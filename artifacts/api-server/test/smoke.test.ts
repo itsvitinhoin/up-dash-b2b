@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import request from "supertest";
+import { db } from "@workspace/db";
 import app from "../src/app";
 import { buildCorsOptions } from "../src/lib/security";
 
@@ -49,6 +50,20 @@ describe("API smoke tests", () => {
       expect(res.body.status).toBe("ok");
       expect(res.body.db).toBe("ok");
       expect(typeof res.body.uptime).toBe("number");
+    });
+
+    it("returns 503 degraded when the DB probe fails", async () => {
+      const spy = vi
+        .spyOn(db, "execute")
+        .mockRejectedValueOnce(new Error("simulated DB outage"));
+      try {
+        const res = await request(app).get("/api/healthz");
+        expect(res.status).toBe(503);
+        expect(res.body.status).toBe("degraded");
+        expect(res.body.db).toBe("error");
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 

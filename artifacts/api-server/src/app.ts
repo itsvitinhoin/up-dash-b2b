@@ -13,7 +13,16 @@ import {
 
 const app: Express = express();
 
-app.set("trust proxy", 1);
+const trustProxyEnv = process.env.TRUST_PROXY;
+if (trustProxyEnv === undefined) {
+  app.set("trust proxy", 1);
+} else if (trustProxyEnv === "false" || trustProxyEnv === "0") {
+  app.set("trust proxy", false);
+} else if (/^\d+$/.test(trustProxyEnv)) {
+  app.set("trust proxy", Number(trustProxyEnv));
+} else {
+  app.set("trust proxy", trustProxyEnv);
+}
 
 app.use(
   pinoHttp({

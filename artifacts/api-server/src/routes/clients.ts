@@ -55,6 +55,9 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
   );
 });
 
+const CURRENCY_RE = /^[A-Z]{3}$/;
+const LOCALE_RE = /^[a-zA-Z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
+
 router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
   const parsed = CreateClientBody.safeParse(req.body);
   if (!parsed.success) {
@@ -62,6 +65,25 @@ router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
       error: true,
       code: "VALIDATION_ERROR",
       message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const { currency, locale } = parsed.data;
+  if (currency !== undefined && !CURRENCY_RE.test(currency)) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: "currency must be a 3-letter ISO 4217 code",
+      status: 400,
+    });
+    return;
+  }
+  if (locale !== undefined && !LOCALE_RE.test(locale)) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: "locale must be a BCP 47 tag",
       status: 400,
     });
     return;

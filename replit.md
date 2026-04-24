@@ -40,7 +40,12 @@ The codebase is a pnpm monorepo. Backend (Drizzle + Express + JWT auth) and fron
 - `ALLOWED_ORIGINS` — comma-separated CORS allowlist. Unset / `*` = permissive (development default).
 - `RATE_LIMIT_AUTH_PER_MIN` — login + refresh limit per IP per minute (default 20).
 - `RATE_LIMIT_API_PER_MIN` — global `/api/*` limit per IP per minute (default 300).
+- `TRUST_PROXY` — Express `trust proxy` setting. Defaults to `1` (one upstream proxy hop, matches managed deployments). Set to `false`/`0` if the API is exposed directly without a trusted proxy (otherwise clients can spoof `X-Forwarded-For` and bypass IP rate limits). Numeric values set hop count; any other string is passed through (e.g. `loopback`, CIDR).
 - `LOG_LEVEL` — pino log level, default `info`.
+
+### Input validation
+
+`POST /api/clients` enforces ISO 4217 (`^[A-Z]{3}$`) for `currency` and a BCP 47 shape (`^[a-zA-Z]{2,3}(?:-[A-Za-z0-9]{2,8})*$`) for `locale`, returning `400 VALIDATION_ERROR` when malformed.
 
 ## Demo Credentials (seed script)
 
