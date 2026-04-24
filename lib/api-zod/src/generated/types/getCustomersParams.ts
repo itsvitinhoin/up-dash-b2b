@@ -6,6 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
-}
+export type GetCustomersParams = {
+  clientId?: string;
+  rfmSegment?: string;
+  state?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+};

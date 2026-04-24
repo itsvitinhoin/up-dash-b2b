@@ -5,7 +5,11 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { Client } from "./client";
 
-export interface HealthStatus {
-  status: string;
+export interface PaginatedClients {
+  data: Client[];
+  total: number;
+  page: number;
+  pages: number;
 }

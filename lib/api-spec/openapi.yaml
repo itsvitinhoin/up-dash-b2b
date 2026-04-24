@@ -3,20 +3,25 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: UP Dash - B2B fashion analytics intelligence API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication
+  - name: clients
+    description: Client (brand) management
+  - name: analytics
+    description: Analytics & reporting
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +29,339 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /auth/refresh:
+    post:
+      operationId: refreshToken
+      tags: [auth]
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshResponse"
+        "401":
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current authenticated user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /clients:
+    get:
+      operationId: listClients
+      tags: [clients]
+      summary: List all clients (admin only)
+      parameters:
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated client list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedClients"
+    post:
+      operationId: createClient
+      tags: [clients]
+      summary: Create a new client (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClientRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+
+  /clients/{clientId}:
+    get:
+      operationId: getClient
+      tags: [clients]
+      summary: Get a single client by id
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Client detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /analytics/dashboard:
+    get:
+      operationId: getDashboard
+      tags: [analytics]
+      summary: Dashboard KPIs and time-series
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Dashboard payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardResponse"
+
+  /analytics/funnel:
+    get:
+      operationId: getFunnel
+      tags: [analytics]
+      summary: Conversion funnel analytics
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Funnel payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FunnelResponse"
+
+  /analytics/customers:
+    get:
+      operationId: getCustomers
+      tags: [analytics]
+      summary: Paginated customers with RFM segmentation
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: rfmSegment
+          schema:
+            type: string
+        - in: query
+          name: state
+          schema:
+            type: string
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated customer list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedCustomers"
+
+  /analytics/products:
+    get:
+      operationId: getProducts
+      tags: [analytics]
+      summary: Product performance ranking
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [revenue, units, created]
+            default: revenue
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Product list with metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductMetrics"
+
+  /analytics/sellers:
+    get:
+      operationId: getSellers
+      tags: [analytics]
+      summary: Seller leaderboard
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Ranked seller list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SellerMetrics"
+
+  /analytics/geography:
+    get:
+      operationId: getGeography
+      tags: [analytics]
+      summary: Geographic breakdown by state and city
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Geography payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeographyResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +369,416 @@ components:
       properties:
         status:
           type: string
+      required: [status]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: boolean
+        code:
+          type: string
+        message:
+          type: string
+        status:
+          type: integer
+      required: [error, code, message, status]
+
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required: [message]
+
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+      required: [email, password]
+
+    RefreshRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+      required: [refreshToken]
+
+    RefreshResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+      required: [accessToken]
+
+    AuthUser:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+          enum: [ADMIN, CLIENT]
+        clientId:
+          type: ["string", "null"]
+      required: [id, email, firstName, lastName, role]
+
+    AuthResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        user:
+          $ref: "#/components/schemas/AuthUser"
+      required: [accessToken, refreshToken, user]
+
+    Client:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        apiKey:
+          type: string
+        revenueYtd:
+          type: number
+        ordersYtd:
+          type: integer
+        leadsYtd:
+          type: integer
+        approvedLeads:
+          type: integer
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
       required:
+        - id
+        - name
+        - email
+        - apiKey
+        - revenueYtd
+        - ordersYtd
+        - leadsYtd
+        - approvedLeads
+        - isActive
+        - createdAt
+        - updatedAt
+
+    PaginatedClients:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Client"
+        total:
+          type: integer
+        page:
+          type: integer
+        pages:
+          type: integer
+      required: [data, total, page, pages]
+
+    CreateClientRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        apiKey:
+          type: string
+      required: [name, email, apiKey]
+
+    DashboardKpis:
+      type: object
+      properties:
+        revenue:
+          type: number
+        orders:
+          type: integer
+        avgTicket:
+          type: number
+        conversionRate:
+          type: number
+        approvalRate:
+          type: number
+        leads:
+          type: integer
+        approvedLeads:
+          type: integer
+        customers:
+          type: integer
+        repeatCustomers:
+          type: integer
+      required:
+        - revenue
+        - orders
+        - avgTicket
+        - conversionRate
+        - approvalRate
+        - leads
+        - approvedLeads
+        - customers
+        - repeatCustomers
+
+    TimeSeriesPoint:
+      type: object
+      properties:
+        date:
+          type: string
+        value:
+          type: number
+      required: [date, value]
+
+    CategoryShare:
+      type: object
+      properties:
+        category:
+          type: string
+        revenue:
+          type: number
+        orders:
+          type: integer
+      required: [category, revenue, orders]
+
+    DashboardResponse:
+      type: object
+      properties:
+        kpis:
+          $ref: "#/components/schemas/DashboardKpis"
+        revenueOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+        ordersOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+        leadsOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+        revenueByCategory:
+          type: array
+          items:
+            $ref: "#/components/schemas/CategoryShare"
+      required:
+        - kpis
+        - revenueOverTime
+        - ordersOverTime
+        - leadsOverTime
+        - revenueByCategory
+
+    FunnelStep:
+      type: object
+      properties:
+        step:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+        conversionRate:
+          type: number
+        dropOffRate:
+          type: number
+      required: [step, label, count, conversionRate, dropOffRate]
+
+    FunnelResponse:
+      type: object
+      properties:
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/FunnelStep"
+        overallConversion:
+          type: number
+        insights:
+          type: array
+          items:
+            type: string
+      required: [steps, overallConversion, insights]
+
+    Customer:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        email:
+          type: string
+        name:
+          type: ["string", "null"]
+        phone:
+          type: ["string", "null"]
+        state:
+          type: ["string", "null"]
+        city:
+          type: ["string", "null"]
+        registrationStatus:
+          type: string
+        rfmSegment:
+          type: ["string", "null"]
+        recencyScore:
+          type: ["integer", "null"]
+        frequencyScore:
+          type: ["integer", "null"]
+        monetaryScore:
+          type: ["integer", "null"]
+        totalOrders:
+          type: integer
+        totalSpent:
+          type: number
+        firstPurchaseAt:
+          type: ["string", "null"]
+          format: date-time
+        lastPurchaseAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - clientId
+        - email
+        - registrationStatus
+        - totalOrders
+        - totalSpent
+        - createdAt
+
+    PaginatedCustomers:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Customer"
+        total:
+          type: integer
+        page:
+          type: integer
+        pages:
+          type: integer
+        segmentCounts:
+          type: array
+          items:
+            type: object
+            properties:
+              segment:
+                type: string
+              count:
+                type: integer
+            required: [segment, count]
+      required: [data, total, page, pages, segmentCounts]
+
+    ProductMetrics:
+      type: object
+      properties:
+        id:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        category:
+          type: ["string", "null"]
+        price:
+          type: number
+        stock:
+          type: integer
+        totalSold:
+          type: integer
+        totalRevenue:
+          type: number
+        status:
+          type: string
+      required:
+        - id
+        - sku
+        - name
+        - price
+        - stock
+        - totalSold
+        - totalRevenue
         - status
 
+    SellerMetrics:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: ["string", "null"]
+        totalOrders:
+          type: integer
+        totalRevenue:
+          type: number
+        avgTicket:
+          type: number
+      required: [id, name, totalOrders, totalRevenue, avgTicket]
+
+    GeographyState:
+      type: object
+      properties:
+        state:
+          type: string
+        orders:
+          type: integer
+        revenue:
+          type: number
+        customers:
+          type: integer
+      required: [state, orders, revenue, customers]
+
+    GeographyCity:
+      type: object
+      properties:
+        state:
+          type: string
+        city:
+          type: string
+        orders:
+          type: integer
+        revenue:
+          type: number
+      required: [state, city, orders, revenue]
+
+    GeographyResponse:
+      type: object
+      properties:
+        states:
+          type: array
+          items:
+            $ref: "#/components/schemas/GeographyState"
+        cities:
+          type: array
+          items:
+            $ref: "#/components/schemas/GeographyCity"
+      required: [states, cities]

@@ -6,6 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
+export interface FunnelStep {
+  step: string;
+  label: string;
+  count: number;
+  conversionRate: number;
+  dropOffRate: number;
 }

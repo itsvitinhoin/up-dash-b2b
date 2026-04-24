@@ -5,7 +5,10 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { FunnelStep } from "./funnelStep";
 
-export interface HealthStatus {
-  status: string;
+export interface FunnelResponse {
+  steps: FunnelStep[];
+  overallConversion: number;
+  insights: string[];
 }
