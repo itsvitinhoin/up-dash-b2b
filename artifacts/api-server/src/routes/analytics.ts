@@ -1553,26 +1553,33 @@ function buildCreativeMetrics(
   }
 
   return creatives.map((c) => {
-    const proratedSpend = c.spend * computeSpendOverlapFraction(c, from, to);
+    const fraction = computeSpendOverlapFraction(c, from, to);
+    const proratedSpend = c.spend * fraction;
     const platRev = platformRevenue.get(c.platform) ?? 0;
     const platSp = platformProratedSpend.get(c.platform) ?? 0;
     const creativeRev = platSp > 0 ? platRev * (proratedSpend / platSp) : 0;
+    // Prorate engagement metrics by the same overlap fraction as spend so all
+    // per-creative KPIs (CTR, CPL, CPA) are consistent with the selected window.
+    const proratedClicks = Math.round(c.clicks * fraction);
+    const proratedImpressions = Math.round(c.impressions * fraction);
+    const proratedLeads = Math.round(c.leads * fraction);
+    const proratedApprovedLeads = Math.round(c.approvedLeads * fraction);
     return {
       id: c.id,
       name: c.name,
       platform: c.platform,
       status: c.status,
       imageUrl: c.imageUrl ?? null,
-      clicks: c.clicks,
-      impressions: c.impressions,
-      ctr: c.impressions > 0 ? (c.clicks / c.impressions) * 100 : 0,
-      leads: c.leads,
-      approvedLeads: c.approvedLeads,
+      clicks: proratedClicks,
+      impressions: proratedImpressions,
+      ctr: proratedImpressions > 0 ? (proratedClicks / proratedImpressions) * 100 : 0,
+      leads: proratedLeads,
+      approvedLeads: proratedApprovedLeads,
       spend: proratedSpend,
       attributedRevenue: creativeRev,
       roas: proratedSpend > 0 ? creativeRev / proratedSpend : 0,
-      cpl: c.leads > 0 ? proratedSpend / c.leads : 0,
-      cpa: c.approvedLeads > 0 ? proratedSpend / c.approvedLeads : 0,
+      cpl: proratedLeads > 0 ? proratedSpend / proratedLeads : 0,
+      cpa: proratedApprovedLeads > 0 ? proratedSpend / proratedApprovedLeads : 0,
     };
   });
 }
