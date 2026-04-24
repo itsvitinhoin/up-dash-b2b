@@ -24,9 +24,10 @@ The codebase is a pnpm monorepo. Backend (Drizzle + Express + JWT auth) and fron
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
+- `pnpm --filter @workspace/db run push` — push DB schema changes (escape hatch only — prefer migrations)
 - `pnpm --filter @workspace/db run generate` — generate a new migration in `lib/db/migrations/`
-- `pnpm --filter @workspace/db run migrate` — apply pending migrations (use this in production)
+- `pnpm --filter @workspace/db run migrate:bootstrap` — idempotent ledger seed; safe to run anywhere
+- `pnpm --filter @workspace/db run migrate` — apply pending migrations (used by post-merge.sh and prod deploys)
 - `pnpm --filter @workspace/db run seed` — seed two demo clients with realistic data
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 - `pnpm --filter @workspace/api-server run test` — run vitest+supertest smoke tests against the API

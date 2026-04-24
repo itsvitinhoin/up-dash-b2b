@@ -122,7 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const refresh = localStorage.getItem(REFRESH_KEY);
     // Best-effort server revocation; never block UI on this network call.
     if (refresh) {
-      apiLogout({ refreshToken: refresh } as never).catch(() => undefined);
+      apiLogout({ refreshToken: refresh }).catch(() => undefined);
     }
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_KEY);
