@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "UP Dash"
+version = "1.0.0"
+id = "artifacts/up-dash"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21579
+
+[services.development]
+run = "pnpm --filter @workspace/up-dash run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/up-dash", "run", "build" ]
+publicDir = "artifacts/up-dash/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21579"
+BASE_PATH = "/"

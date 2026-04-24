@@ -12,9 +12,9 @@ import { authenticate, requireAdmin } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
-router.use("/clients", authenticate, requireAdmin);
+router.use("/clients", authenticate);
 
-router.get("/clients", async (req, res): Promise<void> => {
+router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
   const parsed = ListClientsQueryParams.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({
@@ -55,7 +55,7 @@ router.get("/clients", async (req, res): Promise<void> => {
   );
 });
 
-router.post("/clients", async (req, res): Promise<void> => {
+router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
   const parsed = CreateClientBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -82,6 +82,19 @@ router.get("/clients/:clientId", async (req, res): Promise<void> => {
       code: "VALIDATION_ERROR",
       message: parsed.error.message,
       status: 400,
+    });
+    return;
+  }
+  // Admins can read any client; CLIENT users can only read their own.
+  if (
+    req.user?.role !== "ADMIN" &&
+    req.user?.clientId !== parsed.data.clientId
+  ) {
+    res.status(403).json({
+      error: true,
+      code: "FORBIDDEN",
+      message: "You do not have access to this client",
+      status: 403,
     });
     return;
   }

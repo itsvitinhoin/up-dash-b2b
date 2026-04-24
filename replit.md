@@ -4,7 +4,7 @@
 
 UP Dash is a B2B fashion-industry e-commerce analytics platform. It provides admins with multi-tenant oversight (clients = brands) and individual brand owners with private dashboards covering revenue, conversion funnels, customer RFM segmentation, product/seller performance, and geographic insights.
 
-The codebase is a pnpm monorepo. Backend (Drizzle + Express + JWT auth) and frontend (React + Vite) live in the `artifacts/` directory; shared schema, OpenAPI spec, and generated React Query hooks live in `lib/`.
+The codebase is a pnpm monorepo. Backend (Drizzle + Express + JWT auth) and frontend (React + Vite at `artifacts/up-dash`, served from `/`) live in the `artifacts/` directory; shared schema, OpenAPI spec, and generated React Query hooks live in `lib/`.
 
 ## Stack
 
@@ -41,5 +41,8 @@ The codebase is a pnpm monorepo. Backend (Drizzle + Express + JWT auth) and fron
 - **Auth flow**: `/auth/login` returns access+refresh tokens and the user payload (with `clientId` for clients). `/auth/me` is the rehydration endpoint. `/auth/refresh` rotates the access token.
 - **Analytics endpoints** (`/analytics/*`): dashboard KPIs + daily series, conversion funnel (monotonic, clamped to 100%), paginated customers with RFM segment counts, product ranking, seller leaderboard, and state/city geography breakdowns. All queries are real Drizzle SQL — no mocks.
 - **Events table**: source of truth for funnel/conversion analytics. Seeded with VISIT, REGISTRATION, APPROVED_REGISTRATION, ADD_TO_CART, CHECKOUT_STARTED, PURCHASE per customer journey.
+- **Frontend** (`artifacts/up-dash`): React + Vite + wouter + TanStack Query + shadcn/ui + Recharts. Auth state in `lib/auth.tsx` persists JWT and user to localStorage (`updash.token`, `updash.user`, `updash.clientId`); a global QueryClient `onError` triggers logout on 401. Pages: `/login`, `/dashboard`, `/funnel`, `/customers`, `/products`, `/sellers`, `/geography`, `/clients` (admin only). Date-range filter defaults to last 30 days. Admin users auto-pick the first client on load (analytics endpoints require a `clientId`); CLIENT users have a fixed `clientId` from JWT and don't see the picker.
+- **Generated hooks gotcha**: orval-generated React Query hooks type the `query` option as `UseQueryOptions<...>` which (in TanStack Query v5) requires `queryKey`. The runtime fills it in via the generated `getXyzQueryKey()` helper, so consumers wrap their option object in `queryOpts({ ... })` from `src/lib/query-opts.ts` to satisfy the typing.
+- **`GET /clients/:clientId` access**: ADMIN can read any client; CLIENT can read only their own (used by the topbar to show the brand name).
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
