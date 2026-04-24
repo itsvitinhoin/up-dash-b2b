@@ -232,6 +232,16 @@ paths:
           schema:
             type: string
           description: Restrict to orders from customers in a specific RFM segment (VIP, Loyal, etc.).
+        - in: query
+          name: compare
+          schema:
+            type: boolean
+          description: |
+            When true, the response also includes prior-period equivalents
+            (`prevKpis`, `prevRevenueOverTime`, `prevOrdersOverTime`) covering
+            the immediately preceding window of the same length. Use this so
+            the client can render accurate "vs. previous period" change
+            indicators in a single request.
       responses:
         "200":
           description: Dashboard payload
@@ -915,6 +925,27 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CategoryShare"
+        prevKpis:
+          allOf:
+            - $ref: "#/components/schemas/DashboardKpis"
+          description: |
+            Equivalent KPI totals for the immediately preceding period of
+            the same length. Only present when the request was made with
+            `compare=true`.
+        prevRevenueOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+          description: |
+            Daily revenue series for the prior comparison period. Only
+            present when the request was made with `compare=true`.
+        prevOrdersOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+          description: |
+            Daily order count series for the prior comparison period.
+            Only present when the request was made with `compare=true`.
       required:
         - kpis
         - revenueOverTime

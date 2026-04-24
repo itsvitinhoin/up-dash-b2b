@@ -173,6 +173,12 @@ export const GetDashboardQueryParams = zod.object({
     .describe(
       "Restrict to orders from customers in a specific RFM segment (VIP, Loyal, etc.).",
     ),
+  compare: zod.coerce
+    .boolean()
+    .optional()
+    .describe(
+      'When true, the response also includes prior-period equivalents\n(`prevKpis`, `prevRevenueOverTime`, `prevOrdersOverTime`) covering\nthe immediately preceding window of the same length. Use this so\nthe client can render accurate \"vs. previous period\" change\nindicators in a single request.\n',
+    ),
 });
 
 export const GetDashboardResponse = zod.object({
@@ -212,6 +218,44 @@ export const GetDashboardResponse = zod.object({
       orders: zod.number(),
     }),
   ),
+  prevKpis: zod
+    .object({
+      revenue: zod.number(),
+      orders: zod.number(),
+      avgTicket: zod.number(),
+      conversionRate: zod.number(),
+      approvalRate: zod.number(),
+      leads: zod.number(),
+      approvedLeads: zod.number(),
+      customers: zod.number(),
+      repeatCustomers: zod.number(),
+    })
+    .optional()
+    .describe(
+      "Equivalent KPI totals for the immediately preceding period of\nthe same length. Only present when the request was made with\n`compare=true`.\n",
+    ),
+  prevRevenueOverTime: zod
+    .array(
+      zod.object({
+        date: zod.string(),
+        value: zod.number(),
+      }),
+    )
+    .optional()
+    .describe(
+      "Daily revenue series for the prior comparison period. Only\npresent when the request was made with `compare=true`.\n",
+    ),
+  prevOrdersOverTime: zod
+    .array(
+      zod.object({
+        date: zod.string(),
+        value: zod.number(),
+      }),
+    )
+    .optional()
+    .describe(
+      "Daily order count series for the prior comparison period.\nOnly present when the request was made with `compare=true`.\n",
+    ),
 });
 
 /**

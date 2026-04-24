@@ -26,4 +26,13 @@ export type GetDashboardParams = {
    * Restrict to orders from customers in a specific RFM segment (VIP, Loyal, etc.).
    */
   segment?: string;
+  /**
+ * When true, the response also includes prior-period equivalents
+(`prevKpis`, `prevRevenueOverTime`, `prevOrdersOverTime`) covering
+the immediately preceding window of the same length. Use this so
+the client can render accurate "vs. previous period" change
+indicators in a single request.
+
+ */
+  compare?: boolean;
 };

@@ -15,4 +15,17 @@ export interface DashboardResponse {
   ordersOverTime: TimeSeriesPoint[];
   leadsOverTime: TimeSeriesPoint[];
   revenueByCategory: CategoryShare[];
+  /** Equivalent KPI totals for the immediately preceding period of
+the same length. Only present when the request was made with
+`compare=true`.
+ */
+  prevKpis?: DashboardKpis;
+  /** Daily revenue series for the prior comparison period. Only
+present when the request was made with `compare=true`.
+ */
+  prevRevenueOverTime?: TimeSeriesPoint[];
+  /** Daily order count series for the prior comparison period.
+Only present when the request was made with `compare=true`.
+ */
+  prevOrdersOverTime?: TimeSeriesPoint[];
 }

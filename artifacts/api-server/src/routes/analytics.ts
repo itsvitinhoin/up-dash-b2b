@@ -79,6 +79,30 @@ function requireClient(
   return clientId;
 }
 
+type DashboardKpis = {
+  revenue: number;
+  orders: number;
+  avgTicket: number;
+  conversionRate: number;
+  approvalRate: number;
+  leads: number;
+  approvedLeads: number;
+  customers: number;
+  repeatCustomers: number;
+};
+
+const ZERO_KPIS: DashboardKpis = {
+  revenue: 0,
+  orders: 0,
+  avgTicket: 0,
+  conversionRate: 0,
+  approvalRate: 0,
+  leads: 0,
+  approvedLeads: 0,
+  customers: 0,
+  repeatCustomers: 0,
+};
+
 router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const parsed = GetDashboardQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
   if (!parsed.success) {
@@ -90,48 +114,13 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
-  const { category, sellerId, channel, segment } = parsed.data;
+  const { category, sellerId, channel, segment, compare } = parsed.data;
 
-  // Pre-resolve filter scopes once and reuse across all aggregations.
-  // Category → orders containing a line item in that category.
-  // Channel/segment → orders placed by customers matching utmSource / rfmSegment.
-  const emptyResponse = () =>
-    GetDashboardResponse.parse({
-      kpis: {
-        revenue: 0,
-        orders: 0,
-        avgTicket: 0,
-        conversionRate: 0,
-        approvalRate: 0,
-        leads: 0,
-        approvedLeads: 0,
-        customers: 0,
-        repeatCustomers: 0,
-      },
-      revenueOverTime: [],
-      ordersOverTime: [],
-      leadsOverTime: [],
-      revenueByCategory: [],
-    });
-
-  let categoryOrderIds: string[] | null = null;
-  if (category) {
-    const rows = await db
-      .selectDistinct({ id: ordersTable.id })
-      .from(ordersTable)
-      .innerJoin(orderItemsTable, eq(orderItemsTable.orderId, ordersTable.id))
-      .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
-      .where(
-        and(
-          eq(ordersTable.clientId, clientId),
-          gte(ordersTable.createdAt, from),
-          lte(ordersTable.createdAt, to),
-          eq(productsTable.category, category),
-        ),
-      );
-    categoryOrderIds = rows.map((r) => r.id);
-  }
-
+  // Pre-resolve filter scopes once. Channel/segment scope (customers) is
+  // window-agnostic and can be reused across the current and prior windows.
+  // The category scope, however, is window-dependent (we restrict to orders
+  // *placed in the window* whose items match the category), so it must be
+  // recomputed per window.
   let scopedCustomerIds: string[] | null = null;
   if (channel || segment) {
     const custConds: SQL[] = [eq(customersTable.clientId, clientId)];
@@ -144,155 +133,230 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     scopedCustomerIds = rows.map((r) => r.id);
   }
 
-  const orderConds: SQL[] = [
-    eq(ordersTable.clientId, clientId),
-    gte(ordersTable.createdAt, from),
-    lte(ordersTable.createdAt, to),
-  ];
-  if (sellerId) orderConds.push(eq(ordersTable.sellerId, sellerId));
-  if (categoryOrderIds !== null) {
-    if (categoryOrderIds.length === 0) {
-      res.json(emptyResponse());
-      return;
-    }
-    orderConds.push(
-      sql`${ordersTable.id} IN (${sql.join(
-        categoryOrderIds.map((id) => sql`${id}`),
-        sql`, `,
-      )})`,
-    );
-  }
-  if (scopedCustomerIds !== null) {
-    if (scopedCustomerIds.length === 0) {
-      res.json(emptyResponse());
-      return;
-    }
-    orderConds.push(
-      sql`${ordersTable.customerId} IN (${sql.join(
-        scopedCustomerIds.map((id) => sql`${id}`),
-        sql`, `,
-      )})`,
-    );
-  }
-  const baseOrderWhere = and(...orderConds);
-
-  const [orderAgg] = await db
-    .select({
-      revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
-      orders: sql<number>`COUNT(*)::int`,
-    })
-    .from(ordersTable)
-    .where(
-      and(
-        baseOrderWhere,
-        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-      ),
-    );
-
-  const [eventAgg] = await db
-    .select({
-      visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int`,
-      registrations: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'REGISTRATION')::int`,
-      approvals: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'APPROVED_REGISTRATION')::int`,
-      purchases: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'PURCHASE')::int`,
-    })
-    .from(eventsTable)
-    .where(
-      and(
-        eq(eventsTable.clientId, clientId),
-        gte(eventsTable.createdAt, from),
-        lte(eventsTable.createdAt, to),
-      ),
-    );
-
-  const [customerAgg] = await db
-    .select({
-      total: sql<number>`COUNT(*)::int`,
-      repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
-    })
-    .from(customersTable)
-    .where(eq(customersTable.clientId, clientId));
-
-  const revenue = Number(orderAgg.revenue) || 0;
-  const orders = Number(orderAgg.orders) || 0;
-  const visits = Number(eventAgg.visits) || 0;
-  const registrations = Number(eventAgg.registrations) || 0;
-  const approvals = Number(eventAgg.approvals) || 0;
-
-  const clamp = (n: number): number => Math.min(100, Math.max(0, n));
-  const kpis = {
-    revenue,
-    orders,
-    avgTicket: orders > 0 ? revenue / orders : 0,
-    conversionRate: visits > 0 ? clamp((orders / visits) * 100) : 0,
-    approvalRate: registrations > 0 ? clamp((approvals / registrations) * 100) : 0,
-    leads: registrations,
-    approvedLeads: approvals,
-    customers: Number(customerAgg.total) || 0,
-    repeatCustomers: Number(customerAgg.repeat) || 0,
+  type WindowAggregates = {
+    kpis: DashboardKpis;
+    dailyRevenue: { date: string; value: number }[];
+    dailyOrders: { date: string; value: number }[];
+    dailyLeads: { date: string; value: number }[];
+    revenueByCategory: { category: string; revenue: number; orders: number }[];
   };
 
-  const dailyRevenue = await db
-    .select({
-      date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
-      value: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
-    })
-    .from(ordersTable)
-    .where(
-      and(
-        baseOrderWhere,
-        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-      ),
-    )
-    .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
-    .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
+  // The prior window only needs the data the client renders for comparison
+  // (kpis + revenue/orders series). `full` skips the lead series, category
+  // breakdown, and the (window-agnostic) customer aggregate to avoid extra
+  // database work.
+  const computeWindow = async (
+    winFrom: Date,
+    winTo: Date,
+    full: boolean,
+  ): Promise<WindowAggregates> => {
+    let categoryOrderIds: string[] | null = null;
+    if (category) {
+      const rows = await db
+        .selectDistinct({ id: ordersTable.id })
+        .from(ordersTable)
+        .innerJoin(orderItemsTable, eq(orderItemsTable.orderId, ordersTable.id))
+        .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+        .where(
+          and(
+            eq(ordersTable.clientId, clientId),
+            gte(ordersTable.createdAt, winFrom),
+            lte(ordersTable.createdAt, winTo),
+            eq(productsTable.category, category),
+          ),
+        );
+      categoryOrderIds = rows.map((r) => r.id);
+    }
 
-  const dailyOrders = await db
-    .select({
-      date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
-      value: sql<number>`COUNT(*)::float`,
-    })
-    .from(ordersTable)
-    .where(baseOrderWhere)
-    .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
-    .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
+    const orderConds: SQL[] = [
+      eq(ordersTable.clientId, clientId),
+      gte(ordersTable.createdAt, winFrom),
+      lte(ordersTable.createdAt, winTo),
+    ];
+    if (sellerId) orderConds.push(eq(ordersTable.sellerId, sellerId));
+    const emptyWindow: WindowAggregates = {
+      kpis: { ...ZERO_KPIS },
+      dailyRevenue: [],
+      dailyOrders: [],
+      dailyLeads: [],
+      revenueByCategory: [],
+    };
+    if (categoryOrderIds !== null) {
+      if (categoryOrderIds.length === 0) return emptyWindow;
+      orderConds.push(
+        sql`${ordersTable.id} IN (${sql.join(
+          categoryOrderIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+      );
+    }
+    if (scopedCustomerIds !== null) {
+      if (scopedCustomerIds.length === 0) return emptyWindow;
+      orderConds.push(
+        sql`${ordersTable.customerId} IN (${sql.join(
+          scopedCustomerIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+      );
+    }
+    const baseOrderWhere = and(...orderConds);
 
-  const dailyLeads = await db
-    .select({
-      date: sql<string>`to_char(date_trunc('day', ${eventsTable.createdAt}), 'YYYY-MM-DD')`,
-      value: sql<number>`COUNT(*)::float`,
-    })
-    .from(eventsTable)
-    .where(
-      and(
-        eq(eventsTable.clientId, clientId),
-        eq(eventsTable.eventType, "REGISTRATION"),
-        gte(eventsTable.createdAt, from),
-        lte(eventsTable.createdAt, to),
-      ),
-    )
-    .groupBy(sql`date_trunc('day', ${eventsTable.createdAt})`)
-    .orderBy(sql`date_trunc('day', ${eventsTable.createdAt})`);
+    const [orderAgg] = await db
+      .select({
+        revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+        orders: sql<number>`COUNT(*)::int`,
+      })
+      .from(ordersTable)
+      .where(
+        and(
+          baseOrderWhere,
+          sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+        ),
+      );
 
-  const revenueByCategory = await db
-    .select({
-      category: sql<string>`COALESCE(${productsTable.category}, 'Uncategorized')`,
-      revenue: sql<number>`COALESCE(SUM(${orderItemsTable.priceAtSale} * ${orderItemsTable.quantity}), 0)::float`,
-      orders: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
-    })
-    .from(orderItemsTable)
-    .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
-    .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
-    .where(baseOrderWhere)
-    .groupBy(productsTable.category);
+    const [eventAgg] = await db
+      .select({
+        visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int`,
+        registrations: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'REGISTRATION')::int`,
+        approvals: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'APPROVED_REGISTRATION')::int`,
+        purchases: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'PURCHASE')::int`,
+      })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.clientId, clientId),
+          gte(eventsTable.createdAt, winFrom),
+          lte(eventsTable.createdAt, winTo),
+        ),
+      );
+
+    let customerAgg: { total: number; repeat: number } = { total: 0, repeat: 0 };
+    if (full) {
+      // Customer totals are window-agnostic, so they only matter for the
+      // current-window response. Skip in compare mode.
+      const [row] = await db
+        .select({
+          total: sql<number>`COUNT(*)::int`,
+          repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
+        })
+        .from(customersTable)
+        .where(eq(customersTable.clientId, clientId));
+      customerAgg = row;
+    }
+
+    const revenue = Number(orderAgg.revenue) || 0;
+    const orders = Number(orderAgg.orders) || 0;
+    const visits = Number(eventAgg.visits) || 0;
+    const registrations = Number(eventAgg.registrations) || 0;
+    const approvals = Number(eventAgg.approvals) || 0;
+
+    const clamp = (n: number): number => Math.min(100, Math.max(0, n));
+    const kpis: DashboardKpis = {
+      revenue,
+      orders,
+      avgTicket: orders > 0 ? revenue / orders : 0,
+      conversionRate: visits > 0 ? clamp((orders / visits) * 100) : 0,
+      approvalRate: registrations > 0 ? clamp((approvals / registrations) * 100) : 0,
+      leads: registrations,
+      approvedLeads: approvals,
+      customers: Number(customerAgg.total) || 0,
+      repeatCustomers: Number(customerAgg.repeat) || 0,
+    };
+
+    const dailyRevenue = await db
+      .select({
+        date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+        value: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+      })
+      .from(ordersTable)
+      .where(
+        and(
+          baseOrderWhere,
+          sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+        ),
+      )
+      .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
+      .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
+
+    const dailyOrders = await db
+      .select({
+        date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+        value: sql<number>`COUNT(*)::float`,
+      })
+      .from(ordersTable)
+      .where(baseOrderWhere)
+      .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
+      .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
+
+    const dailyLeads = full
+      ? await db
+          .select({
+            date: sql<string>`to_char(date_trunc('day', ${eventsTable.createdAt}), 'YYYY-MM-DD')`,
+            value: sql<number>`COUNT(*)::float`,
+          })
+          .from(eventsTable)
+          .where(
+            and(
+              eq(eventsTable.clientId, clientId),
+              eq(eventsTable.eventType, "REGISTRATION"),
+              gte(eventsTable.createdAt, winFrom),
+              lte(eventsTable.createdAt, winTo),
+            ),
+          )
+          .groupBy(sql`date_trunc('day', ${eventsTable.createdAt})`)
+          .orderBy(sql`date_trunc('day', ${eventsTable.createdAt})`)
+      : [];
+
+    const revenueByCategory = full
+      ? await db
+          .select({
+            category: sql<string>`COALESCE(${productsTable.category}, 'Uncategorized')`,
+            revenue: sql<number>`COALESCE(SUM(${orderItemsTable.priceAtSale} * ${orderItemsTable.quantity}), 0)::float`,
+            orders: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+          })
+          .from(orderItemsTable)
+          .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+          .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+          .where(baseOrderWhere)
+          .groupBy(productsTable.category)
+      : [];
+
+    return {
+      kpis,
+      dailyRevenue,
+      dailyOrders,
+      dailyLeads,
+      revenueByCategory,
+    };
+  };
+
+  const current = await computeWindow(from, to, true);
+
+  // Equivalent prior window: same length, ending the day before `from`.
+  // We use millisecond arithmetic so the window length matches exactly even
+  // across DST/timezone shifts.
+  let prev: WindowAggregates | null = null;
+  if (compare) {
+    const lengthMs = to.getTime() - from.getTime();
+    const prevTo = new Date(from.getTime() - 1);
+    const prevFrom = new Date(prevTo.getTime() - lengthMs);
+    prev = await computeWindow(prevFrom, prevTo, false);
+  }
 
   res.json(
     GetDashboardResponse.parse({
-      kpis,
-      revenueOverTime: dailyRevenue,
-      ordersOverTime: dailyOrders,
-      leadsOverTime: dailyLeads,
-      revenueByCategory,
+      kpis: current.kpis,
+      revenueOverTime: current.dailyRevenue,
+      ordersOverTime: current.dailyOrders,
+      leadsOverTime: current.dailyLeads,
+      revenueByCategory: current.revenueByCategory,
+      ...(prev
+        ? {
+            prevKpis: prev.kpis,
+            prevRevenueOverTime: prev.dailyRevenue,
+            prevOrdersOverTime: prev.dailyOrders,
+          }
+        : {}),
     }),
   );
 });

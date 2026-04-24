@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
-import { differenceInDays, format, subDays } from "date-fns";
+import { differenceInDays, format } from "date-fns";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -60,15 +60,10 @@ import {
 } from "@/lib/motion";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 
-type Series = { date: string; value: number }[];
-
-function computeChange(series: Series | undefined): number | null {
-  if (!series || series.length < 4) return null;
-  const mid = Math.floor(series.length / 2);
-  const a = series.slice(0, mid).reduce((sum, p) => sum + p.value, 0);
-  const b = series.slice(mid).reduce((sum, p) => sum + p.value, 0);
-  if (a === 0) return b > 0 ? 100 : null;
-  return ((b - a) / a) * 100;
+function computeChange(current: number | undefined, previous: number | undefined): number | null {
+  if (current === undefined || previous === undefined) return null;
+  if (previous === 0) return current > 0 ? 100 : null;
+  return ((current - previous) / previous) * 100;
 }
 
 interface KpiCardProps {
@@ -225,25 +220,12 @@ export default function DashboardPage() {
       sellerId: filters.sellerId ?? undefined,
       channel: filters.channel ?? undefined,
       segment: filters.segment ?? undefined,
+      compare: true,
     },
     { query: queryOpts({ enabled }) },
   );
 
   const inclusiveDays = Math.max(1, differenceInDays(dateRange.to, dateRange.from) + 1);
-  const prevTo = subDays(dateRange.from, 1);
-  const prevFrom = subDays(prevTo, inclusiveDays - 1);
-  const { data: prevData } = useGetDashboard(
-    {
-      clientId,
-      dateFrom: format(prevFrom, "yyyy-MM-dd"),
-      dateTo: format(prevTo, "yyyy-MM-dd"),
-      category: filters.category ?? undefined,
-      sellerId: filters.sellerId ?? undefined,
-      channel: filters.channel ?? undefined,
-      segment: filters.segment ?? undefined,
-    },
-    { query: queryOpts({ enabled }) },
-  );
 
   // ── AI insight (real LLM) ──────────────────────────────────────────────
   const insightParams = {
@@ -273,29 +255,25 @@ export default function DashboardPage() {
     { query: queryOpts({ enabled }) },
   );
 
-  // Compute changes
-  const revenueChange = useMemo(() => computeChange(data?.revenueOverTime), [data]);
-  const ordersChange = useMemo(() => computeChange(data?.ordersOverTime), [data]);
-  const avgTicketChange = useMemo(() => {
-    if (!data?.kpis.avgTicket || !prevData?.kpis.avgTicket) return null;
-    if (prevData.kpis.avgTicket === 0) return null;
-    return ((data.kpis.avgTicket - prevData.kpis.avgTicket) / prevData.kpis.avgTicket) * 100;
-  }, [data, prevData]);
-  const conversionChange = useMemo(() => {
-    if (
-      data?.kpis.conversionRate === undefined ||
-      prevData?.kpis.conversionRate === undefined ||
-      prevData.kpis.conversionRate === 0
-    )
-      return null;
-    return (
-      ((data.kpis.conversionRate - prevData.kpis.conversionRate) /
-        prevData.kpis.conversionRate) *
-      100
-    );
-  }, [data, prevData]);
+  // Compute changes from API-provided prior-period KPIs
+  const revenueChange = useMemo(
+    () => computeChange(data?.kpis.revenue, data?.prevKpis?.revenue),
+    [data],
+  );
+  const ordersChange = useMemo(
+    () => computeChange(data?.kpis.orders, data?.prevKpis?.orders),
+    [data],
+  );
+  const avgTicketChange = useMemo(
+    () => computeChange(data?.kpis.avgTicket, data?.prevKpis?.avgTicket),
+    [data],
+  );
+  const conversionChange = useMemo(
+    () => computeChange(data?.kpis.conversionRate, data?.prevKpis?.conversionRate),
+    [data],
+  );
 
-  // Build chart data
+  // Build chart data (uses prev time series from the same response)
   const chartData = useMemo(() => {
     if (!data) return [];
     const current =
@@ -307,22 +285,25 @@ export default function DashboardPage() {
               const o = data.ordersOverTime[i]?.value || 0;
               return { date: r.date, value: o > 0 ? r.value / o : 0 };
             });
+    const prevRevenue = data.prevRevenueOverTime;
+    const prevOrders = data.prevOrdersOverTime;
     const previous =
-      prevData &&
-      (chartMetric === "revenue"
-        ? prevData.revenueOverTime
-        : chartMetric === "orders"
-          ? prevData.ordersOverTime
-          : prevData.revenueOverTime.map((r, i) => {
-              const o = prevData.ordersOverTime[i]?.value || 0;
-              return { date: r.date, value: o > 0 ? r.value / o : 0 };
-            }));
+      prevRevenue && prevOrders
+        ? chartMetric === "revenue"
+          ? prevRevenue
+          : chartMetric === "orders"
+            ? prevOrders
+            : prevRevenue.map((r, i) => {
+                const o = prevOrders[i]?.value || 0;
+                return { date: r.date, value: o > 0 ? r.value / o : 0 };
+              })
+        : undefined;
     return current.map((p, i) => ({
       date: p.date,
       current: p.value,
       previous: previous?.[i]?.value ?? null,
     }));
-  }, [data, prevData, chartMetric]);
+  }, [data, chartMetric]);
 
   const currentSeries = useMemo(() => {
     if (!data) return [];
@@ -429,7 +410,7 @@ export default function DashboardPage() {
           format={(v) => formatCurrency(v)}
           unit="BRL"
           change={revenueChange}
-          changeLabel="vs. previous half"
+          changeLabel="vs. previous period"
           sparkValues={sparkRevenue}
           sparkColor="#60a5fa"
           sub={[
@@ -447,7 +428,7 @@ export default function DashboardPage() {
           format={(v) => formatNumber(v)}
           unit={inclusiveDays + "d"}
           change={ordersChange}
-          changeLabel="vs. previous half"
+          changeLabel="vs. previous period"
           sparkValues={sparkOrders}
           sparkColor="#a78bfa"
           sub={[

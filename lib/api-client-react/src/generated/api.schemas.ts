@@ -144,6 +144,19 @@ export interface DashboardResponse {
   ordersOverTime: TimeSeriesPoint[];
   leadsOverTime: TimeSeriesPoint[];
   revenueByCategory: CategoryShare[];
+  /** Equivalent KPI totals for the immediately preceding period of
+the same length. Only present when the request was made with
+`compare=true`.
+ */
+  prevKpis?: DashboardKpis;
+  /** Daily revenue series for the prior comparison period. Only
+present when the request was made with `compare=true`.
+ */
+  prevRevenueOverTime?: TimeSeriesPoint[];
+  /** Daily order count series for the prior comparison period.
+Only present when the request was made with `compare=true`.
+ */
+  prevOrdersOverTime?: TimeSeriesPoint[];
 }
 
 export interface FunnelStep {
@@ -443,6 +456,15 @@ export type GetDashboardParams = {
    * Restrict to orders from customers in a specific RFM segment (VIP, Loyal, etc.).
    */
   segment?: string;
+  /**
+ * When true, the response also includes prior-period equivalents
+(`prevKpis`, `prevRevenueOverTime`, `prevOrdersOverTime`) covering
+the immediately preceding window of the same length. Use this so
+the client can render accurate "vs. previous period" change
+indicators in a single request.
+
+ */
+  compare?: boolean;
 };
 
 export type GetFunnelParams = {
