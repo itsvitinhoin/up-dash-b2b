@@ -331,12 +331,45 @@ router.get(
     const sumOrders = (m: Map<string, { orders: number }>) =>
       [...m.values()].reduce((s, v) => s + v.orders, 0);
 
+    // Clients are "active" if they had either revenue-bearing orders OR any
+    // marketing activity (ad spend > 0) in the window.
+    const clientsWithAdSpend = async (winFrom: Date, winTo: Date): Promise<Set<string>> => {
+      const rows = await db
+        .selectDistinct({ clientId: creativesTable.clientId })
+        .from(creativesTable)
+        .where(
+          and(
+            sql`${creativesTable.spend} > 0`,
+            or(
+              sql`${creativesTable.activeFrom} IS NULL`,
+              sql`${creativesTable.activeFrom} <= ${winTo.toISOString().slice(0, 10)}`,
+            ),
+            or(
+              sql`${creativesTable.activeTo} IS NULL`,
+              sql`${creativesTable.activeTo} >= ${winFrom.toISOString().slice(0, 10)}`,
+            ),
+          ),
+        );
+      return new Set(rows.map((r) => r.clientId));
+    };
+
+    const [currAdClients, prevAdClients] = await Promise.all([
+      clientsWithAdSpend(from, to),
+      clientsWithAdSpend(prevFrom, prevTo),
+    ]);
+
     const currRevenue = sumRevenue(currMap);
     const currOrders = sumOrders(currMap);
     const prevRevenue = sumRevenue(prevMap);
     const prevOrders = sumOrders(prevMap);
-    const currActive = [...currMap.values()].filter((v) => v.orders > 0).length;
-    const prevActive = [...prevMap.values()].filter((v) => v.orders > 0).length;
+    const currActive = new Set([
+      ...[...currMap.entries()].filter(([, v]) => v.orders > 0).map(([k]) => k),
+      ...currAdClients,
+    ]).size;
+    const prevActive = new Set([
+      ...[...prevMap.entries()].filter(([, v]) => v.orders > 0).map(([k]) => k),
+      ...prevAdClients,
+    ]).size;
 
     const kpis = {
       revenue: currRevenue,
@@ -561,22 +594,16 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     let returningBuyers = 0;
     let dailyNewBuyers: { date: string; value: number }[] = [];
     let dailyReturningBuyers: { date: string; value: number }[] = [];
-    if (full) {
-      // Customer totals are window-agnostic, so they only matter for the
-      // current-window response. Skip in compare mode.
-      const [row] = await db
-        .select({
-          total: sql<number>`COUNT(*)::int`,
-          repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
-        })
-        .from(customersTable)
-        .where(eq(customersTable.clientId, clientId));
-      customerAgg = row;
 
-      // New vs returning buyers within the window.
-      // New: first ever purchase date falls within [winFrom, winTo].
-      // Returning: ordered in the window but first purchase was before winFrom.
-      const [[newRow], [retRow], newDaily, retDaily] = await Promise.all([
+    // Always compute aggregate new/returning buyer counts so that prev-period
+    // retentionPct, newBuyers, and returningBuyers are available for the
+    // period-over-period delta chips in the UI. Daily time-series are only
+    // needed for the current window (sparklines), so skip them in compare mode.
+    {
+      const buyerAggPromises: [
+        Promise<[{ count: number }]>,
+        Promise<[{ count: number }]>,
+      ] = [
         db
           .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
           .from(ordersTable)
@@ -588,7 +615,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
               gte(customersTable.firstPurchaseAt, winFrom),
               lte(customersTable.firstPurchaseAt, winTo),
             ),
-          ),
+          ) as Promise<[{ count: number }]>,
         db
           .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
           .from(ordersTable)
@@ -599,45 +626,67 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
               sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
               sql`${customersTable.firstPurchaseAt} < ${winFrom}`,
             ),
-          ),
-        db
+          ) as Promise<[{ count: number }]>,
+      ];
+
+      if (full) {
+        // Current window: also fetch customer totals + daily buyer series.
+        const [custRow] = await db
           .select({
-            date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
-            value: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
+            total: sql<number>`COUNT(*)::int`,
+            repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
           })
-          .from(ordersTable)
-          .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
-          .where(
-            and(
-              baseOrderWhere,
-              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-              gte(customersTable.firstPurchaseAt, winFrom),
-              lte(customersTable.firstPurchaseAt, winTo),
-            ),
-          )
-          .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
-          .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`),
-        db
-          .select({
-            date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
-            value: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
-          })
-          .from(ordersTable)
-          .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
-          .where(
-            and(
-              baseOrderWhere,
-              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-              sql`${customersTable.firstPurchaseAt} < ${winFrom}`,
-            ),
-          )
-          .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
-          .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`),
-      ]);
-      newBuyers = Number(newRow?.count) || 0;
-      returningBuyers = Number(retRow?.count) || 0;
-      dailyNewBuyers = newDaily;
-      dailyReturningBuyers = retDaily;
+          .from(customersTable)
+          .where(eq(customersTable.clientId, clientId));
+        customerAgg = custRow;
+
+        const [[newRow], [retRow], newDaily, retDaily] = await Promise.all([
+          ...buyerAggPromises,
+          db
+            .select({
+              date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+              value: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
+            })
+            .from(ordersTable)
+            .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+            .where(
+              and(
+                baseOrderWhere,
+                sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+                gte(customersTable.firstPurchaseAt, winFrom),
+                lte(customersTable.firstPurchaseAt, winTo),
+              ),
+            )
+            .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
+            .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`),
+          db
+            .select({
+              date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+              value: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
+            })
+            .from(ordersTable)
+            .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+            .where(
+              and(
+                baseOrderWhere,
+                sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+                sql`${customersTable.firstPurchaseAt} < ${winFrom}`,
+              ),
+            )
+            .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
+            .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`),
+        ] as const);
+        newBuyers = Number(newRow?.count) || 0;
+        returningBuyers = Number(retRow?.count) || 0;
+        dailyNewBuyers = newDaily;
+        dailyReturningBuyers = retDaily;
+      } else {
+        // Prev window: only aggregate counts are needed (no daily series, no
+        // overall customer totals) — keeps the compare path lean.
+        const [[newRow], [retRow]] = await Promise.all(buyerAggPromises);
+        newBuyers = Number(newRow?.count) || 0;
+        returningBuyers = Number(retRow?.count) || 0;
+      }
     }
 
     const revenue = Number(orderAgg.revenue) || 0;
@@ -751,8 +800,11 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     const signals: DashboardSignal[] = [];
 
     // Signal 1: High traffic, low conversion.
-    // Detect when visit-to-purchase rate is consistently low across the period.
-    const dailyConv = await db
+    // Uses the daily distribution of visit-to-purchase rates: if the bottom
+    // 20th-percentile day's rate is critically low (< 2%) we fire the signal.
+    // This is more robust than an aggregate threshold — a single burst day can
+    // mask a week of poor-converting days when using averages.
+    const dailyConvRows = await db
       .select({
         visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int`,
         purchases: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'PURCHASE')::int`,
@@ -763,20 +815,33 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
           eq(eventsTable.clientId, clientId),
           gte(eventsTable.createdAt, from),
           lte(eventsTable.createdAt, to),
+          sql`${eventsTable.eventType} IN ('VISIT', 'PURCHASE')`,
         ),
-      );
+      )
+      .groupBy(sql`date_trunc('day', ${eventsTable.createdAt})`);
 
-    const totVisits = Number(dailyConv[0]?.visits) || 0;
-    const totPurchases = Number(dailyConv[0]?.purchases) || 0;
-    if (totVisits >= 50) {
-      const convRate = totPurchases / totVisits;
-      if (convRate < 0.05) {
+    const totalVisits = dailyConvRows.reduce((s, r) => s + Number(r.visits), 0);
+    // Only consider days with enough traffic to be statistically meaningful.
+    const ratesByDay = dailyConvRows
+      .filter((r) => Number(r.visits) >= 5)
+      .map((r) => Number(r.purchases) / Number(r.visits));
+
+    if (totalVisits >= 50 && ratesByDay.length >= 3) {
+      const sorted = [...ratesByDay].sort((a, b) => a - b);
+      const p20idx = Math.max(0, Math.floor(sorted.length * 0.2) - 1);
+      const p20rate = sorted[p20idx]!;
+      const medianRate = sorted[Math.floor(sorted.length / 2)]!;
+      if (p20rate < 0.02) {
         signals.push({
           type: "high_traffic_low_sales",
-          severity: convRate < 0.01 ? "critical" : "warning",
+          severity: p20rate < 0.005 ? "critical" : "warning",
           title: "High traffic, low conversion",
-          body: `Visit-to-purchase rate is ${(convRate * 100).toFixed(1)}% over this period. Review pricing, checkout flow, or catalog relevance to improve conversion.`,
-          meta: { avgConversionPct: +(convRate * 100).toFixed(2), totalVisits: totVisits },
+          body: `The bottom 20% of trading days convert at just ${(p20rate * 100).toFixed(1)}% visits→purchases (period median: ${(medianRate * 100).toFixed(1)}%). Review checkout flow, pricing, or catalog relevance.`,
+          meta: {
+            p20ConversionPct: +(p20rate * 100).toFixed(2),
+            medianConversionPct: +(medianRate * 100).toFixed(2),
+            totalVisits,
+          },
         });
       }
     }

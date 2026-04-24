@@ -334,6 +334,10 @@ export default function DashboardPage() {
     () => computeChange(data?.kpis.conversionRate, data?.prevKpis?.conversionRate),
     [data],
   );
+  const retentionChange = useMemo(
+    () => computeChange(data?.kpis.retentionPct, data?.prevKpis?.retentionPct),
+    [data],
+  );
 
   // Build chart data (uses prev time series from the same response)
   const chartData = useMemo(() => {
@@ -637,24 +641,65 @@ export default function DashboardPage() {
           </div>
           {isLoading ? (
             <div className="space-y-1.5">
-              <Skeleton className="h-3 w-full" />
-              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-3 w-full mt-1" />
             </div>
           ) : (
-            <div className="flex gap-3 text-xs">
-              <div className="flex-1 rounded-md bg-muted/40 px-3 py-2 text-center">
-                <p className="font-semibold tabular-nums text-base">
-                  {formatNumber(data?.kpis.newBuyers ?? 0)}
-                </p>
-                <p className="text-muted-foreground mt-0.5">New</p>
+            <>
+              {/* Stacked sparkline: new (emerald) over returning (blue) */}
+              {sparkNewBuyers.length > 0 && (
+                <div className="h-10 w-full mb-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart
+                      data={sparkNewBuyers.map((v, i) => ({
+                        new: v,
+                        returning: sparkReturning[i] ?? 0,
+                      }))}
+                      margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
+                    >
+                      <Area
+                        type="monotone"
+                        dataKey="returning"
+                        stackId="buyers"
+                        stroke="#60a5fa"
+                        fill="#60a5fa"
+                        fillOpacity={0.35}
+                        strokeWidth={1}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="new"
+                        stackId="buyers"
+                        stroke="#34d399"
+                        fill="#34d399"
+                        fillOpacity={0.35}
+                        strokeWidth={1}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+              <div className="flex gap-3 text-xs">
+                <div className="flex-1 flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
+                  <span className="text-muted-foreground">New</span>
+                  <span className="ml-auto font-semibold tabular-nums">
+                    {formatNumber(data?.kpis.newBuyers ?? 0)}
+                  </span>
+                </div>
+                <div className="flex-1 flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-full bg-blue-400 shrink-0" />
+                  <span className="text-muted-foreground">Returning</span>
+                  <span className="ml-auto font-semibold tabular-nums">
+                    {formatNumber(data?.kpis.returningBuyers ?? 0)}
+                  </span>
+                </div>
               </div>
-              <div className="flex-1 rounded-md bg-muted/40 px-3 py-2 text-center">
-                <p className="font-semibold tabular-nums text-base">
-                  {formatNumber(data?.kpis.returningBuyers ?? 0)}
-                </p>
-                <p className="text-muted-foreground mt-0.5">Returning</p>
-              </div>
-            </div>
+            </>
           )}
         </Card>
 
@@ -666,9 +711,8 @@ export default function DashboardPage() {
           label="Buyer retention"
           value={data?.kpis.retentionPct ?? 0}
           format={(v) => formatPercentage(v)}
-          unit="%"
-          change={null}
-          changeLabel=""
+          change={retentionChange}
+          changeLabel="vs. previous period"
           sparkValues={sparkReturning}
           sparkColor="#a78bfa"
           sub={[
