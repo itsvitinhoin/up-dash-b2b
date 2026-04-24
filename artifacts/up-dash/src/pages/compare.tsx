@@ -145,11 +145,11 @@ export default function ComparePage() {
         )}
       </Card>
 
-      {selected.length === 0 ? (
+      {selected.length < 2 ? (
         <EmptyState
           icon={GitCompareArrows}
-          title="Pick at least one brand to start comparing"
-          description="Side-by-side KPIs and revenue trends will appear here once you select."
+          title={selected.length === 0 ? "Pick 2–4 brands to start comparing" : "Pick one more brand to compare"}
+          description="Side-by-side KPIs and revenue trends will appear here once at least two brands are selected."
         />
       ) : (
         <CompareGrid
