@@ -94,6 +94,20 @@ describe("API smoke tests", () => {
       expect(res.status).toBe(401);
     });
 
+    it("rejects refresh after logout (revocation)", async () => {
+      const fresh = await login(CLIENT_EMAIL, CLIENT_PASSWORD);
+
+      const logout = await request(app)
+        .post("/api/auth/logout")
+        .send({ refreshToken: fresh.refreshToken });
+      expect(logout.status).toBe(200);
+
+      const replay = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken: fresh.refreshToken });
+      expect(replay.status).toBe(401);
+    });
+
     it("serializes concurrent rotations of the same token (single winner)", async () => {
       // Race two refreshes against the same token. Atomic conditional UPDATE
       // must let exactly one win — otherwise the second caller would also mint
