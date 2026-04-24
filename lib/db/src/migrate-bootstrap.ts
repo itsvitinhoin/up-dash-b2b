@@ -20,17 +20,24 @@ interface Journal {
 interface MigrationEffects {
   tables: string[];
   indexes: string[];
+  columns: Array<{ table: string; column: string }>;
 }
 
 function parseMigrationEffects(sql: string): MigrationEffects {
   const tables: string[] = [];
   const indexes: string[] = [];
+  const columns: Array<{ table: string; column: string }> = [];
   const tableRe = /create\s+table\s+(?:if\s+not\s+exists\s+)?"?([a-z_][a-z0-9_]*)"?/gi;
   const indexRe = /create\s+(?:unique\s+)?index\s+(?:if\s+not\s+exists\s+)?"?([a-z_][a-z0-9_]*)"?/gi;
+  const addColRe =
+    /alter\s+table\s+"?([a-z_][a-z0-9_]*)"?\s+add\s+column\s+(?:if\s+not\s+exists\s+)?"?([a-z_][a-z0-9_]*)"?/gi;
   let match: RegExpExecArray | null;
   while ((match = tableRe.exec(sql)) !== null) tables.push(match[1]);
   while ((match = indexRe.exec(sql)) !== null) indexes.push(match[1]);
-  return { tables, indexes };
+  while ((match = addColRe.exec(sql)) !== null) {
+    columns.push({ table: match[1], column: match[2] });
+  }
+  return { tables, indexes, columns };
 }
 
 async function tableExists(pool: Pool, name: string): Promise<boolean> {
@@ -51,6 +58,17 @@ async function indexExists(pool: Pool, name: string): Promise<boolean> {
        where schemaname = 'public' and indexname = $1
      ) as exists`,
     [name],
+  );
+  return r.rows[0]?.exists ?? false;
+}
+
+async function columnExists(pool: Pool, table: string, column: string): Promise<boolean> {
+  const r = await pool.query<{ exists: boolean }>(
+    `select exists (
+       select 1 from information_schema.columns
+       where table_schema = 'public' and table_name = $1 and column_name = $2
+     ) as exists`,
+    [table, column],
   );
   return r.rows[0]?.exists ?? false;
 }
@@ -89,9 +107,13 @@ async function main(): Promise<void> {
       if ((already.rowCount ?? 0) > 0) continue;
 
       const effects = parseMigrationEffects(sql);
-      if (effects.tables.length === 0 && effects.indexes.length === 0) {
+      if (
+        effects.tables.length === 0 &&
+        effects.indexes.length === 0 &&
+        effects.columns.length === 0
+      ) {
         console.log(
-          `[migrate-bootstrap] ${entry.tag}: ALTER-only migration, leaving for migrate`,
+          `[migrate-bootstrap] ${entry.tag}: no detectable effects, leaving for migrate`,
         );
         skipped += 1;
         continue;
@@ -103,6 +125,11 @@ async function main(): Promise<void> {
       }
       for (const i of effects.indexes) {
         if (!(await indexExists(pool, i))) missing.push(`index:${i}`);
+      }
+      for (const { table, column } of effects.columns) {
+        if (!(await columnExists(pool, table, column))) {
+          missing.push(`column:${table}.${column}`);
+        }
       }
 
       if (missing.length > 0) {

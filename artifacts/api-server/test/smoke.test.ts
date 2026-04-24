@@ -180,6 +180,32 @@ describe("API smoke tests", () => {
     });
   });
 
+  describe("clients currency/locale", () => {
+    it("persists currency and locale through create-client and read-by-id", async () => {
+      const unique = Math.random().toString(36).slice(2, 10);
+      const created = await request(app)
+        .post("/api/clients")
+        .set("authorization", `Bearer ${admin.accessToken}`)
+        .send({
+          name: `Test Client ${unique}`,
+          email: `test-${unique}@example.com`,
+          apiKey: `key-${unique}`,
+          currency: "USD",
+          locale: "en-US",
+        });
+      expect(created.status).toBe(201);
+      expect(created.body.currency).toBe("USD");
+      expect(created.body.locale).toBe("en-US");
+
+      const fetched = await request(app)
+        .get(`/api/clients/${created.body.id}`)
+        .set("authorization", `Bearer ${admin.accessToken}`);
+      expect(fetched.status).toBe(200);
+      expect(fetched.body.currency).toBe("USD");
+      expect(fetched.body.locale).toBe("en-US");
+    });
+  });
+
   describe("CORS", () => {
     it("rejects disallowed Origin when allowlist is configured", async () => {
       const prev = process.env.ALLOWED_ORIGINS;
