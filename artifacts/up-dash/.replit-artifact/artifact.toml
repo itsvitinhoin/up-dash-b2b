@@ -1,5 +1,5 @@
 kind = "web"
-previewPath = "/"
+previewPath = "/up-dash"
 title = "UP Dash"
 version = "1.0.0"
 id = "artifacts/up-dash"
@@ -11,7 +11,7 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/" ]
+paths = [ "/up-dash" ]
 localPort = 21579
 
 [services.development]
@@ -28,4 +28,4 @@ to = "/index.html"
 
 [services.env]
 PORT = "21579"
-BASE_PATH = "/"
+BASE_PATH = "/up-dash"

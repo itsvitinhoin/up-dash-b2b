@@ -420,10 +420,12 @@ export default function MarketingPage() {
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
     dateTo: format(dateRange.to, "yyyy-MM-dd"),
   };
-  const insightParams = { clientId, ...dateParams };
+  const [creativesPage, setCreativesPage] = useState(1);
+  const CREATIVES_PAGE_SIZE = 20;
+  const insightParams = { clientId, ...dateParams, screen: "marketing" as const };
 
   const { data, isLoading, isError, refetch } = useGetMarketing(
-    { clientId, ...dateParams },
+    { clientId, ...dateParams, creativesPage, creativesPageSize: CREATIVES_PAGE_SIZE },
     { query: queryOpts({ enabled }) },
   );
 
@@ -464,8 +466,15 @@ export default function MarketingPage() {
     }));
   }, [data]);
 
-  // ── Chart 2: Attributed Revenue ───────────────────────────────────────────
-  const revenueChartData = data?.revenueOverTime ?? [];
+  // ── Chart 2: Spend vs Revenue dual-axis ──────────────────────────────────
+  const spendVsRevenueData = useMemo(() => {
+    if (!data) return [];
+    return joinSeries(
+      data.spendOverTime.map((p) => p.date),
+      data.spendOverTime,
+      data.revenueOverTime,
+    ).map((p) => ({ date: p.date, spend: p.a, revenue: p.b }));
+  }, [data]);
 
   // ── Chart 3: ROAS over time ───────────────────────────────────────────────
   const roasData = useMemo(() => {
@@ -781,33 +790,45 @@ export default function MarketingPage() {
         </motion.div>
       )}
 
-      {/* Attributed Revenue chart */}
+      {/* Spend vs Revenue chart */}
       {!hasNoData && (
         <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
           <Card className="p-5 bg-card border-border">
-            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-              Attributed Revenue Over Time
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+                Spend vs Revenue
+              </h2>
+              <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-6 rounded bg-violet-500/60" /> Spend</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-6 rounded bg-teal-400" /> Revenue</span>
+              </div>
+            </div>
             {isLoading ? (
-              <Skeleton className="h-40 w-full" />
-            ) : revenueChartData.length === 0 ? (
-              <EmptyState icon={DollarSign} title="No revenue data" description="No paid-channel orders in this period." className="h-40" />
+              <Skeleton className="h-48 w-full" />
+            ) : spendVsRevenueData.length === 0 ? (
+              <EmptyState icon={DollarSign} title="No data" description="No paid-channel activity in this period." className="h-48" />
             ) : (
-              <ResponsiveContainer width="100%" height={160}>
-                <AreaChart data={revenueChartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+              <ResponsiveContainer width="100%" height={192}>
+                <ComposedChart data={spendVsRevenueData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2dd4bf" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#2dd4bf" stopOpacity={0} />
+                    <linearGradient id="spendGrad2" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.7} />
+                      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.15} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
                   <XAxis dataKey="date" tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={fmtDate} interval="preserveStartEnd" />
-                  <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} width={58} tickFormatter={(v: number) => formatCurrency(v)} />
-                  <Tooltip contentStyle={CHART_TOOLTIP_STYLE} labelFormatter={fmtDateLong} formatter={(v: number) => [formatCurrency(v), "Revenue"]} />
-                  <Area type="monotone" dataKey="value" stroke="#2dd4bf" strokeWidth={2} fill="url(#revGrad)" dot={false} activeDot={{ r: 4 }} />
-                </AreaChart>
+                  <YAxis yAxisId="left" tick={AXIS_TICK} tickLine={false} axisLine={false} width={62} tickFormatter={(v: number) => formatCurrency(v)} />
+                  <YAxis yAxisId="right" orientation="right" tick={AXIS_TICK} tickLine={false} axisLine={false} width={62} tickFormatter={(v: number) => formatCurrency(v)} />
+                  <Tooltip
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    labelFormatter={fmtDateLong}
+                    formatter={(v: number, name: string) => [formatCurrency(v), name === "spend" ? "Spend" : "Revenue"]}
+                  />
+                  <Bar yAxisId="left" dataKey="spend" fill="url(#spendGrad2)" radius={[3, 3, 0, 0]} maxBarSize={32} />
+                  <Line yAxisId="right" type="monotone" dataKey="revenue" stroke="#2dd4bf" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                </ComposedChart>
               </ResponsiveContainer>
             )}
           </Card>
@@ -904,7 +925,9 @@ export default function MarketingPage() {
           <Card className="bg-card border-border overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <h2 className="text-sm font-semibold text-foreground">Creative Performance</h2>
-              <p className="text-xs text-muted-foreground">{sortedCreatives.length} creatives · click headers to sort</p>
+              <p className="text-xs text-muted-foreground">
+                {data ? `${Math.min((creativesPage - 1) * CREATIVES_PAGE_SIZE + 1, data.creativesTotal)}–${Math.min(creativesPage * CREATIVES_PAGE_SIZE, data.creativesTotal)} of ${data.creativesTotal}` : "—"} · click headers to sort
+              </p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -981,6 +1004,30 @@ export default function MarketingPage() {
                 </tbody>
               </table>
             </div>
+            {/* Pagination footer */}
+            {data && data.creativesTotal > CREATIVES_PAGE_SIZE && (
+              <div className="flex items-center justify-between px-5 py-3 border-t border-border bg-muted/10">
+                <p className="text-xs text-muted-foreground">
+                  Page {creativesPage} of {Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE)}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCreativesPage((p) => Math.max(1, p - 1))}
+                    disabled={creativesPage === 1}
+                    className="px-3 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setCreativesPage((p) => Math.min(Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE), p + 1))}
+                    disabled={creativesPage * CREATIVES_PAGE_SIZE >= data.creativesTotal}
+                    className="px-3 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </Card>
         </motion.div>
       )}

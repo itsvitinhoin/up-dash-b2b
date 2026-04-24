@@ -10,4 +10,13 @@ export type GetMarketingParams = {
   clientId?: string;
   dateFrom?: Date;
   dateTo?: Date;
+  /**
+   * @minimum 1
+   */
+  creativesPage?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  creativesPageSize?: number;
 };

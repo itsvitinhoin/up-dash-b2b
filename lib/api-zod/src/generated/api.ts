@@ -497,10 +497,15 @@ export const GetOrdersByDateResponse = zod.object({
 /**
  * @summary AI-generated insight for current dashboard window
  */
+export const getInsightQueryScreenDefault = `dashboard`;
+
 export const GetInsightQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
+  screen: zod
+    .enum(["dashboard", "marketing"])
+    .default(getInsightQueryScreenDefault),
 });
 
 export const GetInsightResponse = zod.object({
@@ -515,10 +520,15 @@ export const GetInsightResponse = zod.object({
 /**
  * @summary Force regenerate the AI insight (skip cache)
  */
+export const regenerateInsightQueryScreenDefault = `dashboard`;
+
 export const RegenerateInsightQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
+  screen: zod
+    .enum(["dashboard", "marketing"])
+    .default(regenerateInsightQueryScreenDefault),
 });
 
 export const RegenerateInsightResponse = zod.object({
@@ -742,10 +752,24 @@ export const GetAdminOverviewResponse = zod.object({
 /**
  * @summary Marketing performance — ad spend, ROAS, CPL, and creatives breakdown
  */
+export const getMarketingQueryCreativesPageDefault = 1;
+
+export const getMarketingQueryCreativesPageSizeDefault = 20;
+export const getMarketingQueryCreativesPageSizeMax = 100;
+
 export const GetMarketingQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
+  creativesPage: zod.coerce
+    .number()
+    .min(1)
+    .default(getMarketingQueryCreativesPageDefault),
+  creativesPageSize: zod.coerce
+    .number()
+    .min(1)
+    .max(getMarketingQueryCreativesPageSizeMax)
+    .default(getMarketingQueryCreativesPageSizeDefault),
 });
 
 export const GetMarketingResponse = zod.object({
@@ -834,6 +858,9 @@ export const GetMarketingResponse = zod.object({
       roas: zod.number(),
     }),
   ),
+  creativesTotal: zod
+    .number()
+    .describe("Total number of creatives before pagination"),
 });
 
 /**

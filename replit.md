@@ -4,7 +4,46 @@
 
 UP Dash is a B2B fashion-industry e-commerce analytics platform. It provides admins with multi-tenant oversight (clients = brands) and individual brand owners with private dashboards covering revenue, conversion funnels, customer RFM segmentation, product/seller performance, and geographic insights.
 
-The codebase is a pnpm monorepo. Backend (Drizzle + Express + JWT auth) and frontend (React + Vite at `artifacts/up-dash`, served from `/`) live in the `artifacts/` directory; shared schema, OpenAPI spec, and generated React Query hooks live in `lib/`.
+The codebase is a pnpm monorepo. Backend (Drizzle + Express + JWT auth) and frontend (React + Vite at `artifacts/up-dash`, served from `/up-dash`) live in the `artifacts/` directory; shared schema, OpenAPI spec, and generated React Query hooks live in `lib/`.
+
+## Frontend Routes
+
+The React app is served at `/up-dash/` (BASE_PATH = "/up-dash"). All routes are relative to this base:
+- `/up-dash/` or `/up-dash/dashboard` — Dashboard (authenticated)
+- `/up-dash/login` — Login page
+- `/up-dash/funnel` — Funnel analysis
+- `/up-dash/customers` — Customer RFM segmentation
+- `/up-dash/products` — Product performance
+- `/up-dash/sellers` — Seller performance
+- `/up-dash/geography` — Geographic distribution (Brazil heat map)
+- `/up-dash/marketing` — Marketing performance (paid channels, creatives, ROAS)
+- `/up-dash/notifications` — Notification center
+- `/up-dash/compare` — Brand comparison (admin only)
+- `/up-dash/overview` — Multi-client overview (admin only)
+- `/up-dash/clients` — Client management (admin only)
+
+## Key Features (Task #7 Motion Polish)
+
+- **KPI sparklines + CountUp** — All KPI cards have animated numbers and inline sparklines
+- **AI insights** — Real LLM-powered (heuristic fallback) insight cards on dashboard and marketing pages; screen-specific context (`screen=marketing` for marketing page)
+- **Drill-down panel** — Click any anomaly or chart point to open an order-level side panel
+- **Notification center** — Bell icon with unread count; notifications synthesized from anomaly signals
+- **Filter bar** — Channel/segment/category/seller filters; save/load named views
+- **Saved views** — Persistent named filter presets stored in DB
+- **Compare brands** — Admin-only page to compare 2–4 client KPIs side-by-side
+- **Keyboard shortcuts** — `?` opens help dialog; `g d/f/m/c/s/g/n` for page navigation; `t` for theme toggle; `/` for search
+- **Page transitions** — framer-motion fade between routes
+- **CSV export** — Per-page export buttons on tables (marketing creatives, customers, etc.)
+- **Empty states** — Consistent across all data-empty views
+- **Marketing page** — 8 KPI tiles, Spend vs Revenue dual-axis chart, ROAS chart, paginated creative table
+
+## Marketing Endpoint Pagination
+
+`GET /api/analytics/marketing` accepts `creativesPage` (default 1) and `creativesPageSize` (default 20) query params. Returns `creativesTotal` in the response for pagination UI.
+
+## AI Insight Endpoint
+
+`GET/POST /api/analytics/insight` accepts `screen` query param (`dashboard` or `marketing`). When `screen=marketing`, uses marketing KPIs (ROAS, spend, CPL, CPA, leads) in the AI prompt instead of dashboard KPIs.
 
 ## Stack
 

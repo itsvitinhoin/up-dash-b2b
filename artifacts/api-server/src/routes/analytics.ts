@@ -1245,18 +1245,128 @@ async function buildInsightContext(
   };
 }
 
+// ── Marketing-specific insight context ───────────────────────────────────────
+async function buildMarketingInsightContext(clientId: string, from: Date, to: Date) {
+  const creatives = await db
+    .select()
+    .from(creativesTable)
+    .where(eq(creativesTable.clientId, clientId));
+
+  const activeCreatives = creatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
+  const kpis = await computeMarketingKpis(clientId, activeCreatives, from, to);
+
+  // Previous period for trend
+  const span = to.getTime() - from.getTime();
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - span);
+  const prevActive = creatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0);
+  const prevKpis = await computeMarketingKpis(clientId, prevActive, prevFrom, prevTo);
+
+  const roasTrend = prevKpis.roas > 0 ? (kpis.roas - prevKpis.roas) / prevKpis.roas : 0;
+
+  // Top platform by spend
+  const platformTotals: Record<string, number> = {};
+  for (const c of activeCreatives) {
+    const fraction = computeSpendOverlapFraction(c, from, to);
+    platformTotals[c.platform] = (platformTotals[c.platform] ?? 0) + c.spend * fraction;
+  }
+  const topPlatform = Object.entries(platformTotals).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "n/a";
+
+  const [brand] = await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId));
+
+  return { kpis, prevKpis, roasTrend, topPlatform, brand: brand?.name ?? "the brand" };
+}
+
+function buildMarketingHeuristic(ctx: Awaited<ReturnType<typeof buildMarketingInsightContext>>) {
+  const { kpis, roasTrend, topPlatform } = ctx;
+  const roasPct = (roasTrend * 100).toFixed(1);
+  const trending = roasTrend >= 0 ? "up" : "down";
+  return {
+    headline: `ROAS is ${trending} ${Math.abs(Number(roasPct))}% vs last period at ${kpis.roas.toFixed(2)}×`,
+    body: `You spent R$${kpis.totalSpend.toFixed(0)} on paid channels and generated R$${kpis.attributedRevenue.toFixed(0)} in attributed revenue. ${topPlatform} is your top-performing platform.`,
+    bullets: [
+      `${kpis.approvedLeads} approved leads at R$${kpis.cpa.toFixed(0)} CPA`,
+      `Cost per lead is R$${kpis.cpl.toFixed(0)} — ${kpis.approvalRate.toFixed(0)}% approval rate`,
+      roasTrend >= 0 ? "Paid channel ROAS is improving — consider scaling top creatives" : "ROAS is declining — review underperforming creatives and adjust bids",
+    ],
+  };
+}
+
 async function generateInsight(
   clientId: string,
   from: Date,
   to: Date,
   forceRefresh: boolean,
+  screen: string = "dashboard",
 ): Promise<{ headline: string; body: string; bullets: string[]; generatedAt: string; cached: boolean; source: "ai" | "heuristic" }> {
-  const cacheKey = `${clientId}|${from.toISOString().slice(0, 10)}|${to.toISOString().slice(0, 10)}`;
+  const cacheKey = `${clientId}|${from.toISOString().slice(0, 10)}|${to.toISOString().slice(0, 10)}|${screen}`;
   if (!forceRefresh) {
     const cached = insightCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       return { ...cached.payload, cached: true };
     }
+  }
+
+  // Use marketing-specific context when requested
+  if (screen === "marketing") {
+    const mktCtx = await buildMarketingInsightContext(clientId, from, to);
+    const heuristic = buildMarketingHeuristic(mktCtx);
+    let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = {
+      ...heuristic,
+      source: "heuristic",
+    };
+    const ai = getOpenAIClient();
+    if (ai && isAIConfigured()) {
+      try {
+        const { kpis, roasTrend, topPlatform, brand } = mktCtx;
+        const mktPrompt = `You are a senior paid-media analyst writing one weekly marketing insight card for the brand "${brand}". Speak directly to the brand owner. Use the following metrics for ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}:
+
+Ad Spend: R$${kpis.totalSpend.toFixed(2)}
+Attributed Revenue: R$${kpis.attributedRevenue.toFixed(2)}
+ROAS: ${kpis.roas.toFixed(2)}x
+ROAS trend vs prior window: ${(roasTrend * 100).toFixed(2)}%
+Total Leads: ${kpis.totalLeads}
+Approved Leads: ${kpis.approvedLeads}
+Approval Rate: ${kpis.approvalRate.toFixed(1)}%
+CPL (cost per lead): R$${kpis.cpl.toFixed(2)}
+CPA (cost per approved lead): R$${kpis.cpa.toFixed(2)}
+Top platform by spend: ${topPlatform}
+
+Focus on paid-channel performance and next best actions. Return strict JSON:
+{
+  "headline": "<one short sentence, <80 chars>",
+  "body": "<2-3 plain sentences explaining the most important marketing takeaway>",
+  "bullets": ["<actionable bullet>", "<actionable bullet>", "<actionable bullet>"]
+}
+No markdown, no preamble.`;
+        const completion = await ai.chat.completions.create({
+          model: "gpt-5-nano",
+          max_completion_tokens: 600,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "You write concise, actionable B2B paid-media marketing insights. Always respond with the requested JSON shape only." },
+            { role: "user", content: mktPrompt },
+          ],
+        });
+        const text = completion.choices[0]?.message?.content;
+        if (text) {
+          const parsed = JSON.parse(text) as { headline?: string; body?: string; bullets?: string[] };
+          if (typeof parsed.headline === "string" && typeof parsed.body === "string" && Array.isArray(parsed.bullets)) {
+            payload = {
+              headline: parsed.headline.slice(0, 120),
+              body: parsed.body.slice(0, 600),
+              bullets: parsed.bullets.slice(0, 4).map((b) => String(b).slice(0, 160)),
+              source: "ai",
+            };
+          }
+        }
+      } catch (err) {
+        console.warn("[insight:marketing] AI generation failed, using heuristic:", (err as Error).message);
+      }
+    }
+    const generatedAt = new Date().toISOString();
+    insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...payload, generatedAt } });
+    return { ...payload, generatedAt, cached: false };
   }
 
   const ctx = await buildInsightContext(clientId, from, to);
@@ -1339,8 +1449,9 @@ router.get("/analytics/insight", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const screen = (parsed.data as Record<string, unknown>).screen as string | undefined ?? "dashboard";
 
-  const insight = await generateInsight(clientId, from, to, false);
+  const insight = await generateInsight(clientId, from, to, false, screen);
   res.json(GetInsightResponse.parse(insight));
 });
 
@@ -1355,8 +1466,9 @@ router.post("/analytics/insight", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const screen = (parsed.data as Record<string, unknown>).screen as string | undefined ?? "dashboard";
 
-  const insight = await generateInsight(clientId, from, to, true);
+  const insight = await generateInsight(clientId, from, to, true, screen);
   res.json(GetInsightResponse.parse(insight));
 });
 
@@ -1632,6 +1744,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   if (!clientId) return;
 
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const creativesPage = (parsed.data as Record<string, unknown>).creativesPage as number | undefined ?? 1;
+  const creativesPageSize = (parsed.data as Record<string, unknown>).creativesPageSize as number | undefined ?? 20;
 
   // Prev period of same length
   const periodMs = to.getTime() - from.getTime();
@@ -1647,6 +1761,11 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
 
   // Only creatives active (overlapping) in the current window
   const creatives = allCreatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
+  const creativesTotal = creatives.length;
+
+  // Apply server-side pagination to the creatives slice passed to buildCreativeMetrics
+  const offset = (creativesPage - 1) * creativesPageSize;
+  const pagedCreatives = creatives.slice(offset, offset + creativesPageSize);
 
   const [kpis, prevKpis] = await Promise.all([
     computeMarketingKpis(clientId, creatives, from, to),
@@ -1707,10 +1826,11 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     leadsOverTime: leadsRows,
     revenueOverTime: revenueRows,
     spendOverTime,
-    creatives: buildCreativeMetrics(creatives, attrRevForCreatives, totalProratedSpend, from, to),
+    creatives: buildCreativeMetrics(pagedCreatives, attrRevForCreatives, totalProratedSpend, from, to),
     platformBreakdown: buildPlatformBreakdown(creatives, attrRevForCreatives, totalProratedSpend, from, to),
     stateBreakdown,
     ageBreakdown: buildAgeBreakdown(),
+    creativesTotal,
   });
   res.json(payload);
 });

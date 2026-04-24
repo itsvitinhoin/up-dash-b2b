@@ -5,9 +5,11 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { RegenerateInsightScreen } from "./regenerateInsightScreen";
 
 export type RegenerateInsightParams = {
   clientId?: string;
   dateFrom?: Date;
   dateTo?: Date;
+  screen?: RegenerateInsightScreen;
 };

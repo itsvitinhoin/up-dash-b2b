@@ -22,4 +22,6 @@ export interface MarketingResponse {
   platformBreakdown: MarketingPlatformRow[];
   stateBreakdown: MarketingStateRow[];
   ageBreakdown: MarketingAgeGroupRow[];
+  /** Total number of creatives before pagination */
+  creativesTotal: number;
 }

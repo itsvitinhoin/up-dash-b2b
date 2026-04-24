@@ -559,6 +559,8 @@ export interface MarketingResponse {
   platformBreakdown: MarketingPlatformRow[];
   stateBreakdown: MarketingStateRow[];
   ageBreakdown: MarketingAgeGroupRow[];
+  /** Total number of creatives before pagination */
+  creativesTotal: number;
 }
 
 export type ListClientsParams = {
@@ -670,13 +672,31 @@ export type GetInsightParams = {
   clientId?: string;
   dateFrom?: string;
   dateTo?: string;
+  screen?: GetInsightScreen;
 };
+
+export type GetInsightScreen =
+  (typeof GetInsightScreen)[keyof typeof GetInsightScreen];
+
+export const GetInsightScreen = {
+  dashboard: "dashboard",
+  marketing: "marketing",
+} as const;
 
 export type RegenerateInsightParams = {
   clientId?: string;
   dateFrom?: string;
   dateTo?: string;
+  screen?: RegenerateInsightScreen;
 };
+
+export type RegenerateInsightScreen =
+  (typeof RegenerateInsightScreen)[keyof typeof RegenerateInsightScreen];
+
+export const RegenerateInsightScreen = {
+  dashboard: "dashboard",
+  marketing: "marketing",
+} as const;
 
 export type GetAlertsParams = {
   clientId?: string;
@@ -708,6 +728,15 @@ export type GetMarketingParams = {
   clientId?: string;
   dateFrom?: string;
   dateTo?: string;
+  /**
+   * @minimum 1
+   */
+  creativesPage?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  creativesPageSize?: number;
 };
 
 export type ListNotificationsParams = {
