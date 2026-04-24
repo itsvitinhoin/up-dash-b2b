@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearch } from "wouter";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
@@ -40,19 +41,42 @@ const SEGMENT_DOT: Record<string, string> = {
   Lost: "bg-zinc-500",
 };
 
+function readQueryParam(search: string, key: string): string {
+  const trimmed = search.startsWith("?") ? search.slice(1) : search;
+  if (!trimmed) return "";
+  const params = new URLSearchParams(trimmed);
+  return params.get(key) ?? "";
+}
+
 export default function CustomersPage() {
   const { selectedClientId, user } = useAuth();
-  const [search, setSearch] = useState("");
+  const locationSearch = useSearch();
+  const urlSearch = readQueryParam(locationSearch, "search");
+  // Seed the input from `?search=` on mount and re-sync whenever the URL
+  // changes (e.g. when a customer is picked from the topbar search palette
+  // while this page is already open).
+  const [search, setSearch] = useState(urlSearch);
   const debouncedSearch = useDebounce(search, 300);
   const [rfmSegment, setRfmSegment] = useState<string>("");
   const [state, setState] = useState<string>("");
   const [page, setPage] = useState(1);
+  const [highlightTarget, setHighlightTarget] = useState<string | null>(
+    urlSearch ? urlSearch.toLowerCase() : null,
+  );
+  useEffect(() => {
+    setSearch((prev) => (prev === urlSearch ? prev : urlSearch));
+    setPage(1);
+    if (urlSearch) {
+      setHighlightTarget(urlSearch.toLowerCase());
+    }
+  }, [urlSearch]);
   const limit = 20;
   const reduced = useReducedMotion();
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const cardVariants = withReducedMotion(cardEntry, reduced);
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
+  const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
 
   const { data, isLoading, isError, refetch } = useGetCustomers(
     {
@@ -85,6 +109,28 @@ export default function CustomersPage() {
   const brazilStates = [
     "SP", "RJ", "MG", "ES", "PR", "BA", "RS", "SC", "RS", "GO", "PE", "CE", "PB", "BA", "MT", "RN", "AL", "SE", "PI", "MA", "MA", "PA", "AM", "TO", "RO", "AC", "AC", "RR", "AP", "DF", "MS", "DF"
   ];
+
+  // Find a customer row whose email or name matches the highlight target so we
+  // can scroll it into view and flash a brief outline.
+  const matchedCustomerId = (() => {
+    if (!highlightTarget || !data?.data) return null;
+    const found = data.data.find(
+      (c) =>
+        (c.email && c.email.toLowerCase() === highlightTarget) ||
+        (c.name && c.name.toLowerCase() === highlightTarget),
+    );
+    return found?.id ?? null;
+  })();
+
+  useEffect(() => {
+    if (!matchedCustomerId) return;
+    highlightedRowRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+    const timer = setTimeout(() => setHighlightTarget(null), 2000);
+    return () => clearTimeout(timer);
+  }, [matchedCustomerId]);
 
   const handleExport = () => {
     if (!data?.data) return;
@@ -272,8 +318,21 @@ export default function CustomersPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  data?.data.map((customer) => (
-                    <TableRow key={customer.id}>
+                  data?.data.map((customer) => {
+                    const isMatched = customer.id === matchedCustomerId;
+                    return (
+                    <TableRow
+                      key={customer.id}
+                      ref={isMatched ? highlightedRowRef : undefined}
+                      className={
+                        isMatched
+                          ? "bg-primary/10 ring-2 ring-primary/40 transition-colors duration-500"
+                          : undefined
+                      }
+                      data-testid={
+                        isMatched ? "customer-row-highlighted" : undefined
+                      }
+                    >
                       <TableCell>
                         <div className="font-medium">{customer.name || 'Unknown'}</div>
                         <div className="text-xs text-muted-foreground">{customer.email}</div>
@@ -294,7 +353,8 @@ export default function CustomersPage() {
                         {customer.lastPurchaseAt ? format(new Date(customer.lastPurchaseAt), "MMM d, yyyy") : '-'}
                       </TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

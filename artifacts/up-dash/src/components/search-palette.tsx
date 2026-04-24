@@ -199,7 +199,11 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
                 <CommandItem
                   key={customer.id}
                   value={`customer-${customer.id}-${customer.email}`}
-                  onSelect={() => handleSelect("/customers")}
+                  onSelect={() =>
+                    handleSelect(
+                      `/customers?search=${encodeURIComponent(customer.email ?? customer.name ?? "")}`,
+                    )
+                  }
                   data-testid={`search-result-customer-${customer.id}`}
                 >
                   <Users className="text-muted-foreground" />
