@@ -32,6 +32,10 @@ export const creativesTable = pgTable(
   },
   (table) => ({
     clientIdx: index("creatives_client_idx").on(table.clientId),
+    clientCreatedIdx: index("creatives_client_created_idx").on(
+      table.clientId,
+      table.createdAt,
+    ),
   }),
 );
 

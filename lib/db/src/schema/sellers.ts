@@ -34,6 +34,10 @@ export const sellersTable = pgTable(
       table.email,
     ),
     clientIdx: index("sellers_client_idx").on(table.clientId),
+    clientCreatedIdx: index("sellers_client_created_idx").on(
+      table.clientId,
+      table.createdAt,
+    ),
   }),
 );
 

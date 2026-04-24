@@ -58,6 +58,10 @@ export const customersTable = pgTable(
       table.clientId,
       table.registrationStatus,
     ),
+    clientCreatedIdx: index("customers_client_created_idx").on(
+      table.clientId,
+      table.createdAt,
+    ),
   }),
 );
 

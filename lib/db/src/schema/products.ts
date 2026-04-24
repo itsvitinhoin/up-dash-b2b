@@ -43,6 +43,10 @@ export const productsTable = pgTable(
     ),
     clientIdx: index("products_client_idx").on(table.clientId),
     categoryIdx: index("products_category_idx").on(table.category),
+    clientCreatedIdx: index("products_client_created_idx").on(
+      table.clientId,
+      table.createdAt,
+    ),
   }),
 );
 
