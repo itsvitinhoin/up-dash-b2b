@@ -1063,7 +1063,7 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
 
   res.json(
     GetCustomersResponse.parse({
-      data,
+      data: data.map((c) => ({ ...c, opportunityLevel: deriveOpportunityLevel(c) })),
       total: count,
       page,
       pages: Math.max(1, Math.ceil(count / limit)),
@@ -1121,7 +1121,9 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
       .where(
         and(
           eq(customersTable.clientId, clientId as string),
-          sql`${customersTable.totalOrders} > 0`,
+          gte(customersTable.createdAt, winFrom),
+          lte(customersTable.createdAt, winTo),
+          sql`${customersTable.firstPurchaseAt} is not null`,
         ),
       );
 
@@ -1131,6 +1133,8 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
       .where(
         and(
           eq(customersTable.clientId, clientId as string),
+          gte(customersTable.createdAt, winFrom),
+          lte(customersTable.createdAt, winTo),
           eq(customersTable.totalOrders, 0),
         ),
       );
@@ -1143,6 +1147,8 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
       .where(
         and(
           eq(customersTable.clientId, clientId as string),
+          gte(customersTable.createdAt, winFrom),
+          lte(customersTable.createdAt, winTo),
           sql`${customersTable.firstPurchaseAt} is not null`,
         ),
       );
@@ -1159,6 +1165,8 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
       .where(
         and(
           eq(customersTable.clientId, clientId as string),
+          gte(customersTable.createdAt, winFrom),
+          lte(customersTable.createdAt, winTo),
           sql`${customersTable.totalOrders} > 1`,
         ),
       );
@@ -1205,7 +1213,13 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
           count: sql<number>`count(*)::int`,
         })
         .from(customersTable)
-        .where(eq(customersTable.clientId, clientId))
+        .where(
+          and(
+            eq(customersTable.clientId, clientId),
+            gte(customersTable.createdAt, from),
+            lte(customersTable.createdAt, to),
+          ),
+        )
         .groupBy(customersTable.state)
         .orderBy(sql`count(*) desc`)
         .limit(10),
@@ -1215,7 +1229,13 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
           count: sql<number>`count(*)::int`,
         })
         .from(customersTable)
-        .where(eq(customersTable.clientId, clientId))
+        .where(
+          and(
+            eq(customersTable.clientId, clientId),
+            gte(customersTable.createdAt, from),
+            lte(customersTable.createdAt, to),
+          ),
+        )
         .groupBy(customersTable.utmSource)
         .orderBy(sql`count(*) desc`)
         .limit(10),
@@ -1233,6 +1253,16 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
 });
 
 // ─── Customer Detail ─────────────────────────────────────────────────────────
+function deriveOpportunityLevel(c: { rfmSegment: string | null; totalOrders: number }): string {
+  if (c.rfmSegment === "Champions") return "CHAMPION";
+  if (c.rfmSegment === "Loyal") return "HIGH";
+  if (c.rfmSegment === "Potential") return "MEDIUM";
+  if (c.rfmSegment === "At Risk" || c.rfmSegment === "Lost") return "LOW";
+  if (c.totalOrders > 5) return "HIGH";
+  if (c.totalOrders > 0) return "MEDIUM";
+  return "LOW";
+}
+
 router.get("/analytics/customers/:customerId", async (req, res): Promise<void> => {
   const pathParsed = GetCustomerDetailParams.safeParse(req.params);
   if (!pathParsed.success) {
@@ -1299,14 +1329,17 @@ router.get("/analytics/customers/:customerId", async (req, res): Promise<void> =
         name: productsTable.name,
         sku: productsTable.sku,
         category: productsTable.category,
+        imageUrl: productsTable.imageUrl,
+        unitPrice: productsTable.price,
         quantity: sql<number>`sum(${orderItemsTable.quantity})::int`,
         totalSpent: sql<number>`sum(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale})`,
+        firstOrderDate: sql<string>`min(${ordersTable.createdAt})`,
       })
       .from(orderItemsTable)
       .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
       .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
       .where(and(eq(ordersTable.customerId, customerId), eq(ordersTable.clientId, clientId)))
-      .groupBy(productsTable.id, productsTable.name, productsTable.sku, productsTable.category)
+      .groupBy(productsTable.id, productsTable.name, productsTable.sku, productsTable.category, productsTable.imageUrl, productsTable.price)
       .orderBy(sql`sum(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale}) desc`)
       .limit(20),
     db
@@ -1328,16 +1361,6 @@ router.get("/analytics/customers/:customerId", async (req, res): Promise<void> =
     addedToCart: journeyMap["ADD_TO_CART"] ?? 0,
     purchased: journeyMap["PURCHASE"] ?? 0,
   };
-
-  function deriveOpportunityLevel(c: typeof customer): string {
-    if (c.rfmSegment === "Champions") return "CHAMPION";
-    if (c.rfmSegment === "Loyal") return "HIGH";
-    if (c.rfmSegment === "Potential") return "MEDIUM";
-    if (c.rfmSegment === "At Risk" || c.rfmSegment === "Lost") return "LOW";
-    if (c.totalOrders > 5) return "HIGH";
-    if (c.totalOrders > 0) return "MEDIUM";
-    return "LOW";
-  }
 
   res.json(
     GetCustomerDetailResponse.parse({
@@ -1692,6 +1715,7 @@ router.get("/analytics/orders", async (req, res): Promise<void> => {
       id: ordersTable.id,
       amount: ordersTable.amount,
       status: ordersTable.status,
+      customerId: ordersTable.customerId,
       customerName: customersTable.name,
       customerEmail: customersTable.email,
       sellerName: sellersTable.name,

@@ -41,5 +41,10 @@ export interface Customer {
   firstPurchaseAt?: Date | null;
   /** @nullable */
   lastPurchaseAt?: Date | null;
+  /**
+   * Derived tier: CHAMPION | HIGH | MEDIUM | LOW
+   * @nullable
+   */
+  opportunityLevel?: string | null;
   createdAt: Date;
 }

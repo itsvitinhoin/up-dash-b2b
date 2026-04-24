@@ -350,6 +350,11 @@ export interface Customer {
   firstPurchaseAt?: string | null;
   /** @nullable */
   lastPurchaseAt?: string | null;
+  /**
+   * Derived tier: CHAMPION | HIGH | MEDIUM | LOW
+   * @nullable
+   */
+  opportunityLevel?: string | null;
   createdAt: string;
 }
 
@@ -466,6 +471,8 @@ export interface OrderDrillRow {
   id: string;
   amount: number;
   status: string;
+  /** @nullable */
+  customerId?: string | null;
   /** @nullable */
   customerName?: string | null;
   /** @nullable */
@@ -716,8 +723,14 @@ export interface CustomerDetailProduct {
   sku: string;
   /** @nullable */
   category?: string | null;
+  /** @nullable */
+  imageUrl?: string | null;
+  /** @nullable */
+  unitPrice?: number | null;
   quantity: number;
   totalSpent: number;
+  /** @nullable */
+  firstOrderDate?: string | null;
 }
 
 export interface CustomerJourney {

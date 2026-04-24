@@ -16,9 +16,10 @@ import {
 import {
   ArrowLeft, Mail, Phone, MapPin, Tag, ShoppingBag, Clock,
   Package, AlertCircle, CheckCircle, XCircle, Eye, ShoppingCart,
-  CreditCard, User, Megaphone, BarChart2, Star
+  CreditCard, User, Megaphone, BarChart2, Star, Building2, Inbox, Calendar
 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
+import { EmptyState } from "@/components/empty-state";
 import { fadeInUp, useReducedMotion, withReducedMotion } from "@/lib/motion";
 
 const OPPORTUNITY_COLOR: Record<string, string> = {
@@ -47,7 +48,7 @@ const STATUS_ORDER: Record<string, { label: string; color: string; icon: React.E
 const EVENT_ICON: Record<string, { icon: React.ElementType; label: string; color: string }> = {
   VISIT: { icon: Eye, label: "Page visit", color: "text-zinc-400" },
   REGISTRATION: { icon: User, label: "Registered", color: "text-violet-500" },
-  APPROVED_REGISTRATION: { icon: CheckCircle, label: "Approved", color: "text-emerald-500" },
+  APPROVED_REGISTRATION: { icon: CheckCircle, label: "Registration approved", color: "text-emerald-500" },
   PRODUCT_VIEW: { icon: Package, label: "Viewed product", color: "text-blue-400" },
   ADD_TO_CART: { icon: ShoppingCart, label: "Added to cart", color: "text-amber-500" },
   CHECKOUT_STARTED: { icon: CreditCard, label: "Started checkout", color: "text-orange-500" },
@@ -67,23 +68,25 @@ function JourneyFunnel({ journey }: {
   };
 }) {
   const steps = [
-    { label: "Visits", value: journey.visits, icon: Eye, active: journey.visits > 0 },
-    { label: "Registered", value: journey.registered ? 1 : 0, icon: User, active: journey.registered },
-    { label: "Approved", value: journey.approved ? 1 : 0, icon: CheckCircle, active: journey.approved },
-    { label: "Product Views", value: journey.productViews, icon: Package, active: journey.productViews > 0 },
-    { label: "Cart Adds", value: journey.addedToCart, icon: ShoppingCart, active: journey.addedToCart > 0 },
-    { label: "Purchases", value: journey.purchased, icon: ShoppingBag, active: journey.purchased > 0 },
+    { label: "Visits", value: journey.visits, icon: Eye, active: journey.visits > 0, numeric: true },
+    { label: "Registered", value: journey.registered ? 1 : 0, icon: User, active: journey.registered, numeric: false },
+    { label: "Approved", value: journey.approved ? 1 : 0, icon: CheckCircle, active: journey.approved, numeric: false },
+    { label: "Product Views", value: journey.productViews, icon: Package, active: journey.productViews > 0, numeric: true },
+    { label: "Cart Adds", value: journey.addedToCart, icon: ShoppingCart, active: journey.addedToCart > 0, numeric: true },
+    { label: "Purchases", value: journey.purchased, icon: ShoppingBag, active: journey.purchased > 0, numeric: true },
   ];
 
   return (
     <div className="flex items-stretch gap-0 overflow-x-auto">
       {steps.map((step, i) => (
         <div key={step.label} className="flex items-center">
-          <div className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-center min-w-[72px] ${
+          <div className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-center min-w-[80px] ${
             step.active ? "bg-primary/10" : "bg-muted/40 opacity-50"
           }`}>
             <step.icon className={`h-4 w-4 ${step.active ? "text-primary" : "text-muted-foreground"}`} />
-            <span className="text-xs font-semibold tabular-nums">{step.value === 1 && typeof step.value === "number" && step.label !== "Visits" && step.label !== "Product Views" && step.label !== "Cart Adds" && step.label !== "Purchases" ? "✓" : formatNumber(step.value)}</span>
+            <span className="text-xs font-semibold tabular-nums">
+              {step.numeric ? formatNumber(step.value) : step.value === 1 ? "✓" : "✗"}
+            </span>
             <span className="text-[10px] text-muted-foreground leading-tight">{step.label}</span>
           </div>
           {i < steps.length - 1 && (
@@ -92,6 +95,46 @@ function JourneyFunnel({ journey }: {
         </div>
       ))}
     </div>
+  );
+}
+
+function AttributionPanel({
+  utmSource, utmMedium, utmCampaign, approvalDate, registrationStatus,
+}: {
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+  approvalDate?: string | null;
+  registrationStatus?: string;
+}) {
+  const rows = [
+    { label: "Channel (First-touch)", value: utmSource ?? "Direct / None", highlight: true },
+    { label: "Medium", value: utmMedium ?? "—" },
+    { label: "Campaign", value: utmCampaign ?? "—" },
+    { label: "Registration Status", value: registrationStatus ?? "—" },
+    { label: "Approval Date", value: approvalDate ? format(new Date(approvalDate), "MMM d, yyyy HH:mm") : "—" },
+  ];
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Megaphone className="h-4 w-4 text-primary" />
+          Attribution & Registration
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <dl className="space-y-2">
+          {rows.map((row) => (
+            <div key={row.label} className="flex items-start justify-between gap-4">
+              <dt className="text-xs text-muted-foreground flex-shrink-0">{row.label}</dt>
+              <dd className={`text-xs font-medium text-right truncate max-w-[180px] ${row.highlight ? "text-primary" : ""}`} title={row.value}>
+                {row.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -271,24 +314,44 @@ export default function CustomerDetailPage() {
         </Card>
       </motion.div>
 
-      {/* Journey funnel */}
-      <motion.div variants={cardVariants} initial="hidden" animate="visible">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <BarChart2 className="h-4 w-4 text-primary" />
-              Customer Journey
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {isLoading || !journey ? (
-              <Skeleton className="h-16 w-full" />
-            ) : (
-              <JourneyFunnel journey={journey} />
-            )}
-          </CardContent>
-        </Card>
-      </motion.div>
+      {/* Journey funnel + Attribution side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <motion.div variants={cardVariants} initial="hidden" animate="visible" className="lg:col-span-2">
+          <Card className="h-full">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <BarChart2 className="h-4 w-4 text-primary" />
+                Customer Journey
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {isLoading || !journey ? (
+                <Skeleton className="h-16 w-full" />
+              ) : (
+                <JourneyFunnel journey={journey} />
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <motion.div variants={cardVariants} initial="hidden" animate="visible">
+          {isLoading ? (
+            <Card className="h-full">
+              <CardContent className="p-6 space-y-3">
+                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-4 w-full" />)}
+              </CardContent>
+            </Card>
+          ) : (
+            <AttributionPanel
+              utmSource={customer?.utmSource}
+              utmMedium={customer?.utmMedium}
+              utmCampaign={customer?.utmCampaign}
+              approvalDate={customer?.approvalDate}
+              registrationStatus={customer?.registrationStatus}
+            />
+          )}
+        </motion.div>
+      </div>
 
       {/* Activity tabs */}
       <motion.div variants={cardVariants} initial="hidden" animate="visible">
@@ -329,8 +392,13 @@ export default function CustomerDetailPage() {
                       </div>
                     </div>
                   ))
-                ) : data?.events.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">No events recorded</p>
+                ) : !data?.events.length ? (
+                  <EmptyState
+                    icon={Clock}
+                    title="No events recorded"
+                    description="Events will appear here as the customer interacts with the store."
+                    className="border-0 bg-transparent py-8"
+                  />
                 ) : (
                   <div className="relative pl-6">
                     <div className="absolute left-[11px] top-0 bottom-0 w-px bg-border" />
@@ -338,7 +406,7 @@ export default function CustomerDetailPage() {
                       const meta = EVENT_ICON[event.eventType] ?? { icon: Clock, label: event.eventType, color: "text-muted-foreground" };
                       return (
                         <div key={event.id} className="relative flex gap-3 py-2.5">
-                          <div className={`absolute left-[-13px] h-6 w-6 rounded-full bg-card border-2 border-border flex items-center justify-center flex-shrink-0 ${i === 0 ? "border-primary" : ""}`}>
+                          <div className={`absolute left-[-13px] h-6 w-6 rounded-full bg-card border-2 flex items-center justify-center flex-shrink-0 ${i === 0 ? "border-primary" : "border-border"}`}>
                             <meta.icon className={`h-3 w-3 ${meta.color}`} />
                           </div>
                           <div className="min-w-0 flex-1 ml-1">
@@ -373,6 +441,7 @@ export default function CustomerDetailPage() {
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider">Order ID</TableHead>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Amount</TableHead>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Seller</TableHead>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider">Items</TableHead>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider">Location</TableHead>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Date</TableHead>
@@ -382,15 +451,20 @@ export default function CustomerDetailPage() {
                     {isLoading ? (
                       Array.from({ length: 4 }).map((_, i) => (
                         <TableRow key={i}>
-                          {Array.from({ length: 6 }).map((__, j) => (
+                          {Array.from({ length: 7 }).map((__, j) => (
                             <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                           ))}
                         </TableRow>
                       ))
-                    ) : data?.orders.length === 0 ? (
+                    ) : !data?.orders.length ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8 text-sm">
-                          No orders yet
+                        <TableCell colSpan={7} className="p-0">
+                          <EmptyState
+                            icon={ShoppingBag}
+                            title="No orders yet"
+                            description="This customer hasn't placed any orders."
+                            className="border-0 bg-transparent py-8"
+                          />
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -405,6 +479,16 @@ export default function CustomerDetailPage() {
                                 <s.icon className="h-3 w-3" />
                                 {s.label}
                               </span>
+                            </TableCell>
+                            <TableCell>
+                              {order.sellerName ? (
+                                <span className="flex items-center gap-1 text-xs">
+                                  <Building2 className="h-3 w-3 text-muted-foreground" />
+                                  {order.sellerName}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
                             </TableCell>
                             <TableCell className="text-sm">{order.itemCount}</TableCell>
                             <TableCell className="text-sm text-muted-foreground">
@@ -429,35 +513,69 @@ export default function CustomerDetailPage() {
                     <TableRow>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider">Product</TableHead>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider">Category</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Unit Price</TableHead>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Qty</TableHead>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Spent</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">First Order</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {isLoading ? (
                       Array.from({ length: 4 }).map((_, i) => (
                         <TableRow key={i}>
-                          {Array.from({ length: 4 }).map((__, j) => (
+                          {Array.from({ length: 6 }).map((__, j) => (
                             <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                           ))}
                         </TableRow>
                       ))
-                    ) : data?.productsPurchased.length === 0 ? (
+                    ) : !data?.productsPurchased.length ? (
                       <TableRow>
-                        <TableCell colSpan={4} className="text-center text-muted-foreground py-8 text-sm">
-                          No products purchased yet
+                        <TableCell colSpan={6} className="p-0">
+                          <EmptyState
+                            icon={Package}
+                            title="No products purchased yet"
+                            description="Products will appear here once the customer makes a purchase."
+                            className="border-0 bg-transparent py-8"
+                          />
                         </TableCell>
                       </TableRow>
                     ) : (
                       data?.productsPurchased.map((p) => (
                         <TableRow key={p.productId}>
                           <TableCell>
-                            <div className="font-medium text-sm">{p.name}</div>
-                            <div className="text-xs text-muted-foreground font-mono">{p.sku}</div>
+                            <div className="flex items-center gap-2">
+                              {p.imageUrl ? (
+                                <img
+                                  src={p.imageUrl}
+                                  alt={p.name}
+                                  className="h-8 w-8 rounded object-cover flex-shrink-0"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                                />
+                              ) : (
+                                <div className="h-8 w-8 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                                  <Package className="h-3.5 w-3.5 text-muted-foreground" />
+                                </div>
+                              )}
+                              <div>
+                                <div className="font-medium text-sm">{p.name}</div>
+                                <div className="text-xs text-muted-foreground font-mono">{p.sku}</div>
+                              </div>
+                            </div>
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">{p.category ?? "—"}</TableCell>
+                          <TableCell className="text-right text-sm">
+                            {p.unitPrice != null ? formatCurrency(p.unitPrice) : "—"}
+                          </TableCell>
                           <TableCell className="text-right">{formatNumber(p.quantity)}</TableCell>
                           <TableCell className="text-right font-semibold">{formatCurrency(p.totalSpent)}</TableCell>
+                          <TableCell className="text-right text-sm text-muted-foreground">
+                            {p.firstOrderDate ? (
+                              <span className="flex items-center justify-end gap-1">
+                                <Calendar className="h-3 w-3" />
+                                {format(new Date(p.firstOrderDate), "MMM d, yyyy")}
+                              </span>
+                            ) : "—"}
+                          </TableCell>
                         </TableRow>
                       ))
                     )}

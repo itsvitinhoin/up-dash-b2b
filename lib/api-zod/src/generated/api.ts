@@ -466,6 +466,10 @@ export const GetCustomersResponse = zod.object({
       totalSpent: zod.number(),
       firstPurchaseAt: zod.coerce.date().nullish(),
       lastPurchaseAt: zod.coerce.date().nullish(),
+      opportunityLevel: zod
+        .string()
+        .nullish()
+        .describe("Derived tier: CHAMPION | HIGH | MEDIUM | LOW"),
       createdAt: zod.coerce.date(),
     }),
   ),
@@ -570,6 +574,10 @@ export const GetCustomerDetailResponse = zod.object({
     totalSpent: zod.number(),
     firstPurchaseAt: zod.coerce.date().nullish(),
     lastPurchaseAt: zod.coerce.date().nullish(),
+    opportunityLevel: zod
+      .string()
+      .nullish()
+      .describe("Derived tier: CHAMPION | HIGH | MEDIUM | LOW"),
     createdAt: zod.coerce.date(),
   }),
   orders: zod.array(
@@ -599,8 +607,11 @@ export const GetCustomerDetailResponse = zod.object({
       name: zod.string(),
       sku: zod.string(),
       category: zod.string().nullish(),
+      imageUrl: zod.string().nullish(),
+      unitPrice: zod.number().nullish(),
       quantity: zod.number(),
       totalSpent: zod.number(),
+      firstOrderDate: zod.coerce.date().nullish(),
     }),
   ),
   journey: zod.object({
@@ -730,6 +741,7 @@ export const GetOrdersByDateResponse = zod.object({
       id: zod.string(),
       amount: zod.number(),
       status: zod.string(),
+      customerId: zod.string().nullish(),
       customerName: zod.string().nullish(),
       customerEmail: zod.string().nullish(),
       sellerName: zod.string().nullish(),

@@ -1419,6 +1419,9 @@ components:
         lastPurchaseAt:
           type: ["string", "null"]
           format: date-time
+        opportunityLevel:
+          type: ["string", "null"]
+          description: "Derived tier: CHAMPION | HIGH | MEDIUM | LOW"
         createdAt:
           type: string
           format: date-time
@@ -1624,6 +1627,8 @@ components:
           type: number
         status:
           type: string
+        customerId:
+          type: ["string", "null"]
         customerName:
           type: ["string", "null"]
         customerEmail:
@@ -2041,10 +2046,17 @@ components:
           type: string
         category:
           type: ["string", "null"]
+        imageUrl:
+          type: ["string", "null"]
+        unitPrice:
+          type: ["number", "null"]
         quantity:
           type: integer
         totalSpent:
           type: number
+        firstOrderDate:
+          type: ["string", "null"]
+          format: date-time
       required: [productId, name, sku, quantity, totalSpent]
 
     CustomerJourney:

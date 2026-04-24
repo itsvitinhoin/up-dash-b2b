@@ -65,12 +65,28 @@ function readQueryParam(search: string, key: string): string {
   return params.get(key) ?? "";
 }
 
+function delta(curr: number | null | undefined, prev: number | null | undefined): number | null {
+  if (curr == null || prev == null || prev === 0) return null;
+  return ((curr - prev) / prev) * 100;
+}
+
+function DeltaBadge({ pct }: { pct: number | null }) {
+  if (pct == null) return null;
+  const positive = pct >= 0;
+  return (
+    <span className={`text-[10px] font-mono flex items-center gap-0.5 ${positive ? "text-emerald-500" : "text-red-500"}`}>
+      {positive ? "↑" : "↓"} {Math.abs(pct).toFixed(1)}%
+    </span>
+  );
+}
+
 function SummaryKpiCard({
-  label, value, sub, icon: Icon, loading,
+  label, value, prevValue, deltaRaw, icon: Icon, loading,
 }: {
   label: string;
   value: string;
-  sub?: string;
+  prevValue?: string;
+  deltaRaw?: number | null;
   icon: React.ElementType;
   loading: boolean;
 }) {
@@ -86,8 +102,13 @@ function SummaryKpiCard({
         ) : (
           <p className="text-xl font-bold tabular-nums leading-tight">{value}</p>
         )}
-        {sub && !loading && (
-          <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>
+        {!loading && (deltaRaw != null || prevValue) && (
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <DeltaBadge pct={deltaRaw ?? null} />
+            {prevValue && (
+              <span className="text-[10px] text-muted-foreground">prev {prevValue}</span>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -215,6 +236,7 @@ export default function CustomersPage() {
   const totalCount = data?.total ?? 0;
   const segmentCount = data?.segmentCounts?.length ?? 0;
   const kpis = summary?.kpis;
+  const prevKpis = (summary as Record<string, unknown> | undefined)?.prevKpis as typeof kpis | undefined;
 
   const CHART_TABS: { key: ChartTab; label: string; icon: React.ElementType }[] = [
     { key: "timeline", label: "Registrations", icon: TrendingUp },
@@ -272,43 +294,56 @@ export default function CustomersPage() {
           <SummaryKpiCard
             label="Registrations"
             value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
-            sub={kpis?.approvalRatePct != null ? `${kpis.approvalRatePct.toFixed(1)}% approval rate` : undefined}
+            prevValue={prevKpis ? formatNumber(prevKpis.totalRegistrations) : undefined}
+            deltaRaw={delta(kpis?.totalRegistrations, prevKpis?.totalRegistrations)}
             icon={Users}
             loading={summaryLoading}
           />
           <SummaryKpiCard
             label="Approved"
             value={kpis ? formatNumber(kpis.approvedRegistrations) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.approvedRegistrations) : undefined}
+            deltaRaw={delta(kpis?.approvedRegistrations, prevKpis?.approvedRegistrations)}
             icon={UserCheck}
             loading={summaryLoading}
           />
           <SummaryKpiCard
             label="Approval Rate"
             value={kpis ? `${kpis.approvalRatePct.toFixed(1)}%` : "—"}
+            prevValue={prevKpis ? `${prevKpis.approvalRatePct.toFixed(1)}%` : undefined}
+            deltaRaw={delta(kpis?.approvalRatePct, prevKpis?.approvalRatePct)}
             icon={TrendingUp}
             loading={summaryLoading}
           />
           <SummaryKpiCard
             label="Total Buyers"
             value={kpis ? formatNumber(kpis.totalBuyers) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.totalBuyers) : undefined}
+            deltaRaw={delta(kpis?.totalBuyers, prevKpis?.totalBuyers)}
             icon={Users}
             loading={summaryLoading}
           />
           <SummaryKpiCard
             label="Without Purchase"
             value={kpis ? formatNumber(kpis.customersWithoutPurchase) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.customersWithoutPurchase) : undefined}
+            deltaRaw={delta(kpis?.customersWithoutPurchase, prevKpis?.customersWithoutPurchase)}
             icon={UserX}
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Avg Days to 1st Purchase"
+            label="Avg Days to 1st"
             value={kpis?.avgTimeToFirstPurchaseDays != null ? `${kpis.avgTimeToFirstPurchaseDays}d` : "—"}
+            prevValue={prevKpis?.avgTimeToFirstPurchaseDays != null ? `${prevKpis.avgTimeToFirstPurchaseDays}d` : undefined}
+            deltaRaw={delta(kpis?.avgTimeToFirstPurchaseDays ?? null, prevKpis?.avgTimeToFirstPurchaseDays ?? null)}
             icon={Clock}
             loading={summaryLoading}
           />
           <SummaryKpiCard
             label="Avg Days Between"
             value={kpis?.avgTimeBetweenPurchasesDays != null ? `${kpis.avgTimeBetweenPurchasesDays}d` : "—"}
+            prevValue={prevKpis?.avgTimeBetweenPurchasesDays != null ? `${prevKpis.avgTimeBetweenPurchasesDays}d` : undefined}
+            deltaRaw={delta(kpis?.avgTimeBetweenPurchasesDays ?? null, prevKpis?.avgTimeBetweenPurchasesDays ?? null)}
             icon={Clock}
             loading={summaryLoading}
           />
@@ -548,12 +583,12 @@ export default function CustomersPage() {
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Customer</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Location</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Source</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Campaign</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Segment</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Opportunity</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Orders</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Spent</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">First Purchase</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Last Purchase</TableHead>
                     <TableHead className="w-8" />
                   </TableRow>
                 </TableHeader>
@@ -564,12 +599,12 @@ export default function CustomersPage() {
                         <TableCell><Skeleton className="h-4 w-32" /><Skeleton className="h-3 w-24 mt-1" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                         <TableCell><Skeleton className="h-6 w-20 rounded-full" /></TableCell>
                         <TableCell><Skeleton className="h-6 w-20 rounded-full" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-8 ml-auto" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
-                        <TableCell><Skeleton className="h-4 w-24 ml-auto" /></TableCell>
                         <TableCell />
                       </TableRow>
                     ))
@@ -587,19 +622,7 @@ export default function CustomersPage() {
                   ) : (
                     data?.data.map((customer) => {
                       const isMatched = customer.id === matchedCustomerId;
-                      const opportunityLevel = customer.rfmSegment === "Champions"
-                        ? "CHAMPION"
-                        : customer.rfmSegment === "Loyal"
-                        ? "HIGH"
-                        : customer.rfmSegment === "Potential"
-                        ? "MEDIUM"
-                        : customer.rfmSegment === "At Risk" || customer.rfmSegment === "Lost"
-                        ? "LOW"
-                        : customer.totalOrders > 5
-                        ? "HIGH"
-                        : customer.totalOrders > 0
-                        ? "MEDIUM"
-                        : "LOW";
+                      const opportunityLevel = customer.opportunityLevel ?? "LOW";
 
                       return (
                         <TableRow
@@ -630,6 +653,15 @@ export default function CustomersPage() {
                             )}
                           </TableCell>
                           <TableCell>
+                            {customer.utmCampaign ? (
+                              <span className="text-xs text-muted-foreground truncate max-w-[80px] block" title={customer.utmCampaign}>
+                                {customer.utmCampaign}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground/50">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
                             {customer.rfmSegment ? (
                               <Badge variant="outline" className={`border-transparent ${getRfmColor(customer.rfmSegment)}`}>
                                 {customer.rfmSegment}
@@ -645,9 +677,6 @@ export default function CustomersPage() {
                           <TableCell className="text-right font-medium">{formatCurrency(customer.totalSpent)}</TableCell>
                           <TableCell className="text-right text-muted-foreground text-sm">
                             {customer.firstPurchaseAt ? format(new Date(customer.firstPurchaseAt), "MMM d, yyyy") : "—"}
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground text-sm">
-                            {customer.lastPurchaseAt ? format(new Date(customer.lastPurchaseAt), "MMM d, yyyy") : "—"}
                           </TableCell>
                           <TableCell>
                             <ChevronRight className="h-4 w-4 text-muted-foreground" />

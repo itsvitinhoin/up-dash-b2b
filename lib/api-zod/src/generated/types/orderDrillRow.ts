@@ -11,6 +11,8 @@ export interface OrderDrillRow {
   amount: number;
   status: string;
   /** @nullable */
+  customerId?: string | null;
+  /** @nullable */
   customerName?: string | null;
   /** @nullable */
   customerEmail?: string | null;

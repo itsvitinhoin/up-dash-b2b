@@ -12,6 +12,12 @@ export interface CustomerDetailProduct {
   sku: string;
   /** @nullable */
   category?: string | null;
+  /** @nullable */
+  imageUrl?: string | null;
+  /** @nullable */
+  unitPrice?: number | null;
   quantity: number;
   totalSpent: number;
+  /** @nullable */
+  firstOrderDate?: Date | null;
 }

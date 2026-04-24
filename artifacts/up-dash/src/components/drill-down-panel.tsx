@@ -1,12 +1,13 @@
 import { format, parseISO } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowUpRight, Inbox, X } from "lucide-react";
+import { ArrowUpRight, Inbox, X, ChevronRight } from "lucide-react";
 import {
   useGetOrdersByDate,
   type OrderDrillRow,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
+import { useLocation } from "wouter";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +32,7 @@ const STATUS_TINT: Record<string, string> = {
 export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
   const { user, selectedClientId } = useAuth();
   const reduced = useReducedMotion();
+  const [, navigate] = useLocation();
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
 
   const { data, isLoading } = useGetOrdersByDate(
@@ -126,9 +128,20 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
                     data-testid={`drill-row-${row.id}`}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">
-                        {row.customerName ?? "Unknown customer"}
-                      </p>
+                      {row.customerId ? (
+                        <button
+                          onClick={() => { onClose(); navigate(`/customers/${row.customerId}`); }}
+                          className="text-sm font-medium truncate hover:text-primary transition-colors flex items-center gap-1 group"
+                          title="View customer profile"
+                        >
+                          {row.customerName ?? "Unknown customer"}
+                          <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+                      ) : (
+                        <p className="text-sm font-medium truncate">
+                          {row.customerName ?? "Unknown customer"}
+                        </p>
+                      )}
                       <p className="text-xs text-muted-foreground truncate">
                         {row.sellerName ?? "—"} · {row.city ?? "—"}, {row.state ?? "—"}
                       </p>
