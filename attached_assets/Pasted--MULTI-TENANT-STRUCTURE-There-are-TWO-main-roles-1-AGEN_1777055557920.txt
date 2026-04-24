@@ -1,0 +1,403 @@
+
+# 👥 MULTI-TENANT STRUCTURE
+
+There are TWO main roles:
+
+## 1. AGENCY (ADMIN)
+- Can see ALL clients
+- Can add new clients via API Key
+- Can see aggregated metrics across all clients
+- Can access any client dashboard
+
+## 2. CLIENT (LOJISTA)
+- Can only see their own data
+- Has access to full dashboard (filtered)
+
+---
+
+# 🔐 AUTH SYSTEM
+
+- Login screen
+- Role-based access:
+  - ADMIN
+  - CLIENT
+
+---
+
+# 🏢 AGENCY PANEL (ADMIN VIEW)
+
+## Screen: Client Management
+
+### Features:
+- List of clients
+- Button: "Add New Client"
+
+### Add Client Flow:
+- Input fields:
+  - Client Name
+  - API Key
+- On submit:
+  - System fetches data automatically from API
+  - Creates new client environment
+
+### Client List Table:
+- Client Name
+- Total Revenue
+- Orders
+- ROAS
+- Leads
+- Approval Rate
+
+Clicking a client → opens full dashboard scoped to that client
+
+---
+
+## Screen: Global Overview (Agency Dashboard)
+
+### KPIs:
+- Total Revenue (All clients)
+- Total Orders
+- Total Ad Spend
+- Global ROAS
+- Total Leads
+- Approved Leads
+
+### Charts:
+- Revenue over time (all clients)
+- Leads over time
+
+### Insights:
+- Best performing client
+- Worst performing client
+- Clients with drop in conversion
+- Clients with growth
+
+---
+
+# 🧭 CLIENT DASHBOARD STRUCTURE
+
+---
+
+# 1. EXECUTIVE DASHBOARD
+
+### KPIs:
+- Requested Revenue
+- Approved Revenue
+- Orders
+- Average Ticket
+- New Buyers
+- Returning Buyers
+- Retention %
+- Conversion %
+
+### Charts:
+- Sales per day
+- New registrations per day
+
+### Distribution:
+- Sales by State
+- Sales by Seller
+- Sales by Size
+- Sales by Color
+
+### Map:
+- Brazil heatmap
+- Top 10 states
+- Top 10 cities
+
+### Alerts:
+- Drop in conversion
+- High traffic but low sales
+- Stock risk
+- High-performing regions
+
+---
+
+# 2. FUNNEL & EVENTS ANALYSIS (VERY IMPORTANT)
+
+## Funnel Visualization:
+- Visitor
+- Registration
+- Approved Registration
+- Product View
+- Add to Cart
+- Checkout
+- Purchase
+
+## Metrics:
+- Conversion rate per step
+- Drop-off rate per step
+- Average number of events before purchase
+
+## Insights (AUTO-GENERATED):
+- Where the biggest drop happens
+- Example:
+  - "High drop between Approved Registration and First Order"
+  - "Users are not reaching checkout"
+
+## Suggested Actions:
+- Improve checkout UX
+- Improve product pages
+- Add urgency triggers
+- Improve seller follow-up
+
+## Advanced:
+- Show most common paths to purchase
+- Compare:
+  - Buyers vs Non-buyers
+
+---
+
+# 3. SALES ANALYSIS
+
+### KPIs:
+- Revenue
+- Orders
+- Ticket
+- Buyers
+
+### Charts:
+- Sales over time
+- Sales by state
+- Sales by size
+- Sales by color
+- Sales by seller
+
+### Table:
+Seller Performance:
+- Seller Name
+- Clients
+- Revenue
+- Orders
+- Conversion %
+
+Click seller → open detailed view
+
+---
+
+# 4. CUSTOMER (CRM ANALYTICS)
+
+### KPIs:
+- New Registrations
+- Approved Registrations
+- Approval Rate
+- Customers without purchase
+- Total buyers
+- Time to first purchase
+- Time between purchases
+
+### Charts:
+- Registrations over time
+- Registrations by state
+- Registrations by UTM
+
+---
+
+## Customer Table:
+- Name
+- State
+- UTM Source
+- Campaign attribution (yes/no)
+- RFM Level
+- Opportunity Level
+- First purchase
+- Last purchase
+- Total spent
+
+---
+
+## Customer Detail (on click):
+- Full timeline of events
+- Campaign attribution
+- Journey until purchase
+- Products purchased
+- Seller assigned
+- RFM classification
+
+---
+
+# 5. JOURNEY ANALYTICS
+
+### Metrics:
+- Avg events before purchase
+- Time between events
+- Most common paths
+
+### Visualization:
+- Event flow diagram
+- Funnel comparison
+
+---
+
+# 6. RFM SEGMENTATION
+
+### Segments:
+- Champions
+- Loyal
+- Promising
+- At Risk
+- Lost
+
+### Metrics:
+- Customers per segment
+- Revenue per segment
+- Avg ticket
+- % representation
+
+### Table:
+- Customer
+- Segment
+- Recency
+- Frequency
+- Monetary
+
+---
+
+# 7. PRODUCT ANALYSIS
+
+### KPIs:
+- Active Products
+- Inactive Products
+- Avg Price
+- Total Stock
+- Sales Power
+
+---
+
+## Product Table:
+- Image
+- Status
+- Level (High Conversion / Low / Risk)
+- Name
+- Price
+- SKU
+- Stock
+- Sales
+- Revenue
+- % Sold
+- Created At
+
+---
+
+## Product Detail:
+- Lifetime performance
+- Sales over time
+- Colors
+- Sizes
+- States sold
+- Customers who bought
+
+---
+
+# 8. STOCK INTELLIGENCE
+
+### Metrics:
+- Stock coverage
+- High turnover products
+- Low turnover products
+- Risk of stockout
+- Overstock risk
+
+### Charts:
+- Stock vs Sales by category
+- Stock vs color
+- Stock vs size
+
+---
+
+# 9. MARKETING PERFORMANCE
+
+### KPIs:
+- Ad Spend
+- ROAS
+- Cost per Lead
+- Cost per Approved Lead
+- Leads
+- Approved Leads
+
+---
+
+## Creative Table:
+- Preview
+- Status
+- Name
+- Clicks
+- CTR
+- Leads
+- CPL
+- Spend
+- Revenue
+- ROAS
+
+---
+
+## Charts:
+- Spend vs Leads
+- Spend vs Revenue
+- ROAS over time
+- Performance by state
+- Performance by age group
+
+---
+
+# 10. GEOGRAPHY
+
+- Brazil heatmap
+- Top cities
+- Top states
+
+---
+
+# 11. UTM / SOURCE ANALYSIS
+
+### Metrics:
+- Registrations
+- Approvals
+- Approval %
+- Buyers
+- Revenue
+- Conversion %
+- ROAS
+
+---
+
+# 🧠 INTELLIGENCE LAYER (VERY IMPORTANT)
+
+Every screen must include INSIGHTS.
+
+Examples:
+- "Conversion dropped 15% due to increase in low-quality leads"
+- "Top 20% products generate 80% of revenue"
+- "Customers from SP convert 2x more than other states"
+
+---
+
+# 🔍 GLOBAL FILTERS
+
+Must exist globally and be combinable:
+- Date range
+- Client
+- Seller
+- UTM
+- Source
+- State
+- City
+- Product
+- Category
+- Size
+- Color
+- RFM
+- Campaign
+- Creative
+
+---
+
+# ⚙️ UX RULES
+
+- Cards aligned in grid
+- Mobile responsive
+- Tables paginated (max 10 rows per page)
+- Click = drilldown
+- Hover = tooltip
+- Clean spacing
+- No clutter
