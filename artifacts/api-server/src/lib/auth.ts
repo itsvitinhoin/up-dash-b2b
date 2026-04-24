@@ -51,5 +51,9 @@ export function verifyAccessToken(token: string): AccessTokenPayload {
 }
 
 export function verifyRefreshToken(token: string): RefreshTokenPayload {
-  return jwt.verify(token, REFRESH_SECRET) as RefreshTokenPayload;
+  const payload = jwt.verify(token, REFRESH_SECRET) as RefreshTokenPayload;
+  if (payload.type !== "refresh") {
+    throw new Error("Invalid token type");
+  }
+  return payload;
 }

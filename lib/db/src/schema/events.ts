@@ -2,6 +2,8 @@ import { pgTable, text, timestamp, jsonb, index } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 import { clientsTable } from "./clients";
 import { customersTable } from "./customers";
+import { productsTable } from "./products";
+import { ordersTable } from "./orders";
 
 export const eventsTable = pgTable(
   "events",
@@ -24,8 +26,12 @@ export const eventsTable = pgTable(
         "PURCHASE",
       ],
     }).notNull(),
-    productId: text("product_id"),
-    orderId: text("order_id"),
+    productId: text("product_id").references(() => productsTable.id, {
+      onDelete: "set null",
+    }),
+    orderId: text("order_id").references(() => ordersTable.id, {
+      onDelete: "set null",
+    }),
     metadata: jsonb("metadata"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
