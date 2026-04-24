@@ -36,6 +36,7 @@ import {
   DollarSign,
   Link2,
   MapPin,
+  PersonStanding,
 } from "lucide-react";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import {
@@ -137,7 +138,7 @@ const CHART_TOOLTIP_STYLE = {
   fontSize: 12,
 };
 
-type SortKey = keyof Pick<CreativeRow, "spend" | "leads" | "approvedLeads" | "roas" | "cpl" | "cpa" | "ctr" | "clicks" | "impressions" | "attributedRevenue">;
+type SortKey = "spend" | "leads" | "approvedLeads" | "roas" | "cpl" | "cpa" | "ctr" | "clicks" | "impressions" | "attributedRevenue" | "name" | "platform" | "status";
 type SortDir = "asc" | "desc";
 
 // ── KPI card ─────────────────────────────────────────────────────────────────
@@ -274,6 +275,7 @@ function StateRow({ state, leads, attributedRevenue, roas, maxLeads }: {
         <div className="flex items-center gap-4 text-muted-foreground text-xs tabular-nums">
           <span>{formatNumber(leads)} leads</span>
           <span className="w-24 text-right">{formatCurrency(attributedRevenue)}</span>
+          <span className="w-20 text-right">ROAS {roas.toFixed(2)}×</span>
         </div>
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
@@ -489,9 +491,13 @@ export default function MarketingPage() {
   const sortedCreatives = useMemo(() => {
     if (!data?.creatives) return [];
     return [...data.creatives].sort((a, b) => {
-      const va = a[sortKey as keyof typeof a] as number;
-      const vb = b[sortKey as keyof typeof b] as number;
-      return sortDir === "desc" ? vb - va : va - vb;
+      const va = a[sortKey as keyof typeof a];
+      const vb = b[sortKey as keyof typeof b];
+      if (typeof va === "string" && typeof vb === "string") {
+        const cmp = va.localeCompare(vb);
+        return sortDir === "asc" ? cmp : -cmp;
+      }
+      return sortDir === "desc" ? (vb as number) - (va as number) : (va as number) - (vb as number);
     });
   }, [data?.creatives, sortKey, sortDir]);
 
@@ -526,7 +532,7 @@ export default function MarketingPage() {
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const fadeVariants = withReducedMotion(fadeInUp, reduced);
 
-  const hasNoData = !isLoading && data && data.kpis.totalSpend === 0 && data.creatives.length === 0;
+  const hasNoData = !isLoading && data && (data.kpis.totalSpend === 0 || data.creatives.length === 0);
 
   if (isError) {
     return (
@@ -851,6 +857,47 @@ export default function MarketingPage() {
         </motion.div>
       )}
 
+      {/* Age-group breakdown — shown only when demographic data is available */}
+      {!hasNoData && (data?.ageBreakdown ?? []).length > 0 && (
+        <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
+          <Card className="p-5 bg-card border-border">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
+              <PersonStanding className="h-4 w-4 text-muted-foreground" />
+              Customer Age Groups (Paid Leads)
+            </h2>
+            <div className="space-y-5">
+              {(data!.ageBreakdown).map((row, i) => {
+                const maxLeads = Math.max(...data!.ageBreakdown.map((r) => r.leads));
+                const pct = maxLeads > 0 ? (row.leads / maxLeads) * 100 : 0;
+                const colors = ["#a78bfa", "#38bdf8", "#34d399", "#fbbf24", "#f97316"];
+                const color = colors[i % colors.length];
+                return (
+                  <div key={row.ageGroup} className="space-y-1.5">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium">{row.ageGroup}</span>
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground tabular-nums">
+                        <span>{formatNumber(row.leads)} leads</span>
+                        <span className="w-24 text-right">{formatCurrency(row.attributedRevenue)}</span>
+                        <span className="w-14 text-right">ROAS {row.roas.toFixed(2)}×</span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                      <motion.div
+                        className="h-full rounded-full"
+                        style={{ backgroundColor: color }}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${pct}%` }}
+                        transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </motion.div>
+      )}
+
       {/* Creatives table */}
       {!hasNoData && (
         <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
@@ -863,22 +910,24 @@ export default function MarketingPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/30">
-                    <th className="text-left px-5 py-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground w-64">Creative</th>
                     {(
                       [
-                        { key: "spend" as SortKey, label: "Spend" },
-                        { key: "attributedRevenue" as SortKey, label: "Revenue" },
-                        { key: "roas" as SortKey, label: "ROAS" },
-                        { key: "leads" as SortKey, label: "Leads" },
-                        { key: "approvedLeads" as SortKey, label: "Aprov." },
-                        { key: "cpl" as SortKey, label: "CPL" },
-                        { key: "cpa" as SortKey, label: "CPA" },
-                        { key: "clicks" as SortKey, label: "Clicks" },
-                        { key: "ctr" as SortKey, label: "CTR %" },
-                      ] as { key: SortKey; label: string }[]
-                    ).map(({ key, label }) => (
-                      <th key={key} className="px-4 py-3 text-right cursor-pointer select-none" onClick={() => handleSort(key)}>
-                        <span className="flex items-center justify-end gap-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
+                        { key: "name" as SortKey, label: "Creative", align: "left", wide: true },
+                        { key: "platform" as SortKey, label: "Platform", align: "left", wide: false },
+                        { key: "status" as SortKey, label: "Status", align: "left", wide: false },
+                        { key: "spend" as SortKey, label: "Spend", align: "right", wide: false },
+                        { key: "attributedRevenue" as SortKey, label: "Revenue", align: "right", wide: false },
+                        { key: "roas" as SortKey, label: "ROAS", align: "right", wide: false },
+                        { key: "leads" as SortKey, label: "Leads", align: "right", wide: false },
+                        { key: "approvedLeads" as SortKey, label: "Aprov.", align: "right", wide: false },
+                        { key: "cpl" as SortKey, label: "CPL", align: "right", wide: false },
+                        { key: "cpa" as SortKey, label: "CPA", align: "right", wide: false },
+                        { key: "clicks" as SortKey, label: "Clicks", align: "right", wide: false },
+                        { key: "ctr" as SortKey, label: "CTR %", align: "right", wide: false },
+                      ] as { key: SortKey; label: string; align: "left" | "right"; wide: boolean }[]
+                    ).map(({ key, label, align, wide }) => (
+                      <th key={key} className={`${wide ? "px-5 w-52" : "px-4"} py-3 text-${align} cursor-pointer select-none`} onClick={() => handleSort(key)}>
+                        <span className={`flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors ${align === "right" ? "justify-end" : "justify-start"}`}>
                           {label}
                           <SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
                         </span>
@@ -890,15 +939,15 @@ export default function MarketingPage() {
                   {isLoading ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <tr key={i} className="border-b border-border/50">
-                        <td className="px-5 py-3"><Skeleton className="h-4 w-48" /></td>
-                        {Array.from({ length: 9 }).map((_, j) => (
+                        <td className="px-5 py-3"><Skeleton className="h-4 w-40" /></td>
+                        {Array.from({ length: 11 }).map((_, j) => (
                           <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-14 ml-auto" /></td>
                         ))}
                       </tr>
                     ))
                   ) : sortedCreatives.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="px-5 py-10 text-center text-muted-foreground text-sm">
+                      <td colSpan={12} className="px-5 py-10 text-center text-muted-foreground text-sm">
                         No creatives found for this brand.
                       </td>
                     </tr>
@@ -908,17 +957,11 @@ export default function MarketingPage() {
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-3 min-w-0">
                             <CreativeThumbnail imageUrl={creative.imageUrl ?? null} platform={creative.platform} name={creative.name} />
-                            <div className="flex flex-col gap-1 min-w-0">
-                              <span className="font-medium text-sm truncate max-w-[180px]" title={creative.name}>
-                                {creative.name}
-                              </span>
-                              <div className="flex items-center gap-1.5">
-                                <PlatformChip platform={creative.platform} />
-                                <StatusBadge status={creative.status} />
-                              </div>
-                            </div>
+                            <span className="font-medium text-sm truncate max-w-[180px]" title={creative.name}>{creative.name}</span>
                           </div>
                         </td>
+                        <td className="px-4 py-3"><PlatformChip platform={creative.platform} /></td>
+                        <td className="px-4 py-3"><StatusBadge status={creative.status} /></td>
                         <td className="px-4 py-3 text-right tabular-nums font-medium">{formatCurrency(creative.spend)}</td>
                         <td className="px-4 py-3 text-right tabular-nums text-teal-400">{formatCurrency(creative.attributedRevenue)}</td>
                         <td className="px-4 py-3 text-right tabular-nums">

@@ -52,6 +52,7 @@ export * from "./listSavedViewsParams";
 export * from "./loginRequest";
 export * from "./logoutRequest";
 export * from "./markAllNotificationsReadParams";
+export * from "./marketingAgeGroupRow";
 export * from "./marketingKpis";
 export * from "./marketingPlatformRow";
 export * from "./marketingResponse";

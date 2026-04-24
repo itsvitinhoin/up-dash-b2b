@@ -1555,7 +1555,9 @@ function buildSpendOverTime(creatives: Creative[], from: Date, to: Date): { date
 }
 
 /** Top 5 states by paid-channel leads in [from, to]. */
-async function buildStateBreakdown(clientId: string, from: Date, to: Date, totalProratedSpend: number, attributedRevenue: number) {
+async function buildStateBreakdown(clientId: string, from: Date, to: Date, totalProratedSpend: number) {
+  // Fetch all states (up to 27 BR states) — sort by ROAS in JS so we can
+  // compute proportional spend per state accurately.
   const rows = await db
     .select({
       state: customersTable.state,
@@ -1584,16 +1586,33 @@ async function buildStateBreakdown(clientId: string, from: Date, to: Date, total
         sql`${customersTable.state} IS NOT NULL`,
       ),
     )
-    .groupBy(customersTable.state)
-    .orderBy(sql`COUNT(DISTINCT ${eventsTable.customerId}) DESC`)
-    .limit(5);
+    .groupBy(customersTable.state);
 
-  return rows.map((r) => ({
-    state: r.state ?? "",
-    leads: r.leads,
-    attributedRevenue: Number(r.revenue),
-    roas: totalProratedSpend > 0 ? (Number(r.revenue) / (totalProratedSpend / Math.max(1, rows.length))) : 0,
-  }));
+  const totalLeads = rows.reduce((s, r) => s + r.leads, 0);
+
+  const withRoas = rows.map((r) => {
+    const leadFraction = totalLeads > 0 ? r.leads / totalLeads : 0;
+    const stateSpend = totalProratedSpend * leadFraction;
+    const revenue = Number(r.revenue);
+    return {
+      state: r.state ?? "",
+      leads: r.leads,
+      attributedRevenue: revenue,
+      roas: stateSpend > 0 ? revenue / stateSpend : 0,
+    };
+  });
+
+  // Top 5 by ROAS descending
+  return withRoas.sort((a, b) => b.roas - a.roas).slice(0, 5);
+}
+
+/** Age-group breakdown. Returns empty when no birth-date data is available in
+ *  the customers table (no dateOfBirth column in current schema). The UI card
+ *  hides itself gracefully when this array is empty. */
+function buildAgeBreakdown(): { ageGroup: string; leads: number; attributedRevenue: number; roas: number }[] {
+  // No dateOfBirth / age column in the customers schema — return empty so the
+  // UI shows its graceful "no demographic data" hide path.
+  return [];
 }
 
 router.get("/analytics/marketing", async (req, res): Promise<void> => {
@@ -1679,7 +1698,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
 
   const [spendOverTime, stateBreakdown] = await Promise.all([
     Promise.resolve(buildSpendOverTime(creatives, from, to)),
-    buildStateBreakdown(clientId, from, to, totalProratedSpend, attrRevForCreatives),
+    buildStateBreakdown(clientId, from, to, totalProratedSpend),
   ]);
 
   const payload = GetMarketingResponse.parse({
@@ -1691,6 +1710,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     creatives: buildCreativeMetrics(creatives, attrRevForCreatives, totalProratedSpend, from, to),
     platformBreakdown: buildPlatformBreakdown(creatives, attrRevForCreatives, totalProratedSpend, from, to),
     stateBreakdown,
+    ageBreakdown: buildAgeBreakdown(),
   });
   res.json(payload);
 });

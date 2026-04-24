@@ -826,6 +826,14 @@ export const GetMarketingResponse = zod.object({
       roas: zod.number(),
     }),
   ),
+  ageBreakdown: zod.array(
+    zod.object({
+      ageGroup: zod.string(),
+      leads: zod.number(),
+      attributedRevenue: zod.number(),
+      roas: zod.number(),
+    }),
+  ),
 });
 
 /**

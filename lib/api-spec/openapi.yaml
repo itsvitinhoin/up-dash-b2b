@@ -1670,6 +1670,19 @@ components:
           type: number
       required: [state, leads, attributedRevenue, roas]
 
+    MarketingAgeGroupRow:
+      type: object
+      properties:
+        ageGroup:
+          type: string
+        leads:
+          type: integer
+        attributedRevenue:
+          type: number
+        roas:
+          type: number
+      required: [ageGroup, leads, attributedRevenue, roas]
+
     MarketingResponse:
       type: object
       properties:
@@ -1701,4 +1714,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MarketingStateRow"
-      required: [kpis, prevKpis, leadsOverTime, revenueOverTime, spendOverTime, creatives, platformBreakdown, stateBreakdown]
+        ageBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingAgeGroupRow"
+      required: [kpis, prevKpis, leadsOverTime, revenueOverTime, spendOverTime, creatives, platformBreakdown, stateBreakdown, ageBreakdown]

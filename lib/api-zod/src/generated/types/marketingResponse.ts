@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CreativeMetrics } from "./creativeMetrics";
+import type { MarketingAgeGroupRow } from "./marketingAgeGroupRow";
 import type { MarketingKpis } from "./marketingKpis";
 import type { MarketingPlatformRow } from "./marketingPlatformRow";
 import type { MarketingStateRow } from "./marketingStateRow";
@@ -20,4 +21,5 @@ export interface MarketingResponse {
   creatives: CreativeMetrics[];
   platformBreakdown: MarketingPlatformRow[];
   stateBreakdown: MarketingStateRow[];
+  ageBreakdown: MarketingAgeGroupRow[];
 }

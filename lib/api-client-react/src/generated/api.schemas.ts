@@ -542,6 +542,13 @@ export interface MarketingStateRow {
   roas: number;
 }
 
+export interface MarketingAgeGroupRow {
+  ageGroup: string;
+  leads: number;
+  attributedRevenue: number;
+  roas: number;
+}
+
 export interface MarketingResponse {
   kpis: MarketingKpis;
   prevKpis: MarketingKpis;
@@ -551,6 +558,7 @@ export interface MarketingResponse {
   creatives: CreativeMetrics[];
   platformBreakdown: MarketingPlatformRow[];
   stateBreakdown: MarketingStateRow[];
+  ageBreakdown: MarketingAgeGroupRow[];
 }
 
 export type ListClientsParams = {
