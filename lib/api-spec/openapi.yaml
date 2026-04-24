@@ -59,7 +59,13 @@ paths:
     post:
       operationId: logout
       tags: [auth]
-      summary: Logout
+      summary: Logout (optionally revoke a refresh token server-side)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
       responses:
         "200":
           description: Logged out
@@ -369,7 +375,13 @@ components:
       properties:
         status:
           type: string
-      required: [status]
+          enum: [ok, degraded]
+        db:
+          type: string
+          enum: [ok, error]
+        uptime:
+          type: number
+      required: [status, db, uptime]
 
     ErrorResponse:
       type: object
@@ -414,7 +426,15 @@ components:
       properties:
         accessToken:
           type: string
-      required: [accessToken]
+        refreshToken:
+          type: string
+      required: [accessToken, refreshToken]
+
+    LogoutRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
 
     AuthUser:
       type: object
@@ -466,6 +486,12 @@ components:
           type: integer
         isActive:
           type: boolean
+        currency:
+          type: string
+          description: ISO 4217 currency code, e.g. BRL, USD
+        locale:
+          type: string
+          description: BCP 47 locale, e.g. pt-BR, en-US
         createdAt:
           type: string
           format: date-time
@@ -482,6 +508,8 @@ components:
         - leadsYtd
         - approvedLeads
         - isActive
+        - currency
+        - locale
         - createdAt
         - updatedAt
 
@@ -510,6 +538,12 @@ components:
           format: email
         apiKey:
           type: string
+        currency:
+          type: string
+          description: ISO 4217 currency code (default BRL)
+        locale:
+          type: string
+          description: BCP 47 locale (default pt-BR)
       required: [name, email, apiKey]
 
     DashboardKpis:

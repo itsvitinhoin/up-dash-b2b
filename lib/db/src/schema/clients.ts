@@ -28,6 +28,8 @@ export const clientsTable = pgTable(
     leadsYtd: integer("leads_ytd").notNull().default(0),
     approvedLeads: integer("approved_leads").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
+    currency: text("currency").notNull().default("BRL"),
+    locale: text("locale").notNull().default("pt-BR"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()

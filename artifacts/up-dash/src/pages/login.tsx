@@ -44,7 +44,7 @@ export default function LoginPage() {
       { data },
       {
         onSuccess: (res) => {
-          login(res.accessToken, res.user);
+          login(res.accessToken, res.refreshToken, res.user);
           setLocation("/dashboard");
         },
       }

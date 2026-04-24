@@ -10,4 +10,8 @@ export interface CreateClientRequest {
   name: string;
   email: string;
   apiKey: string;
+  /** ISO 4217 currency code (default BRL) */
+  currency?: string;
+  /** BCP 47 locale (default pt-BR) */
+  locale?: string;
 }

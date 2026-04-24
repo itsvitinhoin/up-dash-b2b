@@ -34,6 +34,7 @@ import type {
   HealthStatus,
   ListClientsParams,
   LoginRequest,
+  LogoutRequest,
   MessageResponse,
   PaginatedClients,
   PaginatedCustomers,
@@ -214,18 +215,21 @@ export const useLogin = <
 };
 
 /**
- * @summary Logout
+ * @summary Logout (optionally revoke a refresh token server-side)
  */
 export const getLogoutUrl = () => {
   return `/api/auth/logout`;
 };
 
 export const logout = async (
+  logoutRequest?: LogoutRequest,
   options?: RequestInit,
 ): Promise<MessageResponse> => {
   return customFetch<MessageResponse>(getLogoutUrl(), {
     ...options,
     method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(logoutRequest),
   });
 };
 
@@ -236,14 +240,14 @@ export const getLogoutMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof logout>>,
     TError,
-    void,
+    { data: BodyType<LogoutRequest> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof logout>>,
   TError,
-  void,
+  { data: BodyType<LogoutRequest> },
   TContext
 > => {
   const mutationKey = ["logout"];
@@ -257,9 +261,11 @@ export const getLogoutMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof logout>>,
-    void
-  > = () => {
-    return logout(requestOptions);
+    { data: BodyType<LogoutRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return logout(data, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -268,11 +274,11 @@ export const getLogoutMutationOptions = <
 export type LogoutMutationResult = NonNullable<
   Awaited<ReturnType<typeof logout>>
 >;
-
+export type LogoutMutationBody = BodyType<LogoutRequest>;
 export type LogoutMutationError = ErrorType<unknown>;
 
 /**
- * @summary Logout
+ * @summary Logout (optionally revoke a refresh token server-side)
  */
 export const useLogout = <
   TError = ErrorType<unknown>,
@@ -281,14 +287,14 @@ export const useLogout = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof logout>>,
     TError,
-    void,
+    { data: BodyType<LogoutRequest> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof logout>>,
   TError,
-  void,
+  { data: BodyType<LogoutRequest> },
   TContext
 > => {
   return useMutation(getLogoutMutationOptions(options));

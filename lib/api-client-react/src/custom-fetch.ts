@@ -8,6 +8,17 @@ export type BodyType<T> = T;
 
 export type AuthTokenGetter = () => Promise<string | null> | string | null;
 
+/**
+ * Hook called when a request fails with HTTP 401. It can return:
+ *   - `true`  → caller will retry the original request exactly once
+ *   - `false` → no retry, original 401 surfaces to caller
+ * The hook is responsible for refreshing whatever credential the
+ * `AuthTokenGetter` returns.
+ */
+export type UnauthorizedHandler = (
+  request: { method: string; url: string },
+) => Promise<boolean> | boolean;
+
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
@@ -17,6 +28,8 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _unauthorizedHandler: UnauthorizedHandler | null = null;
+let _refreshInFlight: Promise<boolean> | null = null;
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -42,6 +55,18 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+/**
+ * Register a handler that is invoked on the first HTTP 401 response received
+ * by `customFetch`. When the handler returns `true`, the original request is
+ * retried exactly once with a freshly-obtained token. Concurrent 401s share
+ * a single in-flight handler invocation so we never refresh twice in parallel.
+ *
+ * Pass `null` to clear the handler.
+ */
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  _unauthorizedHandler = handler;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -361,6 +386,40 @@ export async function customFetch<T = unknown>(
   const requestInfo = { method, url: resolveUrl(input) };
 
   const response = await fetch(input, { ...init, method, headers });
+
+  if (
+    response.status === 401 &&
+    _unauthorizedHandler &&
+    !(options as { _retried?: boolean })._retried
+  ) {
+    // Coalesce concurrent 401s onto a single refresh attempt so we don't
+    // hammer the refresh endpoint when several requests fail at once.
+    if (!_refreshInFlight) {
+      _refreshInFlight = Promise.resolve(_unauthorizedHandler(requestInfo))
+        .catch(() => false)
+        .finally(() => {
+          // Clear the slot on the next microtask so any 401 that arrives
+          // *after* the refresh resolves can trigger a fresh attempt.
+          queueMicrotask(() => {
+            _refreshInFlight = null;
+          });
+        });
+    }
+    const refreshed = await _refreshInFlight;
+    if (refreshed) {
+      // Re-attach a fresh bearer token by stripping the prior Authorization
+      // header before recursing; the next call will pull the new token from
+      // the configured getter.
+      const retryHeaders = new Headers(headers);
+      retryHeaders.delete("authorization");
+      return customFetch<T>(input, {
+        ...options,
+        headers: retryHeaders,
+        // Internal flag so we never recurse beyond a single retry.
+        _retried: true,
+      } as CustomFetchOptions);
+    }
+  }
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);

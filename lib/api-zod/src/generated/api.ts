@@ -11,7 +11,9 @@ import * as zod from "zod";
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({
-  status: zod.string(),
+  status: zod.enum(["ok", "degraded"]),
+  db: zod.enum(["ok", "error"]),
+  uptime: zod.number(),
 });
 
 /**
@@ -38,8 +40,12 @@ export const LoginResponse = zod.object({
 });
 
 /**
- * @summary Logout
+ * @summary Logout (optionally revoke a refresh token server-side)
  */
+export const LogoutBody = zod.object({
+  refreshToken: zod.string().optional(),
+});
+
 export const LogoutResponse = zod.object({
   message: zod.string(),
 });
@@ -53,6 +59,7 @@ export const RefreshTokenBody = zod.object({
 
 export const RefreshTokenResponse = zod.object({
   accessToken: zod.string(),
+  refreshToken: zod.string(),
 });
 
 /**
@@ -91,6 +98,8 @@ export const ListClientsResponse = zod.object({
       leadsYtd: zod.number(),
       approvedLeads: zod.number(),
       isActive: zod.boolean(),
+      currency: zod.string().describe("ISO 4217 currency code, e.g. BRL, USD"),
+      locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     }),
@@ -107,6 +116,11 @@ export const CreateClientBody = zod.object({
   name: zod.string(),
   email: zod.string().email(),
   apiKey: zod.string(),
+  currency: zod
+    .string()
+    .optional()
+    .describe("ISO 4217 currency code (default BRL)"),
+  locale: zod.string().optional().describe("BCP 47 locale (default pt-BR)"),
 });
 
 /**
@@ -126,6 +140,8 @@ export const GetClientResponse = zod.object({
   leadsYtd: zod.number(),
   approvedLeads: zod.number(),
   isActive: zod.boolean(),
+  currency: zod.string().describe("ISO 4217 currency code, e.g. BRL, USD"),
+  locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });

@@ -1,5 +1,6 @@
 export * from "./users";
 export * from "./clients";
+export * from "./sessions";
 export * from "./customers";
 export * from "./products";
 export * from "./sellers";

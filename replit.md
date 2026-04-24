@@ -25,8 +25,21 @@ The codebase is a pnpm monorepo. Backend (Drizzle + Express + JWT auth) and fron
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
+- `pnpm --filter @workspace/db run generate` — generate a new migration in `lib/db/migrations/`
+- `pnpm --filter @workspace/db run migrate` — apply pending migrations (use this in production)
 - `pnpm --filter @workspace/db run seed` — seed two demo clients with realistic data
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
+- `pnpm --filter @workspace/api-server run test` — run vitest+supertest smoke tests against the API
+
+## Environment Variables
+
+- `DATABASE_URL` — required, Postgres connection string.
+- `JWT_ACCESS_SECRET` — required, must be ≥32 chars. Signs short-lived (1h) access tokens.
+- `JWT_REFRESH_SECRET` — reserved for future asymmetric refresh signing; refresh tokens are currently opaque (random) and stored hashed in the `sessions` table, so this var is not consumed by code today.
+- `ALLOWED_ORIGINS` — comma-separated CORS allowlist. Unset / `*` = permissive (development default).
+- `RATE_LIMIT_AUTH_PER_MIN` — login + refresh limit per IP per minute (default 20).
+- `RATE_LIMIT_API_PER_MIN` — global `/api/*` limit per IP per minute (default 300).
+- `LOG_LEVEL` — pino log level, default `info`.
 
 ## Demo Credentials (seed script)
 
@@ -38,10 +51,12 @@ The codebase is a pnpm monorepo. Backend (Drizzle + Express + JWT auth) and fron
 
 - **Schema** (`lib/db/src/schema/`): users, clients, customers, products, sellers, orders/order_items, events, creatives. All PKs are nanoid TEXT; all timestamps timestamptz; FKs use cascade or set-null. Customer/product denormalized counters are kept in sync by the seeder.
 - **Multi-tenancy**: every domain table has `clientId`. The `resolveClientId(req)` helper in `middlewares/auth.ts` enforces tenant scope: ADMIN may pass `?clientId=...`; CLIENT users always operate on their own client.
-- **Auth flow**: `/auth/login` returns access+refresh tokens and the user payload (with `clientId` for clients). `/auth/me` is the rehydration endpoint. `/auth/refresh` rotates the access token.
+- **Auth flow**: `/auth/login` returns a short-lived JWT access token (1h) and an opaque refresh token (7d) plus the user payload. The refresh token is stored hashed (sha256) in the `sessions` table along with userAgent/ip metadata. `/auth/refresh` is single-use rotation: it revokes the presented session row and issues a fresh refresh token. `/auth/logout` accepts an optional `refreshToken` body and revokes that session. The frontend `lib/auth.tsx` registers an `UnauthorizedHandler` so any 401 from the generated React Query hooks transparently refreshes the token and retries the original request exactly once; concurrent 401s share a single refresh attempt.
+- **Production hardening**: helmet (no CSP, JSON-only API), gzip compression, CORS allowlist, two-tier rate limiting (`/auth/login` + `/auth/refresh` stricter than the global `/api` limiter), pino with `password`/`refreshToken`/`accessToken` redaction, `/healthz` does a live `SELECT 1` and returns 503 + `db: "error"` when the database is unreachable, drizzle migrations are committed under `lib/db/migrations/` for production rollouts.
 - **Analytics endpoints** (`/analytics/*`): dashboard KPIs + daily series, conversion funnel (monotonic, clamped to 100%), paginated customers with RFM segment counts, product ranking, seller leaderboard, and state/city geography breakdowns. All queries are real Drizzle SQL — no mocks.
 - **Events table**: source of truth for funnel/conversion analytics. Seeded with VISIT, REGISTRATION, APPROVED_REGISTRATION, ADD_TO_CART, CHECKOUT_STARTED, PURCHASE per customer journey.
-- **Frontend** (`artifacts/up-dash`): React + Vite + wouter + TanStack Query + shadcn/ui + Recharts. Auth state in `lib/auth.tsx` persists JWT and user to localStorage (`updash.token`, `updash.user`, `updash.clientId`); a global QueryClient `onError` triggers logout on 401. Pages: `/login`, `/dashboard`, `/funnel`, `/customers`, `/products`, `/sellers`, `/geography`, `/clients` (admin only). Date-range filter defaults to last 30 days. Admin users auto-pick the first client on load (analytics endpoints require a `clientId`); CLIENT users have a fixed `clientId` from JWT and don't see the picker.
+- **Frontend** (`artifacts/up-dash`): React + Vite + wouter + TanStack Query + shadcn/ui + Recharts. Auth state in `lib/auth.tsx` persists tokens and user to localStorage (`updash.token`, `updash.refresh`, `updash.user`, `updash.clientId`). 401 responses trigger a single refresh-and-retry cycle inside the shared fetcher; if the refresh itself fails, local state is cleared and the route guard sends the user to `/login`. Pages: `/login`, `/dashboard`, `/funnel`, `/customers`, `/products`, `/sellers`, `/geography`, `/clients` (admin only). Date-range filter defaults to last 30 days. Admin users auto-pick the first client on load (analytics endpoints require a `clientId`); CLIENT users have a fixed `clientId` from JWT and don't see the picker.
+- **Per-client currency/locale**: the `clients` table carries `currency` (ISO 4217, default BRL) and `locale` (BCP 47, default pt-BR). When the active client changes in the topbar, `setActiveCurrency` retints every formatter in the app, so revenue numbers render in the brand's home currency without each component being currency-aware. The `New Client` dialog exposes a curated list of currency+locale presets.
 - **Generated hooks gotcha**: orval-generated React Query hooks type the `query` option as `UseQueryOptions<...>` which (in TanStack Query v5) requires `queryKey`. The runtime fills it in via the generated `getXyzQueryKey()` helper, so consumers wrap their option object in `queryOpts({ ... })` from `src/lib/query-opts.ts` to satisfy the typing.
 - **`GET /clients/:clientId` access**: ADMIN can read any client; CLIENT can read only their own (used by the topbar to show the brand name).
 

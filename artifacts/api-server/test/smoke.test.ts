@@ -1,0 +1,167 @@
+import { describe, it, expect, beforeAll } from "vitest";
+import request from "supertest";
+import app from "../src/app";
+
+const ADMIN_EMAIL = "admin@updash.com";
+const ADMIN_PASSWORD = "Admin123!";
+const CLIENT_EMAIL = "owner@aurora.com";
+const CLIENT_PASSWORD = "Client123!";
+
+interface LoginPayload {
+  accessToken: string;
+  refreshToken: string;
+  user: { id: string; role: "ADMIN" | "CLIENT"; clientId: string | null };
+}
+
+async function login(email: string, password: string): Promise<LoginPayload> {
+  const res = await request(app)
+    .post("/api/auth/login")
+    .send({ email, password });
+  expect(res.status).toBe(200);
+  return res.body as LoginPayload;
+}
+
+describe("API smoke tests", () => {
+  let admin: LoginPayload;
+  let client: LoginPayload;
+  let secondClientId: string;
+
+  beforeAll(async () => {
+    admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
+    client = await login(CLIENT_EMAIL, CLIENT_PASSWORD);
+
+    const list = await request(app)
+      .get("/api/clients?limit=10")
+      .set("authorization", `Bearer ${admin.accessToken}`);
+    expect(list.status).toBe(200);
+    const otherClient = list.body.data.find(
+      (c: { id: string }) => c.id !== client.user.clientId,
+    );
+    expect(otherClient).toBeTruthy();
+    secondClientId = otherClient.id;
+  });
+
+  describe("/healthz", () => {
+    it("returns ok with db status", async () => {
+      const res = await request(app).get("/api/healthz");
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("ok");
+      expect(res.body.db).toBe("ok");
+      expect(typeof res.body.uptime).toBe("number");
+    });
+  });
+
+  describe("/auth/login", () => {
+    it("rejects bad credentials with 401", async () => {
+      const res = await request(app)
+        .post("/api/auth/login")
+        .send({ email: ADMIN_EMAIL, password: "wrong-password-x" });
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_CREDENTIALS");
+    });
+
+    it("returns access + refresh tokens on success", () => {
+      expect(admin.accessToken).toBeTruthy();
+      expect(admin.refreshToken).toBeTruthy();
+      expect(admin.user.role).toBe("ADMIN");
+    });
+  });
+
+  describe("/auth/refresh", () => {
+    it("rotates the refresh token (old one no longer works)", async () => {
+      const fresh = await login(CLIENT_EMAIL, CLIENT_PASSWORD);
+
+      const first = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken: fresh.refreshToken });
+      expect(first.status).toBe(200);
+      expect(first.body.accessToken).toBeTruthy();
+      expect(first.body.refreshToken).toBeTruthy();
+      expect(first.body.refreshToken).not.toBe(fresh.refreshToken);
+
+      // Reusing the original token must now fail (single-use rotation).
+      const replay = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken: fresh.refreshToken });
+      expect(replay.status).toBe(401);
+    });
+
+    it("rejects unknown refresh tokens with 401", async () => {
+      const res = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken: "this-is-not-a-real-token" });
+      expect(res.status).toBe(401);
+    });
+
+    it("serializes concurrent rotations of the same token (single winner)", async () => {
+      // Race two refreshes against the same token. Atomic conditional UPDATE
+      // must let exactly one win — otherwise the second caller would also mint
+      // a fresh token and we'd have two live sessions from one rotation.
+      const fresh = await login(CLIENT_EMAIL, CLIENT_PASSWORD);
+
+      const [a, b] = await Promise.all([
+        request(app)
+          .post("/api/auth/refresh")
+          .send({ refreshToken: fresh.refreshToken }),
+        request(app)
+          .post("/api/auth/refresh")
+          .send({ refreshToken: fresh.refreshToken }),
+      ]);
+
+      const successes = [a, b].filter((r) => r.status === 200);
+      const failures = [a, b].filter((r) => r.status === 401);
+      expect(successes).toHaveLength(1);
+      expect(failures).toHaveLength(1);
+    });
+  });
+
+  describe("tenant isolation", () => {
+    it("CLIENT cannot read another client's record", async () => {
+      const res = await request(app)
+        .get(`/api/clients/${secondClientId}`)
+        .set("authorization", `Bearer ${client.accessToken}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("CLIENT requesting another client's dashboard is silently scoped to its own", async () => {
+      // The tenant resolver hard-pins CLIENT users to their own clientId,
+      // ignoring any ?clientId override. The response must reflect their own
+      // data, not the queried client's.
+      const ownRes = await request(app)
+        .get(`/api/analytics/dashboard?clientId=${client.user.clientId}`)
+        .set("authorization", `Bearer ${client.accessToken}`);
+      expect(ownRes.status).toBe(200);
+
+      const overrideRes = await request(app)
+        .get(`/api/analytics/dashboard?clientId=${secondClientId}`)
+        .set("authorization", `Bearer ${client.accessToken}`);
+      expect(overrideRes.status).toBe(200);
+      // Same payload regardless of the override — proves the server ignored it.
+      expect(overrideRes.body.kpis.revenue).toBe(ownRes.body.kpis.revenue);
+      expect(overrideRes.body.kpis.orders).toBe(ownRes.body.kpis.orders);
+    });
+
+    it("CLIENT can fetch its own dashboard", async () => {
+      const res = await request(app)
+        .get(`/api/analytics/dashboard?clientId=${client.user.clientId}`)
+        .set("authorization", `Bearer ${client.accessToken}`);
+      expect(res.status).toBe(200);
+      expect(res.body.kpis).toBeTruthy();
+      expect(typeof res.body.kpis.revenue).toBe("number");
+    });
+  });
+
+  describe("authorization", () => {
+    it("requires a bearer token on protected endpoints", async () => {
+      const res = await request(app).get("/api/clients");
+      expect(res.status).toBe(401);
+    });
+
+    it("CLIENT cannot list all clients", async () => {
+      const res = await request(app)
+        .get("/api/clients")
+        .set("authorization", `Bearer ${client.accessToken}`);
+      expect(res.status).toBe(403);
+    });
+  });
+});

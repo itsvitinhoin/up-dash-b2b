@@ -24,8 +24,25 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListClientsQueryKey } from "@workspace/api-client-react";
+
+// Curated short list — intentionally not a full ISO list. Add more as new
+// brands onboard. Currency code drives Intl.NumberFormat at display time.
+const CURRENCY_OPTIONS: Array<{ code: string; locale: string; label: string }> = [
+  { code: "BRL", locale: "pt-BR", label: "Real (BRL) — Português (Brasil)" },
+  { code: "USD", locale: "en-US", label: "Dollar (USD) — English (US)" },
+  { code: "EUR", locale: "pt-PT", label: "Euro (EUR) — Português (Portugal)" },
+  { code: "GBP", locale: "en-GB", label: "Pound (GBP) — English (UK)" },
+  { code: "MXN", locale: "es-MX", label: "Peso (MXN) — Español (México)" },
+];
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
@@ -48,6 +65,7 @@ export default function ClientsPage() {
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newApiKey, setNewApiKey] = useState("");
+  const [newCurrencyCode, setNewCurrencyCode] = useState("BRL");
 
   const createMutation = useCreateClient();
 
@@ -67,14 +85,26 @@ export default function ClientsPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    const picked =
+      CURRENCY_OPTIONS.find((c) => c.code === newCurrencyCode) ??
+      CURRENCY_OPTIONS[0];
     createMutation.mutate(
-      { data: { name: newName, email: newEmail, apiKey: newApiKey } },
+      {
+        data: {
+          name: newName,
+          email: newEmail,
+          apiKey: newApiKey,
+          currency: picked.code,
+          locale: picked.locale,
+        },
+      },
       {
         onSuccess: () => {
           setIsDialogOpen(false);
           setNewName("");
           setNewEmail("");
           setNewApiKey("");
+          setNewCurrencyCode("BRL");
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
         },
       }
@@ -129,6 +159,25 @@ export default function ClientsPage() {
                     placeholder="sk_live_..." 
                     required 
                   />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="currency">Currency &amp; Locale</Label>
+                  <Select value={newCurrencyCode} onValueChange={setNewCurrencyCode}>
+                    <SelectTrigger id="currency">
+                      <SelectValue placeholder="Select currency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CURRENCY_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.code} value={opt.code}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    All revenue numbers in this client&apos;s dashboards will be
+                    formatted with these settings.
+                  </p>
                 </div>
               </div>
               <DialogFooter>
@@ -213,7 +262,12 @@ export default function ClientsPage() {
                           {client.isActive ? 'Active' : 'Inactive'}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right font-medium">{formatCurrency(client.revenueYtd)}</TableCell>
+                      <TableCell className="text-right font-medium">
+                        {formatCurrency(client.revenueYtd, {
+                          currency: client.currency,
+                          locale: client.locale,
+                        })}
+                      </TableCell>
                       <TableCell className="text-right">{formatNumber(client.ordersYtd)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex flex-col items-end">

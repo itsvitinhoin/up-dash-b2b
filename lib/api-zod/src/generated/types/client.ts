@@ -16,6 +16,10 @@ export interface Client {
   leadsYtd: number;
   approvedLeads: number;
   isActive: boolean;
+  /** ISO 4217 currency code, e.g. BRL, USD */
+  currency: string;
+  /** BCP 47 locale, e.g. pt-BR, en-US */
+  locale: string;
   createdAt: Date;
   updatedAt: Date;
 }

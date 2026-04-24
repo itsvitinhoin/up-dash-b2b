@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import { eq } from "drizzle-orm";
 import { db, usersTable, clientsTable } from "@workspace/db";
 import {
@@ -12,12 +12,33 @@ import {
 import {
   verifyPassword,
   signAccessToken,
-  signRefreshToken,
-  verifyRefreshToken,
+  issueRefreshToken,
+  rotateRefreshToken,
+  revokeRefreshToken,
+  type SessionContext,
 } from "../lib/auth";
 import { authenticate } from "../middlewares/auth";
 
 const router: IRouter = Router();
+
+function sessionContextFrom(req: Request): SessionContext {
+  return {
+    userAgent: req.get("user-agent") ?? null,
+    ip: req.ip ?? null,
+  };
+}
+
+async function resolveClientIdForUser(
+  userId: string,
+  role: "ADMIN" | "CLIENT",
+): Promise<string | null> {
+  if (role !== "CLIENT") return null;
+  const [client] = await db
+    .select({ id: clientsTable.id })
+    .from(clientsTable)
+    .where(eq(clientsTable.userId, userId));
+  return client?.id ?? null;
+}
 
 router.post("/auth/login", async (req, res): Promise<void> => {
   const parsed = LoginBody.safeParse(req.body);
@@ -57,14 +78,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
-  let clientId: string | null = null;
-  if (user.role === "CLIENT") {
-    const [client] = await db
-      .select({ id: clientsTable.id })
-      .from(clientsTable)
-      .where(eq(clientsTable.userId, user.id));
-    clientId = client?.id ?? null;
-  }
+  const clientId = await resolveClientIdForUser(user.id, user.role);
 
   const accessToken = signAccessToken({
     sub: user.id,
@@ -72,7 +86,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     role: user.role,
     clientId,
   });
-  const refreshToken = signRefreshToken(user.id);
+  const refreshToken = await issueRefreshToken(user.id, sessionContextFrom(req));
 
   res.json(
     LoginResponse.parse({
@@ -90,7 +104,18 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   );
 });
 
-router.post("/auth/logout", async (_req, res): Promise<void> => {
+router.post("/auth/logout", async (req, res): Promise<void> => {
+  // Logout is best-effort: we accept an optional refresh token in the body and
+  // revoke it if present. Always return success so clients can clear local
+  // state without leaking whether the token existed.
+  const body = (req.body ?? {}) as { refreshToken?: unknown };
+  if (typeof body.refreshToken === "string" && body.refreshToken.length > 0) {
+    try {
+      await revokeRefreshToken(body.refreshToken);
+    } catch {
+      // intentionally swallow — see comment above
+    }
+  }
   res.json(LogoutResponse.parse({ message: "Logged out successfully" }));
 });
 
@@ -106,11 +131,14 @@ router.post("/auth/refresh", async (req, res): Promise<void> => {
     return;
   }
   try {
-    const payload = verifyRefreshToken(parsed.data.refreshToken);
+    const { userId, refreshToken } = await rotateRefreshToken(
+      parsed.data.refreshToken,
+      sessionContextFrom(req),
+    );
     const [user] = await db
       .select()
       .from(usersTable)
-      .where(eq(usersTable.id, payload.sub));
+      .where(eq(usersTable.id, userId));
     if (!user) {
       res.status(401).json({
         error: true,
@@ -120,21 +148,14 @@ router.post("/auth/refresh", async (req, res): Promise<void> => {
       });
       return;
     }
-    let clientId: string | null = null;
-    if (user.role === "CLIENT") {
-      const [client] = await db
-        .select({ id: clientsTable.id })
-        .from(clientsTable)
-        .where(eq(clientsTable.userId, user.id));
-      clientId = client?.id ?? null;
-    }
+    const clientId = await resolveClientIdForUser(user.id, user.role);
     const accessToken = signAccessToken({
       sub: user.id,
       email: user.email,
       role: user.role,
       clientId,
     });
-    res.json(RefreshTokenResponse.parse({ accessToken }));
+    res.json(RefreshTokenResponse.parse({ accessToken, refreshToken }));
   } catch {
     res.status(401).json({
       error: true,

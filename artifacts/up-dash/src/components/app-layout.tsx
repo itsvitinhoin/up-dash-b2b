@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useTheme } from "@/components/theme-provider";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
+import { setActiveCurrency } from "@/lib/formatters";
 import { DateRangePicker } from "@/components/date-range-picker";
 import {
   LayoutDashboard,
@@ -90,6 +91,18 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { data: clientData } = useGetClient(user?.clientId || "", {
     query: queryOpts({ enabled: user?.role === "CLIENT" && !!user?.clientId }),
   });
+
+  // Whenever the active client changes, retint every formatter in the app.
+  // This is what powers per-client currency/locale on dashboards.
+  const activeClient =
+    user?.role === "CLIENT"
+      ? clientData
+      : clientsData?.data.find((c) => c.id === selectedClientId);
+  useEffect(() => {
+    if (activeClient?.currency && activeClient?.locale) {
+      setActiveCurrency(activeClient.currency, activeClient.locale);
+    }
+  }, [activeClient?.currency, activeClient?.locale]);
 
   const { data: health } = useHealthCheck({
     query: queryOpts({ refetchInterval: 60000 }),

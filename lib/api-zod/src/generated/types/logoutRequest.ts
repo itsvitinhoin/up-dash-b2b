@@ -6,7 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface RefreshResponse {
-  accessToken: string;
-  refreshToken: string;
+export interface LogoutRequest {
+  refreshToken?: string;
 }

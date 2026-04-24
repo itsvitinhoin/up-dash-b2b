@@ -5,7 +5,11 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { HealthStatusDb } from "./healthStatusDb";
+import type { HealthStatusStatus } from "./healthStatusStatus";
 
 export interface HealthStatus {
-  status: string;
+  status: HealthStatusStatus;
+  db: HealthStatusDb;
+  uptime: number;
 }
