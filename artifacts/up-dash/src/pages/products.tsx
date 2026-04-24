@@ -16,13 +16,40 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, PackageOpen, ArrowDownUp, Download, X, Search } from "lucide-react";
+import { AlertCircle, PackageOpen, ArrowDownUp, Download, X, Search, ChevronRight } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { CountUp } from "@/components/count-up";
 import { cardEntry, staggerContainer, useReducedMotion, withReducedMotion } from "@/lib/motion";
+import { format } from "date-fns";
+
+const LEVEL_STYLES: Record<string, string> = {
+  "High Conversion": "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  Standard: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  Low: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  "At Risk": "bg-red-500/15 text-red-400 border-red-500/30",
+};
+
+function ProductThumbnail({ imageUrl, name }: { imageUrl?: string | null; name: string }) {
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl}
+        alt={name}
+        className="h-8 w-8 rounded object-cover border border-border flex-shrink-0"
+        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+      />
+    );
+  }
+  const initials = name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  return (
+    <div className="h-8 w-8 rounded bg-primary/10 flex items-center justify-center text-[10px] font-semibold text-primary flex-shrink-0 border border-border">
+      {initials}
+    </div>
+  );
+}
 
 const ALL_CATEGORIES = "__all__";
 
@@ -190,10 +217,13 @@ export default function ProductsPage() {
         { header: "name", accessor: (r) => r.name },
         { header: "category", accessor: (r) => r.category ?? "" },
         { header: "status", accessor: (r) => r.status },
+        { header: "level", accessor: (r) => r.level },
         { header: "price", accessor: (r) => r.price },
         { header: "stock", accessor: (r) => r.stock },
         { header: "totalSold", accessor: (r) => r.totalSold },
+        { header: "percentSold", accessor: (r) => Math.round((r.percentSold ?? 0) * 100) + "%" },
         { header: "totalRevenue", accessor: (r) => r.totalRevenue },
+        { header: "createdAt", accessor: (r) => r.createdAt ? format(new Date(r.createdAt as unknown as string), "yyyy-MM-dd") : "" },
       ],
     );
   };
@@ -383,31 +413,37 @@ export default function ProductsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10" />
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Product</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Category</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Status</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Level</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Price</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Stock</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Sold</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">% Sold</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Revenue</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Added</TableHead>
+                  <TableHead className="w-6" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && !data ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={i}>
+                      <TableCell><Skeleton className="h-8 w-8 rounded" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-48" /><Skeleton className="h-3 w-16 mt-1" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                      <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+                      <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
-                      <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                      <TableCell />
                     </TableRow>
                   ))
                 ) : data?.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="p-0">
+                    <TableCell colSpan={10} className="p-0">
                       <EmptyState
                         icon={PackageOpen}
                         title="No products to show"
@@ -418,21 +454,47 @@ export default function ProductsPage() {
                   </TableRow>
                 ) : (
                   data?.map((product) => (
-                    <TableRow key={product.id}>
+                    <TableRow
+                      key={product.id}
+                      className="cursor-pointer hover:bg-accent/30 transition-colors"
+                      onClick={() => setLocation(`/products/${product.id}`)}
+                      data-testid={`product-row-${product.id}`}
+                    >
+                      <TableCell className="pl-3">
+                        <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
+                      </TableCell>
                       <TableCell>
                         <div className="font-medium">{product.name}</div>
                         <div className="text-xs text-muted-foreground">{product.sku}</div>
                       </TableCell>
-                      <TableCell>{product.category || '-'}</TableCell>
+                      <TableCell className="text-muted-foreground">{product.category || '—'}</TableCell>
                       <TableCell>
-                        <Badge variant={product.status === 'active' ? 'default' : 'secondary'}>
-                          {product.status}
-                        </Badge>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${LEVEL_STYLES[product.level] ?? ""}`}>
+                          {product.level}
+                        </span>
                       </TableCell>
                       <TableCell className="text-right">{formatCurrency(product.price)}</TableCell>
                       <TableCell className="text-right">{formatNumber(product.stock)}</TableCell>
-                      <TableCell className="text-right">{formatNumber(product.totalSold)}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-primary"
+                              style={{ width: `${Math.min(100, Math.round((product.percentSold ?? 0) * 100))}%` }}
+                            />
+                          </div>
+                          <span className="tabular-nums text-xs w-8">
+                            {Math.round((product.percentSold ?? 0) * 100)}%
+                          </span>
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right font-medium">{formatCurrency(product.totalRevenue)}</TableCell>
+                      <TableCell className="text-muted-foreground text-xs">
+                        {product.createdAt ? format(new Date(product.createdAt), "MMM d, yyyy") : "—"}
+                      </TableCell>
+                      <TableCell className="pr-3">
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </TableCell>
                     </TableRow>
                   ))
                 )}

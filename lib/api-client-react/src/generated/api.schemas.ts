@@ -371,6 +371,19 @@ export interface PaginatedCustomers {
   segmentCounts: PaginatedCustomersSegmentCountsItem[];
 }
 
+/**
+ * Performance tier derived from sell-through and stock health.
+ */
+export type ProductMetricsLevel =
+  (typeof ProductMetricsLevel)[keyof typeof ProductMetricsLevel];
+
+export const ProductMetricsLevel = {
+  High_Conversion: "High Conversion",
+  Standard: "Standard",
+  Low: "Low",
+  At_Risk: "At Risk",
+} as const;
+
 export interface ProductMetrics {
   id: string;
   sku: string;
@@ -378,11 +391,119 @@ export interface ProductMetrics {
   /** @nullable */
   category?: string | null;
   price: number;
+  /** @nullable */
+  cost?: number | null;
   stock: number;
   restockThreshold: number;
   totalSold: number;
   totalRevenue: number;
   status: string;
+  /** @nullable */
+  imageUrl?: string | null;
+  /** totalSold / (totalSold + stock), as a fraction 0–1. */
+  percentSold: number;
+  /** Performance tier derived from sell-through and stock health. */
+  level: ProductMetricsLevel;
+  createdAt: string;
+}
+
+export type ProductDetailResponseProductLevel =
+  (typeof ProductDetailResponseProductLevel)[keyof typeof ProductDetailResponseProductLevel];
+
+export const ProductDetailResponseProductLevel = {
+  High_Conversion: "High Conversion",
+  Standard: "Standard",
+  Low: "Low",
+  At_Risk: "At Risk",
+} as const;
+
+export type ProductDetailResponseProduct = {
+  id: string;
+  sku: string;
+  name: string;
+  /** @nullable */
+  description?: string | null;
+  /** @nullable */
+  category?: string | null;
+  price: number;
+  /** @nullable */
+  cost?: number | null;
+  stock: number;
+  restockThreshold: number;
+  /** @nullable */
+  imageUrl?: string | null;
+  totalSold: number;
+  totalRevenue: number;
+  status: string;
+  percentSold: number;
+  level: ProductDetailResponseProductLevel;
+  createdAt: string;
+};
+
+export type ProductDetailResponseKpis = {
+  totalRevenue: number;
+  totalUnitsSold: number;
+  avgTicket: number;
+  uniqueBuyers: number;
+  percentSold: number;
+};
+
+export type ProductDetailResponseRevenueOverTimeItem = {
+  date: string;
+  revenue: number;
+  units: number;
+};
+
+export type ProductDetailResponsePrevRevenueOverTimeItem = {
+  date: string;
+  revenue: number;
+  units: number;
+};
+
+export type ProductDetailResponseByColorItem = {
+  label: string;
+  units: number;
+  revenue: number;
+};
+
+export type ProductDetailResponseBySizeItem = {
+  label: string;
+  units: number;
+  revenue: number;
+};
+
+export type ProductDetailResponseByStateItem = {
+  label: string;
+  units: number;
+  revenue: number;
+};
+
+export interface ProductDetailResponse {
+  product: ProductDetailResponseProduct;
+  kpis: ProductDetailResponseKpis;
+  revenueOverTime: ProductDetailResponseRevenueOverTimeItem[];
+  prevRevenueOverTime: ProductDetailResponsePrevRevenueOverTimeItem[];
+  byColor: ProductDetailResponseByColorItem[];
+  bySize: ProductDetailResponseBySizeItem[];
+  byState: ProductDetailResponseByStateItem[];
+}
+
+export type ProductCustomersResponseDataItem = {
+  customerId: string;
+  name: string;
+  email: string;
+  /** @nullable */
+  rfmSegment?: string | null;
+  totalUnitsBought: number;
+  totalSpent: number;
+  lastPurchaseAt: string;
+};
+
+export interface ProductCustomersResponse {
+  data: ProductCustomersResponseDataItem[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export type InventoryAlertType =
@@ -860,6 +981,18 @@ export const GetProductsSort = {
   units: "units",
   created: "created",
 } as const;
+
+export type GetProductDetailParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+export type GetProductCustomersParams = {
+  clientId?: string;
+  page?: number;
+  limit?: number;
+};
 
 export type GetSellersParams = {
   clientId?: string;

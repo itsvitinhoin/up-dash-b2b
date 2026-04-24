@@ -41,6 +41,8 @@ import type {
   GetInsightParams,
   GetMarketingParams,
   GetOrdersByDateParams,
+  GetProductCustomersParams,
+  GetProductDetailParams,
   GetProductsParams,
   GetSellersParams,
   HealthStatus,
@@ -62,6 +64,8 @@ import type {
   PaginatedClients,
   PaginatedCustomers,
   PlatformOverviewResponse,
+  ProductCustomersResponse,
+  ProductDetailResponse,
   ProductMetrics,
   RefreshRequest,
   RefreshResponse,
@@ -1331,6 +1335,246 @@ export function useGetProducts<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetProductsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Full performance profile for a single product
+ */
+export const getGetProductDetailUrl = (
+  productId: string,
+  params?: GetProductDetailParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/products/${productId}?${stringifiedParams}`
+    : `/api/analytics/products/${productId}`;
+};
+
+export const getProductDetail = async (
+  productId: string,
+  params?: GetProductDetailParams,
+  options?: RequestInit,
+): Promise<ProductDetailResponse> => {
+  return customFetch<ProductDetailResponse>(
+    getGetProductDetailUrl(productId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetProductDetailQueryKey = (
+  productId: string,
+  params?: GetProductDetailParams,
+) => {
+  return [
+    `/api/analytics/products/${productId}`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetProductDetailQueryOptions = <
+  TData = Awaited<ReturnType<typeof getProductDetail>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  productId: string,
+  params?: GetProductDetailParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getProductDetail>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetProductDetailQueryKey(productId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getProductDetail>>
+  > = ({ signal }) =>
+    getProductDetail(productId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!productId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getProductDetail>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetProductDetailQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getProductDetail>>
+>;
+export type GetProductDetailQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Full performance profile for a single product
+ */
+
+export function useGetProductDetail<
+  TData = Awaited<ReturnType<typeof getProductDetail>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  productId: string,
+  params?: GetProductDetailParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getProductDetail>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetProductDetailQueryOptions(
+    productId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Paginated list of customers who purchased this product
+ */
+export const getGetProductCustomersUrl = (
+  productId: string,
+  params?: GetProductCustomersParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/products/${productId}/customers?${stringifiedParams}`
+    : `/api/analytics/products/${productId}/customers`;
+};
+
+export const getProductCustomers = async (
+  productId: string,
+  params?: GetProductCustomersParams,
+  options?: RequestInit,
+): Promise<ProductCustomersResponse> => {
+  return customFetch<ProductCustomersResponse>(
+    getGetProductCustomersUrl(productId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetProductCustomersQueryKey = (
+  productId: string,
+  params?: GetProductCustomersParams,
+) => {
+  return [
+    `/api/analytics/products/${productId}/customers`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetProductCustomersQueryOptions = <
+  TData = Awaited<ReturnType<typeof getProductCustomers>>,
+  TError = ErrorType<unknown>,
+>(
+  productId: string,
+  params?: GetProductCustomersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getProductCustomers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetProductCustomersQueryKey(productId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getProductCustomers>>
+  > = ({ signal }) =>
+    getProductCustomers(productId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!productId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getProductCustomers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetProductCustomersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getProductCustomers>>
+>;
+export type GetProductCustomersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Paginated list of customers who purchased this product
+ */
+
+export function useGetProductCustomers<
+  TData = Awaited<ReturnType<typeof getProductCustomers>>,
+  TError = ErrorType<unknown>,
+>(
+  productId: string,
+  params?: GetProductCustomersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getProductCustomers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetProductCustomersQueryOptions(
+    productId,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

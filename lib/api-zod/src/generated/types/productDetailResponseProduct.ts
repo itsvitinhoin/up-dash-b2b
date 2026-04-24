@@ -5,12 +5,14 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
-import type { ProductMetricsLevel } from "./productMetricsLevel";
+import type { ProductDetailResponseProductLevel } from "./productDetailResponseProductLevel";
 
-export interface ProductMetrics {
+export type ProductDetailResponseProduct = {
   id: string;
   sku: string;
   name: string;
+  /** @nullable */
+  description?: string | null;
   /** @nullable */
   category?: string | null;
   price: number;
@@ -18,14 +20,12 @@ export interface ProductMetrics {
   cost?: number | null;
   stock: number;
   restockThreshold: number;
+  /** @nullable */
+  imageUrl?: string | null;
   totalSold: number;
   totalRevenue: number;
   status: string;
-  /** @nullable */
-  imageUrl?: string | null;
-  /** totalSold / (totalSold + stock), as a fraction 0–1. */
   percentSold: number;
-  /** Performance tier derived from sell-through and stock health. */
-  level: ProductMetricsLevel;
+  level: ProductDetailResponseProductLevel;
   createdAt: Date;
-}
+};

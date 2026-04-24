@@ -443,6 +443,78 @@ paths:
                 items:
                   $ref: "#/components/schemas/ProductMetrics"
 
+  /analytics/products/{productId}:
+    get:
+      operationId: getProductDetail
+      tags: [analytics]
+      summary: Full performance profile for a single product
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Product detail payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductDetailResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /analytics/products/{productId}/customers:
+    get:
+      operationId: getProductCustomers
+      tags: [analytics]
+      summary: Paginated list of customers who purchased this product
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated buyer list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductCustomersResponse"
+
   /analytics/sellers:
     get:
       operationId: getSellers
@@ -1472,6 +1544,8 @@ components:
           type: ["string", "null"]
         price:
           type: number
+        cost:
+          type: ["number", "null"]
         stock:
           type: integer
         restockThreshold:
@@ -1482,6 +1556,18 @@ components:
           type: number
         status:
           type: string
+        imageUrl:
+          type: ["string", "null"]
+        percentSold:
+          type: number
+          description: totalSold / (totalSold + stock), as a fraction 0–1.
+        level:
+          type: string
+          enum: [High Conversion, Standard, Low, At Risk]
+          description: Performance tier derived from sell-through and stock health.
+        createdAt:
+          type: string
+          format: date-time
       required:
         - id
         - sku
@@ -1492,6 +1578,188 @@ components:
         - totalSold
         - totalRevenue
         - status
+        - percentSold
+        - level
+        - createdAt
+
+    ProductDetailResponse:
+      type: object
+      properties:
+        product:
+          type: object
+          properties:
+            id:
+              type: string
+            sku:
+              type: string
+            name:
+              type: string
+            description:
+              type: ["string", "null"]
+            category:
+              type: ["string", "null"]
+            price:
+              type: number
+            cost:
+              type: ["number", "null"]
+            stock:
+              type: integer
+            restockThreshold:
+              type: integer
+            imageUrl:
+              type: ["string", "null"]
+            totalSold:
+              type: integer
+            totalRevenue:
+              type: number
+            status:
+              type: string
+            percentSold:
+              type: number
+            level:
+              type: string
+              enum: [High Conversion, Standard, Low, At Risk]
+            createdAt:
+              type: string
+              format: date-time
+          required:
+            - id
+            - sku
+            - name
+            - price
+            - stock
+            - restockThreshold
+            - totalSold
+            - totalRevenue
+            - status
+            - percentSold
+            - level
+            - createdAt
+        kpis:
+          type: object
+          properties:
+            totalRevenue:
+              type: number
+            totalUnitsSold:
+              type: integer
+            avgTicket:
+              type: number
+            uniqueBuyers:
+              type: integer
+            percentSold:
+              type: number
+          required:
+            - totalRevenue
+            - totalUnitsSold
+            - avgTicket
+            - uniqueBuyers
+            - percentSold
+        revenueOverTime:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              revenue:
+                type: number
+              units:
+                type: integer
+            required: [date, revenue, units]
+        prevRevenueOverTime:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              revenue:
+                type: number
+              units:
+                type: integer
+            required: [date, revenue, units]
+        byColor:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              units:
+                type: integer
+              revenue:
+                type: number
+            required: [label, units, revenue]
+        bySize:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              units:
+                type: integer
+              revenue:
+                type: number
+            required: [label, units, revenue]
+        byState:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              units:
+                type: integer
+              revenue:
+                type: number
+            required: [label, units, revenue]
+      required:
+        - product
+        - kpis
+        - revenueOverTime
+        - prevRevenueOverTime
+        - byColor
+        - bySize
+        - byState
+
+    ProductCustomersResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              customerId:
+                type: string
+              name:
+                type: string
+              email:
+                type: string
+              rfmSegment:
+                type: ["string", "null"]
+              totalUnitsBought:
+                type: integer
+              totalSpent:
+                type: number
+              lastPurchaseAt:
+                type: string
+                format: date-time
+            required:
+              - customerId
+              - name
+              - email
+              - totalUnitsBought
+              - totalSpent
+              - lastPurchaseAt
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+      required: [data, total, page, limit]
 
     InventoryAlert:
       type: object

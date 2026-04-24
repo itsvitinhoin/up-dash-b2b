@@ -147,7 +147,10 @@ export function AppLayout({ children }: AppLayoutProps) {
     query: queryOpts({ refetchInterval: 60000 }),
   });
 
-  const meta = pageMeta[location] ?? { title: "UP Dash", subtitle: "", hasDateRange: false, hasFilterBar: false };
+  const meta =
+    pageMeta[location] ??
+    (location.startsWith("/products/") ? { title: "Product detail", subtitle: "Performance profile", hasDateRange: false, hasFilterBar: false, requiresClient: true } : null) ??
+    { title: "UP Dash", subtitle: "", hasDateRange: false, hasFilterBar: false };
   const subtitleText =
     location === "/" || location === "/dashboard"
       ? `${format(new Date(), "EEEE, MMM d")} · live data`

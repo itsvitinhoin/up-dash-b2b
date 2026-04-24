@@ -39,6 +39,8 @@ import {
   GetCustomerDetailQueryParams,
   GetCustomerDetailParams,
   GetCustomerDetailResponse,
+  GetProductDetailQueryParams,
+  GetProductCustomersQueryParams,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
@@ -1386,6 +1388,20 @@ router.get("/analytics/customers/:customerId", async (req, res): Promise<void> =
   );
 });
 
+function computeProductLevel(
+  totalSold: number,
+  stock: number,
+  restockThreshold: number,
+): "High Conversion" | "Standard" | "Low" | "At Risk" {
+  const total = totalSold + stock;
+  const sellThrough = total > 0 ? totalSold / total : 0;
+  if (stock === 0 && totalSold === 0) return "At Risk";
+  if (sellThrough >= 0.7) return "High Conversion";
+  if (sellThrough >= 0.4) return "Standard";
+  if (stock > 0 && stock <= restockThreshold) return "Low";
+  return "Low";
+}
+
 router.get("/analytics/products", async (req, res): Promise<void> => {
   const parsed = GetProductsQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
   if (!parsed.success) {
@@ -1428,18 +1444,284 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
       name: productsTable.name,
       category: productsTable.category,
       price: productsTable.price,
+      cost: productsTable.cost,
       stock: productsTable.stock,
       restockThreshold: productsTable.restockThreshold,
       totalSold: productsTable.totalSold,
       totalRevenue: productsTable.totalRevenue,
       status: productsTable.status,
+      imageUrl: productsTable.imageUrl,
+      createdAt: productsTable.createdAt,
     })
     .from(productsTable)
     .where(and(...conditions))
     .orderBy(orderBy)
     .limit(limit);
 
-  res.json(GetProductsResponse.parse(rows));
+  const enriched = rows.map((r) => ({
+    ...r,
+    percentSold: (r.totalSold + r.stock) > 0 ? r.totalSold / (r.totalSold + r.stock) : 0,
+    level: computeProductLevel(r.totalSold, r.stock, r.restockThreshold),
+    createdAt: r.createdAt.toISOString(),
+  }));
+
+  res.json(GetProductsResponse.parse(enriched));
+});
+
+router.get("/analytics/products/:productId/customers", async (req, res): Promise<void> => {
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { productId } = req.params;
+  const page = Math.max(1, parseInt((req.query.page as string) ?? "1", 10));
+  const limit = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20", 10)));
+  const offset = (page - 1) * limit;
+
+  const product = await db
+    .select({ id: productsTable.id })
+    .from(productsTable)
+    .where(and(eq(productsTable.id, productId), eq(productsTable.clientId, clientId)))
+    .limit(1);
+
+  if (!product.length) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Product not found", status: 404 });
+    return;
+  }
+
+  const [buyers, countRows] = await Promise.all([
+    db
+      .select({
+        customerId: customersTable.id,
+        name: sql<string>`COALESCE(${customersTable.name}, ${customersTable.email})`,
+        email: customersTable.email,
+        rfmSegment: customersTable.rfmSegment,
+        totalUnitsBought: sql<number>`SUM(${orderItemsTable.quantity})::int`,
+        totalSpent: sql<number>`SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale})`,
+        lastPurchaseAt: sql<string>`MAX(${ordersTable.createdAt})`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+      .where(
+        and(
+          eq(orderItemsTable.productId, productId),
+          eq(ordersTable.clientId, clientId),
+        ),
+      )
+      .groupBy(customersTable.id, customersTable.name, customersTable.email, customersTable.rfmSegment)
+      .orderBy(desc(sql`SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale})`))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(orderItemsTable.productId, productId),
+          eq(ordersTable.clientId, clientId),
+        ),
+      ),
+  ]);
+
+  res.json({
+    data: buyers.map((b) => ({
+      ...b,
+      lastPurchaseAt: b.lastPurchaseAt,
+    })),
+    total: countRows[0]?.count ?? 0,
+    page,
+    limit,
+  });
+});
+
+router.get("/analytics/products/:productId", async (req, res): Promise<void> => {
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { productId } = req.params;
+
+  const dateFrom = req.query.dateFrom ? new Date(req.query.dateFrom as string) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const dateTo = req.query.dateTo ? new Date(req.query.dateTo as string) : new Date();
+
+  const [productRows] = await Promise.all([
+    db
+      .select()
+      .from(productsTable)
+      .where(and(eq(productsTable.id, productId), eq(productsTable.clientId, clientId)))
+      .limit(1),
+  ]);
+
+  const product = productRows?.[0];
+  if (!product) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Product not found", status: 404 });
+    return;
+  }
+
+  const prevWindowMs = dateTo.getTime() - dateFrom.getTime();
+  const prevFrom = new Date(dateFrom.getTime() - prevWindowMs);
+  const prevTo = new Date(dateFrom.getTime() - 1);
+
+  const [kpiRows, buyerCountRows, revTimeSeries, prevTimeSeries, colorRows, sizeRows, stateRows] = await Promise.all([
+    db
+      .select({
+        totalRevenue: sql<number>`COALESCE(SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale}), 0)`,
+        totalUnitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+        avgTicket: sql<number>`COALESCE(AVG(${ordersTable.amount}), 0)`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(orderItemsTable.productId, productId),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      ),
+    db
+      .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(orderItemsTable.productId, productId),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      ),
+    db
+      .select({
+        date: sql<string>`TO_CHAR(DATE_TRUNC('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+        revenue: sql<number>`COALESCE(SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale}), 0)`,
+        units: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(orderItemsTable.productId, productId),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      )
+      .groupBy(sql`DATE_TRUNC('day', ${ordersTable.createdAt})`)
+      .orderBy(sql`DATE_TRUNC('day', ${ordersTable.createdAt})`),
+    db
+      .select({
+        date: sql<string>`TO_CHAR(DATE_TRUNC('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+        revenue: sql<number>`COALESCE(SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale}), 0)`,
+        units: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(orderItemsTable.productId, productId),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, prevFrom),
+          lte(ordersTable.createdAt, prevTo),
+        ),
+      )
+      .groupBy(sql`DATE_TRUNC('day', ${ordersTable.createdAt})`)
+      .orderBy(sql`DATE_TRUNC('day', ${ordersTable.createdAt})`),
+    db
+      .select({
+        label: sql<string>`COALESCE(${orderItemsTable.color}, 'Unknown')`,
+        units: sql<number>`SUM(${orderItemsTable.quantity})::int`,
+        revenue: sql<number>`SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale})`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(orderItemsTable.productId, productId),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      )
+      .groupBy(sql`COALESCE(${orderItemsTable.color}, 'Unknown')`)
+      .orderBy(desc(sql`SUM(${orderItemsTable.quantity})`))
+      .limit(10),
+    db
+      .select({
+        label: sql<string>`COALESCE(${orderItemsTable.size}, 'Unknown')`,
+        units: sql<number>`SUM(${orderItemsTable.quantity})::int`,
+        revenue: sql<number>`SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale})`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(orderItemsTable.productId, productId),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      )
+      .groupBy(sql`COALESCE(${orderItemsTable.size}, 'Unknown')`)
+      .orderBy(desc(sql`SUM(${orderItemsTable.quantity})`))
+      .limit(10),
+    db
+      .select({
+        label: sql<string>`COALESCE(${ordersTable.state}, 'Unknown')`,
+        units: sql<number>`SUM(${orderItemsTable.quantity})::int`,
+        revenue: sql<number>`SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale})`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(orderItemsTable.productId, productId),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      )
+      .groupBy(sql`COALESCE(${ordersTable.state}, 'Unknown')`)
+      .orderBy(desc(sql`SUM(${orderItemsTable.quantity})`))
+      .limit(10),
+  ]);
+
+  const kpi = kpiRows[0] ?? { totalRevenue: 0, totalUnitsSold: 0, avgTicket: 0 };
+  const uniqueBuyers = buyerCountRows[0]?.count ?? 0;
+  const percentSold = (product.totalSold + product.stock) > 0
+    ? product.totalSold / (product.totalSold + product.stock)
+    : 0;
+
+  res.json({
+    product: {
+      id: product.id,
+      sku: product.sku,
+      name: product.name,
+      description: product.description,
+      category: product.category,
+      price: product.price,
+      cost: product.cost,
+      stock: product.stock,
+      restockThreshold: product.restockThreshold,
+      imageUrl: product.imageUrl,
+      totalSold: product.totalSold,
+      totalRevenue: product.totalRevenue,
+      status: product.status,
+      percentSold,
+      level: computeProductLevel(product.totalSold, product.stock, product.restockThreshold),
+      createdAt: product.createdAt.toISOString(),
+    },
+    kpis: {
+      totalRevenue: Number(kpi.totalRevenue),
+      totalUnitsSold: Number(kpi.totalUnitsSold),
+      avgTicket: Number(kpi.avgTicket),
+      uniqueBuyers: Number(uniqueBuyers),
+      percentSold,
+    },
+    revenueOverTime: revTimeSeries,
+    prevRevenueOverTime: prevTimeSeries,
+    byColor: colorRows,
+    bySize: sizeRows,
+    byState: stateRows,
+  });
 });
 
 router.get("/analytics/alerts", async (req, res): Promise<void> => {
