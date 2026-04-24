@@ -1,5 +1,14 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import {
+  Bar,
+  BarChart,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useGetSellers } from "@workspace/api-client-react";
@@ -9,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Trophy, ShoppingBag, DollarSign, Download, Users, Crown } from "lucide-react";
+import { AlertCircle, Trophy, ShoppingBag, DollarSign, Download, Users, Crown, BarChart3 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
@@ -17,6 +26,15 @@ import { exportRowsAsCsv } from "@/lib/csv-export";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { CountUp } from "@/components/count-up";
 import { cardEntry, staggerContainer, useReducedMotion, withReducedMotion } from "@/lib/motion";
+
+const CHART_MAX = 15;
+const BAR_PALETTE = [
+  "hsl(var(--chart-1))",
+  "hsl(var(--primary))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-4))",
+];
 
 export default function SellersPage() {
   const { selectedClientId, user } = useAuth();
@@ -45,6 +63,19 @@ export default function SellersPage() {
   );
   const activeSellers = data?.length ?? 0;
   const topSeller = data?.[0];
+  const topRevenue = topSeller?.totalRevenue ?? 0;
+
+  const chartData = useMemo(
+    () =>
+      (data ?? []).slice(0, CHART_MAX).map((s, i) => ({
+        rank: i + 1,
+        name: s.name,
+        revenue: s.totalRevenue,
+        orders: s.totalOrders,
+        share: totalRevenue > 0 ? (s.totalRevenue / totalRevenue) * 100 : 0,
+      })),
+    [data, totalRevenue],
+  );
 
   return (
     <motion.div
@@ -197,6 +228,156 @@ export default function SellersPage() {
         </motion.div>
       </div>
 
+      {/* Revenue contribution chart */}
+      <motion.div variants={cardVariants}>
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 text-primary">
+                <BarChart3 className="h-3.5 w-3.5" />
+              </div>
+              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
+                Revenue Contribution
+                {chartData.length > 0 && (
+                  <span className="ml-1 text-muted-foreground/60">
+                    · Top {chartData.length}
+                  </span>
+                )}
+              </span>
+            </div>
+            {chartData.length > 0 && (
+              <div className="hidden sm:flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                <span
+                  className="h-2 w-3 rounded-sm"
+                  style={{ background: "hsl(var(--chart-1))" }}
+                  aria-hidden
+                />
+                <span>Higher = more revenue</span>
+              </div>
+            )}
+          </div>
+
+          {isLoading && !data ? (
+            <div className="space-y-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton
+                    className="h-4"
+                    style={{ width: `${100 - i * 12}%` }}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : chartData.length === 0 ? (
+            <div className="h-[280px] flex items-center justify-center text-sm text-muted-foreground">
+              No seller revenue to chart yet
+            </div>
+          ) : (
+            <div
+              style={{ height: Math.max(220, chartData.length * 32 + 20) }}
+              data-testid="sellers-revenue-chart"
+              role="img"
+              aria-label={`Horizontal bar chart of revenue contribution for the top ${chartData.length} sellers. Leader ${chartData[0]?.name} with ${formatCurrency(chartData[0]?.revenue ?? 0)} accounts for ${chartData[0]?.share.toFixed(1)}% of total revenue.`}
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={chartData}
+                  layout="vertical"
+                  margin={{ top: 4, right: 24, left: 0, bottom: 4 }}
+                  barCategoryGap={6}
+                >
+                  <defs>
+                    <linearGradient id="sellerBarTop" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.95} />
+                      <stop offset="100%" stopColor="hsl(var(--chart-3))" stopOpacity={0.7} />
+                    </linearGradient>
+                    <linearGradient id="sellerBarRest" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.55} />
+                      <stop offset="100%" stopColor="hsl(var(--chart-1))" stopOpacity={0.25} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis type="number" hide domain={[0, "dataMax"]} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={150}
+                    tickLine={false}
+                    axisLine={false}
+                    interval={0}
+                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                  />
+                  <Tooltip
+                    cursor={{ fill: "hsl(var(--muted) / 0.4)" }}
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const p = payload[0].payload as (typeof chartData)[number];
+                      return (
+                        <div className="rounded-md border bg-popover px-2.5 py-1.5 text-xs shadow-md">
+                          <div className="font-medium">
+                            #{p.rank} · {p.name}
+                          </div>
+                          <div className="text-muted-foreground tabular-nums">
+                            {formatCurrency(p.revenue)} · {formatNumber(p.orders)} orders
+                          </div>
+                          <div className="text-muted-foreground/70 tabular-nums">
+                            {p.share.toFixed(1)}% of total
+                          </div>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Bar
+                    dataKey="revenue"
+                    radius={[0, 4, 4, 0]}
+                    isAnimationActive={!reduced}
+                    animationDuration={700}
+                  >
+                    {chartData.map((entry) => (
+                      <Cell
+                        key={entry.rank}
+                        fill={
+                          entry.rank === 1
+                            ? "url(#sellerBarTop)"
+                            : entry.rank <= 3
+                              ? BAR_PALETTE[entry.rank - 1]
+                              : "url(#sellerBarRest)"
+                        }
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              {/* Screen-reader fallback: same info as the visual chart, in
+                  table form, since the Recharts tooltip is hover-only. */}
+              <table className="sr-only">
+                <caption>Revenue contribution by seller, top {chartData.length}</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Rank</th>
+                    <th scope="col">Seller</th>
+                    <th scope="col">Revenue</th>
+                    <th scope="col">Orders</th>
+                    <th scope="col">Share of total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {chartData.map((row) => (
+                    <tr key={row.rank}>
+                      <td>{row.rank}</td>
+                      <td>{row.name}</td>
+                      <td>{formatCurrency(row.revenue)}</td>
+                      <td>{formatNumber(row.orders)}</td>
+                      <td>{row.share.toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </motion.div>
+
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -233,9 +414,23 @@ export default function SellersPage() {
           ) : (
             data?.map((seller, index) => {
               const isTop3 = index < 3;
-              
+              const sharePct =
+                topRevenue > 0
+                  ? Math.max(2, (seller.totalRevenue / topRevenue) * 100)
+                  : 0;
+
               return (
-                <Card key={seller.id} className={`overflow-hidden transition-all hover:shadow-md ${isTop3 ? 'border-primary/20 shadow-sm' : ''}`}>
+                <motion.div
+                  key={seller.id}
+                  layout={!reduced}
+                  initial={reduced ? false : { opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{
+                    duration: reduced ? 0 : 0.25,
+                    delay: reduced ? 0 : Math.min(index * 0.03, 0.3),
+                  }}
+                >
+                <Card className={`overflow-hidden transition-all hover:shadow-md relative ${isTop3 ? 'border-primary/20 shadow-sm' : ''}`}>
                   <CardContent className="p-0">
                     <div className="flex items-center p-4 sm:p-6 gap-4 sm:gap-6 relative">
                       {isTop3 && (
@@ -297,8 +492,36 @@ export default function SellersPage() {
                         <p className="text-xs text-muted-foreground">{formatNumber(seller.totalOrders)} ord</p>
                       </div>
                     </div>
+
+                    {/* Revenue share rail — visualises this seller's revenue
+                        as % of the rank-#1 seller, so the list itself reads
+                        as a horizontal bar chart, not just text rows. */}
+                    <div
+                      className="relative h-[3px] w-full bg-muted/40"
+                      aria-hidden
+                    >
+                      <motion.div
+                        className={`absolute inset-y-0 left-0 ${
+                          index === 0
+                            ? "bg-gradient-to-r from-primary via-chart-3 to-chart-1"
+                            : index === 1
+                              ? "bg-zinc-400/70"
+                              : index === 2
+                                ? "bg-amber-600/70"
+                                : "bg-primary/35"
+                        }`}
+                        initial={reduced ? false : { width: 0 }}
+                        animate={{ width: `${sharePct}%` }}
+                        transition={{
+                          duration: reduced ? 0 : 0.7,
+                          delay: reduced ? 0 : 0.1 + Math.min(index * 0.04, 0.4),
+                          ease: "easeOut",
+                        }}
+                      />
+                    </div>
                   </CardContent>
                 </Card>
+                </motion.div>
               );
             })
           )}
