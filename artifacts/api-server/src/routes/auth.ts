@@ -105,15 +105,12 @@ router.post("/auth/login", async (req, res): Promise<void> => {
 });
 
 router.post("/auth/logout", async (req, res): Promise<void> => {
-  // Logout is best-effort: we accept an optional refresh token in the body and
-  // revoke it if present. Always return success so clients can clear local
-  // state without leaking whether the token existed.
   const body = (req.body ?? {}) as { refreshToken?: unknown };
   if (typeof body.refreshToken === "string" && body.refreshToken.length > 0) {
     try {
       await revokeRefreshToken(body.refreshToken);
     } catch {
-      // intentionally swallow — see comment above
+      /* best-effort */
     }
   }
   res.json(LogoutResponse.parse({ message: "Logged out successfully" }));

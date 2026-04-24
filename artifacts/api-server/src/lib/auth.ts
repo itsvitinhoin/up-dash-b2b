@@ -56,10 +56,6 @@ export interface SessionContext {
   ip?: string | null;
 }
 
-/**
- * Issue a new opaque refresh token and persist its hash in the sessions table.
- * The plain token is returned once — only the hash is stored.
- */
 export async function issueRefreshToken(
   userId: string,
   ctx: SessionContext = {},
@@ -80,18 +76,6 @@ export interface RotatedSession {
   refreshToken: string;
 }
 
-/**
- * Verify a refresh token, then rotate it: revoke the old session row, create a
- * new one, and return the new opaque refresh token alongside the userId.
- *
- * The revoke step is performed as a single conditional UPDATE that only
- * matches rows that are still active (not revoked, not expired). PostgreSQL
- * serializes concurrent UPDATEs against the same row, so two callers that
- * race with the same token will see exactly one revocation succeed and the
- * other receive zero rows back — preserving strict single-use rotation.
- *
- * Throws when the token is unknown, revoked, or expired.
- */
 export async function rotateRefreshToken(
   presented: string,
   ctx: SessionContext = {},
@@ -112,8 +96,6 @@ export async function rotateRefreshToken(
     .returning({ userId: sessionsTable.userId });
 
   if (revoked.length === 0) {
-    // Either the token never existed, has already been used, or has expired —
-    // we deliberately don't distinguish to avoid leaking session state.
     throw new Error("REFRESH_TOKEN_INVALID");
   }
 
@@ -121,10 +103,6 @@ export async function rotateRefreshToken(
   return { userId: revoked[0].userId, refreshToken };
 }
 
-/**
- * Revoke a specific refresh token (e.g. on logout). Silently no-ops when the
- * token is unknown so logout never leaks whether a token existed.
- */
 export async function revokeRefreshToken(presented: string): Promise<void> {
   const presentedHash = hashRefreshToken(presented);
   await db

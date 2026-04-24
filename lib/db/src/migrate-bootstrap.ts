@@ -1,21 +1,7 @@
-/**
- * One-time bootstrap for environments whose schema was applied via
- * `drizzle-kit push` (i.e. the dev DB) before the project committed to
- * tracked migrations. Idempotent: safe to run on every deploy.
- *
- * Logic:
- *   1. Ensure the `drizzle.__drizzle_migrations` ledger table exists.
- *   2. For each migration in `migrations/meta/_journal.json`, parse its SQL
- *      to discover the relations it would create (CREATE TABLE / CREATE
- *      INDEX), then verify EVERY one of them is already present in the live
- *      database. Only when all are present is the migration marked as
- *      applied. This makes the bootstrap safe for partial-upgrade scenarios
- *      (e.g. a DB created from an older snapshot that's missing newly-added
- *      tables/columns): such migrations are *not* fast-forwarded so
- *      `drizzle-kit migrate` will still run them.
- *   3. On a fresh DB nothing matches, the ledger stays empty, and migrate
- *      applies everything from scratch.
- */
+// Idempotent bootstrap: marks each migration as applied in the drizzle
+// ledger only when every CREATE TABLE / CREATE INDEX target it declares is
+// already present in the live DB. Lets `drizzle-kit migrate` safely cover
+// fresh, partial-upgrade, and fully-upgraded databases.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -36,13 +22,6 @@ interface MigrationEffects {
   indexes: string[];
 }
 
-/**
- * Parse a Drizzle-generated migration SQL file and return the names of the
- * tables/indexes it creates. We deliberately ignore ALTER TABLE statements:
- * those add columns/constraints, and our existence check uses the table set
- * to gate marking the migration applied. If any table is missing, the
- * ALTERs would also be missing, so the migration must run fully.
- */
 function parseMigrationEffects(sql: string): MigrationEffects {
   const tables: string[] = [];
   const indexes: string[] = [];
@@ -110,8 +89,6 @@ async function main(): Promise<void> {
       if ((already.rowCount ?? 0) > 0) continue;
 
       const effects = parseMigrationEffects(sql);
-      // If a migration creates nothing (rare — ALTER-only), don't pre-mark it:
-      // we have no signal to verify it's been applied.
       if (effects.tables.length === 0 && effects.indexes.length === 0) {
         console.log(
           `[migrate-bootstrap] ${entry.tag}: ALTER-only migration, leaving for migrate`,

@@ -8,13 +8,7 @@ export type BodyType<T> = T;
 
 export type AuthTokenGetter = () => Promise<string | null> | string | null;
 
-/**
- * Hook called when a request fails with HTTP 401. It can return:
- *   - `true`  → caller will retry the original request exactly once
- *   - `false` → no retry, original 401 surfaces to caller
- * The hook is responsible for refreshing whatever credential the
- * `AuthTokenGetter` returns.
- */
+// Returns true to retry the original request once; false to surface the 401.
 export type UnauthorizedHandler = (
   request: { method: string; url: string },
 ) => Promise<boolean> | boolean;
@@ -22,49 +16,19 @@ export type UnauthorizedHandler = (
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
-// ---------------------------------------------------------------------------
-// Module-level configuration
-// ---------------------------------------------------------------------------
-
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
 let _unauthorizedHandler: UnauthorizedHandler | null = null;
 let _refreshInFlight: Promise<boolean> | null = null;
 
-/**
- * Set a base URL that is prepended to every relative request URL
- * (i.e. paths that start with `/`).
- *
- * Useful for Expo bundles that need to call a remote API server.
- * Pass `null` to clear the base URL.
- */
 export function setBaseUrl(url: string | null): void {
   _baseUrl = url ? url.replace(/\/+$/, "") : null;
 }
 
-/**
- * Register a getter that supplies a bearer auth token.  Before every fetch
- * the getter is invoked; when it returns a non-null string, an
- * `Authorization: Bearer <token>` header is attached to the request.
- *
- * Useful for Expo bundles making token-gated API calls.
- * Pass `null` to clear the getter.
- *
- * NOTE: This function should never be used in web applications where session
- * token cookies are automatically associated with API calls by the browser.
- */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
 }
 
-/**
- * Register a handler that is invoked on the first HTTP 401 response received
- * by `customFetch`. When the handler returns `true`, the original request is
- * retried exactly once with a freshly-obtained token. Concurrent 401s share
- * a single in-flight handler invocation so we never refresh twice in parallel.
- *
- * Pass `null` to clear the handler.
- */
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
   _unauthorizedHandler = handler;
 }
@@ -392,14 +356,10 @@ export async function customFetch<T = unknown>(
     _unauthorizedHandler &&
     !(options as { _retried?: boolean })._retried
   ) {
-    // Coalesce concurrent 401s onto a single refresh attempt so we don't
-    // hammer the refresh endpoint when several requests fail at once.
     if (!_refreshInFlight) {
       _refreshInFlight = Promise.resolve(_unauthorizedHandler(requestInfo))
         .catch(() => false)
         .finally(() => {
-          // Clear the slot on the next microtask so any 401 that arrives
-          // *after* the refresh resolves can trigger a fresh attempt.
           queueMicrotask(() => {
             _refreshInFlight = null;
           });
@@ -407,15 +367,11 @@ export async function customFetch<T = unknown>(
     }
     const refreshed = await _refreshInFlight;
     if (refreshed) {
-      // Re-attach a fresh bearer token by stripping the prior Authorization
-      // header before recursing; the next call will pull the new token from
-      // the configured getter.
       const retryHeaders = new Headers(headers);
       retryHeaders.delete("authorization");
       return customFetch<T>(input, {
         ...options,
         headers: retryHeaders,
-        // Internal flag so we never recurse beyond a single retry.
         _retried: true,
       } as CustomFetchOptions);
     }

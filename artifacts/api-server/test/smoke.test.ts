@@ -194,16 +194,19 @@ describe("API smoke tests", () => {
       }
     });
 
-    it("throws at startup if ALLOWED_ORIGINS is unset in production", () => {
+    it("throws at startup in production when ALLOWED_ORIGINS is unset or '*'", () => {
       const prevEnv = process.env.NODE_ENV;
       const prevAllow = process.env.ALLOWED_ORIGINS;
       process.env.NODE_ENV = "production";
-      delete process.env.ALLOWED_ORIGINS;
       try {
-        expect(() => buildCorsOptions()).toThrow(/ALLOWED_ORIGINS is required in production/);
+        delete process.env.ALLOWED_ORIGINS;
+        expect(() => buildCorsOptions()).toThrow(/concrete comma-separated allowlist/);
+        process.env.ALLOWED_ORIGINS = "*";
+        expect(() => buildCorsOptions()).toThrow(/concrete comma-separated allowlist/);
       } finally {
         process.env.NODE_ENV = prevEnv;
         if (prevAllow !== undefined) process.env.ALLOWED_ORIGINS = prevAllow;
+        else delete process.env.ALLOWED_ORIGINS;
       }
     });
   });

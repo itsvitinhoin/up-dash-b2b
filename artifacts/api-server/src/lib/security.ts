@@ -1,44 +1,31 @@
 import type { CorsOptions } from "cors";
 import rateLimit, { type RateLimitRequestHandler } from "express-rate-limit";
 
-/**
- * Build a CORS options object from the ALLOWED_ORIGINS env var.
- *
- * - In production, ALLOWED_ORIGINS MUST be set to a non-empty allowlist
- *   (or to the explicit value "*"). Misconfiguration throws at startup
- *   so a deploy can never accidentally ship with permissive CORS.
- * - In non-production, an unset or "*" value is permissive (dev default).
- * - Otherwise it parses a comma-separated allowlist and rejects everything else.
- *
- * Same-origin requests (no Origin header) are always allowed so the browser's
- * preview iframe and tools like curl keep working.
- */
 export function buildCorsOptions(): CorsOptions {
   const raw = process.env.ALLOWED_ORIGINS?.trim();
   const isProd = process.env.NODE_ENV === "production";
 
-  if (!raw) {
-    if (isProd) {
+  if (isProd) {
+    if (!raw || raw === "*") {
       throw new Error(
-        "ALLOWED_ORIGINS is required in production. Set it to a comma-separated list of allowed origins, or to \"*\" to explicitly opt in to permissive CORS.",
+        "ALLOWED_ORIGINS must be a concrete comma-separated allowlist in production",
       );
     }
-    console.log("[cors] permissive (dev default — no ALLOWED_ORIGINS set)");
-    return { origin: true, credentials: true };
+    const allowList = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    return {
+      credentials: true,
+      origin(origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowList.includes(origin)) return callback(null, true);
+        callback(new Error(`Origin not allowed by CORS: ${origin}`));
+      },
+    };
   }
 
-  if (raw === "*") {
-    console.log("[cors] permissive (ALLOWED_ORIGINS=*)");
+  if (!raw || raw === "*") {
     return { origin: true, credentials: true };
   }
-
-  const allowList = raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-
-  console.log(`[cors] allowlist: ${allowList.join(", ")}`);
-
+  const allowList = raw.split(",").map((s) => s.trim()).filter(Boolean);
   return {
     credentials: true,
     origin(origin, callback) {
