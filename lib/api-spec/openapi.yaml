@@ -590,6 +590,34 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /analytics/marketing:
+    get:
+      operationId: getMarketing
+      tags: [analytics]
+      summary: Marketing performance — ad spend, ROAS, CPL, and creatives breakdown
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Marketing performance payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingResponse"
+
   /notifications:
     get:
       operationId: listNotifications
@@ -1551,3 +1579,105 @@ components:
         filters:
           $ref: "#/components/schemas/SavedViewFilters"
       required: [name, filters]
+
+    MarketingKpis:
+      type: object
+      properties:
+        totalSpend:
+          type: number
+        attributedRevenue:
+          type: number
+        roas:
+          type: number
+        totalLeads:
+          type: integer
+        approvedLeads:
+          type: integer
+        approvalRate:
+          type: number
+        cpl:
+          type: number
+        cpa:
+          type: number
+      required: [totalSpend, attributedRevenue, roas, totalLeads, approvedLeads, approvalRate, cpl, cpa]
+
+    CreativeMetrics:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        platform:
+          type: string
+        status:
+          type: string
+        imageUrl:
+          type: ["string", "null"]
+        clicks:
+          type: integer
+        impressions:
+          type: integer
+        ctr:
+          type: number
+        leads:
+          type: integer
+        approvedLeads:
+          type: integer
+        spend:
+          type: number
+        attributedRevenue:
+          type: number
+        roas:
+          type: number
+        cpl:
+          type: number
+        cpa:
+          type: number
+      required: [id, name, platform, status, clicks, impressions, ctr, leads, approvedLeads, spend, attributedRevenue, roas, cpl, cpa]
+
+    MarketingPlatformRow:
+      type: object
+      properties:
+        platform:
+          type: string
+        spend:
+          type: number
+        leads:
+          type: integer
+        approvedLeads:
+          type: integer
+        clicks:
+          type: integer
+        impressions:
+          type: integer
+        attributedRevenue:
+          type: number
+        roas:
+          type: number
+      required: [platform, spend, leads, approvedLeads, clicks, impressions, attributedRevenue, roas]
+
+    MarketingResponse:
+      type: object
+      properties:
+        kpis:
+          $ref: "#/components/schemas/MarketingKpis"
+        prevKpis:
+          $ref: "#/components/schemas/MarketingKpis"
+        leadsOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+        revenueOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+        creatives:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeMetrics"
+        platformBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingPlatformRow"
+      required: [kpis, prevKpis, leadsOverTime, revenueOverTime, creatives, platformBreakdown]

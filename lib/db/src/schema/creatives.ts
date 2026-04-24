@@ -24,6 +24,7 @@ export const creativesTable = pgTable(
     impressions: integer("impressions").notNull().default(0),
     spend: doublePrecision("spend").notNull().default(0),
     leads: integer("leads").notNull().default(0),
+    approvedLeads: integer("approved_leads").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()

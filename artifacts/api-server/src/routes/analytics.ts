@@ -9,6 +9,7 @@ import {
   eventsTable,
   orderItemsTable,
   clientsTable,
+  creativesTable,
 } from "@workspace/db";
 import {
   GetDashboardQueryParams,
@@ -31,6 +32,8 @@ import {
   GetAlertsResponse,
   GetAdminOverviewQueryParams,
   GetAdminOverviewResponse,
+  GetMarketingQueryParams,
+  GetMarketingResponse,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
@@ -1358,3 +1361,231 @@ router.post("/analytics/insight", async (req, res): Promise<void> => {
 });
 
 export default router;
+
+// ── Marketing Performance ────────────────────────────────────────────────────
+// Paid channels we attribute revenue and leads to.
+const PAID_UTM_SOURCES = ["instagram", "facebook", "meta", "google", "google_ads", "tiktok"];
+const PAID_SOURCES_ARRAY = `ARRAY[${PAID_UTM_SOURCES.map((s) => `'${s}'`).join(",")}]`;
+
+type Creative = typeof creativesTable.$inferSelect;
+
+function buildPlatformBreakdown(
+  creatives: Creative[],
+  attributedRevenue: number,
+  totalSpend: number,
+) {
+  const platforms = new Map<
+    string,
+    { spend: number; leads: number; approvedLeads: number; clicks: number; impressions: number }
+  >();
+  for (const c of creatives) {
+    const existing = platforms.get(c.platform) ?? { spend: 0, leads: 0, approvedLeads: 0, clicks: 0, impressions: 0 };
+    platforms.set(c.platform, {
+      spend: existing.spend + c.spend,
+      leads: existing.leads + c.leads,
+      approvedLeads: existing.approvedLeads + c.approvedLeads,
+      clicks: existing.clicks + c.clicks,
+      impressions: existing.impressions + c.impressions,
+    });
+  }
+  return Array.from(platforms.entries()).map(([platform, p]) => {
+    const share = totalSpend > 0 ? p.spend / totalSpend : 0;
+    const platRevenue = attributedRevenue * share;
+    return {
+      platform,
+      spend: p.spend,
+      leads: p.leads,
+      approvedLeads: p.approvedLeads,
+      clicks: p.clicks,
+      impressions: p.impressions,
+      attributedRevenue: platRevenue,
+      roas: p.spend > 0 ? platRevenue / p.spend : 0,
+    };
+  });
+}
+
+function buildCreativeMetrics(creatives: Creative[], attributedRevenue: number, totalSpend: number) {
+  // Split attributed revenue proportionally by spend share within each platform.
+  const platformSpend = new Map<string, number>();
+  for (const c of creatives) {
+    platformSpend.set(c.platform, (platformSpend.get(c.platform) ?? 0) + c.spend);
+  }
+  const platformRevenue = new Map<string, number>();
+  if (totalSpend > 0) {
+    for (const [platform, pspend] of platformSpend.entries()) {
+      platformRevenue.set(platform, attributedRevenue * (pspend / totalSpend));
+    }
+  }
+
+  return creatives.map((c) => {
+    const platRev = platformRevenue.get(c.platform) ?? 0;
+    const platSp = platformSpend.get(c.platform) ?? 0;
+    const creativeRev = platSp > 0 ? platRev * (c.spend / platSp) : 0;
+    return {
+      id: c.id,
+      name: c.name,
+      platform: c.platform,
+      status: c.status,
+      imageUrl: c.imageUrl ?? null,
+      clicks: c.clicks,
+      impressions: c.impressions,
+      ctr: c.impressions > 0 ? (c.clicks / c.impressions) * 100 : 0,
+      leads: c.leads,
+      approvedLeads: c.approvedLeads,
+      spend: c.spend,
+      attributedRevenue: creativeRev,
+      roas: c.spend > 0 ? creativeRev / c.spend : 0,
+      cpl: c.leads > 0 ? c.spend / c.leads : 0,
+      cpa: c.approvedLeads > 0 ? c.spend / c.approvedLeads : 0,
+    };
+  });
+}
+
+async function computeMarketingKpis(
+  clientId: string,
+  creatives: Creative[],
+  from: Date,
+  to: Date,
+) {
+  const totalSpend = creatives.reduce((s, c) => s + c.spend, 0);
+
+  // Attributed revenue: orders from paid-UTM customers in window
+  const [revRow] = await db
+    .select({ revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float` })
+    .from(ordersTable)
+    .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+    .where(
+      and(
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, from),
+        lte(ordersTable.createdAt, to),
+        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+        sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
+      ),
+    );
+  const attributedRevenue = revRow?.revenue ?? 0;
+
+  // Leads: REGISTRATION events from paid-UTM customers in window.
+  // approvedLeads: those same registrations where the customer is now APPROVED.
+  // This guarantees approvedLeads ≤ totalLeads for a sensible approval rate.
+  const [evtRow] = await db
+    .select({
+      totalLeads: sql<number>`COUNT(*)::int`,
+      approvedLeads: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
+    })
+    .from(eventsTable)
+    .innerJoin(customersTable, eq(eventsTable.customerId, customersTable.id))
+    .where(
+      and(
+        eq(eventsTable.clientId, clientId),
+        gte(eventsTable.createdAt, from),
+        lte(eventsTable.createdAt, to),
+        sql`${eventsTable.eventType} = 'REGISTRATION'`,
+        sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
+      ),
+    );
+
+  const totalLeads = evtRow?.totalLeads ?? 0;
+  const approvedLeads = evtRow?.approvedLeads ?? 0;
+  const approvalRate = totalLeads > 0 ? (approvedLeads / totalLeads) * 100 : 0;
+
+  return {
+    totalSpend,
+    attributedRevenue,
+    roas: totalSpend > 0 ? attributedRevenue / totalSpend : 0,
+    totalLeads,
+    approvedLeads,
+    approvalRate,
+    cpl: totalLeads > 0 ? totalSpend / totalLeads : 0,
+    cpa: approvedLeads > 0 ? totalSpend / approvedLeads : 0,
+  };
+}
+
+router.get("/analytics/marketing", async (req, res): Promise<void> => {
+  const parsed = GetMarketingQueryParams.safeParse(
+    coerceDateQuery(req.query as Record<string, unknown>),
+  );
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+
+  // Prev period of same length
+  const periodMs = to.getTime() - from.getTime();
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - periodMs);
+
+  // All creatives for the client (lifetime stats)
+  const creatives = await db
+    .select()
+    .from(creativesTable)
+    .where(eq(creativesTable.clientId, clientId))
+    .orderBy(desc(creativesTable.spend));
+
+  const [kpis, prevKpis] = await Promise.all([
+    computeMarketingKpis(clientId, creatives, from, to),
+    computeMarketingKpis(clientId, creatives, prevFrom, prevTo),
+  ]);
+
+  // Daily series: paid-channel registrations by day
+  const leadsRows = await db
+    .select({
+      date: sql<string>`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')::text`,
+      value: sql<number>`COUNT(*)::int`,
+    })
+    .from(eventsTable)
+    .innerJoin(customersTable, eq(eventsTable.customerId, customersTable.id))
+    .where(
+      and(
+        eq(eventsTable.clientId, clientId),
+        gte(eventsTable.createdAt, from),
+        lte(eventsTable.createdAt, to),
+        sql`${eventsTable.eventType} = 'REGISTRATION'`,
+        sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
+      ),
+    )
+    .groupBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`)
+    .orderBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`);
+
+  // Daily series: attributed revenue
+  const revenueRows = await db
+    .select({
+      date: sql<string>`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')::text`,
+      value: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+    })
+    .from(ordersTable)
+    .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+    .where(
+      and(
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, from),
+        lte(ordersTable.createdAt, to),
+        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+        sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
+      ),
+    )
+    .groupBy(sql`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')`)
+    .orderBy(sql`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')`);
+
+  const totalSpendForAttribution = kpis.totalSpend;
+  const attrRevForCreatives = kpis.attributedRevenue;
+
+  const payload = GetMarketingResponse.parse({
+    kpis,
+    prevKpis,
+    leadsOverTime: leadsRows,
+    revenueOverTime: revenueRows,
+    creatives: buildCreativeMetrics(creatives, attrRevForCreatives, totalSpendForAttribution),
+    platformBreakdown: buildPlatformBreakdown(creatives, attrRevForCreatives, totalSpendForAttribution),
+  });
+  res.json(payload);
+});

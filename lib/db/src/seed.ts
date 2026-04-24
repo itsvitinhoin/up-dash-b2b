@@ -582,35 +582,33 @@ async function main() {
       .where(eq(clientsTable.id, client.id));
 
     // Creatives
-    await db.insert(creativesTable).values([
-      {
-        clientId: client.id,
-        name: "Spring Lookbook — Carousel",
-        platform: "META",
-        clicks: randInt(800, 5000),
-        impressions: randInt(50000, 200000),
-        spend: randInt(800, 4000),
-        leads: randInt(100, 600),
-      },
-      {
-        clientId: client.id,
-        name: "VIP Launch — Reels",
-        platform: "META",
-        clicks: randInt(800, 5000),
-        impressions: randInt(50000, 200000),
-        spend: randInt(800, 4000),
-        leads: randInt(100, 600),
-      },
-      {
-        clientId: client.id,
-        name: "Search — Brand Keywords",
-        platform: "GOOGLE",
-        clicks: randInt(800, 5000),
-        impressions: randInt(50000, 200000),
-        spend: randInt(800, 4000),
-        leads: randInt(100, 600),
-      },
-    ]);
+    const creativeDefs = [
+      { name: "Spring Lookbook — Carousel", platform: "META" as const, spendMin: 1200, spendMax: 4500, clicksMin: 2000, clicksMax: 8000, impressionsMin: 80000, impressionsMax: 250000, leadsMin: 180, leadsMax: 650 },
+      { name: "VIP Launch — Reels", platform: "META" as const, spendMin: 900, spendMax: 3500, clicksMin: 1500, clicksMax: 6000, impressionsMin: 60000, impressionsMax: 200000, leadsMin: 120, leadsMax: 500 },
+      { name: "Remarketing — Abandoned Cart", platform: "META" as const, spendMin: 600, spendMax: 2000, clicksMin: 800, clicksMax: 3500, impressionsMin: 30000, impressionsMax: 100000, leadsMin: 80, leadsMax: 300 },
+      { name: "Search — Brand Keywords", platform: "GOOGLE" as const, spendMin: 1500, spendMax: 5000, clicksMin: 3000, clicksMax: 10000, impressionsMin: 50000, impressionsMax: 180000, leadsMin: 200, leadsMax: 700 },
+      { name: "Shopping — Best Sellers", platform: "GOOGLE" as const, spendMin: 800, spendMax: 3000, clicksMin: 1200, clicksMax: 5000, impressionsMin: 40000, impressionsMax: 150000, leadsMin: 100, leadsMax: 400 },
+      { name: "TikTok For You — UGC", platform: "TIKTOK" as const, spendMin: 700, spendMax: 2800, clicksMin: 2500, clicksMax: 9000, impressionsMin: 100000, impressionsMax: 400000, leadsMin: 150, leadsMax: 550 },
+      { name: "TikTok Spark — Influencer", platform: "TIKTOK" as const, spendMin: 1000, spendMax: 3200, clicksMin: 1800, clicksMax: 7000, impressionsMin: 80000, impressionsMax: 300000, leadsMin: 120, leadsMax: 450 },
+    ];
+    const approvalRateForClient = 0.72 + Math.random() * 0.15;
+    await db.insert(creativesTable).values(
+      creativeDefs.map((def) => {
+        const leads = randInt(def.leadsMin, def.leadsMax);
+        const approvedLeads = Math.round(leads * (approvalRateForClient - 0.05 + Math.random() * 0.1));
+        return {
+          clientId: client.id,
+          name: def.name,
+          platform: def.platform,
+          status: Math.random() < 0.85 ? "ACTIVE" : "PAUSED",
+          clicks: randInt(def.clicksMin, def.clicksMax),
+          impressions: randInt(def.impressionsMin, def.impressionsMax),
+          spend: randInt(def.spendMin, def.spendMax),
+          leads,
+          approvedLeads,
+        };
+      }),
+    );
 
     console.log(
       `  ✓ ${customers.length} customers, ${insertedOrders.length} orders, ${eventBatch.length} events`,

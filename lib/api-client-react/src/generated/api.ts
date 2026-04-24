@@ -35,6 +35,7 @@ import type {
   GetFunnelParams,
   GetGeographyParams,
   GetInsightParams,
+  GetMarketingParams,
   GetOrdersByDateParams,
   GetProductsParams,
   GetSellersParams,
@@ -49,6 +50,7 @@ import type {
   MarkNotificationReadParams,
   MarkNotificationReadRequest,
   MarkReadResponse,
+  MarketingResponse,
   MessageResponse,
   Notification,
   NotificationsResponse,
@@ -1772,6 +1774,100 @@ export function useGetAdminOverview<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetAdminOverviewQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Marketing performance — ad spend, ROAS, CPL, and creatives breakdown
+ */
+export const getGetMarketingUrl = (params?: GetMarketingParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/marketing?${stringifiedParams}`
+    : `/api/analytics/marketing`;
+};
+
+export const getMarketing = async (
+  params?: GetMarketingParams,
+  options?: RequestInit,
+): Promise<MarketingResponse> => {
+  return customFetch<MarketingResponse>(getGetMarketingUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetMarketingQueryKey = (params?: GetMarketingParams) => {
+  return [`/api/analytics/marketing`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetMarketingQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMarketing>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetMarketingParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMarketing>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetMarketingQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getMarketing>>> = ({
+    signal,
+  }) => getMarketing(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMarketing>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMarketingQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMarketing>>
+>;
+export type GetMarketingQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Marketing performance — ad spend, ROAS, CPL, and creatives breakdown
+ */
+
+export function useGetMarketing<
+  TData = Awaited<ReturnType<typeof getMarketing>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetMarketingParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMarketing>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMarketingQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

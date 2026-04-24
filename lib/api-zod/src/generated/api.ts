@@ -740,6 +740,81 @@ export const GetAdminOverviewResponse = zod.object({
 });
 
 /**
+ * @summary Marketing performance — ad spend, ROAS, CPL, and creatives breakdown
+ */
+export const GetMarketingQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+});
+
+export const GetMarketingResponse = zod.object({
+  kpis: zod.object({
+    totalSpend: zod.number(),
+    attributedRevenue: zod.number(),
+    roas: zod.number(),
+    totalLeads: zod.number(),
+    approvedLeads: zod.number(),
+    approvalRate: zod.number(),
+    cpl: zod.number(),
+    cpa: zod.number(),
+  }),
+  prevKpis: zod.object({
+    totalSpend: zod.number(),
+    attributedRevenue: zod.number(),
+    roas: zod.number(),
+    totalLeads: zod.number(),
+    approvedLeads: zod.number(),
+    approvalRate: zod.number(),
+    cpl: zod.number(),
+    cpa: zod.number(),
+  }),
+  leadsOverTime: zod.array(
+    zod.object({
+      date: zod.string(),
+      value: zod.number(),
+    }),
+  ),
+  revenueOverTime: zod.array(
+    zod.object({
+      date: zod.string(),
+      value: zod.number(),
+    }),
+  ),
+  creatives: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string(),
+      platform: zod.string(),
+      status: zod.string(),
+      imageUrl: zod.string().nullish(),
+      clicks: zod.number(),
+      impressions: zod.number(),
+      ctr: zod.number(),
+      leads: zod.number(),
+      approvedLeads: zod.number(),
+      spend: zod.number(),
+      attributedRevenue: zod.number(),
+      roas: zod.number(),
+      cpl: zod.number(),
+      cpa: zod.number(),
+    }),
+  ),
+  platformBreakdown: zod.array(
+    zod.object({
+      platform: zod.string(),
+      spend: zod.number(),
+      leads: zod.number(),
+      approvedLeads: zod.number(),
+      clicks: zod.number(),
+      impressions: zod.number(),
+      attributedRevenue: zod.number(),
+      roas: zod.number(),
+    }),
+  ),
+});
+
+/**
  * @summary List notifications for the current client/tenant
  */
 export const listNotificationsQueryLimitDefault = 20;

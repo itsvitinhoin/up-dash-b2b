@@ -494,6 +494,56 @@ export interface CreateSavedViewRequest {
   filters: SavedViewFilters;
 }
 
+export interface MarketingKpis {
+  totalSpend: number;
+  attributedRevenue: number;
+  roas: number;
+  totalLeads: number;
+  approvedLeads: number;
+  approvalRate: number;
+  cpl: number;
+  cpa: number;
+}
+
+export interface CreativeMetrics {
+  id: string;
+  name: string;
+  platform: string;
+  status: string;
+  /** @nullable */
+  imageUrl?: string | null;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  leads: number;
+  approvedLeads: number;
+  spend: number;
+  attributedRevenue: number;
+  roas: number;
+  cpl: number;
+  cpa: number;
+}
+
+export interface MarketingPlatformRow {
+  platform: string;
+  spend: number;
+  leads: number;
+  approvedLeads: number;
+  clicks: number;
+  impressions: number;
+  attributedRevenue: number;
+  roas: number;
+}
+
+export interface MarketingResponse {
+  kpis: MarketingKpis;
+  prevKpis: MarketingKpis;
+  leadsOverTime: TimeSeriesPoint[];
+  revenueOverTime: TimeSeriesPoint[];
+  creatives: CreativeMetrics[];
+  platformBreakdown: MarketingPlatformRow[];
+}
+
 export type ListClientsParams = {
   search?: string;
   page?: number;
@@ -633,6 +683,12 @@ export type GetAlertsParams = {
 };
 
 export type GetAdminOverviewParams = {
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+export type GetMarketingParams = {
+  clientId?: string;
   dateFrom?: string;
   dateTo?: string;
 };

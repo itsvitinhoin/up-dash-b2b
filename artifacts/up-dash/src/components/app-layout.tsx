@@ -28,6 +28,7 @@ import {
   GitCompareArrows,
   Bell,
   HelpCircle,
+  Megaphone,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -77,6 +78,7 @@ const pageMeta: Record<string, PageMeta> = {
   "/notifications": { title: "Notifications", subtitle: "Anomalies, top movers, and rollups", hasDateRange: false, hasFilterBar: false, requiresClient: true },
   "/compare": { title: "Compare brands", subtitle: "Benchmark up to four clients side-by-side", hasDateRange: true, hasFilterBar: false },
   "/overview": { title: "Platform overview", subtitle: "Every brand on UP Dash, at a glance", hasDateRange: true, hasFilterBar: false },
+  "/marketing": { title: "Marketing", subtitle: "Ad spend, ROAS, CPL, and creative performance", hasDateRange: true, hasFilterBar: false, requiresClient: true },
 };
 
 // Sentinel value for the topbar picker when an admin selects the
@@ -153,6 +155,7 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   const analyticsNav = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+    { name: "Marketing", href: "/marketing", icon: Megaphone },
     { name: "Funnel", href: "/funnel", icon: Filter },
     { name: "Customers", href: "/customers", icon: Users },
     { name: "Products", href: "/products", icon: Package },
