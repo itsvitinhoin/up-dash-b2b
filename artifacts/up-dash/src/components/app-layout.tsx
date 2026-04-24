@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { format } from "date-fns";
 import { useAuth } from "@/lib/auth";
@@ -47,6 +47,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { SearchPalette } from "@/components/search-palette";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -78,16 +79,30 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { theme, setTheme } = useTheme();
   const { dateRange, setDateRange } = useDashboardFilters();
   const { setOpen: setShortcutsOpen } = useKeyboardShortcuts();
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
 
-  // Expose focus-search for "/" shortcut.
+  // Bridge the "/" shortcut to the command palette. The topbar search is now
+  // a button that opens a palette (not an <input>), so "focusing search"
+  // means opening the palette.
   useEffect(() => {
     (window as unknown as { __focusSearch?: () => void }).__focusSearch = () => {
-      searchInputRef.current?.focus();
+      setSearchOpen(true);
     };
     return () => {
       delete (window as unknown as { __focusSearch?: () => void }).__focusSearch;
     };
+  }, []);
+
+  // Open the search palette on ⌘K / Ctrl+K, anywhere on the page.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   const { data: clientsData } = useListClients(
@@ -268,20 +283,20 @@ export function AppLayout({ children }: AppLayoutProps) {
             )}
           </div>
 
+          {/* Search trigger — opens the command palette */}
           <div className="hidden lg:flex flex-1 max-w-md ml-4">
-            <div className="relative w-full">
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              data-testid="search-trigger"
+              className="relative w-full h-9 bg-card border border-border rounded-md pl-10 pr-12 text-sm text-left text-muted-foreground hover:bg-accent/40 focus:outline-none focus:ring-1 focus:ring-primary"
+            >
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                ref={searchInputRef}
-                type="search"
-                placeholder="Search SKUs, categories, campaigns"
-                className="w-full h-9 bg-card border border-border rounded-md pl-10 pr-12 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                data-testid="topbar-search"
-              />
+              Search SKUs, categories, customers
               <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono bg-muted border border-border rounded text-muted-foreground">
                 /
               </kbd>
-            </div>
+            </button>
           </div>
 
           <div className="ml-auto flex items-center gap-2">
@@ -378,6 +393,8 @@ export function AppLayout({ children }: AppLayoutProps) {
           {children}
         </main>
       </div>
+
+      <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
     </div>
   );
 }
