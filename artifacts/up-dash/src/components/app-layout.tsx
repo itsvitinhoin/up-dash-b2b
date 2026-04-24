@@ -59,18 +59,22 @@ interface PageMeta {
   subtitle: string;
   hasDateRange: boolean;
   hasFilterBar: boolean;
+  // Per-brand pages need a single client in context — admins must explicitly
+  // pick one before the page can render. Pages that aggregate across the whole
+  // platform (e.g. /overview, /clients, /compare) leave this false.
+  requiresClient?: boolean;
 }
 
 const pageMeta: Record<string, PageMeta> = {
-  "/": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true },
-  "/dashboard": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true },
-  "/funnel": { title: "Conversion funnel", subtitle: "Visit through purchase", hasDateRange: true, hasFilterBar: true },
-  "/customers": { title: "Customers", subtitle: "RFM segmentation and lifetime value", hasDateRange: false, hasFilterBar: true },
-  "/products": { title: "Products", subtitle: "Performance and ranking", hasDateRange: false, hasFilterBar: true },
-  "/sellers": { title: "Sellers", subtitle: "Top performers across the catalog", hasDateRange: false, hasFilterBar: true },
-  "/geography": { title: "Geography", subtitle: "Sales distribution by region", hasDateRange: true, hasFilterBar: true },
+  "/": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true, requiresClient: true },
+  "/dashboard": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true, requiresClient: true },
+  "/funnel": { title: "Conversion funnel", subtitle: "Visit through purchase", hasDateRange: true, hasFilterBar: true, requiresClient: true },
+  "/customers": { title: "Customers", subtitle: "RFM segmentation and lifetime value", hasDateRange: false, hasFilterBar: true, requiresClient: true },
+  "/products": { title: "Products", subtitle: "Performance and ranking", hasDateRange: false, hasFilterBar: true, requiresClient: true },
+  "/sellers": { title: "Sellers", subtitle: "Top performers across the catalog", hasDateRange: false, hasFilterBar: true, requiresClient: true },
+  "/geography": { title: "Geography", subtitle: "Sales distribution by region", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/clients": { title: "Clients", subtitle: "Brand accounts on the platform", hasDateRange: true, hasFilterBar: false },
-  "/notifications": { title: "Notifications", subtitle: "Anomalies, top movers, and rollups", hasDateRange: false, hasFilterBar: false },
+  "/notifications": { title: "Notifications", subtitle: "Anomalies, top movers, and rollups", hasDateRange: false, hasFilterBar: false, requiresClient: true },
   "/compare": { title: "Compare brands", subtitle: "Benchmark up to four clients side-by-side", hasDateRange: true, hasFilterBar: false },
   "/overview": { title: "Platform overview", subtitle: "Every brand on UP Dash, at a glance", hasDateRange: true, hasFilterBar: false },
 };
@@ -116,21 +120,12 @@ export function AppLayout({ children }: AppLayoutProps) {
     { query: queryOpts({ enabled: user?.role === "ADMIN" }) },
   );
 
-  // Auto-pick the first client for admins — but skip on the platform overview
-  // page, which is intentionally unscoped. Without this guard, navigating to
-  // /overview would silently re-select a client and any per-brand widgets
-  // would mount with the wrong context.
-  useEffect(() => {
-    if (
-      user?.role === "ADMIN" &&
-      !selectedClientId &&
-      location !== "/overview" &&
-      clientsData?.data &&
-      clientsData.data.length > 0
-    ) {
-      setSelectedClientId(clientsData.data[0].id);
-    }
-  }, [user?.role, selectedClientId, clientsData, setSelectedClientId, location]);
+  // We deliberately do NOT auto-pick a client for admins here. UP Dash is an
+  // agency platform: admins always operate on behalf of one specific brand at
+  // a time, and silently selecting the alphabetically-first one risks them
+  // taking action on the wrong account. Per-brand pages render an explicit
+  // "select a brand" prompt below when no client is in context. The platform-
+  // wide pages (/overview, /clients, /compare) work fine without a selection.
 
   const { data: clientData } = useGetClient(user?.clientId || "", {
     query: queryOpts({ enabled: user?.role === "CLIENT" && !!user?.clientId }),
@@ -431,7 +426,31 @@ export function AppLayout({ children }: AppLayoutProps) {
         {meta.hasFilterBar && <FilterBar />}
 
         <main className="flex-1 overflow-y-auto bg-background p-4 sm:p-6 md:p-8 print-area">
-          {children}
+          {meta.requiresClient && user?.role === "ADMIN" && !selectedClientId ? (
+            <div className="mx-auto flex max-w-xl flex-col items-center justify-center gap-4 rounded-2xl border border-dashed bg-card/50 p-10 text-center" data-testid="empty-no-client-selected">
+              <div className="rounded-full bg-muted p-3">
+                <Building2 className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold">Select a brand to continue</h2>
+                <p className="text-sm text-muted-foreground">
+                  This page shows data for one brand at a time. Pick a brand from the
+                  selector at the top of the page, or open the platform overview to
+                  see how every brand is doing.
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button onClick={() => navigate("/overview")} data-testid="link-go-to-overview">
+                  Go to platform overview
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/clients")} data-testid="link-go-to-clients">
+                  Browse all brands
+                </Button>
+              </div>
+            </div>
+          ) : (
+            children
+          )}
         </main>
       </div>
 
