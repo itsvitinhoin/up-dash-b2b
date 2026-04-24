@@ -549,7 +549,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing]
+            enum: [dashboard, marketing, customers]
             default: dashboard
       responses:
         "200":
@@ -581,7 +581,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing]
+            enum: [dashboard, marketing, customers]
             default: dashboard
       responses:
         "200":
@@ -2098,4 +2098,7 @@ components:
         opportunityLevel:
           type: string
           description: Derived from RFM segment and recency (CHAMPION, HIGH, MEDIUM, LOW)
+        assignedSeller:
+          type: ["string", "null"]
+          description: Name of the seller associated with the customer's most recent order
       required: [customer, orders, events, productsPurchased, journey, opportunityLevel]

@@ -19,4 +19,9 @@ export interface CustomerDetailResponse {
   journey: CustomerJourney;
   /** Derived from RFM segment and recency (CHAMPION, HIGH, MEDIUM, LOW) */
   opportunityLevel: string;
+  /**
+   * Name of the seller associated with the customer's most recent order
+   * @nullable
+   */
+  assignedSeller?: string | null;
 }

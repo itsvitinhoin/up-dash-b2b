@@ -5,7 +5,14 @@ import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
-import { useGetCustomers, useGetCustomerSummary } from "@workspace/api-client-react";
+import {
+  useGetCustomers,
+  useGetCustomerSummary,
+  useGetInsight,
+  useRegenerateInsight,
+  getGetInsightQueryKey,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -19,7 +26,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertCircle, Search, Inbox, Download, ChevronRight,
-  UserCheck, Users, UserX, Clock, TrendingUp, BarChart2, Globe
+  UserCheck, Users, UserX, Clock, TrendingUp, BarChart2, Globe,
+  Sparkles, RefreshCw, X as XIcon,
 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
@@ -132,6 +140,8 @@ export default function CustomersPage() {
   const [highlightTarget, setHighlightTarget] = useState<string | null>(
     urlSearch ? urlSearch.toLowerCase() : null,
   );
+  const [insightDismissed, setInsightDismissed] = useState(false);
+  const queryClient = useQueryClient();
   useEffect(() => {
     setSearch((prev) => (prev === urlSearch ? prev : urlSearch));
     setPage(1);
@@ -168,14 +178,31 @@ export default function CustomersPage() {
 
   const summaryParams = {
     clientId,
-    dateFrom: dateRange?.from ?? undefined,
-    dateTo: dateRange?.to ?? undefined,
+    dateFrom: dateRange ? format(dateRange.from, "yyyy-MM-dd") : undefined,
+    dateTo: dateRange ? format(dateRange.to, "yyyy-MM-dd") : undefined,
     compare: true,
   };
   const { data: summary, isLoading: summaryLoading } = useGetCustomerSummary(
     summaryParams,
     { query: queryOpts({ enabled }) },
   );
+
+  const insightParams = {
+    clientId,
+    dateFrom: dateRange ? format(dateRange.from, "yyyy-MM-dd") : undefined,
+    dateTo: dateRange ? format(dateRange.to, "yyyy-MM-dd") : undefined,
+    screen: "customers" as const,
+  };
+  const { data: insight, isLoading: insightLoading } = useGetInsight(
+    insightParams,
+    { query: queryOpts({ enabled }) },
+  );
+  const regenerate = useRegenerateInsight({
+    mutation: {
+      onSuccess: () =>
+        queryClient.invalidateQueries({ queryKey: getGetInsightQueryKey(insightParams) }),
+    },
+  });
 
   const getRfmColor = (segment: string) => {
     switch (segment) {
@@ -494,6 +521,70 @@ export default function CustomersPage() {
         </Card>
       </motion.div>
 
+      {/* AI Insight card */}
+      {!insightDismissed && (
+        <motion.div variants={cardVariants}>
+          <Card className="p-5 bg-gradient-to-br from-primary/[0.04] via-card to-card border-border relative overflow-hidden" data-testid="customers-insight-card">
+            <div aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-primary via-chart-3 to-chart-1 opacity-80" />
+            <div className="absolute -top-12 -right-12 h-40 w-40 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
+            <div className="relative z-10">
+              <div className="flex items-center justify-between mb-3">
+                <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
+                  <Sparkles className="h-3 w-3" />
+                  UP Insight · CRM · {insight?.source === "ai" ? "AI" : "Auto"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setInsightDismissed(true)}
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="Dismiss insight"
+                  data-testid="customers-insight-dismiss"
+                >
+                  <XIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {insightLoading || !insight ? (
+                <>
+                  <Skeleton className="h-5 w-3/4 mb-2" />
+                  <Skeleton className="h-4 w-full mb-1" />
+                  <Skeleton className="h-4 w-5/6 mb-3" />
+                </>
+              ) : (
+                <>
+                  <h3 className="text-base font-semibold leading-snug mb-2">{insight.headline}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{insight.body}</p>
+                  {insight.bullets && insight.bullets.length > 0 && (
+                    <ul className="mt-3 space-y-1.5">
+                      {insight.bullets.map((b, i) => (
+                        <li key={i} className="flex gap-2 text-xs text-muted-foreground">
+                          <span className="text-primary mt-1 leading-none">•</span>
+                          <span className="leading-relaxed">{b}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+              <div className="mt-4 flex items-center gap-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => regenerate.mutate({ params: insightParams })}
+                  disabled={regenerate.isPending || insightLoading}
+                  data-testid="customers-insight-regenerate"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${regenerate.isPending ? "animate-spin" : ""}`} />
+                  {regenerate.isPending ? "Regenerating…" : "Regenerate"}
+                </Button>
+                {insight?.cached && (
+                  <span className="text-[11px] text-muted-foreground">Cached · refreshes hourly</span>
+                )}
+              </div>
+            </div>
+          </Card>
+        </motion.div>
+      )}
+
       {/* Filters */}
       <motion.div variants={cardVariants}>
         <Card>
@@ -589,6 +680,7 @@ export default function CustomersPage() {
                     <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Orders</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Spent</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">First Purchase</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Last Purchase</TableHead>
                     <TableHead className="w-8" />
                   </TableRow>
                 </TableHeader>
@@ -599,18 +691,19 @@ export default function CustomersPage() {
                         <TableCell><Skeleton className="h-4 w-32" /><Skeleton className="h-3 w-24 mt-1" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-                        <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                        <TableCell><Skeleton className="h-6 w-12 rounded-full" /></TableCell>
                         <TableCell><Skeleton className="h-6 w-20 rounded-full" /></TableCell>
                         <TableCell><Skeleton className="h-6 w-20 rounded-full" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-8 ml-auto" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
                         <TableCell />
                       </TableRow>
                     ))
                   ) : data?.data.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="p-0">
+                      <TableCell colSpan={11} className="p-0">
                         <EmptyState
                           icon={Inbox}
                           title="No customers match these filters"
@@ -653,12 +746,21 @@ export default function CustomersPage() {
                             )}
                           </TableCell>
                           <TableCell>
-                            {customer.utmCampaign ? (
-                              <span className="text-xs text-muted-foreground truncate max-w-[80px] block" title={customer.utmCampaign}>
-                                {customer.utmCampaign}
-                              </span>
+                            {(customer.utmSource || customer.utmCampaign) ? (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] border-transparent bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                title={customer.utmCampaign ?? customer.utmSource ?? undefined}
+                              >
+                                Yes
+                              </Badge>
                             ) : (
-                              <span className="text-xs text-muted-foreground/50">—</span>
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] border-transparent bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                              >
+                                No
+                              </Badge>
                             )}
                           </TableCell>
                           <TableCell>
@@ -677,6 +779,9 @@ export default function CustomersPage() {
                           <TableCell className="text-right font-medium">{formatCurrency(customer.totalSpent)}</TableCell>
                           <TableCell className="text-right text-muted-foreground text-sm">
                             {customer.firstPurchaseAt ? format(new Date(customer.firstPurchaseAt), "MMM d, yyyy") : "—"}
+                          </TableCell>
+                          <TableCell className="text-right text-muted-foreground text-sm">
+                            {customer.lastPurchaseAt ? format(new Date(customer.lastPurchaseAt), "MMM d, yyyy") : "—"}
                           </TableCell>
                           <TableCell>
                             <ChevronRight className="h-4 w-4 text-muted-foreground" />

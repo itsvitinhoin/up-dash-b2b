@@ -239,6 +239,15 @@ export default function CustomerDetailPage() {
                             {[customer.city, customer.state].filter(Boolean).join(", ")}
                           </span>
                         )}
+                        {(() => {
+                          const seller = (data as Record<string, unknown> | undefined)?.assignedSeller as string | null | undefined;
+                          return seller ? (
+                            <span className="flex items-center gap-1">
+                              <User className="h-3.5 w-3.5" />
+                              Seller: {seller}
+                            </span>
+                          ) : null;
+                        })()}
                       </div>
                       <div className="flex flex-wrap gap-2 mt-3">
                         {customer?.registrationStatus && (

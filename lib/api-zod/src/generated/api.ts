@@ -627,6 +627,12 @@ export const GetCustomerDetailResponse = zod.object({
     .describe(
       "Derived from RFM segment and recency (CHAMPION, HIGH, MEDIUM, LOW)",
     ),
+  assignedSeller: zod
+    .string()
+    .nullish()
+    .describe(
+      "Name of the seller associated with the customer's most recent order",
+    ),
 });
 
 /**
@@ -762,7 +768,7 @@ export const GetInsightQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
   screen: zod
-    .enum(["dashboard", "marketing"])
+    .enum(["dashboard", "marketing", "customers"])
     .default(getInsightQueryScreenDefault),
 });
 
@@ -785,7 +791,7 @@ export const RegenerateInsightQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
   screen: zod
-    .enum(["dashboard", "marketing"])
+    .enum(["dashboard", "marketing", "customers"])
     .default(regenerateInsightQueryScreenDefault),
 });
 

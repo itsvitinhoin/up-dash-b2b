@@ -605,10 +605,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     // period-over-period delta chips in the UI. Daily time-series are only
     // needed for the current window (sparklines), so skip them in compare mode.
     {
-      const buyerAggPromises: [
-        Promise<[{ count: number }]>,
-        Promise<[{ count: number }]>,
-      ] = [
+      const buyerAggPromises = [
         db
           .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
           .from(ordersTable)
@@ -620,7 +617,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
               gte(customersTable.firstPurchaseAt, winFrom),
               lte(customersTable.firstPurchaseAt, winTo),
             ),
-          ) as Promise<[{ count: number }]>,
+          ),
         db
           .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
           .from(ordersTable)
@@ -631,8 +628,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
               sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
               sql`${customersTable.firstPurchaseAt} < ${winFrom}`,
             ),
-          ) as Promise<[{ count: number }]>,
-      ];
+          ),
+      ] as const;
 
       if (full) {
         // Current window: also fetch customer totals + daily buyer series.
@@ -1072,26 +1069,8 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
   );
 });
 
-// ─── Customer Summary (CRM KPI strip) ───────────────────────────────────────
-router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
-  const parsed = GetCustomerSummaryQueryParams.safeParse(
-    coerceDateQuery(req.query as Record<string, unknown>),
-  );
-  if (!parsed.success) {
-    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
-    return;
-  }
-  const clientId = requireClient(req, res);
-  if (!clientId) return;
-
-  const { dateFrom, dateTo, compare } = parsed.data;
-  const { from, to } = dateRange(dateFrom as Date | undefined, dateTo as Date | undefined);
-
-  const winLenMs = to.getTime() - from.getTime();
-  const prevFrom = new Date(from.getTime() - winLenMs);
-  const prevTo = new Date(from.getTime());
-
-  async function computeSummaryKpis(winFrom: Date, winTo: Date) {
+// ─── Customer Summary KPI computation (module-level for reuse in insights) ──
+async function computeSummaryKpis(clientId: string, winFrom: Date, winTo: Date) {
     const [totalRow] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(customersTable)
@@ -1185,12 +1164,31 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
       avgTimeBetweenPurchasesDays:
         timeBetweenRow?.avg != null ? Math.round(timeBetweenRow.avg * 10) / 10 : null,
     };
+}
+
+// ─── Customer Summary (CRM KPI strip) ───────────────────────────────────────
+router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
+  const parsed = GetCustomerSummaryQueryParams.safeParse(
+    coerceDateQuery(req.query as Record<string, unknown>),
+  );
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
   }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const { dateFrom, dateTo, compare } = parsed.data;
+  const { from, to } = dateRange(dateFrom as Date | undefined, dateTo as Date | undefined);
+
+  const winLenMs = to.getTime() - from.getTime();
+  const prevFrom = new Date(from.getTime() - winLenMs);
+  const prevTo = new Date(from.getTime());
 
   const [kpis, prevKpisRaw, registrationsOverTime, registrationsByState, registrationsBySource] =
     await Promise.all([
-      computeSummaryKpis(from, to),
-      compare ? computeSummaryKpis(prevFrom, prevTo) : null,
+      computeSummaryKpis(clientId, from, to),
+      compare ? computeSummaryKpis(clientId, prevFrom, prevTo) : null,
       db
         .select({
           date: sql<string>`to_char(date_trunc('day', ${customersTable.createdAt}), 'YYYY-MM-DD')`,
@@ -1383,6 +1381,7 @@ router.get("/analytics/customers/:customerId", async (req, res): Promise<void> =
       productsPurchased: productsPurchasedRaw,
       journey: journeyPayload,
       opportunityLevel: deriveOpportunityLevel(customer),
+      assignedSeller: orders[0]?.sellerName ?? null,
     }),
   );
 });
@@ -2020,6 +2019,62 @@ No markdown, no preamble.`;
         }
       } catch (err) {
         console.warn("[insight:marketing] AI generation failed, using heuristic:", (err as Error).message);
+      }
+    }
+    const generatedAt = new Date().toISOString();
+    insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...payload, generatedAt } });
+    return { ...payload, generatedAt, cached: false };
+  }
+
+  // Customers-specific insight
+  if (screen === "customers") {
+    const cKpis = await computeSummaryKpis(clientId, from, to);
+    const hasAttribution = cKpis.approvalRatePct < 40;
+    const heuristic = {
+      headline: cKpis.totalRegistrations > 0
+        ? `${cKpis.approvedRegistrations} of ${cKpis.totalRegistrations} registrations approved (${cKpis.approvalRatePct.toFixed(1)}%)`
+        : "No registrations in this period",
+      body: cKpis.totalBuyers > 0
+        ? `${cKpis.totalBuyers} customers made purchases, while ${cKpis.customersWithoutPurchase} registered but never bought.${cKpis.avgTimeToFirstPurchaseDays != null ? ` Average time to first purchase: ${cKpis.avgTimeToFirstPurchaseDays}d.` : ""}`
+        : "No purchases recorded in this period.",
+      bullets: [
+        `Approval rate: ${cKpis.approvalRatePct.toFixed(1)}% — ${hasAttribution ? "below 40%, consider improving your approval process" : "healthy conversion from registration to approval"}`,
+        cKpis.avgTimeToFirstPurchaseDays != null
+          ? `Avg ${cKpis.avgTimeToFirstPurchaseDays}d to first purchase — optimize post-approval activation flows to reduce this`
+          : "Track time to first purchase by enabling first-purchase attribution",
+        cKpis.customersWithoutPurchase > cKpis.totalBuyers
+          ? `${cKpis.customersWithoutPurchase} registered customers never purchased — consider targeted re-engagement campaigns`
+          : "Majority of registered customers have made at least one purchase — strong activation rate",
+      ],
+    };
+    let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
+    const ai = getOpenAIClient();
+    if (ai && isAIConfigured()) {
+      try {
+        const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
+        const prompt = `You are a senior CRM analyst writing one weekly customer insight card for the brand "${brand}". Speak directly to the brand owner. Period: ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}.
+Registrations: ${cKpis.totalRegistrations} | Approved: ${cKpis.approvedRegistrations} | Approval Rate: ${cKpis.approvalRatePct.toFixed(1)}%
+Buyers: ${cKpis.totalBuyers} | Without purchase: ${cKpis.customersWithoutPurchase}
+Avg days to 1st purchase: ${cKpis.avgTimeToFirstPurchaseDays ?? "N/A"} | Avg days between purchases: ${cKpis.avgTimeBetweenPurchasesDays ?? "N/A"}
+Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 sentences>","bullets":["<actionable>","<actionable>","<actionable>"]}`;
+        const completion = await ai.chat.completions.create({
+          model: "gpt-5-nano",
+          max_completion_tokens: 500,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "You write concise, actionable B2B CRM insights for fashion retail brands. Always respond with the requested JSON shape only." },
+            { role: "user", content: prompt },
+          ],
+        });
+        const text = completion.choices[0]?.message?.content;
+        if (text) {
+          const parsed = JSON.parse(text) as { headline?: string; body?: string; bullets?: string[] };
+          if (typeof parsed.headline === "string" && typeof parsed.body === "string" && Array.isArray(parsed.bullets)) {
+            payload = { headline: parsed.headline.slice(0, 120), body: parsed.body.slice(0, 600), bullets: parsed.bullets.slice(0, 4).map((b) => String(b).slice(0, 160)), source: "ai" };
+          }
+        }
+      } catch (err) {
+        console.warn("[insight:customers] AI generation failed, using heuristic:", (err as Error).message);
       }
     }
     const generatedAt = new Date().toISOString();

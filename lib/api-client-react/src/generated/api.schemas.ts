@@ -750,6 +750,11 @@ export interface CustomerDetailResponse {
   journey: CustomerJourney;
   /** Derived from RFM segment and recency (CHAMPION, HIGH, MEDIUM, LOW) */
   opportunityLevel: string;
+  /**
+   * Name of the seller associated with the customer's most recent order
+   * @nullable
+   */
+  assignedSeller?: string | null;
 }
 
 export type ListClientsParams = {
@@ -886,6 +891,7 @@ export type GetInsightScreen =
 export const GetInsightScreen = {
   dashboard: "dashboard",
   marketing: "marketing",
+  customers: "customers",
 } as const;
 
 export type RegenerateInsightParams = {
@@ -901,6 +907,7 @@ export type RegenerateInsightScreen =
 export const RegenerateInsightScreen = {
   dashboard: "dashboard",
   marketing: "marketing",
+  customers: "customers",
 } as const;
 
 export type GetAlertsParams = {

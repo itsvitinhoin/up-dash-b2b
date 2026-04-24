@@ -12,4 +12,5 @@ export type GetInsightScreen =
 export const GetInsightScreen = {
   dashboard: "dashboard",
   marketing: "marketing",
+  customers: "customers",
 } as const;
