@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
@@ -422,6 +422,12 @@ export default function MarketingPage() {
   };
   const [creativesPage, setCreativesPage] = useState(1);
   const CREATIVES_PAGE_SIZE = 20;
+
+  // Reset page to 1 whenever the client or date window changes to avoid stale empty-table states
+  const dateFrom = dateParams.dateFrom;
+  const dateTo = dateParams.dateTo;
+  useEffect(() => { setCreativesPage(1); }, [clientId, dateFrom, dateTo]);
+
   const insightParams = { clientId, ...dateParams, screen: "marketing" as const };
 
   const { data, isLoading, isError, refetch } = useGetMarketing(
@@ -861,7 +867,7 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
               <MapPin className="h-4 w-4 text-muted-foreground" />
-              Top States by Paid Leads
+              Top States by ROAS
             </h2>
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
