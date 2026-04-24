@@ -327,7 +327,15 @@ export interface Customer {
   state?: string | null;
   /** @nullable */
   city?: string | null;
+  /** @nullable */
+  utmSource?: string | null;
+  /** @nullable */
+  utmMedium?: string | null;
+  /** @nullable */
+  utmCampaign?: string | null;
   registrationStatus: string;
+  /** @nullable */
+  approvalDate?: string | null;
   /** @nullable */
   rfmSegment?: string | null;
   /** @nullable */
@@ -641,6 +649,96 @@ export interface MarketingResponse {
   creativesTotal: number;
 }
 
+export interface CustomerSummaryKpis {
+  totalRegistrations: number;
+  approvedRegistrations: number;
+  approvalRatePct: number;
+  customersWithoutPurchase: number;
+  totalBuyers: number;
+  /** @nullable */
+  avgTimeToFirstPurchaseDays?: number | null;
+  /** @nullable */
+  avgTimeBetweenPurchasesDays?: number | null;
+}
+
+export interface CustomerRegistrationPoint {
+  date: string;
+  registrations: number;
+  approved: number;
+}
+
+export interface CustomerSourceRow {
+  source: string;
+  count: number;
+}
+
+export interface CustomerStateRow {
+  state: string;
+  count: number;
+}
+
+export interface CustomerSummaryResponse {
+  kpis: CustomerSummaryKpis;
+  prevKpis?: CustomerSummaryKpis;
+  registrationsOverTime: CustomerRegistrationPoint[];
+  registrationsByState: CustomerStateRow[];
+  registrationsBySource: CustomerSourceRow[];
+}
+
+export interface CustomerDetailOrder {
+  id: string;
+  amount: number;
+  status: string;
+  /** @nullable */
+  state?: string | null;
+  /** @nullable */
+  city?: string | null;
+  itemCount: number;
+  /** @nullable */
+  sellerName?: string | null;
+  createdAt: string;
+}
+
+export type CustomerDetailEventMetadata = { [key: string]: unknown };
+
+export interface CustomerDetailEvent {
+  id: string;
+  eventType: string;
+  /** @nullable */
+  productName?: string | null;
+  metadata?: CustomerDetailEventMetadata;
+  createdAt: string;
+}
+
+export interface CustomerDetailProduct {
+  productId: string;
+  name: string;
+  sku: string;
+  /** @nullable */
+  category?: string | null;
+  quantity: number;
+  totalSpent: number;
+}
+
+export interface CustomerJourney {
+  visits: number;
+  registered: boolean;
+  approved: boolean;
+  productViews: number;
+  addedToCart: number;
+  purchased: number;
+}
+
+export interface CustomerDetailResponse {
+  customer: Customer;
+  orders: CustomerDetailOrder[];
+  events: CustomerDetailEvent[];
+  productsPurchased: CustomerDetailProduct[];
+  journey: CustomerJourney;
+  /** Derived from RFM segment and recency (CHAMPION, HIGH, MEDIUM, LOW) */
+  opportunityLevel: string;
+}
+
 export type ListClientsParams = {
   search?: string;
   page?: number;
@@ -700,6 +798,22 @@ export type GetCustomersParams = {
   search?: string;
   page?: number;
   limit?: number;
+};
+
+export type GetCustomerSummaryParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  /**
+ * When true the response also includes prevKpis for the immediately
+preceding window of equal length.
+
+ */
+  compare?: boolean;
+};
+
+export type GetCustomerDetailParams = {
+  clientId?: string;
 };
 
 export type GetProductsParams = {

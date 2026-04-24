@@ -200,9 +200,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
                   key={customer.id}
                   value={`customer-${customer.id}-${customer.email}`}
                   onSelect={() =>
-                    handleSelect(
-                      `/customers?search=${encodeURIComponent(customer.email ?? customer.name ?? "")}`,
-                    )
+                    handleSelect(`/customers/${customer.id}`)
                   }
                   data-testid={`search-result-customer-${customer.id}`}
                 >

@@ -34,6 +34,11 @@ import {
   GetAdminOverviewResponse,
   GetMarketingQueryParams,
   GetMarketingResponse,
+  GetCustomerSummaryQueryParams,
+  GetCustomerSummaryResponse,
+  GetCustomerDetailQueryParams,
+  GetCustomerDetailParams,
+  GetCustomerDetailResponse,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
@@ -1063,6 +1068,298 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
       page,
       pages: Math.max(1, Math.ceil(count / limit)),
       segmentCounts,
+    }),
+  );
+});
+
+// ─── Customer Summary (CRM KPI strip) ───────────────────────────────────────
+router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
+  const parsed = GetCustomerSummaryQueryParams.safeParse(
+    coerceDateQuery(req.query as Record<string, unknown>),
+  );
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const { dateFrom, dateTo, compare } = parsed.data;
+  const { from, to } = dateRange(dateFrom as Date | undefined, dateTo as Date | undefined);
+
+  const winLenMs = to.getTime() - from.getTime();
+  const prevFrom = new Date(from.getTime() - winLenMs);
+  const prevTo = new Date(from.getTime());
+
+  async function computeSummaryKpis(winFrom: Date, winTo: Date) {
+    const [totalRow] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId as string),
+          gte(customersTable.createdAt, winFrom),
+          lte(customersTable.createdAt, winTo),
+        ),
+      );
+
+    const [approvedRow] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId as string),
+          eq(customersTable.registrationStatus, "APPROVED"),
+          gte(customersTable.createdAt, winFrom),
+          lte(customersTable.createdAt, winTo),
+        ),
+      );
+
+    const [buyersRow] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId as string),
+          sql`${customersTable.totalOrders} > 0`,
+        ),
+      );
+
+    const [noBuyersRow] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId as string),
+          eq(customersTable.totalOrders, 0),
+        ),
+      );
+
+    const [timeToFirstRow] = await db
+      .select({
+        avg: sql<number | null>`avg(extract(epoch from (${customersTable.firstPurchaseAt} - ${customersTable.createdAt})) / 86400)`,
+      })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId as string),
+          sql`${customersTable.firstPurchaseAt} is not null`,
+        ),
+      );
+
+    const [timeBetweenRow] = await db
+      .select({
+        avg: sql<number | null>`avg(
+          case when ${customersTable.totalOrders} > 1
+          then extract(epoch from (${customersTable.lastPurchaseAt} - ${customersTable.firstPurchaseAt})) / 86400 / (${customersTable.totalOrders} - 1)
+          else null end
+        )`,
+      })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId as string),
+          sql`${customersTable.totalOrders} > 1`,
+        ),
+      );
+
+    const total = totalRow?.count ?? 0;
+    const approved = approvedRow?.count ?? 0;
+
+    return {
+      totalRegistrations: total,
+      approvedRegistrations: approved,
+      approvalRatePct: total > 0 ? Math.round((approved / total) * 1000) / 10 : 0,
+      customersWithoutPurchase: noBuyersRow?.count ?? 0,
+      totalBuyers: buyersRow?.count ?? 0,
+      avgTimeToFirstPurchaseDays:
+        timeToFirstRow?.avg != null ? Math.round(timeToFirstRow.avg * 10) / 10 : null,
+      avgTimeBetweenPurchasesDays:
+        timeBetweenRow?.avg != null ? Math.round(timeBetweenRow.avg * 10) / 10 : null,
+    };
+  }
+
+  const [kpis, prevKpisRaw, registrationsOverTime, registrationsByState, registrationsBySource] =
+    await Promise.all([
+      computeSummaryKpis(from, to),
+      compare ? computeSummaryKpis(prevFrom, prevTo) : null,
+      db
+        .select({
+          date: sql<string>`to_char(date_trunc('day', ${customersTable.createdAt}), 'YYYY-MM-DD')`,
+          registrations: sql<number>`count(*)::int`,
+          approved: sql<number>`sum(case when ${customersTable.registrationStatus} = 'APPROVED' then 1 else 0 end)::int`,
+        })
+        .from(customersTable)
+        .where(
+          and(
+            eq(customersTable.clientId, clientId),
+            gte(customersTable.createdAt, from),
+            lte(customersTable.createdAt, to),
+          ),
+        )
+        .groupBy(sql`date_trunc('day', ${customersTable.createdAt})`)
+        .orderBy(sql`date_trunc('day', ${customersTable.createdAt})`),
+      db
+        .select({
+          state: sql<string>`coalesce(${customersTable.state}, 'Unknown')`,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(customersTable)
+        .where(eq(customersTable.clientId, clientId))
+        .groupBy(customersTable.state)
+        .orderBy(sql`count(*) desc`)
+        .limit(10),
+      db
+        .select({
+          source: sql<string>`coalesce(${customersTable.utmSource}, 'Direct')`,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(customersTable)
+        .where(eq(customersTable.clientId, clientId))
+        .groupBy(customersTable.utmSource)
+        .orderBy(sql`count(*) desc`)
+        .limit(10),
+    ]);
+
+  const payload: Record<string, unknown> = {
+    kpis,
+    registrationsOverTime,
+    registrationsByState,
+    registrationsBySource,
+  };
+  if (prevKpisRaw) payload.prevKpis = prevKpisRaw;
+
+  res.json(GetCustomerSummaryResponse.parse(payload));
+});
+
+// ─── Customer Detail ─────────────────────────────────────────────────────────
+router.get("/analytics/customers/:customerId", async (req, res): Promise<void> => {
+  const pathParsed = GetCustomerDetailParams.safeParse(req.params);
+  if (!pathParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: pathParsed.error.message, status: 400 });
+    return;
+  }
+  const queryParsed = GetCustomerDetailQueryParams.safeParse(req.query);
+  if (!queryParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: queryParsed.error.message, status: 400 });
+    return;
+  }
+
+  const clientId = resolveClientId(req) ?? queryParsed.data.clientId;
+  if (!clientId) {
+    res.status(400).json({ error: true, code: "CLIENT_REQUIRED", message: "clientId is required for admin users", status: 400 });
+    return;
+  }
+
+  const { customerId } = pathParsed.data;
+
+  const [customer] = await db
+    .select()
+    .from(customersTable)
+    .where(and(eq(customersTable.id, customerId), eq(customersTable.clientId, clientId)));
+
+  if (!customer) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Customer not found", status: 404 });
+    return;
+  }
+
+  const [orders, events, productsPurchasedRaw, journey] = await Promise.all([
+    db
+      .select({
+        id: ordersTable.id,
+        amount: ordersTable.amount,
+        status: ordersTable.status,
+        state: ordersTable.state,
+        city: ordersTable.city,
+        createdAt: ordersTable.createdAt,
+        sellerName: sellersTable.name,
+        itemCount: sql<number>`(select count(*) from order_items where order_id = ${ordersTable.id})::int`,
+      })
+      .from(ordersTable)
+      .leftJoin(sellersTable, eq(ordersTable.sellerId, sellersTable.id))
+      .where(and(eq(ordersTable.customerId, customerId), eq(ordersTable.clientId, clientId)))
+      .orderBy(desc(ordersTable.createdAt))
+      .limit(50),
+    db
+      .select({
+        id: eventsTable.id,
+        eventType: eventsTable.eventType,
+        metadata: eventsTable.metadata,
+        createdAt: eventsTable.createdAt,
+        productName: productsTable.name,
+      })
+      .from(eventsTable)
+      .leftJoin(productsTable, eq(eventsTable.productId, productsTable.id))
+      .where(and(eq(eventsTable.customerId, customerId), eq(eventsTable.clientId, clientId)))
+      .orderBy(desc(eventsTable.createdAt))
+      .limit(100),
+    db
+      .select({
+        productId: productsTable.id,
+        name: productsTable.name,
+        sku: productsTable.sku,
+        category: productsTable.category,
+        quantity: sql<number>`sum(${orderItemsTable.quantity})::int`,
+        totalSpent: sql<number>`sum(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale})`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+      .where(and(eq(ordersTable.customerId, customerId), eq(ordersTable.clientId, clientId)))
+      .groupBy(productsTable.id, productsTable.name, productsTable.sku, productsTable.category)
+      .orderBy(sql`sum(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale}) desc`)
+      .limit(20),
+    db
+      .select({
+        eventType: eventsTable.eventType,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(eventsTable)
+      .where(and(eq(eventsTable.customerId, customerId), eq(eventsTable.clientId, clientId)))
+      .groupBy(eventsTable.eventType),
+  ]);
+
+  const journeyMap = Object.fromEntries(journey.map((j) => [j.eventType, j.count]));
+  const journeyPayload = {
+    visits: journeyMap["VISIT"] ?? 0,
+    registered: customer.registrationStatus !== "PENDING",
+    approved: customer.registrationStatus === "APPROVED",
+    productViews: journeyMap["PRODUCT_VIEW"] ?? 0,
+    addedToCart: journeyMap["ADD_TO_CART"] ?? 0,
+    purchased: journeyMap["PURCHASE"] ?? 0,
+  };
+
+  function deriveOpportunityLevel(c: typeof customer): string {
+    if (c.rfmSegment === "Champions") return "CHAMPION";
+    if (c.rfmSegment === "Loyal") return "HIGH";
+    if (c.rfmSegment === "Potential") return "MEDIUM";
+    if (c.rfmSegment === "At Risk" || c.rfmSegment === "Lost") return "LOW";
+    if (c.totalOrders > 5) return "HIGH";
+    if (c.totalOrders > 0) return "MEDIUM";
+    return "LOW";
+  }
+
+  res.json(
+    GetCustomerDetailResponse.parse({
+      customer: {
+        ...customer,
+        firstPurchaseAt: customer.firstPurchaseAt?.toISOString() ?? null,
+        lastPurchaseAt: customer.lastPurchaseAt?.toISOString() ?? null,
+        approvalDate: customer.approvalDate?.toISOString() ?? null,
+        createdAt: customer.createdAt.toISOString(),
+      },
+      orders: orders.map((o) => ({
+        ...o,
+        createdAt: o.createdAt.toISOString(),
+      })),
+      events: events.map((e) => ({
+        ...e,
+        createdAt: e.createdAt.toISOString(),
+        metadata: (e.metadata as Record<string, unknown>) ?? {},
+      })),
+      productsPurchased: productsPurchasedRaw,
+      journey: journeyPayload,
+      opportunityLevel: deriveOpportunityLevel(customer),
     }),
   );
 });

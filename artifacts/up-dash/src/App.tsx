@@ -18,6 +18,7 @@ import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
 import FunnelPage from "@/pages/funnel";
 import CustomersPage from "@/pages/customers";
+import CustomerDetailPage from "@/pages/customer-detail";
 import ProductsPage from "@/pages/products";
 import SellersPage from "@/pages/sellers";
 import GeographyPage from "@/pages/geography";
@@ -78,6 +79,14 @@ function Router() {
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="funnel"><FunnelPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/customers/:customerId">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="customer-detail"><CustomerDetailPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

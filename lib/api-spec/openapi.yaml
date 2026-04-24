@@ -333,6 +333,70 @@ paths:
               schema:
                 $ref: "#/components/schemas/PaginatedCustomers"
 
+  /analytics/customers/summary:
+    get:
+      operationId: getCustomerSummary
+      tags: [analytics]
+      summary: CRM KPI strip — registrations, approvals, buyers, time-to-purchase
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: compare
+          schema:
+            type: boolean
+          description: |
+            When true the response also includes prevKpis for the immediately
+            preceding window of equal length.
+      responses:
+        "200":
+          description: Customer summary payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerSummaryResponse"
+
+  /analytics/customers/{customerId}:
+    get:
+      operationId: getCustomerDetail
+      tags: [analytics]
+      summary: Full CRM profile for a single customer
+      parameters:
+        - in: path
+          name: customerId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: clientId
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Customer detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerDetailResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /analytics/products:
     get:
       operationId: getProducts
@@ -1326,8 +1390,17 @@ components:
           type: ["string", "null"]
         city:
           type: ["string", "null"]
+        utmSource:
+          type: ["string", "null"]
+        utmMedium:
+          type: ["string", "null"]
+        utmCampaign:
+          type: ["string", "null"]
         registrationStatus:
           type: string
+        approvalDate:
+          type: ["string", "null"]
+          format: date-time
         rfmSegment:
           type: ["string", "null"]
         recencyScore:
@@ -1843,3 +1916,174 @@ components:
           type: integer
           description: Total number of creatives before pagination
       required: [kpis, prevKpis, leadsOverTime, revenueOverTime, spendOverTime, creatives, platformBreakdown, stateBreakdown, ageBreakdown, creativesTotal]
+
+    CustomerSummaryKpis:
+      type: object
+      properties:
+        totalRegistrations:
+          type: integer
+        approvedRegistrations:
+          type: integer
+        approvalRatePct:
+          type: number
+        customersWithoutPurchase:
+          type: integer
+        totalBuyers:
+          type: integer
+        avgTimeToFirstPurchaseDays:
+          type: ["number", "null"]
+        avgTimeBetweenPurchasesDays:
+          type: ["number", "null"]
+      required:
+        - totalRegistrations
+        - approvedRegistrations
+        - approvalRatePct
+        - customersWithoutPurchase
+        - totalBuyers
+
+    CustomerRegistrationPoint:
+      type: object
+      properties:
+        date:
+          type: string
+        registrations:
+          type: integer
+        approved:
+          type: integer
+      required: [date, registrations, approved]
+
+    CustomerSourceRow:
+      type: object
+      properties:
+        source:
+          type: string
+        count:
+          type: integer
+      required: [source, count]
+
+    CustomerStateRow:
+      type: object
+      properties:
+        state:
+          type: string
+        count:
+          type: integer
+      required: [state, count]
+
+    CustomerSummaryResponse:
+      type: object
+      properties:
+        kpis:
+          $ref: "#/components/schemas/CustomerSummaryKpis"
+        prevKpis:
+          $ref: "#/components/schemas/CustomerSummaryKpis"
+        registrationsOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomerRegistrationPoint"
+        registrationsByState:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomerStateRow"
+        registrationsBySource:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomerSourceRow"
+      required: [kpis, registrationsOverTime, registrationsByState, registrationsBySource]
+
+    CustomerDetailOrder:
+      type: object
+      properties:
+        id:
+          type: string
+        amount:
+          type: number
+        status:
+          type: string
+        state:
+          type: ["string", "null"]
+        city:
+          type: ["string", "null"]
+        itemCount:
+          type: integer
+        sellerName:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, amount, status, itemCount, createdAt]
+
+    CustomerDetailEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        eventType:
+          type: string
+        productName:
+          type: ["string", "null"]
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, eventType, createdAt]
+
+    CustomerDetailProduct:
+      type: object
+      properties:
+        productId:
+          type: string
+        name:
+          type: string
+        sku:
+          type: string
+        category:
+          type: ["string", "null"]
+        quantity:
+          type: integer
+        totalSpent:
+          type: number
+      required: [productId, name, sku, quantity, totalSpent]
+
+    CustomerJourney:
+      type: object
+      properties:
+        visits:
+          type: integer
+        registered:
+          type: boolean
+        approved:
+          type: boolean
+        productViews:
+          type: integer
+        addedToCart:
+          type: integer
+        purchased:
+          type: integer
+      required: [visits, registered, approved, productViews, addedToCart, purchased]
+
+    CustomerDetailResponse:
+      type: object
+      properties:
+        customer:
+          $ref: "#/components/schemas/Customer"
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomerDetailOrder"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomerDetailEvent"
+        productsPurchased:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomerDetailProduct"
+        journey:
+          $ref: "#/components/schemas/CustomerJourney"
+        opportunityLevel:
+          type: string
+          description: Derived from RFM segment and recency (CHAMPION, HIGH, MEDIUM, LOW)
+      required: [customer, orders, events, productsPurchased, journey, opportunityLevel]

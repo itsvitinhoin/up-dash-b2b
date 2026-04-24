@@ -24,12 +24,16 @@ import type {
   CreateClientRequest,
   CreateSavedViewParams,
   CreateSavedViewRequest,
+  CustomerDetailResponse,
+  CustomerSummaryResponse,
   DashboardResponse,
   ErrorResponse,
   FunnelResponse,
   GeographyResponse,
   GetAdminOverviewParams,
   GetAlertsParams,
+  GetCustomerDetailParams,
+  GetCustomerSummaryParams,
   GetCustomersParams,
   GetDashboardParams,
   GetFunnelParams,
@@ -1010,6 +1014,229 @@ export function useGetCustomers<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetCustomersQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary CRM KPI strip — registrations, approvals, buyers, time-to-purchase
+ */
+export const getGetCustomerSummaryUrl = (params?: GetCustomerSummaryParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/customers/summary?${stringifiedParams}`
+    : `/api/analytics/customers/summary`;
+};
+
+export const getCustomerSummary = async (
+  params?: GetCustomerSummaryParams,
+  options?: RequestInit,
+): Promise<CustomerSummaryResponse> => {
+  return customFetch<CustomerSummaryResponse>(
+    getGetCustomerSummaryUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetCustomerSummaryQueryKey = (
+  params?: GetCustomerSummaryParams,
+) => {
+  return [
+    `/api/analytics/customers/summary`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetCustomerSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCustomerSummary>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetCustomerSummaryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCustomerSummary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetCustomerSummaryQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCustomerSummary>>
+  > = ({ signal }) => getCustomerSummary(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCustomerSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCustomerSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCustomerSummary>>
+>;
+export type GetCustomerSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary CRM KPI strip — registrations, approvals, buyers, time-to-purchase
+ */
+
+export function useGetCustomerSummary<
+  TData = Awaited<ReturnType<typeof getCustomerSummary>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetCustomerSummaryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCustomerSummary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCustomerSummaryQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Full CRM profile for a single customer
+ */
+export const getGetCustomerDetailUrl = (
+  customerId: string,
+  params?: GetCustomerDetailParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/customers/${customerId}?${stringifiedParams}`
+    : `/api/analytics/customers/${customerId}`;
+};
+
+export const getCustomerDetail = async (
+  customerId: string,
+  params?: GetCustomerDetailParams,
+  options?: RequestInit,
+): Promise<CustomerDetailResponse> => {
+  return customFetch<CustomerDetailResponse>(
+    getGetCustomerDetailUrl(customerId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetCustomerDetailQueryKey = (
+  customerId: string,
+  params?: GetCustomerDetailParams,
+) => {
+  return [
+    `/api/analytics/customers/${customerId}`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetCustomerDetailQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCustomerDetail>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  customerId: string,
+  params?: GetCustomerDetailParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCustomerDetail>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetCustomerDetailQueryKey(customerId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCustomerDetail>>
+  > = ({ signal }) =>
+    getCustomerDetail(customerId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!customerId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCustomerDetail>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCustomerDetailQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCustomerDetail>>
+>;
+export type GetCustomerDetailQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Full CRM profile for a single customer
+ */
+
+export function useGetCustomerDetail<
+  TData = Awaited<ReturnType<typeof getCustomerDetail>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  customerId: string,
+  params?: GetCustomerDetailParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCustomerDetail>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCustomerDetailQueryOptions(
+    customerId,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

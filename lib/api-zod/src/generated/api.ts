@@ -453,7 +453,11 @@ export const GetCustomersResponse = zod.object({
       phone: zod.string().nullish(),
       state: zod.string().nullish(),
       city: zod.string().nullish(),
+      utmSource: zod.string().nullish(),
+      utmMedium: zod.string().nullish(),
+      utmCampaign: zod.string().nullish(),
       registrationStatus: zod.string(),
+      approvalDate: zod.coerce.date().nullish(),
       rfmSegment: zod.string().nullish(),
       recencyScore: zod.number().nullish(),
       frequencyScore: zod.number().nullish(),
@@ -474,6 +478,144 @@ export const GetCustomersResponse = zod.object({
       count: zod.number(),
     }),
   ),
+});
+
+/**
+ * @summary CRM KPI strip — registrations, approvals, buyers, time-to-purchase
+ */
+export const GetCustomerSummaryQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+  compare: zod.coerce
+    .boolean()
+    .optional()
+    .describe(
+      "When true the response also includes prevKpis for the immediately\npreceding window of equal length.\n",
+    ),
+});
+
+export const GetCustomerSummaryResponse = zod.object({
+  kpis: zod.object({
+    totalRegistrations: zod.number(),
+    approvedRegistrations: zod.number(),
+    approvalRatePct: zod.number(),
+    customersWithoutPurchase: zod.number(),
+    totalBuyers: zod.number(),
+    avgTimeToFirstPurchaseDays: zod.number().nullish(),
+    avgTimeBetweenPurchasesDays: zod.number().nullish(),
+  }),
+  prevKpis: zod
+    .object({
+      totalRegistrations: zod.number(),
+      approvedRegistrations: zod.number(),
+      approvalRatePct: zod.number(),
+      customersWithoutPurchase: zod.number(),
+      totalBuyers: zod.number(),
+      avgTimeToFirstPurchaseDays: zod.number().nullish(),
+      avgTimeBetweenPurchasesDays: zod.number().nullish(),
+    })
+    .optional(),
+  registrationsOverTime: zod.array(
+    zod.object({
+      date: zod.string(),
+      registrations: zod.number(),
+      approved: zod.number(),
+    }),
+  ),
+  registrationsByState: zod.array(
+    zod.object({
+      state: zod.string(),
+      count: zod.number(),
+    }),
+  ),
+  registrationsBySource: zod.array(
+    zod.object({
+      source: zod.string(),
+      count: zod.number(),
+    }),
+  ),
+});
+
+/**
+ * @summary Full CRM profile for a single customer
+ */
+export const GetCustomerDetailParams = zod.object({
+  customerId: zod.coerce.string(),
+});
+
+export const GetCustomerDetailQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+});
+
+export const GetCustomerDetailResponse = zod.object({
+  customer: zod.object({
+    id: zod.string(),
+    clientId: zod.string(),
+    email: zod.string(),
+    name: zod.string().nullish(),
+    phone: zod.string().nullish(),
+    state: zod.string().nullish(),
+    city: zod.string().nullish(),
+    utmSource: zod.string().nullish(),
+    utmMedium: zod.string().nullish(),
+    utmCampaign: zod.string().nullish(),
+    registrationStatus: zod.string(),
+    approvalDate: zod.coerce.date().nullish(),
+    rfmSegment: zod.string().nullish(),
+    recencyScore: zod.number().nullish(),
+    frequencyScore: zod.number().nullish(),
+    monetaryScore: zod.number().nullish(),
+    totalOrders: zod.number(),
+    totalSpent: zod.number(),
+    firstPurchaseAt: zod.coerce.date().nullish(),
+    lastPurchaseAt: zod.coerce.date().nullish(),
+    createdAt: zod.coerce.date(),
+  }),
+  orders: zod.array(
+    zod.object({
+      id: zod.string(),
+      amount: zod.number(),
+      status: zod.string(),
+      state: zod.string().nullish(),
+      city: zod.string().nullish(),
+      itemCount: zod.number(),
+      sellerName: zod.string().nullish(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+  events: zod.array(
+    zod.object({
+      id: zod.string(),
+      eventType: zod.string(),
+      productName: zod.string().nullish(),
+      metadata: zod.record(zod.string(), zod.unknown()).optional(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+  productsPurchased: zod.array(
+    zod.object({
+      productId: zod.string(),
+      name: zod.string(),
+      sku: zod.string(),
+      category: zod.string().nullish(),
+      quantity: zod.number(),
+      totalSpent: zod.number(),
+    }),
+  ),
+  journey: zod.object({
+    visits: zod.number(),
+    registered: zod.boolean(),
+    approved: zod.boolean(),
+    productViews: zod.number(),
+    addedToCart: zod.number(),
+    purchased: zod.number(),
+  }),
+  opportunityLevel: zod
+    .string()
+    .describe(
+      "Derived from RFM segment and recency (CHAMPION, HIGH, MEDIUM, LOW)",
+    ),
 });
 
 /**

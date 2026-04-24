@@ -18,7 +18,15 @@ export interface Customer {
   state?: string | null;
   /** @nullable */
   city?: string | null;
+  /** @nullable */
+  utmSource?: string | null;
+  /** @nullable */
+  utmMedium?: string | null;
+  /** @nullable */
+  utmCampaign?: string | null;
   registrationStatus: string;
+  /** @nullable */
+  approvalDate?: Date | null;
   /** @nullable */
   rfmSegment?: string | null;
   /** @nullable */
