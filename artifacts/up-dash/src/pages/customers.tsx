@@ -72,9 +72,6 @@ export default function CustomersPage() {
 
   return (
     <div className="space-y-6" data-testid="page-customers">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-3xl font-bold tracking-tight">Customers</h1>
-      </div>
 
       <Card>
         <CardContent className="p-4">

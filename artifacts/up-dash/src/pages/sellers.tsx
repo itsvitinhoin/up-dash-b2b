@@ -33,10 +33,8 @@ export default function SellersPage() {
 
   return (
     <div className="space-y-6" data-testid="page-sellers">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-3xl font-bold tracking-tight">Top Sellers</h1>
-        
-        <div className="flex items-center gap-2 bg-card p-1 rounded-md border">
+      <div className="flex justify-end">
+        <div className="flex items-center gap-2 bg-card p-1 rounded-md border border-border">
           <span className="text-sm font-medium text-muted-foreground px-2">Show top</span>
           <Select value={limit.toString()} onValueChange={(val) => setLimit(Number(val))}>
             <SelectTrigger className="w-[80px] border-none shadow-none h-8">

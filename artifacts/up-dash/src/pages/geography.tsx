@@ -1,9 +1,8 @@
-import { useState } from "react";
-import { subDays, format } from "date-fns";
+import { format } from "date-fns";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useGetGeography } from "@workspace/api-client-react";
-import { DateRangePicker, DateRange } from "@/components/date-range-picker";
+import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
@@ -26,10 +25,7 @@ import {
 
 export default function GeographyPage() {
   const { selectedClientId, user } = useAuth();
-  const [dateRange, setDateRange] = useState<DateRange>({
-    from: subDays(new Date(), 30),
-    to: new Date(),
-  });
+  const { dateRange } = useDashboardFilters();
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
 
@@ -52,11 +48,6 @@ export default function GeographyPage() {
 
   return (
     <div className="space-y-6" data-testid="page-geography">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-3xl font-bold tracking-tight">Geography</h1>
-        <DateRangePicker value={dateRange} onChange={setDateRange} />
-      </div>
-
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />

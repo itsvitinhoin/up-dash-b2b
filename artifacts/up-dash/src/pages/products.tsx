@@ -39,9 +39,6 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-6" data-testid="page-products">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-3xl font-bold tracking-tight">Products</h1>
-      </div>
 
       <Card>
         <CardContent className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">

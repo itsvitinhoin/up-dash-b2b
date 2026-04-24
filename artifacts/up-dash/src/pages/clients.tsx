@@ -83,9 +83,7 @@ export default function ClientsPage() {
 
   return (
     <div className="space-y-6" data-testid="page-clients">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-3xl font-bold tracking-tight">Clients Management</h1>
-        
+      <div className="flex justify-end">
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button>

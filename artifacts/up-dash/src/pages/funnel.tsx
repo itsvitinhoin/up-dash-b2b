@@ -1,9 +1,8 @@
-import { useState } from "react";
-import { subDays, format } from "date-fns";
+import { format } from "date-fns";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useGetFunnel } from "@workspace/api-client-react";
-import { DateRangePicker, DateRange } from "@/components/date-range-picker";
+import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,10 +13,7 @@ import { Badge } from "@/components/ui/badge";
 
 export default function FunnelPage() {
   const { selectedClientId, user } = useAuth();
-  const [dateRange, setDateRange] = useState<DateRange>({
-    from: subDays(new Date(), 30),
-    to: new Date(),
-  });
+  const { dateRange } = useDashboardFilters();
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
 
@@ -36,11 +32,6 @@ export default function FunnelPage() {
 
   return (
     <div className="space-y-6" data-testid="page-funnel">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-3xl font-bold tracking-tight">Conversion Funnel</h1>
-        <DateRangePicker value={dateRange} onChange={setDateRange} />
-      </div>
-
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />

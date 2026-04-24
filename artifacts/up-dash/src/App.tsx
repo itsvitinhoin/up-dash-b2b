@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { AppLayout } from "@/components/app-layout";
 import { AuthGuard } from "@/components/auth-guard";
 import { handleApiError } from "@/lib/api-error";
+import { DashboardFiltersProvider } from "@/lib/dashboard-filters";
 import { useMemo, useEffect, useState } from "react";
 
 import NotFound from "@/pages/not-found";
@@ -120,14 +121,16 @@ function Router() {
 
 function App() {
   return (
-    <ThemeProvider defaultTheme="light" storageKey="updash-theme">
+    <ThemeProvider defaultTheme="dark" storageKey="updash-theme">
       <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
         <AuthProvider>
           <ApiErrorBoundary>
-            <TooltipProvider>
-              <Router />
-              <Toaster />
-            </TooltipProvider>
+            <DashboardFiltersProvider>
+              <TooltipProvider>
+                <Router />
+                <Toaster />
+              </TooltipProvider>
+            </DashboardFiltersProvider>
           </ApiErrorBoundary>
         </AuthProvider>
       </WouterRouter>
