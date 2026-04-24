@@ -161,6 +161,18 @@ export const GetDashboardQueryParams = zod.object({
     .string()
     .optional()
     .describe("Restrict order metrics to a single seller."),
+  channel: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict to orders from customers acquired via a UTM source (e.g. instagram, google).",
+    ),
+  segment: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict to orders from customers in a specific RFM segment (VIP, Loyal, etc.).",
+    ),
 });
 
 export const GetDashboardResponse = zod.object({

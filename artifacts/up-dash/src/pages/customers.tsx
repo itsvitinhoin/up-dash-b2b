@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Search, Inbox, Download } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
@@ -197,11 +198,13 @@ export default function CustomersPage() {
                   ))
                 ) : data?.data.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
-                      <div className="flex flex-col items-center justify-center">
-                        <Inbox className="h-8 w-8 mb-2 text-muted-foreground/50" />
-                        No customers found matching your filters.
-                      </div>
+                    <TableCell colSpan={6} className="p-0">
+                      <EmptyState
+                        icon={Inbox}
+                        title="No customers match these filters"
+                        description="Try widening the date range or clearing search and segment filters to see more results."
+                        className="m-4 border-0 bg-transparent"
+                      />
                     </TableCell>
                   </TableRow>
                 ) : (

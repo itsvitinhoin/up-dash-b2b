@@ -88,11 +88,30 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
-  const { category, sellerId } = parsed.data;
+  const { category, sellerId, channel, segment } = parsed.data;
 
-  // For category filtering we need to constrain to orders that contain a line
-  // item in that category. We pre-resolve the matching order ids once so each
-  // aggregation can re-use the same scope without rejoining order_items.
+  // Pre-resolve filter scopes once and reuse across all aggregations.
+  // Category → orders containing a line item in that category.
+  // Channel/segment → orders placed by customers matching utmSource / rfmSegment.
+  const emptyResponse = () =>
+    GetDashboardResponse.parse({
+      kpis: {
+        revenue: 0,
+        orders: 0,
+        avgTicket: 0,
+        conversionRate: 0,
+        approvalRate: 0,
+        leads: 0,
+        approvedLeads: 0,
+        customers: 0,
+        repeatCustomers: 0,
+      },
+      revenueOverTime: [],
+      ordersOverTime: [],
+      leadsOverTime: [],
+      revenueByCategory: [],
+    });
+
   let categoryOrderIds: string[] | null = null;
   if (category) {
     const rows = await db
@@ -111,6 +130,18 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     categoryOrderIds = rows.map((r) => r.id);
   }
 
+  let scopedCustomerIds: string[] | null = null;
+  if (channel || segment) {
+    const custConds: SQL[] = [eq(customersTable.clientId, clientId)];
+    if (channel) custConds.push(eq(customersTable.utmSource, channel));
+    if (segment) custConds.push(eq(customersTable.rfmSegment, segment));
+    const rows = await db
+      .select({ id: customersTable.id })
+      .from(customersTable)
+      .where(and(...custConds));
+    scopedCustomerIds = rows.map((r) => r.id);
+  }
+
   const orderConds: SQL[] = [
     eq(ordersTable.clientId, clientId),
     gte(ordersTable.createdAt, from),
@@ -119,31 +150,24 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   if (sellerId) orderConds.push(eq(ordersTable.sellerId, sellerId));
   if (categoryOrderIds !== null) {
     if (categoryOrderIds.length === 0) {
-      // Nothing in scope — short circuit with empty payload.
-      res.json(
-        GetDashboardResponse.parse({
-          kpis: {
-            revenue: 0,
-            orders: 0,
-            avgTicket: 0,
-            conversionRate: 0,
-            approvalRate: 0,
-            leads: 0,
-            approvedLeads: 0,
-            customers: 0,
-            repeatCustomers: 0,
-          },
-          revenueOverTime: [],
-          ordersOverTime: [],
-          leadsOverTime: [],
-          revenueByCategory: [],
-        }),
-      );
+      res.json(emptyResponse());
       return;
     }
     orderConds.push(
       sql`${ordersTable.id} IN (${sql.join(
         categoryOrderIds.map((id) => sql`${id}`),
+        sql`, `,
+      )})`,
+    );
+  }
+  if (scopedCustomerIds !== null) {
+    if (scopedCustomerIds.length === 0) {
+      res.json(emptyResponse());
+      return;
+    }
+    orderConds.push(
+      sql`${ordersTable.customerId} IN (${sql.join(
+        scopedCustomerIds.map((id) => sql`${id}`),
         sql`, `,
       )})`,
     );

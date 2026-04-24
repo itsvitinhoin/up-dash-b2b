@@ -188,18 +188,15 @@ const CHART_METRICS = [
 type ChartMetric = (typeof CHART_METRICS)[number]["id"];
 
 function detectAnomalies(series: { date: string; value: number }[]): { date: string; value: number }[] {
-  if (series.length < 8) return [];
-  const anomalies: { date: string; value: number }[] = [];
-  for (let i = 7; i < series.length; i++) {
-    const window = series.slice(i - 7, i);
-    const avg = window.reduce((s, p) => s + p.value, 0) / window.length;
-    const variance =
-      window.reduce((s, p) => s + Math.pow(p.value - avg, 2), 0) / window.length;
-    const std = Math.sqrt(variance);
-    const z = std === 0 ? 0 : (series[i].value - avg) / std;
-    if (Math.abs(z) >= 1.8) anomalies.push(series[i]);
-  }
-  return anomalies;
+  // ±2σ from the series mean — flag any point whose value is more than two
+  // standard deviations away from the average for the visible date range.
+  if (series.length < 4) return [];
+  const mean = series.reduce((s, p) => s + p.value, 0) / series.length;
+  const variance =
+    series.reduce((s, p) => s + Math.pow(p.value - mean, 2), 0) / series.length;
+  const std = Math.sqrt(variance);
+  if (std === 0) return [];
+  return series.filter((p) => Math.abs(p.value - mean) >= 2 * std);
 }
 
 export default function DashboardPage() {
@@ -222,6 +219,8 @@ export default function DashboardPage() {
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
       category: filters.category ?? undefined,
       sellerId: filters.sellerId ?? undefined,
+      channel: filters.channel ?? undefined,
+      segment: filters.segment ?? undefined,
     },
     { query: queryOpts({ enabled }) },
   );
@@ -236,6 +235,8 @@ export default function DashboardPage() {
       dateTo: format(prevTo, "yyyy-MM-dd"),
       category: filters.category ?? undefined,
       sellerId: filters.sellerId ?? undefined,
+      channel: filters.channel ?? undefined,
+      segment: filters.segment ?? undefined,
     },
     { query: queryOpts({ enabled }) },
   );

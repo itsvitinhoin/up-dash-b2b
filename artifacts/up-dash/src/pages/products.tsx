@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, PackageOpen, ArrowDownUp, Download } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
@@ -150,11 +151,13 @@ export default function ProductsPage() {
                   ))
                 ) : data?.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
-                      <div className="flex flex-col items-center justify-center">
-                        <PackageOpen className="h-8 w-8 mb-2 text-muted-foreground/50" />
-                        No products found.
-                      </div>
+                    <TableCell colSpan={7} className="p-0">
+                      <EmptyState
+                        icon={PackageOpen}
+                        title="No products to show"
+                        description="There are no products with sales in the selected date range. Try expanding the range or clearing filters."
+                        className="m-4 border-0 bg-transparent"
+                      />
                     </TableCell>
                   </TableRow>
                 ) : (

@@ -6,6 +6,7 @@ import {
   useCreateSavedView,
   useDeleteSavedView,
   getListSavedViewsQueryKey,
+  useGetSellers,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -40,6 +41,22 @@ const CATEGORY_OPTIONS = [
   { value: "Accessories", label: "Accessories" },
 ];
 
+const CHANNEL_OPTIONS = [
+  { value: "instagram", label: "Instagram" },
+  { value: "google", label: "Google" },
+  { value: "tiktok", label: "TikTok" },
+  { value: "facebook", label: "Facebook" },
+  { value: "youtube", label: "YouTube" },
+];
+
+const SEGMENT_OPTIONS = [
+  { value: "VIP", label: "VIP" },
+  { value: "Loyal", label: "Loyal" },
+  { value: "Promising", label: "Promising" },
+  { value: "At-Risk", label: "At Risk" },
+  { value: "Hibernating", label: "Hibernating" },
+];
+
 export function FilterBar() {
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
@@ -53,6 +70,15 @@ export function FilterBar() {
   const { data: views } = useListSavedViews(
     { clientId },
     { query: queryOpts({ enabled }) },
+  );
+
+  const { data: sellers } = useGetSellers(
+    { clientId, limit: 50 },
+    { query: queryOpts({ enabled }) },
+  );
+  const sellerOptions = useMemo(
+    () => (sellers ?? []).map((s) => ({ value: s.id, label: s.name })),
+    [sellers],
   );
 
   const createView = useCreateSavedView({
@@ -88,10 +114,14 @@ export function FilterBar() {
     const chips: { key: keyof DashboardFilters; label: string; value: string }[] = [];
     if (filters.category)
       chips.push({ key: "category", label: "Category", value: labelFor(CATEGORY_OPTIONS, filters.category) });
+    if (filters.channel)
+      chips.push({ key: "channel", label: "Channel", value: labelFor(CHANNEL_OPTIONS, filters.channel) });
+    if (filters.segment)
+      chips.push({ key: "segment", label: "Segment", value: labelFor(SEGMENT_OPTIONS, filters.segment) });
     if (filters.sellerId)
-      chips.push({ key: "sellerId", label: "Seller", value: filters.sellerId });
+      chips.push({ key: "sellerId", label: "Seller", value: labelFor(sellerOptions, filters.sellerId) });
     return chips;
-  }, [filters]);
+  }, [filters, sellerOptions]);
 
   return (
     <div
@@ -104,6 +134,27 @@ export function FilterBar() {
         options={CATEGORY_OPTIONS}
         onChange={(v) => setFilter("category", v)}
         testId="filter-category"
+      />
+      <FilterSelect
+        placeholder="Channel"
+        value={filters.channel}
+        options={CHANNEL_OPTIONS}
+        onChange={(v) => setFilter("channel", v)}
+        testId="filter-channel"
+      />
+      <FilterSelect
+        placeholder="Segment"
+        value={filters.segment}
+        options={SEGMENT_OPTIONS}
+        onChange={(v) => setFilter("segment", v)}
+        testId="filter-segment"
+      />
+      <FilterSelect
+        placeholder="Seller"
+        value={filters.sellerId}
+        options={sellerOptions}
+        onChange={(v) => setFilter("sellerId", v)}
+        testId="filter-seller"
       />
 
       {activeChips.length > 0 && (
@@ -162,6 +213,8 @@ export function FilterBar() {
                   filters: {
                     category: view.filters.category ?? null,
                     sellerId: view.filters.sellerId ?? null,
+                    channel: view.filters.channel ?? null,
+                    segment: view.filters.segment ?? null,
                   },
                 })
               }
@@ -215,6 +268,8 @@ export function FilterBar() {
                         dateTo: format(dateRange.to, "yyyy-MM-dd"),
                         category: filters.category,
                         sellerId: filters.sellerId,
+                        channel: filters.channel,
+                        segment: filters.segment,
                       },
                     },
                   });
@@ -237,6 +292,8 @@ export function FilterBar() {
                       dateTo: format(dateRange.to, "yyyy-MM-dd"),
                       category: filters.category,
                       sellerId: filters.sellerId,
+                      channel: filters.channel,
+                      segment: filters.segment,
                     },
                   },
                 });
@@ -272,7 +329,7 @@ function FilterSelect({ placeholder, value, options, onChange, testId }: FilterS
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__all">All {placeholder.toLowerCase()}s</SelectItem>
+        <SelectItem value="__all">All {pluralize(placeholder)}</SelectItem>
         {options.map((opt) => (
           <SelectItem key={opt.value} value={opt.value}>
             {opt.label}
@@ -285,6 +342,14 @@ function FilterSelect({ placeholder, value, options, onChange, testId }: FilterS
 
 function labelFor(opts: { value: string; label: string }[], v: string): string {
   return opts.find((o) => o.value === v)?.label ?? v;
+}
+
+function pluralize(word: string): string {
+  const lower = word.toLowerCase();
+  if (lower === "category") return "categories";
+  if (lower.endsWith("y")) return `${lower.slice(0, -1)}ies`;
+  if (lower.endsWith("s")) return lower;
+  return `${lower}s`;
 }
 
 // Re-export used by saved view filter shape parsing in callers.

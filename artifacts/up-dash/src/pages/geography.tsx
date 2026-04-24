@@ -10,7 +10,8 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle, RefreshCw, Download } from "lucide-react";
+import { AlertCircle, RefreshCw, Download, MapPin } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { exportRowsAsCsv } from "@/lib/csv-export";
@@ -150,8 +151,13 @@ export default function GeographyPage() {
                         ))
                       ) : data?.states.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                            No data available
+                          <TableCell colSpan={4} className="p-0">
+                            <EmptyState
+                              icon={MapPin}
+                              title="No regional sales yet"
+                              description="Once orders ship to customers, you'll see a state-by-state breakdown here."
+                              className="m-4 border-0 bg-transparent"
+                            />
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -224,8 +230,13 @@ export default function GeographyPage() {
                         ))
                       ) : data?.cities.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                            No data available
+                          <TableCell colSpan={4} className="p-0">
+                            <EmptyState
+                              icon={MapPin}
+                              title="No city-level data yet"
+                              description="Once orders are placed, your top-performing cities will appear here."
+                              className="m-4 border-0 bg-transparent"
+                            />
                           </TableCell>
                         </TableRow>
                       ) : (

@@ -9,6 +9,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Trophy, ShoppingBag, DollarSign, Download } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
@@ -103,12 +104,11 @@ export default function SellersPage() {
               </Card>
             ))
           ) : data?.length === 0 ? (
-            <Card>
-              <CardContent className="h-32 flex flex-col items-center justify-center text-muted-foreground">
-                <Trophy className="h-8 w-8 mb-2 text-muted-foreground/50" />
-                No sellers found.
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={Trophy}
+              title="No seller activity yet"
+              description="Once orders are attributed to sellers in the selected window, they'll appear ranked here."
+            />
           ) : (
             data?.map((seller, index) => {
               const isTop3 = index < 3;

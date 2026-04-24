@@ -16,11 +16,15 @@ export interface DateRange {
 export interface DashboardFilters {
   category: string | null;
   sellerId: string | null;
+  channel: string | null;
+  segment: string | null;
 }
 
 const EMPTY_FILTERS: DashboardFilters = {
   category: null,
   sellerId: null,
+  channel: null,
+  segment: null,
 };
 
 export interface SavedViewSnapshot {
@@ -71,7 +75,11 @@ export function DashboardFiltersProvider({ children }: { children: ReactNode }) 
       setFilter,
       resetFilters,
       applyView,
-      hasAny: !!filters.category || !!filters.sellerId,
+      hasAny:
+        !!filters.category ||
+        !!filters.sellerId ||
+        !!filters.channel ||
+        !!filters.segment,
     }),
     [dateRange, filters, setFilter, resetFilters, applyView],
   );

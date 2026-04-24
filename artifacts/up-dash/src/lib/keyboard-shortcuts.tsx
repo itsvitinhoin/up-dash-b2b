@@ -36,6 +36,7 @@ const NAV_SHORTCUTS: Shortcut[] = [
   { combo: "g p", description: "Go to Products" },
   { combo: "g s", description: "Go to Sellers" },
   { combo: "g g", description: "Go to Geography" },
+  { combo: "g l", description: "Go to Clients (admin)" },
   { combo: "g n", description: "Open Notifications" },
 ];
 
@@ -53,6 +54,7 @@ const NAV_MAP: Record<string, string> = {
   p: "/products",
   s: "/sellers",
   g: "/geography",
+  l: "/clients",
   n: "/notifications",
 };
 

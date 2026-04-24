@@ -222,6 +222,16 @@ paths:
           schema:
             type: string
           description: Restrict order metrics to a single seller.
+        - in: query
+          name: channel
+          schema:
+            type: string
+          description: Restrict to orders from customers acquired via a UTM source (e.g. instagram, google).
+        - in: query
+          name: segment
+          schema:
+            type: string
+          description: Restrict to orders from customers in a specific RFM segment (VIP, Loyal, etc.).
       responses:
         "200":
           description: Dashboard payload

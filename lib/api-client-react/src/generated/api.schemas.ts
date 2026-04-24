@@ -381,6 +381,14 @@ export type GetDashboardParams = {
    * Restrict order metrics to a single seller.
    */
   sellerId?: string;
+  /**
+   * Restrict to orders from customers acquired via a UTM source (e.g. instagram, google).
+   */
+  channel?: string;
+  /**
+   * Restrict to orders from customers in a specific RFM segment (VIP, Loyal, etc.).
+   */
+  segment?: string;
 };
 
 export type GetFunnelParams = {
