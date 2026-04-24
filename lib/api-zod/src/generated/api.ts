@@ -781,6 +781,12 @@ export const GetMarketingResponse = zod.object({
       value: zod.number(),
     }),
   ),
+  spendOverTime: zod.array(
+    zod.object({
+      date: zod.string(),
+      value: zod.number(),
+    }),
+  ),
   creatives: zod.array(
     zod.object({
       id: zod.string(),
@@ -808,6 +814,14 @@ export const GetMarketingResponse = zod.object({
       approvedLeads: zod.number(),
       clicks: zod.number(),
       impressions: zod.number(),
+      attributedRevenue: zod.number(),
+      roas: zod.number(),
+    }),
+  ),
+  stateBreakdown: zod.array(
+    zod.object({
+      state: zod.string(),
+      leads: zod.number(),
       attributedRevenue: zod.number(),
       roas: zod.number(),
     }),

@@ -592,10 +592,32 @@ async function main() {
       { name: "TikTok Spark — Influencer", platform: "TIKTOK" as const, spendMin: 1000, spendMax: 3200, clicksMin: 1800, clicksMax: 7000, impressionsMin: 80000, impressionsMax: 300000, leadsMin: 120, leadsMax: 450 },
     ];
     const approvalRateForClient = 0.72 + Math.random() * 0.15;
+    // Assign campaign date windows: some are long-running (always active), some are
+    // recent campaigns, some are past campaigns that may not overlap a short window.
+    const creativeWindows = [
+      // Long-running evergreen (META)
+      { daysAgo: 180, durationDays: 365 },
+      // Recent META campaign
+      { daysAgo: 45, durationDays: 90 },
+      // Short burst past META campaign
+      { daysAgo: 70, durationDays: 30 },
+      // Google search (evergreen)
+      { daysAgo: 120, durationDays: 240 },
+      // Google shopping (seasonal, recent)
+      { daysAgo: 30, durationDays: 60 },
+      // TikTok UGC (recent, running)
+      { daysAgo: 25, durationDays: 90 },
+      // TikTok Spark (very recent)
+      { daysAgo: 10, durationDays: 60 },
+    ];
+    const creativeNow = new Date();
     await db.insert(creativesTable).values(
-      creativeDefs.map((def) => {
+      creativeDefs.map((def, i) => {
         const leads = randInt(def.leadsMin, def.leadsMax);
         const approvedLeads = Math.round(leads * (approvalRateForClient - 0.05 + Math.random() * 0.1));
+        const w = creativeWindows[i % creativeWindows.length];
+        const activeFrom = new Date(creativeNow.getTime() - w.daysAgo * 86400_000);
+        const activeTo = new Date(activeFrom.getTime() + w.durationDays * 86400_000);
         return {
           clientId: client.id,
           name: def.name,
@@ -606,6 +628,8 @@ async function main() {
           spend: randInt(def.spendMin, def.spendMax),
           leads,
           approvedLeads,
+          activeFrom: activeFrom.toISOString().split("T")[0],
+          activeTo: activeTo.toISOString().split("T")[0],
         };
       }),
     );

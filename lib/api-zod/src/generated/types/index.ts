@@ -55,6 +55,7 @@ export * from "./markAllNotificationsReadParams";
 export * from "./marketingKpis";
 export * from "./marketingPlatformRow";
 export * from "./marketingResponse";
+export * from "./marketingStateRow";
 export * from "./markNotificationReadParams";
 export * from "./markNotificationReadRequest";
 export * from "./markReadResponse";

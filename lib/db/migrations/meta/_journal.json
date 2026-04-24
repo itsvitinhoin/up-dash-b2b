@@ -29,6 +29,13 @@
       "when": 1777047117152,
       "tag": "0003_natural_thena",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777057499508,
+      "tag": "0004_silent_havok",
+      "breakpoints": true
     }
   ]
 }

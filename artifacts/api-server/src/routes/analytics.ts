@@ -1369,19 +1369,35 @@ const PAID_SOURCES_ARRAY = `ARRAY[${PAID_UTM_SOURCES.map((s) => `'${s}'`).join("
 
 type Creative = typeof creativesTable.$inferSelect;
 
+/**
+ * Returns the fraction of a creative's total spend that falls within [from, to].
+ * Creatives without date bounds are treated as fully active in any window.
+ */
+function computeSpendOverlapFraction(creative: Creative, from: Date, to: Date): number {
+  if (!creative.activeFrom || !creative.activeTo) return 1;
+  const cFrom = new Date(creative.activeFrom as string);
+  const cTo = new Date(creative.activeTo as string);
+  const campaignMs = Math.max(1, cTo.getTime() - cFrom.getTime());
+  const overlapMs = Math.max(0, Math.min(to.getTime(), cTo.getTime()) - Math.max(from.getTime(), cFrom.getTime()));
+  return overlapMs / campaignMs;
+}
+
 function buildPlatformBreakdown(
   creatives: Creative[],
   attributedRevenue: number,
-  totalSpend: number,
+  totalProratedSpend: number,
+  from: Date,
+  to: Date,
 ) {
   const platforms = new Map<
     string,
     { spend: number; leads: number; approvedLeads: number; clicks: number; impressions: number }
   >();
   for (const c of creatives) {
+    const proratedSpend = c.spend * computeSpendOverlapFraction(c, from, to);
     const existing = platforms.get(c.platform) ?? { spend: 0, leads: 0, approvedLeads: 0, clicks: 0, impressions: 0 };
     platforms.set(c.platform, {
-      spend: existing.spend + c.spend,
+      spend: existing.spend + proratedSpend,
       leads: existing.leads + c.leads,
       approvedLeads: existing.approvedLeads + c.approvedLeads,
       clicks: existing.clicks + c.clicks,
@@ -1389,7 +1405,7 @@ function buildPlatformBreakdown(
     });
   }
   return Array.from(platforms.entries()).map(([platform, p]) => {
-    const share = totalSpend > 0 ? p.spend / totalSpend : 0;
+    const share = totalProratedSpend > 0 ? p.spend / totalProratedSpend : 0;
     const platRevenue = attributedRevenue * share;
     return {
       platform,
@@ -1404,23 +1420,31 @@ function buildPlatformBreakdown(
   });
 }
 
-function buildCreativeMetrics(creatives: Creative[], attributedRevenue: number, totalSpend: number) {
-  // Split attributed revenue proportionally by spend share within each platform.
-  const platformSpend = new Map<string, number>();
+function buildCreativeMetrics(
+  creatives: Creative[],
+  attributedRevenue: number,
+  totalProratedSpend: number,
+  from: Date,
+  to: Date,
+) {
+  // Split attributed revenue proportionally by prorated spend share within each platform.
+  const platformProratedSpend = new Map<string, number>();
   for (const c of creatives) {
-    platformSpend.set(c.platform, (platformSpend.get(c.platform) ?? 0) + c.spend);
+    const ps = c.spend * computeSpendOverlapFraction(c, from, to);
+    platformProratedSpend.set(c.platform, (platformProratedSpend.get(c.platform) ?? 0) + ps);
   }
   const platformRevenue = new Map<string, number>();
-  if (totalSpend > 0) {
-    for (const [platform, pspend] of platformSpend.entries()) {
-      platformRevenue.set(platform, attributedRevenue * (pspend / totalSpend));
+  if (totalProratedSpend > 0) {
+    for (const [platform, pspend] of platformProratedSpend.entries()) {
+      platformRevenue.set(platform, attributedRevenue * (pspend / totalProratedSpend));
     }
   }
 
   return creatives.map((c) => {
+    const proratedSpend = c.spend * computeSpendOverlapFraction(c, from, to);
     const platRev = platformRevenue.get(c.platform) ?? 0;
-    const platSp = platformSpend.get(c.platform) ?? 0;
-    const creativeRev = platSp > 0 ? platRev * (c.spend / platSp) : 0;
+    const platSp = platformProratedSpend.get(c.platform) ?? 0;
+    const creativeRev = platSp > 0 ? platRev * (proratedSpend / platSp) : 0;
     return {
       id: c.id,
       name: c.name,
@@ -1432,11 +1456,11 @@ function buildCreativeMetrics(creatives: Creative[], attributedRevenue: number, 
       ctr: c.impressions > 0 ? (c.clicks / c.impressions) * 100 : 0,
       leads: c.leads,
       approvedLeads: c.approvedLeads,
-      spend: c.spend,
+      spend: proratedSpend,
       attributedRevenue: creativeRev,
-      roas: c.spend > 0 ? creativeRev / c.spend : 0,
-      cpl: c.leads > 0 ? c.spend / c.leads : 0,
-      cpa: c.approvedLeads > 0 ? c.spend / c.approvedLeads : 0,
+      roas: proratedSpend > 0 ? creativeRev / proratedSpend : 0,
+      cpl: c.leads > 0 ? proratedSpend / c.leads : 0,
+      cpa: c.approvedLeads > 0 ? proratedSpend / c.approvedLeads : 0,
     };
   });
 }
@@ -1447,7 +1471,8 @@ async function computeMarketingKpis(
   from: Date,
   to: Date,
 ) {
-  const totalSpend = creatives.reduce((s, c) => s + c.spend, 0);
+  // Prorated spend: only count each creative's spend for the overlap with the query window.
+  const totalSpend = creatives.reduce((s, c) => s + c.spend * computeSpendOverlapFraction(c, from, to), 0);
 
   // Attributed revenue: orders from paid-UTM customers in window
   const [revRow] = await db
@@ -1501,6 +1526,76 @@ async function computeMarketingKpis(
   };
 }
 
+/** Build a daily spend series by distributing each creative's prorated spend across its active days within [from, to]. */
+function buildSpendOverTime(creatives: Creative[], from: Date, to: Date): { date: string; value: number }[] {
+  const days: { date: string; value: number }[] = [];
+  const msPerDay = 86_400_000;
+  const totalDays = Math.round((to.getTime() - from.getTime()) / msPerDay) + 1;
+
+  for (let d = 0; d < totalDays; d++) {
+    const day = new Date(from.getTime() + d * msPerDay);
+    const dayStr = day.toISOString().split("T")[0];
+    let dailySpend = 0;
+
+    for (const c of creatives) {
+      if (!c.activeFrom || !c.activeTo) {
+        dailySpend += c.spend / totalDays;
+      } else {
+        const cFrom = new Date(c.activeFrom as string);
+        const cTo = new Date(c.activeTo as string);
+        if (day >= cFrom && day <= cTo) {
+          const campaignDays = Math.max(1, Math.round((cTo.getTime() - cFrom.getTime()) / msPerDay) + 1);
+          dailySpend += c.spend / campaignDays;
+        }
+      }
+    }
+    days.push({ date: dayStr, value: Math.round(dailySpend) });
+  }
+  return days;
+}
+
+/** Top 5 states by paid-channel leads in [from, to]. */
+async function buildStateBreakdown(clientId: string, from: Date, to: Date, totalProratedSpend: number, attributedRevenue: number) {
+  const rows = await db
+    .select({
+      state: customersTable.state,
+      leads: sql<number>`COUNT(DISTINCT ${eventsTable.customerId})::int`,
+      revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+    })
+    .from(eventsTable)
+    .innerJoin(customersTable, eq(eventsTable.customerId, customersTable.id))
+    .leftJoin(
+      ordersTable,
+      and(
+        eq(ordersTable.customerId, customersTable.id),
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, from),
+        lte(ordersTable.createdAt, to),
+        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+      ),
+    )
+    .where(
+      and(
+        eq(eventsTable.clientId, clientId),
+        gte(eventsTable.createdAt, from),
+        lte(eventsTable.createdAt, to),
+        sql`${eventsTable.eventType} = 'REGISTRATION'`,
+        sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
+        sql`${customersTable.state} IS NOT NULL`,
+      ),
+    )
+    .groupBy(customersTable.state)
+    .orderBy(sql`COUNT(DISTINCT ${eventsTable.customerId}) DESC`)
+    .limit(5);
+
+  return rows.map((r) => ({
+    state: r.state ?? "",
+    leads: r.leads,
+    attributedRevenue: Number(r.revenue),
+    roas: totalProratedSpend > 0 ? (Number(r.revenue) / (totalProratedSpend / Math.max(1, rows.length))) : 0,
+  }));
+}
+
 router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const parsed = GetMarketingQueryParams.safeParse(
     coerceDateQuery(req.query as Record<string, unknown>),
@@ -1524,16 +1619,19 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const prevTo = new Date(from.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - periodMs);
 
-  // All creatives for the client (lifetime stats)
-  const creatives = await db
+  // All creatives for the client; sorted by prorated spend descending
+  const allCreatives = await db
     .select()
     .from(creativesTable)
     .where(eq(creativesTable.clientId, clientId))
     .orderBy(desc(creativesTable.spend));
 
+  // Only creatives active (overlapping) in the current window
+  const creatives = allCreatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
+
   const [kpis, prevKpis] = await Promise.all([
     computeMarketingKpis(clientId, creatives, from, to),
-    computeMarketingKpis(clientId, creatives, prevFrom, prevTo),
+    computeMarketingKpis(clientId, allCreatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0), prevFrom, prevTo),
   ]);
 
   // Daily series: paid-channel registrations by day
@@ -1576,16 +1674,23 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     .groupBy(sql`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')`)
     .orderBy(sql`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')`);
 
-  const totalSpendForAttribution = kpis.totalSpend;
+  const totalProratedSpend = kpis.totalSpend;
   const attrRevForCreatives = kpis.attributedRevenue;
+
+  const [spendOverTime, stateBreakdown] = await Promise.all([
+    Promise.resolve(buildSpendOverTime(creatives, from, to)),
+    buildStateBreakdown(clientId, from, to, totalProratedSpend, attrRevForCreatives),
+  ]);
 
   const payload = GetMarketingResponse.parse({
     kpis,
     prevKpis,
     leadsOverTime: leadsRows,
     revenueOverTime: revenueRows,
-    creatives: buildCreativeMetrics(creatives, attrRevForCreatives, totalSpendForAttribution),
-    platformBreakdown: buildPlatformBreakdown(creatives, attrRevForCreatives, totalSpendForAttribution),
+    spendOverTime,
+    creatives: buildCreativeMetrics(creatives, attrRevForCreatives, totalProratedSpend, from, to),
+    platformBreakdown: buildPlatformBreakdown(creatives, attrRevForCreatives, totalProratedSpend, from, to),
+    stateBreakdown,
   });
   res.json(payload);
 });

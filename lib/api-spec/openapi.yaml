@@ -1657,6 +1657,19 @@ components:
           type: number
       required: [platform, spend, leads, approvedLeads, clicks, impressions, attributedRevenue, roas]
 
+    MarketingStateRow:
+      type: object
+      properties:
+        state:
+          type: string
+        leads:
+          type: integer
+        attributedRevenue:
+          type: number
+        roas:
+          type: number
+      required: [state, leads, attributedRevenue, roas]
+
     MarketingResponse:
       type: object
       properties:
@@ -1672,6 +1685,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TimeSeriesPoint"
+        spendOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
         creatives:
           type: array
           items:
@@ -1680,4 +1697,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MarketingPlatformRow"
-      required: [kpis, prevKpis, leadsOverTime, revenueOverTime, creatives, platformBreakdown]
+        stateBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingStateRow"
+      required: [kpis, prevKpis, leadsOverTime, revenueOverTime, spendOverTime, creatives, platformBreakdown, stateBreakdown]

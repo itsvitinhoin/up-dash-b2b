@@ -535,13 +535,22 @@ export interface MarketingPlatformRow {
   roas: number;
 }
 
+export interface MarketingStateRow {
+  state: string;
+  leads: number;
+  attributedRevenue: number;
+  roas: number;
+}
+
 export interface MarketingResponse {
   kpis: MarketingKpis;
   prevKpis: MarketingKpis;
   leadsOverTime: TimeSeriesPoint[];
   revenueOverTime: TimeSeriesPoint[];
+  spendOverTime: TimeSeriesPoint[];
   creatives: CreativeMetrics[];
   platformBreakdown: MarketingPlatformRow[];
+  stateBreakdown: MarketingStateRow[];
 }
 
 export type ListClientsParams = {

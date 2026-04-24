@@ -1,9 +1,15 @@
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
-import { useGetMarketing } from "@workspace/api-client-react";
+import {
+  useGetMarketing,
+  useGetInsight,
+  useRegenerateInsight,
+  getGetInsightQueryKey,
+} from "@workspace/api-client-react";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +31,11 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  CheckCircle2,
+  Users,
+  DollarSign,
+  Link2,
+  MapPin,
 } from "lucide-react";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import {
@@ -35,10 +46,10 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  BarChart,
+  ComposedChart,
   Bar,
-  Cell,
-  LabelList,
+  Line,
+  ReferenceLine,
 } from "recharts";
 import { CountUp } from "@/components/count-up";
 import { Sparkline } from "@/components/sparkline";
@@ -88,6 +99,25 @@ function computeChange(current: number, previous: number): number | null {
   return ((current - previous) / previous) * 100;
 }
 
+function fmtDate(d: string) {
+  try { return format(new Date(d + "T12:00:00"), "MMM d"); } catch { return d; }
+}
+
+function fmtDateLong(d: string) {
+  try { return format(new Date(d + "T12:00:00"), "MMM d, yyyy"); } catch { return d; }
+}
+
+/** Join two sparse date-keyed series into a combined array, filling zeros. */
+function joinSeries(
+  keys: string[],
+  seriesA: { date: string; value: number }[],
+  seriesB: { date: string; value: number }[],
+): { date: string; a: number; b: number }[] {
+  const mapA = new Map(seriesA.map((p) => [p.date, p.value]));
+  const mapB = new Map(seriesB.map((p) => [p.date, p.value]));
+  return keys.map((date) => ({ date, a: mapA.get(date) ?? 0, b: mapB.get(date) ?? 0 }));
+}
+
 const PLATFORM_COLORS: Record<string, string> = {
   META: "#1877F2",
   GOOGLE: "#EA4335",
@@ -100,14 +130,14 @@ const PLATFORM_LABELS: Record<string, string> = {
   TIKTOK: "TikTok Ads",
 };
 
-const CHART_TABS = [
-  { id: "leads", label: "Paid Leads", color: "#a78bfa", formatter: (v: number) => formatNumber(v) },
-  { id: "revenue", label: "Attr. Revenue", color: "#34d399", formatter: (v: number) => formatCurrency(v) },
-] as const;
+const CHART_TOOLTIP_STYLE = {
+  background: "hsl(var(--card))",
+  border: "1px solid hsl(var(--border))",
+  borderRadius: "8px",
+  fontSize: 12,
+};
 
-type ChartTab = (typeof CHART_TABS)[number]["id"];
-
-type SortKey = keyof Pick<CreativeRow, "spend" | "leads" | "approvedLeads" | "roas" | "cpl" | "cpa" | "ctr" | "clicks" | "impressions">;
+type SortKey = keyof Pick<CreativeRow, "spend" | "leads" | "approvedLeads" | "roas" | "cpl" | "cpa" | "ctr" | "clicks" | "impressions" | "attributedRevenue">;
 type SortDir = "asc" | "desc";
 
 // ── KPI card ─────────────────────────────────────────────────────────────────
@@ -123,7 +153,7 @@ interface KpiCardProps {
   sparkColor: string;
   isLoading: boolean;
   testId: string;
-  tooltip?: string;
+  invertChange?: boolean;
 }
 
 function MktKpiCard({
@@ -138,13 +168,15 @@ function MktKpiCard({
   sparkColor,
   isLoading,
   testId,
+  invertChange = false,
 }: KpiCardProps) {
   const reduced = useReducedMotion();
   const variants = withReducedMotion(cardEntry, reduced);
-  const isUp = change !== null && change >= 0;
+  const effectiveChange = invertChange && change !== null ? -change : change;
+  const isUp = effectiveChange !== null && effectiveChange >= 0;
   return (
     <motion.div variants={variants}>
-      <Card data-testid={testId} className="flex flex-col p-5 bg-card border-border hover-elevate transition-shadow">
+      <Card data-testid={testId} className="flex flex-col p-5 bg-card border-border hover:shadow-md transition-shadow">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2.5">
             <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconClass}`}>
@@ -177,14 +209,14 @@ function MktKpiCard({
           )}
         </div>
 
-        {!isLoading && change !== null && (
+        {!isLoading && effectiveChange !== null && (
           <span
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium w-fit ${
               isUp ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
             }`}
           >
             {isUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-            {isUp ? "+" : ""}{change.toFixed(1)}%
+            {isUp ? "+" : ""}{effectiveChange.toFixed(1)}%
             <span className="ml-1 text-muted-foreground font-normal">vs prev</span>
           </span>
         )}
@@ -195,12 +227,7 @@ function MktKpiCard({
 
 // ── Platform bar ─────────────────────────────────────────────────────────────
 function PlatformRow({ platform, spend, roas, leads, clicks, maxSpend }: {
-  platform: string;
-  spend: number;
-  roas: number;
-  leads: number;
-  clicks: number;
-  maxSpend: number;
+  platform: string; spend: number; roas: number; leads: number; clicks: number; maxSpend: number;
 }) {
   const pct = maxSpend > 0 ? (spend / maxSpend) * 100 : 0;
   const color = PLATFORM_COLORS[platform] ?? "#6366f1";
@@ -232,6 +259,35 @@ function PlatformRow({ platform, spend, roas, leads, clicks, maxSpend }: {
   );
 }
 
+// ── State row ─────────────────────────────────────────────────────────────────
+function StateRow({ state, leads, attributedRevenue, roas, maxLeads }: {
+  state: string; leads: number; attributedRevenue: number; roas: number; maxLeads: number;
+}) {
+  const pct = maxLeads > 0 ? (leads / maxLeads) * 100 : 0;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-sm">
+        <div className="flex items-center gap-2">
+          <MapPin className="h-3 w-3 text-muted-foreground" />
+          <span className="font-medium">{state}</span>
+        </div>
+        <div className="flex items-center gap-4 text-muted-foreground text-xs tabular-nums">
+          <span>{formatNumber(leads)} leads</span>
+          <span className="w-24 text-right">{formatCurrency(attributedRevenue)}</span>
+        </div>
+      </div>
+      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+        <motion.div
+          className="h-full rounded-full bg-violet-500"
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ── Sort icon ────────────────────────────────────────────────────────────────
 function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; sortDir: SortDir }) {
   if (col !== sortKey) return <ArrowUpDown className="h-3 w-3 opacity-40" />;
@@ -242,11 +298,7 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
 function StatusBadge({ status }: { status: string }) {
   const isActive = status === "ACTIVE";
   return (
-    <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium font-mono uppercase tracking-wide ${
-        isActive ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
-      }`}
-    >
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium font-mono uppercase tracking-wide ${isActive ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${isActive ? "bg-emerald-500" : "bg-amber-500"}`} />
       {status.toLowerCase()}
     </span>
@@ -258,75 +310,182 @@ function PlatformChip({ platform }: { platform: string }) {
   const color = PLATFORM_COLORS[platform] ?? "#6366f1";
   const short = platform === "GOOGLE" ? "G" : platform === "TIKTOK" ? "TT" : "META";
   return (
-    <span
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold font-mono"
-      style={{ color, backgroundColor: color + "20" }}
-    >
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold font-mono" style={{ color, backgroundColor: color + "20" }}>
       {short}
     </span>
   );
 }
+
+// ── Creative thumbnail ────────────────────────────────────────────────────────
+function CreativeThumbnail({ imageUrl, platform, name }: { imageUrl: string | null; platform: string; name: string }) {
+  const color = PLATFORM_COLORS[platform] ?? "#6366f1";
+  if (imageUrl) {
+    return (
+      <div className="w-10 h-10 rounded-md overflow-hidden border border-border shrink-0">
+        <img src={imageUrl} alt={name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+      </div>
+    );
+  }
+  const initial = platform.charAt(0);
+  return (
+    <div className="w-10 h-10 rounded-md shrink-0 flex items-center justify-center text-sm font-bold" style={{ backgroundColor: color + "22", color }}>
+      {initial}
+    </div>
+  );
+}
+
+// ── AI Insight block ──────────────────────────────────────────────────────────
+function InsightBlock({
+  insight,
+  isLoading,
+  isRegenerating,
+  onRegenerate,
+}: {
+  insight: { headline: string; body: string; bullets: string[]; generatedAt: string; cached: boolean; source: string } | null | undefined;
+  isLoading: boolean;
+  isRegenerating: boolean;
+  onRegenerate: () => void;
+}) {
+  if (!isLoading && !insight) return null;
+  return (
+    <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+      <Card className="p-5 bg-gradient-to-br from-violet-500/5 to-violet-500/0 border-violet-500/20">
+        <div className="flex items-start gap-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/15 shrink-0 mt-0.5">
+            <Sparkles className="h-4 w-4 text-violet-400" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-violet-400">AI Marketing Insight</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs text-muted-foreground"
+                onClick={onRegenerate}
+                disabled={isRegenerating}
+                data-testid="insight-regenerate"
+              >
+                <RefreshCw className={`h-3 w-3 mr-1.5 ${isRegenerating ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
+            {isLoading ? (
+              <div className="space-y-1.5">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-4/5" />
+                <Skeleton className="h-4 w-3/5" />
+              </div>
+            ) : insight ? (
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-foreground">{insight.headline}</p>
+                <p className="text-sm text-foreground/80 leading-relaxed">{insight.body}</p>
+                {insight.bullets.length > 0 && (
+                  <ul className="space-y-1 mt-2">
+                    {insight.bullets.map((b, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                        <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-violet-400 shrink-0" />
+                        {b}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </Card>
+    </motion.div>
+  );
+}
+
+// ── Chart helper: X/Y axes + tooltip styles ─────────────────────────────────
+const AXIS_TICK = { fontSize: 10, fill: "hsl(var(--muted-foreground))" };
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function MarketingPage() {
   const { selectedClientId, user } = useAuth();
   const { dateRange } = useDashboardFilters();
   const reduced = useReducedMotion();
+  const queryClient = useQueryClient();
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
 
-  const [chartTab, setChartTab] = useState<ChartTab>("leads");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
+  const dateParams = {
+    dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+    dateTo: format(dateRange.to, "yyyy-MM-dd"),
+  };
+  const insightParams = { clientId, ...dateParams };
+
   const { data, isLoading, isError, refetch } = useGetMarketing(
-    {
-      clientId,
-      dateFrom: format(dateRange.from, "yyyy-MM-dd"),
-      dateTo: format(dateRange.to, "yyyy-MM-dd"),
-    },
+    { clientId, ...dateParams },
     { query: queryOpts({ enabled }) },
   );
 
-  // Derived KPI changes
-  const spendChange = useMemo(
-    () => data ? computeChange(data.kpis.totalSpend, data.prevKpis.totalSpend) : null,
-    [data],
-  );
-  const roasChange = useMemo(
-    () => data ? computeChange(data.kpis.roas, data.prevKpis.roas) : null,
-    [data],
-  );
-  const cplChange = useMemo(
-    () => data ? computeChange(data.kpis.cpl, data.prevKpis.cpl) : null,
-    [data],
-  );
-  const cpaChange = useMemo(
-    () => data ? computeChange(data.kpis.cpa, data.prevKpis.cpa) : null,
-    [data],
-  );
+  const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
+    query: queryOpts({ enabled }),
+  });
+  const regenerateInsight = useRegenerateInsight({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetInsightQueryKey(insightParams) });
+      },
+    },
+  });
 
-  // Chart data
-  const chartConfig = CHART_TABS.find((t) => t.id === chartTab)!;
-  const chartData = useMemo(() => {
-    if (!data) return [];
-    const series = chartTab === "leads" ? data.leadsOverTime : data.revenueOverTime;
-    return series.map((p) => ({ date: p.date, value: p.value }));
-  }, [data, chartTab]);
+  // ── KPI changes ──────────────────────────────────────────────────────────
+  const spendChange = useMemo(() => data ? computeChange(data.kpis.totalSpend, data.prevKpis.totalSpend) : null, [data]);
+  const revenueChange = useMemo(() => data ? computeChange(data.kpis.attributedRevenue, data.prevKpis.attributedRevenue) : null, [data]);
+  const roasChange = useMemo(() => data ? computeChange(data.kpis.roas, data.prevKpis.roas) : null, [data]);
+  const approvalRateChange = useMemo(() => data ? computeChange(data.kpis.approvalRate, data.prevKpis.approvalRate) : null, [data]);
+  const leadsChange = useMemo(() => data ? computeChange(data.kpis.totalLeads, data.prevKpis.totalLeads) : null, [data]);
+  const approvedLeadsChange = useMemo(() => data ? computeChange(data.kpis.approvedLeads, data.prevKpis.approvedLeads) : null, [data]);
+  const cplChange = useMemo(() => data ? computeChange(data.kpis.cpl, data.prevKpis.cpl) : null, [data]);
+  const cpaChange = useMemo(() => data ? computeChange(data.kpis.cpa, data.prevKpis.cpa) : null, [data]);
 
-  // Sparklines for KPI cards (use chart data as proxy)
+  // ── Sparklines (reuse time-series data) ──────────────────────────────────
   const sparkLeads = data?.leadsOverTime.map((p) => p.value) ?? [];
   const sparkRevenue = data?.revenueOverTime.map((p) => p.value) ?? [];
+  const sparkSpend = data?.spendOverTime.map((p) => p.value) ?? [];
 
-  // Platform breakdown sorted by spend desc
-  const platformRows = useMemo(
-    () => [...(data?.platformBreakdown ?? [])].sort((a, b) => b.spend - a.spend),
-    [data],
-  );
+  // ── Chart 1: Spend vs Leads dual-axis ────────────────────────────────────
+  const spendLeadsData = useMemo(() => {
+    if (!data) return [];
+    const spendDates = data.spendOverTime.map((p) => p.date);
+    return joinSeries(spendDates, data.spendOverTime, data.leadsOverTime).map((p) => ({
+      date: p.date,
+      spend: p.a,
+      leads: p.b,
+    }));
+  }, [data]);
+
+  // ── Chart 2: Attributed Revenue ───────────────────────────────────────────
+  const revenueChartData = data?.revenueOverTime ?? [];
+
+  // ── Chart 3: ROAS over time ───────────────────────────────────────────────
+  const roasData = useMemo(() => {
+    if (!data) return [];
+    const spendMap = new Map(data.spendOverTime.map((p) => [p.date, p.value]));
+    const revMap = new Map(data.revenueOverTime.map((p) => [p.date, p.value]));
+    return data.spendOverTime.map((p) => {
+      const sp = spendMap.get(p.date) ?? 0;
+      const rev = revMap.get(p.date) ?? 0;
+      return { date: p.date, roas: sp > 0 ? Math.round((rev / sp) * 100) / 100 : 0 };
+    });
+  }, [data]);
+
+  // ── Platform breakdown ────────────────────────────────────────────────────
+  const platformRows = useMemo(() => [...(data?.platformBreakdown ?? [])].sort((a, b) => b.spend - a.spend), [data]);
   const maxPlatformSpend = platformRows[0]?.spend ?? 0;
 
-  // Sorted creatives
+  // ── State breakdown ───────────────────────────────────────────────────────
+  const stateRows = data?.stateBreakdown ?? [];
+  const maxStateLeads = stateRows[0]?.leads ?? 0;
+
+  // ── Sorted creatives ──────────────────────────────────────────────────────
   const sortedCreatives = useMemo(() => {
     if (!data?.creatives) return [];
     return [...data.creatives].sort((a, b) => {
@@ -367,6 +526,8 @@ export default function MarketingPage() {
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const fadeVariants = withReducedMotion(fadeInUp, reduced);
 
+  const hasNoData = !isLoading && data && data.kpis.totalSpend === 0 && data.creatives.length === 0;
+
   if (isError) {
     return (
       <Alert variant="destructive" data-testid="page-marketing">
@@ -385,12 +546,7 @@ export default function MarketingPage() {
   return (
     <div className="space-y-6" data-testid="page-marketing">
       {/* Toolbar */}
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={fadeVariants}
-        className="flex flex-wrap items-center justify-between gap-2"
-      >
+      <motion.div initial="hidden" animate="visible" variants={fadeVariants} className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="relative flex h-1.5 w-1.5">
             {!reduced && (
@@ -408,345 +564,383 @@ export default function MarketingPage() {
         </Button>
       </motion.div>
 
-      {/* KPI grid */}
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={containerVariants}
-        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"
-      >
-        <MktKpiCard
-          testId="kpi-ad-spend"
-          icon={Wallet}
-          iconClass="bg-violet-500/15 text-violet-400"
-          label="Ad Spend (all-time)"
-          value={data?.kpis.totalSpend ?? 0}
-          format={(v) => formatCurrency(v)}
-          unit="BRL"
-          change={spendChange}
-          sparkValues={sparkRevenue}
-          sparkColor="#a78bfa"
-          isLoading={isLoading}
-        />
-        <MktKpiCard
-          testId="kpi-roas"
-          icon={TrendingUp}
-          iconClass="bg-emerald-500/15 text-emerald-400"
-          label="ROAS"
-          value={data?.kpis.roas ?? 0}
-          format={(v) => `${v.toFixed(2)}×`}
-          change={roasChange}
-          sparkValues={sparkRevenue}
-          sparkColor="#34d399"
-          isLoading={isLoading}
-        />
-        <MktKpiCard
-          testId="kpi-cpl"
-          icon={Target}
-          iconClass="bg-sky-500/15 text-sky-400"
-          label="CPL (cost / lead)"
-          value={data?.kpis.cpl ?? 0}
-          format={(v) => formatCurrency(v)}
-          unit="BRL"
-          change={cplChange !== null ? -cplChange : null}
-          sparkValues={sparkLeads}
-          sparkColor="#38bdf8"
-          isLoading={isLoading}
-        />
-        <MktKpiCard
-          testId="kpi-cpa"
-          icon={Sparkles}
-          iconClass="bg-amber-500/15 text-amber-400"
-          label="CPA (cost / aprov.)"
-          value={data?.kpis.cpa ?? 0}
-          format={(v) => formatCurrency(v)}
-          unit="BRL"
-          change={cpaChange !== null ? -cpaChange : null}
-          sparkValues={sparkLeads}
-          sparkColor="#fbbf24"
-          isLoading={isLoading}
-        />
-      </motion.div>
-
-      {/* Summary row: approval rate + leads + revenue */}
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={fadeVariants}
-        className="grid grid-cols-2 sm:grid-cols-4 gap-3"
-      >
-        {[
-          { label: "Paid Leads (period)", value: data?.kpis.totalLeads ?? 0, format: formatNumber, color: "text-violet-400" },
-          { label: "Approved Leads", value: data?.kpis.approvedLeads ?? 0, format: formatNumber, color: "text-emerald-400" },
-          { label: "Approval Rate", value: data?.kpis.approvalRate ?? 0, format: formatPercentage, color: "text-sky-400" },
-          { label: "Attributed Revenue", value: data?.kpis.attributedRevenue ?? 0, format: formatCurrency, color: "text-amber-400" },
-        ].map(({ label, value, format: fmt, color }) => (
-          <Card key={label} className="p-4 bg-card/60 border-border">
-            <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
-            {isLoading ? (
-              <Skeleton className="h-7 w-24" />
-            ) : (
-              <p className={`text-xl font-semibold tabular-nums ${color}`}>
-                <CountUp value={value} format={fmt} />
+      {/* Empty state: no ad account data */}
+      {hasNoData && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+          <Card className="p-12 border-dashed border-2 border-border/60 bg-card/30 flex flex-col items-center text-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-500/10">
+              <Link2 className="h-7 w-7 text-violet-400" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold mb-1">No paid channel data yet</h3>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                Connect your ad accounts (Meta, Google, TikTok) to start tracking spend, ROAS, and creative performance in this period.
               </p>
+            </div>
+            <Button variant="outline" size="sm" className="gap-2">
+              <Link2 className="h-4 w-4" />
+              Connect ad accounts
+            </Button>
+          </Card>
+        </motion.div>
+      )}
+
+      {/* AI Insight block */}
+      {!hasNoData && (
+        <InsightBlock
+          insight={insight}
+          isLoading={insightLoading}
+          isRegenerating={regenerateInsight.isPending}
+          onRegenerate={() => regenerateInsight.mutate({ params: insightParams })}
+        />
+      )}
+
+      {/* KPI grid — 8 tiles */}
+      {!hasNoData && (
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={containerVariants}
+          className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+        >
+          <MktKpiCard
+            testId="kpi-ad-spend"
+            icon={Wallet}
+            iconClass="bg-violet-500/15 text-violet-400"
+            label="Ad Spend"
+            value={data?.kpis.totalSpend ?? 0}
+            format={formatCurrency}
+            change={spendChange}
+            sparkValues={sparkSpend}
+            sparkColor="#a78bfa"
+            isLoading={isLoading}
+          />
+          <MktKpiCard
+            testId="kpi-revenue"
+            icon={DollarSign}
+            iconClass="bg-teal-500/15 text-teal-400"
+            label="Attr. Revenue"
+            value={data?.kpis.attributedRevenue ?? 0}
+            format={formatCurrency}
+            change={revenueChange}
+            sparkValues={sparkRevenue}
+            sparkColor="#2dd4bf"
+            isLoading={isLoading}
+          />
+          <MktKpiCard
+            testId="kpi-roas"
+            icon={TrendingUp}
+            iconClass="bg-emerald-500/15 text-emerald-400"
+            label="ROAS"
+            value={data?.kpis.roas ?? 0}
+            format={(v) => `${v.toFixed(2)}×`}
+            change={roasChange}
+            sparkValues={sparkRevenue}
+            sparkColor="#34d399"
+            isLoading={isLoading}
+          />
+          <MktKpiCard
+            testId="kpi-approval-rate"
+            icon={CheckCircle2}
+            iconClass="bg-indigo-500/15 text-indigo-400"
+            label="Approval Rate"
+            value={data?.kpis.approvalRate ?? 0}
+            format={formatPercentage}
+            change={approvalRateChange}
+            sparkValues={sparkLeads}
+            sparkColor="#818cf8"
+            isLoading={isLoading}
+          />
+          <MktKpiCard
+            testId="kpi-leads"
+            icon={Users}
+            iconClass="bg-sky-500/15 text-sky-400"
+            label="Total Leads"
+            value={data?.kpis.totalLeads ?? 0}
+            format={formatNumber}
+            change={leadsChange}
+            sparkValues={sparkLeads}
+            sparkColor="#38bdf8"
+            isLoading={isLoading}
+          />
+          <MktKpiCard
+            testId="kpi-approved-leads"
+            icon={CheckCircle2}
+            iconClass="bg-green-500/15 text-green-400"
+            label="Approved Leads"
+            value={data?.kpis.approvedLeads ?? 0}
+            format={formatNumber}
+            change={approvedLeadsChange}
+            sparkValues={sparkLeads}
+            sparkColor="#4ade80"
+            isLoading={isLoading}
+          />
+          <MktKpiCard
+            testId="kpi-cpl"
+            icon={Target}
+            iconClass="bg-orange-500/15 text-orange-400"
+            label="CPL"
+            value={data?.kpis.cpl ?? 0}
+            format={formatCurrency}
+            change={cplChange}
+            sparkValues={sparkSpend}
+            sparkColor="#fb923c"
+            isLoading={isLoading}
+            invertChange
+          />
+          <MktKpiCard
+            testId="kpi-cpa"
+            icon={Sparkles}
+            iconClass="bg-amber-500/15 text-amber-400"
+            label="CPA"
+            value={data?.kpis.cpa ?? 0}
+            format={formatCurrency}
+            change={cpaChange}
+            sparkValues={sparkSpend}
+            sparkColor="#fbbf24"
+            isLoading={isLoading}
+            invertChange
+          />
+        </motion.div>
+      )}
+
+      {/* Charts row */}
+      {!hasNoData && (
+        <motion.div initial="hidden" animate="visible" variants={fadeVariants} className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          {/* Chart 1: Spend vs Leads dual-axis */}
+          <Card className="xl:col-span-2 p-5 bg-card border-border">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
+              <BarChart3 className="h-4 w-4 text-muted-foreground" />
+              Spend vs Leads
+            </h2>
+            {isLoading ? (
+              <Skeleton className="h-52 w-full" />
+            ) : spendLeadsData.length === 0 ? (
+              <EmptyState icon={BarChart3} title="No data" description="No paid-channel activity in this period." className="h-52" />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <ComposedChart data={spendLeadsData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
+                  <XAxis dataKey="date" tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={fmtDate} interval="preserveStartEnd" />
+                  <YAxis yAxisId="left" tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCurrency(v)} width={60} />
+                  <YAxis yAxisId="right" orientation="right" tick={AXIS_TICK} tickLine={false} axisLine={false} width={36} />
+                  <Tooltip
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    labelFormatter={fmtDateLong}
+                    formatter={(value: number, name: string) => [
+                      name === "spend" ? formatCurrency(value) : formatNumber(value),
+                      name === "spend" ? "Ad Spend" : "Leads",
+                    ]}
+                  />
+                  <Bar yAxisId="left" dataKey="spend" fill="#a78bfa" opacity={0.8} radius={[2, 2, 0, 0]} name="spend" />
+                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#38bdf8" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="leads" />
+                </ComposedChart>
+              </ResponsiveContainer>
             )}
           </Card>
-        ))}
-      </motion.div>
 
-      {/* Chart + platform breakdown */}
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={fadeVariants}
-        className="grid grid-cols-1 xl:grid-cols-3 gap-4"
-      >
-        {/* Time-series chart */}
-        <Card className="xl:col-span-2 p-5 bg-card border-border">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-muted-foreground" />
-              Performance Over Time
+          {/* Chart 2: ROAS over time */}
+          <Card className="p-5 bg-card border-border">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              ROAS Over Time
             </h2>
-            <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
-              {CHART_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setChartTab(tab.id)}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                    chartTab === tab.id
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          </div>
+            {isLoading ? (
+              <Skeleton className="h-52 w-full" />
+            ) : roasData.length === 0 ? (
+              <EmptyState icon={TrendingUp} title="No data" description="No ROAS data in this period." className="h-52" />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={roasData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="roasGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#34d399" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
+                  <XAxis dataKey="date" tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={fmtDate} interval="preserveStartEnd" />
+                  <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} width={36} tickFormatter={(v: number) => `${v}×`} />
+                  <Tooltip
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    labelFormatter={fmtDateLong}
+                    formatter={(v: number) => [`${v.toFixed(2)}×`, "ROAS"]}
+                  />
+                  <ReferenceLine y={2} stroke="#f97316" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: "Target 2×", position: "insideTopRight", fontSize: 9, fill: "#f97316" }} />
+                  <Area type="monotone" dataKey="roas" stroke="#34d399" strokeWidth={2} fill="url(#roasGrad)" dot={false} activeDot={{ r: 4, fill: "#34d399" }} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+        </motion.div>
+      )}
 
-          {isLoading ? (
-            <Skeleton className="h-52 w-full" />
-          ) : chartData.length === 0 ? (
-            <EmptyState
-              icon={BarChart3}
-              title="No data for this period"
-              description="No paid-channel activity was recorded in the selected date range."
-              className="h-52"
-            />
-          ) : (
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={chartTab}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                <ResponsiveContainer width="100%" height={220}>
-                  <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="mktGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={chartConfig.color} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={chartConfig.color} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
-                    <XAxis
-                      dataKey="date"
-                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(d: string) => {
-                        try { return format(new Date(d + "T12:00:00"), "MMM d"); } catch { return d; }
-                      }}
-                      interval="preserveStartEnd"
-                    />
-                    <YAxis
-                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(v: number) => chartConfig.formatter(v)}
-                      width={58}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: "hsl(var(--card))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: "8px",
-                        fontSize: 12,
-                      }}
-                      formatter={(v: number) => [chartConfig.formatter(v), chartConfig.label]}
-                      labelFormatter={(label: string) => {
-                        try { return format(new Date(label + "T12:00:00"), "MMM d, yyyy"); } catch { return label; }
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="value"
-                      stroke={chartConfig.color}
-                      strokeWidth={2}
-                      fill="url(#mktGrad)"
-                      dot={false}
-                      activeDot={{ r: 4, fill: chartConfig.color, strokeWidth: 0 }}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </motion.div>
-            </AnimatePresence>
-          )}
-        </Card>
+      {/* Attributed Revenue chart */}
+      {!hasNoData && (
+        <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
+          <Card className="p-5 bg-card border-border">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+              Attributed Revenue Over Time
+            </h2>
+            {isLoading ? (
+              <Skeleton className="h-40 w-full" />
+            ) : revenueChartData.length === 0 ? (
+              <EmptyState icon={DollarSign} title="No revenue data" description="No paid-channel orders in this period." className="h-40" />
+            ) : (
+              <ResponsiveContainer width="100%" height={160}>
+                <AreaChart data={revenueChartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2dd4bf" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#2dd4bf" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
+                  <XAxis dataKey="date" tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={fmtDate} interval="preserveStartEnd" />
+                  <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} width={58} tickFormatter={(v: number) => formatCurrency(v)} />
+                  <Tooltip contentStyle={CHART_TOOLTIP_STYLE} labelFormatter={fmtDateLong} formatter={(v: number) => [formatCurrency(v), "Revenue"]} />
+                  <Area type="monotone" dataKey="value" stroke="#2dd4bf" strokeWidth={2} fill="url(#revGrad)" dot={false} activeDot={{ r: 4 }} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+        </motion.div>
+      )}
 
-        {/* Platform breakdown */}
-        <Card className="p-5 bg-card border-border">
-          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
-            <Megaphone className="h-4 w-4 text-muted-foreground" />
-            By Platform
-          </h2>
-          {isLoading ? (
-            <div className="space-y-4">
-              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
-            </div>
-          ) : platformRows.length === 0 ? (
-            <EmptyState icon={Megaphone} title="No creatives" description="No active creatives found for this brand." />
-          ) : (
-            <div className="space-y-5">
-              {platformRows.map((row) => (
-                <PlatformRow
-                  key={row.platform}
-                  platform={row.platform}
-                  spend={row.spend}
-                  roas={row.roas}
-                  leads={row.leads}
-                  clicks={row.clicks}
-                  maxSpend={maxPlatformSpend}
-                />
-              ))}
-            </div>
-          )}
-        </Card>
-      </motion.div>
+      {/* Platform + State breakdowns */}
+      {!hasNoData && (
+        <motion.div initial="hidden" animate="visible" variants={fadeVariants} className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {/* Platform breakdown */}
+          <Card className="p-5 bg-card border-border">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
+              <Megaphone className="h-4 w-4 text-muted-foreground" />
+              By Platform
+            </h2>
+            {isLoading ? (
+              <div className="space-y-4">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            ) : platformRows.length === 0 ? (
+              <EmptyState icon={Megaphone} title="No creatives" description="No active creatives found for this brand." />
+            ) : (
+              <div className="space-y-5">
+                {platformRows.map((row) => (
+                  <PlatformRow key={row.platform} platform={row.platform} spend={row.spend} roas={row.roas} leads={row.leads} clicks={row.clicks} maxSpend={maxPlatformSpend} />
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {/* State breakdown */}
+          <Card className="p-5 bg-card border-border">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
+              <MapPin className="h-4 w-4 text-muted-foreground" />
+              Top States by Paid Leads
+            </h2>
+            {isLoading ? (
+              <div className="space-y-4">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            ) : stateRows.length === 0 ? (
+              <EmptyState icon={MapPin} title="No geographic data" description="No paid-channel leads with state data in this period." />
+            ) : (
+              <div className="space-y-5">
+                {stateRows.map((row) => (
+                  <StateRow key={row.state} state={row.state} leads={row.leads} attributedRevenue={row.attributedRevenue} roas={row.roas} maxLeads={maxStateLeads} />
+                ))}
+              </div>
+            )}
+          </Card>
+        </motion.div>
+      )}
 
       {/* Creatives table */}
-      <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
-        <Card className="bg-card border-border overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-            <h2 className="text-sm font-semibold text-foreground">Creative Performance</h2>
-            <p className="text-xs text-muted-foreground">
-              {sortedCreatives.length} creatives · click headers to sort
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/30">
-                  <th className="text-left px-5 py-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground w-64">
-                    Creative
-                  </th>
-                  {(
-                    [
-                      { key: "spend" as SortKey, label: "Spend" },
-                      { key: "leads" as SortKey, label: "Leads" },
-                      { key: "approvedLeads" as SortKey, label: "Aprov." },
-                      { key: "cpl" as SortKey, label: "CPL" },
-                      { key: "cpa" as SortKey, label: "CPA" },
-                      { key: "roas" as SortKey, label: "ROAS" },
-                      { key: "clicks" as SortKey, label: "Clicks" },
-                      { key: "ctr" as SortKey, label: "CTR %" },
-                    ] as { key: SortKey; label: string }[]
-                  ).map(({ key, label }) => (
-                    <th
-                      key={key}
-                      className="px-4 py-3 text-right cursor-pointer select-none"
-                      onClick={() => handleSort(key)}
-                    >
-                      <span className="flex items-center justify-end gap-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
-                        {label}
-                        <SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
-                      </span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <tr key={i} className="border-b border-border/50">
-                      <td className="px-5 py-3"><Skeleton className="h-4 w-48" /></td>
-                      {Array.from({ length: 8 }).map((_, j) => (
-                        <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-14 ml-auto" /></td>
-                      ))}
-                    </tr>
-                  ))
-                ) : sortedCreatives.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-5 py-10 text-center text-muted-foreground text-sm">
-                      No creatives found for this brand.
-                    </td>
+      {!hasNoData && (
+        <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
+          <Card className="bg-card border-border overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h2 className="text-sm font-semibold text-foreground">Creative Performance</h2>
+              <p className="text-xs text-muted-foreground">{sortedCreatives.length} creatives · click headers to sort</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="text-left px-5 py-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground w-64">Creative</th>
+                    {(
+                      [
+                        { key: "spend" as SortKey, label: "Spend" },
+                        { key: "attributedRevenue" as SortKey, label: "Revenue" },
+                        { key: "roas" as SortKey, label: "ROAS" },
+                        { key: "leads" as SortKey, label: "Leads" },
+                        { key: "approvedLeads" as SortKey, label: "Aprov." },
+                        { key: "cpl" as SortKey, label: "CPL" },
+                        { key: "cpa" as SortKey, label: "CPA" },
+                        { key: "clicks" as SortKey, label: "Clicks" },
+                        { key: "ctr" as SortKey, label: "CTR %" },
+                      ] as { key: SortKey; label: string }[]
+                    ).map(({ key, label }) => (
+                      <th key={key} className="px-4 py-3 text-right cursor-pointer select-none" onClick={() => handleSort(key)}>
+                        <span className="flex items-center justify-end gap-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
+                          {label}
+                          <SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
+                        </span>
+                      </th>
+                    ))}
                   </tr>
-                ) : (
-                  sortedCreatives.map((creative, idx) => (
-                    <tr
-                      key={creative.id}
-                      className={`border-b border-border/50 hover:bg-accent/20 transition-colors ${
-                        idx % 2 === 0 ? "" : "bg-muted/10"
-                      }`}
-                    >
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="flex flex-col gap-1 min-w-0">
-                            <span className="font-medium text-sm truncate max-w-[220px]" title={creative.name}>
-                              {creative.name}
-                            </span>
-                            <div className="flex items-center gap-1.5">
-                              <PlatformChip platform={creative.platform} />
-                              <StatusBadge status={creative.status} />
+                </thead>
+                <tbody>
+                  {isLoading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={i} className="border-b border-border/50">
+                        <td className="px-5 py-3"><Skeleton className="h-4 w-48" /></td>
+                        {Array.from({ length: 9 }).map((_, j) => (
+                          <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-14 ml-auto" /></td>
+                        ))}
+                      </tr>
+                    ))
+                  ) : sortedCreatives.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="px-5 py-10 text-center text-muted-foreground text-sm">
+                        No creatives found for this brand.
+                      </td>
+                    </tr>
+                  ) : (
+                    sortedCreatives.map((creative, idx) => (
+                      <tr key={creative.id} className={`border-b border-border/50 hover:bg-accent/20 transition-colors ${idx % 2 === 0 ? "" : "bg-muted/10"}`}>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <CreativeThumbnail imageUrl={creative.imageUrl ?? null} platform={creative.platform} name={creative.name} />
+                            <div className="flex flex-col gap-1 min-w-0">
+                              <span className="font-medium text-sm truncate max-w-[180px]" title={creative.name}>
+                                {creative.name}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <PlatformChip platform={creative.platform} />
+                                <StatusBadge status={creative.status} />
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums font-medium">
-                        {formatCurrency(creative.spend)}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-                        {formatNumber(creative.leads)}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-emerald-400">
-                        {formatNumber(creative.approvedLeads)}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-                        {formatCurrency(creative.cpl)}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-                        {formatCurrency(creative.cpa)}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        <span
-                          className={`font-semibold ${
-                            creative.roas >= 3
-                              ? "text-emerald-400"
-                              : creative.roas >= 1.5
-                                ? "text-amber-400"
-                                : "text-red-400"
-                          }`}
-                        >
-                          {creative.roas.toFixed(2)}×
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-                        {formatNumber(creative.clicks)}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-                        {formatPercentage(creative.ctr)}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      </motion.div>
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums font-medium">{formatCurrency(creative.spend)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-teal-400">{formatCurrency(creative.attributedRevenue)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          <span className={`font-semibold ${creative.roas >= 3 ? "text-emerald-400" : creative.roas >= 1.5 ? "text-amber-400" : "text-red-400"}`}>
+                            {creative.roas.toFixed(2)}×
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatNumber(creative.leads)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-emerald-400">{formatNumber(creative.approvedLeads)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatCurrency(creative.cpl)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatCurrency(creative.cpa)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatNumber(creative.clicks)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatPercentage(creative.ctr)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </motion.div>
+      )}
     </div>
   );
 }

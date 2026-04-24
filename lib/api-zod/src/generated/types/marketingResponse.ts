@@ -8,6 +8,7 @@
 import type { CreativeMetrics } from "./creativeMetrics";
 import type { MarketingKpis } from "./marketingKpis";
 import type { MarketingPlatformRow } from "./marketingPlatformRow";
+import type { MarketingStateRow } from "./marketingStateRow";
 import type { TimeSeriesPoint } from "./timeSeriesPoint";
 
 export interface MarketingResponse {
@@ -15,6 +16,8 @@ export interface MarketingResponse {
   prevKpis: MarketingKpis;
   leadsOverTime: TimeSeriesPoint[];
   revenueOverTime: TimeSeriesPoint[];
+  spendOverTime: TimeSeriesPoint[];
   creatives: CreativeMetrics[];
   platformBreakdown: MarketingPlatformRow[];
+  stateBreakdown: MarketingStateRow[];
 }
