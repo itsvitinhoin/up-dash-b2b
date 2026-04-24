@@ -487,7 +487,11 @@ export type GetProductsParams = {
   sort?: GetProductsSort;
   limit?: number;
   /**
-   * Case-insensitive substring match against the SKU.
+   * Case-insensitive substring match against the SKU or product name.
+   */
+  search?: string;
+  /**
+   * Case-insensitive substring match against the SKU only (legacy).
    */
   sku?: string;
   /**

@@ -340,10 +340,15 @@ paths:
             type: integer
             default: 50
         - in: query
+          name: search
+          schema:
+            type: string
+          description: Case-insensitive substring match against the SKU or product name.
+        - in: query
           name: sku
           schema:
             type: string
-          description: Case-insensitive substring match against the SKU.
+          description: Case-insensitive substring match against the SKU only (legacy).
         - in: query
           name: category
           schema:

@@ -513,7 +513,7 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
-  const { sort = "revenue", limit = 50, sku, category } = parsed.data;
+  const { sort = "revenue", limit = 50, search, sku, category } = parsed.data;
 
   const orderBy =
     sort === "units"
@@ -523,6 +523,14 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
         : desc(productsTable.totalRevenue);
 
   const conditions: SQL[] = [eq(productsTable.clientId, clientId)];
+  if (search && search.trim().length > 0) {
+    const term = `%${search.trim()}%`;
+    const cond = or(
+      ilike(productsTable.sku, term),
+      ilike(productsTable.name, term),
+    );
+    if (cond) conditions.push(cond);
+  }
   if (sku && sku.trim().length > 0) {
     conditions.push(ilike(productsTable.sku, `%${sku.trim()}%`));
   }

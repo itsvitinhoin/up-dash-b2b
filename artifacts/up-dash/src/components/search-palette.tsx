@@ -140,7 +140,11 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
               <CommandItem
                 key={product.id}
                 value={`product-${product.id}-${product.sku}-${product.name}`}
-                onSelect={() => handleSelect("/products")}
+                onSelect={() =>
+                  handleSelect(
+                    `/products?search=${encodeURIComponent(product.sku)}`,
+                  )
+                }
                 data-testid={`search-result-product-${product.sku}`}
               >
                 <Package className="text-muted-foreground" />
@@ -167,7 +171,11 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
                 <CommandItem
                   key={`category-${category}`}
                   value={`category-${category}`}
-                  onSelect={() => handleSelect("/products")}
+                  onSelect={() =>
+                    handleSelect(
+                      `/products?category=${encodeURIComponent(category)}`,
+                    )
+                  }
                   data-testid={`search-result-category-${category}`}
                 >
                   <Tag className="text-muted-foreground" />

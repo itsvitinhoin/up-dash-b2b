@@ -341,10 +341,18 @@ export const GetProductsQueryParams = zod.object({
     .enum(["revenue", "units", "created"])
     .default(getProductsQuerySortDefault),
   limit: zod.coerce.number().default(getProductsQueryLimitDefault),
+  search: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Case-insensitive substring match against the SKU or product name.",
+    ),
   sku: zod.coerce
     .string()
     .optional()
-    .describe("Case-insensitive substring match against the SKU."),
+    .describe(
+      "Case-insensitive substring match against the SKU only (legacy).",
+    ),
   category: zod.coerce
     .string()
     .optional()
