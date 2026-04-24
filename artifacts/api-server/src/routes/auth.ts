@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db, usersTable, clientsTable } from "@workspace/db";
 import {
   LoginBody,
+  LogoutBody,
   RefreshTokenBody,
   LoginResponse,
   RefreshTokenResponse,
@@ -105,10 +106,20 @@ router.post("/auth/login", async (req, res): Promise<void> => {
 });
 
 router.post("/auth/logout", async (req, res): Promise<void> => {
-  const body = (req.body ?? {}) as { refreshToken?: unknown };
-  if (typeof body.refreshToken === "string" && body.refreshToken.length > 0) {
+  const parsed = LogoutBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const refreshToken = parsed.data.refreshToken;
+  if (refreshToken && refreshToken.length > 0) {
     try {
-      await revokeRefreshToken(body.refreshToken);
+      await revokeRefreshToken(refreshToken);
     } catch {
       /* best-effort */
     }
