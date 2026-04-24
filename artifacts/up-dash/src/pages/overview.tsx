@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import { addDays, differenceInDays, format, subDays } from "date-fns";
+import { addDays, differenceInDays, eachDayOfInterval, format, subDays } from "date-fns";
 import { motion } from "framer-motion";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   AlertCircle,
   ArrowDownRight,
@@ -277,6 +277,7 @@ export default function OverviewPage() {
   const { user, setSelectedClientId } = useAuth();
   const { dateRange } = useDashboardFilters();
   const reduced = useReducedMotion();
+  const [, navigate] = useLocation();
   const [seriesMetric, setSeriesMetric] = useState<SeriesMetric>("revenue");
 
   const enabled = user?.role === "ADMIN";
@@ -296,6 +297,13 @@ export default function OverviewPage() {
     [prevPeriodTo, inclusiveDays],
   );
 
+  // Build the chart axis from the requested current-period date range, then
+  // index both the current and previous series by date string. The backend
+  // only returns days that have activity, so without explicit zero-fill the
+  // arrays for current vs prior windows can have different lengths and a
+  // naive index-pairing would compare the wrong dates. We pair by ordinal
+  // offset in the window: day N of "this period" lines up with day N of
+  // "previous period".
   const chartData = useMemo(() => {
     if (!data) return [];
     const current =
@@ -304,18 +312,31 @@ export default function OverviewPage() {
       seriesMetric === "revenue"
         ? data.prevRevenueOverTime
         : data.prevOrdersOverTime;
-    return current.map((p, i) => ({
-      date: p.date,
-      current: p.value,
-      previous: previous[i]?.value ?? null,
-    }));
-  }, [data, seriesMetric]);
+    const currentByDate = new Map(current.map((p) => [p.date, p.value]));
+    const previousByDate = new Map(previous.map((p) => [p.date, p.value]));
+    const days = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
+    return days.map((day, idx) => {
+      const dayKey = format(day, "yyyy-MM-dd");
+      const prevKey = format(addDays(prevPeriodFrom, idx), "yyyy-MM-dd");
+      return {
+        date: dayKey,
+        current: currentByDate.get(dayKey) ?? 0,
+        previous: previousByDate.get(prevKey) ?? 0,
+      };
+    });
+  }, [data, seriesMetric, dateRange.from, dateRange.to, prevPeriodFrom]);
 
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const fadeVariants = withReducedMotion(fadeInUp, reduced);
 
+  // Drill down into a single brand from the overview. We both set the
+  // selected client (so the topbar picker reflects the choice) AND navigate
+  // away from `/overview` — otherwise the picker is forced to the
+  // `__platform__` value while on this page and the user gets no visual
+  // feedback that their click did anything.
   const handleSelectClient = (id: string) => {
     setSelectedClientId(id);
+    navigate("/dashboard");
   };
 
   if (user?.role !== "ADMIN") {

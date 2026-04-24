@@ -2,17 +2,26 @@ import { useState, useEffect } from "react";
 import { format } from "date-fns";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
+import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { useListClients, useCreateClient } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { 
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Search, Building2, Plus } from "lucide-react";
-import { formatCurrency, formatNumber } from "@/lib/formatters";
+import {
+  AlertCircle,
+  ArrowDownRight,
+  ArrowUpRight,
+  Building2,
+  Minus,
+  Plus,
+  Search,
+} from "lucide-react";
+import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -53,9 +62,36 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
+function GrowthCell({ value }: { value: number | null | undefined }) {
+  if (value === null || value === undefined) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <Minus className="h-3 w-3" /> n/a
+      </span>
+    );
+  }
+  const isUp = value >= 0;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs font-medium tabular-nums ${
+        isUp ? "text-emerald-400" : "text-red-400"
+      }`}
+    >
+      {isUp ? (
+        <ArrowUpRight className="h-3 w-3" />
+      ) : (
+        <ArrowDownRight className="h-3 w-3" />
+      )}
+      {isUp ? "+" : ""}
+      {value.toFixed(1)}%
+    </span>
+  );
+}
+
 export default function ClientsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const { dateRange } = useDashboardFilters();
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 300);
   const [page, setPage] = useState(1);
@@ -73,7 +109,9 @@ export default function ClientsPage() {
     {
       search: debouncedSearch || undefined,
       page,
-      limit
+      limit,
+      dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+      dateTo: format(dateRange.to, "yyyy-MM-dd"),
     },
     {
       query: queryOpts({
@@ -225,8 +263,10 @@ export default function ClientsPage() {
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">YTD Revenue</TableHead>
                   <TableHead className="text-right">Orders</TableHead>
-                  <TableHead className="text-right">Leads</TableHead>
-                  <TableHead className="text-right">Created At</TableHead>
+                  <TableHead className="text-right">Avg order</TableHead>
+                  <TableHead className="text-right">Conv. %</TableHead>
+                  <TableHead className="text-right">Growth</TableHead>
+                  <TableHead className="text-right">Created</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -237,13 +277,15 @@ export default function ClientsPage() {
                       <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-24 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-24 ml-auto" /></TableCell>
                     </TableRow>
                   ))
                 ) : data?.data.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                    <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
                       <div className="flex flex-col items-center justify-center">
                         <Building2 className="h-8 w-8 mb-2 text-muted-foreground/50" />
                         No clients found.
@@ -252,7 +294,7 @@ export default function ClientsPage() {
                   </TableRow>
                 ) : (
                   data?.data.map((client) => (
-                    <TableRow key={client.id}>
+                    <TableRow key={client.id} data-testid={`clients-row-${client.id}`}>
                       <TableCell>
                         <div className="font-medium">{client.name}</div>
                         <div className="text-xs text-muted-foreground">{client.email}</div>
@@ -262,20 +304,34 @@ export default function ClientsPage() {
                           {client.isActive ? 'Active' : 'Inactive'}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right font-medium">
+                      <TableCell className="text-right font-medium tabular-nums">
                         {formatCurrency(client.revenueYtd, {
                           currency: client.currency,
                           locale: client.locale,
                         })}
                       </TableCell>
-                      <TableCell className="text-right">{formatNumber(client.ordersYtd)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumber(client.ordersYtd)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {client.avgOrderValue !== undefined && client.avgOrderValue !== null
+                          ? formatCurrency(client.avgOrderValue, {
+                              currency: client.currency,
+                              locale: client.locale,
+                            })
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {client.conversionRate !== undefined && client.conversionRate !== null
+                          ? formatPercentage(client.conversionRate)
+                          : "—"}
+                      </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex flex-col items-end">
-                          <span>{formatNumber(client.leadsYtd)}</span>
-                          <span className="text-xs text-muted-foreground">{formatNumber(client.approvedLeads)} approved</span>
+                        <div className="flex justify-end">
+                          <GrowthCell value={client.periodGrowthPct} />
                         </div>
                       </TableCell>
-                      <TableCell className="text-right text-muted-foreground">
+                      <TableCell className="text-right text-muted-foreground tabular-nums">
                         {format(new Date(client.createdAt), "MMM d, yyyy")}
                       </TableCell>
                     </TableRow>

@@ -24,6 +24,7 @@ import GeographyPage from "@/pages/geography";
 import ClientsPage from "@/pages/clients";
 import NotificationsPage from "@/pages/notifications";
 import ComparePage from "@/pages/compare";
+import OverviewPage from "@/pages/overview";
 
 function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
   const { logout } = useAuth();
@@ -124,6 +125,14 @@ function Router() {
           <AuthGuard adminOnly>
             <AppLayout>
               <PageTransition routeKey="compare"><ComparePage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/overview">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="overview"><OverviewPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

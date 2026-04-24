@@ -132,9 +132,13 @@ router.get(
     const prevTo = new Date(from.getTime() - 1);
     const prevFrom = new Date(prevTo.getTime() - lengthMs);
 
-    // All clients (active or inactive). Capped at a generous limit to keep the
-    // response bounded. The platform isn't expected to host thousands of
-    // tenants — if that changes this needs pagination instead.
+    // Every client on the platform (active or inactive). Intentionally
+    // unbounded so KPIs and rankings reflect the whole tenant base — this
+    // endpoint is the single source of truth for "platform totals". If the
+    // tenant base ever grows past a few thousand brands we'll need to split
+    // the per-client `clientStats` payload from the headline KPIs and stream
+    // it separately, but at that scale this whole endpoint warrants a
+    // rethink anyway.
     const clients = await db
       .select({
         id: clientsTable.id,
@@ -143,8 +147,7 @@ router.get(
         locale: clientsTable.locale,
       })
       .from(clientsTable)
-      .orderBy(clientsTable.name)
-      .limit(500);
+      .orderBy(clientsTable.name);
 
     const totalClients = clients.length;
 

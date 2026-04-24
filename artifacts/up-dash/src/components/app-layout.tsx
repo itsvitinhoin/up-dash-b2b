@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
+import { Globe2 } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -68,13 +69,18 @@ const pageMeta: Record<string, PageMeta> = {
   "/products": { title: "Products", subtitle: "Performance and ranking", hasDateRange: false, hasFilterBar: true },
   "/sellers": { title: "Sellers", subtitle: "Top performers across the catalog", hasDateRange: false, hasFilterBar: true },
   "/geography": { title: "Geography", subtitle: "Sales distribution by region", hasDateRange: true, hasFilterBar: true },
-  "/clients": { title: "Clients", subtitle: "Brand accounts on the platform", hasDateRange: false, hasFilterBar: false },
+  "/clients": { title: "Clients", subtitle: "Brand accounts on the platform", hasDateRange: true, hasFilterBar: false },
   "/notifications": { title: "Notifications", subtitle: "Anomalies, top movers, and rollups", hasDateRange: false, hasFilterBar: false },
   "/compare": { title: "Compare brands", subtitle: "Benchmark up to four clients side-by-side", hasDateRange: true, hasFilterBar: false },
+  "/overview": { title: "Platform overview", subtitle: "Every brand on UP Dash, at a glance", hasDateRange: true, hasFilterBar: false },
 };
 
+// Sentinel value for the topbar picker when an admin selects the
+// platform-wide entry. Real client IDs are CUIDs, so this can never collide.
+const PLATFORM_PICK = "__platform__";
+
 export function AppLayout({ children }: AppLayoutProps) {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const { user, logout, selectedClientId, setSelectedClientId } = useAuth();
   const { theme, setTheme } = useTheme();
   const { dateRange, setDateRange } = useDashboardFilters();
@@ -110,16 +116,21 @@ export function AppLayout({ children }: AppLayoutProps) {
     { query: queryOpts({ enabled: user?.role === "ADMIN" }) },
   );
 
+  // Auto-pick the first client for admins — but skip on the platform overview
+  // page, which is intentionally unscoped. Without this guard, navigating to
+  // /overview would silently re-select a client and any per-brand widgets
+  // would mount with the wrong context.
   useEffect(() => {
     if (
       user?.role === "ADMIN" &&
       !selectedClientId &&
+      location !== "/overview" &&
       clientsData?.data &&
       clientsData.data.length > 0
     ) {
       setSelectedClientId(clientsData.data[0].id);
     }
-  }, [user?.role, selectedClientId, clientsData, setSelectedClientId]);
+  }, [user?.role, selectedClientId, clientsData, setSelectedClientId, location]);
 
   const { data: clientData } = useGetClient(user?.clientId || "", {
     query: queryOpts({ enabled: user?.role === "CLIENT" && !!user?.clientId }),
@@ -159,6 +170,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   ];
 
   if (user?.role === "ADMIN") {
+    workspaceNav.unshift({ name: "Platform overview", href: "/overview", icon: Globe2 });
     workspaceNav.push({ name: "Compare brands", href: "/compare", icon: GitCompareArrows });
     workspaceNav.push({ name: "Clients", href: "/clients", icon: Building2 });
   }
@@ -301,10 +313,27 @@ export function AppLayout({ children }: AppLayoutProps) {
 
           <div className="ml-auto flex items-center gap-2">
             {user?.role === "ADMIN" && (
-              <div className="hidden sm:block w-44">
+              <div className="hidden sm:block w-52">
                 <Select
-                  value={selectedClientId ?? undefined}
-                  onValueChange={(val) => setSelectedClientId(val)}
+                  // On the platform overview page no individual client is
+                  // active, so render the picker as the platform entry.
+                  value={
+                    location === "/overview"
+                      ? PLATFORM_PICK
+                      : selectedClientId ?? undefined
+                  }
+                  onValueChange={(val) => {
+                    if (val === PLATFORM_PICK) {
+                      setSelectedClientId(null);
+                      navigate("/overview");
+                      return;
+                    }
+                    setSelectedClientId(val);
+                    // Leaving the platform view back to a brand should land
+                    // on the per-brand dashboard, not strand the user on
+                    // /overview with a brand selected.
+                    if (location === "/overview") navigate("/dashboard");
+                  }}
                 >
                   <SelectTrigger
                     data-testid="client-picker"
@@ -313,6 +342,18 @@ export function AppLayout({ children }: AppLayoutProps) {
                     <SelectValue placeholder="Select a client" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem
+                      value={PLATFORM_PICK}
+                      data-testid="client-picker-platform"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Globe2 className="h-3.5 w-3.5 text-primary" />
+                        All Clients · Platform
+                      </span>
+                    </SelectItem>
+                    {clientsData && clientsData.data.length > 0 && (
+                      <div className="my-1 h-px bg-border" />
+                    )}
                     {clientsData?.data.map((client) => (
                       <SelectItem key={client.id} value={client.id}>
                         {client.name}
