@@ -21,18 +21,22 @@ import {
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
+  BarChart3,
   ChevronRight,
   CircleDot,
   DollarSign,
   Download,
   FileText,
+  Info,
   MoreHorizontal,
   Package,
   PackageX,
   RefreshCw,
   Sparkles,
   Target,
+  TrendingDown,
   TrendingUp,
+  Users,
   Wallet,
   X,
 } from "lucide-react";
@@ -435,6 +439,8 @@ export default function DashboardPage() {
     const orderVal = data?.ordersOverTime[i]?.value ?? 0;
     return leadPoint.value > 0 ? (orderVal / leadPoint.value) * 100 : 0;
   });
+  const sparkNewBuyers = data?.newBuyersOverTime?.map((p) => p.value) ?? [];
+  const sparkReturning = data?.returningBuyersOverTime?.map((p) => p.value) ?? [];
 
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const fadeVariants = withReducedMotion(fadeInUp, reduced);
@@ -553,6 +559,123 @@ export default function DashboardPage() {
           isLoading={isLoading}
           ringValue={data?.kpis.conversionRate ?? 0}
           ringColor="hsl(var(--chart-1))"
+        />
+      </motion.div>
+
+      {/* Marketing & buyer KPIs row */}
+      <motion.div
+        initial="hidden"
+        animate="visible"
+        variants={containerVariants}
+        className="grid grid-cols-1 sm:grid-cols-3 gap-4"
+      >
+        {/* Requested vs Approved Revenue */}
+        <Card className="p-5 bg-card border-border" data-testid="kpi-requested-revenue">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/15 shrink-0">
+              <DollarSign className="h-4 w-4 text-blue-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground leading-none">Requested revenue</p>
+              {isLoading ? (
+                <Skeleton className="h-6 w-24 mt-1" />
+              ) : (
+                <p className="text-xl font-bold tabular-nums mt-0.5">
+                  <CountUp value={data?.kpis.requestedRevenue ?? 0} format={(v) => formatCurrency(v)} />
+                </p>
+              )}
+            </div>
+          </div>
+          {isLoading ? (
+            <Skeleton className="h-3 w-full mb-2" />
+          ) : (
+            <>
+              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                <span>Approved</span>
+                <span className="font-medium text-foreground tabular-nums">
+                  {formatCurrency(data?.kpis.revenue ?? 0)}
+                </span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-blue-400 transition-all"
+                  style={{
+                    width: `${Math.min(100, (data?.kpis.requestedRevenue ?? 0) > 0
+                      ? ((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100
+                      : 0)}%`,
+                  }}
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {(data?.kpis.requestedRevenue ?? 0) > 0
+                  ? `${(((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100).toFixed(1)}% fulfillment rate`
+                  : "No requested revenue"}
+              </p>
+            </>
+          )}
+        </Card>
+
+        {/* New vs Returning Buyers */}
+        <Card className="p-5 bg-card border-border" data-testid="kpi-buyers">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/15 shrink-0">
+              <Users className="h-4 w-4 text-emerald-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground leading-none">Buyers this period</p>
+              {isLoading ? (
+                <Skeleton className="h-6 w-24 mt-1" />
+              ) : (
+                <p className="text-xl font-bold tabular-nums mt-0.5">
+                  <CountUp
+                    value={(data?.kpis.newBuyers ?? 0) + (data?.kpis.returningBuyers ?? 0)}
+                    format={(v) => formatNumber(v)}
+                  />
+                </p>
+              )}
+            </div>
+          </div>
+          {isLoading ? (
+            <div className="space-y-1.5">
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-full" />
+            </div>
+          ) : (
+            <div className="flex gap-3 text-xs">
+              <div className="flex-1 rounded-md bg-muted/40 px-3 py-2 text-center">
+                <p className="font-semibold tabular-nums text-base">
+                  {formatNumber(data?.kpis.newBuyers ?? 0)}
+                </p>
+                <p className="text-muted-foreground mt-0.5">New</p>
+              </div>
+              <div className="flex-1 rounded-md bg-muted/40 px-3 py-2 text-center">
+                <p className="font-semibold tabular-nums text-base">
+                  {formatNumber(data?.kpis.returningBuyers ?? 0)}
+                </p>
+                <p className="text-muted-foreground mt-0.5">Returning</p>
+              </div>
+            </div>
+          )}
+        </Card>
+
+        {/* Retention % */}
+        <KpiCard
+          testId="kpi-retention"
+          icon={TrendingUp}
+          iconClass="bg-violet-500/15 text-violet-400"
+          label="Buyer retention"
+          value={data?.kpis.retentionPct ?? 0}
+          format={(v) => formatPercentage(v)}
+          unit="%"
+          change={null}
+          changeLabel=""
+          sparkValues={sparkReturning}
+          sparkColor="#a78bfa"
+          sub={[
+            { label: "New buyers", value: data ? formatNumber(data.kpis.newBuyers) : "—" },
+            { label: "Returning", value: data ? formatNumber(data.kpis.returningBuyers) : "—" },
+          ]}
+          isLoading={isLoading}
         />
       </motion.div>
 
@@ -765,6 +888,57 @@ export default function DashboardPage() {
           </Card>
         )}
       </motion.div>
+
+      {/* Business signals */}
+      {(data?.signals?.length ?? 0) > 0 && (
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={fadeVariants}
+        >
+          <Card className="p-5 bg-card border-border" data-testid="signals-panel">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-sky-500/15">
+                <BarChart3 className="h-4 w-4 text-sky-400" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold leading-tight">Business signals</h2>
+                <p className="text-xs text-muted-foreground">Computed insights for this period</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {data?.signals?.map((signal) => {
+                const isWarning = signal.severity === "warning";
+                const isCritical = signal.severity === "critical";
+                const colorCls = isCritical
+                  ? "bg-red-500/10 border-red-500/20 text-red-400"
+                  : isWarning
+                    ? "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                    : "bg-sky-500/10 border-sky-500/20 text-sky-400";
+                const Icon =
+                  signal.type === "high_traffic_low_sales"
+                    ? TrendingDown
+                    : signal.type === "high_performing_regions"
+                      ? BarChart3
+                      : Info;
+                return (
+                  <div
+                    key={signal.type}
+                    className={`flex gap-3 p-3.5 rounded-lg border ${colorCls}`}
+                    data-testid={`signal-${signal.type}`}
+                  >
+                    <Icon className="h-4 w-4 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold leading-snug">{signal.title}</p>
+                      <p className="text-xs opacity-80 mt-0.5 leading-relaxed">{signal.body}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </motion.div>
+      )}
 
       {/* Inventory alerts */}
       <Card className="p-5 bg-card border-border" data-testid="alerts-panel">

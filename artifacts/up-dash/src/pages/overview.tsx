@@ -7,15 +7,19 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Award,
+  BadgeCheck,
   Building2,
   ChevronRight,
   CircleDollarSign,
   Globe2,
+  Megaphone,
   Minus,
   Package,
   TrendingDown,
   TrendingUp,
+  UserPlus,
   Users,
+  Zap,
 } from "lucide-react";
 import {
   Area,
@@ -47,7 +51,7 @@ import {
   withReducedMotion,
 } from "@/lib/motion";
 
-type SeriesMetric = "revenue" | "orders";
+type SeriesMetric = "revenue" | "orders" | "leads";
 
 function deltaPct(current: number, previous: number): number | null {
   if (previous === 0) return current > 0 ? 100 : null;
@@ -307,11 +311,17 @@ export default function OverviewPage() {
   const chartData = useMemo(() => {
     if (!data) return [];
     const current =
-      seriesMetric === "revenue" ? data.revenueOverTime : data.ordersOverTime;
+      seriesMetric === "revenue"
+        ? data.revenueOverTime
+        : seriesMetric === "orders"
+          ? data.ordersOverTime
+          : data.leadsOverTime;
     const previous =
       seriesMetric === "revenue"
         ? data.prevRevenueOverTime
-        : data.prevOrdersOverTime;
+        : seriesMetric === "orders"
+          ? data.prevOrdersOverTime
+          : data.prevLeadsOverTime;
     const currentByDate = new Map(current.map((p) => [p.date, p.value]));
     const previousByDate = new Map(previous.map((p) => [p.date, p.value]));
     const days = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
@@ -375,6 +385,10 @@ export default function OverviewPage() {
     kpis && prev ? deltaPct(kpis.avgOrderValue, prev.avgOrderValue) : null;
   const activeDelta =
     kpis && prev ? deltaPct(kpis.activeClients, prev.activeClients) : null;
+  const adSpendDelta = kpis && prev ? deltaPct(kpis.adSpend, prev.adSpend) : null;
+  const roasDelta = kpis && prev ? deltaPct(kpis.roas, prev.roas) : null;
+  const totalLeadsDelta = kpis && prev ? deltaPct(kpis.totalLeads, prev.totalLeads) : null;
+  const approvedLeadsDelta = kpis && prev ? deltaPct(kpis.approvedLeads, prev.approvedLeads) : null;
 
   const seriesEmpty =
     data !== undefined && chartData.every((p) => (p.current ?? 0) === 0);
@@ -470,6 +484,59 @@ export default function OverviewPage() {
         />
       </motion.div>
 
+      {/* Marketing KPIs row */}
+      <motion.div
+        initial="hidden"
+        animate="visible"
+        variants={containerVariants}
+        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"
+      >
+        <KpiTile
+          testId="overview-kpi-adspend"
+          icon={Megaphone}
+          iconClass="bg-rose-500/15 text-rose-400"
+          label="Ad spend"
+          value={kpis?.adSpend ?? 0}
+          format={(v) => formatCurrency(v)}
+          change={adSpendDelta}
+          changeLabel="vs. previous period"
+          isLoading={isLoading}
+        />
+        <KpiTile
+          testId="overview-kpi-roas"
+          icon={Zap}
+          iconClass="bg-yellow-500/15 text-yellow-400"
+          label="Global ROAS"
+          value={kpis?.roas ?? 0}
+          format={(v) => `${v.toFixed(2)}×`}
+          change={roasDelta}
+          changeLabel="vs. previous period"
+          isLoading={isLoading}
+        />
+        <KpiTile
+          testId="overview-kpi-total-leads"
+          icon={UserPlus}
+          iconClass="bg-indigo-500/15 text-indigo-400"
+          label="Total leads"
+          value={kpis?.totalLeads ?? 0}
+          format={(v) => formatNumber(v)}
+          change={totalLeadsDelta}
+          changeLabel="vs. previous period"
+          isLoading={isLoading}
+        />
+        <KpiTile
+          testId="overview-kpi-approved-leads"
+          icon={BadgeCheck}
+          iconClass="bg-teal-500/15 text-teal-400"
+          label="Approved leads"
+          value={kpis?.approvedLeads ?? 0}
+          format={(v) => formatNumber(v)}
+          change={approvedLeadsDelta}
+          changeLabel="vs. previous period"
+          isLoading={isLoading}
+        />
+      </motion.div>
+
       <Card className="p-5 bg-card border-border">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
@@ -486,7 +553,7 @@ export default function OverviewPage() {
             role="tablist"
             aria-label="Series metric"
           >
-            {(["revenue", "orders"] as SeriesMetric[]).map((m) => (
+            {(["revenue", "orders", "leads"] as SeriesMetric[]).map((m) => (
               <button
                 key={m}
                 role="tab"
@@ -499,7 +566,7 @@ export default function OverviewPage() {
                     : "text-muted-foreground hover:bg-accent/40"
                 }`}
               >
-                {m === "revenue" ? "Revenue" : "Orders"}
+                {m === "revenue" ? "Revenue" : m === "orders" ? "Orders" : "Leads"}
               </button>
             ))}
           </div>

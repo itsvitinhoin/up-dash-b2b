@@ -16,4 +16,12 @@ export interface DashboardKpis {
   approvedLeads: number;
   customers: number;
   repeatCustomers: number;
+  /** Sum of ALL order amounts in the period regardless of status (PENDING included). */
+  requestedRevenue: number;
+  /** Distinct buyers whose first ever purchase falls in this window. */
+  newBuyers: number;
+  /** Distinct buyers who had at least one prior order before this window. */
+  returningBuyers: number;
+  /** returningBuyers / (newBuyers + returningBuyers) * 100. */
+  retentionPct: number;
 }

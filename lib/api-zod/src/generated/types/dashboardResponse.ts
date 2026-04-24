@@ -7,6 +7,7 @@
  */
 import type { CategoryShare } from "./categoryShare";
 import type { DashboardKpis } from "./dashboardKpis";
+import type { DashboardSignal } from "./dashboardSignal";
 import type { TimeSeriesPoint } from "./timeSeriesPoint";
 
 export interface DashboardResponse {
@@ -28,4 +29,10 @@ present when the request was made with `compare=true`.
 Only present when the request was made with `compare=true`.
  */
   prevOrdersOverTime?: TimeSeriesPoint[];
+  /** Daily new-buyer count (first purchase in the window). */
+  newBuyersOverTime: TimeSeriesPoint[];
+  /** Daily returning-buyer count (prior purchases before window). */
+  returningBuyersOverTime: TimeSeriesPoint[];
+  /** Computed business signals for the current period. */
+  signals: DashboardSignal[];
 }

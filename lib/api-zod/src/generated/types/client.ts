@@ -40,4 +40,26 @@ the current window has zero revenue too. Only present on enriched
    * @nullable
    */
   periodGrowthPct?: number | null;
+  /**
+   * Optional. ROAS for the period (period revenue / prorated ad spend).
+`null` when the client has no creatives with spend in the window.
+Only present on enriched /clients responses.
+
+   * @nullable
+   */
+  periodRoas?: number | null;
+  /**
+   * Optional. Prorated ad-channel leads (REGISTRATION events) in the
+requested period. Only present on enriched /clients responses.
+
+   * @nullable
+   */
+  periodLeads?: number | null;
+  /**
+   * Optional. Lead approval rate (approvedLeads / totalLeads × 100).
+`null` when there are zero leads. Only present on enriched /clients responses.
+
+   * @nullable
+   */
+  periodApprovalRate?: number | null;
 }

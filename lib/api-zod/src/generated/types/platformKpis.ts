@@ -14,4 +14,12 @@ export interface PlatformKpis {
   /** Number of clients with > 0 orders in the window. */
   activeClients: number;
   totalClients: number;
+  /** Total prorated ad spend summed across all brands in the window. */
+  adSpend: number;
+  /** Platform ROAS — total revenue divided by total ad spend. */
+  roas: number;
+  /** Total prorated ad-channel leads (REGISTRATION events) across all brands. */
+  totalLeads: number;
+  /** Total prorated approved leads across all brands. */
+  approvedLeads: number;
 }

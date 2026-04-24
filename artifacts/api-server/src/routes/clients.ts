@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { and, eq, gte, ilike, inArray, lte, sql } from "drizzle-orm";
-import { db, clientsTable, ordersTable, eventsTable } from "@workspace/db";
+import { and, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
+import { db, clientsTable, ordersTable, eventsTable, creativesTable } from "@workspace/db";
 import {
   CreateClientBody,
   GetClientParams,
@@ -68,6 +68,9 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     avgOrderValue?: number;
     conversionRate?: number;
     periodGrowthPct?: number | null;
+    periodRoas?: number | null;
+    periodLeads?: number | null;
+    periodApprovalRate?: number | null;
   }>;
   if (dateFrom && dateTo && rows.length > 0) {
     const ids = rows.map((r) => r.id);
@@ -113,10 +116,36 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
       )
       .groupBy(eventsTable.clientId);
 
-    const [currRows, prevRows, visitRows] = await Promise.all([
+    // Prorated creative spend/leads per client for the window.
+    const creativesQuery = db
+      .select({
+        clientId: creativesTable.clientId,
+        spend: creativesTable.spend,
+        leads: creativesTable.leads,
+        approvedLeads: creativesTable.approvedLeads,
+        activeFrom: creativesTable.activeFrom,
+        activeTo: creativesTable.activeTo,
+      })
+      .from(creativesTable)
+      .where(
+        and(
+          inArray(creativesTable.clientId, ids),
+          or(
+            sql`${creativesTable.activeFrom} IS NULL`,
+            sql`${creativesTable.activeFrom} <= ${dateTo.toISOString().slice(0, 10)}`,
+          ),
+          or(
+            sql`${creativesTable.activeTo} IS NULL`,
+            sql`${creativesTable.activeTo} >= ${dateFrom.toISOString().slice(0, 10)}`,
+          ),
+        ),
+      );
+
+    const [currRows, prevRows, visitRows, creativeRows] = await Promise.all([
       orderAgg(dateFrom, dateTo),
       orderAgg(prevFrom, prevTo),
       visitAgg,
+      creativesQuery,
     ]);
 
     const curr = new Map<string, { revenue: number; orders: number }>();
@@ -138,10 +167,34 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
       visits.set(r.clientId, Number(r.visits) || 0);
     }
 
+    // Aggregate prorated creative metrics per client.
+    type MktMetrics = { adSpend: number; totalLeads: number; approvedLeads: number };
+    const mkt = new Map<string, MktMetrics>();
+    for (const c of creativeRows) {
+      let frac = 1;
+      if (c.activeFrom && c.activeTo) {
+        const cFrom = new Date(c.activeFrom as string);
+        const cTo = new Date(c.activeTo as string);
+        const campaignMs = Math.max(1, cTo.getTime() - cFrom.getTime());
+        const overlapMs = Math.max(
+          0,
+          Math.min(dateTo.getTime(), cTo.getTime()) - Math.max(dateFrom.getTime(), cFrom.getTime()),
+        );
+        frac = overlapMs / campaignMs;
+      }
+      const existing = mkt.get(c.clientId) ?? { adSpend: 0, totalLeads: 0, approvedLeads: 0 };
+      mkt.set(c.clientId, {
+        adSpend: existing.adSpend + c.spend * frac,
+        totalLeads: existing.totalLeads + Math.round(c.leads * frac),
+        approvedLeads: existing.approvedLeads + Math.round(c.approvedLeads * frac),
+      });
+    }
+
     enriched = rows.map((r) => {
       const c = curr.get(r.id) ?? { revenue: 0, orders: 0 };
       const p = prev.get(r.id) ?? { revenue: 0, orders: 0 };
       const v = visits.get(r.id) ?? 0;
+      const m = mkt.get(r.id) ?? null;
       let growthPct: number | null;
       if (p.revenue > 0) {
         growthPct = ((c.revenue - p.revenue) / p.revenue) * 100;
@@ -157,6 +210,9 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
         // imports, which would otherwise render >100% conversions.
         conversionRate: v > 0 ? Math.min(100, (c.orders / v) * 100) : 0,
         periodGrowthPct: growthPct,
+        periodRoas: m && m.adSpend > 0 ? c.revenue / m.adSpend : null,
+        periodLeads: m ? m.totalLeads : null,
+        periodApprovalRate: m && m.totalLeads > 0 ? (m.approvedLeads / m.totalLeads) * 100 : null,
       };
     });
   }

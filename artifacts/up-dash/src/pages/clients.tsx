@@ -266,6 +266,9 @@ export default function ClientsPage() {
                   <TableHead className="text-right">Avg order</TableHead>
                   <TableHead className="text-right">Conv. %</TableHead>
                   <TableHead className="text-right">Growth</TableHead>
+                  <TableHead className="text-right">ROAS</TableHead>
+                  <TableHead className="text-right">Leads</TableHead>
+                  <TableHead className="text-right">Approval</TableHead>
                   <TableHead className="text-right">Created</TableHead>
                 </TableRow>
               </TableHeader>
@@ -280,12 +283,15 @@ export default function ClientsPage() {
                       <TableCell><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-14 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-24 ml-auto" /></TableCell>
                     </TableRow>
                   ))
                 ) : data?.data.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
+                    <TableCell colSpan={11} className="h-32 text-center text-muted-foreground">
                       <div className="flex flex-col items-center justify-center">
                         <Building2 className="h-8 w-8 mb-2 text-muted-foreground/50" />
                         No clients found.
@@ -330,6 +336,21 @@ export default function ClientsPage() {
                         <div className="flex justify-end">
                           <GrowthCell value={client.periodGrowthPct} />
                         </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {client.periodRoas !== undefined && client.periodRoas !== null
+                          ? `${client.periodRoas.toFixed(2)}×`
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {client.periodLeads !== undefined && client.periodLeads !== null
+                          ? formatNumber(client.periodLeads)
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {client.periodApprovalRate !== undefined && client.periodApprovalRate !== null
+                          ? formatPercentage(client.periodApprovalRate)
+                          : "—"}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground tabular-nums">
                         {format(new Date(client.createdAt), "MMM d, yyyy")}

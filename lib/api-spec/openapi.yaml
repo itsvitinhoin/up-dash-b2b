@@ -929,6 +929,22 @@ components:
             (in percent). `null` when the prior window had zero revenue and
             the current window has zero revenue too. Only present on enriched
             /clients responses.
+        periodRoas:
+          type: ["number", "null"]
+          description: |
+            Optional. ROAS for the period (period revenue / prorated ad spend).
+            `null` when the client has no creatives with spend in the window.
+            Only present on enriched /clients responses.
+        periodLeads:
+          type: ["integer", "null"]
+          description: |
+            Optional. Prorated ad-channel leads (REGISTRATION events) in the
+            requested period. Only present on enriched /clients responses.
+        periodApprovalRate:
+          type: ["number", "null"]
+          description: |
+            Optional. Lead approval rate (approvedLeads / totalLeads × 100).
+            `null` when there are zero leads. Only present on enriched /clients responses.
       required:
         - id
         - name
@@ -977,6 +993,25 @@ components:
           description: BCP 47 locale (default pt-BR)
       required: [name, email, apiKey]
 
+    DashboardSignal:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [high_traffic_low_sales, high_performing_regions]
+        severity:
+          type: string
+          enum: [info, warning, critical]
+        title:
+          type: string
+        body:
+          type: string
+        meta:
+          type: object
+          additionalProperties: true
+          description: Optional extra context (region names, conversion %, etc.).
+      required: [type, severity, title, body]
+
     DashboardKpis:
       type: object
       properties:
@@ -998,6 +1033,18 @@ components:
           type: integer
         repeatCustomers:
           type: integer
+        requestedRevenue:
+          type: number
+          description: Sum of ALL order amounts in the period regardless of status (PENDING included).
+        newBuyers:
+          type: integer
+          description: Distinct buyers whose first ever purchase falls in this window.
+        returningBuyers:
+          type: integer
+          description: Distinct buyers who had at least one prior order before this window.
+        retentionPct:
+          type: number
+          description: returningBuyers / (newBuyers + returningBuyers) * 100.
       required:
         - revenue
         - orders
@@ -1008,6 +1055,10 @@ components:
         - approvedLeads
         - customers
         - repeatCustomers
+        - requestedRevenue
+        - newBuyers
+        - returningBuyers
+        - retentionPct
 
     TimeSeriesPoint:
       type: object
@@ -1071,12 +1122,30 @@ components:
           description: |
             Daily order count series for the prior comparison period.
             Only present when the request was made with `compare=true`.
+        newBuyersOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+          description: Daily new-buyer count (first purchase in the window).
+        returningBuyersOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+          description: Daily returning-buyer count (prior purchases before window).
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardSignal"
+          description: Computed business signals for the current period.
       required:
         - kpis
         - revenueOverTime
         - ordersOverTime
         - leadsOverTime
         - revenueByCategory
+        - newBuyersOverTime
+        - returningBuyersOverTime
+        - signals
 
     PlatformKpis:
       type: object
@@ -1094,6 +1163,18 @@ components:
           description: Number of clients with > 0 orders in the window.
         totalClients:
           type: integer
+        adSpend:
+          type: number
+          description: Total prorated ad spend summed across all brands in the window.
+        roas:
+          type: number
+          description: Platform ROAS — total revenue divided by total ad spend.
+        totalLeads:
+          type: integer
+          description: Total prorated ad-channel leads (REGISTRATION events) across all brands.
+        approvedLeads:
+          type: integer
+          description: Total prorated approved leads across all brands.
       required:
         - revenue
         - orders
@@ -1101,6 +1182,10 @@ components:
         - avgOrderValue
         - activeClients
         - totalClients
+        - adSpend
+        - roas
+        - totalLeads
+        - approvedLeads
 
     PlatformClientStat:
       type: object
@@ -1143,11 +1228,20 @@ components:
           items:
             $ref: "#/components/schemas/TimeSeriesPoint"
           description: Daily order count summed across every client.
+        leadsOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+          description: Daily lead count (REGISTRATION events) summed across every client.
         prevRevenueOverTime:
           type: array
           items:
             $ref: "#/components/schemas/TimeSeriesPoint"
         prevOrdersOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+        prevLeadsOverTime:
           type: array
           items:
             $ref: "#/components/schemas/TimeSeriesPoint"
@@ -1176,8 +1270,10 @@ components:
         - prevKpis
         - revenueOverTime
         - ordersOverTime
+        - leadsOverTime
         - prevRevenueOverTime
         - prevOrdersOverTime
+        - prevLeadsOverTime
         - clientStats
         - topPerformers
         - topGrowth

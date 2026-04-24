@@ -16,8 +16,11 @@ export interface PlatformOverviewResponse {
   revenueOverTime: TimeSeriesPoint[];
   /** Daily order count summed across every client. */
   ordersOverTime: TimeSeriesPoint[];
+  /** Daily lead count (REGISTRATION events) summed across every client. */
+  leadsOverTime: TimeSeriesPoint[];
   prevRevenueOverTime: TimeSeriesPoint[];
   prevOrdersOverTime: TimeSeriesPoint[];
+  prevLeadsOverTime: TimeSeriesPoint[];
   /** Per-client revenue/orders/growth for the window. */
   clientStats: PlatformClientStat[];
   /** Top 5 clients by revenue in the window. */

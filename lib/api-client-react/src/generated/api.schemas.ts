@@ -114,6 +114,28 @@ the current window has zero revenue too. Only present on enriched
    * @nullable
    */
   periodGrowthPct?: number | null;
+  /**
+   * Optional. ROAS for the period (period revenue / prorated ad spend).
+`null` when the client has no creatives with spend in the window.
+Only present on enriched /clients responses.
+
+   * @nullable
+   */
+  periodRoas?: number | null;
+  /**
+   * Optional. Prorated ad-channel leads (REGISTRATION events) in the
+requested period. Only present on enriched /clients responses.
+
+   * @nullable
+   */
+  periodLeads?: number | null;
+  /**
+   * Optional. Lead approval rate (approvedLeads / totalLeads × 100).
+`null` when there are zero leads. Only present on enriched /clients responses.
+
+   * @nullable
+   */
+  periodApprovalRate?: number | null;
 }
 
 export interface PaginatedClients {
@@ -133,6 +155,37 @@ export interface CreateClientRequest {
   locale?: string;
 }
 
+export type DashboardSignalType =
+  (typeof DashboardSignalType)[keyof typeof DashboardSignalType];
+
+export const DashboardSignalType = {
+  high_traffic_low_sales: "high_traffic_low_sales",
+  high_performing_regions: "high_performing_regions",
+} as const;
+
+export type DashboardSignalSeverity =
+  (typeof DashboardSignalSeverity)[keyof typeof DashboardSignalSeverity];
+
+export const DashboardSignalSeverity = {
+  info: "info",
+  warning: "warning",
+  critical: "critical",
+} as const;
+
+/**
+ * Optional extra context (region names, conversion %, etc.).
+ */
+export type DashboardSignalMeta = { [key: string]: unknown };
+
+export interface DashboardSignal {
+  type: DashboardSignalType;
+  severity: DashboardSignalSeverity;
+  title: string;
+  body: string;
+  /** Optional extra context (region names, conversion %, etc.). */
+  meta?: DashboardSignalMeta;
+}
+
 export interface DashboardKpis {
   revenue: number;
   orders: number;
@@ -143,6 +196,14 @@ export interface DashboardKpis {
   approvedLeads: number;
   customers: number;
   repeatCustomers: number;
+  /** Sum of ALL order amounts in the period regardless of status (PENDING included). */
+  requestedRevenue: number;
+  /** Distinct buyers whose first ever purchase falls in this window. */
+  newBuyers: number;
+  /** Distinct buyers who had at least one prior order before this window. */
+  returningBuyers: number;
+  /** returningBuyers / (newBuyers + returningBuyers) * 100. */
+  retentionPct: number;
 }
 
 export interface TimeSeriesPoint {
@@ -175,6 +236,12 @@ present when the request was made with `compare=true`.
 Only present when the request was made with `compare=true`.
  */
   prevOrdersOverTime?: TimeSeriesPoint[];
+  /** Daily new-buyer count (first purchase in the window). */
+  newBuyersOverTime: TimeSeriesPoint[];
+  /** Daily returning-buyer count (prior purchases before window). */
+  returningBuyersOverTime: TimeSeriesPoint[];
+  /** Computed business signals for the current period. */
+  signals: DashboardSignal[];
 }
 
 export interface PlatformKpis {
@@ -185,6 +252,14 @@ export interface PlatformKpis {
   /** Number of clients with > 0 orders in the window. */
   activeClients: number;
   totalClients: number;
+  /** Total prorated ad spend summed across all brands in the window. */
+  adSpend: number;
+  /** Platform ROAS — total revenue divided by total ad spend. */
+  roas: number;
+  /** Total prorated ad-channel leads (REGISTRATION events) across all brands. */
+  totalLeads: number;
+  /** Total prorated approved leads across all brands. */
+  approvedLeads: number;
 }
 
 export interface PlatformClientStat {
@@ -211,8 +286,11 @@ export interface PlatformOverviewResponse {
   revenueOverTime: TimeSeriesPoint[];
   /** Daily order count summed across every client. */
   ordersOverTime: TimeSeriesPoint[];
+  /** Daily lead count (REGISTRATION events) summed across every client. */
+  leadsOverTime: TimeSeriesPoint[];
   prevRevenueOverTime: TimeSeriesPoint[];
   prevOrdersOverTime: TimeSeriesPoint[];
+  prevLeadsOverTime: TimeSeriesPoint[];
   /** Per-client revenue/orders/growth for the window. */
   clientStats: PlatformClientStat[];
   /** Top 5 clients by revenue in the window. */

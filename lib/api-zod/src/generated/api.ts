@@ -127,6 +127,24 @@ export const ListClientsResponse = zod.object({
         .describe(
           "Optional. Revenue growth versus the prior window of equal length\n(in percent). `null` when the prior window had zero revenue and\nthe current window has zero revenue too. Only present on enriched\n\/clients responses.\n",
         ),
+      periodRoas: zod
+        .number()
+        .nullish()
+        .describe(
+          "Optional. ROAS for the period (period revenue \/ prorated ad spend).\n`null` when the client has no creatives with spend in the window.\nOnly present on enriched \/clients responses.\n",
+        ),
+      periodLeads: zod
+        .number()
+        .nullish()
+        .describe(
+          "Optional. Prorated ad-channel leads (REGISTRATION events) in the\nrequested period. Only present on enriched \/clients responses.\n",
+        ),
+      periodApprovalRate: zod
+        .number()
+        .nullish()
+        .describe(
+          "Optional. Lead approval rate (approvedLeads \/ totalLeads × 100).\n`null` when there are zero leads. Only present on enriched \/clients responses.\n",
+        ),
     }),
   ),
   total: zod.number(),
@@ -187,6 +205,24 @@ export const GetClientResponse = zod.object({
     .describe(
       "Optional. Revenue growth versus the prior window of equal length\n(in percent). `null` when the prior window had zero revenue and\nthe current window has zero revenue too. Only present on enriched\n\/clients responses.\n",
     ),
+  periodRoas: zod
+    .number()
+    .nullish()
+    .describe(
+      "Optional. ROAS for the period (period revenue \/ prorated ad spend).\n`null` when the client has no creatives with spend in the window.\nOnly present on enriched \/clients responses.\n",
+    ),
+  periodLeads: zod
+    .number()
+    .nullish()
+    .describe(
+      "Optional. Prorated ad-channel leads (REGISTRATION events) in the\nrequested period. Only present on enriched \/clients responses.\n",
+    ),
+  periodApprovalRate: zod
+    .number()
+    .nullish()
+    .describe(
+      "Optional. Lead approval rate (approvedLeads \/ totalLeads × 100).\n`null` when there are zero leads. Only present on enriched \/clients responses.\n",
+    ),
 });
 
 /**
@@ -235,6 +271,24 @@ export const GetDashboardResponse = zod.object({
     approvedLeads: zod.number(),
     customers: zod.number(),
     repeatCustomers: zod.number(),
+    requestedRevenue: zod
+      .number()
+      .describe(
+        "Sum of ALL order amounts in the period regardless of status (PENDING included).",
+      ),
+    newBuyers: zod
+      .number()
+      .describe(
+        "Distinct buyers whose first ever purchase falls in this window.",
+      ),
+    returningBuyers: zod
+      .number()
+      .describe(
+        "Distinct buyers who had at least one prior order before this window.",
+      ),
+    retentionPct: zod
+      .number()
+      .describe("returningBuyers \/ (newBuyers + returningBuyers) \* 100."),
   }),
   revenueOverTime: zod.array(
     zod.object({
@@ -272,6 +326,24 @@ export const GetDashboardResponse = zod.object({
       approvedLeads: zod.number(),
       customers: zod.number(),
       repeatCustomers: zod.number(),
+      requestedRevenue: zod
+        .number()
+        .describe(
+          "Sum of ALL order amounts in the period regardless of status (PENDING included).",
+        ),
+      newBuyers: zod
+        .number()
+        .describe(
+          "Distinct buyers whose first ever purchase falls in this window.",
+        ),
+      returningBuyers: zod
+        .number()
+        .describe(
+          "Distinct buyers who had at least one prior order before this window.",
+        ),
+      retentionPct: zod
+        .number()
+        .describe("returningBuyers \/ (newBuyers + returningBuyers) \* 100."),
     })
     .optional()
     .describe(
@@ -299,6 +371,38 @@ export const GetDashboardResponse = zod.object({
     .describe(
       "Daily order count series for the prior comparison period.\nOnly present when the request was made with `compare=true`.\n",
     ),
+  newBuyersOverTime: zod
+    .array(
+      zod.object({
+        date: zod.string(),
+        value: zod.number(),
+      }),
+    )
+    .describe("Daily new-buyer count (first purchase in the window)."),
+  returningBuyersOverTime: zod
+    .array(
+      zod.object({
+        date: zod.string(),
+        value: zod.number(),
+      }),
+    )
+    .describe("Daily returning-buyer count (prior purchases before window)."),
+  signals: zod
+    .array(
+      zod.object({
+        type: zod.enum(["high_traffic_low_sales", "high_performing_regions"]),
+        severity: zod.enum(["info", "warning", "critical"]),
+        title: zod.string(),
+        body: zod.string(),
+        meta: zod
+          .record(zod.string(), zod.unknown())
+          .optional()
+          .describe(
+            "Optional extra context (region names, conversion %, etc.).",
+          ),
+      }),
+    )
+    .describe("Computed business signals for the current period."),
 });
 
 /**
@@ -632,6 +736,22 @@ export const GetAdminOverviewResponse = zod.object({
       .number()
       .describe("Number of clients with > 0 orders in the window."),
     totalClients: zod.number(),
+    adSpend: zod
+      .number()
+      .describe(
+        "Total prorated ad spend summed across all brands in the window.",
+      ),
+    roas: zod
+      .number()
+      .describe("Platform ROAS — total revenue divided by total ad spend."),
+    totalLeads: zod
+      .number()
+      .describe(
+        "Total prorated ad-channel leads (REGISTRATION events) across all brands.",
+      ),
+    approvedLeads: zod
+      .number()
+      .describe("Total prorated approved leads across all brands."),
   }),
   prevKpis: zod.object({
     revenue: zod.number(),
@@ -642,6 +762,22 @@ export const GetAdminOverviewResponse = zod.object({
       .number()
       .describe("Number of clients with > 0 orders in the window."),
     totalClients: zod.number(),
+    adSpend: zod
+      .number()
+      .describe(
+        "Total prorated ad spend summed across all brands in the window.",
+      ),
+    roas: zod
+      .number()
+      .describe("Platform ROAS — total revenue divided by total ad spend."),
+    totalLeads: zod
+      .number()
+      .describe(
+        "Total prorated ad-channel leads (REGISTRATION events) across all brands.",
+      ),
+    approvedLeads: zod
+      .number()
+      .describe("Total prorated approved leads across all brands."),
   }),
   revenueOverTime: zod
     .array(
@@ -659,6 +795,16 @@ export const GetAdminOverviewResponse = zod.object({
       }),
     )
     .describe("Daily order count summed across every client."),
+  leadsOverTime: zod
+    .array(
+      zod.object({
+        date: zod.string(),
+        value: zod.number(),
+      }),
+    )
+    .describe(
+      "Daily lead count (REGISTRATION events) summed across every client.",
+    ),
   prevRevenueOverTime: zod.array(
     zod.object({
       date: zod.string(),
@@ -666,6 +812,12 @@ export const GetAdminOverviewResponse = zod.object({
     }),
   ),
   prevOrdersOverTime: zod.array(
+    zod.object({
+      date: zod.string(),
+      value: zod.number(),
+    }),
+  ),
+  prevLeadsOverTime: zod.array(
     zod.object({
       date: zod.string(),
       value: zod.number(),

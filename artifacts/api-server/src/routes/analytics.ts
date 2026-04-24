@@ -94,6 +94,18 @@ type DashboardKpis = {
   approvedLeads: number;
   customers: number;
   repeatCustomers: number;
+  requestedRevenue: number;
+  newBuyers: number;
+  returningBuyers: number;
+  retentionPct: number;
+};
+
+type DashboardSignal = {
+  type: "high_traffic_low_sales" | "high_performing_regions";
+  severity: "info" | "warning" | "critical";
+  title: string;
+  body: string;
+  meta?: Record<string, unknown>;
 };
 
 const ZERO_KPIS: DashboardKpis = {
@@ -106,6 +118,10 @@ const ZERO_KPIS: DashboardKpis = {
   approvedLeads: 0,
   customers: 0,
   repeatCustomers: 0,
+  requestedRevenue: 0,
+  newBuyers: 0,
+  returningBuyers: 0,
+  retentionPct: 0,
 };
 
 // ───────── Admin: platform-wide overview across every client ─────────
@@ -241,6 +257,75 @@ router.get(
       customerCount(prevFrom, prevTo),
     ]);
 
+    // Platform-wide marketing KPIs: prorated ad spend + leads from creatives.
+    const prorateCreatives = async (winFrom: Date, winTo: Date) => {
+      const rows = await db
+        .select({
+          spend: creativesTable.spend,
+          leads: creativesTable.leads,
+          approvedLeads: creativesTable.approvedLeads,
+          activeFrom: creativesTable.activeFrom,
+          activeTo: creativesTable.activeTo,
+        })
+        .from(creativesTable)
+        .where(
+          and(
+            or(
+              sql`${creativesTable.activeFrom} IS NULL`,
+              sql`${creativesTable.activeFrom} <= ${winTo.toISOString().slice(0, 10)}`,
+            ),
+            or(
+              sql`${creativesTable.activeTo} IS NULL`,
+              sql`${creativesTable.activeTo} >= ${winFrom.toISOString().slice(0, 10)}`,
+            ),
+          ),
+        );
+      let adSpend = 0;
+      let totalLeads = 0;
+      let approvedLeads = 0;
+      for (const c of rows) {
+        let frac = 1;
+        if (c.activeFrom && c.activeTo) {
+          const cFrom = new Date(c.activeFrom as string);
+          const cTo = new Date(c.activeTo as string);
+          const campaignMs = Math.max(1, cTo.getTime() - cFrom.getTime());
+          const overlapMs = Math.max(
+            0,
+            Math.min(winTo.getTime(), cTo.getTime()) - Math.max(winFrom.getTime(), cFrom.getTime()),
+          );
+          frac = overlapMs / campaignMs;
+        }
+        adSpend += c.spend * frac;
+        totalLeads += Math.round(c.leads * frac);
+        approvedLeads += Math.round(c.approvedLeads * frac);
+      }
+      return { adSpend, totalLeads, approvedLeads };
+    };
+
+    const platformLeadsSeries = (winFrom: Date, winTo: Date) =>
+      db
+        .select({
+          date: sql<string>`to_char(date_trunc('day', ${eventsTable.createdAt}), 'YYYY-MM-DD')`,
+          value: sql<number>`COUNT(*)::float`,
+        })
+        .from(eventsTable)
+        .where(
+          and(
+            eq(eventsTable.eventType, "REGISTRATION"),
+            gte(eventsTable.createdAt, winFrom),
+            lte(eventsTable.createdAt, winTo),
+          ),
+        )
+        .groupBy(sql`date_trunc('day', ${eventsTable.createdAt})`)
+        .orderBy(sql`date_trunc('day', ${eventsTable.createdAt})`);
+
+    const [currMarketing, prevMarketing, currLeadsDaily, prevLeadsDaily] = await Promise.all([
+      prorateCreatives(from, to),
+      prorateCreatives(prevFrom, prevTo),
+      platformLeadsSeries(from, to),
+      platformLeadsSeries(prevFrom, prevTo),
+    ]);
+
     const sumRevenue = (m: Map<string, { revenue: number }>) =>
       [...m.values()].reduce((s, v) => s + v.revenue, 0);
     const sumOrders = (m: Map<string, { orders: number }>) =>
@@ -260,6 +345,10 @@ router.get(
       avgOrderValue: currOrders > 0 ? currRevenue / currOrders : 0,
       activeClients: currActive,
       totalClients,
+      adSpend: currMarketing.adSpend,
+      roas: currMarketing.adSpend > 0 ? currRevenue / currMarketing.adSpend : 0,
+      totalLeads: currMarketing.totalLeads,
+      approvedLeads: currMarketing.approvedLeads,
     };
     const prevKpis = {
       revenue: prevRevenue,
@@ -268,6 +357,10 @@ router.get(
       avgOrderValue: prevOrders > 0 ? prevRevenue / prevOrders : 0,
       activeClients: prevActive,
       totalClients,
+      adSpend: prevMarketing.adSpend,
+      roas: prevMarketing.adSpend > 0 ? prevRevenue / prevMarketing.adSpend : 0,
+      totalLeads: prevMarketing.totalLeads,
+      approvedLeads: prevMarketing.approvedLeads,
     };
 
     // Per-client stats — every registered client appears in `clientStats`,
@@ -319,8 +412,10 @@ router.get(
         prevKpis,
         revenueOverTime: currDaily.map((r) => ({ date: r.date, value: Number(r.revenue) || 0 })),
         ordersOverTime: currDaily.map((r) => ({ date: r.date, value: Number(r.orders) || 0 })),
+        leadsOverTime: currLeadsDaily,
         prevRevenueOverTime: prevDaily.map((r) => ({ date: r.date, value: Number(r.revenue) || 0 })),
         prevOrdersOverTime: prevDaily.map((r) => ({ date: r.date, value: Number(r.orders) || 0 })),
+        prevLeadsOverTime: prevLeadsDaily,
         clientStats,
         topPerformers,
         topGrowth,
@@ -365,6 +460,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     dailyRevenue: { date: string; value: number }[];
     dailyOrders: { date: string; value: number }[];
     dailyLeads: { date: string; value: number }[];
+    dailyNewBuyers: { date: string; value: number }[];
+    dailyReturningBuyers: { date: string; value: number }[];
     revenueByCategory: { category: string; revenue: number; orders: number }[];
   };
 
@@ -406,6 +503,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       dailyRevenue: [],
       dailyOrders: [],
       dailyLeads: [],
+      dailyNewBuyers: [],
+      dailyReturningBuyers: [],
       revenueByCategory: [],
     };
     if (categoryOrderIds !== null) {
@@ -428,36 +527,40 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     }
     const baseOrderWhere = and(...orderConds);
 
-    const [orderAgg] = await db
-      .select({
-        revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
-        orders: sql<number>`COUNT(*)::int`,
-      })
-      .from(ordersTable)
-      .where(
-        and(
-          baseOrderWhere,
-          sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+    const [[orderAgg], [requestedRow], [eventAgg]] = await Promise.all([
+      db
+        .select({
+          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          orders: sql<number>`COUNT(*)::int`,
+        })
+        .from(ordersTable)
+        .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`)),
+      db
+        .select({ total: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float` })
+        .from(ordersTable)
+        .where(baseOrderWhere),
+      db
+        .select({
+          visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int`,
+          registrations: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'REGISTRATION')::int`,
+          approvals: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'APPROVED_REGISTRATION')::int`,
+          purchases: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'PURCHASE')::int`,
+        })
+        .from(eventsTable)
+        .where(
+          and(
+            eq(eventsTable.clientId, clientId),
+            gte(eventsTable.createdAt, winFrom),
+            lte(eventsTable.createdAt, winTo),
+          ),
         ),
-      );
-
-    const [eventAgg] = await db
-      .select({
-        visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int`,
-        registrations: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'REGISTRATION')::int`,
-        approvals: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'APPROVED_REGISTRATION')::int`,
-        purchases: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'PURCHASE')::int`,
-      })
-      .from(eventsTable)
-      .where(
-        and(
-          eq(eventsTable.clientId, clientId),
-          gte(eventsTable.createdAt, winFrom),
-          lte(eventsTable.createdAt, winTo),
-        ),
-      );
+    ]);
 
     let customerAgg: { total: number; repeat: number } = { total: 0, repeat: 0 };
+    let newBuyers = 0;
+    let returningBuyers = 0;
+    let dailyNewBuyers: { date: string; value: number }[] = [];
+    let dailyReturningBuyers: { date: string; value: number }[] = [];
     if (full) {
       // Customer totals are window-agnostic, so they only matter for the
       // current-window response. Skip in compare mode.
@@ -469,6 +572,72 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
         .from(customersTable)
         .where(eq(customersTable.clientId, clientId));
       customerAgg = row;
+
+      // New vs returning buyers within the window.
+      // New: first ever purchase date falls within [winFrom, winTo].
+      // Returning: ordered in the window but first purchase was before winFrom.
+      const [[newRow], [retRow], newDaily, retDaily] = await Promise.all([
+        db
+          .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
+          .from(ordersTable)
+          .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+          .where(
+            and(
+              baseOrderWhere,
+              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+              gte(customersTable.firstPurchaseAt, winFrom),
+              lte(customersTable.firstPurchaseAt, winTo),
+            ),
+          ),
+        db
+          .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
+          .from(ordersTable)
+          .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+          .where(
+            and(
+              baseOrderWhere,
+              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+              sql`${customersTable.firstPurchaseAt} < ${winFrom}`,
+            ),
+          ),
+        db
+          .select({
+            date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+            value: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
+          })
+          .from(ordersTable)
+          .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+          .where(
+            and(
+              baseOrderWhere,
+              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+              gte(customersTable.firstPurchaseAt, winFrom),
+              lte(customersTable.firstPurchaseAt, winTo),
+            ),
+          )
+          .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
+          .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`),
+        db
+          .select({
+            date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+            value: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
+          })
+          .from(ordersTable)
+          .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+          .where(
+            and(
+              baseOrderWhere,
+              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+              sql`${customersTable.firstPurchaseAt} < ${winFrom}`,
+            ),
+          )
+          .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
+          .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`),
+      ]);
+      newBuyers = Number(newRow?.count) || 0;
+      returningBuyers = Number(retRow?.count) || 0;
+      dailyNewBuyers = newDaily;
+      dailyReturningBuyers = retDaily;
     }
 
     const revenue = Number(orderAgg.revenue) || 0;
@@ -478,6 +647,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     const approvals = Number(eventAgg.approvals) || 0;
 
     const clamp = (n: number): number => Math.min(100, Math.max(0, n));
+    const totalBuyers = newBuyers + returningBuyers;
     const kpis: DashboardKpis = {
       revenue,
       orders,
@@ -488,6 +658,10 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       approvedLeads: approvals,
       customers: Number(customerAgg.total) || 0,
       repeatCustomers: Number(customerAgg.repeat) || 0,
+      requestedRevenue: Number(requestedRow?.total) || 0,
+      newBuyers,
+      returningBuyers,
+      retentionPct: totalBuyers > 0 ? (returningBuyers / totalBuyers) * 100 : 0,
     };
 
     const dailyRevenue = await db
@@ -553,6 +727,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       dailyRevenue,
       dailyOrders,
       dailyLeads,
+      dailyNewBuyers,
+      dailyReturningBuyers,
       revenueByCategory,
     };
   };
@@ -570,6 +746,99 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     prev = await computeWindow(prevFrom, prevTo, false);
   }
 
+  // Business signals — computed from the current window only.
+  const computeSignals = async (): Promise<DashboardSignal[]> => {
+    const signals: DashboardSignal[] = [];
+
+    // Signal 1: High traffic, low conversion.
+    // Detect when visit-to-purchase rate is consistently low across the period.
+    const dailyConv = await db
+      .select({
+        visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int`,
+        purchases: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'PURCHASE')::int`,
+      })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.clientId, clientId),
+          gte(eventsTable.createdAt, from),
+          lte(eventsTable.createdAt, to),
+        ),
+      );
+
+    const totVisits = Number(dailyConv[0]?.visits) || 0;
+    const totPurchases = Number(dailyConv[0]?.purchases) || 0;
+    if (totVisits >= 50) {
+      const convRate = totPurchases / totVisits;
+      if (convRate < 0.05) {
+        signals.push({
+          type: "high_traffic_low_sales",
+          severity: convRate < 0.01 ? "critical" : "warning",
+          title: "High traffic, low conversion",
+          body: `Visit-to-purchase rate is ${(convRate * 100).toFixed(1)}% over this period. Review pricing, checkout flow, or catalog relevance to improve conversion.`,
+          meta: { avgConversionPct: +(convRate * 100).toFixed(2), totalVisits: totVisits },
+        });
+      }
+    }
+
+    // Signal 2: High-performing regions (week-over-week state revenue growth).
+    const wkEnd = to;
+    const wkStart = new Date(wkEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const pwkEnd = new Date(wkStart.getTime() - 1);
+    const pwkStart = new Date(pwkEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const stateRevenue = (winFrom: Date, winTo: Date) =>
+      db
+        .select({
+          state: customersTable.state,
+          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+        })
+        .from(ordersTable)
+        .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+        .where(
+          and(
+            eq(ordersTable.clientId, clientId),
+            gte(ordersTable.createdAt, winFrom),
+            lte(ordersTable.createdAt, winTo),
+            sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+          ),
+        )
+        .groupBy(customersTable.state);
+
+    const [currStates, prevStates] = await Promise.all([
+      stateRevenue(wkStart, wkEnd),
+      stateRevenue(pwkStart, pwkEnd),
+    ]);
+
+    const prevStateMap = new Map<string, number>();
+    for (const r of prevStates) if (r.state) prevStateMap.set(r.state, Number(r.revenue));
+
+    const risingStates = currStates
+      .filter((r) => r.state && r.revenue > 0)
+      .map((r) => {
+        const prior = prevStateMap.get(r.state!) ?? 0;
+        const growthPct = prior > 0 ? ((Number(r.revenue) - prior) / prior) * 100 : null;
+        return { state: r.state!, revenue: Number(r.revenue), growthPct };
+      })
+      .filter((r) => r.growthPct !== null && r.growthPct > 10)
+      .sort((a, b) => (b.growthPct ?? 0) - (a.growthPct ?? 0))
+      .slice(0, 3);
+
+    if (risingStates.length > 0) {
+      signals.push({
+        type: "high_performing_regions",
+        severity: "info",
+        title: "High-performing regions this week",
+        body: `${risingStates.map((s) => `${s.state} (+${s.growthPct!.toFixed(0)}%)`).join(", ")} ${risingStates.length === 1 ? "is surging" : "are surging"} week-over-week. Consider shifting inventory or ad budget to these regions.`,
+        meta: { regions: risingStates.map((s) => ({ state: s.state, growthPct: +(s.growthPct!.toFixed(1)) })) },
+      });
+    }
+
+    return signals;
+  };
+
+  const signals = await computeSignals();
+
   res.json(
     GetDashboardResponse.parse({
       kpis: current.kpis,
@@ -577,6 +846,9 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       ordersOverTime: current.dailyOrders,
       leadsOverTime: current.dailyLeads,
       revenueByCategory: current.revenueByCategory,
+      newBuyersOverTime: current.dailyNewBuyers,
+      returningBuyersOverTime: current.dailyReturningBuyers,
+      signals,
       ...(prev
         ? {
             prevKpis: prev.kpis,
