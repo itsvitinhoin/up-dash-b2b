@@ -24,6 +24,7 @@ export const productsTable = pgTable(
     price: doublePrecision("price").notNull(),
     cost: doublePrecision("cost"),
     stock: integer("stock").notNull().default(0),
+    restockThreshold: integer("restock_threshold").notNull().default(10),
     imageUrl: text("image_url"),
     totalSold: integer("total_sold").notNull().default(0),
     totalRevenue: doublePrecision("total_revenue").notNull().default(0),

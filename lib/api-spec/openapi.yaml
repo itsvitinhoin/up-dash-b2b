@@ -329,6 +329,16 @@ paths:
           schema:
             type: integer
             default: 50
+        - in: query
+          name: sku
+          schema:
+            type: string
+          description: Case-insensitive substring match against the SKU.
+        - in: query
+          name: category
+          schema:
+            type: string
+          description: Exact-match filter on product category.
       responses:
         "200":
           description: Product list with metrics
@@ -474,6 +484,47 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/InsightResponse"
+
+  /analytics/alerts:
+    get:
+      operationId: getAlerts
+      tags: [analytics]
+      summary: Inventory alerts (low stock and predicted stockouts)
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: horizonDays
+          schema:
+            type: integer
+            default: 14
+            minimum: 1
+            maximum: 90
+          description: Days ahead to predict stockouts based on recent sales velocity.
+        - in: query
+          name: lookbackDays
+          schema:
+            type: integer
+            default: 30
+            minimum: 1
+            maximum: 180
+          description: Days of recent sales used to compute average daily demand.
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 25
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Inventory alerts payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertsResponse"
 
   /notifications:
     get:
@@ -990,6 +1041,8 @@ components:
           type: number
         stock:
           type: integer
+        restockThreshold:
+          type: integer
         totalSold:
           type: integer
         totalRevenue:
@@ -1002,9 +1055,79 @@ components:
         - name
         - price
         - stock
+        - restockThreshold
         - totalSold
         - totalRevenue
         - status
+
+    InventoryAlert:
+      type: object
+      properties:
+        productId:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        category:
+          type: ["string", "null"]
+        stock:
+          type: integer
+        restockThreshold:
+          type: integer
+        averageDailySales:
+          type: number
+          description: Average units sold per day during the lookback window.
+        daysOfCover:
+          type: ["number", "null"]
+          description: Days of stock remaining at the recent sales rate. Null when there were no recent sales.
+        type:
+          type: string
+          enum: [LOW_STOCK, PREDICTED_STOCKOUT, OUT_OF_STOCK]
+        severity:
+          type: string
+          enum: [critical, warning]
+        message:
+          type: string
+      required:
+        - productId
+        - sku
+        - name
+        - stock
+        - restockThreshold
+        - averageDailySales
+        - type
+        - severity
+        - message
+
+    AlertsResponse:
+      type: object
+      properties:
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryAlert"
+        counts:
+          type: object
+          properties:
+            total:
+              type: integer
+            critical:
+              type: integer
+            warning:
+              type: integer
+            outOfStock:
+              type: integer
+            lowStock:
+              type: integer
+            predictedStockout:
+              type: integer
+          required: [total, critical, warning, outOfStock, lowStock, predictedStockout]
+        horizonDays:
+          type: integer
+        lookbackDays:
+          type: integer
+      required: [alerts, counts, horizonDays, lookbackDays]
 
     SellerMetrics:
       type: object

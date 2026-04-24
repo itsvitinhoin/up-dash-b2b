@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useGetProducts, GetProductsSort } from "@workspace/api-client-react";
@@ -13,16 +14,45 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, PackageOpen, ArrowDownUp, Download } from "lucide-react";
+import { AlertCircle, PackageOpen, ArrowDownUp, Download, X } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 
+function readQueryParam(search: string, key: string): string | undefined {
+  const trimmed = search.startsWith("?") ? search.slice(1) : search;
+  if (!trimmed) return undefined;
+  const params = new URLSearchParams(trimmed);
+  const value = params.get(key);
+  return value && value.length > 0 ? value : undefined;
+}
+
 export default function ProductsPage() {
   const { selectedClientId, user } = useAuth();
+  const [, setLocation] = useLocation();
   const [sort, setSort] = useState<GetProductsSort>(GetProductsSort.revenue);
   const [limit, setLimit] = useState(25);
+
+  // Read SKU/category filters from the URL on mount and when the location
+  // search string changes (e.g. clicking an alert from the dashboard).
+  const initialSearch = typeof window !== "undefined" ? window.location.search : "";
+  const [skuFilter, setSkuFilter] = useState<string | undefined>(() =>
+    readQueryParam(initialSearch, "sku"),
+  );
+  const [categoryFilter, setCategoryFilter] = useState<string | undefined>(() =>
+    readQueryParam(initialSearch, "category"),
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = () => {
+      setSkuFilter(readQueryParam(window.location.search, "sku"));
+      setCategoryFilter(readQueryParam(window.location.search, "category"));
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, []);
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
 
@@ -31,6 +61,8 @@ export default function ProductsPage() {
       clientId,
       sort,
       limit,
+      sku: skuFilter,
+      category: categoryFilter,
     },
     {
       query: queryOpts({
@@ -38,6 +70,17 @@ export default function ProductsPage() {
       }),
     }
   );
+
+  const hasActiveFilters = useMemo(
+    () => Boolean(skuFilter) || Boolean(categoryFilter),
+    [skuFilter, categoryFilter],
+  );
+
+  const clearFilters = () => {
+    setSkuFilter(undefined);
+    setCategoryFilter(undefined);
+    setLocation("/products");
+  };
 
   const handleExport = () => {
     if (!data) return;
@@ -60,7 +103,43 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-6" data-testid="page-products">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        {hasActiveFilters ? (
+          <div
+            className="flex items-center gap-2 flex-wrap"
+            data-testid="products-active-filters"
+          >
+            <span className="text-xs text-muted-foreground">Filtered by:</span>
+            {skuFilter && (
+              <span
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium bg-primary/10 text-primary"
+                data-testid="products-filter-sku"
+              >
+                SKU: {skuFilter}
+              </span>
+            )}
+            {categoryFilter && (
+              <span
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium bg-primary/10 text-primary"
+                data-testid="products-filter-category"
+              >
+                Category: {categoryFilter}
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearFilters}
+              className="h-7 px-2 text-xs"
+              data-testid="products-clear-filters"
+            >
+              <X className="h-3 w-3 mr-1" />
+              Clear
+            </Button>
+          </div>
+        ) : (
+          <div />
+        )}
         <Button
           variant="outline"
           size="sm"

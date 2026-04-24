@@ -11,4 +11,12 @@ export type GetProductsParams = {
   clientId?: string;
   sort?: GetProductsSort;
   limit?: number;
+  /**
+   * Case-insensitive substring match against the SKU.
+   */
+  sku?: string;
+  /**
+   * Exact-match filter on product category.
+   */
+  category?: string;
 };

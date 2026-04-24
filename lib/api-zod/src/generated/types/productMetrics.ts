@@ -14,6 +14,7 @@ export interface ProductMetrics {
   category?: string | null;
   price: number;
   stock: number;
+  restockThreshold: number;
   totalSold: number;
   totalRevenue: number;
   status: string;

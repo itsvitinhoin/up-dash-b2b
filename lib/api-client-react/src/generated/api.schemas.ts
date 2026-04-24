@@ -211,9 +211,63 @@ export interface ProductMetrics {
   category?: string | null;
   price: number;
   stock: number;
+  restockThreshold: number;
   totalSold: number;
   totalRevenue: number;
   status: string;
+}
+
+export type InventoryAlertType =
+  (typeof InventoryAlertType)[keyof typeof InventoryAlertType];
+
+export const InventoryAlertType = {
+  LOW_STOCK: "LOW_STOCK",
+  PREDICTED_STOCKOUT: "PREDICTED_STOCKOUT",
+  OUT_OF_STOCK: "OUT_OF_STOCK",
+} as const;
+
+export type InventoryAlertSeverity =
+  (typeof InventoryAlertSeverity)[keyof typeof InventoryAlertSeverity];
+
+export const InventoryAlertSeverity = {
+  critical: "critical",
+  warning: "warning",
+} as const;
+
+export interface InventoryAlert {
+  productId: string;
+  sku: string;
+  name: string;
+  /** @nullable */
+  category?: string | null;
+  stock: number;
+  restockThreshold: number;
+  /** Average units sold per day during the lookback window. */
+  averageDailySales: number;
+  /**
+   * Days of stock remaining at the recent sales rate. Null when there were no recent sales.
+   * @nullable
+   */
+  daysOfCover?: number | null;
+  type: InventoryAlertType;
+  severity: InventoryAlertSeverity;
+  message: string;
+}
+
+export type AlertsResponseCounts = {
+  total: number;
+  critical: number;
+  warning: number;
+  outOfStock: number;
+  lowStock: number;
+  predictedStockout: number;
+};
+
+export interface AlertsResponse {
+  alerts: InventoryAlert[];
+  counts: AlertsResponseCounts;
+  horizonDays: number;
+  lookbackDays: number;
 }
 
 export interface SellerMetrics {
@@ -410,6 +464,14 @@ export type GetProductsParams = {
   clientId?: string;
   sort?: GetProductsSort;
   limit?: number;
+  /**
+   * Case-insensitive substring match against the SKU.
+   */
+  sku?: string;
+  /**
+   * Exact-match filter on product category.
+   */
+  category?: string;
 };
 
 export type GetProductsSort =
@@ -448,6 +510,27 @@ export type RegenerateInsightParams = {
   clientId?: string;
   dateFrom?: string;
   dateTo?: string;
+};
+
+export type GetAlertsParams = {
+  clientId?: string;
+  /**
+   * Days ahead to predict stockouts based on recent sales velocity.
+   * @minimum 1
+   * @maximum 90
+   */
+  horizonDays?: number;
+  /**
+   * Days of recent sales used to compute average daily demand.
+   * @minimum 1
+   * @maximum 180
+   */
+  lookbackDays?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
 };
 
 export type ListNotificationsParams = {

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "wouter";
 import { differenceInDays, format, subDays } from "date-fns";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
@@ -9,6 +10,7 @@ import {
   useGetInsight,
   useRegenerateInsight,
   getGetInsightQueryKey,
+  useGetAlerts,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
@@ -16,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
   ChevronRight,
@@ -25,6 +28,7 @@ import {
   FileText,
   MoreHorizontal,
   Package,
+  PackageX,
   RefreshCw,
   Sparkles,
   Target,
@@ -259,6 +263,15 @@ export default function DashboardPage() {
       },
     },
   });
+
+  // ── Inventory alerts ──────────────────────────────────────────────────
+  const {
+    data: alertsData,
+    isLoading: alertsLoading,
+  } = useGetAlerts(
+    { clientId, horizonDays: 14, lookbackDays: 30, limit: 8 },
+    { query: queryOpts({ enabled }) },
+  );
 
   // Compute changes
   const revenueChange = useMemo(() => computeChange(data?.revenueOverTime), [data]);
@@ -685,6 +698,147 @@ export default function DashboardPage() {
           </Card>
         )}
       </motion.div>
+
+      {/* Inventory alerts */}
+      <Card className="p-5 bg-card border-border" data-testid="alerts-panel">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h2 className="text-base font-semibold leading-tight flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-400" />
+              Alerts
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              SKUs below restock threshold and predicted stockouts in the next 14 days
+            </p>
+          </div>
+          {alertsData && alertsData.counts.total > 0 && (
+            <div className="flex items-center gap-2">
+              {alertsData.counts.critical > 0 && (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-red-500/15 text-red-400"
+                  data-testid="alerts-count-critical"
+                >
+                  {alertsData.counts.critical} critical
+                </span>
+              )}
+              {alertsData.counts.warning > 0 && (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-amber-500/15 text-amber-400"
+                  data-testid="alerts-count-warning"
+                >
+                  {alertsData.counts.warning} warning
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {alertsLoading ? (
+          <div className="space-y-3">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-14 w-full" />
+            ))}
+          </div>
+        ) : !alertsData || alertsData.alerts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-10 text-center">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400 mb-3">
+              <Package className="h-5 w-5" />
+            </div>
+            <p className="text-sm font-medium">All inventory is healthy</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              No SKUs below restock threshold or projected to stock out soon.
+            </p>
+          </div>
+        ) : (
+          <div>
+            <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
+              <div className="col-span-5">Product</div>
+              <div className="col-span-2 text-right">Stock</div>
+              <div className="col-span-2 text-right">Threshold</div>
+              <div className="col-span-2 text-right">Days of cover</div>
+              <div className="col-span-1" />
+            </div>
+            <div className="divide-y divide-border">
+              {alertsData.alerts.map((alert) => {
+                const isCritical = alert.severity === "critical";
+                const Icon =
+                  alert.type === "OUT_OF_STOCK"
+                    ? PackageX
+                    : alert.type === "PREDICTED_STOCKOUT"
+                      ? AlertTriangle
+                      : AlertCircle;
+                const iconWrap = isCritical
+                  ? "bg-red-500/15 text-red-400"
+                  : "bg-amber-500/15 text-amber-400";
+                const typeLabel =
+                  alert.type === "OUT_OF_STOCK"
+                    ? "Out of stock"
+                    : alert.type === "PREDICTED_STOCKOUT"
+                      ? "Predicted stockout"
+                      : "Low stock";
+                const productHref = `/products?sku=${encodeURIComponent(alert.sku)}${
+                  alert.category ? `&category=${encodeURIComponent(alert.category)}` : ""
+                }`;
+                const daysCover =
+                  alert.daysOfCover === null || alert.daysOfCover === undefined
+                    ? "—"
+                    : `${Math.max(0, Math.round(alert.daysOfCover))}d`;
+                return (
+                  <div
+                    key={alert.productId}
+                    className="grid grid-cols-12 gap-4 items-center px-2 py-3"
+                    data-testid={`alert-row-${alert.sku}`}
+                  >
+                    <div className="col-span-5 flex items-center gap-3 min-w-0">
+                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${iconWrap}`}>
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm truncate">{alert.name}</span>
+                          <span
+                            className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                              isCritical
+                                ? "bg-red-500/15 text-red-400"
+                                : "bg-amber-500/15 text-amber-400"
+                            }`}
+                            data-testid={`alert-type-${alert.sku}`}
+                          >
+                            {typeLabel}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {alert.sku}
+                          {alert.category ? ` · ${alert.category}` : ""} · {alert.message}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="col-span-2 text-right tabular-nums text-sm">
+                      {formatNumber(alert.stock)}
+                    </div>
+                    <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                      {formatNumber(alert.restockThreshold)}
+                    </div>
+                    <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                      {daysCover}
+                    </div>
+                    <div className="col-span-1 flex justify-end">
+                      <Link
+                        href={productHref}
+                        className="inline-flex items-center text-xs font-medium text-primary hover:underline"
+                        data-testid={`alert-link-${alert.sku}`}
+                        aria-label={`View ${alert.sku} in products`}
+                      >
+                        View <ChevronRight className="h-3 w-3" />
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </Card>
 
       {/* Top categories */}
       <Card className="p-5 bg-card border-border">

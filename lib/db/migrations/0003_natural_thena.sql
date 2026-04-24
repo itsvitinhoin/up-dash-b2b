@@ -1,0 +1,1 @@
+ALTER TABLE "products" ADD COLUMN "restock_threshold" integer DEFAULT 10 NOT NULL;

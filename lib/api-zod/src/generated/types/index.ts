@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./alertsResponse";
+export * from "./alertsResponseCounts";
 export * from "./authResponse";
 export * from "./authUser";
 export * from "./authUserRole";
@@ -23,6 +25,7 @@ export * from "./funnelStep";
 export * from "./geographyCity";
 export * from "./geographyResponse";
 export * from "./geographyState";
+export * from "./getAlertsParams";
 export * from "./getCustomersParams";
 export * from "./getDashboardParams";
 export * from "./getFunnelParams";
@@ -37,6 +40,9 @@ export * from "./healthStatusDb";
 export * from "./healthStatusStatus";
 export * from "./insightResponse";
 export * from "./insightResponseSource";
+export * from "./inventoryAlert";
+export * from "./inventoryAlertSeverity";
+export * from "./inventoryAlertType";
 export * from "./listClientsParams";
 export * from "./listNotificationsParams";
 export * from "./listSavedViewsParams";

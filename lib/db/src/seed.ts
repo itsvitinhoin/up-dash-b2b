@@ -258,6 +258,10 @@ async function main() {
     const productSeeds: Array<typeof productsTable.$inferInsert> = [];
     for (let i = 0; i < productCount; i++) {
       const name = PRODUCT_NAMES[i % PRODUCT_NAMES.length];
+      const restockThreshold = randInt(8, 25);
+      // Bias roughly a quarter of products to be at-or-below threshold so the
+      // alerts panel has signal in seeded demos.
+      const stock = i % 4 === 0 ? randInt(0, restockThreshold) : randInt(restockThreshold + 1, 200);
       productSeeds.push({
         clientId: client.id,
         sku: `${client.name.slice(0, 3).toUpperCase()}-${String(i + 1).padStart(4, "0")}`,
@@ -266,7 +270,8 @@ async function main() {
         category: pick(CATEGORIES),
         price: randInt(89, 899),
         cost: randInt(40, 350),
-        stock: randInt(0, 200),
+        stock,
+        restockThreshold,
       });
     }
     const products = await db.insert(productsTable).values(productSeeds).returning();

@@ -297,6 +297,14 @@ export const GetProductsQueryParams = zod.object({
     .enum(["revenue", "units", "created"])
     .default(getProductsQuerySortDefault),
   limit: zod.coerce.number().default(getProductsQueryLimitDefault),
+  sku: zod.coerce
+    .string()
+    .optional()
+    .describe("Case-insensitive substring match against the SKU."),
+  category: zod.coerce
+    .string()
+    .optional()
+    .describe("Exact-match filter on product category."),
 });
 
 export const GetProductsResponseItem = zod.object({
@@ -306,6 +314,7 @@ export const GetProductsResponseItem = zod.object({
   category: zod.string().nullish(),
   price: zod.number(),
   stock: zod.number(),
+  restockThreshold: zod.number(),
   totalSold: zod.number(),
   totalRevenue: zod.number(),
   status: zod.string(),
@@ -424,6 +433,76 @@ export const RegenerateInsightResponse = zod.object({
   generatedAt: zod.coerce.date(),
   cached: zod.boolean(),
   source: zod.enum(["ai", "heuristic"]),
+});
+
+/**
+ * @summary Inventory alerts (low stock and predicted stockouts)
+ */
+export const getAlertsQueryHorizonDaysDefault = 14;
+export const getAlertsQueryHorizonDaysMax = 90;
+
+export const getAlertsQueryLookbackDaysDefault = 30;
+export const getAlertsQueryLookbackDaysMax = 180;
+
+export const getAlertsQueryLimitDefault = 25;
+export const getAlertsQueryLimitMax = 100;
+
+export const GetAlertsQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  horizonDays: zod.coerce
+    .number()
+    .min(1)
+    .max(getAlertsQueryHorizonDaysMax)
+    .default(getAlertsQueryHorizonDaysDefault)
+    .describe(
+      "Days ahead to predict stockouts based on recent sales velocity.",
+    ),
+  lookbackDays: zod.coerce
+    .number()
+    .min(1)
+    .max(getAlertsQueryLookbackDaysMax)
+    .default(getAlertsQueryLookbackDaysDefault)
+    .describe("Days of recent sales used to compute average daily demand."),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(getAlertsQueryLimitMax)
+    .default(getAlertsQueryLimitDefault),
+});
+
+export const GetAlertsResponse = zod.object({
+  alerts: zod.array(
+    zod.object({
+      productId: zod.string(),
+      sku: zod.string(),
+      name: zod.string(),
+      category: zod.string().nullish(),
+      stock: zod.number(),
+      restockThreshold: zod.number(),
+      averageDailySales: zod
+        .number()
+        .describe("Average units sold per day during the lookback window."),
+      daysOfCover: zod
+        .number()
+        .nullish()
+        .describe(
+          "Days of stock remaining at the recent sales rate. Null when there were no recent sales.",
+        ),
+      type: zod.enum(["LOW_STOCK", "PREDICTED_STOCKOUT", "OUT_OF_STOCK"]),
+      severity: zod.enum(["critical", "warning"]),
+      message: zod.string(),
+    }),
+  ),
+  counts: zod.object({
+    total: zod.number(),
+    critical: zod.number(),
+    warning: zod.number(),
+    outOfStock: zod.number(),
+    lowStock: zod.number(),
+    predictedStockout: zod.number(),
+  }),
+  horizonDays: zod.number(),
+  lookbackDays: zod.number(),
 });
 
 /**

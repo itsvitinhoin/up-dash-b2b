@@ -17,6 +17,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AlertsResponse,
   AuthResponse,
   AuthUser,
   Client,
@@ -27,6 +28,7 @@ import type {
   ErrorResponse,
   FunnelResponse,
   GeographyResponse,
+  GetAlertsParams,
   GetCustomersParams,
   GetDashboardParams,
   GetFunnelParams,
@@ -1577,6 +1579,100 @@ export const useRegenerateInsight = <
 > => {
   return useMutation(getRegenerateInsightMutationOptions(options));
 };
+
+/**
+ * @summary Inventory alerts (low stock and predicted stockouts)
+ */
+export const getGetAlertsUrl = (params?: GetAlertsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/alerts?${stringifiedParams}`
+    : `/api/analytics/alerts`;
+};
+
+export const getAlerts = async (
+  params?: GetAlertsParams,
+  options?: RequestInit,
+): Promise<AlertsResponse> => {
+  return customFetch<AlertsResponse>(getGetAlertsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAlertsQueryKey = (params?: GetAlertsParams) => {
+  return [`/api/analytics/alerts`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetAlertsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAlerts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetAlertsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAlerts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAlertsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAlerts>>> = ({
+    signal,
+  }) => getAlerts(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAlerts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAlertsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAlerts>>
+>;
+export type GetAlertsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Inventory alerts (low stock and predicted stockouts)
+ */
+
+export function useGetAlerts<
+  TData = Awaited<ReturnType<typeof getAlerts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetAlertsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAlerts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAlertsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary List notifications for the current client/tenant

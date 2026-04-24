@@ -27,6 +27,8 @@ import {
   GetOrdersByDateResponse,
   GetInsightQueryParams,
   GetInsightResponse,
+  GetAlertsQueryParams,
+  GetAlertsResponse,
 } from "@workspace/api-zod";
 import { authenticate, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
@@ -447,7 +449,7 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
-  const { sort = "revenue", limit = 50 } = parsed.data;
+  const { sort = "revenue", limit = 50, sku, category } = parsed.data;
 
   const orderBy =
     sort === "units"
@@ -455,6 +457,14 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
       : sort === "created"
         ? desc(productsTable.createdAt)
         : desc(productsTable.totalRevenue);
+
+  const conditions: SQL[] = [eq(productsTable.clientId, clientId)];
+  if (sku && sku.trim().length > 0) {
+    conditions.push(ilike(productsTable.sku, `%${sku.trim()}%`));
+  }
+  if (category && category.trim().length > 0) {
+    conditions.push(eq(productsTable.category, category.trim()));
+  }
 
   const rows = await db
     .select({
@@ -464,16 +474,179 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
       category: productsTable.category,
       price: productsTable.price,
       stock: productsTable.stock,
+      restockThreshold: productsTable.restockThreshold,
       totalSold: productsTable.totalSold,
       totalRevenue: productsTable.totalRevenue,
       status: productsTable.status,
     })
     .from(productsTable)
-    .where(eq(productsTable.clientId, clientId))
+    .where(and(...conditions))
     .orderBy(orderBy)
     .limit(limit);
 
   res.json(GetProductsResponse.parse(rows));
+});
+
+router.get("/analytics/alerts", async (req, res): Promise<void> => {
+  const parsed = GetAlertsQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res
+      .status(400)
+      .json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { horizonDays = 14, lookbackDays = 30, limit = 25 } = parsed.data;
+
+  const lookbackFrom = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+
+  // Average daily units sold per product over the lookback window.
+  // We only consider non-rejected orders (those that consume inventory in
+  // practice — APPROVED, SHIPPED, DELIVERED) so cancellations don't inflate
+  // velocity.
+  const velocityRows = await db
+    .select({
+      productId: orderItemsTable.productId,
+      unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+    })
+    .from(orderItemsTable)
+    .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+    .where(
+      and(
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, lookbackFrom),
+        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+      ),
+    )
+    .groupBy(orderItemsTable.productId);
+
+  const velocityById = new Map<string, number>();
+  for (const row of velocityRows) {
+    velocityById.set(row.productId, Number(row.unitsSold) || 0);
+  }
+
+  const products = await db
+    .select({
+      id: productsTable.id,
+      sku: productsTable.sku,
+      name: productsTable.name,
+      category: productsTable.category,
+      stock: productsTable.stock,
+      restockThreshold: productsTable.restockThreshold,
+    })
+    .from(productsTable)
+    .where(
+      and(
+        eq(productsTable.clientId, clientId),
+        sql`${productsTable.status} <> 'DISCONTINUED'`,
+      ),
+    );
+
+  type Alert = {
+    productId: string;
+    sku: string;
+    name: string;
+    category: string | null;
+    stock: number;
+    restockThreshold: number;
+    averageDailySales: number;
+    daysOfCover: number | null;
+    type: "LOW_STOCK" | "PREDICTED_STOCKOUT" | "OUT_OF_STOCK";
+    severity: "critical" | "warning";
+    message: string;
+  };
+
+  const alerts: Alert[] = [];
+  for (const p of products) {
+    const unitsSold = velocityById.get(p.id) ?? 0;
+    const avgDaily = unitsSold / lookbackDays;
+    const daysOfCover = avgDaily > 0 ? p.stock / avgDaily : null;
+
+    if (p.stock <= 0) {
+      alerts.push({
+        productId: p.id,
+        sku: p.sku,
+        name: p.name,
+        category: p.category,
+        stock: p.stock,
+        restockThreshold: p.restockThreshold,
+        averageDailySales: avgDaily,
+        daysOfCover,
+        type: "OUT_OF_STOCK",
+        severity: "critical",
+        message: "Out of stock — restock immediately.",
+      });
+      continue;
+    }
+
+    if (daysOfCover !== null && daysOfCover <= horizonDays) {
+      const days = Math.max(1, Math.round(daysOfCover));
+      alerts.push({
+        productId: p.id,
+        sku: p.sku,
+        name: p.name,
+        category: p.category,
+        stock: p.stock,
+        restockThreshold: p.restockThreshold,
+        averageDailySales: avgDaily,
+        daysOfCover,
+        type: "PREDICTED_STOCKOUT",
+        severity: daysOfCover <= Math.max(3, horizonDays / 4) ? "critical" : "warning",
+        message: `Projected to sell out in ~${days} day${days === 1 ? "" : "s"} at recent demand.`,
+      });
+      continue;
+    }
+
+    if (p.stock <= p.restockThreshold) {
+      alerts.push({
+        productId: p.id,
+        sku: p.sku,
+        name: p.name,
+        category: p.category,
+        stock: p.stock,
+        restockThreshold: p.restockThreshold,
+        averageDailySales: avgDaily,
+        daysOfCover,
+        type: "LOW_STOCK",
+        severity: p.stock <= Math.max(1, Math.floor(p.restockThreshold / 2)) ? "critical" : "warning",
+        message: `Stock (${p.stock}) is at or below restock threshold (${p.restockThreshold}).`,
+      });
+    }
+  }
+
+  // Rank: out-of-stock first, then by smallest days-of-cover, then by smallest
+  // absolute stock so the most pressing items surface first.
+  const typeRank: Record<Alert["type"], number> = {
+    OUT_OF_STOCK: 0,
+    PREDICTED_STOCKOUT: 1,
+    LOW_STOCK: 2,
+  };
+  alerts.sort((a, b) => {
+    if (typeRank[a.type] !== typeRank[b.type]) return typeRank[a.type] - typeRank[b.type];
+    const ac = a.daysOfCover ?? Number.POSITIVE_INFINITY;
+    const bc = b.daysOfCover ?? Number.POSITIVE_INFINITY;
+    if (ac !== bc) return ac - bc;
+    return a.stock - b.stock;
+  });
+
+  const counts = {
+    total: alerts.length,
+    critical: alerts.filter((a) => a.severity === "critical").length,
+    warning: alerts.filter((a) => a.severity === "warning").length,
+    outOfStock: alerts.filter((a) => a.type === "OUT_OF_STOCK").length,
+    lowStock: alerts.filter((a) => a.type === "LOW_STOCK").length,
+    predictedStockout: alerts.filter((a) => a.type === "PREDICTED_STOCKOUT").length,
+  };
+
+  res.json(
+    GetAlertsResponse.parse({
+      alerts: alerts.slice(0, limit),
+      counts,
+      horizonDays,
+      lookbackDays,
+    }),
+  );
 });
 
 router.get("/analytics/sellers", async (req, res): Promise<void> => {
