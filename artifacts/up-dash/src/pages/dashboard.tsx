@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
-import { differenceInDays, format } from "date-fns";
+import { addDays, differenceInDays, format, subDays } from "date-fns";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -80,6 +80,46 @@ interface KpiCardProps {
   sparkColor: string;
   isLoading: boolean;
   testId: string;
+  /** Optional: render value text with a primary→accent gradient. */
+  valueAccent?: boolean;
+  /** Optional: replace sparkline with a small radial ring (0–100). */
+  ringValue?: number;
+  ringColor?: string;
+}
+
+function MiniRing({
+  pct,
+  color,
+  reduced,
+}: {
+  pct: number;
+  color: string;
+  reduced: boolean;
+}) {
+  const size = 52;
+  const stroke = 5;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(100, pct));
+  const dash = (clamped / 100) * c;
+  return (
+    <svg width={size} height={size} className="-rotate-90 shrink-0" aria-hidden>
+      <circle cx={size / 2} cy={size / 2} r={r} stroke="hsl(var(--muted))" strokeOpacity={0.5} strokeWidth={stroke} fill="none" />
+      <motion.circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        stroke={color}
+        strokeWidth={stroke}
+        strokeLinecap="round"
+        fill="none"
+        strokeDasharray={c}
+        initial={{ strokeDashoffset: reduced ? c - dash : c }}
+        animate={{ strokeDashoffset: c - dash }}
+        transition={{ duration: reduced ? 0 : 1.1, ease: [0.22, 1, 0.36, 1] }}
+      />
+    </svg>
+  );
 }
 
 function KpiCard({
@@ -96,6 +136,9 @@ function KpiCard({
   sparkColor,
   isLoading,
   testId,
+  valueAccent,
+  ringValue,
+  ringColor,
 }: KpiCardProps) {
   const reduced = useReducedMotion();
   const isUp = change !== null && change >= 0;
@@ -111,7 +154,9 @@ function KpiCard({
             <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconClass}`}>
               <Icon className="h-4 w-4" />
             </div>
-            <span className="text-sm text-muted-foreground">{label}</span>
+            <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+              {label}
+            </span>
           </div>
           <button
             className="text-muted-foreground hover:text-foreground transition-colors"
@@ -127,14 +172,22 @@ function KpiCard({
               <Skeleton className="h-9 w-32" />
             ) : (
               <>
-                <span className="text-3xl font-semibold tracking-tight tabular-nums">
+                <span
+                  className={`text-3xl font-semibold tracking-tight tabular-nums ${
+                    valueAccent
+                      ? "bg-gradient-to-br from-foreground via-foreground to-primary bg-clip-text text-transparent"
+                      : ""
+                  }`}
+                >
                   <CountUp value={value} format={fmt} />
                 </span>
                 {unit && <span className="text-xs text-muted-foreground font-medium">{unit}</span>}
               </>
             )}
           </div>
-          {!isLoading && sparkValues.length > 1 && (
+          {!isLoading && ringValue !== undefined ? (
+            <MiniRing pct={ringValue} color={ringColor ?? sparkColor} reduced={reduced} />
+          ) : !isLoading && sparkValues.length > 1 ? (
             <Sparkline
               values={sparkValues}
               stroke={sparkColor}
@@ -143,7 +196,7 @@ function KpiCard({
               height={28}
               ariaLabel={`${label} trend sparkline`}
             />
-          )}
+          ) : null}
         </div>
 
         {!isLoading && change !== null && (
@@ -226,6 +279,11 @@ export default function DashboardPage() {
   );
 
   const inclusiveDays = Math.max(1, differenceInDays(dateRange.to, dateRange.from) + 1);
+  const prevPeriodTo = useMemo(() => subDays(dateRange.from, 1), [dateRange.from]);
+  const prevPeriodFrom = useMemo(
+    () => addDays(prevPeriodTo, -(inclusiveDays - 1)),
+    [prevPeriodTo, inclusiveDays],
+  );
 
   // ── AI insight (real LLM) ──────────────────────────────────────────────
   const insightParams = {
@@ -383,16 +441,37 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 dashboard-printable" data-testid="page-dashboard">
-      {/* Export toolbar */}
-      <div className="flex justify-end gap-2 no-print">
-        <Button variant="outline" size="sm" onClick={handleExportSummary} data-testid="dashboard-export-csv">
-          <Download className="h-4 w-4 mr-1.5" />
-          Export CSV
-        </Button>
-        <Button variant="outline" size="sm" onClick={handlePrint} data-testid="dashboard-export-pdf">
-          <FileText className="h-4 w-4 mr-1.5" />
-          Print / PDF
-        </Button>
+      {/* Live indicator + export toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 no-print">
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={fadeVariants}
+          className="flex items-center gap-2 text-xs text-muted-foreground"
+        >
+          <span className="relative flex h-1.5 w-1.5">
+            {!reduced && (
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/60" />
+            )}
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          <span className="font-mono uppercase tracking-wider">
+            Live · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            <span className="ml-2 text-muted-foreground/70">
+              vs. {format(prevPeriodFrom, "MMM d")} → {format(prevPeriodTo, "MMM d")}
+            </span>
+          </span>
+        </motion.div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={handleExportSummary} data-testid="dashboard-export-csv">
+            <Download className="h-4 w-4 mr-1.5" />
+            Export CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={handlePrint} data-testid="dashboard-export-pdf">
+            <FileText className="h-4 w-4 mr-1.5" />
+            Print / PDF
+          </Button>
+        </div>
       </div>
 
       <motion.div
@@ -418,6 +497,7 @@ export default function DashboardPage() {
             { label: "Customers", value: data ? formatNumber(data.kpis.customers) : "—" },
           ]}
           isLoading={isLoading}
+          valueAccent
         />
         <KpiCard
           testId="kpi-orders"
@@ -471,6 +551,8 @@ export default function DashboardPage() {
             { label: "Orders", value: data ? formatNumber(data.kpis.orders) : "—" },
           ]}
           isLoading={isLoading}
+          ringValue={data?.kpis.conversionRate ?? 0}
+          ringColor="hsl(var(--chart-1))"
         />
       </motion.div>
 
@@ -618,9 +700,13 @@ export default function DashboardPage() {
         {/* AI insight card */}
         {!insightDismissed && (
           <Card
-            className="p-5 bg-gradient-to-br from-card to-card border-border relative overflow-hidden flex flex-col"
+            className="p-5 bg-gradient-to-br from-primary/[0.04] via-card to-card border-border relative overflow-hidden flex flex-col"
             data-testid="ai-insight-card"
           >
+            <div
+              aria-hidden
+              className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-primary via-chart-3 to-chart-1 opacity-80"
+            />
             <div className="absolute -top-12 -right-12 h-40 w-40 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
             <div className="relative z-10 flex flex-col h-full">
               <div className="flex items-center justify-between mb-3">
