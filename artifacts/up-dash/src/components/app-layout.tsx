@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { format } from "date-fns";
 import { useAuth } from "@/lib/auth";
@@ -7,6 +7,9 @@ import { useTheme } from "@/components/theme-provider";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { setActiveCurrency } from "@/lib/formatters";
 import { DateRangePicker } from "@/components/date-range-picker";
+import { NotificationBell } from "@/components/notification-bell";
+import { FilterBar } from "@/components/filter-bar";
+import { useKeyboardShortcuts } from "@/lib/keyboard-shortcuts";
 import {
   LayoutDashboard,
   Filter,
@@ -19,9 +22,11 @@ import {
   Moon,
   Sun,
   Menu,
-  Bell,
   Search,
   Activity,
+  GitCompareArrows,
+  Bell,
+  HelpCircle,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -51,17 +56,20 @@ interface PageMeta {
   title: string;
   subtitle: string;
   hasDateRange: boolean;
+  hasFilterBar: boolean;
 }
 
 const pageMeta: Record<string, PageMeta> = {
-  "/": { title: "Overview", subtitle: "", hasDateRange: true },
-  "/dashboard": { title: "Overview", subtitle: "", hasDateRange: true },
-  "/funnel": { title: "Conversion funnel", subtitle: "Visit through purchase", hasDateRange: true },
-  "/customers": { title: "Customers", subtitle: "RFM segmentation and lifetime value", hasDateRange: false },
-  "/products": { title: "Products", subtitle: "Performance and ranking", hasDateRange: false },
-  "/sellers": { title: "Sellers", subtitle: "Top performers across the catalog", hasDateRange: false },
-  "/geography": { title: "Geography", subtitle: "Sales distribution by region", hasDateRange: true },
-  "/clients": { title: "Clients", subtitle: "Brand accounts on the platform", hasDateRange: false },
+  "/": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true },
+  "/dashboard": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true },
+  "/funnel": { title: "Conversion funnel", subtitle: "Visit through purchase", hasDateRange: true, hasFilterBar: true },
+  "/customers": { title: "Customers", subtitle: "RFM segmentation and lifetime value", hasDateRange: false, hasFilterBar: true },
+  "/products": { title: "Products", subtitle: "Performance and ranking", hasDateRange: false, hasFilterBar: true },
+  "/sellers": { title: "Sellers", subtitle: "Top performers across the catalog", hasDateRange: false, hasFilterBar: true },
+  "/geography": { title: "Geography", subtitle: "Sales distribution by region", hasDateRange: true, hasFilterBar: true },
+  "/clients": { title: "Clients", subtitle: "Brand accounts on the platform", hasDateRange: false, hasFilterBar: false },
+  "/notifications": { title: "Notifications", subtitle: "Anomalies, top movers, and rollups", hasDateRange: false, hasFilterBar: false },
+  "/compare": { title: "Compare brands", subtitle: "Benchmark up to four clients side-by-side", hasDateRange: true, hasFilterBar: false },
 };
 
 export function AppLayout({ children }: AppLayoutProps) {
@@ -69,14 +77,24 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { user, logout, selectedClientId, setSelectedClientId } = useAuth();
   const { theme, setTheme } = useTheme();
   const { dateRange, setDateRange } = useDashboardFilters();
+  const { setOpen: setShortcutsOpen } = useKeyboardShortcuts();
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Expose focus-search for "/" shortcut.
+  useEffect(() => {
+    (window as unknown as { __focusSearch?: () => void }).__focusSearch = () => {
+      searchInputRef.current?.focus();
+    };
+    return () => {
+      delete (window as unknown as { __focusSearch?: () => void }).__focusSearch;
+    };
+  }, []);
 
   const { data: clientsData } = useListClients(
     { limit: 100 },
     { query: queryOpts({ enabled: user?.role === "ADMIN" }) },
   );
 
-  // Admin must always be viewing a specific client — auto-pick the first one
-  // when none is selected (the analytics endpoints require a clientId).
   useEffect(() => {
     if (
       user?.role === "ADMIN" &&
@@ -92,8 +110,6 @@ export function AppLayout({ children }: AppLayoutProps) {
     query: queryOpts({ enabled: user?.role === "CLIENT" && !!user?.clientId }),
   });
 
-  // Whenever the active client changes, retint every formatter in the app.
-  // This is what powers per-client currency/locale on dashboards.
   const activeClient =
     user?.role === "CLIENT"
       ? clientData
@@ -108,7 +124,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     query: queryOpts({ refetchInterval: 60000 }),
   });
 
-  const meta = pageMeta[location] ?? { title: "UP Dash", subtitle: "", hasDateRange: false };
+  const meta = pageMeta[location] ?? { title: "UP Dash", subtitle: "", hasDateRange: false, hasFilterBar: false };
   const subtitleText =
     location === "/" || location === "/dashboard"
       ? `${format(new Date(), "EEEE, MMM d")} · live data`
@@ -124,9 +140,11 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   const workspaceNav: { name: string; href: string; icon: typeof Users }[] = [
     { name: "Geography", href: "/geography", icon: MapPin },
+    { name: "Notifications", href: "/notifications", icon: Bell },
   ];
 
   if (user?.role === "ADMIN") {
+    workspaceNav.push({ name: "Compare brands", href: "/compare", icon: GitCompareArrows });
     workspaceNav.push({ name: "Clients", href: "/clients", icon: Building2 });
   }
 
@@ -136,7 +154,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     return (
       <Link href={item.href}>
         <span
-          data-testid={`nav-${item.name.toLowerCase()}`}
+          data-testid={`nav-${item.name.toLowerCase().replace(/\s+/g, "-")}`}
           className={`relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${
             isActive
               ? "bg-primary/10 text-primary font-medium"
@@ -223,15 +241,12 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      {/* Desktop Sidebar */}
-      <aside className="hidden w-60 flex-col border-r border-border bg-sidebar md:flex">
+      <aside className="hidden w-60 flex-col border-r border-border bg-sidebar md:flex no-print">
         <SidebarContent />
       </aside>
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Topbar */}
-        <header className="flex h-16 shrink-0 items-center gap-4 border-b border-border bg-background px-4 sm:px-6">
-          {/* Mobile nav trigger */}
+        <header className="flex h-16 shrink-0 items-center gap-4 border-b border-border bg-background px-4 sm:px-6 no-print">
           <Sheet>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" className="md:hidden">
@@ -244,7 +259,6 @@ export function AppLayout({ children }: AppLayoutProps) {
             </SheetContent>
           </Sheet>
 
-          {/* Page title */}
           <div className="min-w-0">
             <h1 className="text-lg sm:text-xl font-semibold leading-tight truncate">
               {meta.title}
@@ -254,24 +268,23 @@ export function AppLayout({ children }: AppLayoutProps) {
             )}
           </div>
 
-          {/* Search (decorative for now) */}
           <div className="hidden lg:flex flex-1 max-w-md ml-4">
             <div className="relative w-full">
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input
+                ref={searchInputRef}
                 type="search"
-                disabled
                 placeholder="Search SKUs, categories, campaigns"
-                className="w-full h-9 bg-card border border-border rounded-md pl-10 pr-12 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed"
+                className="w-full h-9 bg-card border border-border rounded-md pl-10 pr-12 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                data-testid="topbar-search"
               />
               <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono bg-muted border border-border rounded text-muted-foreground">
-                ⌘K
+                /
               </kbd>
             </div>
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            {/* Client picker (admin) */}
             {user?.role === "ADMIN" && (
               <div className="hidden sm:block w-44">
                 <Select
@@ -295,34 +308,34 @@ export function AppLayout({ children }: AppLayoutProps) {
               </div>
             )}
 
-            {/* Date range pill */}
             {meta.hasDateRange && (
               <DateRangePicker value={dateRange} onChange={setDateRange} />
             )}
 
-            {/* Notifications */}
             <Button
               variant="ghost"
               size="icon"
-              className="relative h-9 w-9 hover:bg-accent"
-              aria-label="Notifications"
+              className="h-9 w-9 hover:bg-accent"
+              onClick={() => setShortcutsOpen(true)}
+              aria-label="Keyboard shortcuts"
+              data-testid="open-shortcuts"
             >
-              <Bell className="h-4 w-4" />
-              <span className="absolute top-2 right-2 h-1.5 w-1.5 rounded-full bg-primary" />
+              <HelpCircle className="h-4 w-4" />
             </Button>
 
-            {/* Theme toggle */}
+            <NotificationBell />
+
             <Button
               variant="ghost"
               size="icon"
               className="h-9 w-9 hover:bg-accent"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               aria-label="Toggle theme"
+              data-testid="theme-toggle"
             >
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
 
-            {/* Avatar menu */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-9 w-9 rounded-full p-0">
@@ -346,6 +359,10 @@ export function AppLayout({ children }: AppLayoutProps) {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setShortcutsOpen(true)} className="cursor-pointer">
+                  <HelpCircle className="mr-2 h-4 w-4" />
+                  <span>Keyboard shortcuts</span>
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={logout} className="text-destructive cursor-pointer">
                   <LogOut className="mr-2 h-4 w-4" />
                   <span>Log out</span>
@@ -355,8 +372,9 @@ export function AppLayout({ children }: AppLayoutProps) {
           </div>
         </header>
 
-        {/* Main Content */}
-        <main className="flex-1 overflow-y-auto bg-background p-4 sm:p-6 md:p-8">
+        {meta.hasFilterBar && <FilterBar />}
+
+        <main className="flex-1 overflow-y-auto bg-background p-4 sm:p-6 md:p-8 print-area">
           {children}
         </main>
       </div>

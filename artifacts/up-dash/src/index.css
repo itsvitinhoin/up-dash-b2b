@@ -202,3 +202,25 @@
     @apply font-sans antialiased bg-background text-foreground;
   }
 }
+
+@media print {
+  body.print-dashboard aside,
+  body.print-dashboard header,
+  body.print-dashboard .no-print,
+  body.print-dashboard [data-radix-popper-content-wrapper] {
+    display: none !important;
+  }
+  body.print-dashboard .print-area {
+    overflow: visible !important;
+    height: auto !important;
+    padding: 0 !important;
+  }
+  body.print-dashboard .dashboard-printable {
+    background: white !important;
+    color: black !important;
+  }
+  body.print-dashboard {
+    background: white !important;
+    color: black !important;
+  }
+}

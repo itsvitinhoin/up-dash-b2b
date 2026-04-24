@@ -16,6 +16,10 @@ tags:
     description: Client (brand) management
   - name: analytics
     description: Analytics & reporting
+  - name: notifications
+    description: Notification center
+  - name: savedViews
+    description: Saved dashboard views
 paths:
   /healthz:
     get:
@@ -208,6 +212,16 @@ paths:
           schema:
             type: string
             format: date-time
+        - in: query
+          name: category
+          schema:
+            type: string
+          description: Restrict revenue/order metrics to a single product category.
+        - in: query
+          name: sellerId
+          schema:
+            type: string
+          description: Restrict order metrics to a single seller.
       responses:
         "200":
           description: Dashboard payload
@@ -367,6 +381,227 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GeographyResponse"
+
+  /analytics/orders:
+    get:
+      operationId: getOrdersByDate
+      tags: [analytics]
+      summary: Drill-down list of orders for a single day
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: date
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 25
+      responses:
+        "200":
+          description: Orders payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrdersByDateResponse"
+
+  /analytics/insight:
+    get:
+      operationId: getInsight
+      tags: [analytics]
+      summary: AI-generated insight for current dashboard window
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Insight payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsightResponse"
+    post:
+      operationId: regenerateInsight
+      tags: [analytics]
+      summary: Force regenerate the AI insight (skip cache)
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Insight payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsightResponse"
+
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: List notifications for the current client/tenant
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Notification list with unread count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationsResponse"
+
+  /notifications/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      tags: [notifications]
+      summary: Mark every notification for this client as read
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarkReadResponse"
+
+  /notifications/read:
+    post:
+      operationId: markNotificationRead
+      tags: [notifications]
+      summary: Mark a single notification as read
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkNotificationReadRequest"
+      responses:
+        "200":
+          description: Updated notification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /saved-views:
+    get:
+      operationId: listSavedViews
+      tags: [savedViews]
+      summary: List the current user's saved views for the active client
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Saved view list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SavedView"
+    post:
+      operationId: createSavedView
+      tags: [savedViews]
+      summary: Save the current dashboard filter set as a named view
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSavedViewRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedView"
+
+  /saved-views/{viewId}:
+    delete:
+      operationId: deleteSavedView
+      tags: [savedViews]
+      summary: Delete a saved view owned by the current user
+      parameters:
+        - in: path
+          name: viewId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
@@ -816,3 +1051,162 @@ components:
           items:
             $ref: "#/components/schemas/GeographyCity"
       required: [states, cities]
+
+    OrderDrillRow:
+      type: object
+      properties:
+        id:
+          type: string
+        amount:
+          type: number
+        status:
+          type: string
+        customerName:
+          type: ["string", "null"]
+        customerEmail:
+          type: ["string", "null"]
+        sellerName:
+          type: ["string", "null"]
+        state:
+          type: ["string", "null"]
+        city:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, amount, status, createdAt]
+
+    OrdersByDateResponse:
+      type: object
+      properties:
+        date:
+          type: string
+        totalOrders:
+          type: integer
+        totalRevenue:
+          type: number
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderDrillRow"
+      required: [date, totalOrders, totalRevenue, orders]
+
+    InsightResponse:
+      type: object
+      properties:
+        headline:
+          type: string
+        body:
+          type: string
+        bullets:
+          type: array
+          items:
+            type: string
+        generatedAt:
+          type: string
+          format: date-time
+        cached:
+          type: boolean
+        source:
+          type: string
+          enum: [ai, heuristic]
+      required: [headline, body, bullets, generatedAt, cached, source]
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        type:
+          type: string
+          enum: [ANOMALY, TOP_MOVER, SUMMARY, ALERT]
+        severity:
+          type: string
+          enum: [INFO, SUCCESS, WARNING]
+        title:
+          type: string
+        body:
+          type: string
+        signalKey:
+          type: string
+        isRead:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, clientId, type, severity, title, body, signalKey, isRead, createdAt]
+
+    NotificationsResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Notification"
+        unreadCount:
+          type: integer
+      required: [data, unreadCount]
+
+    MarkReadResponse:
+      type: object
+      properties:
+        updated:
+          type: integer
+      required: [updated]
+
+    MarkNotificationReadRequest:
+      type: object
+      properties:
+        notificationId:
+          type: string
+      required: [notificationId]
+
+    SavedViewFilters:
+      type: object
+      properties:
+        dateFrom:
+          type: ["string", "null"]
+          format: date-time
+        dateTo:
+          type: ["string", "null"]
+          format: date-time
+        channel:
+          type: ["string", "null"]
+        segment:
+          type: ["string", "null"]
+        category:
+          type: ["string", "null"]
+        sellerId:
+          type: ["string", "null"]
+      required: []
+
+    SavedView:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        clientId:
+          type: string
+        name:
+          type: string
+        filters:
+          $ref: "#/components/schemas/SavedViewFilters"
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, userId, clientId, name, filters, createdAt]
+
+    CreateSavedViewRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        filters:
+          $ref: "#/components/schemas/SavedViewFilters"
+      required: [name, filters]

@@ -153,6 +153,14 @@ export const GetDashboardQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
+  category: zod.coerce
+    .string()
+    .optional()
+    .describe("Restrict revenue\/order metrics to a single product category."),
+  sellerId: zod.coerce
+    .string()
+    .optional()
+    .describe("Restrict order metrics to a single seller."),
 });
 
 export const GetDashboardResponse = zod.object({
@@ -338,4 +346,187 @@ export const GetGeographyResponse = zod.object({
       revenue: zod.number(),
     }),
   ),
+});
+
+/**
+ * @summary Drill-down list of orders for a single day
+ */
+export const getOrdersByDateQueryLimitDefault = 25;
+
+export const GetOrdersByDateQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  date: zod.date(),
+  limit: zod.coerce.number().default(getOrdersByDateQueryLimitDefault),
+});
+
+export const GetOrdersByDateResponse = zod.object({
+  date: zod.string(),
+  totalOrders: zod.number(),
+  totalRevenue: zod.number(),
+  orders: zod.array(
+    zod.object({
+      id: zod.string(),
+      amount: zod.number(),
+      status: zod.string(),
+      customerName: zod.string().nullish(),
+      customerEmail: zod.string().nullish(),
+      sellerName: zod.string().nullish(),
+      state: zod.string().nullish(),
+      city: zod.string().nullish(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary AI-generated insight for current dashboard window
+ */
+export const GetInsightQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+});
+
+export const GetInsightResponse = zod.object({
+  headline: zod.string(),
+  body: zod.string(),
+  bullets: zod.array(zod.string()),
+  generatedAt: zod.coerce.date(),
+  cached: zod.boolean(),
+  source: zod.enum(["ai", "heuristic"]),
+});
+
+/**
+ * @summary Force regenerate the AI insight (skip cache)
+ */
+export const RegenerateInsightQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+});
+
+export const RegenerateInsightResponse = zod.object({
+  headline: zod.string(),
+  body: zod.string(),
+  bullets: zod.array(zod.string()),
+  generatedAt: zod.coerce.date(),
+  cached: zod.boolean(),
+  source: zod.enum(["ai", "heuristic"]),
+});
+
+/**
+ * @summary List notifications for the current client/tenant
+ */
+export const listNotificationsQueryLimitDefault = 20;
+
+export const ListNotificationsQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  limit: zod.coerce.number().default(listNotificationsQueryLimitDefault),
+});
+
+export const ListNotificationsResponse = zod.object({
+  data: zod.array(
+    zod.object({
+      id: zod.string(),
+      clientId: zod.string(),
+      type: zod.enum(["ANOMALY", "TOP_MOVER", "SUMMARY", "ALERT"]),
+      severity: zod.enum(["INFO", "SUCCESS", "WARNING"]),
+      title: zod.string(),
+      body: zod.string(),
+      signalKey: zod.string(),
+      isRead: zod.boolean(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+  unreadCount: zod.number(),
+});
+
+/**
+ * @summary Mark every notification for this client as read
+ */
+export const MarkAllNotificationsReadQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+});
+
+export const MarkAllNotificationsReadResponse = zod.object({
+  updated: zod.number(),
+});
+
+/**
+ * @summary Mark a single notification as read
+ */
+export const MarkNotificationReadQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+});
+
+export const MarkNotificationReadBody = zod.object({
+  notificationId: zod.string(),
+});
+
+export const MarkNotificationReadResponse = zod.object({
+  id: zod.string(),
+  clientId: zod.string(),
+  type: zod.enum(["ANOMALY", "TOP_MOVER", "SUMMARY", "ALERT"]),
+  severity: zod.enum(["INFO", "SUCCESS", "WARNING"]),
+  title: zod.string(),
+  body: zod.string(),
+  signalKey: zod.string(),
+  isRead: zod.boolean(),
+  createdAt: zod.coerce.date(),
+});
+
+/**
+ * @summary List the current user's saved views for the active client
+ */
+export const ListSavedViewsQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+});
+
+export const ListSavedViewsResponseItem = zod.object({
+  id: zod.string(),
+  userId: zod.string(),
+  clientId: zod.string(),
+  name: zod.string(),
+  filters: zod.object({
+    dateFrom: zod.coerce.date().nullish(),
+    dateTo: zod.coerce.date().nullish(),
+    channel: zod.string().nullish(),
+    segment: zod.string().nullish(),
+    category: zod.string().nullish(),
+    sellerId: zod.string().nullish(),
+  }),
+  createdAt: zod.coerce.date(),
+});
+export const ListSavedViewsResponse = zod.array(ListSavedViewsResponseItem);
+
+/**
+ * @summary Save the current dashboard filter set as a named view
+ */
+export const CreateSavedViewQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+});
+
+export const createSavedViewBodyNameMax = 64;
+
+export const CreateSavedViewBody = zod.object({
+  name: zod.string().min(1).max(createSavedViewBodyNameMax),
+  filters: zod.object({
+    dateFrom: zod.coerce.date().nullish(),
+    dateTo: zod.coerce.date().nullish(),
+    channel: zod.string().nullish(),
+    segment: zod.string().nullish(),
+    category: zod.string().nullish(),
+    sellerId: zod.string().nullish(),
+  }),
+});
+
+/**
+ * @summary Delete a saved view owned by the current user
+ */
+export const DeleteSavedViewParams = zod.object({
+  viewId: zod.coerce.string(),
+});
+
+export const DeleteSavedViewResponse = zod.object({
+  message: zod.string(),
 });

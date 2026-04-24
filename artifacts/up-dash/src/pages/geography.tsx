@@ -10,9 +10,10 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
+import { exportRowsAsCsv } from "@/lib/csv-export";
 import {
   BarChart,
   Bar,
@@ -46,8 +47,42 @@ export default function GeographyPage() {
   const topStates = [...(data?.states || [])].sort((a, b) => b.revenue - a.revenue).slice(0, 10);
   const topCities = [...(data?.cities || [])].sort((a, b) => b.revenue - a.revenue).slice(0, 10);
 
+  const handleExport = () => {
+    if (!data) return;
+    const states = data.states ?? [];
+    const cities = data.cities ?? [];
+    const rows = [
+      ...states.map((s) => ({ kind: "state", name: s.state, state: s.state, customers: s.customers, orders: s.orders, revenue: s.revenue })),
+      ...cities.map((c) => ({ kind: "city", name: c.city, state: c.state, customers: 0, orders: c.orders, revenue: c.revenue })),
+    ];
+    exportRowsAsCsv(
+      `geography-${new Date().toISOString().slice(0, 10)}.csv`,
+      rows,
+      [
+        { header: "kind", accessor: (r) => r.kind },
+        { header: "name", accessor: (r) => r.name },
+        { header: "state", accessor: (r) => r.state },
+        { header: "customers", accessor: (r) => r.customers },
+        { header: "orders", accessor: (r) => r.orders },
+        { header: "revenue", accessor: (r) => r.revenue },
+      ],
+    );
+  };
+
   return (
     <div className="space-y-6" data-testid="page-geography">
+      <div className="flex justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExport}
+          disabled={!data}
+          data-testid="geography-export"
+        >
+          <Download className="h-4 w-4 mr-1.5" />
+          Export CSV
+        </Button>
+      </div>
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />

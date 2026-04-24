@@ -6,10 +6,11 @@ import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle, RefreshCw, Lightbulb, ArrowDownRight } from "lucide-react";
+import { AlertCircle, RefreshCw, Lightbulb, ArrowDownRight, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatPercentage, formatNumber } from "@/lib/formatters";
 import { Badge } from "@/components/ui/badge";
+import { exportRowsAsCsv } from "@/lib/csv-export";
 
 export default function FunnelPage() {
   const { selectedClientId, user } = useAuth();
@@ -30,8 +31,35 @@ export default function FunnelPage() {
     }
   );
 
+  const handleExport = () => {
+    if (!data) return;
+    exportRowsAsCsv(
+      `funnel-${new Date().toISOString().slice(0, 10)}.csv`,
+      data.steps,
+      [
+        { header: "step", accessor: (r) => r.step },
+        { header: "label", accessor: (r) => r.label },
+        { header: "count", accessor: (r) => r.count },
+        { header: "conversionRate", accessor: (r) => r.conversionRate },
+        { header: "dropOffRate", accessor: (r) => r.dropOffRate },
+      ],
+    );
+  };
+
   return (
     <div className="space-y-6" data-testid="page-funnel">
+      <div className="flex justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExport}
+          disabled={!data?.steps?.length}
+          data-testid="funnel-export"
+        >
+          <Download className="h-4 w-4 mr-1.5" />
+          Export CSV
+        </Button>
+      </div>
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />

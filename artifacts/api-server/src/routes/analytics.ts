@@ -8,6 +8,7 @@ import {
   sellersTable,
   eventsTable,
   orderItemsTable,
+  clientsTable,
 } from "@workspace/db";
 import {
   GetDashboardQueryParams,
@@ -22,8 +23,13 @@ import {
   GetSellersResponse,
   GetGeographyQueryParams,
   GetGeographyResponse,
+  GetOrdersByDateQueryParams,
+  GetOrdersByDateResponse,
+  GetInsightQueryParams,
+  GetInsightResponse,
 } from "@workspace/api-zod";
 import { authenticate, resolveClientId } from "../middlewares/auth";
+import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 
 const router: IRouter = Router();
 
@@ -33,7 +39,7 @@ router.use("/analytics", authenticate);
 // arrive as strings. Coerce the relevant query fields before validation.
 function coerceDateQuery(query: Record<string, unknown>): Record<string, unknown> {
   const out = { ...query };
-  for (const key of ["dateFrom", "dateTo"]) {
+  for (const key of ["dateFrom", "dateTo", "date"]) {
     const v = out[key];
     if (typeof v === "string" && v.length > 0) {
       const parsed = new Date(v);
@@ -82,12 +88,67 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const { category, sellerId } = parsed.data;
 
-  const baseOrderWhere = and(
+  // For category filtering we need to constrain to orders that contain a line
+  // item in that category. We pre-resolve the matching order ids once so each
+  // aggregation can re-use the same scope without rejoining order_items.
+  let categoryOrderIds: string[] | null = null;
+  if (category) {
+    const rows = await db
+      .selectDistinct({ id: ordersTable.id })
+      .from(ordersTable)
+      .innerJoin(orderItemsTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, from),
+          lte(ordersTable.createdAt, to),
+          eq(productsTable.category, category),
+        ),
+      );
+    categoryOrderIds = rows.map((r) => r.id);
+  }
+
+  const orderConds: SQL[] = [
     eq(ordersTable.clientId, clientId),
     gte(ordersTable.createdAt, from),
     lte(ordersTable.createdAt, to),
-  );
+  ];
+  if (sellerId) orderConds.push(eq(ordersTable.sellerId, sellerId));
+  if (categoryOrderIds !== null) {
+    if (categoryOrderIds.length === 0) {
+      // Nothing in scope — short circuit with empty payload.
+      res.json(
+        GetDashboardResponse.parse({
+          kpis: {
+            revenue: 0,
+            orders: 0,
+            avgTicket: 0,
+            conversionRate: 0,
+            approvalRate: 0,
+            leads: 0,
+            approvedLeads: 0,
+            customers: 0,
+            repeatCustomers: 0,
+          },
+          revenueOverTime: [],
+          ordersOverTime: [],
+          leadsOverTime: [],
+          revenueByCategory: [],
+        }),
+      );
+      return;
+    }
+    orderConds.push(
+      sql`${ordersTable.id} IN (${sql.join(
+        categoryOrderIds.map((id) => sql`${id}`),
+        sql`, `,
+      )})`,
+    );
+  }
+  const baseOrderWhere = and(...orderConds);
 
   const [orderAgg] = await db
     .select({
@@ -468,6 +529,339 @@ router.get("/analytics/geography", async (req, res): Promise<void> => {
     .limit(50);
 
   res.json(GetGeographyResponse.parse({ states, cities }));
+});
+
+// ───────── Drill-down: orders for a specific day ─────────
+
+router.get("/analytics/orders", async (req, res): Promise<void> => {
+  const parsed = GetOrdersByDateQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res
+      .status(400)
+      .json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const day = parsed.data.date;
+  const limit = parsed.data.limit ?? 25;
+
+  const start = new Date(day);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setUTCHours(23, 59, 59, 999);
+
+  const where = and(
+    eq(ordersTable.clientId, clientId),
+    gte(ordersTable.createdAt, start),
+    lte(ordersTable.createdAt, end),
+  );
+
+  const rows = await db
+    .select({
+      id: ordersTable.id,
+      amount: ordersTable.amount,
+      status: ordersTable.status,
+      customerName: customersTable.name,
+      customerEmail: customersTable.email,
+      sellerName: sellersTable.name,
+      state: ordersTable.state,
+      city: ordersTable.city,
+      createdAt: ordersTable.createdAt,
+    })
+    .from(ordersTable)
+    .leftJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+    .leftJoin(sellersTable, eq(ordersTable.sellerId, sellersTable.id))
+    .where(where)
+    .orderBy(desc(ordersTable.amount))
+    .limit(limit);
+
+  const [agg] = await db
+    .select({
+      totalOrders: sql<number>`COUNT(*)::int`,
+      totalRevenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+    })
+    .from(ordersTable)
+    .where(where);
+
+  res.json(
+    GetOrdersByDateResponse.parse({
+      date: start.toISOString().slice(0, 10),
+      totalOrders: Number(agg.totalOrders) || 0,
+      totalRevenue: Number(agg.totalRevenue) || 0,
+      orders: rows,
+    }),
+  );
+});
+
+// ───────── AI insight: cached + heuristic fallback ─────────
+
+interface InsightCacheEntry {
+  expiresAt: number;
+  payload: { headline: string; body: string; bullets: string[]; generatedAt: string; source: "ai" | "heuristic" };
+}
+const insightCache = new Map<string, InsightCacheEntry>();
+const INSIGHT_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function buildHeuristic(
+  kpis: { revenue: number; orders: number; conversionRate: number; avgTicket: number; approvalRate: number },
+  topCategory: { category: string; revenue: number } | null,
+  topSeller: { name: string; revenue: number } | null,
+  trend: number,
+): { headline: string; body: string; bullets: string[] } {
+  const trendPct = (trend * 100).toFixed(1);
+  const headline =
+    trend > 0.05
+      ? `Revenue trending up ${trendPct}% versus the prior window.`
+      : trend < -0.05
+        ? `Revenue dipping ${Math.abs(parseFloat(trendPct)).toFixed(1)}% versus the prior window.`
+        : `Revenue holding steady at ${kpis.revenue.toFixed(0)}.`;
+
+  const body = `Across the period the catalog generated ${kpis.orders} orders at an average ticket of ${kpis.avgTicket.toFixed(2)}, with a ${kpis.conversionRate.toFixed(1)}% visit-to-purchase conversion rate.`;
+
+  const bullets: string[] = [];
+  if (topCategory) bullets.push(`Top category: ${topCategory.category} (${topCategory.revenue.toFixed(0)}).`);
+  if (topSeller) bullets.push(`Top seller: ${topSeller.name} (${topSeller.revenue.toFixed(0)}).`);
+  if (kpis.approvalRate > 0) bullets.push(`Lead approval rate ${kpis.approvalRate.toFixed(1)}%.`);
+  return { headline, body, bullets };
+}
+
+async function buildInsightContext(
+  clientId: string,
+  from: Date,
+  to: Date,
+): Promise<{
+  kpis: { revenue: number; orders: number; conversionRate: number; avgTicket: number; approvalRate: number };
+  topCategory: { category: string; revenue: number } | null;
+  topSeller: { name: string; revenue: number } | null;
+  trend: number;
+  brand: string;
+}> {
+  const baseWhere = and(
+    eq(ordersTable.clientId, clientId),
+    gte(ordersTable.createdAt, from),
+    lte(ordersTable.createdAt, to),
+    sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+  );
+
+  const [orderAgg] = await db
+    .select({
+      revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+      orders: sql<number>`COUNT(*)::int`,
+    })
+    .from(ordersTable)
+    .where(baseWhere);
+
+  const [eventAgg] = await db
+    .select({
+      visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int`,
+      registrations: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'REGISTRATION')::int`,
+      approvals: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'APPROVED_REGISTRATION')::int`,
+    })
+    .from(eventsTable)
+    .where(
+      and(
+        eq(eventsTable.clientId, clientId),
+        gte(eventsTable.createdAt, from),
+        lte(eventsTable.createdAt, to),
+      ),
+    );
+
+  const revenue = Number(orderAgg.revenue) || 0;
+  const orders = Number(orderAgg.orders) || 0;
+  const visits = Number(eventAgg.visits) || 0;
+  const registrations = Number(eventAgg.registrations) || 0;
+  const approvals = Number(eventAgg.approvals) || 0;
+  const kpis = {
+    revenue,
+    orders,
+    avgTicket: orders > 0 ? revenue / orders : 0,
+    conversionRate: visits > 0 ? Math.min(100, (orders / visits) * 100) : 0,
+    approvalRate: registrations > 0 ? Math.min(100, (approvals / registrations) * 100) : 0,
+  };
+
+  // Compare to prior window of equal length.
+  const span = to.getTime() - from.getTime();
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - span);
+  const [prevAgg] = await db
+    .select({ revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float` })
+    .from(ordersTable)
+    .where(
+      and(
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, prevFrom),
+        lte(ordersTable.createdAt, prevTo),
+        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+      ),
+    );
+  const prevRevenue = Number(prevAgg.revenue) || 0;
+  const trend = prevRevenue > 0 ? (revenue - prevRevenue) / prevRevenue : 0;
+
+  const [topCat] = await db
+    .select({
+      category: sql<string>`COALESCE(${productsTable.category}, 'Uncategorized')`,
+      revenue: sql<number>`COALESCE(SUM(${orderItemsTable.priceAtSale} * ${orderItemsTable.quantity}), 0)::float`,
+    })
+    .from(orderItemsTable)
+    .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+    .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+    .where(
+      and(
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, from),
+        lte(ordersTable.createdAt, to),
+      ),
+    )
+    .groupBy(productsTable.category)
+    .orderBy(sql`SUM(${orderItemsTable.priceAtSale} * ${orderItemsTable.quantity}) DESC`)
+    .limit(1);
+
+  const [topSeller] = await db
+    .select({
+      name: sellersTable.name,
+      revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+    })
+    .from(ordersTable)
+    .innerJoin(sellersTable, eq(ordersTable.sellerId, sellersTable.id))
+    .where(
+      and(
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, from),
+        lte(ordersTable.createdAt, to),
+      ),
+    )
+    .groupBy(sellersTable.id, sellersTable.name)
+    .orderBy(sql`SUM(${ordersTable.amount}) DESC`)
+    .limit(1);
+
+  const [brand] = await db
+    .select({ name: clientsTable.name })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  return {
+    kpis,
+    topCategory: topCat ? { category: topCat.category, revenue: Number(topCat.revenue) || 0 } : null,
+    topSeller: topSeller ? { name: topSeller.name, revenue: Number(topSeller.revenue) || 0 } : null,
+    trend,
+    brand: brand?.name ?? "the brand",
+  };
+}
+
+async function generateInsight(
+  clientId: string,
+  from: Date,
+  to: Date,
+  forceRefresh: boolean,
+): Promise<{ headline: string; body: string; bullets: string[]; generatedAt: string; cached: boolean; source: "ai" | "heuristic" }> {
+  const cacheKey = `${clientId}|${from.toISOString().slice(0, 10)}|${to.toISOString().slice(0, 10)}`;
+  if (!forceRefresh) {
+    const cached = insightCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return { ...cached.payload, cached: true };
+    }
+  }
+
+  const ctx = await buildInsightContext(clientId, from, to);
+  const heuristic = buildHeuristic(ctx.kpis, ctx.topCategory, ctx.topSeller, ctx.trend);
+
+  let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = {
+    ...heuristic,
+    source: "heuristic",
+  };
+
+  const ai = getOpenAIClient();
+  if (ai && isAIConfigured()) {
+    try {
+      const userPrompt = `You are a senior fashion-retail analyst writing one weekly insight card for the brand "${ctx.brand}". Speak directly to the brand owner. Use the following metrics for the period ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}:
+
+Revenue: ${ctx.kpis.revenue.toFixed(2)}
+Orders: ${ctx.kpis.orders}
+Avg ticket: ${ctx.kpis.avgTicket.toFixed(2)}
+Visit-to-purchase: ${ctx.kpis.conversionRate.toFixed(2)}%
+Lead approval: ${ctx.kpis.approvalRate.toFixed(2)}%
+Revenue trend vs prior window: ${(ctx.trend * 100).toFixed(2)}%
+Top category: ${ctx.topCategory?.category ?? "n/a"} (${ctx.topCategory?.revenue.toFixed(2) ?? 0})
+Top seller: ${ctx.topSeller?.name ?? "n/a"} (${ctx.topSeller?.revenue.toFixed(2) ?? 0})
+
+Return strict JSON:
+{
+  "headline": "<one short sentence, <80 chars>",
+  "body": "<2-3 plain sentences explaining the most important takeaway>",
+  "bullets": ["<actionable bullet>", "<actionable bullet>", "<actionable bullet>"]
+}
+No markdown, no preamble.`;
+
+      const completion = await ai.chat.completions.create({
+        model: "gpt-5-nano",
+        max_completion_tokens: 600,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "You write concise, actionable B2B analytics insights. Always respond with the requested JSON shape only." },
+          { role: "user", content: userPrompt },
+        ],
+      });
+      const text = completion.choices[0]?.message?.content;
+      if (text) {
+        const parsed = JSON.parse(text) as { headline?: string; body?: string; bullets?: string[] };
+        if (
+          typeof parsed.headline === "string" &&
+          typeof parsed.body === "string" &&
+          Array.isArray(parsed.bullets)
+        ) {
+          payload = {
+            headline: parsed.headline.slice(0, 120),
+            body: parsed.body.slice(0, 600),
+            bullets: parsed.bullets.slice(0, 4).map((b) => String(b).slice(0, 160)),
+            source: "ai",
+          };
+        }
+      }
+    } catch (err) {
+      // Swallow AI errors; heuristic stays.
+      console.warn("[insight] AI generation failed, using heuristic:", (err as Error).message);
+    }
+  }
+
+  const generatedAt = new Date().toISOString();
+  insightCache.set(cacheKey, {
+    expiresAt: Date.now() + INSIGHT_TTL_MS,
+    payload: { ...payload, generatedAt },
+  });
+  return { ...payload, generatedAt, cached: false };
+}
+
+router.get("/analytics/insight", async (req, res): Promise<void> => {
+  const parsed = GetInsightQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res
+      .status(400)
+      .json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+
+  const insight = await generateInsight(clientId, from, to, false);
+  res.json(GetInsightResponse.parse(insight));
+});
+
+router.post("/analytics/insight", async (req, res): Promise<void> => {
+  const parsed = GetInsightQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res
+      .status(400)
+      .json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+
+  const insight = await generateInsight(clientId, from, to, true);
+  res.json(GetInsightResponse.parse(insight));
 });
 
 export default router;

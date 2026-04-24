@@ -245,6 +245,124 @@ export interface GeographyResponse {
   cities: GeographyCity[];
 }
 
+export interface OrderDrillRow {
+  id: string;
+  amount: number;
+  status: string;
+  /** @nullable */
+  customerName?: string | null;
+  /** @nullable */
+  customerEmail?: string | null;
+  /** @nullable */
+  sellerName?: string | null;
+  /** @nullable */
+  state?: string | null;
+  /** @nullable */
+  city?: string | null;
+  createdAt: string;
+}
+
+export interface OrdersByDateResponse {
+  date: string;
+  totalOrders: number;
+  totalRevenue: number;
+  orders: OrderDrillRow[];
+}
+
+export type InsightResponseSource =
+  (typeof InsightResponseSource)[keyof typeof InsightResponseSource];
+
+export const InsightResponseSource = {
+  ai: "ai",
+  heuristic: "heuristic",
+} as const;
+
+export interface InsightResponse {
+  headline: string;
+  body: string;
+  bullets: string[];
+  generatedAt: string;
+  cached: boolean;
+  source: InsightResponseSource;
+}
+
+export type NotificationType =
+  (typeof NotificationType)[keyof typeof NotificationType];
+
+export const NotificationType = {
+  ANOMALY: "ANOMALY",
+  TOP_MOVER: "TOP_MOVER",
+  SUMMARY: "SUMMARY",
+  ALERT: "ALERT",
+} as const;
+
+export type NotificationSeverity =
+  (typeof NotificationSeverity)[keyof typeof NotificationSeverity];
+
+export const NotificationSeverity = {
+  INFO: "INFO",
+  SUCCESS: "SUCCESS",
+  WARNING: "WARNING",
+} as const;
+
+export interface Notification {
+  id: string;
+  clientId: string;
+  type: NotificationType;
+  severity: NotificationSeverity;
+  title: string;
+  body: string;
+  signalKey: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export interface NotificationsResponse {
+  data: Notification[];
+  unreadCount: number;
+}
+
+export interface MarkReadResponse {
+  updated: number;
+}
+
+export interface MarkNotificationReadRequest {
+  notificationId: string;
+}
+
+export interface SavedViewFilters {
+  /** @nullable */
+  dateFrom?: string | null;
+  /** @nullable */
+  dateTo?: string | null;
+  /** @nullable */
+  channel?: string | null;
+  /** @nullable */
+  segment?: string | null;
+  /** @nullable */
+  category?: string | null;
+  /** @nullable */
+  sellerId?: string | null;
+}
+
+export interface SavedView {
+  id: string;
+  userId: string;
+  clientId: string;
+  name: string;
+  filters: SavedViewFilters;
+  createdAt: string;
+}
+
+export interface CreateSavedViewRequest {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  name: string;
+  filters: SavedViewFilters;
+}
+
 export type ListClientsParams = {
   search?: string;
   page?: number;
@@ -255,6 +373,14 @@ export type GetDashboardParams = {
   clientId?: string;
   dateFrom?: string;
   dateTo?: string;
+  /**
+   * Restrict revenue/order metrics to a single product category.
+   */
+  category?: string;
+  /**
+   * Restrict order metrics to a single seller.
+   */
+  sellerId?: string;
 };
 
 export type GetFunnelParams = {
@@ -296,4 +422,43 @@ export type GetGeographyParams = {
   clientId?: string;
   dateFrom?: string;
   dateTo?: string;
+};
+
+export type GetOrdersByDateParams = {
+  clientId?: string;
+  date: string;
+  limit?: number;
+};
+
+export type GetInsightParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+export type RegenerateInsightParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+export type ListNotificationsParams = {
+  clientId?: string;
+  limit?: number;
+};
+
+export type MarkAllNotificationsReadParams = {
+  clientId?: string;
+};
+
+export type MarkNotificationReadParams = {
+  clientId?: string;
+};
+
+export type ListSavedViewsParams = {
+  clientId?: string;
+};
+
+export type CreateSavedViewParams = {
+  clientId?: string;
 };

@@ -21,6 +21,8 @@ import type {
   AuthUser,
   Client,
   CreateClientRequest,
+  CreateSavedViewParams,
+  CreateSavedViewRequest,
   DashboardResponse,
   ErrorResponse,
   FunnelResponse,
@@ -29,18 +31,32 @@ import type {
   GetDashboardParams,
   GetFunnelParams,
   GetGeographyParams,
+  GetInsightParams,
+  GetOrdersByDateParams,
   GetProductsParams,
   GetSellersParams,
   HealthStatus,
+  InsightResponse,
   ListClientsParams,
+  ListNotificationsParams,
+  ListSavedViewsParams,
   LoginRequest,
   LogoutRequest,
+  MarkAllNotificationsReadParams,
+  MarkNotificationReadParams,
+  MarkNotificationReadRequest,
+  MarkReadResponse,
   MessageResponse,
+  Notification,
+  NotificationsResponse,
+  OrdersByDateResponse,
   PaginatedClients,
   PaginatedCustomers,
   ProductMetrics,
   RefreshRequest,
   RefreshResponse,
+  RegenerateInsightParams,
+  SavedView,
   SellerMetrics,
 } from "./api.schemas";
 
@@ -1277,3 +1293,876 @@ export function useGetGeography<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Drill-down list of orders for a single day
+ */
+export const getGetOrdersByDateUrl = (params: GetOrdersByDateParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/orders?${stringifiedParams}`
+    : `/api/analytics/orders`;
+};
+
+export const getOrdersByDate = async (
+  params: GetOrdersByDateParams,
+  options?: RequestInit,
+): Promise<OrdersByDateResponse> => {
+  return customFetch<OrdersByDateResponse>(getGetOrdersByDateUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOrdersByDateQueryKey = (params?: GetOrdersByDateParams) => {
+  return [`/api/analytics/orders`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetOrdersByDateQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOrdersByDate>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetOrdersByDateParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOrdersByDate>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOrdersByDateQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getOrdersByDate>>> = ({
+    signal,
+  }) => getOrdersByDate(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOrdersByDate>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOrdersByDateQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOrdersByDate>>
+>;
+export type GetOrdersByDateQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Drill-down list of orders for a single day
+ */
+
+export function useGetOrdersByDate<
+  TData = Awaited<ReturnType<typeof getOrdersByDate>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetOrdersByDateParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOrdersByDate>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOrdersByDateQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary AI-generated insight for current dashboard window
+ */
+export const getGetInsightUrl = (params?: GetInsightParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/insight?${stringifiedParams}`
+    : `/api/analytics/insight`;
+};
+
+export const getInsight = async (
+  params?: GetInsightParams,
+  options?: RequestInit,
+): Promise<InsightResponse> => {
+  return customFetch<InsightResponse>(getGetInsightUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetInsightQueryKey = (params?: GetInsightParams) => {
+  return [`/api/analytics/insight`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetInsightQueryOptions = <
+  TData = Awaited<ReturnType<typeof getInsight>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetInsightParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInsight>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetInsightQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getInsight>>> = ({
+    signal,
+  }) => getInsight(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getInsight>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetInsightQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getInsight>>
+>;
+export type GetInsightQueryError = ErrorType<unknown>;
+
+/**
+ * @summary AI-generated insight for current dashboard window
+ */
+
+export function useGetInsight<
+  TData = Awaited<ReturnType<typeof getInsight>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetInsightParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInsight>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetInsightQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Force regenerate the AI insight (skip cache)
+ */
+export const getRegenerateInsightUrl = (params?: RegenerateInsightParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/insight?${stringifiedParams}`
+    : `/api/analytics/insight`;
+};
+
+export const regenerateInsight = async (
+  params?: RegenerateInsightParams,
+  options?: RequestInit,
+): Promise<InsightResponse> => {
+  return customFetch<InsightResponse>(getRegenerateInsightUrl(params), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getRegenerateInsightMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof regenerateInsight>>,
+    TError,
+    { params?: RegenerateInsightParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof regenerateInsight>>,
+  TError,
+  { params?: RegenerateInsightParams },
+  TContext
+> => {
+  const mutationKey = ["regenerateInsight"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof regenerateInsight>>,
+    { params?: RegenerateInsightParams }
+  > = (props) => {
+    const { params } = props ?? {};
+
+    return regenerateInsight(params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RegenerateInsightMutationResult = NonNullable<
+  Awaited<ReturnType<typeof regenerateInsight>>
+>;
+
+export type RegenerateInsightMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Force regenerate the AI insight (skip cache)
+ */
+export const useRegenerateInsight = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof regenerateInsight>>,
+    TError,
+    { params?: RegenerateInsightParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof regenerateInsight>>,
+  TError,
+  { params?: RegenerateInsightParams },
+  TContext
+> => {
+  return useMutation(getRegenerateInsightMutationOptions(options));
+};
+
+/**
+ * @summary List notifications for the current client/tenant
+ */
+export const getListNotificationsUrl = (params?: ListNotificationsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/notifications?${stringifiedParams}`
+    : `/api/notifications`;
+};
+
+export const listNotifications = async (
+  params?: ListNotificationsParams,
+  options?: RequestInit,
+): Promise<NotificationsResponse> => {
+  return customFetch<NotificationsResponse>(getListNotificationsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListNotificationsQueryKey = (
+  params?: ListNotificationsParams,
+) => {
+  return [`/api/notifications`, ...(params ? [params] : [])] as const;
+};
+
+export const getListNotificationsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listNotifications>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListNotificationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listNotifications>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListNotificationsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listNotifications>>
+  > = ({ signal }) => listNotifications(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listNotifications>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListNotificationsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listNotifications>>
+>;
+export type ListNotificationsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List notifications for the current client/tenant
+ */
+
+export function useListNotifications<
+  TData = Awaited<ReturnType<typeof listNotifications>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListNotificationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listNotifications>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListNotificationsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Mark every notification for this client as read
+ */
+export const getMarkAllNotificationsReadUrl = (
+  params?: MarkAllNotificationsReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/notifications/read-all?${stringifiedParams}`
+    : `/api/notifications/read-all`;
+};
+
+export const markAllNotificationsRead = async (
+  params?: MarkAllNotificationsReadParams,
+  options?: RequestInit,
+): Promise<MarkReadResponse> => {
+  return customFetch<MarkReadResponse>(getMarkAllNotificationsReadUrl(params), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getMarkAllNotificationsReadMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markAllNotificationsRead>>,
+    TError,
+    { params?: MarkAllNotificationsReadParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof markAllNotificationsRead>>,
+  TError,
+  { params?: MarkAllNotificationsReadParams },
+  TContext
+> => {
+  const mutationKey = ["markAllNotificationsRead"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof markAllNotificationsRead>>,
+    { params?: MarkAllNotificationsReadParams }
+  > = (props) => {
+    const { params } = props ?? {};
+
+    return markAllNotificationsRead(params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MarkAllNotificationsReadMutationResult = NonNullable<
+  Awaited<ReturnType<typeof markAllNotificationsRead>>
+>;
+
+export type MarkAllNotificationsReadMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Mark every notification for this client as read
+ */
+export const useMarkAllNotificationsRead = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markAllNotificationsRead>>,
+    TError,
+    { params?: MarkAllNotificationsReadParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof markAllNotificationsRead>>,
+  TError,
+  { params?: MarkAllNotificationsReadParams },
+  TContext
+> => {
+  return useMutation(getMarkAllNotificationsReadMutationOptions(options));
+};
+
+/**
+ * @summary Mark a single notification as read
+ */
+export const getMarkNotificationReadUrl = (
+  params?: MarkNotificationReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/notifications/read?${stringifiedParams}`
+    : `/api/notifications/read`;
+};
+
+export const markNotificationRead = async (
+  markNotificationReadRequest: MarkNotificationReadRequest,
+  params?: MarkNotificationReadParams,
+  options?: RequestInit,
+): Promise<Notification> => {
+  return customFetch<Notification>(getMarkNotificationReadUrl(params), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(markNotificationReadRequest),
+  });
+};
+
+export const getMarkNotificationReadMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markNotificationRead>>,
+    TError,
+    {
+      data: BodyType<MarkNotificationReadRequest>;
+      params?: MarkNotificationReadParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof markNotificationRead>>,
+  TError,
+  {
+    data: BodyType<MarkNotificationReadRequest>;
+    params?: MarkNotificationReadParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["markNotificationRead"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof markNotificationRead>>,
+    {
+      data: BodyType<MarkNotificationReadRequest>;
+      params?: MarkNotificationReadParams;
+    }
+  > = (props) => {
+    const { data, params } = props ?? {};
+
+    return markNotificationRead(data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MarkNotificationReadMutationResult = NonNullable<
+  Awaited<ReturnType<typeof markNotificationRead>>
+>;
+export type MarkNotificationReadMutationBody =
+  BodyType<MarkNotificationReadRequest>;
+export type MarkNotificationReadMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Mark a single notification as read
+ */
+export const useMarkNotificationRead = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markNotificationRead>>,
+    TError,
+    {
+      data: BodyType<MarkNotificationReadRequest>;
+      params?: MarkNotificationReadParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof markNotificationRead>>,
+  TError,
+  {
+    data: BodyType<MarkNotificationReadRequest>;
+    params?: MarkNotificationReadParams;
+  },
+  TContext
+> => {
+  return useMutation(getMarkNotificationReadMutationOptions(options));
+};
+
+/**
+ * @summary List the current user's saved views for the active client
+ */
+export const getListSavedViewsUrl = (params?: ListSavedViewsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/saved-views?${stringifiedParams}`
+    : `/api/saved-views`;
+};
+
+export const listSavedViews = async (
+  params?: ListSavedViewsParams,
+  options?: RequestInit,
+): Promise<SavedView[]> => {
+  return customFetch<SavedView[]>(getListSavedViewsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListSavedViewsQueryKey = (params?: ListSavedViewsParams) => {
+  return [`/api/saved-views`, ...(params ? [params] : [])] as const;
+};
+
+export const getListSavedViewsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSavedViews>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListSavedViewsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSavedViews>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListSavedViewsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listSavedViews>>> = ({
+    signal,
+  }) => listSavedViews(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listSavedViews>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListSavedViewsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSavedViews>>
+>;
+export type ListSavedViewsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List the current user's saved views for the active client
+ */
+
+export function useListSavedViews<
+  TData = Awaited<ReturnType<typeof listSavedViews>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListSavedViewsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSavedViews>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListSavedViewsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Save the current dashboard filter set as a named view
+ */
+export const getCreateSavedViewUrl = (params?: CreateSavedViewParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/saved-views?${stringifiedParams}`
+    : `/api/saved-views`;
+};
+
+export const createSavedView = async (
+  createSavedViewRequest: CreateSavedViewRequest,
+  params?: CreateSavedViewParams,
+  options?: RequestInit,
+): Promise<SavedView> => {
+  return customFetch<SavedView>(getCreateSavedViewUrl(params), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createSavedViewRequest),
+  });
+};
+
+export const getCreateSavedViewMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSavedView>>,
+    TError,
+    { data: BodyType<CreateSavedViewRequest>; params?: CreateSavedViewParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createSavedView>>,
+  TError,
+  { data: BodyType<CreateSavedViewRequest>; params?: CreateSavedViewParams },
+  TContext
+> => {
+  const mutationKey = ["createSavedView"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createSavedView>>,
+    { data: BodyType<CreateSavedViewRequest>; params?: CreateSavedViewParams }
+  > = (props) => {
+    const { data, params } = props ?? {};
+
+    return createSavedView(data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateSavedViewMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createSavedView>>
+>;
+export type CreateSavedViewMutationBody = BodyType<CreateSavedViewRequest>;
+export type CreateSavedViewMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Save the current dashboard filter set as a named view
+ */
+export const useCreateSavedView = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSavedView>>,
+    TError,
+    { data: BodyType<CreateSavedViewRequest>; params?: CreateSavedViewParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createSavedView>>,
+  TError,
+  { data: BodyType<CreateSavedViewRequest>; params?: CreateSavedViewParams },
+  TContext
+> => {
+  return useMutation(getCreateSavedViewMutationOptions(options));
+};
+
+/**
+ * @summary Delete a saved view owned by the current user
+ */
+export const getDeleteSavedViewUrl = (viewId: string) => {
+  return `/api/saved-views/${viewId}`;
+};
+
+export const deleteSavedView = async (
+  viewId: string,
+  options?: RequestInit,
+): Promise<MessageResponse> => {
+  return customFetch<MessageResponse>(getDeleteSavedViewUrl(viewId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteSavedViewMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSavedView>>,
+    TError,
+    { viewId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteSavedView>>,
+  TError,
+  { viewId: string },
+  TContext
+> => {
+  const mutationKey = ["deleteSavedView"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteSavedView>>,
+    { viewId: string }
+  > = (props) => {
+    const { viewId } = props ?? {};
+
+    return deleteSavedView(viewId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteSavedViewMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteSavedView>>
+>;
+
+export type DeleteSavedViewMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Delete a saved view owned by the current user
+ */
+export const useDeleteSavedView = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSavedView>>,
+    TError,
+    { viewId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteSavedView>>,
+  TError,
+  { viewId: string },
+  TContext
+> => {
+  return useMutation(getDeleteSavedViewMutationOptions(options));
+};

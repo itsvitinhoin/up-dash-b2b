@@ -13,9 +13,10 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, PackageOpen, ArrowDownUp } from "lucide-react";
+import { AlertCircle, PackageOpen, ArrowDownUp, Download } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
+import { exportRowsAsCsv } from "@/lib/csv-export";
 
 export default function ProductsPage() {
   const { selectedClientId, user } = useAuth();
@@ -37,8 +38,39 @@ export default function ProductsPage() {
     }
   );
 
+  const handleExport = () => {
+    if (!data) return;
+    exportRowsAsCsv(
+      `products-${new Date().toISOString().slice(0, 10)}.csv`,
+      data,
+      [
+        { header: "id", accessor: (r) => r.id },
+        { header: "sku", accessor: (r) => r.sku ?? "" },
+        { header: "name", accessor: (r) => r.name },
+        { header: "category", accessor: (r) => r.category ?? "" },
+        { header: "status", accessor: (r) => r.status },
+        { header: "price", accessor: (r) => r.price },
+        { header: "stock", accessor: (r) => r.stock },
+        { header: "totalSold", accessor: (r) => r.totalSold },
+        { header: "totalRevenue", accessor: (r) => r.totalRevenue },
+      ],
+    );
+  };
+
   return (
     <div className="space-y-6" data-testid="page-products">
+      <div className="flex justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExport}
+          disabled={!data?.length}
+          data-testid="products-export"
+        >
+          <Download className="h-4 w-4 mr-1.5" />
+          Export CSV
+        </Button>
+      </div>
 
       <Card>
         <CardContent className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">

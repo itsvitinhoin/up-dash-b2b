@@ -202,6 +202,9 @@ importers:
       nanoid:
         specifier: ^5.1.9
         version: 5.1.9
+      openai:
+        specifier: ^5.23.2
+        version: 5.23.2(zod@3.25.76)
       pino:
         specifier: ^9
         version: 9.14.0
@@ -2811,6 +2814,18 @@ packages:
 
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
+
+  openai@5.23.2:
+    resolution: {integrity: sha512-MQBzmTulj+MM5O8SKEk/gL8a7s5mktS9zUtAkU257WjvobGc9nKcBuVwjyEEcb9SI8a8Y2G/mzn3vm9n1Jlleg==}
+    hasBin: true
+    peerDependencies:
+      ws: ^8.18.0
+      zod: ^3.23.8
+    peerDependenciesMeta:
+      ws:
+        optional: true
+      zod:
+        optional: true
 
   orval@8.5.3:
     resolution: {integrity: sha512-+8Es2ZR3tPthzAL27X1a9AlboqTQ/w9U/PhMkp4vsLA9OvdkpXr+9f8lCfJUV/wtdX+lXBDQ4imx42Em943JSg==}
@@ -5714,6 +5729,10 @@ snapshots:
   once@1.4.0:
     dependencies:
       wrappy: 1.0.2
+
+  openai@5.23.2(zod@3.25.76):
+    optionalDependencies:
+      zod: 3.25.76
 
   orval@8.5.3(prettier@3.8.1)(typescript@5.9.3):
     dependencies:

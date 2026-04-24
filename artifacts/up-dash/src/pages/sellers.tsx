@@ -8,9 +8,10 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Trophy, ShoppingBag, DollarSign } from "lucide-react";
+import { AlertCircle, Trophy, ShoppingBag, DollarSign, Download } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
+import { exportRowsAsCsv } from "@/lib/csv-export";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 export default function SellersPage() {
@@ -33,7 +34,31 @@ export default function SellersPage() {
 
   return (
     <div className="space-y-6" data-testid="page-sellers">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            if (!data) return;
+            exportRowsAsCsv(
+              `sellers-${new Date().toISOString().slice(0, 10)}.csv`,
+              data,
+              [
+                { header: "id", accessor: (r) => r.id },
+                { header: "name", accessor: (r) => r.name },
+                { header: "email", accessor: (r) => r.email ?? "" },
+                { header: "totalOrders", accessor: (r) => r.totalOrders },
+                { header: "totalRevenue", accessor: (r) => r.totalRevenue },
+                { header: "avgTicket", accessor: (r) => r.avgTicket },
+              ],
+            );
+          }}
+          disabled={!data?.length}
+          data-testid="sellers-export"
+        >
+          <Download className="h-4 w-4 mr-1.5" />
+          Export CSV
+        </Button>
         <div className="flex items-center gap-2 bg-card p-1 rounded-md border border-border">
           <span className="text-sm font-medium text-muted-foreground px-2">Show top</span>
           <Select value={limit.toString()} onValueChange={(val) => setLimit(Number(val))}>

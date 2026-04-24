@@ -23,6 +23,7 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.3",
     "nanoid": "^5.1.9",
+    "openai": "^5.23.2",
     "pino": "^9",
     "pino-http": "^10"
   },

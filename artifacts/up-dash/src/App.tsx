@@ -1,14 +1,17 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@tanstack/react-query";
+import { AnimatePresence } from "framer-motion";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
-import { ThemeProvider } from "@/components/theme-provider";
+import { ThemeProvider, useTheme } from "@/components/theme-provider";
 import { AppLayout } from "@/components/app-layout";
 import { AuthGuard } from "@/components/auth-guard";
 import { handleApiError } from "@/lib/api-error";
 import { DashboardFiltersProvider } from "@/lib/dashboard-filters";
-import { useMemo, useEffect, useState } from "react";
+import { KeyboardShortcutsProvider } from "@/lib/keyboard-shortcuts";
+import { PageTransition } from "@/components/page-transition";
+import { useMemo } from "react";
 
 import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/login";
@@ -19,10 +22,12 @@ import ProductsPage from "@/pages/products";
 import SellersPage from "@/pages/sellers";
 import GeographyPage from "@/pages/geography";
 import ClientsPage from "@/pages/clients";
+import NotificationsPage from "@/pages/notifications";
+import ComparePage from "@/pages/compare";
 
 function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
   const { logout } = useAuth();
-  
+
   const queryClient = useMemo(() => {
     return new QueryClient({
       queryCache: new QueryCache({
@@ -42,80 +47,115 @@ function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
 }
 
 function Router() {
+  const [location] = useLocation();
+
   return (
-    <Switch>
-      <Route path="/login">
-        <LoginPage />
-      </Route>
-      
-      <Route path="/dashboard">
-        <AuthGuard>
-          <AppLayout>
-            <DashboardPage />
-          </AppLayout>
-        </AuthGuard>
-      </Route>
+    <AnimatePresence mode="wait" initial={false}>
+      <Switch key={location} location={location}>
+        <Route path="/login">
+          <LoginPage />
+        </Route>
 
-      <Route path="/">
-        <AuthGuard>
-          <AppLayout>
-            <DashboardPage />
-          </AppLayout>
-        </AuthGuard>
-      </Route>
+        <Route path="/dashboard">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="dashboard"><DashboardPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
 
-      <Route path="/funnel">
-        <AuthGuard>
-          <AppLayout>
-            <FunnelPage />
-          </AppLayout>
-        </AuthGuard>
-      </Route>
+        <Route path="/">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="dashboard"><DashboardPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
 
-      <Route path="/customers">
-        <AuthGuard>
-          <AppLayout>
-            <CustomersPage />
-          </AppLayout>
-        </AuthGuard>
-      </Route>
+        <Route path="/funnel">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="funnel"><FunnelPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
 
-      <Route path="/products">
-        <AuthGuard>
-          <AppLayout>
-            <ProductsPage />
-          </AppLayout>
-        </AuthGuard>
-      </Route>
+        <Route path="/customers">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="customers"><CustomersPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
 
-      <Route path="/sellers">
-        <AuthGuard>
-          <AppLayout>
-            <SellersPage />
-          </AppLayout>
-        </AuthGuard>
-      </Route>
+        <Route path="/products">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="products"><ProductsPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
 
-      <Route path="/geography">
-        <AuthGuard>
-          <AppLayout>
-            <GeographyPage />
-          </AppLayout>
-        </AuthGuard>
-      </Route>
+        <Route path="/sellers">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="sellers"><SellersPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
 
-      <Route path="/clients">
-        <AuthGuard adminOnly>
-          <AppLayout>
-            <ClientsPage />
-          </AppLayout>
-        </AuthGuard>
-      </Route>
+        <Route path="/geography">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="geography"><GeographyPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
 
-      <Route>
-        <NotFound />
-      </Route>
-    </Switch>
+        <Route path="/notifications">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="notifications"><NotificationsPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/compare">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="compare"><ComparePage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/clients">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="clients"><ClientsPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route>
+          <NotFound />
+        </Route>
+      </Switch>
+    </AnimatePresence>
+  );
+}
+
+function ShortcutsBridge({ children }: { children: React.ReactNode }) {
+  const { theme, setTheme } = useTheme();
+  return (
+    <KeyboardShortcutsProvider
+      onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+      onFocusSearch={() => {
+        const focus = (window as unknown as { __focusSearch?: () => void }).__focusSearch;
+        focus?.();
+      }}
+    >
+      {children}
+    </KeyboardShortcutsProvider>
   );
 }
 
@@ -126,10 +166,12 @@ function App() {
         <AuthProvider>
           <ApiErrorBoundary>
             <DashboardFiltersProvider>
-              <TooltipProvider>
-                <Router />
-                <Toaster />
-              </TooltipProvider>
+              <ShortcutsBridge>
+                <TooltipProvider>
+                  <Router />
+                  <Toaster />
+                </TooltipProvider>
+              </ShortcutsBridge>
             </DashboardFiltersProvider>
           </ApiErrorBoundary>
         </AuthProvider>

@@ -14,9 +14,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Search, Inbox } from "lucide-react";
+import { AlertCircle, Search, Inbox, Download } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
+import { exportRowsAsCsv } from "@/lib/csv-export";
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
@@ -70,8 +71,39 @@ export default function CustomersPage() {
     "SP", "RJ", "MG", "ES", "PR", "BA", "RS", "SC", "RS", "GO", "PE", "CE", "PB", "BA", "MT", "RN", "AL", "SE", "PI", "MA", "MA", "PA", "AM", "TO", "RO", "AC", "AC", "RR", "AP", "DF", "MS", "DF"
   ];
 
+  const handleExport = () => {
+    if (!data?.data) return;
+    exportRowsAsCsv(
+      `customers-${new Date().toISOString().slice(0, 10)}.csv`,
+      data.data,
+      [
+        { header: "id", accessor: (r) => r.id },
+        { header: "name", accessor: (r) => r.name ?? "" },
+        { header: "email", accessor: (r) => r.email ?? "" },
+        { header: "city", accessor: (r) => r.city ?? "" },
+        { header: "state", accessor: (r) => r.state ?? "" },
+        { header: "rfmSegment", accessor: (r) => r.rfmSegment ?? "" },
+        { header: "totalOrders", accessor: (r) => r.totalOrders },
+        { header: "totalSpent", accessor: (r) => r.totalSpent },
+        { header: "lastPurchaseAt", accessor: (r) => r.lastPurchaseAt ?? "" },
+      ],
+    );
+  };
+
   return (
     <div className="space-y-6" data-testid="page-customers">
+      <div className="flex justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExport}
+          disabled={!data?.data?.length}
+          data-testid="customers-export"
+        >
+          <Download className="h-4 w-4 mr-1.5" />
+          Export CSV
+        </Button>
+      </div>
 
       <Card>
         <CardContent className="p-4">

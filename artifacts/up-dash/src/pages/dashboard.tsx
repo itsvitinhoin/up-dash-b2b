@@ -1,9 +1,16 @@
 import { useMemo, useState } from "react";
 import { differenceInDays, format, subDays } from "date-fns";
+import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
-import { useGetDashboard } from "@workspace/api-client-react";
+import {
+  useGetDashboard,
+  useGetInsight,
+  useRegenerateInsight,
+  getGetInsightQueryKey,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,6 +21,8 @@ import {
   ChevronRight,
   CircleDot,
   DollarSign,
+  Download,
+  FileText,
   MoreHorizontal,
   Package,
   RefreshCw,
@@ -21,6 +30,7 @@ import {
   Target,
   TrendingUp,
   Wallet,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatPercentage, formatNumber } from "@/lib/formatters";
@@ -32,7 +42,19 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  ReferenceDot,
 } from "recharts";
+import { CountUp } from "@/components/count-up";
+import { Sparkline } from "@/components/sparkline";
+import { DrillDownPanel } from "@/components/drill-down-panel";
+import {
+  cardEntry,
+  fadeInUp,
+  staggerContainer,
+  useReducedMotion,
+  withReducedMotion,
+} from "@/lib/motion";
+import { exportRowsAsCsv } from "@/lib/csv-export";
 
 type Series = { date: string; value: number }[];
 
@@ -49,11 +71,14 @@ interface KpiCardProps {
   icon: React.ComponentType<{ className?: string }>;
   iconClass: string;
   label: string;
-  value: string;
+  value: number;
+  format: (value: number) => string;
   unit?: string;
   change: number | null;
   changeLabel: string;
   sub: { label: string; value: string }[];
+  sparkValues: number[];
+  sparkColor: string;
   isLoading: boolean;
   testId: string;
 }
@@ -63,75 +88,94 @@ function KpiCard({
   iconClass,
   label,
   value,
+  format: fmt,
   unit,
   change,
   changeLabel,
   sub,
+  sparkValues,
+  sparkColor,
   isLoading,
   testId,
 }: KpiCardProps) {
+  const reduced = useReducedMotion();
   const isUp = change !== null && change >= 0;
+  const variants = withReducedMotion(cardEntry, reduced);
   return (
-    <Card
-      data-testid={testId}
-      className="flex flex-col p-5 bg-card border-border hover-elevate transition-shadow"
-    >
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2.5">
-          <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconClass}`}>
-            <Icon className="h-4 w-4" />
+    <motion.div variants={variants}>
+      <Card
+        data-testid={testId}
+        className="flex flex-col p-5 bg-card border-border hover-elevate transition-shadow"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2.5">
+            <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconClass}`}>
+              <Icon className="h-4 w-4" />
+            </div>
+            <span className="text-sm text-muted-foreground">{label}</span>
           </div>
-          <span className="text-sm text-muted-foreground">{label}</span>
-        </div>
-        <button
-          className="text-muted-foreground hover:text-foreground transition-colors"
-          aria-label="More options"
-        >
-          <MoreHorizontal className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="flex items-baseline gap-2 mb-3">
-        {isLoading ? (
-          <Skeleton className="h-9 w-32" />
-        ) : (
-          <>
-            <span className="text-3xl font-semibold tracking-tight tabular-nums">{value}</span>
-            {unit && <span className="text-xs text-muted-foreground font-medium">{unit}</span>}
-          </>
-        )}
-      </div>
-
-      {!isLoading && change !== null && (
-        <div className="mb-4">
-          <span
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${
-              isUp
-                ? "bg-emerald-500/10 text-emerald-400"
-                : "bg-red-500/10 text-red-400"
-            }`}
+          <button
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="More options"
           >
-            {isUp ? (
-              <ArrowUpRight className="h-3 w-3" />
-            ) : (
-              <ArrowDownRight className="h-3 w-3" />
-            )}
-            {isUp ? "+" : ""}
-            {change.toFixed(1)}%
-          </span>
-          <span className="text-xs text-muted-foreground ml-2">{changeLabel}</span>
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
         </div>
-      )}
 
-      <div className="mt-auto pt-3 border-t border-border space-y-2">
-        {sub.map((row) => (
-          <div key={row.label} className="flex justify-between text-sm">
-            <span className="text-muted-foreground">{row.label}</span>
-            <span className="font-medium tabular-nums">{row.value}</span>
+        <div className="flex items-end justify-between gap-3 mb-3">
+          <div className="flex items-baseline gap-2">
+            {isLoading ? (
+              <Skeleton className="h-9 w-32" />
+            ) : (
+              <>
+                <span className="text-3xl font-semibold tracking-tight tabular-nums">
+                  <CountUp value={value} format={fmt} />
+                </span>
+                {unit && <span className="text-xs text-muted-foreground font-medium">{unit}</span>}
+              </>
+            )}
           </div>
-        ))}
-      </div>
-    </Card>
+          {!isLoading && sparkValues.length > 1 && (
+            <Sparkline
+              values={sparkValues}
+              stroke={sparkColor}
+              fill={sparkColor + "22"}
+              width={88}
+              height={28}
+              ariaLabel={`${label} trend sparkline`}
+            />
+          )}
+        </div>
+
+        {!isLoading && change !== null && (
+          <div className="mb-4">
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${
+                isUp ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
+              }`}
+            >
+              {isUp ? (
+                <ArrowUpRight className="h-3 w-3" />
+              ) : (
+                <ArrowDownRight className="h-3 w-3" />
+              )}
+              {isUp ? "+" : ""}
+              {change.toFixed(1)}%
+            </span>
+            <span className="text-xs text-muted-foreground ml-2">{changeLabel}</span>
+          </div>
+        )}
+
+        <div className="mt-auto pt-3 border-t border-border space-y-2">
+          {sub.map((row) => (
+            <div key={row.label} className="flex justify-between text-sm">
+              <span className="text-muted-foreground">{row.label}</span>
+              <span className="font-medium tabular-nums">{row.value}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </motion.div>
   );
 }
 
@@ -143,10 +187,29 @@ const CHART_METRICS = [
 
 type ChartMetric = (typeof CHART_METRICS)[number]["id"];
 
+function detectAnomalies(series: { date: string; value: number }[]): { date: string; value: number }[] {
+  if (series.length < 8) return [];
+  const anomalies: { date: string; value: number }[] = [];
+  for (let i = 7; i < series.length; i++) {
+    const window = series.slice(i - 7, i);
+    const avg = window.reduce((s, p) => s + p.value, 0) / window.length;
+    const variance =
+      window.reduce((s, p) => s + Math.pow(p.value - avg, 2), 0) / window.length;
+    const std = Math.sqrt(variance);
+    const z = std === 0 ? 0 : (series[i].value - avg) / std;
+    if (Math.abs(z) >= 1.8) anomalies.push(series[i]);
+  }
+  return anomalies;
+}
+
 export default function DashboardPage() {
   const { selectedClientId, user } = useAuth();
-  const { dateRange } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
+  const queryClient = useQueryClient();
   const [chartMetric, setChartMetric] = useState<ChartMetric>("revenue");
+  const [drillDate, setDrillDate] = useState<string | null>(null);
+  const [insightDismissed, setInsightDismissed] = useState(false);
+  const reduced = useReducedMotion();
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled =
@@ -157,15 +220,13 @@ export default function DashboardPage() {
       clientId,
       dateFrom: format(dateRange.from, "yyyy-MM-dd"),
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
+      category: filters.category ?? undefined,
+      sellerId: filters.sellerId ?? undefined,
     },
     { query: queryOpts({ enabled }) },
   );
 
-  // Previous period (same inclusive length, immediately before current range)
-  const inclusiveDays = Math.max(
-    1,
-    differenceInDays(dateRange.to, dateRange.from) + 1,
-  );
+  const inclusiveDays = Math.max(1, differenceInDays(dateRange.to, dateRange.from) + 1);
   const prevTo = subDays(dateRange.from, 1);
   const prevFrom = subDays(prevTo, inclusiveDays - 1);
   const { data: prevData } = useGetDashboard(
@@ -173,14 +234,34 @@ export default function DashboardPage() {
       clientId,
       dateFrom: format(prevFrom, "yyyy-MM-dd"),
       dateTo: format(prevTo, "yyyy-MM-dd"),
+      category: filters.category ?? undefined,
+      sellerId: filters.sellerId ?? undefined,
     },
     { query: queryOpts({ enabled }) },
   );
 
-  // Compute changes from time series
+  // ── AI insight (real LLM) ──────────────────────────────────────────────
+  const insightParams = {
+    clientId,
+    dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+    dateTo: format(dateRange.to, "yyyy-MM-dd"),
+  };
+  const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
+    query: queryOpts({ enabled }),
+  });
+  const regenerateInsight = useRegenerateInsight({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({
+          queryKey: getGetInsightQueryKey(insightParams),
+        });
+      },
+    },
+  });
+
+  // Compute changes
   const revenueChange = useMemo(() => computeChange(data?.revenueOverTime), [data]);
   const ordersChange = useMemo(() => computeChange(data?.ordersOverTime), [data]);
-  const leadsChange = useMemo(() => computeChange(data?.leadsOverTime), [data]);
   const avgTicketChange = useMemo(() => {
     if (!data?.kpis.avgTicket || !prevData?.kpis.avgTicket) return null;
     if (prevData.kpis.avgTicket === 0) return null;
@@ -200,7 +281,7 @@ export default function DashboardPage() {
     );
   }, [data, prevData]);
 
-  // Build dual-line chart data (current vs. previous)
+  // Build chart data
   const chartData = useMemo(() => {
     if (!data) return [];
     const current =
@@ -222,7 +303,6 @@ export default function DashboardPage() {
               const o = prevData.ordersOverTime[i]?.value || 0;
               return { date: r.date, value: o > 0 ? r.value / o : 0 };
             }));
-
     return current.map((p, i) => ({
       date: p.date,
       current: p.value,
@@ -230,60 +310,55 @@ export default function DashboardPage() {
     }));
   }, [data, prevData, chartMetric]);
 
+  const currentSeries = useMemo(() => {
+    if (!data) return [];
+    return chartMetric === "revenue"
+      ? data.revenueOverTime
+      : chartMetric === "orders"
+        ? data.ordersOverTime
+        : data.revenueOverTime.map((r, i) => {
+            const o = data.ordersOverTime[i]?.value || 0;
+            return { date: r.date, value: o > 0 ? r.value / o : 0 };
+          });
+  }, [data, chartMetric]);
+
+  const anomalies = useMemo(() => detectAnomalies(currentSeries), [currentSeries]);
   const chartFormatter = CHART_METRICS.find((m) => m.id === chartMetric)!.formatter;
 
-  // Top categories (by revenue)
+  // Top categories
   const topCategories = useMemo(() => {
     if (!data?.revenueByCategory) return [];
-    return [...data.revenueByCategory]
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 5);
+    return [...data.revenueByCategory].sort((a, b) => b.revenue - a.revenue).slice(0, 5);
   }, [data]);
 
   const totalCategoryRevenue = topCategories.reduce((sum, c) => sum + c.revenue, 0);
 
-  // Build derived "highlights" from real data for the right column panel
-  const highlights = useMemo(() => {
-    const items: { label: string; sub: string; tone: "primary" | "success" | "warning" }[] = [];
-    if (data?.revenueByCategory && data.revenueByCategory.length > 0) {
-      const top = [...data.revenueByCategory].sort((a, b) => b.revenue - a.revenue)[0];
-      items.push({
-        label: `${top.category} leads category revenue`,
-        sub: `${formatCurrency(top.revenue)} this period`,
-        tone: "primary",
-      });
-    }
-    if (data?.kpis.repeatCustomers && data?.kpis.customers) {
-      const ratio = (data.kpis.repeatCustomers / data.kpis.customers) * 100;
-      items.push({
-        label: `${ratio.toFixed(1)}% repeat customer rate`,
-        sub: `${formatNumber(data.kpis.repeatCustomers)} of ${formatNumber(data.kpis.customers)} customers came back`,
-        tone: ratio >= 30 ? "success" : "warning",
-      });
-    }
-    if (data?.revenueOverTime && data.revenueOverTime.length > 0) {
-      const best = [...data.revenueOverTime].sort((a, b) => b.value - a.value)[0];
-      items.push({
-        label: `Best day: ${format(new Date(best.date), "MMM d")}`,
-        sub: `${formatCurrency(best.value)} in revenue`,
-        tone: "primary",
-      });
-    }
-    return items;
-  }, [data]);
+  const handlePrint = () => {
+    document.body.classList.add("print-dashboard");
+    window.setTimeout(() => {
+      window.print();
+      document.body.classList.remove("print-dashboard");
+    }, 50);
+  };
 
-  // AI insight body, derived from real data
-  const insight = useMemo(() => {
-    if (!data?.revenueByCategory || data.revenueByCategory.length === 0) return null;
-    const sorted = [...data.revenueByCategory].sort((a, b) => b.revenue - a.revenue);
-    const top = sorted[0];
-    const totalRev = sorted.reduce((sum, c) => sum + c.revenue, 0);
-    const share = totalRev > 0 ? (top.revenue / totalRev) * 100 : 0;
-    return {
-      headline: `${top.category} drove ${share.toFixed(0)}% of category revenue.`,
-      body: `Consider doubling down on ${top.category.toLowerCase()} promotions and replenishing inventory before the next campaign window.`,
-    };
-  }, [data]);
+  const handleExportSummary = () => {
+    if (!data) return;
+    exportRowsAsCsv(
+      `dashboard-summary-${format(dateRange.from, "yyyyMMdd")}-${format(dateRange.to, "yyyyMMdd")}.csv`,
+      data.revenueOverTime.map((r, i) => ({
+        date: r.date,
+        revenue: r.value,
+        orders: data.ordersOverTime[i]?.value ?? 0,
+        leads: data.leadsOverTime[i]?.value ?? 0,
+      })),
+      [
+        { header: "date", accessor: (r) => r.date },
+        { header: "revenue", accessor: (r) => r.revenue },
+        { header: "orders", accessor: (r) => r.orders },
+        { header: "leads", accessor: (r) => r.leads },
+      ],
+    );
+  };
 
   if (isError) {
     return (
@@ -300,19 +375,49 @@ export default function DashboardPage() {
     );
   }
 
+  const sparkRevenue = data?.revenueOverTime.map((p) => p.value) ?? [];
+  const sparkOrders = data?.ordersOverTime.map((p) => p.value) ?? [];
+  const sparkLeads = data?.leadsOverTime.map((p) => p.value) ?? [];
+  const sparkConv = (data?.leadsOverTime ?? []).map((leadPoint, i) => {
+    const orderVal = data?.ordersOverTime[i]?.value ?? 0;
+    return leadPoint.value > 0 ? (orderVal / leadPoint.value) * 100 : 0;
+  });
+
+  const containerVariants = withReducedMotion(staggerContainer, reduced);
+  const fadeVariants = withReducedMotion(fadeInUp, reduced);
+
   return (
-    <div className="space-y-6" data-testid="page-dashboard">
-      {/* KPI cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+    <div className="space-y-6 dashboard-printable" data-testid="page-dashboard">
+      {/* Export toolbar */}
+      <div className="flex justify-end gap-2 no-print">
+        <Button variant="outline" size="sm" onClick={handleExportSummary} data-testid="dashboard-export-csv">
+          <Download className="h-4 w-4 mr-1.5" />
+          Export CSV
+        </Button>
+        <Button variant="outline" size="sm" onClick={handlePrint} data-testid="dashboard-export-pdf">
+          <FileText className="h-4 w-4 mr-1.5" />
+          Print / PDF
+        </Button>
+      </div>
+
+      <motion.div
+        initial="hidden"
+        animate="visible"
+        variants={containerVariants}
+        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"
+      >
         <KpiCard
           testId="kpi-revenue"
           icon={DollarSign}
           iconClass="bg-blue-500/15 text-blue-400"
           label="Total revenue"
-          value={data ? formatCurrency(data.kpis.revenue) : "—"}
+          value={data?.kpis.revenue ?? 0}
+          format={(v) => formatCurrency(v)}
           unit="BRL"
           change={revenueChange}
           changeLabel="vs. previous half"
+          sparkValues={sparkRevenue}
+          sparkColor="#60a5fa"
           sub={[
             { label: "Avg ticket", value: data ? formatCurrency(data.kpis.avgTicket) : "—" },
             { label: "Customers", value: data ? formatNumber(data.kpis.customers) : "—" },
@@ -324,10 +429,13 @@ export default function DashboardPage() {
           icon={Package}
           iconClass="bg-violet-500/15 text-violet-400"
           label="Orders"
-          value={data ? formatNumber(data.kpis.orders) : "—"}
+          value={data?.kpis.orders ?? 0}
+          format={(v) => formatNumber(v)}
           unit={inclusiveDays + "d"}
           change={ordersChange}
           changeLabel="vs. previous half"
+          sparkValues={sparkOrders}
+          sparkColor="#a78bfa"
           sub={[
             { label: "Leads", value: data ? formatNumber(data.kpis.leads) : "—" },
             { label: "Approved leads", value: data ? formatNumber(data.kpis.approvedLeads) : "—" },
@@ -339,10 +447,13 @@ export default function DashboardPage() {
           icon={Wallet}
           iconClass="bg-emerald-500/15 text-emerald-400"
           label="Avg ticket"
-          value={data ? formatCurrency(data.kpis.avgTicket) : "—"}
+          value={data?.kpis.avgTicket ?? 0}
+          format={(v) => formatCurrency(v)}
           unit="BRL"
           change={avgTicketChange}
           changeLabel="vs. previous period"
+          sparkValues={sparkLeads}
+          sparkColor="#34d399"
           sub={[
             { label: "Repeat customers", value: data ? formatNumber(data.kpis.repeatCustomers) : "—" },
             { label: "Approval rate", value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
@@ -354,25 +465,33 @@ export default function DashboardPage() {
           icon={Target}
           iconClass="bg-sky-500/15 text-sky-400"
           label="Conversion rate"
-          value={data ? formatPercentage(data.kpis.conversionRate) : "—"}
+          value={data?.kpis.conversionRate ?? 0}
+          format={(v) => formatPercentage(v)}
           change={conversionChange}
           changeLabel="vs. previous period"
+          sparkValues={sparkConv}
+          sparkColor="#38bdf8"
           sub={[
             { label: "Leads", value: data ? formatNumber(data.kpis.leads) : "—" },
             { label: "Orders", value: data ? formatNumber(data.kpis.orders) : "—" },
           ]}
           isLoading={isLoading}
         />
-      </div>
+      </motion.div>
 
       {/* Chart + insight */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <motion.div
+        initial="hidden"
+        animate="visible"
+        variants={fadeVariants}
+        className="grid grid-cols-1 lg:grid-cols-3 gap-4"
+      >
         <Card className="lg:col-span-2 p-5 bg-card border-border">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
             <div>
               <h2 className="text-base font-semibold leading-tight">Daily performance</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Last {inclusiveDays} days vs. previous period
+                Last {inclusiveDays} days vs. previous period · click any anomaly to drill in
               </p>
             </div>
             <div className="inline-flex items-center bg-muted/40 border border-border rounded-md p-0.5">
@@ -398,18 +517,20 @@ export default function DashboardPage() {
               <Skeleton className="h-full w-full" />
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <AreaChart
+                  data={chartData}
+                  margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                  onClick={(e: { activeLabel?: string }) => {
+                    if (e?.activeLabel) setDrillDate(e.activeLabel);
+                  }}
+                >
                   <defs>
                     <linearGradient id="colorCurrent" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.35} />
                       <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    vertical={false}
-                    stroke="hsl(var(--border))"
-                  />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                   <XAxis
                     dataKey="date"
                     tickFormatter={(val) => format(new Date(val), "MMM d")}
@@ -452,7 +573,7 @@ export default function DashboardPage() {
                     strokeDasharray="4 4"
                     fill="transparent"
                     dot={false}
-                    isAnimationActive={false}
+                    isAnimationActive={!reduced}
                   />
                   <Area
                     type="monotone"
@@ -461,14 +582,27 @@ export default function DashboardPage() {
                     strokeWidth={2}
                     fill="url(#colorCurrent)"
                     dot={false}
-                    activeDot={{ r: 4 }}
+                    activeDot={{ r: 5, style: { cursor: "pointer" } }}
+                    isAnimationActive={!reduced}
                   />
+                  {anomalies.map((a) => (
+                    <ReferenceDot
+                      key={a.date}
+                      x={a.date}
+                      y={a.value}
+                      r={5}
+                      stroke="#fbbf24"
+                      strokeWidth={2}
+                      fill="hsl(var(--background))"
+                      ifOverflow="extendDomain"
+                    />
+                  ))}
                 </AreaChart>
               </ResponsiveContainer>
             )}
           </div>
 
-          <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+          <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
             <span className="flex items-center gap-1.5">
               <CircleDot className="h-3 w-3 text-primary" />
               Current
@@ -477,165 +611,149 @@ export default function DashboardPage() {
               <span className="inline-block w-3 border-t border-dashed border-muted-foreground" />
               Previous
             </span>
+            {anomalies.length > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-2.5 rounded-full ring-2 ring-amber-400/80 bg-background" />
+                {anomalies.length} anomaly{anomalies.length === 1 ? "" : "ies"} detected
+              </span>
+            )}
           </div>
         </Card>
 
         {/* AI insight card */}
-        <Card className="p-5 bg-gradient-to-br from-card to-card border-border relative overflow-hidden flex flex-col">
-          <div className="absolute -top-12 -right-12 h-40 w-40 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
-          <div className="relative z-10 flex flex-col h-full">
-            <div className="flex items-center gap-2 mb-4">
-              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
-                <Sparkles className="h-3 w-3" />
-                UP Insight · AI
-              </span>
-            </div>
-            {isLoading || !insight ? (
-              <>
-                <Skeleton className="h-6 w-3/4 mb-2" />
-                <Skeleton className="h-4 w-full mb-1" />
-                <Skeleton className="h-4 w-5/6 mb-4" />
-              </>
-            ) : (
-              <>
-                <h3 className="text-lg font-semibold leading-snug mb-2">{insight.headline}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{insight.body}</p>
-              </>
-            )}
-            <div className="mt-auto pt-5 flex items-center gap-3">
-              <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground">
-                View details
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-muted-foreground hover:text-foreground"
-              >
-                Dismiss
-              </Button>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* Top categories + Highlights */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2 p-5 bg-card border-border">
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h2 className="text-base font-semibold leading-tight">Top categories</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Share of revenue across the catalog
-              </p>
-            </div>
-            <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-              See all <ChevronRight className="h-3 w-3" />
-            </button>
-          </div>
-
-          {isLoading ? (
-            <div className="space-y-3">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <Skeleton key={i} className="h-10 w-full" />
-              ))}
-            </div>
-          ) : topCategories.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">
-              No category data for this period.
-            </p>
-          ) : (
-            <div>
-              <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
-                <div className="col-span-5">Category</div>
-                <div className="col-span-3 text-right">Revenue</div>
-                <div className="col-span-2 text-right">Orders</div>
-                <div className="col-span-2 text-right">Share</div>
+        {!insightDismissed && (
+          <Card
+            className="p-5 bg-gradient-to-br from-card to-card border-border relative overflow-hidden flex flex-col"
+            data-testid="ai-insight-card"
+          >
+            <div className="absolute -top-12 -right-12 h-40 w-40 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
+            <div className="relative z-10 flex flex-col h-full">
+              <div className="flex items-center justify-between mb-3">
+                <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
+                  <Sparkles className="h-3 w-3" />
+                  UP Insight · {insight?.source === "ai" ? "AI" : "Auto"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setInsightDismissed(true)}
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="Dismiss insight"
+                  data-testid="insight-dismiss"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               </div>
-              <div className="divide-y divide-border">
-                {topCategories.map((cat) => {
-                  const share =
-                    totalCategoryRevenue > 0 ? (cat.revenue / totalCategoryRevenue) * 100 : 0;
-                  return (
-                    <div
-                      key={cat.category}
-                      className="grid grid-cols-12 gap-4 items-center px-2 py-3"
-                      data-testid={`category-row-${cat.category}`}
-                    >
-                      <div className="col-span-5 flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/15 text-primary">
-                          <Package className="h-4 w-4" />
-                        </div>
-                        <span className="font-medium text-sm">{cat.category}</span>
-                      </div>
-                      <div className="col-span-3 text-right tabular-nums text-sm">
-                        {formatCurrency(cat.revenue)}
-                      </div>
-                      <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
-                        {formatNumber(cat.orders)}
-                      </div>
-                      <div className="col-span-2 text-right">
-                        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
-                          <TrendingUp className="h-3 w-3" />
-                          {share.toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
+              {insightLoading || !insight ? (
+                <>
+                  <Skeleton className="h-6 w-3/4 mb-2" />
+                  <Skeleton className="h-4 w-full mb-1" />
+                  <Skeleton className="h-4 w-5/6 mb-4" />
+                </>
+              ) : (
+                <>
+                  <h3 className="text-lg font-semibold leading-snug mb-2">{insight.headline}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{insight.body}</p>
+                  {insight.bullets && insight.bullets.length > 0 && (
+                    <ul className="mt-3 space-y-1.5">
+                      {insight.bullets.map((b, i) => (
+                        <li key={i} className="flex gap-2 text-xs text-muted-foreground">
+                          <span className="text-primary mt-1 leading-none">•</span>
+                          <span className="leading-relaxed">{b}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+              <div className="mt-auto pt-5 flex items-center gap-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => regenerateInsight.mutate({ params: insightParams })}
+                  disabled={regenerateInsight.isPending || insightLoading}
+                  data-testid="insight-regenerate"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${regenerateInsight.isPending ? "animate-spin" : ""}`} />
+                  {regenerateInsight.isPending ? "Regenerating" : "Regenerate"}
+                </Button>
+                {insight?.cached && (
+                  <span className="text-[11px] text-muted-foreground">Cached · refreshes hourly</span>
+                )}
               </div>
             </div>
-          )}
-        </Card>
+          </Card>
+        )}
+      </motion.div>
 
-        <Card className="p-5 bg-card border-border">
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h2 className="text-base font-semibold leading-tight">Highlights</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">Signals from this period</p>
-            </div>
-            {!isLoading && highlights.length > 0 && (
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/15 px-2 py-1 rounded-md">
-                {highlights.length} new
-              </span>
-            )}
-          </div>
-
-          {isLoading ? (
-            <div className="space-y-3">
-              {[0, 1, 2].map((i) => (
-                <Skeleton key={i} className="h-14 w-full" />
-              ))}
-            </div>
-          ) : highlights.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">
-              No highlights available.
+      {/* Top categories */}
+      <Card className="p-5 bg-card border-border">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h2 className="text-base font-semibold leading-tight">Top categories</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Share of revenue across the catalog
             </p>
-          ) : (
-            <div className="space-y-3">
-              {highlights.map((h, i) => {
-                const dotClass =
-                  h.tone === "success"
-                    ? "bg-emerald-500"
-                    : h.tone === "warning"
-                      ? "bg-amber-500"
-                      : "bg-primary";
+          </div>
+          <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+            See all <ChevronRight className="h-3 w-3" />
+          </button>
+        </div>
+
+        {isLoading ? (
+          <div className="space-y-3">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : topCategories.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-8 text-center">
+            No category data for this period.
+          </p>
+        ) : (
+          <div>
+            <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
+              <div className="col-span-5">Category</div>
+              <div className="col-span-3 text-right">Revenue</div>
+              <div className="col-span-2 text-right">Orders</div>
+              <div className="col-span-2 text-right">Share</div>
+            </div>
+            <div className="divide-y divide-border">
+              {topCategories.map((cat) => {
+                const share =
+                  totalCategoryRevenue > 0 ? (cat.revenue / totalCategoryRevenue) * 100 : 0;
                 return (
                   <div
-                    key={i}
-                    className="flex items-start gap-3 px-3 py-3 rounded-md border border-border bg-background/40"
+                    key={cat.category}
+                    className="grid grid-cols-12 gap-4 items-center px-2 py-3"
+                    data-testid={`category-row-${cat.category}`}
                   >
-                    <span className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${dotClass}`} />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium leading-tight">{h.label}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{h.sub}</p>
+                    <div className="col-span-5 flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/15 text-primary">
+                        <Package className="h-4 w-4" />
+                      </div>
+                      <span className="font-medium text-sm">{cat.category}</span>
+                    </div>
+                    <div className="col-span-3 text-right tabular-nums text-sm">
+                      {formatCurrency(cat.revenue)}
+                    </div>
+                    <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                      {formatNumber(cat.orders)}
+                    </div>
+                    <div className="col-span-2 text-right">
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
+                        <TrendingUp className="h-3 w-3" />
+                        {share.toFixed(1)}%
+                      </span>
                     </div>
                   </div>
                 );
               })}
             </div>
-          )}
-        </Card>
-      </div>
+          </div>
+        )}
+      </Card>
+
+      <DrillDownPanel date={drillDate} onClose={() => setDrillDate(null)} />
     </div>
   );
 }

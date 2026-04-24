@@ -6,16 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type GetDashboardParams = {
+export type RegenerateInsightParams = {
   clientId?: string;
   dateFrom?: Date;
   dateTo?: Date;
-  /**
-   * Restrict revenue/order metrics to a single product category.
-   */
-  category?: string;
-  /**
-   * Restrict order metrics to a single seller.
-   */
-  sellerId?: string;
 };
