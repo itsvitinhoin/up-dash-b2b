@@ -36,7 +36,7 @@ The codebase is a pnpm monorepo. Backend (Drizzle + Express + JWT auth) and fron
 
 - `DATABASE_URL` — required, Postgres connection string.
 - `JWT_ACCESS_SECRET` — required, must be ≥32 chars. Signs short-lived (1h) access tokens.
-- `JWT_REFRESH_SECRET` — reserved for future asymmetric refresh signing; refresh tokens are currently opaque (random) and stored hashed in the `sessions` table, so this var is not consumed by code today.
+- `JWT_REFRESH_SECRET` — not consumed by the runtime. Refresh tokens are opaque random bytes (sha256-hashed in the `sessions` table); no signing secret is needed. The variable is kept available if a future change adopts signed refresh tokens, but it is safe to leave unset.
 - `ALLOWED_ORIGINS` — comma-separated CORS allowlist. Unset / `*` = permissive (development default).
 - `RATE_LIMIT_AUTH_PER_MIN` — login + refresh limit per IP per minute (default 20).
 - `RATE_LIMIT_API_PER_MIN` — global `/api/*` limit per IP per minute (default 300).
