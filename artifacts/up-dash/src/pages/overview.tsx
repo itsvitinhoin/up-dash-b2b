@@ -415,7 +415,7 @@ export default function OverviewPage() {
         {data && (
           <span className="text-muted-foreground/80">
             {data.kpis.activeClients} of {data.kpis.totalClients} brands generated
-            revenue in this window.
+            revenue or ran marketing campaigns in this window.
           </span>
         )}
       </motion.div>
