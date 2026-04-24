@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import request from "supertest";
 import app from "../src/app";
+import { buildCorsOptions } from "../src/lib/security";
 
 const ADMIN_EMAIL = "admin@updash.com";
 const ADMIN_PASSWORD = "Admin123!";
@@ -162,6 +163,48 @@ describe("API smoke tests", () => {
         .get("/api/clients")
         .set("authorization", `Bearer ${client.accessToken}`);
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe("CORS", () => {
+    it("rejects disallowed Origin when allowlist is configured", async () => {
+      const prev = process.env.ALLOWED_ORIGINS;
+      process.env.ALLOWED_ORIGINS = "https://allowed.example.com";
+      try {
+        const opts = buildCorsOptions();
+        const originFn = opts.origin as (
+          origin: string | undefined,
+          cb: (err: Error | null, allow?: boolean) => void,
+        ) => void;
+
+        const allowedResult = await new Promise<{ err: Error | null; allow?: boolean }>(
+          (resolve) => originFn("https://allowed.example.com", (err, allow) => resolve({ err, allow })),
+        );
+        expect(allowedResult.err).toBeNull();
+        expect(allowedResult.allow).toBe(true);
+
+        const blockedResult = await new Promise<{ err: Error | null; allow?: boolean }>(
+          (resolve) => originFn("https://evil.example.com", (err, allow) => resolve({ err, allow })),
+        );
+        expect(blockedResult.err).toBeInstanceOf(Error);
+        expect(blockedResult.err?.message).toMatch(/not allowed by CORS/);
+      } finally {
+        if (prev === undefined) delete process.env.ALLOWED_ORIGINS;
+        else process.env.ALLOWED_ORIGINS = prev;
+      }
+    });
+
+    it("throws at startup if ALLOWED_ORIGINS is unset in production", () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevAllow = process.env.ALLOWED_ORIGINS;
+      process.env.NODE_ENV = "production";
+      delete process.env.ALLOWED_ORIGINS;
+      try {
+        expect(() => buildCorsOptions()).toThrow(/ALLOWED_ORIGINS is required in production/);
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevAllow !== undefined) process.env.ALLOWED_ORIGINS = prevAllow;
+      }
     });
   });
 });

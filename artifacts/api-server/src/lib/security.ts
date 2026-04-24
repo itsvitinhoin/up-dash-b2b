@@ -4,7 +4,10 @@ import rateLimit, { type RateLimitRequestHandler } from "express-rate-limit";
 /**
  * Build a CORS options object from the ALLOWED_ORIGINS env var.
  *
- * - If unset (or "*"), the middleware is permissive (development default).
+ * - In production, ALLOWED_ORIGINS MUST be set to a non-empty allowlist
+ *   (or to the explicit value "*"). Misconfiguration throws at startup
+ *   so a deploy can never accidentally ship with permissive CORS.
+ * - In non-production, an unset or "*" value is permissive (dev default).
  * - Otherwise it parses a comma-separated allowlist and rejects everything else.
  *
  * Same-origin requests (no Origin header) are always allowed so the browser's
@@ -12,7 +15,20 @@ import rateLimit, { type RateLimitRequestHandler } from "express-rate-limit";
  */
 export function buildCorsOptions(): CorsOptions {
   const raw = process.env.ALLOWED_ORIGINS?.trim();
-  if (!raw || raw === "*") {
+  const isProd = process.env.NODE_ENV === "production";
+
+  if (!raw) {
+    if (isProd) {
+      throw new Error(
+        "ALLOWED_ORIGINS is required in production. Set it to a comma-separated list of allowed origins, or to \"*\" to explicitly opt in to permissive CORS.",
+      );
+    }
+    console.log("[cors] permissive (dev default — no ALLOWED_ORIGINS set)");
+    return { origin: true, credentials: true };
+  }
+
+  if (raw === "*") {
+    console.log("[cors] permissive (ALLOWED_ORIGINS=*)");
     return { origin: true, credentials: true };
   }
 
@@ -20,6 +36,8 @@ export function buildCorsOptions(): CorsOptions {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+
+  console.log(`[cors] allowlist: ${allowList.join(", ")}`);
 
   return {
     credentials: true,
