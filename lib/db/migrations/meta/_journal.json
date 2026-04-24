@@ -8,6 +8,13 @@
       "when": 1777039638013,
       "tag": "0000_abandoned_agent_brand",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777139638013,
+      "tag": "0001_session_currency_locale",
+      "breakpoints": true
     }
   ]
 }

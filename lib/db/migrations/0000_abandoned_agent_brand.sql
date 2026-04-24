@@ -22,26 +22,11 @@ CREATE TABLE "clients" (
 	"leads_ytd" integer DEFAULT 0 NOT NULL,
 	"approved_leads" integer DEFAULT 0 NOT NULL,
 	"is_active" boolean DEFAULT true NOT NULL,
-	"currency" text DEFAULT 'BRL' NOT NULL,
-	"locale" text DEFAULT 'pt-BR' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "clients_name_unique" UNIQUE("name"),
 	CONSTRAINT "clients_email_unique" UNIQUE("email"),
 	CONSTRAINT "clients_api_key_unique" UNIQUE("api_key")
-);
---> statement-breakpoint
-CREATE TABLE "sessions" (
-	"id" text PRIMARY KEY NOT NULL,
-	"user_id" text NOT NULL,
-	"refresh_token_hash" text NOT NULL,
-	"user_agent" text,
-	"ip" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"last_used_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"expires_at" timestamp with time zone NOT NULL,
-	"revoked_at" timestamp with time zone,
-	CONSTRAINT "sessions_refresh_token_hash_unique" UNIQUE("refresh_token_hash")
 );
 --> statement-breakpoint
 CREATE TABLE "customers" (
@@ -153,7 +138,6 @@ CREATE TABLE "creatives" (
 --> statement-breakpoint
 ALTER TABLE "clients" ADD CONSTRAINT "clients_admin_id_users_id_fk" FOREIGN KEY ("admin_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "clients" ADD CONSTRAINT "clients_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "customers" ADD CONSTRAINT "customers_client_id_clients_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "products" ADD CONSTRAINT "products_client_id_clients_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "sellers" ADD CONSTRAINT "sellers_client_id_clients_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -170,8 +154,6 @@ ALTER TABLE "creatives" ADD CONSTRAINT "creatives_client_id_clients_id_fk" FOREI
 CREATE INDEX "users_email_idx" ON "users" USING btree ("email");--> statement-breakpoint
 CREATE INDEX "clients_admin_idx" ON "clients" USING btree ("admin_id");--> statement-breakpoint
 CREATE INDEX "clients_user_idx" ON "clients" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "sessions_user_idx" ON "sessions" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "sessions_expires_idx" ON "sessions" USING btree ("expires_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "customers_client_email_uq" ON "customers" USING btree ("client_id","email");--> statement-breakpoint
 CREATE INDEX "customers_client_idx" ON "customers" USING btree ("client_id");--> statement-breakpoint
 CREATE INDEX "customers_rfm_idx" ON "customers" USING btree ("client_id","rfm_segment");--> statement-breakpoint
