@@ -28,6 +28,7 @@ import type {
   ErrorResponse,
   FunnelResponse,
   GeographyResponse,
+  GetAdminOverviewParams,
   GetAlertsParams,
   GetCustomersParams,
   GetDashboardParams,
@@ -54,6 +55,7 @@ import type {
   OrdersByDateResponse,
   PaginatedClients,
   PaginatedCustomers,
+  PlatformOverviewResponse,
   ProductMetrics,
   RefreshRequest,
   RefreshResponse,
@@ -1666,6 +1668,110 @@ export function useGetAlerts<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetAlertsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Aggregate KPIs, daily revenue/orders time-series summed across every
+client, plus per-client growth ranking (top performers, top growth,
+bottom growth). Restricted to ADMIN users.
+
+ * @summary Platform-wide overview across every client (admin only)
+ */
+export const getGetAdminOverviewUrl = (params?: GetAdminOverviewParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/admin/overview?${stringifiedParams}`
+    : `/api/analytics/admin/overview`;
+};
+
+export const getAdminOverview = async (
+  params?: GetAdminOverviewParams,
+  options?: RequestInit,
+): Promise<PlatformOverviewResponse> => {
+  return customFetch<PlatformOverviewResponse>(getGetAdminOverviewUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAdminOverviewQueryKey = (
+  params?: GetAdminOverviewParams,
+) => {
+  return [
+    `/api/analytics/admin/overview`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAdminOverviewQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAdminOverview>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetAdminOverviewParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAdminOverview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAdminOverviewQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAdminOverview>>
+  > = ({ signal }) => getAdminOverview(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminOverview>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAdminOverviewQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAdminOverview>>
+>;
+export type GetAdminOverviewQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Platform-wide overview across every client (admin only)
+ */
+
+export function useGetAdminOverview<
+  TData = Awaited<ReturnType<typeof getAdminOverview>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetAdminOverviewParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAdminOverview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAdminOverviewQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

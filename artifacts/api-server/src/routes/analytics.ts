@@ -29,8 +29,10 @@ import {
   GetInsightResponse,
   GetAlertsQueryParams,
   GetAlertsResponse,
+  GetAdminOverviewQueryParams,
+  GetAdminOverviewResponse,
 } from "@workspace/api-zod";
-import { authenticate, resolveClientId } from "../middlewares/auth";
+import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 
 const router: IRouter = Router();
@@ -102,6 +104,225 @@ const ZERO_KPIS: DashboardKpis = {
   customers: 0,
   repeatCustomers: 0,
 };
+
+// ───────── Admin: platform-wide overview across every client ─────────
+//
+// Aggregates revenue, orders, customers, and active-client count across the
+// entire tenant base for the requested window, plus daily time-series and
+// per-client growth ranking. Restricted to ADMIN — CLIENT users get 403 from
+// `requireAdmin` before any DB work happens.
+router.get(
+  "/analytics/admin/overview",
+  requireAdmin,
+  async (req, res): Promise<void> => {
+    const parsed = GetAdminOverviewQueryParams.safeParse(
+      coerceDateQuery(req.query as Record<string, unknown>),
+    );
+    if (!parsed.success) {
+      res.status(400).json({
+        error: true,
+        code: "VALIDATION_ERROR",
+        message: parsed.error.message,
+        status: 400,
+      });
+      return;
+    }
+    const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+    const lengthMs = to.getTime() - from.getTime();
+    const prevTo = new Date(from.getTime() - 1);
+    const prevFrom = new Date(prevTo.getTime() - lengthMs);
+
+    // All clients (active or inactive). Capped at a generous limit to keep the
+    // response bounded. The platform isn't expected to host thousands of
+    // tenants — if that changes this needs pagination instead.
+    const clients = await db
+      .select({
+        id: clientsTable.id,
+        name: clientsTable.name,
+        currency: clientsTable.currency,
+        locale: clientsTable.locale,
+      })
+      .from(clientsTable)
+      .orderBy(clientsTable.name)
+      .limit(500);
+
+    const totalClients = clients.length;
+
+    // Window-scoped order aggregates grouped by client. Only counts revenue-
+    // bearing orders to match the per-brand dashboard semantics.
+    const fetchOrderAggByClient = (winFrom: Date, winTo: Date) =>
+      db
+        .select({
+          clientId: ordersTable.clientId,
+          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          orders: sql<number>`COUNT(*)::int`,
+        })
+        .from(ordersTable)
+        .where(
+          and(
+            gte(ordersTable.createdAt, winFrom),
+            lte(ordersTable.createdAt, winTo),
+            sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+          ),
+        )
+        .groupBy(ordersTable.clientId);
+
+    const [currByClient, prevByClient] = await Promise.all([
+      fetchOrderAggByClient(from, to),
+      fetchOrderAggByClient(prevFrom, prevTo),
+    ]);
+
+    const currMap = new Map<string, { revenue: number; orders: number }>();
+    for (const r of currByClient) {
+      currMap.set(r.clientId, {
+        revenue: Number(r.revenue) || 0,
+        orders: Number(r.orders) || 0,
+      });
+    }
+    const prevMap = new Map<string, { revenue: number; orders: number }>();
+    for (const r of prevByClient) {
+      prevMap.set(r.clientId, {
+        revenue: Number(r.revenue) || 0,
+        orders: Number(r.orders) || 0,
+      });
+    }
+
+    // Daily series — summed across every tenant. We do NOT group by client
+    // here; the goal is platform-wide totals per day.
+    const dailySeries = (winFrom: Date, winTo: Date) =>
+      db
+        .select({
+          date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          orders: sql<number>`COUNT(*)::int`,
+        })
+        .from(ordersTable)
+        .where(
+          and(
+            gte(ordersTable.createdAt, winFrom),
+            lte(ordersTable.createdAt, winTo),
+            sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+          ),
+        )
+        .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
+        .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
+
+    const [currDaily, prevDaily] = await Promise.all([
+      dailySeries(from, to),
+      dailySeries(prevFrom, prevTo),
+    ]);
+
+    // Distinct customers across every client in the window. We treat any
+    // customer with at least one revenue-bearing order in the window as
+    // "active" platform-wide, mirroring the per-brand dashboard.
+    const customerCount = async (winFrom: Date, winTo: Date) => {
+      const [row] = await db
+        .select({
+          count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
+        })
+        .from(ordersTable)
+        .where(
+          and(
+            gte(ordersTable.createdAt, winFrom),
+            lte(ordersTable.createdAt, winTo),
+            sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+          ),
+        );
+      return Number(row?.count) || 0;
+    };
+    const [currCustomers, prevCustomers] = await Promise.all([
+      customerCount(from, to),
+      customerCount(prevFrom, prevTo),
+    ]);
+
+    const sumRevenue = (m: Map<string, { revenue: number }>) =>
+      [...m.values()].reduce((s, v) => s + v.revenue, 0);
+    const sumOrders = (m: Map<string, { orders: number }>) =>
+      [...m.values()].reduce((s, v) => s + v.orders, 0);
+
+    const currRevenue = sumRevenue(currMap);
+    const currOrders = sumOrders(currMap);
+    const prevRevenue = sumRevenue(prevMap);
+    const prevOrders = sumOrders(prevMap);
+    const currActive = [...currMap.values()].filter((v) => v.orders > 0).length;
+    const prevActive = [...prevMap.values()].filter((v) => v.orders > 0).length;
+
+    const kpis = {
+      revenue: currRevenue,
+      orders: currOrders,
+      customers: currCustomers,
+      avgOrderValue: currOrders > 0 ? currRevenue / currOrders : 0,
+      activeClients: currActive,
+      totalClients,
+    };
+    const prevKpis = {
+      revenue: prevRevenue,
+      orders: prevOrders,
+      customers: prevCustomers,
+      avgOrderValue: prevOrders > 0 ? prevRevenue / prevOrders : 0,
+      activeClients: prevActive,
+      totalClients,
+    };
+
+    // Per-client stats — every registered client appears in `clientStats`,
+    // even brands with no activity, so the UI can show "0 / —".
+    const clientStats = clients.map((c) => {
+      const cur = currMap.get(c.id) ?? { revenue: 0, orders: 0 };
+      const prv = prevMap.get(c.id) ?? { revenue: 0, orders: 0 };
+      let growthPct: number | null;
+      if (prv.revenue > 0) {
+        growthPct = ((cur.revenue - prv.revenue) / prv.revenue) * 100;
+      } else if (cur.revenue > 0) {
+        growthPct = 100;
+      } else {
+        growthPct = null;
+      }
+      return {
+        id: c.id,
+        name: c.name,
+        currency: c.currency,
+        locale: c.locale,
+        revenue: cur.revenue,
+        orders: cur.orders,
+        prevRevenue: prv.revenue,
+        growthPct,
+      };
+    });
+
+    const topPerformers = [...clientStats]
+      .filter((s) => s.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
+
+    // Growth rankings only consider clients with a real prior baseline so
+    // brand new clients with no prior period don't dominate the leaderboard
+    // at +100%/-0%.
+    const rankable = clientStats.filter(
+      (s) => s.growthPct !== null && s.prevRevenue > 0,
+    );
+    const topGrowth = [...rankable]
+      .sort((a, b) => (b.growthPct ?? 0) - (a.growthPct ?? 0))
+      .slice(0, 5);
+    const bottomGrowth = [...rankable]
+      .sort((a, b) => (a.growthPct ?? 0) - (b.growthPct ?? 0))
+      .slice(0, 5);
+
+    res.json(
+      GetAdminOverviewResponse.parse({
+        kpis,
+        prevKpis,
+        revenueOverTime: currDaily.map((r) => ({ date: r.date, value: Number(r.revenue) || 0 })),
+        ordersOverTime: currDaily.map((r) => ({ date: r.date, value: Number(r.orders) || 0 })),
+        prevRevenueOverTime: prevDaily.map((r) => ({ date: r.date, value: Number(r.revenue) || 0 })),
+        prevOrdersOverTime: prevDaily.map((r) => ({ date: r.date, value: Number(r.orders) || 0 })),
+        clientStats,
+        topPerformers,
+        topGrowth,
+        bottomGrowth,
+      }),
+    );
+  },
+);
 
 router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const parsed = GetDashboardQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));

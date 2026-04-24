@@ -10,4 +10,13 @@ export type ListClientsParams = {
   search?: string;
   page?: number;
   limit?: number;
+  /**
+ * When both dateFrom and dateTo are provided, each client row in the
+response is enriched with `avgOrderValue`, `conversionRate`, and
+`periodGrowthPct` computed over that window (versus the previous
+window of equal length for growth).
+
+ */
+  dateFrom?: Date;
+  dateTo?: Date;
 };

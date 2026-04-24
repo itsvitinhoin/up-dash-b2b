@@ -142,6 +142,21 @@ paths:
           schema:
             type: integer
             default: 20
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+          description: |
+            When both dateFrom and dateTo are provided, each client row in the
+            response is enriched with `avgOrderValue`, `conversionRate`, and
+            `periodGrowthPct` computed over that window (versus the previous
+            window of equal length for growth).
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
       responses:
         "200":
           description: Paginated client list
@@ -541,6 +556,40 @@ paths:
               schema:
                 $ref: "#/components/schemas/AlertsResponse"
 
+  /analytics/admin/overview:
+    get:
+      operationId: getAdminOverview
+      tags: [analytics]
+      summary: Platform-wide overview across every client (admin only)
+      description: |
+        Aggregate KPIs, daily revenue/orders time-series summed across every
+        client, plus per-client growth ranking (top performers, top growth,
+        bottom growth). Restricted to ADMIN users.
+      parameters:
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Platform overview payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformOverviewResponse"
+        "403":
+          description: Admin role required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /notifications:
     get:
       operationId: listNotifications
@@ -809,6 +858,24 @@ components:
         updatedAt:
           type: string
           format: date-time
+        avgOrderValue:
+          type: number
+          description: |
+            Optional. Average order value (revenue / orders) over the requested
+            window. Only present on /clients responses when both `dateFrom` and
+            `dateTo` are supplied.
+        conversionRate:
+          type: number
+          description: |
+            Optional. Visit-to-purchase conversion rate as a percentage over
+            the requested window. Only present on enriched /clients responses.
+        periodGrowthPct:
+          type: ["number", "null"]
+          description: |
+            Optional. Revenue growth versus the prior window of equal length
+            (in percent). `null` when the prior window had zero revenue and
+            the current window has zero revenue too. Only present on enriched
+            /clients responses.
       required:
         - id
         - name
@@ -957,6 +1024,111 @@ components:
         - ordersOverTime
         - leadsOverTime
         - revenueByCategory
+
+    PlatformKpis:
+      type: object
+      properties:
+        revenue:
+          type: number
+        orders:
+          type: integer
+        customers:
+          type: integer
+        avgOrderValue:
+          type: number
+        activeClients:
+          type: integer
+          description: Number of clients with > 0 orders in the window.
+        totalClients:
+          type: integer
+      required:
+        - revenue
+        - orders
+        - customers
+        - avgOrderValue
+        - activeClients
+        - totalClients
+
+    PlatformClientStat:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        currency:
+          type: string
+        locale:
+          type: string
+        revenue:
+          type: number
+        orders:
+          type: integer
+        prevRevenue:
+          type: number
+        growthPct:
+          type: ["number", "null"]
+          description: |
+            Period-over-period revenue growth in percent. `null` when both the
+            current and prior windows had zero revenue.
+      required: [id, name, currency, locale, revenue, orders, prevRevenue, growthPct]
+
+    PlatformOverviewResponse:
+      type: object
+      properties:
+        kpis:
+          $ref: "#/components/schemas/PlatformKpis"
+        prevKpis:
+          $ref: "#/components/schemas/PlatformKpis"
+        revenueOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+          description: Daily revenue summed across every client in the window.
+        ordersOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+          description: Daily order count summed across every client.
+        prevRevenueOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+        prevOrdersOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+        clientStats:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlatformClientStat"
+          description: Per-client revenue/orders/growth for the window.
+        topPerformers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlatformClientStat"
+          description: Top 5 clients by revenue in the window.
+        topGrowth:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlatformClientStat"
+          description: Top 5 clients by period-over-period growth.
+        bottomGrowth:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlatformClientStat"
+          description: Bottom 5 clients by period-over-period growth.
+      required:
+        - kpis
+        - prevKpis
+        - revenueOverTime
+        - ordersOverTime
+        - prevRevenueOverTime
+        - prevOrdersOverTime
+        - clientStats
+        - topPerformers
+        - topGrowth
+        - bottomGrowth
 
     FunnelStep:
       type: object

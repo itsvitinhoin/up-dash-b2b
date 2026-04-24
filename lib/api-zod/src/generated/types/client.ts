@@ -22,4 +22,22 @@ export interface Client {
   locale: string;
   createdAt: Date;
   updatedAt: Date;
+  /** Optional. Average order value (revenue / orders) over the requested
+window. Only present on /clients responses when both `dateFrom` and
+`dateTo` are supplied.
+ */
+  avgOrderValue?: number;
+  /** Optional. Visit-to-purchase conversion rate as a percentage over
+the requested window. Only present on enriched /clients responses.
+ */
+  conversionRate?: number;
+  /**
+   * Optional. Revenue growth versus the prior window of equal length
+(in percent). `null` when the prior window had zero revenue and
+the current window has zero revenue too. Only present on enriched
+/clients responses.
+
+   * @nullable
+   */
+  periodGrowthPct?: number | null;
 }

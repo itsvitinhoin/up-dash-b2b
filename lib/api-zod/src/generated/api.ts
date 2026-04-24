@@ -84,6 +84,13 @@ export const ListClientsQueryParams = zod.object({
   search: zod.coerce.string().optional(),
   page: zod.coerce.number().default(listClientsQueryPageDefault),
   limit: zod.coerce.number().default(listClientsQueryLimitDefault),
+  dateFrom: zod
+    .date()
+    .optional()
+    .describe(
+      "When both dateFrom and dateTo are provided, each client row in the\nresponse is enriched with `avgOrderValue`, `conversionRate`, and\n`periodGrowthPct` computed over that window (versus the previous\nwindow of equal length for growth).\n",
+    ),
+  dateTo: zod.date().optional(),
 });
 
 export const ListClientsResponse = zod.object({
@@ -102,6 +109,24 @@ export const ListClientsResponse = zod.object({
       locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
+      avgOrderValue: zod
+        .number()
+        .optional()
+        .describe(
+          "Optional. Average order value (revenue \/ orders) over the requested\nwindow. Only present on \/clients responses when both `dateFrom` and\n`dateTo` are supplied.\n",
+        ),
+      conversionRate: zod
+        .number()
+        .optional()
+        .describe(
+          "Optional. Visit-to-purchase conversion rate as a percentage over\nthe requested window. Only present on enriched \/clients responses.\n",
+        ),
+      periodGrowthPct: zod
+        .number()
+        .nullish()
+        .describe(
+          "Optional. Revenue growth versus the prior window of equal length\n(in percent). `null` when the prior window had zero revenue and\nthe current window has zero revenue too. Only present on enriched\n\/clients responses.\n",
+        ),
     }),
   ),
   total: zod.number(),
@@ -144,6 +169,24 @@ export const GetClientResponse = zod.object({
   locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
+  avgOrderValue: zod
+    .number()
+    .optional()
+    .describe(
+      "Optional. Average order value (revenue \/ orders) over the requested\nwindow. Only present on \/clients responses when both `dateFrom` and\n`dateTo` are supplied.\n",
+    ),
+  conversionRate: zod
+    .number()
+    .optional()
+    .describe(
+      "Optional. Visit-to-purchase conversion rate as a percentage over\nthe requested window. Only present on enriched \/clients responses.\n",
+    ),
+  periodGrowthPct: zod
+    .number()
+    .nullish()
+    .describe(
+      "Optional. Revenue growth versus the prior window of equal length\n(in percent). `null` when the prior window had zero revenue and\nthe current window has zero revenue too. Only present on enriched\n\/clients responses.\n",
+    ),
 });
 
 /**
@@ -555,6 +598,145 @@ export const GetAlertsResponse = zod.object({
   }),
   horizonDays: zod.number(),
   lookbackDays: zod.number(),
+});
+
+/**
+ * Aggregate KPIs, daily revenue/orders time-series summed across every
+client, plus per-client growth ranking (top performers, top growth,
+bottom growth). Restricted to ADMIN users.
+
+ * @summary Platform-wide overview across every client (admin only)
+ */
+export const GetAdminOverviewQueryParams = zod.object({
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+});
+
+export const GetAdminOverviewResponse = zod.object({
+  kpis: zod.object({
+    revenue: zod.number(),
+    orders: zod.number(),
+    customers: zod.number(),
+    avgOrderValue: zod.number(),
+    activeClients: zod
+      .number()
+      .describe("Number of clients with > 0 orders in the window."),
+    totalClients: zod.number(),
+  }),
+  prevKpis: zod.object({
+    revenue: zod.number(),
+    orders: zod.number(),
+    customers: zod.number(),
+    avgOrderValue: zod.number(),
+    activeClients: zod
+      .number()
+      .describe("Number of clients with > 0 orders in the window."),
+    totalClients: zod.number(),
+  }),
+  revenueOverTime: zod
+    .array(
+      zod.object({
+        date: zod.string(),
+        value: zod.number(),
+      }),
+    )
+    .describe("Daily revenue summed across every client in the window."),
+  ordersOverTime: zod
+    .array(
+      zod.object({
+        date: zod.string(),
+        value: zod.number(),
+      }),
+    )
+    .describe("Daily order count summed across every client."),
+  prevRevenueOverTime: zod.array(
+    zod.object({
+      date: zod.string(),
+      value: zod.number(),
+    }),
+  ),
+  prevOrdersOverTime: zod.array(
+    zod.object({
+      date: zod.string(),
+      value: zod.number(),
+    }),
+  ),
+  clientStats: zod
+    .array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        currency: zod.string(),
+        locale: zod.string(),
+        revenue: zod.number(),
+        orders: zod.number(),
+        prevRevenue: zod.number(),
+        growthPct: zod
+          .number()
+          .nullable()
+          .describe(
+            "Period-over-period revenue growth in percent. `null` when both the\ncurrent and prior windows had zero revenue.\n",
+          ),
+      }),
+    )
+    .describe("Per-client revenue\/orders\/growth for the window."),
+  topPerformers: zod
+    .array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        currency: zod.string(),
+        locale: zod.string(),
+        revenue: zod.number(),
+        orders: zod.number(),
+        prevRevenue: zod.number(),
+        growthPct: zod
+          .number()
+          .nullable()
+          .describe(
+            "Period-over-period revenue growth in percent. `null` when both the\ncurrent and prior windows had zero revenue.\n",
+          ),
+      }),
+    )
+    .describe("Top 5 clients by revenue in the window."),
+  topGrowth: zod
+    .array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        currency: zod.string(),
+        locale: zod.string(),
+        revenue: zod.number(),
+        orders: zod.number(),
+        prevRevenue: zod.number(),
+        growthPct: zod
+          .number()
+          .nullable()
+          .describe(
+            "Period-over-period revenue growth in percent. `null` when both the\ncurrent and prior windows had zero revenue.\n",
+          ),
+      }),
+    )
+    .describe("Top 5 clients by period-over-period growth."),
+  bottomGrowth: zod
+    .array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        currency: zod.string(),
+        locale: zod.string(),
+        revenue: zod.number(),
+        orders: zod.number(),
+        prevRevenue: zod.number(),
+        growthPct: zod
+          .number()
+          .nullable()
+          .describe(
+            "Period-over-period revenue growth in percent. `null` when both the\ncurrent and prior windows had zero revenue.\n",
+          ),
+      }),
+    )
+    .describe("Bottom 5 clients by period-over-period growth."),
 });
 
 /**

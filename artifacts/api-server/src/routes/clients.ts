@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { and, eq, ilike, sql } from "drizzle-orm";
-import { db, clientsTable } from "@workspace/db";
+import { and, eq, gte, ilike, inArray, lte, sql } from "drizzle-orm";
+import { db, clientsTable, ordersTable, eventsTable } from "@workspace/db";
 import {
   CreateClientBody,
   GetClientParams,
@@ -14,8 +14,25 @@ const router: IRouter = Router();
 
 router.use("/clients", authenticate);
 
+// Coerce ISO date-time strings on the query before zod sees them — orval
+// generates `z.coerce.date()` for date-time params, but Express delivers
+// strings, and we want graceful fallback if either bound is missing.
+function coerceClientsQuery(query: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...query };
+  for (const key of ["dateFrom", "dateTo"]) {
+    const v = out[key];
+    if (typeof v === "string" && v.length > 0) {
+      const parsed = new Date(v);
+      if (!Number.isNaN(parsed.getTime())) out[key] = parsed;
+    }
+  }
+  return out;
+}
+
 router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
-  const parsed = ListClientsQueryParams.safeParse(req.query);
+  const parsed = ListClientsQueryParams.safeParse(
+    coerceClientsQuery(req.query as Record<string, unknown>),
+  );
   if (!parsed.success) {
     res.status(400).json({
       error: true,
@@ -25,7 +42,7 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     });
     return;
   }
-  const { search, page = 1, limit = 20 } = parsed.data;
+  const { search, page = 1, limit = 20, dateFrom, dateTo } = parsed.data;
   const where = search
     ? ilike(clientsTable.name, `%${search}%`)
     : undefined;
@@ -45,9 +62,108 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     .from(clientsTable)
     .where(where);
 
+  // Window-scoped enrichment. We only run the extra aggregations when both
+  // bounds are provided — otherwise the legacy YTD shape is enough.
+  let enriched = rows as Array<(typeof rows)[number] & {
+    avgOrderValue?: number;
+    conversionRate?: number;
+    periodGrowthPct?: number | null;
+  }>;
+  if (dateFrom && dateTo && rows.length > 0) {
+    const ids = rows.map((r) => r.id);
+    const lengthMs = dateTo.getTime() - dateFrom.getTime();
+    const prevTo = new Date(dateFrom.getTime() - 1);
+    const prevFrom = new Date(prevTo.getTime() - lengthMs);
+
+    // Revenue/orders per client in the window. Same status filter the
+    // dashboard uses so AOV matches "real" revenue.
+    const orderAgg = (winFrom: Date, winTo: Date) =>
+      db
+        .select({
+          clientId: ordersTable.clientId,
+          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          orders: sql<number>`COUNT(*)::int`,
+        })
+        .from(ordersTable)
+        .where(
+          and(
+            inArray(ordersTable.clientId, ids),
+            gte(ordersTable.createdAt, winFrom),
+            lte(ordersTable.createdAt, winTo),
+            sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+          ),
+        )
+        .groupBy(ordersTable.clientId);
+
+    // Visits + purchases per client for visit-to-purchase conversion. We
+    // intentionally use VISIT events from `events_table` rather than orders
+    // counted vs visits, mirroring the per-brand dashboard's definition.
+    const visitAgg = db
+      .select({
+        clientId: eventsTable.clientId,
+        visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int`,
+      })
+      .from(eventsTable)
+      .where(
+        and(
+          inArray(eventsTable.clientId, ids),
+          gte(eventsTable.createdAt, dateFrom),
+          lte(eventsTable.createdAt, dateTo),
+        ),
+      )
+      .groupBy(eventsTable.clientId);
+
+    const [currRows, prevRows, visitRows] = await Promise.all([
+      orderAgg(dateFrom, dateTo),
+      orderAgg(prevFrom, prevTo),
+      visitAgg,
+    ]);
+
+    const curr = new Map<string, { revenue: number; orders: number }>();
+    for (const r of currRows) {
+      curr.set(r.clientId, {
+        revenue: Number(r.revenue) || 0,
+        orders: Number(r.orders) || 0,
+      });
+    }
+    const prev = new Map<string, { revenue: number; orders: number }>();
+    for (const r of prevRows) {
+      prev.set(r.clientId, {
+        revenue: Number(r.revenue) || 0,
+        orders: Number(r.orders) || 0,
+      });
+    }
+    const visits = new Map<string, number>();
+    for (const r of visitRows) {
+      visits.set(r.clientId, Number(r.visits) || 0);
+    }
+
+    enriched = rows.map((r) => {
+      const c = curr.get(r.id) ?? { revenue: 0, orders: 0 };
+      const p = prev.get(r.id) ?? { revenue: 0, orders: 0 };
+      const v = visits.get(r.id) ?? 0;
+      let growthPct: number | null;
+      if (p.revenue > 0) {
+        growthPct = ((c.revenue - p.revenue) / p.revenue) * 100;
+      } else if (c.revenue > 0) {
+        growthPct = 100;
+      } else {
+        growthPct = null;
+      }
+      return {
+        ...r,
+        avgOrderValue: c.orders > 0 ? c.revenue / c.orders : 0,
+        // Clamp to 0–100 — visits can lag behind orders for back-dated
+        // imports, which would otherwise render >100% conversions.
+        conversionRate: v > 0 ? Math.min(100, (c.orders / v) * 100) : 0,
+        periodGrowthPct: growthPct,
+      };
+    });
+  }
+
   res.json(
     ListClientsResponse.parse({
-      data: rows,
+      data: enriched,
       total: count,
       page,
       pages: Math.max(1, Math.ceil(count / limit)),

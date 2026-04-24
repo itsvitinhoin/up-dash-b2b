@@ -96,6 +96,24 @@ export interface Client {
   locale: string;
   createdAt: string;
   updatedAt: string;
+  /** Optional. Average order value (revenue / orders) over the requested
+window. Only present on /clients responses when both `dateFrom` and
+`dateTo` are supplied.
+ */
+  avgOrderValue?: number;
+  /** Optional. Visit-to-purchase conversion rate as a percentage over
+the requested window. Only present on enriched /clients responses.
+ */
+  conversionRate?: number;
+  /**
+   * Optional. Revenue growth versus the prior window of equal length
+(in percent). `null` when the prior window had zero revenue and
+the current window has zero revenue too. Only present on enriched
+/clients responses.
+
+   * @nullable
+   */
+  periodGrowthPct?: number | null;
 }
 
 export interface PaginatedClients {
@@ -157,6 +175,52 @@ present when the request was made with `compare=true`.
 Only present when the request was made with `compare=true`.
  */
   prevOrdersOverTime?: TimeSeriesPoint[];
+}
+
+export interface PlatformKpis {
+  revenue: number;
+  orders: number;
+  customers: number;
+  avgOrderValue: number;
+  /** Number of clients with > 0 orders in the window. */
+  activeClients: number;
+  totalClients: number;
+}
+
+export interface PlatformClientStat {
+  id: string;
+  name: string;
+  currency: string;
+  locale: string;
+  revenue: number;
+  orders: number;
+  prevRevenue: number;
+  /**
+   * Period-over-period revenue growth in percent. `null` when both the
+current and prior windows had zero revenue.
+
+   * @nullable
+   */
+  growthPct: number | null;
+}
+
+export interface PlatformOverviewResponse {
+  kpis: PlatformKpis;
+  prevKpis: PlatformKpis;
+  /** Daily revenue summed across every client in the window. */
+  revenueOverTime: TimeSeriesPoint[];
+  /** Daily order count summed across every client. */
+  ordersOverTime: TimeSeriesPoint[];
+  prevRevenueOverTime: TimeSeriesPoint[];
+  prevOrdersOverTime: TimeSeriesPoint[];
+  /** Per-client revenue/orders/growth for the window. */
+  clientStats: PlatformClientStat[];
+  /** Top 5 clients by revenue in the window. */
+  topPerformers: PlatformClientStat[];
+  /** Top 5 clients by period-over-period growth. */
+  topGrowth: PlatformClientStat[];
+  /** Bottom 5 clients by period-over-period growth. */
+  bottomGrowth: PlatformClientStat[];
 }
 
 export interface FunnelStep {
@@ -434,6 +498,15 @@ export type ListClientsParams = {
   search?: string;
   page?: number;
   limit?: number;
+  /**
+ * When both dateFrom and dateTo are provided, each client row in the
+response is enriched with `avgOrderValue`, `conversionRate`, and
+`periodGrowthPct` computed over that window (versus the previous
+window of equal length for growth).
+
+ */
+  dateFrom?: string;
+  dateTo?: string;
 };
 
 export type GetDashboardParams = {
@@ -557,6 +630,11 @@ export type GetAlertsParams = {
    * @maximum 100
    */
   limit?: number;
+};
+
+export type GetAdminOverviewParams = {
+  dateFrom?: string;
+  dateTo?: string;
 };
 
 export type ListNotificationsParams = {
