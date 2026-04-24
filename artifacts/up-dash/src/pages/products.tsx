@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
+import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useGetProducts, GetProductsSort } from "@workspace/api-client-react";
@@ -20,6 +21,8 @@ import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
+import { CountUp } from "@/components/count-up";
+import { cardEntry, staggerContainer, useReducedMotion, withReducedMotion } from "@/lib/motion";
 
 const ALL_CATEGORIES = "__all__";
 
@@ -31,9 +34,14 @@ function readQueryParam(search: string, key: string): string | undefined {
   return value && value.length > 0 ? value : undefined;
 }
 
+const LOW_STOCK_THRESHOLD = 10;
+
 export default function ProductsPage() {
   const { selectedClientId, user } = useAuth();
   const [, setLocation] = useLocation();
+  const reduced = useReducedMotion();
+  const containerVariants = withReducedMotion(staggerContainer, reduced);
+  const cardVariants = withReducedMotion(cardEntry, reduced);
   // useSearch reacts to URL query-string changes from in-app navigation
   // (e.g. picking a result from the topbar search palette).
   const locationSearch = useSearch();
@@ -159,6 +167,18 @@ export default function ProductsPage() {
     setLocation("/products", { replace: true });
   };
 
+  const visibleCount = data?.length ?? 0;
+  const inStockCount = useMemo(
+    () => (data ?? []).filter((p) => p.stock > 0).length,
+    [data],
+  );
+  const lowStockCount = useMemo(
+    () =>
+      (data ?? []).filter((p) => p.stock > 0 && p.stock <= LOW_STOCK_THRESHOLD)
+        .length,
+    [data],
+  );
+
   const handleExport = () => {
     if (!data) return;
     exportRowsAsCsv(
@@ -179,44 +199,44 @@ export default function ProductsPage() {
   };
 
   return (
-    <div className="space-y-6" data-testid="page-products">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        {hasActiveFilters ? (
-          <div
-            className="flex items-center gap-2 flex-wrap"
-            data-testid="products-active-filters"
-          >
-            <span className="text-xs text-muted-foreground">Filtered by:</span>
-            {urlSearch && (
-              <span
-                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium bg-primary/10 text-primary"
-                data-testid="products-filter-search"
-              >
-                Search: {urlSearch}
+    <motion.div
+      className="space-y-6"
+      data-testid="page-products"
+      initial="hidden"
+      animate="visible"
+      variants={containerVariants}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div
+          className="flex items-center gap-2 text-xs text-muted-foreground"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="relative flex h-1.5 w-1.5" aria-hidden>
+            {!reduced && (
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/60" />
+            )}
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          <span className="font-mono uppercase tracking-wider">
+            Live ·{" "}
+            <span className="text-foreground font-semibold tabular-nums">
+              <CountUp
+                value={visibleCount}
+                format={(v) => formatNumber(Math.round(v))}
+              />
+            </span>{" "}
+            Shown
+            <span className="ml-2 text-muted-foreground/70">
+              · {formatNumber(inStockCount)} In Stock
+            </span>
+            {lowStockCount > 0 && (
+              <span className="ml-2 text-amber-500/90">
+                · {formatNumber(lowStockCount)} Low Stock
               </span>
             )}
-            {urlCategory && (
-              <span
-                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium bg-primary/10 text-primary"
-                data-testid="products-filter-category"
-              >
-                Category: {urlCategory}
-              </span>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearFilters}
-              className="h-7 px-2 text-xs"
-              data-testid="products-clear-filters"
-            >
-              <X className="h-3 w-3 mr-1" />
-              Clear
-            </Button>
-          </div>
-        ) : (
-          <div />
-        )}
+          </span>
+        </div>
         <Button
           variant="outline"
           size="sm"
@@ -229,6 +249,44 @@ export default function ProductsPage() {
         </Button>
       </div>
 
+      {hasActiveFilters && (
+        <div
+          className="flex items-center gap-2 flex-wrap"
+          data-testid="products-active-filters"
+        >
+          <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
+            Filtered by:
+          </span>
+          {urlSearch && (
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium bg-primary/10 text-primary"
+              data-testid="products-filter-search"
+            >
+              Search: {urlSearch}
+            </span>
+          )}
+          {urlCategory && (
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium bg-primary/10 text-primary"
+              data-testid="products-filter-category"
+            >
+              Category: {urlCategory}
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearFilters}
+            className="h-7 px-2 text-xs"
+            data-testid="products-clear-filters"
+          >
+            <X className="h-3 w-3 mr-1" />
+            Clear
+          </Button>
+        </div>
+      )}
+
+      <motion.div variants={cardVariants}>
       <Card>
         <CardContent className="p-4 flex flex-col gap-4">
           <div className="flex flex-col sm:flex-row gap-3">
@@ -271,8 +329,8 @@ export default function ProductsPage() {
 
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-muted-foreground flex items-center gap-1">
-                <ArrowDownUp className="h-4 w-4" /> Sort by
+              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground flex items-center gap-1">
+                <ArrowDownUp className="h-3 w-3" /> Sort by
               </span>
               <ToggleGroup
                 type="single"
@@ -293,7 +351,7 @@ export default function ProductsPage() {
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-muted-foreground">Show</span>
+              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Show</span>
               <Select value={limit.toString()} onValueChange={(val) => setLimit(Number(val))}>
                 <SelectTrigger className="w-[80px]">
                   <SelectValue />
@@ -308,6 +366,7 @@ export default function ProductsPage() {
           </div>
         </CardContent>
       </Card>
+      </motion.div>
 
       {isError ? (
         <Alert variant="destructive">
@@ -318,18 +377,19 @@ export default function ProductsPage() {
           </AlertDescription>
         </Alert>
       ) : (
+        <motion.div variants={cardVariants}>
         <Card>
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Product</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Price</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead className="text-right">Sold</TableHead>
-                  <TableHead className="text-right">Revenue</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Product</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Category</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Status</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Price</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Stock</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Sold</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Revenue</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -380,7 +440,8 @@ export default function ProductsPage() {
             </Table>
           </div>
         </Card>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 }

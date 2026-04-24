@@ -1,15 +1,16 @@
 import { useState, useEffect } from "react";
 import { format } from "date-fns";
+import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useGetCustomers } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { 
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
-import { 
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,6 +20,8 @@ import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
+import { CountUp } from "@/components/count-up";
+import { cardEntry, staggerContainer, useReducedMotion, withReducedMotion } from "@/lib/motion";
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
@@ -29,6 +32,14 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
+const SEGMENT_DOT: Record<string, string> = {
+  Champions: "bg-emerald-500",
+  Loyal: "bg-blue-500",
+  Potential: "bg-violet-500",
+  "At Risk": "bg-amber-500",
+  Lost: "bg-zinc-500",
+};
+
 export default function CustomersPage() {
   const { selectedClientId, user } = useAuth();
   const [search, setSearch] = useState("");
@@ -37,6 +48,9 @@ export default function CustomersPage() {
   const [state, setState] = useState<string>("");
   const [page, setPage] = useState(1);
   const limit = 20;
+  const reduced = useReducedMotion();
+  const containerVariants = withReducedMotion(staggerContainer, reduced);
+  const cardVariants = withReducedMotion(cardEntry, reduced);
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
 
@@ -91,9 +105,45 @@ export default function CustomersPage() {
     );
   };
 
+  const totalCount = data?.total ?? 0;
+  const segmentCount = data?.segmentCounts?.length ?? 0;
+
   return (
-    <div className="space-y-6" data-testid="page-customers">
-      <div className="flex justify-end">
+    <motion.div
+      className="space-y-6"
+      data-testid="page-customers"
+      initial="hidden"
+      animate="visible"
+      variants={containerVariants}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div
+          className="flex items-center gap-2 text-xs text-muted-foreground"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="relative flex h-1.5 w-1.5" aria-hidden>
+            {!reduced && (
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/60" />
+            )}
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          <span className="font-mono uppercase tracking-wider">
+            Live ·{" "}
+            <span className="text-foreground font-semibold tabular-nums">
+              <CountUp
+                value={totalCount}
+                format={(v) => formatNumber(Math.round(v))}
+              />
+            </span>{" "}
+            Customers
+            {segmentCount > 0 && (
+              <span className="ml-2 text-muted-foreground/70">
+                · {segmentCount} Segments
+              </span>
+            )}
+          </span>
+        </div>
         <Button
           variant="outline"
           size="sm"
@@ -106,6 +156,7 @@ export default function CustomersPage() {
         </Button>
       </div>
 
+      <motion.div variants={cardVariants}>
       <Card>
         <CardContent className="p-4">
           <div className="flex flex-col md:flex-row gap-4">
@@ -155,15 +206,27 @@ export default function CustomersPage() {
           {data?.segmentCounts && data.segmentCounts.length > 0 && (
             <div className="mt-4 flex gap-2 overflow-x-auto pb-2 scrollbar-thin">
               {data.segmentCounts.map(seg => (
-                <div key={seg.segment} className="flex-shrink-0 bg-muted px-3 py-1 rounded-full text-xs font-medium flex items-center gap-2">
-                  <span className="text-muted-foreground">{seg.segment}</span>
-                  <span>{formatNumber(seg.count)}</span>
+                <div
+                  key={seg.segment}
+                  className="flex-shrink-0 bg-muted/60 border border-border px-3 py-1.5 rounded-full text-xs flex items-center gap-2"
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${SEGMENT_DOT[seg.segment] ?? "bg-gray-400"}`}
+                    aria-hidden
+                  />
+                  <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
+                    {seg.segment}
+                  </span>
+                  <span className="font-semibold tabular-nums">
+                    {formatNumber(seg.count)}
+                  </span>
                 </div>
               ))}
             </div>
           )}
         </CardContent>
       </Card>
+      </motion.div>
 
       {isError ? (
         <Alert variant="destructive">
@@ -171,17 +234,18 @@ export default function CustomersPage() {
           <AlertDescription>Failed to load customers. <Button variant="link" className="p-0 h-auto text-destructive-foreground font-semibold" onClick={() => refetch()}>Retry</Button></AlertDescription>
         </Alert>
       ) : (
+        <motion.div variants={cardVariants}>
         <Card>
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Segment</TableHead>
-                  <TableHead className="text-right">Orders</TableHead>
-                  <TableHead className="text-right">Spent</TableHead>
-                  <TableHead className="text-right">Last Purchase</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Customer</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Location</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Segment</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Orders</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Spent</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Last Purchase</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -261,7 +325,8 @@ export default function CustomersPage() {
             </div>
           )}
         </Card>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 }
