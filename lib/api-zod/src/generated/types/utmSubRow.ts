@@ -8,6 +8,10 @@
 
 export interface UtmSubRow {
   key: string;
+  /** @nullable */
+  medium?: string | null;
+  /** @nullable */
+  campaign?: string | null;
   registrations: number;
   approvals: number;
   approvalPct: number;

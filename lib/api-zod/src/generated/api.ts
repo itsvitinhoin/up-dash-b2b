@@ -1445,6 +1445,12 @@ export const GetUtmResponse = zod.object({
     totalBuyers: zod.number(),
     totalRevenue: zod.number(),
     conversionPct: zod.number(),
+    totalRoas: zod
+      .number()
+      .nullish()
+      .describe(
+        "Aggregate ROAS across all sources (total revenue \/ total ad spend). Null when no spend data exists.",
+      ),
     topSource: zod.string().nullish(),
     topSourceRevenue: zod.number(),
   }),
@@ -1462,6 +1468,8 @@ export const GetUtmResponse = zod.object({
       subRows: zod.array(
         zod.object({
           key: zod.string(),
+          medium: zod.string().nullish(),
+          campaign: zod.string().nullish(),
           registrations: zod.number(),
           approvals: zod.number(),
           approvalPct: zod.number(),

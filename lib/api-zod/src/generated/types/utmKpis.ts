@@ -13,6 +13,11 @@ export interface UtmKpis {
   totalBuyers: number;
   totalRevenue: number;
   conversionPct: number;
+  /**
+   * Aggregate ROAS across all sources (total revenue / total ad spend). Null when no spend data exists.
+   * @nullable
+   */
+  totalRoas?: number | null;
   /** @nullable */
   topSource?: string | null;
   topSourceRevenue: number;

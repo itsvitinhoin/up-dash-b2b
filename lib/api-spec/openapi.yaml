@@ -2038,6 +2038,9 @@ components:
           type: number
         conversionPct:
           type: number
+        totalRoas:
+          type: ["number", "null"]
+          description: Aggregate ROAS across all sources (total revenue / total ad spend). Null when no spend data exists.
         topSource:
           type: ["string", "null"]
         topSourceRevenue:
@@ -2049,6 +2052,10 @@ components:
       properties:
         key:
           type: string
+        medium:
+          type: ["string", "null"]
+        campaign:
+          type: ["string", "null"]
         registrations:
           type: integer
         approvals:

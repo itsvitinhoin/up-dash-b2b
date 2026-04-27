@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
@@ -28,6 +28,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
 import {
@@ -128,6 +129,8 @@ type UtmRowType = {
   roas?: number | null;
   subRows: {
     key: string;
+    medium?: string | null;
+    campaign?: string | null;
     registrations: number;
     approvals: number;
     approvalPct: number;
@@ -231,6 +234,12 @@ export default function UtmPage() {
     [data],
   );
 
+  const avgConvPct = useMemo(() => {
+    if (!barDataConv.length) return null;
+    const sum = barDataConv.reduce((s, d) => s + d.value, 0);
+    return parseFloat((sum / barDataConv.length).toFixed(1));
+  }, [barDataConv]);
+
   const kpis = data?.kpis;
   const totalRows = data?.rows.length ?? 0;
 
@@ -321,7 +330,7 @@ export default function UtmPage() {
       <motion.div variants={cardVariants}>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <KpiCard
-            label="Registrations"
+            label="Leads / Sessions"
             value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
             icon={Users}
             loading={isLoading}
@@ -331,13 +340,6 @@ export default function UtmPage() {
             value={kpis ? formatNumber(kpis.totalApprovals) : "—"}
             icon={UserCheck}
             loading={isLoading}
-          />
-          <KpiCard
-            label="Approval %"
-            value={kpis ? `${kpis.approvalPct.toFixed(1)}%` : "—"}
-            icon={TrendingUp}
-            loading={isLoading}
-            accent="bg-emerald-500/10"
           />
           <KpiCard
             label="Buyers"
@@ -358,6 +360,13 @@ export default function UtmPage() {
             icon={TrendingUp}
             loading={isLoading}
             accent="bg-blue-500/10"
+          />
+          <KpiCard
+            label="ROAS"
+            value={kpis?.totalRoas != null ? `${kpis.totalRoas.toFixed(2)}x` : "—"}
+            icon={TrendingUp}
+            loading={isLoading}
+            accent="bg-emerald-500/10"
           />
         </div>
       </motion.div>
@@ -547,6 +556,15 @@ export default function UtmPage() {
                           />
                         ))}
                       </Bar>
+                      {avgConvPct != null && (
+                        <ReferenceLine
+                          x={avgConvPct}
+                          stroke="hsl(var(--primary))"
+                          strokeDasharray="4 3"
+                          strokeWidth={1.5}
+                          label={{ value: `Avg ${avgConvPct}%`, position: "insideTopRight", fontSize: 10, fill: "hsl(var(--primary))" }}
+                        />
+                      )}
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -669,9 +687,8 @@ export default function UtmPage() {
                       const hasSubRows = groupBy === "source" && row.subRows.length > 1;
                       const color = SOURCE_PALETTE[idx % SOURCE_PALETTE.length];
                       return (
-                        <>
+                        <React.Fragment key={row.key}>
                           <tr
-                            key={row.key}
                             className={`border-b border-border/50 hover:bg-muted/20 transition-colors ${hasSubRows ? "cursor-pointer" : ""}`}
                             onClick={() => hasSubRows && toggleRow(row.key)}
                             data-testid={`utm-row-${row.key}`}
@@ -701,7 +718,7 @@ export default function UtmPage() {
                                 </span>
                                 {hasSubRows && (
                                   <Badge variant="outline" className="text-[10px] h-4 px-1.5">
-                                    {row.subRows.length} mediums
+                                    {row.subRows.length} breakdowns
                                   </Badge>
                                 )}
                               </div>
@@ -757,20 +774,27 @@ export default function UtmPage() {
                             </td>
                           </tr>
 
-                          {/* Sub-rows (medium breakdown) */}
+                          {/* Sub-rows (medium + campaign breakdown) */}
                           {isExpanded &&
                             hasSubRows &&
-                            row.subRows.map((sub) => (
+                            row.subRows.map((sub, si) => (
                               <tr
-                                key={`${row.key}__${sub.key}`}
+                                key={`${row.key}__${sub.key}__${si}`}
                                 className="border-b border-border/30 bg-muted/10"
-                                data-testid={`utm-subrow-${row.key}-${sub.key}`}
+                                data-testid={`utm-subrow-${row.key}-${si}`}
                               >
                                 {groupBy === "source" && <td className="pl-4 py-2" />}
                                 <td className="pl-8 pr-3 py-2">
-                                  <div className="flex items-center gap-2 text-muted-foreground">
-                                    <span className="text-[10px] font-mono">↳</span>
-                                    <span className="text-xs">{sub.key}</span>
+                                  <div className="flex flex-col gap-0.5">
+                                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                                      <span className="text-[10px] font-mono">↳</span>
+                                      <span className="text-xs font-medium">{sub.key}</span>
+                                    </div>
+                                    {sub.campaign && sub.campaign !== "(none)" && (
+                                      <span className="pl-4 text-[10px] font-mono text-muted-foreground/70 truncate max-w-[200px]" title={sub.campaign}>
+                                        {sub.campaign}
+                                      </span>
+                                    )}
                                   </div>
                                 </td>
                                 <td className="px-3 py-2 text-right tabular-nums text-xs text-muted-foreground">
@@ -796,7 +820,7 @@ export default function UtmPage() {
                                 </td>
                               </tr>
                             ))}
-                        </>
+                        </React.Fragment>
                       );
                     })}
                   </tbody>

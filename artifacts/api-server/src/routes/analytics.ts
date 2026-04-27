@@ -4028,9 +4028,16 @@ async function buildUtmAnalytics(
       ? sql`COALESCE(NULLIF(lower(c.utm_campaign), ''), '(campaign unset)')`
       : sql`COALESCE(NULLIF(lower(c.utm_source), ''), '(direct)')`;
 
+  // When groupBy=source: expose medium+campaign breakdown in sub-rows
+  // When groupBy=campaign: no sub-row breakdown needed
   const mediumExpr =
     groupBy === "source"
       ? sql`COALESCE(NULLIF(lower(c.utm_medium), ''), '(none)')`
+      : sql`NULL`;
+
+  const campaignExpr =
+    groupBy === "source"
+      ? sql`COALESCE(NULLIF(lower(c.utm_campaign), ''), '(none)')`
       : sql`NULL`;
 
   const srcCond = filterSource
@@ -4043,11 +4050,13 @@ async function buildUtmAnalytics(
     ? sql` AND lower(c.utm_campaign) = lower(${filterCampaign})`
     : sql``;
 
-  type RegRow = { key: string; medium: string | null; registrations: string; approvals: string };
+  // Registrations: customers who joined in the period, grouped by source+medium+campaign
+  type RegRow = { key: string; medium: string | null; campaign: string | null; registrations: string; approvals: string };
   const regRaw = await db.execute<RegRow>(sql`
     SELECT
-      ${keyExpr} AS key,
+      ${keyExpr}    AS key,
       ${mediumExpr} AS medium,
+      ${campaignExpr} AS campaign,
       COUNT(*)::int AS registrations,
       COUNT(*) FILTER (WHERE c.registration_status = 'APPROVED')::int AS approvals
     FROM customers c
@@ -4055,10 +4064,12 @@ async function buildUtmAnalytics(
       AND c.created_at >= ${from}
       AND c.created_at <= ${to}
       ${srcCond}${medCond}${campCond}
-    GROUP BY 1, 2
+    GROUP BY 1, 2, 3
     ORDER BY registrations DESC
   `);
 
+  // Buyers/revenue: restrict to the SAME customer cohort (registered in the period)
+  // to keep conversion math consistent: conversionPct = buyers / registrations.
   type SalesRow = { key: string; buyers: string; revenue: string };
   const salesRaw = await db.execute<SalesRow>(sql`
     SELECT
@@ -4069,15 +4080,15 @@ async function buildUtmAnalytics(
     JOIN orders o
       ON  o.customer_id = c.id
       AND o.client_id   = ${clientId}
-      AND o.created_at  >= ${from}
-      AND o.created_at  <= ${to}
       AND o.status IN ('APPROVED','SHIPPED','DELIVERED')
     WHERE c.client_id = ${clientId}
+      AND c.created_at >= ${from}
+      AND c.created_at <= ${to}
       ${srcCond}${medCond}${campCond}
     GROUP BY 1
   `);
 
-  const regRows  = (regRaw.rows  ?? regRaw)  as unknown as RegRow[];
+  const regRows   = (regRaw.rows   ?? regRaw)   as unknown as RegRow[];
   const salesRows = (salesRaw.rows ?? salesRaw) as unknown as SalesRow[];
 
   const salesMap = new Map(
@@ -4100,7 +4111,7 @@ async function buildUtmAnalytics(
     }
   }
 
-  // Group registration rows by primary key
+  // Group registration rows by primary key (source or campaign)
   const entriesByKey = new Map<string, RegRow[]>();
   for (const r of regRows) {
     const list = entriesByKey.get(r.key) ?? [];
@@ -4118,12 +4129,16 @@ async function buildUtmAnalytics(
     const spend    = spendBySource.get(key.toLowerCase()) ?? 0;
     const roas     = spend > 0 ? sales.revenue / spend : null;
 
+    // Sub-rows: when grouping by source, expose medium + campaign breakdown.
+    // Each sub-row = a unique (medium, campaign) combination under this source.
     const subRows =
       groupBy === "source"
         ? entries.map((e) => ({
-            key: e.medium ?? "(none)",
+            key:         e.medium ?? "(none)",
+            medium:      e.medium,
+            campaign:    e.campaign,
             registrations: Number(e.registrations),
-            approvals: Number(e.approvals),
+            approvals:   Number(e.approvals),
             approvalPct: Number(e.registrations) > 0
               ? (Number(e.approvals) / Number(e.registrations)) * 100
               : 0,
@@ -4156,6 +4171,10 @@ async function buildUtmAnalytics(
   const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
   const topRow       = rows[0];
 
+  // Aggregate ROAS: total revenue / total ad spend across all sources with spend data
+  const totalSpend = [...spendBySource.values()].reduce((s, v) => s + v, 0);
+  const totalRoas  = totalSpend > 0 ? totalRevenue / totalSpend : null;
+
   const kpis = {
     totalRegistrations: totalReg,
     totalApprovals: totalApp,
@@ -4163,6 +4182,7 @@ async function buildUtmAnalytics(
     totalBuyers,
     totalRevenue,
     conversionPct: totalReg > 0 ? (totalBuyers / totalReg) * 100 : 0,
+    totalRoas,
     topSource: topRow?.key ?? null,
     topSourceRevenue: topRow?.revenue ?? 0,
   };
