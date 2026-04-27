@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { useContext, useEffect, useState, ReactNode } from "react";
 import { useLocation } from "wouter";
 import {
   AuthUser,
@@ -6,24 +6,15 @@ import {
   setUnauthorizedHandler,
   logout as apiLogout,
 } from "@workspace/api-client-react";
+import { AuthContext, type AuthContextType } from "./auth-context";
+
+export type { AuthContextType };
 
 const TOKEN_KEY = "updash.token";
 const REFRESH_KEY = "updash.refresh";
 const USER_KEY = "updash.user";
 const CLIENT_KEY = "updash.clientId";
 
-// Bearer-token getter — reads the latest access token on every request.
-setAuthTokenGetter(() => localStorage.getItem(TOKEN_KEY));
-
-// 401 retry: refresh once with the stored refresh token, persist the rotated
-// pair, and tell `customFetch` to replay the original request. On failure,
-// clear local state so the route guard punts the user to /login.
-//
-// IMPORTANT: this handler must NOT route the refresh call back through
-// `customFetch` (which is what the orval-generated `apiRefreshToken` does).
-// `customFetch` already holds an in-flight promise pointing at THIS handler;
-// a nested 401 from inside the refresh call would await that same promise
-// and deadlock. Using raw `fetch` here breaks the cycle.
 async function performRefresh(refresh: string): Promise<{
   accessToken: string;
   refreshToken: string;
@@ -45,35 +36,35 @@ async function performRefresh(refresh: string): Promise<{
   }
 }
 
-setUnauthorizedHandler(async () => {
-  const refresh = localStorage.getItem(REFRESH_KEY);
-  if (!refresh) return false;
-  const rotated = await performRefresh(refresh);
-  if (!rotated) {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_KEY);
-    localStorage.removeItem(USER_KEY);
-    localStorage.removeItem(CLIENT_KEY);
-    return false;
-  }
-  localStorage.setItem(TOKEN_KEY, rotated.accessToken);
-  localStorage.setItem(REFRESH_KEY, rotated.refreshToken);
-  return true;
-});
-
-interface AuthContextType {
-  user: AuthUser | null;
-  token: string | null;
-  login: (token: string, refreshToken: string, user: AuthUser) => void;
-  logout: () => void;
-  isLoading: boolean;
-  selectedClientId: string | null;
-  setSelectedClientId: (id: string | null) => void;
+// One-time initialisation of the API client interceptors.
+// Using a module-scoped flag avoids repeated calls on HMR re-renders while
+// keeping all side-effects inside the component file (no module-top-level
+// calls, which break Vite Fast Refresh).
+let _apiClientReady = false;
+function initApiClient() {
+  if (_apiClientReady) return;
+  _apiClientReady = true;
+  setAuthTokenGetter(() => localStorage.getItem(TOKEN_KEY));
+  setUnauthorizedHandler(async () => {
+    const refresh = localStorage.getItem(REFRESH_KEY);
+    if (!refresh) return false;
+    const rotated = await performRefresh(refresh);
+    if (!rotated) {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(REFRESH_KEY);
+      localStorage.removeItem(USER_KEY);
+      localStorage.removeItem(CLIENT_KEY);
+      return false;
+    }
+    localStorage.setItem(TOKEN_KEY, rotated.accessToken);
+    localStorage.setItem(REFRESH_KEY, rotated.refreshToken);
+    return true;
+  });
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
 export function AuthProvider({ children }: { children: ReactNode }) {
+  initApiClient();
+
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -120,7 +111,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     const refresh = localStorage.getItem(REFRESH_KEY);
-    // Best-effort server revocation; never block UI on this network call.
     if (refresh) {
       apiLogout({ refreshToken: refresh }).catch(() => undefined);
     }
