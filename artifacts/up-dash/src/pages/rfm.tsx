@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { format } from "date-fns";
-import { Link } from "wouter";
+import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -103,6 +103,7 @@ export default function RfmPage() {
   const reduced = useReducedMotion();
   const variants = withReducedMotion(fadeInUp, reduced);
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const [insightDismissed, setInsightDismissed] = useState(false);
   const [segmentFilter, setSegmentFilter] = useState<string>("");
   const [page, setPage] = useState(1);
@@ -443,7 +444,11 @@ export default function RfmPage() {
                         </TableRow>
                       ) : (
                         customers.map((c) => (
-                          <TableRow key={c.id} className="hover:bg-muted/30">
+                          <TableRow
+                            key={c.id}
+                            className="hover:bg-muted/30 cursor-pointer"
+                            onClick={() => navigate(`/customers/${c.id}`)}
+                          >
                             <TableCell>
                               <div>
                                 <p className="text-sm font-medium">{c.name ?? "—"}</p>
@@ -463,11 +468,7 @@ export default function RfmPage() {
                               {formatCurrency(c.monetary)}
                             </TableCell>
                             <TableCell className="text-right">
-                              <Link href={`/customers/${c.id}`}>
-                                <Button variant="ghost" size="icon" className="h-7 w-7">
-                                  <ChevronRight className="h-3.5 w-3.5" />
-                                </Button>
-                              </Link>
+                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground ml-auto" />
                             </TableCell>
                           </TableRow>
                         ))
