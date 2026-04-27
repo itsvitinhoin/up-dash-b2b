@@ -72,18 +72,18 @@ function KpiCard({
   accent?: string;
 }) {
   return (
-    <div className="flex items-start gap-3 p-4 bg-card border border-border rounded-xl">
-      <div className={`p-2 rounded-lg mt-0.5 ${accent ?? "bg-primary/10"}`}>
-        <Icon className={`h-4 w-4 ${accent ? "text-foreground" : "text-primary"}`} />
+    <div className="flex flex-col gap-1.5 p-3 bg-card border border-border rounded-xl">
+      <div className="flex items-center gap-1.5">
+        <div className={`p-1 rounded-md shrink-0 ${accent ?? "bg-primary/10"}`}>
+          <Icon className={`h-3 w-3 ${accent ? "text-foreground" : "text-primary"}`} />
+        </div>
+        <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground truncate">{label}</p>
       </div>
-      <div className="min-w-0">
-        <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground truncate">{label}</p>
-        {loading ? (
-          <Skeleton className="h-6 w-20 mt-1" />
-        ) : (
-          <p className="text-2xl font-semibold tabular-nums leading-tight">{value}</p>
-        )}
-      </div>
+      {loading ? (
+        <Skeleton className="h-5 w-16" />
+      ) : (
+        <p className="text-base font-semibold tabular-nums leading-tight truncate">{value}</p>
+      )}
     </div>
   );
 }
