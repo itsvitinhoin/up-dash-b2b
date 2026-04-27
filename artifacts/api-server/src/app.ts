@@ -65,4 +65,8 @@ app.use("/api", apiLimiter);
 
 app.use("/api", router);
 
+app.get("/", (_req, res) => {
+  res.redirect(301, "/up-dash");
+});
+
 export default app;
