@@ -52,7 +52,7 @@ const SEGMENT_META: Record<string, {
     description: "Buy regularly and respond well to offers",
   },
   Potential: {
-    label: "Promising",
+    label: "Potential",
     color: "#8b5cf6",
     bg: "bg-violet-500/10",
     ring: "ring-violet-500/30",
