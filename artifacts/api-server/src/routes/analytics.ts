@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, gte, lte, sql, ilike, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql, ilike, or, inArray, type SQL } from "drizzle-orm";
 import {
   db,
   ordersTable,
@@ -1392,24 +1392,28 @@ function computeProductLevel(
   totalSold: number,
   stock: number,
   restockThreshold: number,
+  recent30dSold: number,
+  catalogAvgSellThrough: number,
 ): "High Conversion" | "Standard" | "Low" | "At Risk" {
-  // Never sold at all — dead stock risk regardless of inventory level
+  // Never sold at all — dead stock risk
   if (totalSold === 0) return "At Risk";
 
   const total = totalSold + stock;
   const sellThrough = total > 0 ? totalSold / total : 0;
 
-  // Highly converted: sold through 65%+ of lifetime inventory
-  if (sellThrough >= 0.65) return "High Conversion";
+  // At Risk: stagnant recent velocity AND sell-through well below catalog avg
+  if (recent30dSold === 0 && sellThrough < catalogAvgSellThrough * 0.4) return "At Risk";
 
-  // At Risk: low historical sell-through AND still sitting on excess stock
-  // (more than 3× the restock threshold, showing very poor inventory turnover)
+  // At Risk: excess inventory AND very poor lifetime sell-through
   if (sellThrough < 0.15 && stock > restockThreshold * 3) return "At Risk";
 
-  // Moderate sell-through — healthy but not outstanding
-  if (sellThrough >= 0.35) return "Standard";
+  // High Conversion: 65%+ lifetime sell-through OR significantly above catalog avg
+  if (sellThrough >= 0.65 || (sellThrough >= 0.5 && sellThrough > catalogAvgSellThrough * 1.3)) return "High Conversion";
 
-  // Below 35% sell-through — low performance
+  // Standard: at/near catalog avg (within 70%)
+  if (sellThrough >= 0.35 || (sellThrough >= 0.25 && sellThrough >= catalogAvgSellThrough * 0.7)) return "Standard";
+
+  // Below 35% and below 70% of catalog avg — underperforming
   return "Low";
 }
 
@@ -1469,10 +1473,48 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
     .orderBy(orderBy)
     .limit(limit);
 
+  // Catalog avg sell-through — used to benchmark individual product levels
+  const catalogAvgSellThrough =
+    rows.length > 0
+      ? rows.reduce((sum, r) => {
+          const t = r.totalSold + r.stock;
+          return sum + (t > 0 ? r.totalSold / t : 0);
+        }, 0) / rows.length
+      : 0;
+
+  // 30-day recent velocity per product (batch query)
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const productIds = rows.map((r) => r.id);
+  const recentSalesRows =
+    productIds.length > 0
+      ? await db
+          .select({
+            productId: orderItemsTable.productId,
+            recentSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+          })
+          .from(orderItemsTable)
+          .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+          .where(
+            and(
+              eq(ordersTable.clientId, clientId),
+              gte(ordersTable.createdAt, thirtyDaysAgo),
+              inArray(orderItemsTable.productId, productIds),
+            ),
+          )
+          .groupBy(orderItemsTable.productId)
+      : [];
+  const recentSoldMap = new Map(recentSalesRows.map((r) => [r.productId, r.recentSold]));
+
   const enriched = rows.map((r) => ({
     ...r,
     percentSold: (r.totalSold + r.stock) > 0 ? r.totalSold / (r.totalSold + r.stock) : 0,
-    level: computeProductLevel(r.totalSold, r.stock, r.restockThreshold),
+    level: computeProductLevel(
+      r.totalSold,
+      r.stock,
+      r.restockThreshold,
+      recentSoldMap.get(r.id) ?? 0,
+      catalogAvgSellThrough,
+    ),
     createdAt: r.createdAt.toISOString(),
   }));
 
@@ -2406,7 +2448,14 @@ No markdown, no preamble.`;
         .where(eq(productsTable.clientId, clientId)),
     ]);
 
-    const levels = levelCounts.map((r) => computeProductLevel(r.totalSold, r.stock, r.restockThreshold));
+    const catalogAvg =
+      levelCounts.length > 0
+        ? levelCounts.reduce((s, r) => {
+            const t = r.totalSold + r.stock;
+            return s + (t > 0 ? r.totalSold / t : 0);
+          }, 0) / levelCounts.length
+        : 0;
+    const levels = levelCounts.map((r) => computeProductLevel(r.totalSold, r.stock, r.restockThreshold, 0, catalogAvg));
     const atRiskCount = levels.filter((l) => l === "At Risk").length;
     const highConvCount = levels.filter((l) => l === "High Conversion").length;
     const totalProducts = levels.length;

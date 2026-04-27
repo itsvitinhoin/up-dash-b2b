@@ -31,7 +31,7 @@ import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { CountUp } from "@/components/count-up";
 import { cardEntry, staggerContainer, useReducedMotion, withReducedMotion } from "@/lib/motion";
-import { format, subDays } from "date-fns";
+import { format, formatDistanceToNow, subDays } from "date-fns";
 
 const LEVEL_STYLES: Record<string, string> = {
   "High Conversion": "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -41,17 +41,18 @@ const LEVEL_STYLES: Record<string, string> = {
 };
 
 function ProductThumbnail({ imageUrl, name }: { imageUrl?: string | null; name: string }) {
-  if (imageUrl) {
+  const [imgError, setImgError] = useState(false);
+  const initials = name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  if (imageUrl && !imgError) {
     return (
       <img
         src={imageUrl}
         alt={name}
         className="h-8 w-8 rounded object-cover border border-border flex-shrink-0"
-        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+        onError={() => setImgError(true)}
       />
     );
   }
-  const initials = name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
   return (
     <div className="h-8 w-8 rounded bg-primary/10 flex items-center justify-center text-[10px] font-semibold text-primary flex-shrink-0 border border-border">
       {initials}
@@ -557,8 +558,10 @@ export default function ProductsPage() {
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Product</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Category</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Level</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Status</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Price</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Stock</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Sold</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">% Sold</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Revenue</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Added</TableHead>
@@ -573,7 +576,9 @@ export default function ProductsPage() {
                       <TableCell><Skeleton className="h-4 w-48" /><Skeleton className="h-3 w-16 mt-1" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                      <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
@@ -583,7 +588,7 @@ export default function ProductsPage() {
                   ))
                 ) : data?.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="p-0">
+                    <TableCell colSpan={12} className="p-0">
                       <EmptyState
                         icon={PackageOpen}
                         title="No products to show"
@@ -613,8 +618,17 @@ export default function ProductsPage() {
                           {product.level}
                         </span>
                       </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={product.status === "ACTIVE" ? "default" : "secondary"}
+                          className="text-[10px]"
+                        >
+                          {product.status}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-right">{formatCurrency(product.price)}</TableCell>
                       <TableCell className="text-right">{formatNumber(product.stock)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatNumber(product.totalSold)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
@@ -629,8 +643,8 @@ export default function ProductsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-medium">{formatCurrency(product.totalRevenue)}</TableCell>
-                      <TableCell className="text-muted-foreground text-xs">
-                        {product.createdAt ? format(new Date(product.createdAt), "MMM d, yyyy") : "—"}
+                      <TableCell className="text-muted-foreground text-xs" title={product.createdAt ? format(new Date(product.createdAt), "MMM d, yyyy") : ""}>
+                        {product.createdAt ? formatDistanceToNow(new Date(product.createdAt), { addSuffix: true }) : "—"}
                       </TableCell>
                       <TableCell className="pr-3">
                         <ChevronRight className="h-4 w-4 text-muted-foreground" />

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import {
@@ -50,19 +51,20 @@ const LEVEL_STYLES: Record<string, string> = {
 };
 
 function ProductThumbnail({ imageUrl, name, size = "lg" }: { imageUrl?: string | null; name: string; size?: "sm" | "lg" }) {
+  const [imgError, setImgError] = useState(false);
   const dim = size === "lg" ? "h-16 w-16" : "h-8 w-8";
   const text = size === "lg" ? "text-xl" : "text-[10px]";
-  if (imageUrl) {
+  const initials = name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  if (imageUrl && !imgError) {
     return (
       <img
         src={imageUrl}
         alt={name}
         className={`${dim} rounded-lg object-cover border border-border flex-shrink-0`}
-        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+        onError={() => setImgError(true)}
       />
     );
   }
-  const initials = name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
   return (
     <div className={`${dim} rounded-lg bg-primary/10 flex items-center justify-center ${text} font-semibold text-primary flex-shrink-0 border border-border`}>
       {initials}
