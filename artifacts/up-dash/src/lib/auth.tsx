@@ -106,6 +106,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (newUser.role === 'CLIENT' && newUser.clientId) {
       setSelectedClientId(newUser.clientId);
       localStorage.setItem(CLIENT_KEY, newUser.clientId);
+    } else {
+      setSelectedClientId(null);
+      localStorage.removeItem(CLIENT_KEY);
     }
   };
 
