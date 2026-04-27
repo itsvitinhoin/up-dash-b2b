@@ -167,6 +167,23 @@ export const CreateClientBody = zod.object({
 });
 
 /**
+ * @summary Look up a client by API key (admin only)
+ */
+export const LookupClientByApiKeyQueryParams = zod.object({
+  apiKey: zod.coerce
+    .string()
+    .describe("The client's integration API key to look up."),
+});
+
+export const LookupClientByApiKeyResponse = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  email: zod.string(),
+  currency: zod.string(),
+  locale: zod.string(),
+});
+
+/**
  * @summary Get a single client by id
  */
 export const GetClientParams = zod.object({

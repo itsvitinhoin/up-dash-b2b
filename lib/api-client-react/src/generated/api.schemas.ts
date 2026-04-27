@@ -80,6 +80,14 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
+export interface ClientLookupResult {
+  id: string;
+  name: string;
+  email: string;
+  currency: string;
+  locale: string;
+}
+
 export interface Client {
   id: string;
   name: string;
@@ -1244,6 +1252,13 @@ window of equal length for growth).
  */
   dateFrom?: string;
   dateTo?: string;
+};
+
+export type LookupClientByApiKeyParams = {
+  /**
+   * The client's integration API key to look up.
+   */
+  apiKey: string;
 };
 
 export type GetDashboardParams = {

@@ -21,6 +21,7 @@ import type {
   AuthResponse,
   AuthUser,
   Client,
+  ClientLookupResult,
   CreateClientRequest,
   CreateSavedViewParams,
   CreateSavedViewRequest,
@@ -62,6 +63,7 @@ import type {
   ListSavedViewsParams,
   LoginRequest,
   LogoutRequest,
+  LookupClientByApiKeyParams,
   MarkAllNotificationsReadParams,
   MarkNotificationReadParams,
   MarkNotificationReadRequest,
@@ -674,6 +676,106 @@ export const useCreateClient = <
 > => {
   return useMutation(getCreateClientMutationOptions(options));
 };
+
+/**
+ * @summary Look up a client by API key (admin only)
+ */
+export const getLookupClientByApiKeyUrl = (
+  params: LookupClientByApiKeyParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/clients/lookup?${stringifiedParams}`
+    : `/api/clients/lookup`;
+};
+
+export const lookupClientByApiKey = async (
+  params: LookupClientByApiKeyParams,
+  options?: RequestInit,
+): Promise<ClientLookupResult> => {
+  return customFetch<ClientLookupResult>(getLookupClientByApiKeyUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getLookupClientByApiKeyQueryKey = (
+  params?: LookupClientByApiKeyParams,
+) => {
+  return [`/api/clients/lookup`, ...(params ? [params] : [])] as const;
+};
+
+export const getLookupClientByApiKeyQueryOptions = <
+  TData = Awaited<ReturnType<typeof lookupClientByApiKey>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: LookupClientByApiKeyParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupClientByApiKey>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getLookupClientByApiKeyQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof lookupClientByApiKey>>
+  > = ({ signal }) =>
+    lookupClientByApiKey(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof lookupClientByApiKey>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type LookupClientByApiKeyQueryResult = NonNullable<
+  Awaited<ReturnType<typeof lookupClientByApiKey>>
+>;
+export type LookupClientByApiKeyQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Look up a client by API key (admin only)
+ */
+
+export function useLookupClientByApiKey<
+  TData = Awaited<ReturnType<typeof lookupClientByApiKey>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: LookupClientByApiKeyParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupClientByApiKey>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getLookupClientByApiKeyQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Get a single client by id

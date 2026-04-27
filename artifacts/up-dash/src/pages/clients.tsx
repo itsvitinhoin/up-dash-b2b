@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
-import { useListClients, useCreateClient } from "@workspace/api-client-react";
+import { useListClients, useCreateClient, lookupClientByApiKey } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -17,6 +17,8 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Building2,
+  CheckCircle2,
+  Loader2,
   Minus,
   Plus,
   Search,
@@ -102,6 +104,37 @@ export default function ClientsPage() {
   const [newEmail, setNewEmail] = useState("");
   const [newApiKey, setNewApiKey] = useState("");
   const [newCurrencyCode, setNewCurrencyCode] = useState("BRL");
+  const [isLookingUp, setIsLookingUp] = useState(false);
+  const [lookupMatch, setLookupMatch] = useState<string | null>(null);
+
+  const debouncedApiKey = useDebounce(newApiKey, 400);
+
+  useEffect(() => {
+    if (!debouncedApiKey) {
+      setLookupMatch(null);
+      return;
+    }
+    let cancelled = false;
+    setIsLookingUp(true);
+    lookupClientByApiKey({ apiKey: debouncedApiKey })
+      .then((data) => {
+        if (cancelled) return;
+        setNewName(data.name);
+        setNewEmail(data.email);
+        const matched = CURRENCY_OPTIONS.find((c) => c.code === data.currency);
+        if (matched) setNewCurrencyCode(matched.code);
+        setLookupMatch(data.name);
+      })
+      .catch(() => {
+        if (!cancelled) setLookupMatch(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLookingUp(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedApiKey]);
 
   const createMutation = useCreateClient();
 
@@ -143,6 +176,7 @@ export default function ClientsPage() {
           setNewEmail("");
           setNewApiKey("");
           setNewCurrencyCode("BRL");
+          setLookupMatch(null);
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
         },
       }
@@ -152,7 +186,16 @@ export default function ClientsPage() {
   return (
     <div className="space-y-6" data-testid="page-clients">
       <div className="flex justify-end">
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <Dialog open={isDialogOpen} onOpenChange={(open) => {
+          setIsDialogOpen(open);
+          if (!open) {
+            setNewName("");
+            setNewEmail("");
+            setNewApiKey("");
+            setNewCurrencyCode("BRL");
+            setLookupMatch(null);
+          }
+        }}>
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 h-4 w-4" /> New Client
@@ -190,13 +233,28 @@ export default function ClientsPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="apiKey">API Key (Integration)</Label>
-                  <Input 
-                    id="apiKey" 
-                    value={newApiKey} 
-                    onChange={(e) => setNewApiKey(e.target.value)} 
-                    placeholder="sk_live_..." 
-                    required 
-                  />
+                  <div className="relative">
+                    <Input
+                      id="apiKey"
+                      value={newApiKey}
+                      onChange={(e) => {
+                        setNewApiKey(e.target.value);
+                        setLookupMatch(null);
+                      }}
+                      placeholder="sk_..."
+                      required
+                      className={isLookingUp ? "pr-9" : ""}
+                    />
+                    {isLookingUp && (
+                      <Loader2 className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                  {lookupMatch && (
+                    <p className="flex items-center gap-1 text-xs text-emerald-400">
+                      <CheckCircle2 className="h-3 w-3 shrink-0" />
+                      Found: {lookupMatch} — fields pre-filled
+                    </p>
+                  )}
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="currency">Currency &amp; Locale</Label>

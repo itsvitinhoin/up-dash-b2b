@@ -182,6 +182,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/Client"
 
+  /clients/lookup:
+    get:
+      operationId: lookupClientByApiKey
+      tags: [clients]
+      summary: Look up a client by API key (admin only)
+      parameters:
+        - in: query
+          name: apiKey
+          required: true
+          schema:
+            type: string
+          description: The client's integration API key to look up.
+      responses:
+        "200":
+          description: Client found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientLookupResult"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /clients/{clientId}:
     get:
       operationId: getClient
@@ -1525,6 +1551,21 @@ components:
         user:
           $ref: "#/components/schemas/AuthUser"
       required: [accessToken, refreshToken, user]
+
+    ClientLookupResult:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        currency:
+          type: string
+        locale:
+          type: string
+      required: [id, name, email, currency, locale]
 
     Client:
       type: object

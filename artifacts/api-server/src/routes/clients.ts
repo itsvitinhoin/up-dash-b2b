@@ -268,6 +268,39 @@ router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
   res.status(201).json(GetClientResponse.parse(created));
 });
 
+router.get("/clients/lookup", requireAdmin, async (req, res): Promise<void> => {
+  const apiKey = typeof req.query.apiKey === "string" ? req.query.apiKey.trim() : "";
+  if (!apiKey) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: "apiKey query parameter is required",
+      status: 400,
+    });
+    return;
+  }
+  const [row] = await db
+    .select({
+      id: clientsTable.id,
+      name: clientsTable.name,
+      email: clientsTable.email,
+      currency: clientsTable.currency,
+      locale: clientsTable.locale,
+    })
+    .from(clientsTable)
+    .where(eq(clientsTable.apiKey, apiKey));
+  if (!row) {
+    res.status(404).json({
+      error: true,
+      code: "NOT_FOUND",
+      message: "No client found with that API key",
+      status: 404,
+    });
+    return;
+  }
+  res.json(row);
+});
+
 router.get("/clients/:clientId", async (req, res): Promise<void> => {
   const parsed = GetClientParams.safeParse(req.params);
   if (!parsed.success) {
