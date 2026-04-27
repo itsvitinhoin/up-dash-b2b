@@ -11,8 +11,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { format } from "date-fns";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
+import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
   useGetSellers,
   useGetInsight,
@@ -58,13 +60,16 @@ export default function SellersPage() {
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+  const { dateRange } = useDashboardFilters();
+  const dateFrom = format(dateRange.from, "yyyy-MM-dd");
+  const dateTo = format(dateRange.to, "yyyy-MM-dd");
 
   const { data, isLoading, isError, refetch } = useGetSellers(
     { clientId, limit },
     { query: queryOpts({ enabled }) },
   );
 
-  const insightParams = { clientId, screen: "sellers" as const };
+  const insightParams = { clientId, dateFrom, dateTo, screen: "sellers" as const };
   const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
     query: queryOpts({ enabled, staleTime: 3_600_000 }),
   });
