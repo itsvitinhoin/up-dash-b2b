@@ -15,7 +15,6 @@ export * from "./categoryShare";
 export * from "./categoryStockRow";
 export * from "./client";
 export * from "./clientImportError";
-export * from "./clientImportRequest";
 export * from "./clientImportResponse";
 export * from "./clientImportRow";
 export * from "./clientLookupResult";

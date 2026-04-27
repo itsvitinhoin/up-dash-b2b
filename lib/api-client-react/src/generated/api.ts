@@ -21,8 +21,8 @@ import type {
   AuthResponse,
   AuthUser,
   Client,
-  ClientImportRequest,
   ClientImportResponse,
+  ClientImportRow,
   ClientLookupResult,
   CreateClientRequest,
   CreateSavedViewParams,
@@ -787,14 +787,14 @@ export const getImportClientsUrl = () => {
 };
 
 export const importClients = async (
-  clientImportRequest: ClientImportRequest,
+  clientImportRow: ClientImportRow[],
   options?: RequestInit,
 ): Promise<ClientImportResponse> => {
   return customFetch<ClientImportResponse>(getImportClientsUrl(), {
     ...options,
     method: "POST",
     headers: { "Content-Type": "application/json", ...options?.headers },
-    body: JSON.stringify(clientImportRequest),
+    body: JSON.stringify(clientImportRow),
   });
 };
 
@@ -805,14 +805,14 @@ export const getImportClientsMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof importClients>>,
     TError,
-    { data: BodyType<ClientImportRequest> },
+    { data: BodyType<ClientImportRow[]> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof importClients>>,
   TError,
-  { data: BodyType<ClientImportRequest> },
+  { data: BodyType<ClientImportRow[]> },
   TContext
 > => {
   const mutationKey = ["importClients"];
@@ -826,7 +826,7 @@ export const getImportClientsMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof importClients>>,
-    { data: BodyType<ClientImportRequest> }
+    { data: BodyType<ClientImportRow[]> }
   > = (props) => {
     const { data } = props ?? {};
 
@@ -839,7 +839,7 @@ export const getImportClientsMutationOptions = <
 export type ImportClientsMutationResult = NonNullable<
   Awaited<ReturnType<typeof importClients>>
 >;
-export type ImportClientsMutationBody = BodyType<ClientImportRequest>;
+export type ImportClientsMutationBody = BodyType<ClientImportRow[]>;
 export type ImportClientsMutationError = ErrorType<ErrorResponse>;
 
 /**
@@ -852,14 +852,14 @@ export const useImportClients = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof importClients>>,
     TError,
-    { data: BodyType<ClientImportRequest> },
+    { data: BodyType<ClientImportRow[]> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof importClients>>,
   TError,
-  { data: BodyType<ClientImportRequest> },
+  { data: BodyType<ClientImportRow[]> },
   TContext
 > => {
   return useMutation(getImportClientsMutationOptions(options));

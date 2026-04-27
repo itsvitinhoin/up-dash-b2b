@@ -278,14 +278,12 @@ const ImportRowSchema = z.object({
 });
 
 router.post("/clients/import", requireAdmin, async (req, res): Promise<void> => {
-  const outerParsed = z
-    .object({ rows: z.array(z.unknown()).min(1).max(500) })
-    .safeParse(req.body);
-  if (!outerParsed.success) {
+  const bodyParsed = z.array(z.unknown()).min(1).max(500).safeParse(req.body);
+  if (!bodyParsed.success) {
     res.status(400).json({
       error: true,
       code: "VALIDATION_ERROR",
-      message: outerParsed.error.message,
+      message: bodyParsed.error.message,
       status: 400,
     });
     return;
@@ -293,7 +291,10 @@ router.post("/clients/import", requireAdmin, async (req, res): Promise<void> => 
 
   const adminId = req.user?.sub ?? null;
   const errors: Array<{ index: number; field: string; message: string }> = [];
+
+  // First pass: validate each row and collect the ones that pass.
   const validRows: Array<{
+    originalIndex: number;
     name: string;
     email: string;
     apiKey: string;
@@ -302,8 +303,8 @@ router.post("/clients/import", requireAdmin, async (req, res): Promise<void> => 
     adminId: string | null;
   }> = [];
 
-  for (let i = 0; i < outerParsed.data.rows.length; i++) {
-    const rowParsed = ImportRowSchema.safeParse(outerParsed.data.rows[i]);
+  for (let i = 0; i < bodyParsed.data.length; i++) {
+    const rowParsed = ImportRowSchema.safeParse(bodyParsed.data[i]);
     if (!rowParsed.success) {
       const first = rowParsed.error.errors[0];
       errors.push({
@@ -322,27 +323,40 @@ router.post("/clients/import", requireAdmin, async (req, res): Promise<void> => 
       errors.push({ index: i, field: "locale", message: "must be a BCP 47 tag" });
       continue;
     }
-    validRows.push({ ...rowParsed.data, adminId });
+    validRows.push({ originalIndex: i, ...rowParsed.data, adminId });
   }
 
+  // Second pass: check for existing apiKeys so we can report accurate row indices.
   let created = 0;
   if (validRows.length > 0) {
-    const inserted = await db
-      .insert(clientsTable)
-      .values(validRows)
-      .onConflictDoNothing()
-      .returning({ id: clientsTable.id });
-    created = inserted.length;
-    // Rows that silently conflicted (duplicate apiKey/email) count as skipped.
-    const conflicted = validRows.length - created;
-    if (conflicted > 0) {
-      for (let i = 0; i < conflicted; i++) {
-        errors.push({ index: -1, field: "apiKey", message: "duplicate key — row already exists" });
+    const keysToInsert = validRows.map((r) => r.apiKey);
+    const existing = await db
+      .select({ apiKey: clientsTable.apiKey })
+      .from(clientsTable)
+      .where(inArray(clientsTable.apiKey, keysToInsert));
+    const existingSet = new Set(existing.map((r) => r.apiKey));
+
+    const insertableRows = validRows.filter((r) => {
+      if (existingSet.has(r.apiKey)) {
+        errors.push({
+          index: r.originalIndex,
+          field: "apiKey",
+          message: "duplicate — a client with this API key already exists",
+        });
+        return false;
       }
+      return true;
+    });
+
+    if (insertableRows.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const dbRows = insertableRows.map(({ originalIndex: _i, ...rest }) => rest);
+      const inserted = await db.insert(clientsTable).values(dbRows).returning({ id: clientsTable.id });
+      created = inserted.length;
     }
   }
 
-  const skipped = outerParsed.data.rows.length - created;
+  const skipped = bodyParsed.data.length - created;
   res.json({ created, skipped, errors });
 });
 

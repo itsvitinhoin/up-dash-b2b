@@ -176,14 +176,6 @@ export interface ClientImportRow {
   locale?: string;
 }
 
-export interface ClientImportRequest {
-  /**
-   * @minItems 1
-   * @maxItems 500
-   */
-  rows: ClientImportRow[];
-}
-
 export interface ClientImportError {
   /** Zero-based row index in the submitted array. */
   index: number;

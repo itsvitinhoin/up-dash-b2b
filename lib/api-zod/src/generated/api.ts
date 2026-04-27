@@ -186,30 +186,22 @@ export const LookupClientByApiKeyResponse = zod.object({
 /**
  * @summary Bulk-import clients from a JSON array (admin only)
  */
-export const importClientsBodyRowsMax = 500;
-
-export const ImportClientsBody = zod.object({
-  rows: zod
-    .array(
-      zod
-        .object({
-          name: zod.string(),
-          email: zod.string().email(),
-          apiKey: zod.string(),
-          currency: zod
-            .string()
-            .optional()
-            .describe("ISO 4217 currency code (default BRL)"),
-          locale: zod
-            .string()
-            .optional()
-            .describe("BCP 47 locale (default pt-BR)"),
-        })
-        .describe("A single row in a bulk client import payload."),
-    )
-    .min(1)
-    .max(importClientsBodyRowsMax),
-});
+export const ImportClientsBodyItem = zod
+  .object({
+    name: zod.string(),
+    email: zod.string().email(),
+    apiKey: zod.string(),
+    currency: zod
+      .string()
+      .optional()
+      .describe("ISO 4217 currency code (default BRL)"),
+    locale: zod.string().optional().describe("BCP 47 locale (default pt-BR)"),
+  })
+  .describe("A single row in a bulk client import payload.");
+export const ImportClientsBody = zod
+  .array(ImportClientsBodyItem)
+  .min(1)
+  .max(500);
 
 export const ImportClientsResponse = zod.object({
   created: zod.number().describe("Number of rows successfully created."),

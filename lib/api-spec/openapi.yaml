@@ -218,7 +218,12 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ClientImportRequest"
+              type: array
+              items:
+                $ref: "#/components/schemas/ClientImportRow"
+              minItems: 1
+              maxItems: 500
+              description: Array of client rows to import (max 500).
       responses:
         "200":
           description: Import complete (partial success is also 200)
@@ -1725,17 +1730,6 @@ components:
           type: string
           description: BCP 47 locale (default pt-BR)
       required: [name, email, apiKey]
-
-    ClientImportRequest:
-      type: object
-      properties:
-        rows:
-          type: array
-          items:
-            $ref: "#/components/schemas/ClientImportRow"
-          minItems: 1
-          maxItems: 500
-      required: [rows]
 
     ClientImportError:
       type: object

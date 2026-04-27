@@ -209,15 +209,13 @@ export default function ClientsPage() {
   function handleImportConfirm() {
     importMutation.mutate(
       {
-        data: {
-          rows: validCsvRows.map((r) => ({
-            name: r.name,
-            email: r.email,
-            apiKey: r.apiKey,
-            ...(r.currency ? { currency: r.currency } : {}),
-            ...(r.locale ? { locale: r.locale } : {}),
-          })),
-        },
+        data: validCsvRows.map((r) => ({
+          name: r.name,
+          email: r.email,
+          apiKey: r.apiKey,
+          ...(r.currency ? { currency: r.currency } : {}),
+          ...(r.locale ? { locale: r.locale } : {}),
+        })),
       },
       {
         onSuccess(result) {
