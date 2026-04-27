@@ -1022,24 +1022,26 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     `Overall funnel conversion is ${overallConversion.toFixed(2)}% from first visit to purchase.`,
   );
 
-  // Average events per customer session before a PURCHASE event (raw SQL to avoid subquery alias issues)
+  // Average events per customer that occurred BEFORE their first purchase in the window
+  // (purchase-bounded: join to first-purchase timestamp, count only preceding events)
   const purchaseEventsRaw = await db.execute<{ avg_events: string }>(sql`
     SELECT COALESCE(AVG(cnt), 0)::float AS avg_events
     FROM (
-      SELECT customer_id, COUNT(*) AS cnt
-      FROM events
-      WHERE client_id = ${clientId}
-        AND created_at >= ${from}
-        AND created_at <= ${to}
-        AND customer_id IN (
-          SELECT DISTINCT customer_id
-          FROM events
-          WHERE client_id = ${clientId}
-            AND event_type = 'PURCHASE'
-            AND created_at >= ${from}
-            AND created_at <= ${to}
-        )
-      GROUP BY customer_id
+      SELECT e.customer_id, COUNT(*) AS cnt
+      FROM events e
+      JOIN (
+        SELECT customer_id, MIN(created_at) AS first_purchase_at
+        FROM orders
+        WHERE client_id = ${clientId}
+          AND created_at >= ${from}
+          AND created_at <= ${to}
+          AND status IN ('APPROVED','SHIPPED','DELIVERED')
+        GROUP BY customer_id
+      ) fp ON fp.customer_id = e.customer_id
+      WHERE e.client_id = ${clientId}
+        AND e.created_at >= ${from}
+        AND e.created_at < fp.first_purchase_at
+      GROUP BY e.customer_id
     ) sub
   `);
   const [purchaseEventsAgg] = (purchaseEventsRaw.rows ?? purchaseEventsRaw) as unknown as { avg_events: string }[];
@@ -3695,22 +3697,25 @@ router.get("/analytics/journey", async (req, res): Promise<void> => {
       ),
     );
 
+  // Count only events that occurred BEFORE each buyer's first purchase in the window
   const avgEvtRaw = await db.execute<{ avg_e: string }>(sql`
     SELECT COALESCE(AVG(cnt), 0)::float AS avg_e
     FROM (
-      SELECT customer_id, COUNT(*) AS cnt
-      FROM events
-      WHERE client_id = ${clientId}
-        AND created_at >= ${from}
-        AND created_at <= ${to}
-        AND customer_id IN (
-          SELECT customer_id FROM orders
-          WHERE client_id = ${clientId}
-            AND created_at >= ${from}
-            AND created_at <= ${to}
-            AND status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
-        )
-      GROUP BY customer_id
+      SELECT e.customer_id, COUNT(*) AS cnt
+      FROM events e
+      JOIN (
+        SELECT customer_id, MIN(created_at) AS first_purchase_at
+        FROM orders
+        WHERE client_id = ${clientId}
+          AND created_at >= ${from}
+          AND created_at <= ${to}
+          AND status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+        GROUP BY customer_id
+      ) fp ON fp.customer_id = e.customer_id
+      WHERE e.client_id = ${clientId}
+        AND e.created_at >= ${from}
+        AND e.created_at < fp.first_purchase_at
+      GROUP BY e.customer_id
     ) sub
   `);
   const [avgEvtsRow] = (avgEvtRaw.rows ?? avgEvtRaw) as unknown as { avg_e: string }[];
@@ -4019,45 +4024,48 @@ async function buildTopPaths(
   to: Date,
   topN: number,
 ): Promise<Array<{ steps: string[]; visitCount: number; conversionRate: number }>> {
-  // Get all events per customer (buyers) in order
-  const evtRows = await db
-    .select({
-      customerId: eventsTable.customerId,
-      eventType: eventsTable.eventType,
-    })
-    .from(eventsTable)
-    .where(
-      and(
-        eq(eventsTable.clientId, clientId),
-        gte(eventsTable.createdAt, from),
-        lte(eventsTable.createdAt, to),
-        inArray(
-          eventsTable.customerId,
-          db
-            .select({ id: eventsTable.customerId })
-            .from(eventsTable)
-            .where(
-              and(
-                eq(eventsTable.clientId, clientId),
-                eq(eventsTable.eventType, "PURCHASE"),
-                gte(eventsTable.createdAt, from),
-                lte(eventsTable.createdAt, to),
-              ),
-            ),
-        ),
-      ),
-    )
-    .orderBy(eventsTable.customerId, eventsTable.createdAt);
+  // Fetch purchase-bounded events: for each buyer, only events BEFORE their first purchase in the window.
+  // We include the purchase event itself as the terminal step.
+  const evtRaw = await db.execute<{ customer_id: string; event_type: string }>(sql`
+    SELECT e.customer_id, e.event_type
+    FROM events e
+    JOIN (
+      SELECT customer_id, MIN(created_at) AS first_purchase_at
+      FROM orders
+      WHERE client_id = ${clientId}
+        AND created_at >= ${from}
+        AND created_at <= ${to}
+        AND status IN ('APPROVED','SHIPPED','DELIVERED')
+      GROUP BY customer_id
+    ) fp ON fp.customer_id = e.customer_id
+    WHERE e.client_id = ${clientId}
+      AND e.created_at >= ${from}
+      AND e.created_at <= fp.first_purchase_at
+    ORDER BY e.customer_id, e.created_at
+  `);
 
-  // Group by customer, deduplicate consecutive events, build path string
+  const evtRows = (evtRaw.rows ?? evtRaw) as unknown as { customer_id: string; event_type: string }[];
+
+  // Total distinct visitors (all customers with any event in window) — denominator for conversion rate
+  const visitorRaw = await db.execute<{ cnt: string }>(sql`
+    SELECT COUNT(DISTINCT customer_id)::int AS cnt
+    FROM events
+    WHERE client_id = ${clientId}
+      AND created_at >= ${from}
+      AND created_at <= ${to}
+  `);
+  const [visRow] = (visitorRaw.rows ?? visitorRaw) as unknown as { cnt: string }[];
+  const totalVisitors = Number(visRow?.cnt) || 1;
+
+  // Build per-customer purchase-path, deduplicating consecutive identical events
   const customerPaths = new Map<string, string[]>();
   for (const row of evtRows) {
-    if (!row.customerId || !row.eventType) continue;
-    const path = customerPaths.get(row.customerId) ?? [];
-    if (path[path.length - 1] !== row.eventType) {
-      path.push(row.eventType);
+    if (!row.customer_id || !row.event_type) continue;
+    const path = customerPaths.get(row.customer_id) ?? [];
+    if (path[path.length - 1] !== row.event_type) {
+      path.push(row.event_type);
     }
-    customerPaths.set(row.customerId, path);
+    customerPaths.set(row.customer_id, path);
   }
 
   // Count path frequencies
@@ -4067,19 +4075,21 @@ async function buildTopPaths(
     pathCounts.set(key, (pathCounts.get(key) ?? 0) + 1);
   }
 
-  const totalBuyers = customerPaths.size;
+  // conversionRate = share of total visitors who took exactly this path to purchase
   return Array.from(pathCounts.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, topN)
     .map(([key, count]) => ({
       steps: key.split("|").map((s) => EVENT_LABEL[s] ?? s),
       visitCount: count,
-      conversionRate: totalBuyers > 0 ? (count / totalBuyers) * 100 : 0,
+      conversionRate: (count / totalVisitors) * 100,
     }));
 }
 
 /**
- * Build event flow graph nodes and edges from buyer event sequences.
+ * Build event flow graph nodes and edges from buyer conversion journeys.
+ * Scoped to purchase-bounded sequences: only events up to (and including) the
+ * buyer's first purchase in the selected date window.
  */
 async function buildEventFlowGraph(
   clientId: string,
@@ -4089,31 +4099,36 @@ async function buildEventFlowGraph(
   nodes: Array<{ id: string; label: string; count: number; layer: number }>;
   edges: Array<{ source: string; target: string; count: number }>;
 }> {
-  const evtRows = await db
-    .select({
-      customerId: eventsTable.customerId,
-      eventType: eventsTable.eventType,
-    })
-    .from(eventsTable)
-    .where(
-      and(
-        eq(eventsTable.clientId, clientId),
-        gte(eventsTable.createdAt, from),
-        lte(eventsTable.createdAt, to),
-      ),
-    )
-    .orderBy(eventsTable.customerId, eventsTable.createdAt);
+  const evtRaw = await db.execute<{ customer_id: string; event_type: string }>(sql`
+    SELECT e.customer_id, e.event_type
+    FROM events e
+    JOIN (
+      SELECT customer_id, MIN(created_at) AS first_purchase_at
+      FROM orders
+      WHERE client_id = ${clientId}
+        AND created_at >= ${from}
+        AND created_at <= ${to}
+        AND status IN ('APPROVED','SHIPPED','DELIVERED')
+      GROUP BY customer_id
+    ) fp ON fp.customer_id = e.customer_id
+    WHERE e.client_id = ${clientId}
+      AND e.created_at >= ${from}
+      AND e.created_at <= fp.first_purchase_at
+    ORDER BY e.customer_id, e.created_at
+  `);
+
+  const evtRows = (evtRaw.rows ?? evtRaw) as unknown as { customer_id: string; event_type: string }[];
 
   const nodeCounts = new Map<string, number>();
   const edgeCounts = new Map<string, number>();
 
-  // Accumulate counts per customer
+  // Accumulate purchase-bounded sequences per customer
   const customerSeqs = new Map<string, string[]>();
   for (const row of evtRows) {
-    if (!row.customerId || !row.eventType) continue;
-    const seq = customerSeqs.get(row.customerId) ?? [];
-    seq.push(row.eventType);
-    customerSeqs.set(row.customerId, seq);
+    if (!row.customer_id || !row.event_type) continue;
+    const seq = customerSeqs.get(row.customer_id) ?? [];
+    seq.push(row.event_type);
+    customerSeqs.set(row.customer_id, seq);
   }
 
   for (const seq of customerSeqs.values()) {

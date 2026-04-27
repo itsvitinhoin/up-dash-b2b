@@ -20,7 +20,9 @@ import {
 } from "@/components/ui/table";
 import {
   AlertCircle, RefreshCw, ChevronRight, Sparkles, X as XIcon, ChevronLeft, Lightbulb,
+  BarChart3, Users,
 } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
@@ -306,9 +308,7 @@ export default function RfmPage() {
                 {isLoading ? (
                   <Skeleton className="h-52 w-full" />
                 ) : composition.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    No segment history available for this period.
-                  </p>
+                  <EmptyState icon={BarChart3} title="No segment history" description="Segment composition data will appear once purchases are recorded in this period." />
                 ) : (
                   <ResponsiveContainer width="100%" height={220}>
                     <AreaChart data={composition} margin={{ left: 0, right: 8 }}>
@@ -437,8 +437,8 @@ export default function RfmPage() {
                         ))
                       ) : customers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center text-muted-foreground py-10 text-sm">
-                            No customers found for this filter.
+                          <TableCell colSpan={6} className="py-0">
+                            <EmptyState icon={Users} title="No customers found" description="Try clearing the segment filter or selecting a broader date range." className="border-0 rounded-none" />
                           </TableCell>
                         </TableRow>
                       ) : (

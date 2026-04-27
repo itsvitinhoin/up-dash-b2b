@@ -14,8 +14,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   AlertCircle, RefreshCw, Activity, Clock, Zap, Users, ArrowRight,
-  Lightbulb, Sparkles, X as XIcon,
+  Lightbulb, Sparkles, X as XIcon, Route,
 } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend,
 } from "recharts";
@@ -267,7 +268,7 @@ export default function JourneyPage() {
                   {isLoading ? (
                     Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)
                   ) : topPaths.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">No purchase paths recorded yet.</p>
+                    <EmptyState icon={Route} title="No purchase paths yet" description="Once customers complete purchases, their event sequences will appear here." />
                   ) : (
                     topPaths.map((path, i) => (
                       <div
@@ -327,7 +328,7 @@ export default function JourneyPage() {
                 {isLoading ? (
                   <Skeleton className="h-52 w-full" />
                 ) : comparisonData.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">No event data for this period.</p>
+                  <EmptyState icon={Activity} title="No event data" description="No visitor events were recorded in this date range." />
                 ) : (
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={comparisonData} margin={{ left: 0, right: 8 }}>
@@ -440,9 +441,12 @@ interface FlowEdge {
 function EventFlowDiagram({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEdge[] }) {
   if (nodes.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
-        No event data recorded for this period.
-      </div>
+      <EmptyState
+        icon={Activity}
+        title="No conversion journeys yet"
+        description="Purchase-bounded event flows will appear here once buyers are recorded in this period."
+        className="my-4"
+      />
     );
   }
 
