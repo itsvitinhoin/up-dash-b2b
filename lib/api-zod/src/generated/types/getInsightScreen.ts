@@ -16,4 +16,6 @@ export const GetInsightScreen = {
   products: "products",
   sellers: "sellers",
   stock: "stock",
+  journey: "journey",
+  rfm: "rfm",
 } as const;

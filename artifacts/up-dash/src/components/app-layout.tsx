@@ -30,6 +30,8 @@ import {
   HelpCircle,
   Megaphone,
   PackageSearch,
+  Route,
+  BarChart3,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -81,6 +83,8 @@ const pageMeta: Record<string, PageMeta> = {
   "/overview": { title: "Platform overview", subtitle: "Every brand on UP Dash, at a glance", hasDateRange: true, hasFilterBar: false },
   "/marketing": { title: "Marketing", subtitle: "Ad spend, ROAS, CPL, and creative performance", hasDateRange: true, hasFilterBar: false, requiresClient: true },
   "/stock": { title: "Stock Intelligence", subtitle: "Coverage, risk, and inventory health", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/journey": { title: "Journey Analytics", subtitle: "Event flow, top paths, and buyer behaviour", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/rfm": { title: "RFM Segmentation", subtitle: "Recency, frequency, and monetary analysis", hasDateRange: true, hasFilterBar: false, requiresClient: true },
 };
 
 // Sentinel value for the topbar picker when an admin selects the
@@ -164,6 +168,8 @@ export function AppLayout({ children }: AppLayoutProps) {
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Marketing", href: "/marketing", icon: Megaphone },
     { name: "Funnel", href: "/funnel", icon: Filter },
+    { name: "Journey", href: "/journey", icon: Route },
+    { name: "RFM", href: "/rfm", icon: BarChart3 },
     { name: "Customers", href: "/customers", icon: Users },
     { name: "Products", href: "/products", icon: Package },
     { name: "Sellers", href: "/sellers", icon: ShoppingBag },

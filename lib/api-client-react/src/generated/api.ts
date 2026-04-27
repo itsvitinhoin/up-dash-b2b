@@ -39,12 +39,14 @@ import type {
   GetFunnelParams,
   GetGeographyParams,
   GetInsightParams,
+  GetJourneyParams,
   GetMarketingParams,
   GetOrdersByDateParams,
   GetProductCustomersParams,
   GetProductDetailParams,
   GetProductsParams,
   GetProductsSummaryParams,
+  GetRfmParams,
   GetSellerCustomersParams,
   GetSellerDetailParams,
   GetSellerOrdersParams,
@@ -53,6 +55,7 @@ import type {
   GetStockResponse,
   HealthStatus,
   InsightResponse,
+  JourneyResponse,
   ListClientsParams,
   ListNotificationsParams,
   ListSavedViewsParams,
@@ -77,6 +80,7 @@ import type {
   RefreshRequest,
   RefreshResponse,
   RegenerateInsightParams,
+  RfmResponse,
   SavedView,
   SellerCustomersResponse,
   SellerDetailResponse,
@@ -2234,6 +2238,184 @@ export function useGetStock<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetStockQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Journey analytics — event-path KPIs, top paths, event flow graph, buyers vs non-buyers
+ */
+export const getGetJourneyUrl = (params?: GetJourneyParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/journey?${stringifiedParams}`
+    : `/api/analytics/journey`;
+};
+
+export const getJourney = async (
+  params?: GetJourneyParams,
+  options?: RequestInit,
+): Promise<JourneyResponse> => {
+  return customFetch<JourneyResponse>(getGetJourneyUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetJourneyQueryKey = (params?: GetJourneyParams) => {
+  return [`/api/analytics/journey`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetJourneyQueryOptions = <
+  TData = Awaited<ReturnType<typeof getJourney>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetJourneyParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getJourney>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetJourneyQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getJourney>>> = ({
+    signal,
+  }) => getJourney(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getJourney>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetJourneyQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getJourney>>
+>;
+export type GetJourneyQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Journey analytics — event-path KPIs, top paths, event flow graph, buyers vs non-buyers
+ */
+
+export function useGetJourney<
+  TData = Awaited<ReturnType<typeof getJourney>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetJourneyParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getJourney>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetJourneyQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary RFM segmentation — segment aggregates, composition timeseries, customer table
+ */
+export const getGetRfmUrl = (params?: GetRfmParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/rfm?${stringifiedParams}`
+    : `/api/analytics/rfm`;
+};
+
+export const getRfm = async (
+  params?: GetRfmParams,
+  options?: RequestInit,
+): Promise<RfmResponse> => {
+  return customFetch<RfmResponse>(getGetRfmUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetRfmQueryKey = (params?: GetRfmParams) => {
+  return [`/api/analytics/rfm`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetRfmQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRfm>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetRfmParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getRfm>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRfmQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRfm>>> = ({
+    signal,
+  }) => getRfm(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRfm>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRfmQueryResult = NonNullable<Awaited<ReturnType<typeof getRfm>>>;
+export type GetRfmQueryError = ErrorType<unknown>;
+
+/**
+ * @summary RFM segmentation — segment aggregates, composition timeseries, customer table
+ */
+
+export function useGetRfm<
+  TData = Awaited<ReturnType<typeof getRfm>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetRfmParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getRfm>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRfmQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

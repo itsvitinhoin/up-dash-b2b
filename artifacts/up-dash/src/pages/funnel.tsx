@@ -19,7 +19,11 @@ import {
   ShoppingCart,
   Sparkles,
   Activity,
+  Zap,
+  ArrowRight,
+  ChevronRight,
 } from "lucide-react";
+import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { formatPercentage, formatNumber } from "@/lib/formatters";
 import { exportRowsAsCsv } from "@/lib/csv-export";
@@ -180,7 +184,7 @@ export default function FunnelPage() {
                     Hover any stage below to see counts, conversion, and drop-off.
                   </p>
 
-                  <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <MiniStat
                       icon={Users}
                       label="Total visits"
@@ -204,6 +208,15 @@ export default function FunnelPage() {
                       format={(v) => `${v.toFixed(1)}%`}
                       tone="warn"
                       delay={0.19}
+                      reduced={reduced}
+                    />
+                    <MiniStat
+                      icon={Zap}
+                      label="Avg events before purchase"
+                      value={data.avgEventsBeforePurchase ?? 0}
+                      format={(v) => v.toFixed(1)}
+                      color="hsl(var(--chart-4))"
+                      delay={0.26}
                       reduced={reduced}
                     />
                   </div>
@@ -276,6 +289,69 @@ export default function FunnelPage() {
                     Not enough data to generate insights for this period.
                   </CardContent>
                 </Card>
+              )}
+
+              {/* Top paths mini-list */}
+              {data.topPaths && data.topPaths.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: reduced ? 0 : 0.35 }}
+                >
+                  <div className="rounded-lg border border-border/60 bg-card p-4">
+                    <p className="font-semibold text-sm flex items-center gap-1.5 mb-3">
+                      <ArrowRight className="h-3.5 w-3.5 text-primary" />
+                      Common paths to purchase
+                    </p>
+                    <div className="space-y-2">
+                      {data.topPaths.slice(0, 3).map((path, i) => (
+                        <div key={i} className="text-xs">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <span className="text-muted-foreground">#{i + 1}</span>
+                            <span className="font-mono text-muted-foreground">{path.conversionRate.toFixed(1)}%</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-0.5">
+                            {path.steps.map((step, si) => (
+                              <span key={si} className="flex items-center gap-0.5">
+                                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary font-medium">{step}</span>
+                                {si < path.steps.length - 1 && <ArrowRight className="h-2 w-2 text-muted-foreground" />}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <Link href="/journey">
+                      <button className="mt-3 text-[11px] text-primary flex items-center gap-1 hover:underline">
+                        Full journey analysis <ChevronRight className="h-3 w-3" />
+                      </button>
+                    </Link>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Suggested actions */}
+              {data.suggestedActions && data.suggestedActions.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: reduced ? 0 : 0.45 }}
+                >
+                  <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+                    <p className="font-semibold text-sm flex items-center gap-1.5 mb-3">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                      Suggested actions
+                    </p>
+                    <ul className="space-y-2">
+                      {data.suggestedActions.map((action, i) => (
+                        <li key={i} className="flex items-start gap-2 text-xs text-foreground/80 leading-relaxed">
+                          <span className="text-primary font-bold mt-0.5">→</span>
+                          {action}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </motion.div>
               )}
 
               {/* "How to read" helper */}

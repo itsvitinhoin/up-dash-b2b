@@ -309,10 +309,99 @@ export interface FunnelStep {
   dropOffRate: number;
 }
 
+export interface FunnelPath {
+  steps: string[];
+  visitCount: number;
+  conversionRate: number;
+}
+
 export interface FunnelResponse {
   steps: FunnelStep[];
   overallConversion: number;
   insights: string[];
+  avgEventsBeforePurchase: number;
+  topPaths: FunnelPath[];
+  suggestedActions: string[];
+}
+
+export interface JourneyKpis {
+  avgEventsBeforePurchase: number;
+  /** @nullable */
+  avgTimeToFirstPurchaseDays: number | null;
+  /** @nullable */
+  avgTimeBetweenPurchasesDays: number | null;
+  pctBuyersFromFirstSession: number;
+}
+
+export interface JourneyEventNode {
+  id: string;
+  label: string;
+  count: number;
+  layer: number;
+}
+
+export interface JourneyEventEdge {
+  source: string;
+  target: string;
+  count: number;
+}
+
+export interface JourneyEventCounts {
+  eventType: string;
+  count: number;
+}
+
+export interface JourneyAudience {
+  avgSessionDepth: number;
+  eventCounts: JourneyEventCounts[];
+}
+
+export interface JourneyResponse {
+  kpis: JourneyKpis;
+  topPaths: FunnelPath[];
+  eventNodes: JourneyEventNode[];
+  eventEdges: JourneyEventEdge[];
+  buyers: JourneyAudience;
+  nonBuyers: JourneyAudience;
+}
+
+export interface RfmSegmentSummary {
+  segment: string;
+  customerCount: number;
+  revenue: number;
+  avgTicket: number;
+  pct: number;
+}
+
+export interface RfmCompositionPoint {
+  month: string;
+  Champions: number;
+  Loyal: number;
+  Potential: number;
+  AtRisk: number;
+  Lost: number;
+}
+
+export interface RfmCustomerRow {
+  id: string;
+  /** @nullable */
+  name?: string | null;
+  email: string;
+  /** @nullable */
+  segment?: string | null;
+  /** @nullable */
+  recencyDays?: number | null;
+  frequency: number;
+  monetary: number;
+}
+
+export interface RfmResponse {
+  segments: RfmSegmentSummary[];
+  composition: RfmCompositionPoint[];
+  customers: RfmCustomerRow[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export interface Customer {
@@ -1264,6 +1353,43 @@ export const GetStockRisk = {
   Healthy: "Healthy",
 } as const;
 
+export type GetJourneyParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+export type GetRfmParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  limit?: number;
+  /**
+   * Filter by RFM segment name
+   */
+  segment?: string;
+  sortBy?: GetRfmSortBy;
+  sortDir?: GetRfmSortDir;
+};
+
+export type GetRfmSortBy = (typeof GetRfmSortBy)[keyof typeof GetRfmSortBy];
+
+export const GetRfmSortBy = {
+  name: "name",
+  segment: "segment",
+  recencyDays: "recencyDays",
+  frequency: "frequency",
+  monetary: "monetary",
+} as const;
+
+export type GetRfmSortDir = (typeof GetRfmSortDir)[keyof typeof GetRfmSortDir];
+
+export const GetRfmSortDir = {
+  asc: "asc",
+  desc: "desc",
+} as const;
+
 export type GetGeographyParams = {
   clientId?: string;
   dateFrom?: string;
@@ -1293,6 +1419,8 @@ export const GetInsightScreen = {
   products: "products",
   sellers: "sellers",
   stock: "stock",
+  journey: "journey",
+  rfm: "rfm",
 } as const;
 
 export type RegenerateInsightParams = {
@@ -1312,6 +1440,8 @@ export const RegenerateInsightScreen = {
   products: "products",
   sellers: "sellers",
   stock: "stock",
+  journey: "journey",
+  rfm: "rfm",
 } as const;
 
 export type GetAlertsParams = {

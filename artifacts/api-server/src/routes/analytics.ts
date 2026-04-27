@@ -50,6 +50,10 @@ import {
   GetSellerOrdersResponse,
   GetStockQueryParams,
   GetStockResponse,
+  GetJourneyQueryParams,
+  GetJourneyResponse,
+  GetRfmQueryParams,
+  GetRfmResponse,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
@@ -1018,7 +1022,36 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     `Overall funnel conversion is ${overallConversion.toFixed(2)}% from first visit to purchase.`,
   );
 
-  res.json(GetFunnelResponse.parse({ steps, overallConversion, insights }));
+  // Average events per customer session before a PURCHASE event (raw SQL to avoid subquery alias issues)
+  const purchaseEventsRaw = await db.execute<{ avg_events: string }>(sql`
+    SELECT COALESCE(AVG(cnt), 0)::float AS avg_events
+    FROM (
+      SELECT customer_id, COUNT(*) AS cnt
+      FROM events
+      WHERE client_id = ${clientId}
+        AND created_at >= ${from}
+        AND created_at <= ${to}
+        AND customer_id IN (
+          SELECT DISTINCT customer_id
+          FROM events
+          WHERE client_id = ${clientId}
+            AND event_type = 'PURCHASE'
+            AND created_at >= ${from}
+            AND created_at <= ${to}
+        )
+      GROUP BY customer_id
+    ) sub
+  `);
+  const [purchaseEventsAgg] = (purchaseEventsRaw.rows ?? purchaseEventsRaw) as unknown as { avg_events: string }[];
+  const avgEventsBeforePurchase = Number(purchaseEventsAgg?.avg_events) || 0;
+
+  // Top-3 event paths (sequences for buyers)
+  const topPaths = await buildTopPaths(clientId, from, to, 3);
+
+  // Suggested actions based on biggest drop-off step
+  const suggestedActions = buildFunnelSuggestedActions(worst, steps);
+
+  res.json(GetFunnelResponse.parse({ steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions }));
 });
 
 router.get("/analytics/customers", async (req, res): Promise<void> => {
@@ -3086,6 +3119,104 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
     return { ...payload, generatedAt: generatedAt2, cached: false };
   }
 
+  // Journey-specific insight
+  if (screen === "journey") {
+    const jCtx = await buildJourneyInsightContext(clientId, from, to);
+    const heuristic = {
+      headline: jCtx.avgEventsBeforePurchase > 0
+        ? `Buyers average ${jCtx.avgEventsBeforePurchase.toFixed(1)} events before purchasing`
+        : "No purchase journey data available for this period",
+      body: `Customers who converted touched an average of ${jCtx.avgEventsBeforePurchase.toFixed(1)} events before completing a purchase.${jCtx.avgTimeToFirstPurchaseDays > 0 ? ` Time from registration to first purchase averages ${jCtx.avgTimeToFirstPurchaseDays.toFixed(1)} days.` : ""}`,
+      bullets: [
+        `Avg events before purchase: ${jCtx.avgEventsBeforePurchase.toFixed(1)} — consider shortening the path to reduce drop-off`,
+        jCtx.avgTimeToFirstPurchaseDays > 0
+          ? `Avg time to first purchase: ${jCtx.avgTimeToFirstPurchaseDays.toFixed(1)} days — post-registration nurture can reduce this`
+          : "Enable first-purchase attribution to track activation time",
+        "Compare buyers vs non-buyers to identify the key events that differentiate converters",
+      ],
+    };
+    let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
+    const ai = getOpenAIClient();
+    if (ai && isAIConfigured()) {
+      try {
+        const prompt = `You are a senior UX/CRO analyst writing a weekly journey analytics insight for "${jCtx.brand}". Period: ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}.
+Avg events before purchase: ${jCtx.avgEventsBeforePurchase.toFixed(2)}
+Avg time to first purchase (days): ${jCtx.avgTimeToFirstPurchaseDays.toFixed(1)}
+Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 sentences>","bullets":["<actionable>","<actionable>","<actionable>"]}`;
+        const completion = await ai.chat.completions.create({
+          model: "gpt-5-nano",
+          max_completion_tokens: 500,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "You write concise, actionable B2B journey analytics insights for fashion brands. Always respond with the requested JSON shape only." },
+            { role: "user", content: prompt },
+          ],
+        });
+        const text = completion.choices[0]?.message?.content;
+        if (text) {
+          const parsed = JSON.parse(text) as { headline?: string; body?: string; bullets?: string[] };
+          if (typeof parsed.headline === "string" && typeof parsed.body === "string" && Array.isArray(parsed.bullets)) {
+            payload = { headline: parsed.headline.slice(0, 120), body: parsed.body.slice(0, 600), bullets: parsed.bullets.slice(0, 4).map((b) => String(b).slice(0, 160)), source: "ai" };
+          }
+        }
+      } catch (err) {
+        console.warn("[insight:journey] AI generation failed, using heuristic:", (err as Error).message);
+      }
+    }
+    const gAt = new Date().toISOString();
+    insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...payload, generatedAt: gAt } });
+    return { ...payload, generatedAt: gAt, cached: false };
+  }
+
+  // RFM-specific insight
+  if (screen === "rfm") {
+    const rfmCtx = await buildRfmInsightContext(clientId);
+    const { segMap, total } = rfmCtx;
+    const champions = segMap["Champions"] ?? { count: 0, revenue: 0 };
+    const atRisk = segMap["At Risk"] ?? { count: 0, revenue: 0 };
+    const lost = segMap["Lost"] ?? { count: 0, revenue: 0 };
+    const heuristic = {
+      headline: champions.count > 0
+        ? `Champions represent ${((champions.count / Math.max(1, total)) * 100).toFixed(1)}% of your customer base`
+        : "No RFM segments computed yet for this brand",
+      body: `Your customer base is segmented into ${total} customers. Champions (${champions.count}) drive the highest lifetime value. ${atRisk.count > 0 ? `${atRisk.count} customers are At Risk — re-engagement can recover their revenue.` : ""}${lost.count > 0 ? ` ${lost.count} customers are Lost — consider win-back campaigns.` : ""}`,
+      bullets: [
+        `Champions: ${champions.count} customers, R$${champions.revenue.toFixed(0)} total revenue`,
+        atRisk.count > 0 ? `At Risk: ${atRisk.count} customers — launch re-engagement campaigns` : "No At Risk customers right now — keep up retention efforts",
+        lost.count > 0 ? `Lost: ${lost.count} customers — consider win-back offers` : "No Lost customers detected",
+      ],
+    };
+    let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
+    const ai = getOpenAIClient();
+    if (ai && isAIConfigured()) {
+      try {
+        const segSummary = Object.entries(segMap).map(([s, v]) => `${s}: ${v.count} customers, R$${v.revenue.toFixed(0)}`).join(" | ");
+        const prompt = `You are a senior CRM analyst writing a weekly RFM segmentation insight for "${rfmCtx.brand}". Total customers: ${total}. Segments: ${segSummary}. Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 sentences>","bullets":["<actionable>","<actionable>","<actionable>"]}`;
+        const completion = await ai.chat.completions.create({
+          model: "gpt-5-nano",
+          max_completion_tokens: 500,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "You write concise, actionable B2B CRM/RFM insights for fashion brands. Always respond with the requested JSON shape only." },
+            { role: "user", content: prompt },
+          ],
+        });
+        const text = completion.choices[0]?.message?.content;
+        if (text) {
+          const parsed = JSON.parse(text) as { headline?: string; body?: string; bullets?: string[] };
+          if (typeof parsed.headline === "string" && typeof parsed.body === "string" && Array.isArray(parsed.bullets)) {
+            payload = { headline: parsed.headline.slice(0, 120), body: parsed.body.slice(0, 600), bullets: parsed.bullets.slice(0, 4).map((b) => String(b).slice(0, 160)), source: "ai" };
+          }
+        }
+      } catch (err) {
+        console.warn("[insight:rfm] AI generation failed, using heuristic:", (err as Error).message);
+      }
+    }
+    const gAt = new Date().toISOString();
+    insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...payload, generatedAt: gAt } });
+    return { ...payload, generatedAt: gAt, cached: false };
+  }
+
   const ctx = await buildInsightContext(clientId, from, to);
   const heuristic = buildHeuristic(ctx.kpis, ctx.topCategory, ctx.topSeller, ctx.trend);
 
@@ -3541,6 +3672,259 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
   }));
 });
 
+router.get("/analytics/journey", async (req, res): Promise<void> => {
+  const parsed = GetJourneyQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+
+  // 1. KPIs
+  const buyerCustomerIds = db
+    .select({ id: ordersTable.customerId })
+    .from(ordersTable)
+    .where(
+      and(
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, from),
+        lte(ordersTable.createdAt, to),
+        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+      ),
+    );
+
+  const avgEvtRaw = await db.execute<{ avg_e: string }>(sql`
+    SELECT COALESCE(AVG(cnt), 0)::float AS avg_e
+    FROM (
+      SELECT customer_id, COUNT(*) AS cnt
+      FROM events
+      WHERE client_id = ${clientId}
+        AND created_at >= ${from}
+        AND created_at <= ${to}
+        AND customer_id IN (
+          SELECT customer_id FROM orders
+          WHERE client_id = ${clientId}
+            AND created_at >= ${from}
+            AND created_at <= ${to}
+            AND status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+        )
+      GROUP BY customer_id
+    ) sub
+  `);
+  const [avgEvtsRow] = (avgEvtRaw.rows ?? avgEvtRaw) as unknown as { avg_e: string }[];
+  const avgEventsBeforePurchase = Number(avgEvtsRow?.avg_e) || 0;
+
+  // Avg time to first purchase (days) for customers who first purchased in window
+  const [ttfpRow] = await db
+    .select({ avg: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (first_purchase_at - created_at)) / 86400), 0)::float` })
+    .from(customersTable)
+    .where(
+      and(
+        eq(customersTable.clientId, clientId),
+        sql`${customersTable.firstPurchaseAt} IS NOT NULL`,
+        gte(customersTable.firstPurchaseAt, from),
+        lte(customersTable.firstPurchaseAt, to),
+      ),
+    );
+  const avgTimeToFirstPurchaseDays = Number(ttfpRow?.avg) || null;
+
+  // Avg time between purchases
+  const [tbpRow] = await db
+    .select({ avg: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (last_purchase_at - first_purchase_at)) / 86400), 0)::float` })
+    .from(customersTable)
+    .where(
+      and(
+        eq(customersTable.clientId, clientId),
+        sql`${customersTable.totalOrders} > 1`,
+        sql`${customersTable.firstPurchaseAt} IS NOT NULL`,
+        sql`${customersTable.lastPurchaseAt} IS NOT NULL`,
+      ),
+    );
+  const avgTimeBetweenPurchasesDays = Number(tbpRow?.avg) || null;
+
+  // % buyers that converted on first session (have a VISIT event the same day as their first purchase)
+  const fsRaw = await db.execute<{ total: string; same_day: string }>(sql`
+    SELECT
+      COUNT(DISTINCT o.customer_id)::int AS total,
+      COUNT(DISTINCT CASE WHEN e.customer_id IS NOT NULL THEN o.customer_id END)::int AS same_day
+    FROM (
+      SELECT customer_id, DATE(MIN(created_at)) AS first_order_date
+      FROM orders
+      WHERE client_id = ${clientId}
+        AND created_at >= ${from}
+        AND created_at <= ${to}
+        AND status IN ('APPROVED','SHIPPED','DELIVERED')
+      GROUP BY customer_id
+    ) o
+    LEFT JOIN (
+      SELECT customer_id, DATE(MIN(created_at)) AS visit_date
+      FROM events
+      WHERE client_id = ${clientId}
+        AND event_type = 'VISIT'
+      GROUP BY customer_id
+    ) e ON e.customer_id = o.customer_id AND e.visit_date = o.first_order_date
+  `);
+  const [fsRow] = (fsRaw.rows ?? fsRaw) as unknown as { total: string; same_day: string }[];
+
+  const totalBuyers = Number(fsRow?.total) || 0;
+  const sameDayBuyers = Number(fsRow?.same_day) || 0;
+  const pctBuyersFromFirstSession = totalBuyers > 0 ? (sameDayBuyers / totalBuyers) * 100 : 0;
+
+  // 2. Top paths to purchase (top 5)
+  const topPaths = await buildTopPaths(clientId, from, to, 5);
+
+  // 3. Event flow graph nodes + edges
+  const eventFlowData = await buildEventFlowGraph(clientId, from, to);
+
+  // 4. Buyers vs non-buyers comparison
+  const [buyersComparison, nonBuyersComparison] = await Promise.all([
+    buildAudienceEventProfile(clientId, from, to, true),
+    buildAudienceEventProfile(clientId, from, to, false),
+  ]);
+
+  const payload = GetJourneyResponse.parse({
+    kpis: {
+      avgEventsBeforePurchase,
+      avgTimeToFirstPurchaseDays,
+      avgTimeBetweenPurchasesDays,
+      pctBuyersFromFirstSession,
+    },
+    topPaths,
+    eventNodes: eventFlowData.nodes,
+    eventEdges: eventFlowData.edges,
+    buyers: buyersComparison,
+    nonBuyers: nonBuyersComparison,
+  });
+  res.json(payload);
+});
+
+router.get("/analytics/rfm", async (req, res): Promise<void> => {
+  const parsed = GetRfmQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { page, limit, segment, sortBy, sortDir } = parsed.data;
+  const offset = (page - 1) * limit;
+
+  // 1. Per-segment aggregates
+  const segmentAggs = await db
+    .select({
+      segment: sql<string>`COALESCE(${customersTable.rfmSegment}, 'Unsegmented')`,
+      customerCount: sql<number>`COUNT(*)::int`,
+      revenue: sql<number>`COALESCE(SUM(${customersTable.totalSpent}), 0)::float`,
+    })
+    .from(customersTable)
+    .where(eq(customersTable.clientId, clientId))
+    .groupBy(customersTable.rfmSegment);
+
+  const totalRevenue = segmentAggs.reduce((s, r) => s + Number(r.revenue), 0);
+  const totalCustomers = segmentAggs.reduce((s, r) => s + Number(r.customerCount), 0);
+
+  const SEGMENT_ORDER = ["Champions", "Loyal", "Potential", "At Risk", "Lost"];
+  const segments = SEGMENT_ORDER.map((seg) => {
+    const row = segmentAggs.find((r) => r.segment === seg);
+    const count = Number(row?.customerCount) || 0;
+    const rev = Number(row?.revenue) || 0;
+    return {
+      segment: seg,
+      customerCount: count,
+      revenue: rev,
+      avgTicket: count > 0 ? rev / count : 0,
+      pct: totalCustomers > 0 ? (count / totalCustomers) * 100 : 0,
+    };
+  });
+
+  // 2. Segment composition over time (monthly, last 12 months)
+  const compositionRows = await db
+    .select({
+      month: sql<string>`TO_CHAR(DATE_TRUNC('month', ${customersTable.lastPurchaseAt}), 'YYYY-MM')`,
+      segment: sql<string>`COALESCE(${customersTable.rfmSegment}, 'Unsegmented')`,
+      count: sql<number>`COUNT(*)::int`,
+    })
+    .from(customersTable)
+    .where(
+      and(
+        eq(customersTable.clientId, clientId),
+        sql`${customersTable.lastPurchaseAt} IS NOT NULL`,
+        gte(customersTable.lastPurchaseAt, new Date(new Date().setFullYear(new Date().getFullYear() - 1))),
+      ),
+    )
+    .groupBy(sql`DATE_TRUNC('month', ${customersTable.lastPurchaseAt})`, customersTable.rfmSegment)
+    .orderBy(sql`DATE_TRUNC('month', ${customersTable.lastPurchaseAt})`);
+
+  // Pivot to monthly composition
+  const monthMap = new Map<string, { Champions: number; Loyal: number; Potential: number; AtRisk: number; Lost: number }>();
+  for (const row of compositionRows) {
+    if (!row.month) continue;
+    const existing = monthMap.get(row.month) ?? { Champions: 0, Loyal: 0, Potential: 0, AtRisk: 0, Lost: 0 };
+    const seg = row.segment;
+    if (seg === "Champions") existing.Champions += Number(row.count);
+    else if (seg === "Loyal") existing.Loyal += Number(row.count);
+    else if (seg === "Potential") existing.Potential += Number(row.count);
+    else if (seg === "At Risk") existing.AtRisk += Number(row.count);
+    else if (seg === "Lost") existing.Lost += Number(row.count);
+    monthMap.set(row.month, existing);
+  }
+  const composition = Array.from(monthMap.entries()).map(([month, v]) => ({ month, ...v }));
+
+  // 3. Paginated customer table
+  const conditions: SQL[] = [eq(customersTable.clientId, clientId)];
+  if (segment) conditions.push(eq(customersTable.rfmSegment, segment));
+
+  const sortColMap: Record<string, SQL> = {
+    name: sql`${customersTable.name}`,
+    segment: sql`${customersTable.rfmSegment}`,
+    recencyDays: sql`EXTRACT(EPOCH FROM (NOW() - ${customersTable.lastPurchaseAt})) / 86400`,
+    frequency: sql`${customersTable.totalOrders}`,
+    monetary: sql`${customersTable.totalSpent}`,
+  };
+  const sortCol: SQL = sortColMap[sortBy] ?? sql`${customersTable.totalSpent}`;
+  const orderDir = sortDir === "asc" ? sql`ASC NULLS LAST` : sql`DESC NULLS LAST`;
+
+  const [customerRows, [countRow]] = await Promise.all([
+    db
+      .select({
+        id: customersTable.id,
+        name: customersTable.name,
+        email: customersTable.email,
+        segment: customersTable.rfmSegment,
+        recencyDays: sql<number | null>`CASE WHEN ${customersTable.lastPurchaseAt} IS NOT NULL THEN ROUND(EXTRACT(EPOCH FROM (NOW() - ${customersTable.lastPurchaseAt})) / 86400)::int ELSE NULL END`,
+        frequency: customersTable.totalOrders,
+        monetary: customersTable.totalSpent,
+      })
+      .from(customersTable)
+      .where(and(...conditions))
+      .orderBy(sql`${sortCol} ${orderDir}`)
+      .limit(limit)
+      .offset(offset),
+    db.select({ count: sql<number>`COUNT(*)::int` }).from(customersTable).where(and(...conditions)),
+  ]);
+
+  const total = Number(countRow?.count) || 0;
+  const payload = GetRfmResponse.parse({
+    segments,
+    composition,
+    customers: customerRows.map((r) => ({
+      id: r.id,
+      name: r.name ?? null,
+      email: r.email,
+      segment: r.segment ?? null,
+      recencyDays: r.recencyDays != null ? Number(r.recencyDays) : null,
+      frequency: Number(r.frequency) || 0,
+      monetary: Number(r.monetary) || 0,
+    })),
+    total,
+    page,
+    limit,
+  });
+  res.json(payload);
+});
+
 router.get("/analytics/insight", async (req, res): Promise<void> => {
   const parsed = GetInsightQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
   if (!parsed.success) {
@@ -3576,6 +3960,340 @@ router.post("/analytics/insight", async (req, res): Promise<void> => {
 });
 
 export default router;
+
+// ── Journey Analytics Helpers ────────────────────────────────────────────────
+
+const EVENT_LABEL: Record<string, string> = {
+  VISIT: "Visit",
+  REGISTRATION: "Registration",
+  APPROVED_REGISTRATION: "Approved",
+  PRODUCT_VIEW: "Product View",
+  ADD_TO_CART: "Add to Cart",
+  CHECKOUT_STARTED: "Checkout",
+  PURCHASE: "Purchase",
+};
+
+// Ordered event funnel layers for the flow graph
+const EVENT_LAYER: Record<string, number> = {
+  VISIT: 0,
+  REGISTRATION: 1,
+  APPROVED_REGISTRATION: 2,
+  PRODUCT_VIEW: 3,
+  ADD_TO_CART: 4,
+  CHECKOUT_STARTED: 5,
+  PURCHASE: 6,
+};
+
+/**
+ * Build the top-N most common event paths that end in a PURCHASE.
+ * Simplified: uses the ordered sequence of distinct event types per customer.
+ */
+async function buildTopPaths(
+  clientId: string,
+  from: Date,
+  to: Date,
+  topN: number,
+): Promise<Array<{ steps: string[]; visitCount: number; conversionRate: number }>> {
+  // Get all events per customer (buyers) in order
+  const evtRows = await db
+    .select({
+      customerId: eventsTable.customerId,
+      eventType: eventsTable.eventType,
+    })
+    .from(eventsTable)
+    .where(
+      and(
+        eq(eventsTable.clientId, clientId),
+        gte(eventsTable.createdAt, from),
+        lte(eventsTable.createdAt, to),
+        inArray(
+          eventsTable.customerId,
+          db
+            .select({ id: eventsTable.customerId })
+            .from(eventsTable)
+            .where(
+              and(
+                eq(eventsTable.clientId, clientId),
+                eq(eventsTable.eventType, "PURCHASE"),
+                gte(eventsTable.createdAt, from),
+                lte(eventsTable.createdAt, to),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(eventsTable.customerId, eventsTable.createdAt);
+
+  // Group by customer, deduplicate consecutive events, build path string
+  const customerPaths = new Map<string, string[]>();
+  for (const row of evtRows) {
+    if (!row.customerId || !row.eventType) continue;
+    const path = customerPaths.get(row.customerId) ?? [];
+    if (path[path.length - 1] !== row.eventType) {
+      path.push(row.eventType);
+    }
+    customerPaths.set(row.customerId, path);
+  }
+
+  // Count path frequencies
+  const pathCounts = new Map<string, number>();
+  for (const path of customerPaths.values()) {
+    const key = path.join("|");
+    pathCounts.set(key, (pathCounts.get(key) ?? 0) + 1);
+  }
+
+  const totalBuyers = customerPaths.size;
+  return Array.from(pathCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN)
+    .map(([key, count]) => ({
+      steps: key.split("|").map((s) => EVENT_LABEL[s] ?? s),
+      visitCount: count,
+      conversionRate: totalBuyers > 0 ? (count / totalBuyers) * 100 : 0,
+    }));
+}
+
+/**
+ * Build event flow graph nodes and edges from buyer event sequences.
+ */
+async function buildEventFlowGraph(
+  clientId: string,
+  from: Date,
+  to: Date,
+): Promise<{
+  nodes: Array<{ id: string; label: string; count: number; layer: number }>;
+  edges: Array<{ source: string; target: string; count: number }>;
+}> {
+  const evtRows = await db
+    .select({
+      customerId: eventsTable.customerId,
+      eventType: eventsTable.eventType,
+    })
+    .from(eventsTable)
+    .where(
+      and(
+        eq(eventsTable.clientId, clientId),
+        gte(eventsTable.createdAt, from),
+        lte(eventsTable.createdAt, to),
+      ),
+    )
+    .orderBy(eventsTable.customerId, eventsTable.createdAt);
+
+  const nodeCounts = new Map<string, number>();
+  const edgeCounts = new Map<string, number>();
+
+  // Accumulate counts per customer
+  const customerSeqs = new Map<string, string[]>();
+  for (const row of evtRows) {
+    if (!row.customerId || !row.eventType) continue;
+    const seq = customerSeqs.get(row.customerId) ?? [];
+    seq.push(row.eventType);
+    customerSeqs.set(row.customerId, seq);
+  }
+
+  for (const seq of customerSeqs.values()) {
+    for (let i = 0; i < seq.length; i++) {
+      const et = seq[i];
+      nodeCounts.set(et, (nodeCounts.get(et) ?? 0) + 1);
+      if (i < seq.length - 1) {
+        const edgeKey = `${seq[i]}→${seq[i + 1]}`;
+        edgeCounts.set(edgeKey, (edgeCounts.get(edgeKey) ?? 0) + 1);
+      }
+    }
+  }
+
+  const nodes = Array.from(nodeCounts.entries()).map(([et, count]) => ({
+    id: et,
+    label: EVENT_LABEL[et] ?? et,
+    count,
+    layer: EVENT_LAYER[et] ?? 99,
+  }));
+
+  const edges = Array.from(edgeCounts.entries()).map(([key, count]) => {
+    const [source, target] = key.split("→");
+    return { source, target, count };
+  });
+
+  return { nodes, edges };
+}
+
+/**
+ * Build avg session depth and event-type breakdown for buyers or non-buyers.
+ */
+async function buildAudienceEventProfile(
+  clientId: string,
+  from: Date,
+  to: Date,
+  isBuyer: boolean,
+): Promise<{ avgSessionDepth: number; eventCounts: Array<{ eventType: string; count: number }> }> {
+  const buyerIds = db
+    .select({ id: ordersTable.customerId })
+    .from(ordersTable)
+    .where(
+      and(
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, from),
+        lte(ordersTable.createdAt, to),
+        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+      ),
+    );
+
+  const inOrNotIn = isBuyer
+    ? inArray(eventsTable.customerId, buyerIds)
+    : sql`${eventsTable.customerId} NOT IN (${buyerIds})`;
+
+  const customerFilter = isBuyer
+    ? sql`customer_id IN (SELECT customer_id FROM orders WHERE client_id = ${clientId} AND created_at >= ${from} AND created_at <= ${to} AND status IN ('APPROVED','SHIPPED','DELIVERED'))`
+    : sql`customer_id NOT IN (SELECT customer_id FROM orders WHERE client_id = ${clientId} AND created_at >= ${from} AND created_at <= ${to} AND status IN ('APPROVED','SHIPPED','DELIVERED'))`;
+
+  const depthRaw = await db.execute<{ avg_d: string }>(sql`
+    SELECT COALESCE(AVG(cnt), 0)::float AS avg_d
+    FROM (
+      SELECT customer_id, COUNT(*) AS cnt
+      FROM events
+      WHERE client_id = ${clientId}
+        AND created_at >= ${from}
+        AND created_at <= ${to}
+        AND ${customerFilter}
+      GROUP BY customer_id
+    ) sub
+  `);
+  const [depthRow] = (depthRaw.rows ?? depthRaw) as unknown as { avg_d: string }[];
+
+  const eventRows = await db
+    .select({
+      eventType: eventsTable.eventType,
+      count: sql<number>`COUNT(*)::int`,
+    })
+    .from(eventsTable)
+    .where(
+      and(
+        eq(eventsTable.clientId, clientId),
+        gte(eventsTable.createdAt, from),
+        lte(eventsTable.createdAt, to),
+        inOrNotIn,
+      ),
+    )
+    .groupBy(eventsTable.eventType)
+    .orderBy(sql`COUNT(*) DESC`);
+
+  return {
+    avgSessionDepth: Number(depthRow?.avg_d) || 0,
+    eventCounts: eventRows.map((r) => ({ eventType: r.eventType, count: Number(r.count) })),
+  };
+}
+
+/**
+ * Build suggested-actions list keyed off the worst drop-off step in the funnel.
+ */
+function buildFunnelSuggestedActions(
+  worst: { idx: number; drop: number },
+  steps: Array<{ step: string; label: string; dropOffRate: number }>,
+): string[] {
+  const STEP_ACTIONS: Record<string, string[]> = {
+    REGISTRATION: [
+      "Simplify the registration form — fewer required fields can lift signups significantly.",
+      "Add social login options to reduce friction at registration.",
+      "A/B test the registration CTA copy and placement.",
+    ],
+    APPROVED_REGISTRATION: [
+      "Review approval criteria — if the approval rate is below 50%, consider loosening them.",
+      "Send an immediate approval-notification email/SMS to keep momentum.",
+      "Set up an automated follow-up sequence for pending applications.",
+    ],
+    ADD_TO_CART: [
+      "Add urgency signals (limited stock badges, countdown timers) to product pages.",
+      "Improve product page visuals and descriptions to drive cart adds.",
+      "Introduce a 'Recently Viewed' or 'Recommended' section to surface relevant products.",
+    ],
+    CHECKOUT_STARTED: [
+      "Reduce the number of checkout steps — a single-page checkout converts better.",
+      "Enable guest checkout to remove the login barrier.",
+      "Show trust signals (SSL badge, return policy) prominently at checkout.",
+    ],
+    PURCHASE: [
+      "Investigate payment failures — high drop-off here often signals payment method gaps.",
+      "Offer Buy-Now-Pay-Later (BNPL) options if not already available.",
+      "Add an order-review step with a clear CTA to reduce last-second abandonment.",
+    ],
+  };
+
+  const worstStep = worst.idx > 0 ? steps[worst.idx]?.step : null;
+  const specific = worstStep ? (STEP_ACTIONS[worstStep] ?? []) : [];
+  const generic = [
+    "Invest in re-engagement campaigns targeting customers who dropped off mid-funnel.",
+    "Review mobile UX — mobile sessions often have higher drop-off rates.",
+  ];
+  return [...specific.slice(0, 2), ...generic].slice(0, 3);
+}
+
+// ── Journey / RFM AI Insight Helpers ────────────────────────────────────────
+
+async function buildJourneyInsightContext(clientId: string, from: Date, to: Date) {
+  const [kpiRow] = await db
+    .select({
+      avgTTFP: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (first_purchase_at - created_at)) / 86400), 0)::float`,
+    })
+    .from(customersTable)
+    .where(
+      and(
+        eq(customersTable.clientId, clientId),
+        sql`${customersTable.firstPurchaseAt} IS NOT NULL`,
+        gte(customersTable.firstPurchaseAt, from),
+        lte(customersTable.firstPurchaseAt, to),
+      ),
+    );
+
+  const buyerEvtRaw = await db.execute<{ avg_be: string }>(sql`
+    SELECT COALESCE(AVG(cnt), 0)::float AS avg_be
+    FROM (
+      SELECT customer_id, COUNT(*) AS cnt
+      FROM events
+      WHERE client_id = ${clientId}
+        AND created_at >= ${from}
+        AND created_at <= ${to}
+        AND customer_id IN (
+          SELECT customer_id FROM orders
+          WHERE client_id = ${clientId}
+            AND created_at >= ${from}
+            AND created_at <= ${to}
+            AND status IN ('APPROVED','SHIPPED','DELIVERED')
+        )
+      GROUP BY customer_id
+    ) sub
+  `);
+  const [buyerEvtRow] = (buyerEvtRaw.rows ?? buyerEvtRaw) as unknown as { avg_be: string }[];
+
+  const [brand] = await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId));
+
+  return {
+    avgEventsBeforePurchase: Number(buyerEvtRow?.avg_be) || 0,
+    avgTimeToFirstPurchaseDays: Number(kpiRow?.avgTTFP) || 0,
+    brand: brand?.name ?? "the brand",
+  };
+}
+
+async function buildRfmInsightContext(clientId: string) {
+  const segRows = await db
+    .select({
+      segment: sql<string>`COALESCE(${customersTable.rfmSegment}, 'Unsegmented')`,
+      count: sql<number>`COUNT(*)::int`,
+      revenue: sql<number>`COALESCE(SUM(${customersTable.totalSpent}), 0)::float`,
+    })
+    .from(customersTable)
+    .where(eq(customersTable.clientId, clientId))
+    .groupBy(customersTable.rfmSegment);
+
+  const total = segRows.reduce((s, r) => s + Number(r.count), 0);
+  const [brand] = await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId));
+
+  const segMap: Record<string, { count: number; revenue: number }> = {};
+  for (const r of segRows) {
+    segMap[r.segment] = { count: Number(r.count), revenue: Number(r.revenue) };
+  }
+
+  return { segMap, total, brand: brand?.name ?? "the brand" };
+}
 
 // ── Marketing Performance ────────────────────────────────────────────────────
 // Paid channels we attribute revenue and leads to.

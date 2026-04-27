@@ -771,6 +771,89 @@ paths:
               schema:
                 $ref: "#/components/schemas/GetStockResponse"
 
+  /analytics/journey:
+    get:
+      operationId: getJourney
+      tags: [analytics]
+      summary: Journey analytics — event-path KPIs, top paths, event flow graph, buyers vs non-buyers
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Journey analytics payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JourneyResponse"
+
+  /analytics/rfm:
+    get:
+      operationId: getRfm
+      tags: [analytics]
+      summary: RFM segmentation — segment aggregates, composition timeseries, customer table
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 25
+        - in: query
+          name: segment
+          schema:
+            type: string
+          description: Filter by RFM segment name
+        - in: query
+          name: sortBy
+          schema:
+            type: string
+            enum: [name, segment, recencyDays, frequency, monetary]
+            default: monetary
+        - in: query
+          name: sortDir
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: RFM segmentation payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RfmResponse"
+
   /analytics/geography:
     get:
       operationId: getGeography
@@ -852,7 +935,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing, customers, products, sellers, stock]
+            enum: [dashboard, marketing, customers, products, sellers, stock, journey, rfm]
             default: dashboard
       responses:
         "200":
@@ -884,7 +967,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing, customers, products, sellers, stock]
+            enum: [dashboard, marketing, customers, products, sellers, stock, journey, rfm]
             default: dashboard
       responses:
         "200":
@@ -1661,6 +1744,19 @@ components:
           type: number
       required: [step, label, count, conversionRate, dropOffRate]
 
+    FunnelPath:
+      type: object
+      properties:
+        steps:
+          type: array
+          items:
+            type: string
+        visitCount:
+          type: integer
+        conversionRate:
+          type: number
+      required: [steps, visitCount, conversionRate]
+
     FunnelResponse:
       type: object
       properties:
@@ -1674,7 +1770,171 @@ components:
           type: array
           items:
             type: string
-      required: [steps, overallConversion, insights]
+        avgEventsBeforePurchase:
+          type: number
+        topPaths:
+          type: array
+          items:
+            $ref: "#/components/schemas/FunnelPath"
+        suggestedActions:
+          type: array
+          items:
+            type: string
+      required: [steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions]
+
+    JourneyKpis:
+      type: object
+      properties:
+        avgEventsBeforePurchase:
+          type: number
+        avgTimeToFirstPurchaseDays:
+          type: ["number", "null"]
+        avgTimeBetweenPurchasesDays:
+          type: ["number", "null"]
+        pctBuyersFromFirstSession:
+          type: number
+      required: [avgEventsBeforePurchase, avgTimeToFirstPurchaseDays, avgTimeBetweenPurchasesDays, pctBuyersFromFirstSession]
+
+    JourneyEventNode:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+        layer:
+          type: integer
+      required: [id, label, count, layer]
+
+    JourneyEventEdge:
+      type: object
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        count:
+          type: integer
+      required: [source, target, count]
+
+    JourneyEventCounts:
+      type: object
+      properties:
+        eventType:
+          type: string
+        count:
+          type: integer
+      required: [eventType, count]
+
+    JourneyAudience:
+      type: object
+      properties:
+        avgSessionDepth:
+          type: number
+        eventCounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/JourneyEventCounts"
+      required: [avgSessionDepth, eventCounts]
+
+    JourneyResponse:
+      type: object
+      properties:
+        kpis:
+          $ref: "#/components/schemas/JourneyKpis"
+        topPaths:
+          type: array
+          items:
+            $ref: "#/components/schemas/FunnelPath"
+        eventNodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/JourneyEventNode"
+        eventEdges:
+          type: array
+          items:
+            $ref: "#/components/schemas/JourneyEventEdge"
+        buyers:
+          $ref: "#/components/schemas/JourneyAudience"
+        nonBuyers:
+          $ref: "#/components/schemas/JourneyAudience"
+      required: [kpis, topPaths, eventNodes, eventEdges, buyers, nonBuyers]
+
+    RfmSegmentSummary:
+      type: object
+      properties:
+        segment:
+          type: string
+        customerCount:
+          type: integer
+        revenue:
+          type: number
+        avgTicket:
+          type: number
+        pct:
+          type: number
+      required: [segment, customerCount, revenue, avgTicket, pct]
+
+    RfmCompositionPoint:
+      type: object
+      properties:
+        month:
+          type: string
+        Champions:
+          type: integer
+        Loyal:
+          type: integer
+        Potential:
+          type: integer
+        AtRisk:
+          type: integer
+        Lost:
+          type: integer
+      required: [month, Champions, Loyal, Potential, AtRisk, Lost]
+
+    RfmCustomerRow:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: ["string", "null"]
+        email:
+          type: string
+        segment:
+          type: ["string", "null"]
+        recencyDays:
+          type: ["integer", "null"]
+        frequency:
+          type: integer
+        monetary:
+          type: number
+      required: [id, email, frequency, monetary]
+
+    RfmResponse:
+      type: object
+      properties:
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/RfmSegmentSummary"
+        composition:
+          type: array
+          items:
+            $ref: "#/components/schemas/RfmCompositionPoint"
+        customers:
+          type: array
+          items:
+            $ref: "#/components/schemas/RfmCustomerRow"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+      required: [segments, composition, customers, total, page, limit]
 
     Customer:
       type: object

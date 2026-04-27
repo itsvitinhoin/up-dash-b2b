@@ -426,6 +426,15 @@ export const GetFunnelResponse = zod.object({
   ),
   overallConversion: zod.number(),
   insights: zod.array(zod.string()),
+  avgEventsBeforePurchase: zod.number(),
+  topPaths: zod.array(
+    zod.object({
+      steps: zod.array(zod.string()),
+      visitCount: zod.number(),
+      conversionRate: zod.number(),
+    }),
+  ),
+  suggestedActions: zod.array(zod.string()),
 });
 
 /**
@@ -1190,6 +1199,124 @@ export const GetStockResponse = zod.object({
 });
 
 /**
+ * @summary Journey analytics — event-path KPIs, top paths, event flow graph, buyers vs non-buyers
+ */
+export const GetJourneyQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+});
+
+export const GetJourneyResponse = zod.object({
+  kpis: zod.object({
+    avgEventsBeforePurchase: zod.number(),
+    avgTimeToFirstPurchaseDays: zod.number().nullable(),
+    avgTimeBetweenPurchasesDays: zod.number().nullable(),
+    pctBuyersFromFirstSession: zod.number(),
+  }),
+  topPaths: zod.array(
+    zod.object({
+      steps: zod.array(zod.string()),
+      visitCount: zod.number(),
+      conversionRate: zod.number(),
+    }),
+  ),
+  eventNodes: zod.array(
+    zod.object({
+      id: zod.string(),
+      label: zod.string(),
+      count: zod.number(),
+      layer: zod.number(),
+    }),
+  ),
+  eventEdges: zod.array(
+    zod.object({
+      source: zod.string(),
+      target: zod.string(),
+      count: zod.number(),
+    }),
+  ),
+  buyers: zod.object({
+    avgSessionDepth: zod.number(),
+    eventCounts: zod.array(
+      zod.object({
+        eventType: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+  }),
+  nonBuyers: zod.object({
+    avgSessionDepth: zod.number(),
+    eventCounts: zod.array(
+      zod.object({
+        eventType: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+  }),
+});
+
+/**
+ * @summary RFM segmentation — segment aggregates, composition timeseries, customer table
+ */
+export const getRfmQueryPageDefault = 1;
+export const getRfmQueryLimitDefault = 25;
+export const getRfmQuerySortByDefault = `monetary`;
+export const getRfmQuerySortDirDefault = `desc`;
+
+export const GetRfmQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+  page: zod.coerce.number().default(getRfmQueryPageDefault),
+  limit: zod.coerce.number().default(getRfmQueryLimitDefault),
+  segment: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by RFM segment name"),
+  sortBy: zod
+    .enum(["name", "segment", "recencyDays", "frequency", "monetary"])
+    .default(getRfmQuerySortByDefault),
+  sortDir: zod.enum(["asc", "desc"]).default(getRfmQuerySortDirDefault),
+});
+
+export const GetRfmResponse = zod.object({
+  segments: zod.array(
+    zod.object({
+      segment: zod.string(),
+      customerCount: zod.number(),
+      revenue: zod.number(),
+      avgTicket: zod.number(),
+      pct: zod.number(),
+    }),
+  ),
+  composition: zod.array(
+    zod.object({
+      month: zod.string(),
+      Champions: zod.number(),
+      Loyal: zod.number(),
+      Potential: zod.number(),
+      AtRisk: zod.number(),
+      Lost: zod.number(),
+    }),
+  ),
+  customers: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string().nullish(),
+      email: zod.string(),
+      segment: zod.string().nullish(),
+      recencyDays: zod.number().nullish(),
+      frequency: zod.number(),
+      monetary: zod.number(),
+    }),
+  ),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+});
+
+/**
  * @summary Geographic breakdown by state and city
  */
 export const GetGeographyQueryParams = zod.object({
@@ -1265,6 +1392,8 @@ export const GetInsightQueryParams = zod.object({
       "products",
       "sellers",
       "stock",
+      "journey",
+      "rfm",
     ])
     .default(getInsightQueryScreenDefault),
 });
@@ -1295,6 +1424,8 @@ export const RegenerateInsightQueryParams = zod.object({
       "products",
       "sellers",
       "stock",
+      "journey",
+      "rfm",
     ])
     .default(regenerateInsightQueryScreenDefault),
 });
