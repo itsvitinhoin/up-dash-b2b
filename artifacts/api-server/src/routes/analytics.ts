@@ -41,6 +41,7 @@ import {
   GetCustomerDetailResponse,
   GetProductDetailQueryParams,
   GetProductCustomersQueryParams,
+  GetProductsSummaryQueryParams,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
@@ -1527,13 +1528,16 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
 });
 
 router.get("/analytics/products/summary", async (req, res): Promise<void> => {
+  const parsed = GetProductsSummaryQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
   const clientId = requireClient(req, res);
   if (!clientId) return;
 
-  const dateTo = req.query.dateTo ? new Date(req.query.dateTo as string) : new Date();
-  const dateFrom = req.query.dateFrom
-    ? new Date(req.query.dateFrom as string)
-    : new Date(dateTo.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const dateTo = parsed.data.dateTo ?? new Date();
+  const dateFrom = parsed.data.dateFrom ?? new Date(dateTo.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   const periodMs = dateTo.getTime() - dateFrom.getTime();
   const periodDays = Math.max(1, Math.round(periodMs / (24 * 60 * 60 * 1000)));
@@ -1589,11 +1593,16 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
 });
 
 router.get("/analytics/products/:productId/customers", async (req, res): Promise<void> => {
+  const qParsed = GetProductCustomersQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!qParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: qParsed.error.message, status: 400 });
+    return;
+  }
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { productId } = req.params;
-  const page = Math.max(1, parseInt((req.query.page as string) ?? "1", 10));
-  const limit = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20", 10)));
+  const page = Math.max(1, qParsed.data.page ?? 1);
+  const limit = Math.min(50, Math.max(1, qParsed.data.limit ?? 20));
   const offset = (page - 1) * limit;
 
   const product = await db
@@ -1655,12 +1664,17 @@ router.get("/analytics/products/:productId/customers", async (req, res): Promise
 });
 
 router.get("/analytics/products/:productId", async (req, res): Promise<void> => {
+  const qParsed = GetProductDetailQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!qParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: qParsed.error.message, status: 400 });
+    return;
+  }
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { productId } = req.params;
 
-  const dateFrom = req.query.dateFrom ? new Date(req.query.dateFrom as string) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-  const dateTo = req.query.dateTo ? new Date(req.query.dateTo as string) : new Date();
+  const dateFrom = qParsed.data.dateFrom ?? new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const dateTo = qParsed.data.dateTo ?? new Date();
 
   const [productRows] = await Promise.all([
     db

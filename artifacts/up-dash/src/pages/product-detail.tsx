@@ -16,6 +16,7 @@ import {
   TrendingUp,
   ShoppingCart,
   ChevronRight,
+  BarChart2,
 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
@@ -89,6 +90,7 @@ function BreakdownChart({ data, title }: {
   if (!data.length) {
     return (
       <EmptyState
+        icon={BarChart2}
         title="No data available"
         description="No breakdown data for this period."
         className="h-40 border-0 bg-transparent"
@@ -167,12 +169,22 @@ export default function ProductDetailPage() {
   const product = data?.product;
   const kpis = data?.kpis;
 
-  const mergedChart = (data?.revenueOverTime ?? []).map((d, i) => {
-    const prevEntry = data?.prevRevenueOverTime?.[i];
+  const currentSeries = data?.revenueOverTime ?? [];
+  const prevSeries = data?.prevRevenueOverTime ?? [];
+  const firstPrevMs = prevSeries.length ? new Date(prevSeries[0].date).getTime() : 0;
+  const prevOffsetMap = new Map<number, number>(
+    prevSeries.map((d) => [
+      Math.round((new Date(d.date).getTime() - firstPrevMs) / 86_400_000),
+      d.revenue,
+    ]),
+  );
+  const firstCurrentMs = currentSeries.length ? new Date(currentSeries[0].date).getTime() : 0;
+  const mergedChart = currentSeries.map((d) => {
+    const offset = Math.round((new Date(d.date).getTime() - firstCurrentMs) / 86_400_000);
     return {
       date: d.date,
       revenue: d.revenue,
-      prevRevenue: prevEntry?.revenue,
+      prevRevenue: prevOffsetMap.get(offset),
     };
   });
 
