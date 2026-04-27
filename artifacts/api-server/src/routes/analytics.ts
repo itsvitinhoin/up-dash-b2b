@@ -3172,7 +3172,7 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
 
   // RFM-specific insight
   if (screen === "rfm") {
-    const rfmCtx = await buildRfmInsightContext(clientId);
+    const rfmCtx = await buildRfmInsightContext(clientId, from, to);
     const { segMap, total } = rfmCtx;
     const champions = segMap["Champions"] ?? { count: 0, revenue: 0 };
     const atRisk = segMap["At Risk"] ?? { count: 0, revenue: 0 };
@@ -4335,7 +4335,20 @@ async function buildJourneyInsightContext(clientId: string, from: Date, to: Date
   };
 }
 
-async function buildRfmInsightContext(clientId: string) {
+async function buildRfmInsightContext(clientId: string, from: Date, to: Date) {
+  // Scope to customers who had at least one purchase in the selected period
+  const periodBuyerIds = db
+    .select({ id: ordersTable.customerId })
+    .from(ordersTable)
+    .where(
+      and(
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, from),
+        lte(ordersTable.createdAt, to),
+        sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`,
+      ),
+    );
+
   const segRows = await db
     .select({
       segment: sql<string>`COALESCE(${customersTable.rfmSegment}, 'Unsegmented')`,
@@ -4343,7 +4356,12 @@ async function buildRfmInsightContext(clientId: string) {
       revenue: sql<number>`COALESCE(SUM(${customersTable.totalSpent}), 0)::float`,
     })
     .from(customersTable)
-    .where(eq(customersTable.clientId, clientId))
+    .where(
+      and(
+        eq(customersTable.clientId, clientId),
+        inArray(customersTable.id, periodBuyerIds),
+      ),
+    )
     .groupBy(customersTable.rfmSegment);
 
   const total = segRows.reduce((s, r) => s + Number(r.count), 0);

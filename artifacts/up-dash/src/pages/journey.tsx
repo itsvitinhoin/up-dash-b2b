@@ -355,7 +355,7 @@ export default function JourneyPage() {
                   <div className="mt-4 grid grid-cols-2 gap-4 border-t border-border/40 pt-4">
                     <div>
                       <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                        Buyer acquisition channels
+                        Buyer UTM sources
                       </p>
                       <div className="space-y-1.5">
                         {(buyers?.topUtmSources ?? []).slice(0, 4).map((u) => (
@@ -372,7 +372,7 @@ export default function JourneyPage() {
                     </div>
                     <div>
                       <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                        Non-buyer acquisition channels
+                        Non-buyer UTM sources
                       </p>
                       <div className="space-y-1.5">
                         {(nonBuyers?.topUtmSources ?? []).slice(0, 4).map((u) => (
