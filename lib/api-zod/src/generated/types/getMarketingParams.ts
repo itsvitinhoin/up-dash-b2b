@@ -20,8 +20,15 @@ export type GetMarketingParams = {
    */
   creativesPageSize?: number;
   /**
-   * Filter marketing analytics to this UTM source.
+   * Filter marketing analytics to this UTM source (maps to creative platform).
    */
   utmSource?: string;
+  /**
+   * Filter marketing analytics to this UTM medium (applied to customer registration filters).
+   */
   utmMedium?: string;
+  /**
+   * Filter to creatives whose name contains this string (case-insensitive).
+   */
+  creative?: string;
 };

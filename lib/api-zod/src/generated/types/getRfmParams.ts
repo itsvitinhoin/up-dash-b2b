@@ -25,4 +25,16 @@ export type GetRfmParams = {
    */
   utmSource?: string;
   utmMedium?: string;
+  /**
+   * Restrict RFM analysis to customers from this state.
+   */
+  state?: string;
+  /**
+   * Restrict RFM analysis to customers from this city.
+   */
+  city?: string;
+  /**
+   * Restrict RFM analysis to customers who purchased this product (name or SKU match).
+   */
+  product?: string;
 };

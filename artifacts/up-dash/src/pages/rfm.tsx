@@ -126,6 +126,9 @@ export default function RfmPage() {
       sortDir,
       utmSource: filters.utmSource || undefined,
       utmMedium: filters.utmMedium || undefined,
+      state: filters.state || undefined,
+      city: filters.city || undefined,
+      product: filters.product || undefined,
     },
     {
       query: queryOpts({ enabled, placeholderData: (prev) => prev }),

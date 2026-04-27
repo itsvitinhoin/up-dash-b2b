@@ -3475,6 +3475,8 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
   };
   const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
   const utmMed = (parsed.data as Record<string, unknown>).utmMedium as string | undefined;
+  const stateFilt = (parsed.data as Record<string, unknown>).state as string | undefined;
+  const cityFilt = (parsed.data as Record<string, unknown>).city as string | undefined;
 
   // ── 1. Fetch all products for this client ──────────────────────────────
   const products = await db
@@ -3516,15 +3518,18 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
 
   let productIds = products.map((p) => p.id);
 
-  // ── UTM filter: restrict to products purchased by UTM-source customers ──
-  if (utmSrc && productIds.length > 0) {
+  // ── Customer filter: restrict to products purchased by matching customers ──
+  const anyCustomerFilter = utmSrc || utmMed || stateFilt || cityFilt;
+  if (anyCustomerFilter && productIds.length > 0) {
     const utmConditions: SQL[] = [
       inArray(orderItemsTable.productId, productIds),
       eq(ordersTable.clientId, clientId),
       sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`,
-      sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`,
     ];
+    if (utmSrc) utmConditions.push(sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`);
     if (utmMed) utmConditions.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`);
+    if (stateFilt) utmConditions.push(sql`lower(${customersTable.state}) = lower(${stateFilt})`);
+    if (cityFilt) utmConditions.push(sql`lower(${customersTable.city}) = lower(${cityFilt})`);
     const utmPurchasedRows = await db
       .selectDistinct({ productId: orderItemsTable.productId })
       .from(orderItemsTable)
@@ -3852,21 +3857,34 @@ router.get("/analytics/journey", async (req, res): Promise<void> => {
   if (!clientId) return;
   const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
   const utmMed = (parsed.data as Record<string, unknown>).utmMedium as string | undefined;
+  const stateFilt = (parsed.data as Record<string, unknown>).state as string | undefined;
+  const cityFilt = (parsed.data as Record<string, unknown>).city as string | undefined;
+  const productFilt = (parsed.data as Record<string, unknown>).product as string | undefined;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
 
-  // UTM customer subquery condition — appended to raw SQL WHERE clauses when active
-  // utmRawCond: unqualified column, for single-table contexts (e.g. FROM orders / FROM events with no JOIN)
-  // utmRawCondEvt: qualified as e.customer_id, for contexts with JOIN that make it ambiguous
-  const utmRawCond = utmSrc
-    ? sql` AND customer_id IN (SELECT id FROM customers WHERE client_id = ${clientId} AND lower(utm_source) = lower(${utmSrc})${utmMed ? sql` AND lower(utm_medium) = lower(${utmMed})` : sql``})`
+  // Combined customer subquery used in raw SQL contexts
+  // utmRawCond: unqualified column for single-table context (FROM orders / FROM events, no JOIN)
+  // utmRawCondEvt: qualified e.customer_id for events-joined contexts
+  const anyCustomerFilter = utmSrc || utmMed || stateFilt || cityFilt || productFilt;
+  const _customerSubConds = sql`client_id = ${clientId}${
+    utmSrc ? sql` AND lower(utm_source) = lower(${utmSrc})` : sql``
+  }${utmMed ? sql` AND lower(utm_medium) = lower(${utmMed})` : sql``
+  }${stateFilt ? sql` AND lower(state) = lower(${stateFilt})` : sql``
+  }${cityFilt ? sql` AND lower(city) = lower(${cityFilt})` : sql``
+  }${productFilt ? sql` AND id IN (SELECT DISTINCT o.customer_id FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN products p ON p.id = oi.product_id WHERE o.client_id = ${clientId} AND (lower(p.name) LIKE lower(${"%" + productFilt + "%"}) OR lower(p.sku) LIKE lower(${"%" + productFilt + "%"})))` : sql``}`;
+  const utmRawCond = anyCustomerFilter
+    ? sql` AND customer_id IN (SELECT id FROM customers WHERE ${_customerSubConds})`
     : sql``;
-  const utmRawCondEvt = utmSrc
-    ? sql` AND e.customer_id IN (SELECT id FROM customers WHERE client_id = ${clientId} AND lower(utm_source) = lower(${utmSrc})${utmMed ? sql` AND lower(utm_medium) = lower(${utmMed})` : sql``})`
+  const utmRawCondEvt = anyCustomerFilter
+    ? sql` AND e.customer_id IN (SELECT id FROM customers WHERE ${_customerSubConds})`
     : sql``;
-  // ORM conditions for customers table
+  // ORM conditions for queries that join to customersTable
   const utmCustomerOrm: SQL[] = [];
   if (utmSrc) utmCustomerOrm.push(sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`);
   if (utmMed) utmCustomerOrm.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`);
+  if (stateFilt) utmCustomerOrm.push(sql`lower(${customersTable.state}) = lower(${stateFilt})`);
+  if (cityFilt) utmCustomerOrm.push(sql`lower(${customersTable.city}) = lower(${cityFilt})`);
+  if (productFilt) utmCustomerOrm.push(sql`${customersTable.id} IN (SELECT DISTINCT o.customer_id FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN products p ON p.id = oi.product_id WHERE o.client_id = ${clientId} AND (lower(p.name) LIKE lower(${"%" + productFilt + "%"}) OR lower(p.sku) LIKE lower(${"%" + productFilt + "%"})))`);
 
   // 1. KPIs
   const buyerCustomerIds = db
@@ -4004,13 +4022,19 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
   const { page, limit, segment, sortBy, sortDir } = parsed.data;
   const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
   const utmMed = (parsed.data as Record<string, unknown>).utmMedium as string | undefined;
+  const stateFilt = (parsed.data as Record<string, unknown>).state as string | undefined;
+  const cityFilt = (parsed.data as Record<string, unknown>).city as string | undefined;
+  const productFilt = (parsed.data as Record<string, unknown>).product as string | undefined;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const offset = (page - 1) * limit;
 
-  // UTM conditions applied to the customers table when source/medium filter is active
+  // Customer-level ORM conditions for all active filters
   const utmCustomerConds: SQL[] = [];
   if (utmSrc) utmCustomerConds.push(sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`);
   if (utmMed) utmCustomerConds.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`);
+  if (stateFilt) utmCustomerConds.push(sql`lower(${customersTable.state}) = lower(${stateFilt})`);
+  if (cityFilt) utmCustomerConds.push(sql`lower(${customersTable.city}) = lower(${cityFilt})`);
+  if (productFilt) utmCustomerConds.push(sql`${customersTable.id} IN (SELECT DISTINCT o.customer_id FROM orders o JOIN order_items oi ON oi.order_id = o.id JOIN products p ON p.id = oi.product_id WHERE o.client_id = ${clientId} AND (lower(p.name) LIKE lower(${"%" + productFilt + "%"}) OR lower(p.sku) LIKE lower(${"%" + productFilt + "%"})))`);
 
   // Customers who had at least one purchase in the selected date window
   const activeBuyerIds = db
@@ -5115,6 +5139,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const creativesPage = (parsed.data as Record<string, unknown>).creativesPage as number | undefined ?? 1;
   const creativesPageSize = (parsed.data as Record<string, unknown>).creativesPageSize as number | undefined ?? 20;
   const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
+  const utmMed = (parsed.data as Record<string, unknown>).utmMedium as string | undefined;
+  const creativeFilt = (parsed.data as Record<string, unknown>).creative as string | undefined;
 
   // Prev period of same length
   const periodMs = to.getTime() - from.getTime();
@@ -5128,10 +5154,12 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     .where(eq(creativesTable.clientId, clientId))
     .orderBy(desc(creativesTable.spend));
 
-  // When utmSource is set, restrict to creatives whose platform matches (e.g. "instagram", "google")
-  const allCreatives = utmSrc
-    ? rawCreatives.filter((c) => (c.platform ?? "").toLowerCase() === utmSrc.toLowerCase())
-    : rawCreatives;
+  // Apply client-side filters: utmSource → platform match, creative → name contains
+  const allCreatives = rawCreatives.filter((c) => {
+    if (utmSrc && (c.platform ?? "").toLowerCase() !== utmSrc.toLowerCase()) return false;
+    if (creativeFilt && !c.name.toLowerCase().includes(creativeFilt.toLowerCase())) return false;
+    return true;
+  });
 
   // Only creatives active (overlapping) in the current window
   const creatives = allCreatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
@@ -5160,7 +5188,10 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
         gte(eventsTable.createdAt, from),
         lte(eventsTable.createdAt, to),
         sql`${eventsTable.eventType} = 'REGISTRATION'`,
-        sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
+        utmSrc
+          ? sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`
+          : sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
+        ...(utmMed ? [sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`] : []),
       ),
     )
     .groupBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`)

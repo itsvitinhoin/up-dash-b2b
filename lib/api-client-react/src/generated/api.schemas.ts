@@ -1447,6 +1447,14 @@ export type GetStockParams = {
    */
   utmSource?: string;
   utmMedium?: string;
+  /**
+   * Restrict stock data to products purchased by customers from this state.
+   */
+  state?: string;
+  /**
+   * Restrict stock data to products purchased by customers from this city.
+   */
+  city?: string;
 };
 
 export type GetStockSort = (typeof GetStockSort)[keyof typeof GetStockSort];
@@ -1488,6 +1496,18 @@ export type GetJourneyParams = {
    */
   utmSource?: string;
   utmMedium?: string;
+  /**
+   * Restrict journey data to customers from this state.
+   */
+  state?: string;
+  /**
+   * Restrict journey data to customers from this city.
+   */
+  city?: string;
+  /**
+   * Restrict journey data to customers who purchased this product (name or SKU match).
+   */
+  product?: string;
 };
 
 export type GetRfmParams = {
@@ -1507,6 +1527,18 @@ export type GetRfmParams = {
    */
   utmSource?: string;
   utmMedium?: string;
+  /**
+   * Restrict RFM analysis to customers from this state.
+   */
+  state?: string;
+  /**
+   * Restrict RFM analysis to customers from this city.
+   */
+  city?: string;
+  /**
+   * Restrict RFM analysis to customers who purchased this product (name or SKU match).
+   */
+  product?: string;
 };
 
 export type GetRfmSortBy = (typeof GetRfmSortBy)[keyof typeof GetRfmSortBy];
@@ -1653,10 +1685,17 @@ export type GetMarketingParams = {
    */
   creativesPageSize?: number;
   /**
-   * Filter marketing analytics to this UTM source.
+   * Filter marketing analytics to this UTM source (maps to creative platform).
    */
   utmSource?: string;
+  /**
+   * Filter marketing analytics to this UTM medium (applied to customer registration filters).
+   */
   utmMedium?: string;
+  /**
+   * Filter to creatives whose name contains this string (case-insensitive).
+   */
+  creative?: string;
 };
 
 export type ListNotificationsParams = {

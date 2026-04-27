@@ -34,4 +34,12 @@ export type GetStockParams = {
    */
   utmSource?: string;
   utmMedium?: string;
+  /**
+   * Restrict stock data to products purchased by customers from this state.
+   */
+  state?: string;
+  /**
+   * Restrict stock data to products purchased by customers from this city.
+   */
+  city?: string;
 };

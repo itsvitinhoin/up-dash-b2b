@@ -239,6 +239,8 @@ export default function StockIntelligencePage() {
     risk: riskFilter !== "all" ? (riskFilter as "Stockout" | "Overstock" | "Healthy") : undefined,
     utmSource: filters.utmSource || undefined,
     utmMedium: filters.utmMedium || undefined,
+    state: filters.state || undefined,
+    city: filters.city || undefined,
   };
 
   const { data, isLoading, isError } = useGetStock(stockParams, {

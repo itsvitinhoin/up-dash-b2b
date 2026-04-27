@@ -86,6 +86,9 @@ export default function JourneyPage() {
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
       utmSource: filters.utmSource || undefined,
       utmMedium: filters.utmMedium || undefined,
+      state: filters.state || undefined,
+      city: filters.city || undefined,
+      product: filters.product || undefined,
     },
     {
       query: queryOpts({ enabled }),

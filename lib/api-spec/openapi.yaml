@@ -830,6 +830,16 @@ paths:
           name: utmMedium
           schema:
             type: string
+        - in: query
+          name: state
+          schema:
+            type: string
+          description: Restrict stock data to products purchased by customers from this state.
+        - in: query
+          name: city
+          schema:
+            type: string
+          description: Restrict stock data to products purchased by customers from this city.
       responses:
         "200":
           description: Stock intelligence payload
@@ -867,6 +877,21 @@ paths:
           name: utmMedium
           schema:
             type: string
+        - in: query
+          name: state
+          schema:
+            type: string
+          description: Restrict journey data to customers from this state.
+        - in: query
+          name: city
+          schema:
+            type: string
+          description: Restrict journey data to customers from this city.
+        - in: query
+          name: product
+          schema:
+            type: string
+          description: Restrict journey data to customers who purchased this product (name or SKU match).
       responses:
         "200":
           description: Journey analytics payload
@@ -931,6 +956,21 @@ paths:
           name: utmMedium
           schema:
             type: string
+        - in: query
+          name: state
+          schema:
+            type: string
+          description: Restrict RFM analysis to customers from this state.
+        - in: query
+          name: city
+          schema:
+            type: string
+          description: Restrict RFM analysis to customers from this city.
+        - in: query
+          name: product
+          schema:
+            type: string
+          description: Restrict RFM analysis to customers who purchased this product (name or SKU match).
       responses:
         "200":
           description: RFM segmentation payload
@@ -1232,11 +1272,17 @@ paths:
           name: utmSource
           schema:
             type: string
-          description: Filter marketing analytics to this UTM source.
+          description: Filter marketing analytics to this UTM source (maps to creative platform).
         - in: query
           name: utmMedium
           schema:
             type: string
+          description: Filter marketing analytics to this UTM medium (applied to customer registration filters).
+        - in: query
+          name: creative
+          schema:
+            type: string
+          description: Filter to creatives whose name contains this string (case-insensitive).
       responses:
         "200":
           description: Marketing performance payload

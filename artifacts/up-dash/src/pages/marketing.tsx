@@ -438,6 +438,7 @@ export default function MarketingPage() {
       creativesPageSize: CREATIVES_PAGE_SIZE,
       utmSource: filters.utmSource || undefined,
       utmMedium: filters.utmMedium || undefined,
+      creative: filters.creative || undefined,
     },
     { query: queryOpts({ enabled }) },
   );

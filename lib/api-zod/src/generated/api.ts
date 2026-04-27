@@ -1087,6 +1087,18 @@ export const GetStockQueryParams = zod.object({
       "Restrict stock analysis to products ordered by customers from this UTM source.",
     ),
   utmMedium: zod.coerce.string().optional(),
+  state: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict stock data to products purchased by customers from this state.",
+    ),
+  city: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict stock data to products purchased by customers from this city.",
+    ),
 });
 
 export const GetStockResponse = zod.object({
@@ -1267,6 +1279,20 @@ export const GetJourneyQueryParams = zod.object({
     .optional()
     .describe("Restrict journey data to customers from this UTM source."),
   utmMedium: zod.coerce.string().optional(),
+  state: zod.coerce
+    .string()
+    .optional()
+    .describe("Restrict journey data to customers from this state."),
+  city: zod.coerce
+    .string()
+    .optional()
+    .describe("Restrict journey data to customers from this city."),
+  product: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict journey data to customers who purchased this product (name or SKU match).",
+    ),
 });
 
 export const GetJourneyResponse = zod.object({
@@ -1357,6 +1383,20 @@ export const GetRfmQueryParams = zod.object({
     .optional()
     .describe("Restrict RFM analysis to customers from this UTM source."),
   utmMedium: zod.coerce.string().optional(),
+  state: zod.coerce
+    .string()
+    .optional()
+    .describe("Restrict RFM analysis to customers from this state."),
+  city: zod.coerce
+    .string()
+    .optional()
+    .describe("Restrict RFM analysis to customers from this city."),
+  product: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict RFM analysis to customers who purchased this product (name or SKU match).",
+    ),
 });
 
 export const GetRfmResponse = zod.object({
@@ -1881,8 +1921,21 @@ export const GetMarketingQueryParams = zod.object({
   utmSource: zod.coerce
     .string()
     .optional()
-    .describe("Filter marketing analytics to this UTM source."),
-  utmMedium: zod.coerce.string().optional(),
+    .describe(
+      "Filter marketing analytics to this UTM source (maps to creative platform).",
+    ),
+  utmMedium: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter marketing analytics to this UTM medium (applied to customer registration filters).",
+    ),
+  creative: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter to creatives whose name contains this string (case-insensitive).",
+    ),
 });
 
 export const GetMarketingResponse = zod.object({

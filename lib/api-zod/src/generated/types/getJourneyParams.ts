@@ -15,4 +15,16 @@ export type GetJourneyParams = {
    */
   utmSource?: string;
   utmMedium?: string;
+  /**
+   * Restrict journey data to customers from this state.
+   */
+  state?: string;
+  /**
+   * Restrict journey data to customers from this city.
+   */
+  city?: string;
+  /**
+   * Restrict journey data to customers who purchased this product (name or SKU match).
+   */
+  product?: string;
 };
