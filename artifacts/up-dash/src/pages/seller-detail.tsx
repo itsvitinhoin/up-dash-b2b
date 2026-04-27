@@ -8,6 +8,7 @@ import {
 } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
+import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { formatDistanceToNow, format } from "date-fns";
 import {
@@ -21,6 +22,7 @@ import {
   Phone,
   CheckCircle2,
   MapPin,
+  Target,
 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
@@ -180,22 +182,25 @@ export default function SellerDetailPage() {
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled = !!sellerId && (user?.role === "CLIENT" || !!clientId);
+  const { dateRange } = useDashboardFilters();
+  const dateFrom = format(dateRange.from, "yyyy-MM-dd");
+  const dateTo = format(dateRange.to, "yyyy-MM-dd");
 
   const { data, isLoading, isError } = useGetSellerDetail(
     sellerId!,
-    { clientId },
+    { clientId, dateFrom, dateTo },
     { query: queryOpts({ enabled }) },
   );
 
   const { data: customersData, isLoading: customersLoading } = useGetSellerCustomers(
     sellerId!,
-    { clientId, limit: 20 },
+    { clientId, limit: 20, dateFrom, dateTo },
     { query: queryOpts({ enabled }) },
   );
 
   const { data: ordersData, isLoading: ordersLoading } = useGetSellerOrders(
     sellerId!,
-    { clientId, limit: 25 },
+    { clientId, limit: 25, dateFrom, dateTo },
     { query: queryOpts({ enabled }) },
   );
 
@@ -310,9 +315,9 @@ export default function SellerDetailPage() {
 
       {/* KPI strip */}
       <motion.div variants={cardVariants}>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {isLoading ? (
-            Array.from({ length: 5 }).map((_, i) => (
+            Array.from({ length: 6 }).map((_, i) => (
               <Card key={i} className="p-4">
                 <Skeleton className="h-4 w-20 mb-2" />
                 <Skeleton className="h-7 w-24" />
@@ -354,6 +359,13 @@ export default function SellerDetailPage() {
                 value={kpis.approvalRate}
                 prev={prevKpis.approvalRate}
                 icon={CheckCircle2}
+                format={(v) => `${v.toFixed(1)}%`}
+              />
+              <KpiCard
+                label="Conversion %"
+                value={kpis.conversionRate}
+                prev={prevKpis.conversionRate}
+                icon={Target}
                 format={(v) => `${v.toFixed(1)}%`}
               />
             </>

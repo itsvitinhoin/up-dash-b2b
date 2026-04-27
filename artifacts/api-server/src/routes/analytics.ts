@@ -2253,6 +2253,7 @@ router.get("/analytics/sellers/:sellerId", async (req, res): Promise<void> => {
         revenue: sql<number>`COALESCE(SUM(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN ${ordersTable.amount} ELSE 0 END), 0)::float`,
         orders: sql<number>`COUNT(*)::int`,
         approvedOrders: sql<number>`COUNT(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN 1 END)::int`,
+        deliveredOrders: sql<number>`COUNT(CASE WHEN ${ordersTable.status} = 'DELIVERED' THEN 1 END)::int`,
         uniqueCustomers: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
       })
       .from(ordersTable)
@@ -2314,12 +2315,14 @@ router.get("/analytics/sellers/:sellerId", async (req, res): Promise<void> => {
   const buildKpis = (row: typeof kpiRow) => {
     const orders = Number(row?.orders) || 0;
     const approved = Number(row?.approvedOrders) || 0;
+    const delivered = Number(row?.deliveredOrders) || 0;
     return {
       revenue: Number(row?.revenue) || 0,
       orders,
       avgTicket: approved > 0 ? (Number(row?.revenue) || 0) / approved : 0,
       uniqueCustomers: Number(row?.uniqueCustomers) || 0,
       approvalRate: orders > 0 ? (approved / orders) * 100 : 0,
+      conversionRate: orders > 0 ? (delivered / orders) * 100 : 0,
     };
   };
 

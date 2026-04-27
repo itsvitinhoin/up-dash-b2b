@@ -11,6 +11,7 @@ import {
   useRegenerateInsight,
   getGetInsightQueryKey,
   useGetAlerts,
+  useGetSellers,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
@@ -32,6 +33,7 @@ import {
   Package,
   PackageX,
   RefreshCw,
+  Store,
   Sparkles,
   Target,
   TrendingDown,
@@ -314,6 +316,12 @@ export default function DashboardPage() {
     isLoading: alertsLoading,
   } = useGetAlerts(
     { clientId, horizonDays: 14, lookbackDays: 30, limit: 8 },
+    { query: queryOpts({ enabled }) },
+  );
+
+  // Top sellers (mini leaderboard on the dashboard)
+  const { data: topSellersData, isLoading: topSellersLoading } = useGetSellers(
+    { clientId, limit: 5 },
     { query: queryOpts({ enabled }) },
   );
 
@@ -1192,6 +1200,76 @@ export default function DashboardPage() {
           </div>
         )}
       </Card>
+
+      {/* Top sellers mini-leaderboard */}
+      {(topSellersLoading || (topSellersData && topSellersData.length > 0)) && (
+        <Card className="p-5 bg-card border-border">
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h2 className="text-base font-semibold leading-tight">Top sellers</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Ranked by lifetime revenue
+              </p>
+            </div>
+            <Link
+              href="/sellers"
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              See all <ChevronRight className="h-3 w-3" />
+            </Link>
+          </div>
+
+          {topSellersLoading ? (
+            <div className="space-y-3">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : (
+            <div>
+              <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
+                <div className="col-span-5">Seller</div>
+                <div className="col-span-3 text-right">Revenue</div>
+                <div className="col-span-2 text-right">Orders</div>
+                <div className="col-span-2 text-right"></div>
+              </div>
+              <div className="divide-y divide-border">
+                {topSellersData?.map((seller, idx) => (
+                  <Link
+                    key={seller.id}
+                    href={`/sellers/${seller.id}`}
+                    className="grid grid-cols-12 gap-4 items-center px-2 py-3 hover:bg-muted/30 transition-colors rounded-sm cursor-pointer"
+                    data-testid={`dashboard-top-seller-${seller.id}`}
+                  >
+                    <div className="col-span-5 flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/15 text-primary shrink-0">
+                        <Store className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          {idx === 0 && <span className="text-[10px] text-amber-400 font-bold">#1</span>}
+                          <span className="font-medium text-sm truncate">{seller.name}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="col-span-3 text-right tabular-nums text-sm">
+                      {formatCurrency(seller.totalRevenue)}
+                    </div>
+                    <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                      {formatNumber(seller.totalOrders)}
+                    </div>
+                    <div className="col-span-2 text-right">
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+                        View <ChevronRight className="h-3 w-3" />
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
 
       <DrillDownPanel date={drillDate} onClose={() => setDrillDate(null)} />
     </div>

@@ -12,4 +12,5 @@ export interface SellerKpis {
   avgTicket: number;
   uniqueCustomers: number;
   approvalRate: number;
+  conversionRate: number;
 }

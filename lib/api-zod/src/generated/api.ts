@@ -945,6 +945,7 @@ export const GetSellerDetailResponse = zod.object({
     avgTicket: zod.number(),
     uniqueCustomers: zod.number(),
     approvalRate: zod.number(),
+    conversionRate: zod.number(),
   }),
   prevKpis: zod.object({
     revenue: zod.number(),
@@ -952,6 +953,7 @@ export const GetSellerDetailResponse = zod.object({
     avgTicket: zod.number(),
     uniqueCustomers: zod.number(),
     approvalRate: zod.number(),
+    conversionRate: zod.number(),
   }),
   revenueOverTime: zod.array(
     zod.object({
