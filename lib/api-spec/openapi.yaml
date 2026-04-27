@@ -705,6 +705,72 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /analytics/stock:
+    get:
+      operationId: getStock
+      tags: [analytics]
+      summary: Stock intelligence — coverage, risk classification, and breakdowns
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 25
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [sku, name, category, stock, dailyVelocity, coverageDays, risk, unitsSold]
+            default: coverageDays
+        - in: query
+          name: sortDir
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Case-insensitive match against SKU or product name.
+        - in: query
+          name: category
+          schema:
+            type: string
+          description: Filter by exact category.
+        - in: query
+          name: risk
+          schema:
+            type: string
+            enum: [Stockout, Overstock, Healthy]
+          description: Filter by risk classification.
+      responses:
+        "200":
+          description: Stock intelligence payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetStockResponse"
+
   /analytics/geography:
     get:
       operationId: getGeography
@@ -786,7 +852,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing, customers, products, sellers]
+            enum: [dashboard, marketing, customers, products, sellers, stock]
             default: dashboard
       responses:
         "200":
@@ -818,7 +884,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing, customers, products, sellers]
+            enum: [dashboard, marketing, customers, products, sellers, stock]
             default: dashboard
       responses:
         "200":
@@ -2709,3 +2775,129 @@ components:
         limit:
           type: integer
       required: [data, total, page, limit]
+
+    StockKpis:
+      type: object
+      properties:
+        totalUnits:
+          type: integer
+          description: Sum of current stock across all active products.
+        avgCoverageDays:
+          type: number
+          description: Mean days-of-coverage for products with non-zero velocity.
+        stockoutRiskCount:
+          type: integer
+          description: Products with fewer than 7 days of coverage at current velocity.
+        overstockRiskCount:
+          type: integer
+          description: Products with more than 90 days of coverage or zero velocity with excess stock.
+        sellThroughRate:
+          type: number
+          description: unitsSold / (unitsSold + currentStock) as a percentage 0-100.
+      required: [totalUnits, avgCoverageDays, stockoutRiskCount, overstockRiskCount, sellThroughRate]
+
+    StockSkuRow:
+      type: object
+      properties:
+        productId:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        category:
+          type: ["string", "null"]
+        stock:
+          type: integer
+        restockThreshold:
+          type: integer
+        dailyVelocity:
+          type: number
+          description: Average units sold per day in the selected period.
+        coverageDays:
+          type: ["number", "null"]
+          description: stock / dailyVelocity. Null when velocity is zero.
+        risk:
+          type: string
+          enum: [Stockout, Overstock, Healthy]
+        unitsSold:
+          type: integer
+        lastRestockDate:
+          type: ["string", "null"]
+          format: date-time
+          description: Proxy for last inventory update (product updatedAt).
+      required: [productId, sku, name, stock, restockThreshold, dailyVelocity, risk, unitsSold]
+
+    CategoryStockRow:
+      type: object
+      properties:
+        category:
+          type: string
+        stockUnits:
+          type: integer
+        unitsSold:
+          type: integer
+        dailyVelocity:
+          type: number
+      required: [category, stockUnits, unitsSold, dailyVelocity]
+
+    ColorStockRow:
+      type: object
+      properties:
+        color:
+          type: string
+        unitsSold:
+          type: integer
+      required: [color, unitsSold]
+
+    SizeStockRow:
+      type: object
+      properties:
+        size:
+          type: string
+        unitsSold:
+          type: integer
+      required: [size, unitsSold]
+
+    GetStockResponse:
+      type: object
+      properties:
+        kpis:
+          $ref: "#/components/schemas/StockKpis"
+        prevKpis:
+          $ref: "#/components/schemas/StockKpis"
+        stockoutRisk:
+          type: array
+          items:
+            $ref: "#/components/schemas/StockSkuRow"
+        overstockRisk:
+          type: array
+          items:
+            $ref: "#/components/schemas/StockSkuRow"
+        highTurnover:
+          type: array
+          items:
+            $ref: "#/components/schemas/StockSkuRow"
+        categoryBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/CategoryStockRow"
+        colorBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/ColorStockRow"
+        sizeBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/SizeStockRow"
+        skus:
+          type: array
+          items:
+            $ref: "#/components/schemas/StockSkuRow"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+      required: [kpis, prevKpis, stockoutRisk, overstockRisk, highTurnover, categoryBreakdown, colorBreakdown, sizeBreakdown, skus, total, page, limit]

@@ -982,6 +982,211 @@ export const GetSellerDetailResponse = zod.object({
 });
 
 /**
+ * @summary Stock intelligence — coverage, risk classification, and breakdowns
+ */
+export const getStockQueryPageDefault = 1;
+export const getStockQueryLimitDefault = 25;
+export const getStockQuerySortDefault = `coverageDays`;
+export const getStockQuerySortDirDefault = `asc`;
+
+export const GetStockQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+  page: zod.coerce.number().default(getStockQueryPageDefault),
+  limit: zod.coerce.number().default(getStockQueryLimitDefault),
+  sort: zod
+    .enum([
+      "sku",
+      "name",
+      "category",
+      "stock",
+      "dailyVelocity",
+      "coverageDays",
+      "risk",
+      "unitsSold",
+    ])
+    .default(getStockQuerySortDefault),
+  sortDir: zod.enum(["asc", "desc"]).default(getStockQuerySortDirDefault),
+  search: zod.coerce
+    .string()
+    .optional()
+    .describe("Case-insensitive match against SKU or product name."),
+  category: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by exact category."),
+  risk: zod
+    .enum(["Stockout", "Overstock", "Healthy"])
+    .optional()
+    .describe("Filter by risk classification."),
+});
+
+export const GetStockResponse = zod.object({
+  kpis: zod.object({
+    totalUnits: zod
+      .number()
+      .describe("Sum of current stock across all active products."),
+    avgCoverageDays: zod
+      .number()
+      .describe("Mean days-of-coverage for products with non-zero velocity."),
+    stockoutRiskCount: zod
+      .number()
+      .describe(
+        "Products with fewer than 7 days of coverage at current velocity.",
+      ),
+    overstockRiskCount: zod
+      .number()
+      .describe(
+        "Products with more than 90 days of coverage or zero velocity with excess stock.",
+      ),
+    sellThroughRate: zod
+      .number()
+      .describe(
+        "unitsSold \/ (unitsSold + currentStock) as a percentage 0-100.",
+      ),
+  }),
+  prevKpis: zod.object({
+    totalUnits: zod
+      .number()
+      .describe("Sum of current stock across all active products."),
+    avgCoverageDays: zod
+      .number()
+      .describe("Mean days-of-coverage for products with non-zero velocity."),
+    stockoutRiskCount: zod
+      .number()
+      .describe(
+        "Products with fewer than 7 days of coverage at current velocity.",
+      ),
+    overstockRiskCount: zod
+      .number()
+      .describe(
+        "Products with more than 90 days of coverage or zero velocity with excess stock.",
+      ),
+    sellThroughRate: zod
+      .number()
+      .describe(
+        "unitsSold \/ (unitsSold + currentStock) as a percentage 0-100.",
+      ),
+  }),
+  stockoutRisk: zod.array(
+    zod.object({
+      productId: zod.string(),
+      sku: zod.string(),
+      name: zod.string(),
+      category: zod.string().nullish(),
+      stock: zod.number(),
+      restockThreshold: zod.number(),
+      dailyVelocity: zod
+        .number()
+        .describe("Average units sold per day in the selected period."),
+      coverageDays: zod
+        .number()
+        .nullish()
+        .describe("stock \/ dailyVelocity. Null when velocity is zero."),
+      risk: zod.enum(["Stockout", "Overstock", "Healthy"]),
+      unitsSold: zod.number(),
+      lastRestockDate: zod.coerce
+        .date()
+        .nullish()
+        .describe("Proxy for last inventory update (product updatedAt)."),
+    }),
+  ),
+  overstockRisk: zod.array(
+    zod.object({
+      productId: zod.string(),
+      sku: zod.string(),
+      name: zod.string(),
+      category: zod.string().nullish(),
+      stock: zod.number(),
+      restockThreshold: zod.number(),
+      dailyVelocity: zod
+        .number()
+        .describe("Average units sold per day in the selected period."),
+      coverageDays: zod
+        .number()
+        .nullish()
+        .describe("stock \/ dailyVelocity. Null when velocity is zero."),
+      risk: zod.enum(["Stockout", "Overstock", "Healthy"]),
+      unitsSold: zod.number(),
+      lastRestockDate: zod.coerce
+        .date()
+        .nullish()
+        .describe("Proxy for last inventory update (product updatedAt)."),
+    }),
+  ),
+  highTurnover: zod.array(
+    zod.object({
+      productId: zod.string(),
+      sku: zod.string(),
+      name: zod.string(),
+      category: zod.string().nullish(),
+      stock: zod.number(),
+      restockThreshold: zod.number(),
+      dailyVelocity: zod
+        .number()
+        .describe("Average units sold per day in the selected period."),
+      coverageDays: zod
+        .number()
+        .nullish()
+        .describe("stock \/ dailyVelocity. Null when velocity is zero."),
+      risk: zod.enum(["Stockout", "Overstock", "Healthy"]),
+      unitsSold: zod.number(),
+      lastRestockDate: zod.coerce
+        .date()
+        .nullish()
+        .describe("Proxy for last inventory update (product updatedAt)."),
+    }),
+  ),
+  categoryBreakdown: zod.array(
+    zod.object({
+      category: zod.string(),
+      stockUnits: zod.number(),
+      unitsSold: zod.number(),
+      dailyVelocity: zod.number(),
+    }),
+  ),
+  colorBreakdown: zod.array(
+    zod.object({
+      color: zod.string(),
+      unitsSold: zod.number(),
+    }),
+  ),
+  sizeBreakdown: zod.array(
+    zod.object({
+      size: zod.string(),
+      unitsSold: zod.number(),
+    }),
+  ),
+  skus: zod.array(
+    zod.object({
+      productId: zod.string(),
+      sku: zod.string(),
+      name: zod.string(),
+      category: zod.string().nullish(),
+      stock: zod.number(),
+      restockThreshold: zod.number(),
+      dailyVelocity: zod
+        .number()
+        .describe("Average units sold per day in the selected period."),
+      coverageDays: zod
+        .number()
+        .nullish()
+        .describe("stock \/ dailyVelocity. Null when velocity is zero."),
+      risk: zod.enum(["Stockout", "Overstock", "Healthy"]),
+      unitsSold: zod.number(),
+      lastRestockDate: zod.coerce
+        .date()
+        .nullish()
+        .describe("Proxy for last inventory update (product updatedAt)."),
+    }),
+  ),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+});
+
+/**
  * @summary Geographic breakdown by state and city
  */
 export const GetGeographyQueryParams = zod.object({
@@ -1050,7 +1255,14 @@ export const GetInsightQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
   screen: zod
-    .enum(["dashboard", "marketing", "customers", "products", "sellers"])
+    .enum([
+      "dashboard",
+      "marketing",
+      "customers",
+      "products",
+      "sellers",
+      "stock",
+    ])
     .default(getInsightQueryScreenDefault),
 });
 
@@ -1073,7 +1285,14 @@ export const RegenerateInsightQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
   screen: zod
-    .enum(["dashboard", "marketing", "customers", "products", "sellers"])
+    .enum([
+      "dashboard",
+      "marketing",
+      "customers",
+      "products",
+      "sellers",
+      "stock",
+    ])
     .default(regenerateInsightQueryScreenDefault),
 });
 

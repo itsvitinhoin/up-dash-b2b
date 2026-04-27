@@ -983,6 +983,84 @@ export interface SellerOrdersResponse {
   limit: number;
 }
 
+export interface StockKpis {
+  /** Sum of current stock across all active products. */
+  totalUnits: number;
+  /** Mean days-of-coverage for products with non-zero velocity. */
+  avgCoverageDays: number;
+  /** Products with fewer than 7 days of coverage at current velocity. */
+  stockoutRiskCount: number;
+  /** Products with more than 90 days of coverage or zero velocity with excess stock. */
+  overstockRiskCount: number;
+  /** unitsSold / (unitsSold + currentStock) as a percentage 0-100. */
+  sellThroughRate: number;
+}
+
+export type StockSkuRowRisk =
+  (typeof StockSkuRowRisk)[keyof typeof StockSkuRowRisk];
+
+export const StockSkuRowRisk = {
+  Stockout: "Stockout",
+  Overstock: "Overstock",
+  Healthy: "Healthy",
+} as const;
+
+export interface StockSkuRow {
+  productId: string;
+  sku: string;
+  name: string;
+  /** @nullable */
+  category?: string | null;
+  stock: number;
+  restockThreshold: number;
+  /** Average units sold per day in the selected period. */
+  dailyVelocity: number;
+  /**
+   * stock / dailyVelocity. Null when velocity is zero.
+   * @nullable
+   */
+  coverageDays?: number | null;
+  risk: StockSkuRowRisk;
+  unitsSold: number;
+  /**
+   * Proxy for last inventory update (product updatedAt).
+   * @nullable
+   */
+  lastRestockDate?: string | null;
+}
+
+export interface CategoryStockRow {
+  category: string;
+  stockUnits: number;
+  unitsSold: number;
+  dailyVelocity: number;
+}
+
+export interface ColorStockRow {
+  color: string;
+  unitsSold: number;
+}
+
+export interface SizeStockRow {
+  size: string;
+  unitsSold: number;
+}
+
+export interface GetStockResponse {
+  kpis: StockKpis;
+  prevKpis: StockKpis;
+  stockoutRisk: StockSkuRow[];
+  overstockRisk: StockSkuRow[];
+  highTurnover: StockSkuRow[];
+  categoryBreakdown: CategoryStockRow[];
+  colorBreakdown: ColorStockRow[];
+  sizeBreakdown: SizeStockRow[];
+  skus: StockSkuRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 export type ListClientsParams = {
   search?: string;
   page?: number;
@@ -1132,6 +1210,57 @@ export type GetSellerDetailParams = {
   dateTo?: string;
 };
 
+export type GetStockParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  limit?: number;
+  sort?: GetStockSort;
+  sortDir?: GetStockSortDir;
+  /**
+   * Case-insensitive match against SKU or product name.
+   */
+  search?: string;
+  /**
+   * Filter by exact category.
+   */
+  category?: string;
+  /**
+   * Filter by risk classification.
+   */
+  risk?: GetStockRisk;
+};
+
+export type GetStockSort = (typeof GetStockSort)[keyof typeof GetStockSort];
+
+export const GetStockSort = {
+  sku: "sku",
+  name: "name",
+  category: "category",
+  stock: "stock",
+  dailyVelocity: "dailyVelocity",
+  coverageDays: "coverageDays",
+  risk: "risk",
+  unitsSold: "unitsSold",
+} as const;
+
+export type GetStockSortDir =
+  (typeof GetStockSortDir)[keyof typeof GetStockSortDir];
+
+export const GetStockSortDir = {
+  asc: "asc",
+  desc: "desc",
+} as const;
+
+export type GetStockRisk = (typeof GetStockRisk)[keyof typeof GetStockRisk];
+
+export const GetStockRisk = {
+  Stockout: "Stockout",
+  Overstock: "Overstock",
+  Healthy: "Healthy",
+} as const;
+
 export type GetGeographyParams = {
   clientId?: string;
   dateFrom?: string;
@@ -1160,6 +1289,7 @@ export const GetInsightScreen = {
   customers: "customers",
   products: "products",
   sellers: "sellers",
+  stock: "stock",
 } as const;
 
 export type RegenerateInsightParams = {
@@ -1178,6 +1308,7 @@ export const RegenerateInsightScreen = {
   customers: "customers",
   products: "products",
   sellers: "sellers",
+  stock: "stock",
 } as const;
 
 export type GetAlertsParams = {

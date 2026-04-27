@@ -15,4 +15,5 @@ export const RegenerateInsightScreen = {
   customers: "customers",
   products: "products",
   sellers: "sellers",
+  stock: "stock",
 } as const;

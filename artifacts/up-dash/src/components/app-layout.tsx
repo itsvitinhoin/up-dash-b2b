@@ -29,6 +29,7 @@ import {
   Bell,
   HelpCircle,
   Megaphone,
+  PackageSearch,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -79,6 +80,7 @@ const pageMeta: Record<string, PageMeta> = {
   "/compare": { title: "Compare brands", subtitle: "Benchmark up to four clients side-by-side", hasDateRange: true, hasFilterBar: false },
   "/overview": { title: "Platform overview", subtitle: "Every brand on UP Dash, at a glance", hasDateRange: true, hasFilterBar: false },
   "/marketing": { title: "Marketing", subtitle: "Ad spend, ROAS, CPL, and creative performance", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/stock": { title: "Stock Intelligence", subtitle: "Coverage, risk, and inventory health", hasDateRange: true, hasFilterBar: false, requiresClient: true },
 };
 
 // Sentinel value for the topbar picker when an admin selects the
@@ -165,6 +167,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     { name: "Customers", href: "/customers", icon: Users },
     { name: "Products", href: "/products", icon: Package },
     { name: "Sellers", href: "/sellers", icon: ShoppingBag },
+    { name: "Stock", href: "/stock", icon: PackageSearch },
   ];
 
   const workspaceNav: { name: string; href: string; icon: typeof Users }[] = [

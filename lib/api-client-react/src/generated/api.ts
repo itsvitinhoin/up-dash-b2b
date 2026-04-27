@@ -49,6 +49,8 @@ import type {
   GetSellerDetailParams,
   GetSellerOrdersParams,
   GetSellersParams,
+  GetStockParams,
+  GetStockResponse,
   HealthStatus,
   InsightResponse,
   ListClientsParams,
@@ -2138,6 +2140,100 @@ export function useGetSellerDetail<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Stock intelligence — coverage, risk classification, and breakdowns
+ */
+export const getGetStockUrl = (params?: GetStockParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/stock?${stringifiedParams}`
+    : `/api/analytics/stock`;
+};
+
+export const getStock = async (
+  params?: GetStockParams,
+  options?: RequestInit,
+): Promise<GetStockResponse> => {
+  return customFetch<GetStockResponse>(getGetStockUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetStockQueryKey = (params?: GetStockParams) => {
+  return [`/api/analytics/stock`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetStockQueryOptions = <
+  TData = Awaited<ReturnType<typeof getStock>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetStockParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getStock>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetStockQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getStock>>> = ({
+    signal,
+  }) => getStock(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getStock>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetStockQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getStock>>
+>;
+export type GetStockQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Stock intelligence — coverage, risk classification, and breakdowns
+ */
+
+export function useGetStock<
+  TData = Awaited<ReturnType<typeof getStock>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetStockParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getStock>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetStockQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

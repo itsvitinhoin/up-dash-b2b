@@ -48,6 +48,8 @@ import {
   GetSellerDetailResponse,
   GetSellerCustomersResponse,
   GetSellerOrdersResponse,
+  GetStockQueryParams,
+  GetStockResponse,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
@@ -2975,6 +2977,115 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
     return { ...payload, generatedAt, cached: false };
   }
 
+  // Stock-specific insight
+  if (screen === "stock") {
+    const periodDays = Math.max(1, (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
+    const prods = await db
+      .select({
+        id: productsTable.id,
+        name: productsTable.name,
+        category: productsTable.category,
+        stock: productsTable.stock,
+        restockThreshold: productsTable.restockThreshold,
+      })
+      .from(productsTable)
+      .where(and(eq(productsTable.clientId, clientId), sql`${productsTable.status} != 'DISCONTINUED'`));
+
+    let stockoutCount = 0;
+    let overstockCount = 0;
+    let totalUnits = 0;
+    let totalSold = 0;
+    const stockoutNames: string[] = [];
+
+    if (prods.length > 0) {
+      const velRows = await db
+        .select({
+          productId: orderItemsTable.productId,
+          unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+        })
+        .from(orderItemsTable)
+        .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+        .where(
+          and(
+            inArray(orderItemsTable.productId, prods.map((p) => p.id)),
+            eq(ordersTable.clientId, clientId),
+            gte(ordersTable.createdAt, from),
+            lte(ordersTable.createdAt, to),
+            sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+          ),
+        )
+        .groupBy(orderItemsTable.productId);
+
+      const velMap = new Map<string, number>();
+      for (const v of velRows) velMap.set(v.productId, Number(v.unitsSold) || 0);
+
+      for (const p of prods) {
+        const units = velMap.get(p.id) ?? 0;
+        totalSold += units;
+        totalUnits += p.stock;
+        const vel = units / periodDays;
+        const cov = vel > 0 ? p.stock / vel : null;
+        if (vel > 0 && cov !== null && cov < 7) {
+          stockoutCount++;
+          if (stockoutNames.length < 3) stockoutNames.push(p.name);
+        } else if ((vel === 0 && p.stock > p.restockThreshold * 2) || (cov !== null && cov > 90)) {
+          overstockCount++;
+        }
+      }
+    }
+
+    const sellThrough = totalSold + totalUnits > 0 ? ((totalSold / (totalSold + totalUnits)) * 100).toFixed(1) : "0";
+    const heuristic = {
+      headline: stockoutCount > 0
+        ? `${stockoutCount} SKU${stockoutCount > 1 ? "s are" : " is"} at critical stockout risk this week`
+        : overstockCount > 0
+          ? `${overstockCount} SKU${overstockCount > 1 ? "s have" : " has"} excess inventory — review pricing or promotions`
+          : `Inventory is healthy with a ${sellThrough}% sell-through rate`,
+      body: `In the selected period, ${totalSold} units were sold across ${prods.length} active SKUs. Sell-through rate stands at ${sellThrough}%. ${stockoutCount > 0 ? `${stockoutCount} product${stockoutCount > 1 ? "s need" : " needs"} urgent replenishment.` : overstockCount > 0 ? `${overstockCount} product${overstockCount > 1 ? "s are" : " is"} overstocked.` : "No critical risk items detected."}`,
+      bullets: [
+        stockoutNames.length > 0 ? `Stockout risk: ${stockoutNames.join(", ")}` : `No stockout-risk products in this period`,
+        overstockCount > 0 ? `${overstockCount} SKU${overstockCount > 1 ? "s" : ""} with >90 days coverage — consider markdowns` : "No overstock issues detected",
+        `Current sell-through rate: ${sellThrough}% — aim for 60–80% for fashion`,
+      ],
+    };
+    let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
+    const ai = getOpenAIClient();
+    if (ai && isAIConfigured()) {
+      try {
+        const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
+        const prompt = `You are a senior B2B fashion-retail inventory analyst writing a weekly stock intelligence insight for "${brand}". Period: ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}.
+Total active SKUs: ${prods.length}
+Total stock units: ${totalUnits}
+Total units sold: ${totalSold}
+Sell-through rate: ${sellThrough}%
+Stockout-risk SKUs: ${stockoutCount}${stockoutNames.length > 0 ? ` (${stockoutNames.slice(0, 3).join(", ")})` : ""}
+Overstock-risk SKUs: ${overstockCount}
+Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 sentences>","bullets":["<actionable>","<actionable>","<actionable>"]}`;
+        const completion = await ai.chat.completions.create({
+          model: "gpt-5-nano",
+          max_completion_tokens: 500,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "You write concise, actionable B2B inventory insights for fashion brands. Always respond with the requested JSON shape only." },
+            { role: "user", content: prompt },
+          ],
+        });
+        const text = completion.choices[0]?.message?.content;
+        if (text) {
+          const parsed = JSON.parse(text) as { headline?: string; body?: string; bullets?: string[] };
+          if (typeof parsed.headline === "string" && typeof parsed.body === "string" && Array.isArray(parsed.bullets)) {
+            payload = { headline: parsed.headline.slice(0, 120), body: parsed.body.slice(0, 600), bullets: parsed.bullets.slice(0, 4).map((b) => String(b).slice(0, 160)), source: "ai" };
+          }
+        }
+      } catch (err) {
+        console.warn("[insight:stock] AI generation failed, using heuristic:", (err as Error).message);
+      }
+    }
+    const generatedAt2 = new Date().toISOString();
+    insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...payload, generatedAt: generatedAt2 } });
+    return { ...payload, generatedAt: generatedAt2, cached: false };
+  }
+
   const ctx = await buildInsightContext(clientId, from, to);
   const heuristic = buildHeuristic(ctx.kpis, ctx.topCategory, ctx.topSeller, ctx.trend);
 
@@ -3043,6 +3154,336 @@ No markdown, no preamble.`;
   });
   return { ...payload, generatedAt, cached: false };
 }
+
+// ───────── Stock Intelligence ─────────────────────────────────────────────
+//
+// Risk classification heuristics:
+//   - dailyVelocity = unitsSold / periodDays
+//   - coverageDays  = stock / dailyVelocity  (null when velocity = 0)
+//   - Stockout      = velocity > 0 && coverageDays < 7
+//   - Overstock     = (velocity == 0 && stock > restockThreshold*2) || coverageDays > 90
+//   - Healthy       = everything else
+//
+router.get("/analytics/stock", async (req, res): Promise<void> => {
+  const parsed = GetStockQueryParams.safeParse(
+    coerceDateQuery(req.query as Record<string, unknown>),
+  );
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const periodMs = to.getTime() - from.getTime();
+  const periodDays = Math.max(1, periodMs / (1000 * 60 * 60 * 24));
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - periodMs);
+  const prevPeriodDays = periodDays;
+
+  const {
+    page,
+    limit,
+    sort = "coverageDays",
+    sortDir = "asc",
+    search,
+    category,
+    risk: riskFilter,
+  } = parsed.data as {
+    page: number;
+    limit: number;
+    sort?: string;
+    sortDir?: string;
+    search?: string;
+    category?: string;
+    risk?: string;
+  };
+
+  // ── 1. Fetch all products for this client ──────────────────────────────
+  const products = await db
+    .select({
+      id: productsTable.id,
+      sku: productsTable.sku,
+      name: productsTable.name,
+      category: productsTable.category,
+      stock: productsTable.stock,
+      restockThreshold: productsTable.restockThreshold,
+      updatedAt: productsTable.updatedAt,
+    })
+    .from(productsTable)
+    .where(
+      and(
+        eq(productsTable.clientId, clientId),
+        sql`${productsTable.status} != 'DISCONTINUED'`,
+      ),
+    );
+
+  if (products.length === 0) {
+    const emptyKpis = { totalUnits: 0, avgCoverageDays: 0, stockoutRiskCount: 0, overstockRiskCount: 0, sellThroughRate: 0 };
+    res.json(GetStockResponse.parse({
+      kpis: emptyKpis,
+      prevKpis: emptyKpis,
+      stockoutRisk: [],
+      overstockRisk: [],
+      highTurnover: [],
+      categoryBreakdown: [],
+      colorBreakdown: [],
+      sizeBreakdown: [],
+      skus: [],
+      total: 0,
+      page,
+      limit,
+    }));
+    return;
+  }
+
+  const productIds = products.map((p) => p.id);
+
+  // ── 2. Velocity from order_items joined to orders for date filtering ────
+  const fetchVelocity = async (winFrom: Date, winTo: Date) =>
+    db
+      .select({
+        productId: orderItemsTable.productId,
+        unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          inArray(orderItemsTable.productId, productIds),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, winFrom),
+          lte(ordersTable.createdAt, winTo),
+          sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+        ),
+      )
+      .groupBy(orderItemsTable.productId);
+
+  // ── 3. Color/size breakdown (current period only) ──────────────────────
+  const fetchColorBreakdown = (winFrom: Date, winTo: Date) =>
+    db
+      .select({
+        color: sql<string>`COALESCE(${orderItemsTable.color}, 'Unknown')`,
+        unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          inArray(orderItemsTable.productId, productIds),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, winFrom),
+          lte(ordersTable.createdAt, winTo),
+          sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+          sql`${orderItemsTable.color} IS NOT NULL`,
+        ),
+      )
+      .groupBy(sql`COALESCE(${orderItemsTable.color}, 'Unknown')`)
+      .orderBy(sql`SUM(${orderItemsTable.quantity}) DESC`);
+
+  const fetchSizeBreakdown = (winFrom: Date, winTo: Date) =>
+    db
+      .select({
+        size: sql<string>`COALESCE(${orderItemsTable.size}, 'Unknown')`,
+        unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          inArray(orderItemsTable.productId, productIds),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, winFrom),
+          lte(ordersTable.createdAt, winTo),
+          sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+          sql`${orderItemsTable.size} IS NOT NULL`,
+        ),
+      )
+      .groupBy(sql`COALESCE(${orderItemsTable.size}, 'Unknown')`)
+      .orderBy(sql`SUM(${orderItemsTable.quantity}) DESC`);
+
+  const [currVelocity, prevVelocity, colorBreakdown, sizeBreakdown] = await Promise.all([
+    fetchVelocity(from, to),
+    fetchVelocity(prevFrom, prevTo),
+    fetchColorBreakdown(from, to),
+    fetchSizeBreakdown(from, to),
+  ]);
+
+  const currVelMap = new Map<string, number>();
+  for (const r of currVelocity) currVelMap.set(r.productId, Number(r.unitsSold) || 0);
+
+  const prevVelMap = new Map<string, number>();
+  for (const r of prevVelocity) prevVelMap.set(r.productId, Number(r.unitsSold) || 0);
+
+  // ── 4. Classify each product ───────────────────────────────────────────
+  function classify(stock: number, restockThreshold: number, velocity: number, pDays: number) {
+    const dailyVelocity = velocity / pDays;
+    const coverageDays = dailyVelocity > 0 ? stock / dailyVelocity : null;
+    let risk: "Stockout" | "Overstock" | "Healthy";
+    if (dailyVelocity > 0 && coverageDays !== null && coverageDays < 7) {
+      risk = "Stockout";
+    } else if (
+      (dailyVelocity === 0 && stock > restockThreshold * 2) ||
+      (coverageDays !== null && coverageDays > 90)
+    ) {
+      risk = "Overstock";
+    } else {
+      risk = "Healthy";
+    }
+    return { dailyVelocity, coverageDays, risk };
+  }
+
+  type SkuRow = {
+    productId: string;
+    sku: string;
+    name: string;
+    category: string | null;
+    stock: number;
+    restockThreshold: number;
+    dailyVelocity: number;
+    coverageDays: number | null;
+    risk: "Stockout" | "Overstock" | "Healthy";
+    unitsSold: number;
+    lastRestockDate: string | null;
+  };
+
+  const allSkus: SkuRow[] = products.map((p) => {
+    const unitsSold = currVelMap.get(p.id) ?? 0;
+    const { dailyVelocity, coverageDays, risk } = classify(p.stock, p.restockThreshold, unitsSold, periodDays);
+    return {
+      productId: p.id,
+      sku: p.sku,
+      name: p.name,
+      category: p.category,
+      stock: p.stock,
+      restockThreshold: p.restockThreshold,
+      dailyVelocity,
+      coverageDays,
+      risk,
+      unitsSold,
+      lastRestockDate: p.updatedAt ? p.updatedAt.toISOString() : null,
+    };
+  });
+
+  // Prev-period classification (using same stock levels, prev velocity)
+  const allSkusPrev: SkuRow[] = products.map((p) => {
+    const unitsSold = prevVelMap.get(p.id) ?? 0;
+    const { dailyVelocity, coverageDays, risk } = classify(p.stock, p.restockThreshold, unitsSold, prevPeriodDays);
+    return {
+      productId: p.id,
+      sku: p.sku,
+      name: p.name,
+      category: p.category,
+      stock: p.stock,
+      restockThreshold: p.restockThreshold,
+      dailyVelocity,
+      coverageDays,
+      risk,
+      unitsSold,
+      lastRestockDate: null,
+    };
+  });
+
+  // ── 5. Build KPIs ──────────────────────────────────────────────────────
+  function buildKpis(skus: SkuRow[]) {
+    const totalUnits = skus.reduce((s, r) => s + r.stock, 0);
+    const withVelocity = skus.filter((r) => r.coverageDays !== null);
+    const avgCoverageDays = withVelocity.length > 0
+      ? withVelocity.reduce((s, r) => s + (r.coverageDays ?? 0), 0) / withVelocity.length
+      : 0;
+    const stockoutRiskCount = skus.filter((r) => r.risk === "Stockout").length;
+    const overstockRiskCount = skus.filter((r) => r.risk === "Overstock").length;
+    const totalSold = skus.reduce((s, r) => s + r.unitsSold, 0);
+    const sellThroughRate = totalSold + totalUnits > 0
+      ? (totalSold / (totalSold + totalUnits)) * 100
+      : 0;
+    return { totalUnits, avgCoverageDays, stockoutRiskCount, overstockRiskCount, sellThroughRate };
+  }
+
+  const kpis = buildKpis(allSkus);
+  const prevKpis = buildKpis(allSkusPrev);
+
+  // ── 6. Ranked tiles ────────────────────────────────────────────────────
+  const stockoutRisk = [...allSkus]
+    .filter((r) => r.risk === "Stockout")
+    .sort((a, b) => (a.coverageDays ?? 999) - (b.coverageDays ?? 999))
+    .slice(0, 10);
+
+  const overstockRisk = [...allSkus]
+    .filter((r) => r.risk === "Overstock")
+    .sort((a, b) => (b.coverageDays ?? 0) - (a.coverageDays ?? 0))
+    .slice(0, 10);
+
+  const highTurnover = [...allSkus]
+    .filter((r) => r.dailyVelocity > 0)
+    .sort((a, b) => b.dailyVelocity - a.dailyVelocity)
+    .slice(0, 10);
+
+  // ── 7. Category breakdown ──────────────────────────────────────────────
+  const categoryMap = new Map<string, { stockUnits: number; unitsSold: number }>();
+  for (const s of allSkus) {
+    const cat = s.category ?? "Uncategorized";
+    const existing = categoryMap.get(cat) ?? { stockUnits: 0, unitsSold: 0 };
+    existing.stockUnits += s.stock;
+    existing.unitsSold += s.unitsSold;
+    categoryMap.set(cat, existing);
+  }
+  const categoryBreakdown = [...categoryMap.entries()]
+    .map(([category, v]) => ({
+      category,
+      stockUnits: v.stockUnits,
+      unitsSold: v.unitsSold,
+      dailyVelocity: v.unitsSold / periodDays,
+    }))
+    .sort((a, b) => b.stockUnits - a.stockUnits);
+
+  // ── 8. Apply table filters, sort, paginate ─────────────────────────────
+  let filtered = [...allSkus];
+  if (search) {
+    const q = search.toLowerCase();
+    filtered = filtered.filter((r) => r.sku.toLowerCase().includes(q) || r.name.toLowerCase().includes(q));
+  }
+  if (category) {
+    filtered = filtered.filter((r) => r.category === category);
+  }
+  if (riskFilter) {
+    filtered = filtered.filter((r) => r.risk === riskFilter);
+  }
+
+  const dir = sortDir === "desc" ? -1 : 1;
+  filtered.sort((a, b) => {
+    switch (sort) {
+      case "sku": return dir * a.sku.localeCompare(b.sku);
+      case "name": return dir * a.name.localeCompare(b.name);
+      case "category": return dir * (a.category ?? "").localeCompare(b.category ?? "");
+      case "stock": return dir * (a.stock - b.stock);
+      case "dailyVelocity": return dir * (a.dailyVelocity - b.dailyVelocity);
+      case "coverageDays": return dir * ((a.coverageDays ?? (dir > 0 ? 99999 : -1)) - (b.coverageDays ?? (dir > 0 ? 99999 : -1)));
+      case "risk": return dir * a.risk.localeCompare(b.risk);
+      case "unitsSold": return dir * (a.unitsSold - b.unitsSold);
+      default: return 0;
+    }
+  });
+
+  const total = filtered.length;
+  const pageSkus = filtered.slice((page - 1) * limit, page * limit);
+
+  res.json(GetStockResponse.parse({
+    kpis,
+    prevKpis,
+    stockoutRisk,
+    overstockRisk,
+    highTurnover,
+    categoryBreakdown,
+    colorBreakdown: colorBreakdown.map((r) => ({ color: r.color, unitsSold: Number(r.unitsSold) || 0 })),
+    sizeBreakdown: sizeBreakdown.map((r) => ({ size: r.size, unitsSold: Number(r.unitsSold) || 0 })),
+    skus: pageSkus,
+    total,
+    page,
+    limit,
+  }));
+});
 
 router.get("/analytics/insight", async (req, res): Promise<void> => {
   const parsed = GetInsightQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));

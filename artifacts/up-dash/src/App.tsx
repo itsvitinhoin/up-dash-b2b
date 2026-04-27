@@ -29,6 +29,7 @@ import NotificationsPage from "@/pages/notifications";
 import ComparePage from "@/pages/compare";
 import OverviewPage from "@/pages/overview";
 import MarketingPage from "@/pages/marketing";
+import StockIntelligencePage from "@/pages/stock-intelligence";
 
 function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
   const { logout } = useAuth();
@@ -177,6 +178,14 @@ function Router() {
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="marketing"><MarketingPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/stock">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="stock"><StockIntelligencePage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
