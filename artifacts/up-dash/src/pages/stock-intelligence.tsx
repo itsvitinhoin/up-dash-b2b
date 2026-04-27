@@ -73,7 +73,8 @@ type StockSort =
   | "dailyVelocity"
   | "coverageDays"
   | "risk"
-  | "unitsSold";
+  | "unitsSold"
+  | "lastRestockDate";
 
 type RiskFilter = "Stockout" | "Overstock" | "Healthy" | "all";
 
@@ -298,7 +299,8 @@ export default function StockIntelligencePage() {
     if (!data?.colorBreakdown) return [];
     return data.colorBreakdown.slice(0, 12).map((r) => ({
       name: r.color,
-      value: r.unitsSold,
+      stockUnits: r.stockUnits,
+      unitsSold: r.unitsSold,
     }));
   }, [data]);
 
@@ -306,7 +308,8 @@ export default function StockIntelligencePage() {
     if (!data?.sizeBreakdown) return [];
     return data.sizeBreakdown.slice(0, 12).map((r) => ({
       name: r.size,
-      value: r.unitsSold,
+      stockUnits: r.stockUnits,
+      unitsSold: r.unitsSold,
     }));
   }, [data]);
 
@@ -547,23 +550,39 @@ export default function StockIntelligencePage() {
             {isLoading ? (
               <Skeleton className="h-48 w-full" />
             ) : categoryChartData.length > 0 ? (
-              <div style={{ height: Math.max(160, categoryChartData.length * 36 + 24) }}>
+              <div style={{ height: Math.max(200, categoryChartData.length * 36 + 60) }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart
                     data={categoryChartData}
-                    layout="vertical"
-                    margin={{ top: 4, right: 40, left: 0, bottom: 4 }}
+                    margin={{ top: 4, right: 48, left: 0, bottom: 48 }}
                     barCategoryGap={8}
                   >
-                    <XAxis type="number" hide domain={[0, "dataMax"]} />
-                    <YAxis
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border)/0.4)" vertical={false} />
+                    <XAxis
                       type="category"
                       dataKey="category"
-                      width={90}
                       tickLine={false}
                       axisLine={false}
                       interval={0}
+                      angle={-30}
+                      textAnchor="end"
+                      height={52}
                       tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                    />
+                    <YAxis
+                      yAxisId="units"
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tickFormatter={(v) => formatNumber(v)}
+                    />
+                    <YAxis
+                      yAxisId="vel"
+                      orientation="right"
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tickFormatter={(v) => `${Number(v).toFixed(1)}/d`}
                     />
                     <Tooltip
                       cursor={{ fill: "hsl(var(--accent)/0.3)" }}
@@ -573,9 +592,16 @@ export default function StockIntelligencePage() {
                         borderRadius: "6px",
                         fontSize: 11,
                       }}
+                      formatter={(v, name) => [
+                        name === "Daily Velocity"
+                          ? `${Number(v).toFixed(2)}/day`
+                          : formatNumber(Number(v)),
+                        name,
+                      ]}
                     />
-                    <Bar dataKey="stockUnits" name="Stock Units" fill="hsl(var(--primary))" radius={[0, 3, 3, 0]} barSize={10} />
-                    <Bar dataKey="unitsSold" name="Units Sold" fill="hsl(var(--chart-3))" radius={[0, 3, 3, 0]} barSize={10} />
+                    <Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} />
+                    <Bar yAxisId="units" dataKey="stockUnits" name="Stock Units" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} barSize={14} />
+                    <Line yAxisId="vel" dataKey="dailyVelocity" name="Daily Velocity" stroke="hsl(var(--chart-3))" strokeWidth={2} dot={{ r: 3, fill: "hsl(var(--chart-3))" }} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
@@ -589,14 +615,14 @@ export default function StockIntelligencePage() {
             )}
           </Card>
 
-          {/* Color: Units Sold */}
+          {/* Color: Stock Units by Color */}
           <Card className="p-5">
             <div className="flex items-center gap-2 mb-3">
               <div className="flex h-7 w-7 items-center justify-center rounded-md bg-chart-2/20 text-chart-2">
                 <BarChart3 className="h-3.5 w-3.5" />
               </div>
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Sales by Color
+                Stock by Color
               </span>
             </div>
             {isLoading ? (
@@ -628,9 +654,9 @@ export default function StockIntelligencePage() {
                         borderRadius: "6px",
                         fontSize: 11,
                       }}
-                      formatter={(v) => [formatNumber(v as number), "Units Sold"]}
+                      formatter={(v, name) => [formatNumber(v as number), name === "stockUnits" ? "Stock Units" : "Units Sold"]}
                     />
-                    <Bar dataKey="value" name="Units Sold" radius={[0, 3, 3, 0]} barSize={10}>
+                    <Bar dataKey="stockUnits" name="Stock Units" radius={[0, 3, 3, 0]} barSize={10}>
                       {colorChartData.map((_, i) => (
                         <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
                       ))}
@@ -655,7 +681,7 @@ export default function StockIntelligencePage() {
                 <BarChart3 className="h-3.5 w-3.5" />
               </div>
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Sales by Size
+                Stock by Size
               </span>
             </div>
             {isLoading ? (
@@ -687,9 +713,9 @@ export default function StockIntelligencePage() {
                         borderRadius: "6px",
                         fontSize: 11,
                       }}
-                      formatter={(v) => [formatNumber(v as number), "Units Sold"]}
+                      formatter={(v, name) => [formatNumber(v as number), name === "stockUnits" ? "Stock Units" : "Units Sold"]}
                     />
-                    <Bar dataKey="value" name="Units Sold" radius={[0, 3, 3, 0]} barSize={10}>
+                    <Bar dataKey="stockUnits" name="Stock Units" radius={[0, 3, 3, 0]} barSize={10}>
                       {sizeChartData.map((_, i) => (
                         <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
                       ))}
@@ -767,6 +793,7 @@ export default function StockIntelligencePage() {
                         { key: "coverageDays", label: "Coverage Days" },
                         { key: "risk", label: "Risk" },
                         { key: "unitsSold", label: "Units Sold" },
+                        { key: "lastRestockDate", label: "Last Restock" },
                       ] as { key: StockSort; label: string }[]
                     ).map((col) => (
                       <TableHead
@@ -780,7 +807,6 @@ export default function StockIntelligencePage() {
                         </span>
                       </TableHead>
                     ))}
-                    <TableHead className="text-xs">Last Restock</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

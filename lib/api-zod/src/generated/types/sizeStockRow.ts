@@ -9,4 +9,5 @@
 export interface SizeStockRow {
   size: string;
   unitsSold: number;
+  stockUnits: number;
 }

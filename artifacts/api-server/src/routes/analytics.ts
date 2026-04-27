@@ -3261,9 +3261,10 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
       .groupBy(orderItemsTable.productId);
 
   // ── 3. Color/size breakdown (current period only) ──────────────────────
-  const fetchColorBreakdown = (winFrom: Date, winTo: Date) =>
+  const fetchColorPerProduct = (winFrom: Date, winTo: Date) =>
     db
       .select({
+        productId: orderItemsTable.productId,
         color: sql<string>`COALESCE(${orderItemsTable.color}, 'Unknown')`,
         unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
       })
@@ -3279,12 +3280,12 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
           sql`${orderItemsTable.color} IS NOT NULL`,
         ),
       )
-      .groupBy(sql`COALESCE(${orderItemsTable.color}, 'Unknown')`)
-      .orderBy(sql`SUM(${orderItemsTable.quantity}) DESC`);
+      .groupBy(orderItemsTable.productId, sql`COALESCE(${orderItemsTable.color}, 'Unknown')`);
 
-  const fetchSizeBreakdown = (winFrom: Date, winTo: Date) =>
+  const fetchSizePerProduct = (winFrom: Date, winTo: Date) =>
     db
       .select({
+        productId: orderItemsTable.productId,
         size: sql<string>`COALESCE(${orderItemsTable.size}, 'Unknown')`,
         unitsSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
       })
@@ -3300,14 +3301,13 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
           sql`${orderItemsTable.size} IS NOT NULL`,
         ),
       )
-      .groupBy(sql`COALESCE(${orderItemsTable.size}, 'Unknown')`)
-      .orderBy(sql`SUM(${orderItemsTable.quantity}) DESC`);
+      .groupBy(orderItemsTable.productId, sql`COALESCE(${orderItemsTable.size}, 'Unknown')`);
 
-  const [currVelocity, prevVelocity, colorBreakdown, sizeBreakdown] = await Promise.all([
+  const [currVelocity, prevVelocity, colorPerProduct, sizePerProduct] = await Promise.all([
     fetchVelocity(from, to),
     fetchVelocity(prevFrom, prevTo),
-    fetchColorBreakdown(from, to),
-    fetchSizeBreakdown(from, to),
+    fetchColorPerProduct(from, to),
+    fetchSizePerProduct(from, to),
   ]);
 
   const currVelMap = new Map<string, number>();
@@ -3315,6 +3315,57 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
 
   const prevVelMap = new Map<string, number>();
   for (const r of prevVelocity) prevVelMap.set(r.productId, Number(r.unitsSold) || 0);
+
+  // ── 3b. Proportional stock allocation by color/size ────────────────────
+  const productStockLookup = new Map<string, number>(products.map((p) => [p.id, p.stock]));
+
+  const colorStockMap = new Map<string, { unitsSold: number; stockUnits: number }>();
+  const colorProductMap = new Map<string, Map<string, number>>();
+  for (const r of colorPerProduct) {
+    let m = colorProductMap.get(r.productId);
+    if (!m) { m = new Map(); colorProductMap.set(r.productId, m); }
+    const color = String(r.color ?? "Unknown");
+    m.set(color, (m.get(color) ?? 0) + (Number(r.unitsSold) || 0));
+  }
+  for (const [productId, dimMap] of colorProductMap.entries()) {
+    const stock = productStockLookup.get(productId) ?? 0;
+    const totalSold = [...dimMap.values()].reduce((s, v) => s + v, 0);
+    for (const [color, sold] of dimMap.entries()) {
+      const allocated = totalSold > 0 ? Math.round((sold / totalSold) * stock) : 0;
+      const existing = colorStockMap.get(color) ?? { unitsSold: 0, stockUnits: 0 };
+      existing.unitsSold += sold;
+      existing.stockUnits += allocated;
+      colorStockMap.set(color, existing);
+    }
+  }
+
+  const sizeStockMap = new Map<string, { unitsSold: number; stockUnits: number }>();
+  const sizeProductMap = new Map<string, Map<string, number>>();
+  for (const r of sizePerProduct) {
+    let m = sizeProductMap.get(r.productId);
+    if (!m) { m = new Map(); sizeProductMap.set(r.productId, m); }
+    const size = String(r.size ?? "Unknown");
+    m.set(size, (m.get(size) ?? 0) + (Number(r.unitsSold) || 0));
+  }
+  for (const [productId, dimMap] of sizeProductMap.entries()) {
+    const stock = productStockLookup.get(productId) ?? 0;
+    const totalSold = [...dimMap.values()].reduce((s, v) => s + v, 0);
+    for (const [size, sold] of dimMap.entries()) {
+      const allocated = totalSold > 0 ? Math.round((sold / totalSold) * stock) : 0;
+      const existing = sizeStockMap.get(size) ?? { unitsSold: 0, stockUnits: 0 };
+      existing.unitsSold += sold;
+      existing.stockUnits += allocated;
+      sizeStockMap.set(size, existing);
+    }
+  }
+
+  const colorBreakdownFinal = [...colorStockMap.entries()]
+    .map(([color, v]) => ({ color, unitsSold: v.unitsSold, stockUnits: v.stockUnits }))
+    .sort((a, b) => b.stockUnits - a.stockUnits);
+
+  const sizeBreakdownFinal = [...sizeStockMap.entries()]
+    .map(([size, v]) => ({ size, unitsSold: v.unitsSold, stockUnits: v.stockUnits }))
+    .sort((a, b) => b.stockUnits - a.stockUnits);
 
   // ── 4. Classify each product ───────────────────────────────────────────
   function classify(stock: number, restockThreshold: number, velocity: number, pDays: number) {
@@ -3462,6 +3513,11 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
       case "coverageDays": return dir * ((a.coverageDays ?? (dir > 0 ? 99999 : -1)) - (b.coverageDays ?? (dir > 0 ? 99999 : -1)));
       case "risk": return dir * a.risk.localeCompare(b.risk);
       case "unitsSold": return dir * (a.unitsSold - b.unitsSold);
+      case "lastRestockDate": {
+        const aDate = a.lastRestockDate ? new Date(a.lastRestockDate).getTime() : 0;
+        const bDate = b.lastRestockDate ? new Date(b.lastRestockDate).getTime() : 0;
+        return dir * (aDate - bDate);
+      }
       default: return 0;
     }
   });
@@ -3476,8 +3532,8 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
     overstockRisk,
     highTurnover,
     categoryBreakdown,
-    colorBreakdown: colorBreakdown.map((r) => ({ color: r.color, unitsSold: Number(r.unitsSold) || 0 })),
-    sizeBreakdown: sizeBreakdown.map((r) => ({ size: r.size, unitsSold: Number(r.unitsSold) || 0 })),
+    colorBreakdown: colorBreakdownFinal,
+    sizeBreakdown: sizeBreakdownFinal,
     skus: pageSkus,
     total,
     page,

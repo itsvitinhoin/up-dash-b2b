@@ -17,4 +17,5 @@ export const GetStockSort = {
   coverageDays: "coverageDays",
   risk: "risk",
   unitsSold: "unitsSold",
+  lastRestockDate: "lastRestockDate",
 } as const;

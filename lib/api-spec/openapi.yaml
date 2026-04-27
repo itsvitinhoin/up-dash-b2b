@@ -739,7 +739,7 @@ paths:
           name: sort
           schema:
             type: string
-            enum: [sku, name, category, stock, dailyVelocity, coverageDays, risk, unitsSold]
+            enum: [sku, name, category, stock, dailyVelocity, coverageDays, risk, unitsSold, lastRestockDate]
             default: coverageDays
         - in: query
           name: sortDir
@@ -2848,7 +2848,9 @@ components:
           type: string
         unitsSold:
           type: integer
-      required: [color, unitsSold]
+        stockUnits:
+          type: integer
+      required: [color, unitsSold, stockUnits]
 
     SizeStockRow:
       type: object
@@ -2857,7 +2859,9 @@ components:
           type: string
         unitsSold:
           type: integer
-      required: [size, unitsSold]
+        stockUnits:
+          type: integer
+      required: [size, unitsSold, stockUnits]
 
     GetStockResponse:
       type: object

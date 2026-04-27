@@ -1039,11 +1039,13 @@ export interface CategoryStockRow {
 export interface ColorStockRow {
   color: string;
   unitsSold: number;
+  stockUnits: number;
 }
 
 export interface SizeStockRow {
   size: string;
   unitsSold: number;
+  stockUnits: number;
 }
 
 export interface GetStockResponse {
@@ -1243,6 +1245,7 @@ export const GetStockSort = {
   coverageDays: "coverageDays",
   risk: "risk",
   unitsSold: "unitsSold",
+  lastRestockDate: "lastRestockDate",
 } as const;
 
 export type GetStockSortDir =

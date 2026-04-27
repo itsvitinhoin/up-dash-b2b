@@ -9,4 +9,5 @@
 export interface ColorStockRow {
   color: string;
   unitsSold: number;
+  stockUnits: number;
 }

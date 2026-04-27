@@ -1005,6 +1005,7 @@ export const GetStockQueryParams = zod.object({
       "coverageDays",
       "risk",
       "unitsSold",
+      "lastRestockDate",
     ])
     .default(getStockQuerySortDefault),
   sortDir: zod.enum(["asc", "desc"]).default(getStockQuerySortDirDefault),
@@ -1150,12 +1151,14 @@ export const GetStockResponse = zod.object({
     zod.object({
       color: zod.string(),
       unitsSold: zod.number(),
+      stockUnits: zod.number(),
     }),
   ),
   sizeBreakdown: zod.array(
     zod.object({
       size: zod.string(),
       unitsSold: zod.number(),
+      stockUnits: zod.number(),
     }),
   ),
   skus: zod.array(
