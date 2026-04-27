@@ -22,6 +22,7 @@ import CustomerDetailPage from "@/pages/customer-detail";
 import ProductsPage from "@/pages/products";
 import ProductDetailPage from "@/pages/product-detail";
 import SellersPage from "@/pages/sellers";
+import SellerDetailPage from "@/pages/seller-detail";
 import GeographyPage from "@/pages/geography";
 import ClientsPage from "@/pages/clients";
 import NotificationsPage from "@/pages/notifications";
@@ -112,6 +113,14 @@ function Router() {
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="products"><ProductsPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/sellers/:sellerId">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="seller-detail"><SellerDetailPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

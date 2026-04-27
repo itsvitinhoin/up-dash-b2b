@@ -568,6 +568,143 @@ paths:
                 items:
                   $ref: "#/components/schemas/SellerMetrics"
 
+  /analytics/sellers/{sellerId}/customers:
+    get:
+      operationId: getSellerCustomers
+      tags: [analytics]
+      summary: Paginated top buyers for a single seller
+      parameters:
+        - in: path
+          name: sellerId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated seller customers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SellerCustomersResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /analytics/sellers/{sellerId}/orders:
+    get:
+      operationId: getSellerOrders
+      tags: [analytics]
+      summary: Paginated recent orders for a single seller
+      parameters:
+        - in: path
+          name: sellerId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 25
+      responses:
+        "200":
+          description: Paginated seller orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SellerOrdersResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /analytics/sellers/{sellerId}:
+    get:
+      operationId: getSellerDetail
+      tags: [analytics]
+      summary: Full performance profile for a single seller
+      parameters:
+        - in: path
+          name: sellerId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Seller detail payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SellerDetailResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /analytics/geography:
     get:
       operationId: getGeography
@@ -649,7 +786,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing, customers, products]
+            enum: [dashboard, marketing, customers, products, sellers]
             default: dashboard
       responses:
         "200":
@@ -681,7 +818,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing, customers, products]
+            enum: [dashboard, marketing, customers, products, sellers]
             default: dashboard
       responses:
         "200":
@@ -2422,3 +2559,151 @@ components:
           type: ["string", "null"]
           description: Name of the seller associated with the customer's most recent order
       required: [customer, orders, events, productsPurchased, journey, opportunityLevel]
+
+    SellerKpis:
+      type: object
+      properties:
+        revenue:
+          type: number
+        orders:
+          type: integer
+        avgTicket:
+          type: number
+        uniqueCustomers:
+          type: integer
+        approvalRate:
+          type: number
+      required: [revenue, orders, avgTicket, uniqueCustomers, approvalRate]
+
+    SellerDetailResponse:
+      type: object
+      properties:
+        seller:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            email:
+              type: ["string", "null"]
+            phone:
+              type: ["string", "null"]
+            createdAt:
+              type: string
+          required: [id, name, createdAt]
+        kpis:
+          $ref: "#/components/schemas/SellerKpis"
+        prevKpis:
+          $ref: "#/components/schemas/SellerKpis"
+        revenueOverTime:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              revenue:
+                type: number
+            required: [date, revenue]
+        prevRevenueOverTime:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              revenue:
+                type: number
+            required: [date, revenue]
+        categoryBreakdown:
+          type: array
+          items:
+            type: object
+            properties:
+              category:
+                type: string
+              revenue:
+                type: number
+            required: [category, revenue]
+        stateBreakdown:
+          type: array
+          items:
+            type: object
+            properties:
+              state:
+                type: string
+              revenue:
+                type: number
+            required: [state, revenue]
+      required: [seller, kpis, prevKpis, revenueOverTime, prevRevenueOverTime, categoryBreakdown, stateBreakdown]
+
+    SellerCustomerRow:
+      type: object
+      properties:
+        customerId:
+          type: string
+        name:
+          type: string
+        email:
+          type: ["string", "null"]
+        rfmSegment:
+          type: ["string", "null"]
+        totalOrders:
+          type: integer
+        totalSpent:
+          type: number
+        lastPurchaseAt:
+          type: ["string", "null"]
+      required: [customerId, name, totalOrders, totalSpent]
+
+    SellerCustomersResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SellerCustomerRow"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+      required: [data, total, page, limit]
+
+    SellerOrderRow:
+      type: object
+      properties:
+        id:
+          type: string
+        customerId:
+          type: string
+        customerName:
+          type: string
+        amount:
+          type: number
+        status:
+          type: string
+        state:
+          type: ["string", "null"]
+        city:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required: [id, customerId, customerName, amount, status, createdAt]
+
+    SellerOrdersResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SellerOrderRow"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+      required: [data, total, page, limit]

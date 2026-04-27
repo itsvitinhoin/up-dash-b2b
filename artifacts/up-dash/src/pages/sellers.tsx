@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { useLocation } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
@@ -11,14 +13,22 @@ import {
 } from "recharts";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
-import { useGetSellers } from "@workspace/api-client-react";
+import {
+  useGetSellers,
+  useGetInsight,
+  useRegenerateInsight,
+  getGetInsightQueryKey,
+} from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Trophy, ShoppingBag, DollarSign, Download, Users, Crown, BarChart3 } from "lucide-react";
+import {
+  AlertCircle, Trophy, ShoppingBag, DollarSign, Download, Users, Crown, BarChart3,
+  Sparkles, RefreshCw, X as XIcon, ChevronRight,
+} from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
@@ -38,24 +48,32 @@ const BAR_PALETTE = [
 
 export default function SellersPage() {
   const { selectedClientId, user } = useAuth();
+  const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
   const [limit, setLimit] = useState(25);
+  const [insightDismissed, setInsightDismissed] = useState(false);
   const reduced = useReducedMotion();
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const cardVariants = withReducedMotion(cardEntry, reduced);
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
+  const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
 
   const { data, isLoading, isError, refetch } = useGetSellers(
-    {
-      clientId,
-      limit,
-    },
-    {
-      query: queryOpts({
-        enabled: user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId),
-      }),
-    }
+    { clientId, limit },
+    { query: queryOpts({ enabled }) },
   );
+
+  const insightParams = { clientId, screen: "sellers" as const };
+  const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
+    query: queryOpts({ enabled, staleTime: 3_600_000 }),
+  });
+  const regenerate = useRegenerateInsight({
+    mutation: {
+      onSuccess: () =>
+        queryClient.invalidateQueries({ queryKey: getGetInsightQueryKey(insightParams) }),
+    },
+  });
 
   const totalRevenue = useMemo(
     () => (data ?? []).reduce((s, x) => s + (x.totalRevenue || 0), 0),
@@ -227,6 +245,70 @@ export default function SellersPage() {
           </Card>
         </motion.div>
       </div>
+
+      {/* AI Insight card */}
+      {!insightDismissed && (
+        <motion.div variants={cardVariants}>
+          <Card className="p-5 bg-gradient-to-br from-primary/[0.04] via-card to-card border-border relative overflow-hidden" data-testid="sellers-insight-card">
+            <div aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-primary via-chart-3 to-chart-1 opacity-80" />
+            <div className="absolute -top-12 -right-12 h-40 w-40 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
+            <div className="relative z-10">
+              <div className="flex items-center justify-between mb-3">
+                <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
+                  <Sparkles className="h-3 w-3" />
+                  UP Insight · Sellers · {insight?.source === "ai" ? "AI" : "Auto"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setInsightDismissed(true)}
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="Dismiss insight"
+                  data-testid="sellers-insight-dismiss"
+                >
+                  <XIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {insightLoading || !insight ? (
+                <>
+                  <Skeleton className="h-5 w-3/4 mb-2" />
+                  <Skeleton className="h-4 w-full mb-1" />
+                  <Skeleton className="h-4 w-5/6 mb-3" />
+                </>
+              ) : (
+                <>
+                  <h3 className="text-base font-semibold leading-snug mb-2">{insight.headline}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{insight.body}</p>
+                  {insight.bullets && insight.bullets.length > 0 && (
+                    <ul className="mt-3 space-y-1.5">
+                      {insight.bullets.map((b, i) => (
+                        <li key={i} className="flex gap-2 text-xs text-muted-foreground">
+                          <span className="text-primary mt-1 leading-none">•</span>
+                          <span className="leading-relaxed">{b}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+              <div className="mt-4 flex items-center gap-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => regenerate.mutate({ params: insightParams })}
+                  disabled={regenerate.isPending || insightLoading}
+                  data-testid="sellers-insight-regenerate"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${regenerate.isPending ? "animate-spin" : ""}`} />
+                  {regenerate.isPending ? "Regenerating…" : "Regenerate"}
+                </Button>
+                {insight?.cached && (
+                  <span className="text-[11px] text-muted-foreground">Cached · refreshes hourly</span>
+                )}
+              </div>
+            </div>
+          </Card>
+        </motion.div>
+      )}
 
       {/* Revenue contribution chart */}
       <motion.div variants={cardVariants}>
@@ -430,7 +512,11 @@ export default function SellersPage() {
                     delay: reduced ? 0 : Math.min(index * 0.03, 0.3),
                   }}
                 >
-                <Card className={`overflow-hidden transition-all hover:shadow-md relative ${isTop3 ? 'border-primary/20 shadow-sm' : ''}`}>
+                <Card
+                  className={`overflow-hidden transition-all hover:shadow-md relative cursor-pointer ${isTop3 ? 'border-primary/20 shadow-sm' : ''}`}
+                  onClick={() => navigate(`/sellers/${seller.id}`)}
+                  data-testid={`seller-row-${seller.id}`}
+                >
                   <CardContent className="p-0">
                     <div className="flex items-center p-4 sm:p-6 gap-4 sm:gap-6 relative">
                       {isTop3 && (
@@ -485,6 +571,8 @@ export default function SellersPage() {
                           </p>
                         </div>
                       </div>
+
+                      <ChevronRight className="hidden md:block h-4 w-4 text-muted-foreground/50 shrink-0 ml-1" />
 
                       {/* Mobile stats */}
                       <div className="md:hidden text-right">

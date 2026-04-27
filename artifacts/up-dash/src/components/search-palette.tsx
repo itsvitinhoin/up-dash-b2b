@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { Package, Tag, Users } from "lucide-react";
-import { useGetProducts, useGetCustomers } from "@workspace/api-client-react";
+import { Package, Tag, Users, Store } from "lucide-react";
+import { useGetProducts, useGetCustomers, useGetSellers } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import {
@@ -59,6 +59,12 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
     { query: queryOpts({ enabled, staleTime: 60_000 }) },
   );
 
+  // Sellers — fetch a generous batch and filter on the client.
+  const { data: sellers } = useGetSellers(
+    { clientId, limit: 100 },
+    { query: queryOpts({ enabled, staleTime: 60_000 }) },
+  );
+
   // Customers can be very numerous, so we lean on the server's search filter.
   const { data: customersData } = useGetCustomers(
     {
@@ -103,6 +109,18 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
       .map(([category, count]) => ({ category, count }));
   }, [products, query]);
 
+  const filteredSellers = useMemo(() => {
+    if (!sellers) return [];
+    if (!query) return sellers.slice(0, MAX_RESULTS_PER_GROUP);
+    return sellers
+      .filter(
+        (s) =>
+          fuzzyMatch(s.name, query) ||
+          fuzzyMatch(s.email, query),
+      )
+      .slice(0, MAX_RESULTS_PER_GROUP);
+  }, [sellers, query]);
+
   const customers = customersData?.data ?? [];
 
   const handleSelect = (path: string) => {
@@ -113,6 +131,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
   const hasAnyResults =
     filteredProducts.length > 0 ||
     filteredCategories.length > 0 ||
+    filteredSellers.length > 0 ||
     customers.length > 0;
 
   return (
@@ -185,9 +204,40 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
           </>
         )}
 
-        {customers.length > 0 && (
+        {filteredSellers.length > 0 && (
           <>
             {(filteredProducts.length > 0 || filteredCategories.length > 0) && (
+              <CommandSeparator />
+            )}
+            <CommandGroup heading="Sellers">
+              {filteredSellers.map((seller) => (
+                <CommandItem
+                  key={seller.id}
+                  value={`seller-${seller.id}-${seller.name}`}
+                  onSelect={() => handleSelect(`/sellers/${seller.id}`)}
+                  data-testid={`search-result-seller-${seller.id}`}
+                >
+                  <Store className="text-muted-foreground" />
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <span className="truncate text-sm">{seller.name}</span>
+                    {seller.email && (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {seller.email}
+                      </span>
+                    )}
+                  </div>
+                  <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                    {formatCurrency(seller.totalRevenue)}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
+
+        {customers.length > 0 && (
+          <>
+            {(filteredProducts.length > 0 || filteredCategories.length > 0 || filteredSellers.length > 0) && (
               <CommandSeparator />
             )}
             <CommandGroup heading="Customers">

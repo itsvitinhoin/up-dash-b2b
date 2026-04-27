@@ -848,6 +848,138 @@ export const GetSellersResponseItem = zod.object({
 export const GetSellersResponse = zod.array(GetSellersResponseItem);
 
 /**
+ * @summary Paginated top buyers for a single seller
+ */
+export const GetSellerCustomersParams = zod.object({
+  sellerId: zod.coerce.string(),
+});
+
+export const getSellerCustomersQueryPageDefault = 1;
+export const getSellerCustomersQueryLimitDefault = 20;
+
+export const GetSellerCustomersQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+  page: zod.coerce.number().default(getSellerCustomersQueryPageDefault),
+  limit: zod.coerce.number().default(getSellerCustomersQueryLimitDefault),
+});
+
+export const GetSellerCustomersResponse = zod.object({
+  data: zod.array(
+    zod.object({
+      customerId: zod.string(),
+      name: zod.string(),
+      email: zod.string().nullish(),
+      rfmSegment: zod.string().nullish(),
+      totalOrders: zod.number(),
+      totalSpent: zod.number(),
+      lastPurchaseAt: zod.string().nullish(),
+    }),
+  ),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+});
+
+/**
+ * @summary Paginated recent orders for a single seller
+ */
+export const GetSellerOrdersParams = zod.object({
+  sellerId: zod.coerce.string(),
+});
+
+export const getSellerOrdersQueryPageDefault = 1;
+export const getSellerOrdersQueryLimitDefault = 25;
+
+export const GetSellerOrdersQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+  page: zod.coerce.number().default(getSellerOrdersQueryPageDefault),
+  limit: zod.coerce.number().default(getSellerOrdersQueryLimitDefault),
+});
+
+export const GetSellerOrdersResponse = zod.object({
+  data: zod.array(
+    zod.object({
+      id: zod.string(),
+      customerId: zod.string(),
+      customerName: zod.string(),
+      amount: zod.number(),
+      status: zod.string(),
+      state: zod.string().nullish(),
+      city: zod.string().nullish(),
+      createdAt: zod.string(),
+    }),
+  ),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+});
+
+/**
+ * @summary Full performance profile for a single seller
+ */
+export const GetSellerDetailParams = zod.object({
+  sellerId: zod.coerce.string(),
+});
+
+export const GetSellerDetailQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+});
+
+export const GetSellerDetailResponse = zod.object({
+  seller: zod.object({
+    id: zod.string(),
+    name: zod.string(),
+    email: zod.string().nullish(),
+    phone: zod.string().nullish(),
+    createdAt: zod.string(),
+  }),
+  kpis: zod.object({
+    revenue: zod.number(),
+    orders: zod.number(),
+    avgTicket: zod.number(),
+    uniqueCustomers: zod.number(),
+    approvalRate: zod.number(),
+  }),
+  prevKpis: zod.object({
+    revenue: zod.number(),
+    orders: zod.number(),
+    avgTicket: zod.number(),
+    uniqueCustomers: zod.number(),
+    approvalRate: zod.number(),
+  }),
+  revenueOverTime: zod.array(
+    zod.object({
+      date: zod.string(),
+      revenue: zod.number(),
+    }),
+  ),
+  prevRevenueOverTime: zod.array(
+    zod.object({
+      date: zod.string(),
+      revenue: zod.number(),
+    }),
+  ),
+  categoryBreakdown: zod.array(
+    zod.object({
+      category: zod.string(),
+      revenue: zod.number(),
+    }),
+  ),
+  stateBreakdown: zod.array(
+    zod.object({
+      state: zod.string(),
+      revenue: zod.number(),
+    }),
+  ),
+});
+
+/**
  * @summary Geographic breakdown by state and city
  */
 export const GetGeographyQueryParams = zod.object({
@@ -916,7 +1048,7 @@ export const GetInsightQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
   screen: zod
-    .enum(["dashboard", "marketing", "customers", "products"])
+    .enum(["dashboard", "marketing", "customers", "products", "sellers"])
     .default(getInsightQueryScreenDefault),
 });
 
@@ -939,7 +1071,7 @@ export const RegenerateInsightQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
   screen: zod
-    .enum(["dashboard", "marketing", "customers", "products"])
+    .enum(["dashboard", "marketing", "customers", "products", "sellers"])
     .default(regenerateInsightQueryScreenDefault),
 });
 

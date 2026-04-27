@@ -894,6 +894,94 @@ export interface CustomerDetailResponse {
   assignedSeller?: string | null;
 }
 
+export interface SellerKpis {
+  revenue: number;
+  orders: number;
+  avgTicket: number;
+  uniqueCustomers: number;
+  approvalRate: number;
+}
+
+export type SellerDetailResponseSeller = {
+  id: string;
+  name: string;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  phone?: string | null;
+  createdAt: string;
+};
+
+export type SellerDetailResponseRevenueOverTimeItem = {
+  date: string;
+  revenue: number;
+};
+
+export type SellerDetailResponsePrevRevenueOverTimeItem = {
+  date: string;
+  revenue: number;
+};
+
+export type SellerDetailResponseCategoryBreakdownItem = {
+  category: string;
+  revenue: number;
+};
+
+export type SellerDetailResponseStateBreakdownItem = {
+  state: string;
+  revenue: number;
+};
+
+export interface SellerDetailResponse {
+  seller: SellerDetailResponseSeller;
+  kpis: SellerKpis;
+  prevKpis: SellerKpis;
+  revenueOverTime: SellerDetailResponseRevenueOverTimeItem[];
+  prevRevenueOverTime: SellerDetailResponsePrevRevenueOverTimeItem[];
+  categoryBreakdown: SellerDetailResponseCategoryBreakdownItem[];
+  stateBreakdown: SellerDetailResponseStateBreakdownItem[];
+}
+
+export interface SellerCustomerRow {
+  customerId: string;
+  name: string;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  rfmSegment?: string | null;
+  totalOrders: number;
+  totalSpent: number;
+  /** @nullable */
+  lastPurchaseAt?: string | null;
+}
+
+export interface SellerCustomersResponse {
+  data: SellerCustomerRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface SellerOrderRow {
+  id: string;
+  customerId: string;
+  customerName: string;
+  amount: number;
+  status: string;
+  /** @nullable */
+  state?: string | null;
+  /** @nullable */
+  city?: string | null;
+  createdAt: string;
+}
+
+export interface SellerOrdersResponse {
+  data: SellerOrderRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 export type ListClientsParams = {
   search?: string;
   page?: number;
@@ -1021,6 +1109,28 @@ export type GetSellersParams = {
   limit?: number;
 };
 
+export type GetSellerCustomersParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  limit?: number;
+};
+
+export type GetSellerOrdersParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  limit?: number;
+};
+
+export type GetSellerDetailParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
 export type GetGeographyParams = {
   clientId?: string;
   dateFrom?: string;
@@ -1048,6 +1158,7 @@ export const GetInsightScreen = {
   marketing: "marketing",
   customers: "customers",
   products: "products",
+  sellers: "sellers",
 } as const;
 
 export type RegenerateInsightParams = {
@@ -1065,6 +1176,7 @@ export const RegenerateInsightScreen = {
   marketing: "marketing",
   customers: "customers",
   products: "products",
+  sellers: "sellers",
 } as const;
 
 export type GetAlertsParams = {

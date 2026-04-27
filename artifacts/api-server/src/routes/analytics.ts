@@ -42,6 +42,12 @@ import {
   GetProductDetailQueryParams,
   GetProductCustomersQueryParams,
   GetProductsSummaryQueryParams,
+  GetSellerDetailQueryParams,
+  GetSellerCustomersQueryParams,
+  GetSellerOrdersQueryParams,
+  GetSellerDetailResponse,
+  GetSellerCustomersResponse,
+  GetSellerOrdersResponse,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
@@ -2047,6 +2053,299 @@ router.get("/analytics/alerts", async (req, res): Promise<void> => {
   );
 });
 
+router.get("/analytics/sellers/:sellerId/customers", async (req, res): Promise<void> => {
+  const qParsed = GetSellerCustomersQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!qParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: qParsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { sellerId } = req.params;
+  const page = Math.max(1, qParsed.data.page ?? 1);
+  const limit = Math.min(50, Math.max(1, qParsed.data.limit ?? 20));
+  const offset = (page - 1) * limit;
+  const { from: dateFrom, to: dateTo } = dateRange(qParsed.data.dateFrom, qParsed.data.dateTo);
+
+  const seller = await db
+    .select({ id: sellersTable.id })
+    .from(sellersTable)
+    .where(and(eq(sellersTable.id, sellerId), eq(sellersTable.clientId, clientId)))
+    .limit(1);
+  if (!seller.length) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Seller not found", status: 404 });
+    return;
+  }
+
+  const [buyers, countRows] = await Promise.all([
+    db
+      .select({
+        customerId: customersTable.id,
+        name: sql<string>`COALESCE(${customersTable.name}, ${customersTable.email})`,
+        email: customersTable.email,
+        rfmSegment: customersTable.rfmSegment,
+        totalOrders: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+        totalSpent: sql<number>`SUM(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN ${ordersTable.amount} ELSE 0 END)`,
+        lastPurchaseAt: sql<string>`MAX(${ordersTable.createdAt})`,
+      })
+      .from(ordersTable)
+      .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          eq(ordersTable.sellerId, sellerId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      )
+      .groupBy(customersTable.id, customersTable.name, customersTable.email, customersTable.rfmSegment)
+      .orderBy(sql`SUM(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN ${ordersTable.amount} ELSE 0 END) DESC`)
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          eq(ordersTable.sellerId, sellerId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      ),
+  ]);
+
+  res.json(
+    GetSellerCustomersResponse.parse({
+      data: buyers.map((b) => ({
+        customerId: b.customerId,
+        name: b.name,
+        email: b.email ?? null,
+        rfmSegment: b.rfmSegment ?? null,
+        totalOrders: Number(b.totalOrders) || 0,
+        totalSpent: Number(b.totalSpent) || 0,
+        lastPurchaseAt: b.lastPurchaseAt ?? null,
+      })),
+      total: Number(countRows[0]?.count) || 0,
+      page,
+      limit,
+    }),
+  );
+});
+
+router.get("/analytics/sellers/:sellerId/orders", async (req, res): Promise<void> => {
+  const qParsed = GetSellerOrdersQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!qParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: qParsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { sellerId } = req.params;
+  const page = Math.max(1, qParsed.data.page ?? 1);
+  const limit = Math.min(100, Math.max(1, qParsed.data.limit ?? 25));
+  const offset = (page - 1) * limit;
+  const { from: dateFrom, to: dateTo } = dateRange(qParsed.data.dateFrom, qParsed.data.dateTo);
+
+  const seller = await db
+    .select({ id: sellersTable.id })
+    .from(sellersTable)
+    .where(and(eq(sellersTable.id, sellerId), eq(sellersTable.clientId, clientId)))
+    .limit(1);
+  if (!seller.length) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Seller not found", status: 404 });
+    return;
+  }
+
+  const [orders, countRows] = await Promise.all([
+    db
+      .select({
+        id: ordersTable.id,
+        customerId: ordersTable.customerId,
+        customerName: sql<string>`COALESCE(${customersTable.name}, ${customersTable.email})`,
+        amount: ordersTable.amount,
+        status: ordersTable.status,
+        state: ordersTable.state,
+        city: ordersTable.city,
+        createdAt: sql<string>`${ordersTable.createdAt}::text`,
+      })
+      .from(ordersTable)
+      .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          eq(ordersTable.sellerId, sellerId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      )
+      .orderBy(desc(ordersTable.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          eq(ordersTable.sellerId, sellerId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      ),
+  ]);
+
+  res.json(
+    GetSellerOrdersResponse.parse({
+      data: orders.map((o) => ({
+        id: o.id,
+        customerId: o.customerId,
+        customerName: o.customerName,
+        amount: Number(o.amount) || 0,
+        status: o.status,
+        state: o.state ?? null,
+        city: o.city ?? null,
+        createdAt: o.createdAt,
+      })),
+      total: Number(countRows[0]?.count) || 0,
+      page,
+      limit,
+    }),
+  );
+});
+
+router.get("/analytics/sellers/:sellerId", async (req, res): Promise<void> => {
+  const qParsed = GetSellerDetailQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!qParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: qParsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { sellerId } = req.params;
+  const { from: dateFrom, to: dateTo } = dateRange(qParsed.data.dateFrom, qParsed.data.dateTo);
+  const periodMs = dateTo.getTime() - dateFrom.getTime();
+  const prevTo = new Date(dateFrom.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - periodMs);
+
+  const sellerRows = await db
+    .select()
+    .from(sellersTable)
+    .where(and(eq(sellersTable.id, sellerId), eq(sellersTable.clientId, clientId)))
+    .limit(1);
+  const seller = sellerRows[0];
+  if (!seller) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Seller not found", status: 404 });
+    return;
+  }
+
+  const sellerCond = (from: Date, to: Date) =>
+    and(
+      eq(ordersTable.clientId, clientId),
+      eq(ordersTable.sellerId, sellerId),
+      gte(ordersTable.createdAt, from),
+      lte(ordersTable.createdAt, to),
+    );
+
+  const kpiQuery = (from: Date, to: Date) =>
+    db
+      .select({
+        revenue: sql<number>`COALESCE(SUM(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN ${ordersTable.amount} ELSE 0 END), 0)::float`,
+        orders: sql<number>`COUNT(*)::int`,
+        approvedOrders: sql<number>`COUNT(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN 1 END)::int`,
+        uniqueCustomers: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
+      })
+      .from(ordersTable)
+      .where(sellerCond(from, to));
+
+  const revenueSeriesQuery = (from: Date, to: Date) =>
+    db
+      .select({
+        date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+        revenue: sql<number>`COALESCE(SUM(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN ${ordersTable.amount} ELSE 0 END), 0)::float`,
+      })
+      .from(ordersTable)
+      .where(sellerCond(from, to))
+      .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
+      .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
+
+  const categoryQuery = (from: Date, to: Date) =>
+    db
+      .select({
+        category: productsTable.category,
+        revenue: sql<number>`COALESCE(SUM(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN ${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale} ELSE 0 END), 0)::float`,
+      })
+      .from(ordersTable)
+      .innerJoin(orderItemsTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+      .where(sellerCond(from, to))
+      .groupBy(productsTable.category)
+      .orderBy(sql`2 DESC`)
+      .limit(10);
+
+  const stateQuery = (from: Date, to: Date) =>
+    db
+      .select({
+        state: ordersTable.state,
+        revenue: sql<number>`COALESCE(SUM(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN ${ordersTable.amount} ELSE 0 END), 0)::float`,
+      })
+      .from(ordersTable)
+      .where(sellerCond(from, to))
+      .groupBy(ordersTable.state)
+      .orderBy(sql`2 DESC`)
+      .limit(10);
+
+  const [
+    [kpiRow],
+    [prevKpiRow],
+    revenueSeries,
+    prevRevenueSeries,
+    categoryRows,
+    stateRows,
+  ] = await Promise.all([
+    kpiQuery(dateFrom, dateTo),
+    kpiQuery(prevFrom, prevTo),
+    revenueSeriesQuery(dateFrom, dateTo),
+    revenueSeriesQuery(prevFrom, prevTo),
+    categoryQuery(dateFrom, dateTo),
+    stateQuery(dateFrom, dateTo),
+  ]);
+
+  const buildKpis = (row: typeof kpiRow) => {
+    const orders = Number(row?.orders) || 0;
+    const approved = Number(row?.approvedOrders) || 0;
+    return {
+      revenue: Number(row?.revenue) || 0,
+      orders,
+      avgTicket: approved > 0 ? (Number(row?.revenue) || 0) / approved : 0,
+      uniqueCustomers: Number(row?.uniqueCustomers) || 0,
+      approvalRate: orders > 0 ? (approved / orders) * 100 : 0,
+    };
+  };
+
+  res.json(
+    GetSellerDetailResponse.parse({
+      seller: {
+        id: seller.id,
+        name: seller.name,
+        email: seller.email ?? null,
+        phone: seller.phone ?? null,
+        createdAt: seller.createdAt.toISOString(),
+      },
+      kpis: buildKpis(kpiRow),
+      prevKpis: buildKpis(prevKpiRow),
+      revenueOverTime: revenueSeries.map((r) => ({ date: r.date, revenue: Number(r.revenue) || 0 })),
+      prevRevenueOverTime: prevRevenueSeries.map((r) => ({ date: r.date, revenue: Number(r.revenue) || 0 })),
+      categoryBreakdown: categoryRows
+        .filter((r) => r.category)
+        .map((r) => ({ category: r.category as string, revenue: Number(r.revenue) || 0 })),
+      stateBreakdown: stateRows
+        .filter((r) => r.state)
+        .map((r) => ({ state: r.state as string, revenue: Number(r.revenue) || 0 })),
+    }),
+  );
+});
+
 router.get("/analytics/sellers", async (req, res): Promise<void> => {
   const parsed = GetSellersQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
   if (!parsed.success) {
@@ -2602,6 +2901,70 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
         }
       } catch (err) {
         console.warn("[insight:customers] AI generation failed, using heuristic:", (err as Error).message);
+      }
+    }
+    const generatedAt = new Date().toISOString();
+    insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...payload, generatedAt } });
+    return { ...payload, generatedAt, cached: false };
+  }
+
+  // Sellers-specific insight
+  if (screen === "sellers") {
+    const topSellers = await db
+      .select({
+        name: sellersTable.name,
+        totalRevenue: sellersTable.totalRevenue,
+        totalOrders: sellersTable.totalOrders,
+      })
+      .from(sellersTable)
+      .where(eq(sellersTable.clientId, clientId))
+      .orderBy(desc(sellersTable.totalRevenue))
+      .limit(5);
+
+    const totalRevenue = topSellers.reduce((s, r) => s + r.totalRevenue, 0);
+    const topRevShare = totalRevenue > 0 && topSellers[0] ? (topSellers[0].totalRevenue / totalRevenue) * 100 : 0;
+    const heuristic = {
+      headline: topSellers[0]
+        ? `${topSellers[0].name} leads with ${topSellers[0].totalOrders} orders and ${topSellers[0].totalRevenue.toFixed(0)} in lifetime revenue`
+        : "No seller activity recorded yet",
+      body: topSellers.length > 0
+        ? `Top seller ${topSellers[0]?.name} accounts for ${topRevShare.toFixed(1)}% of total seller revenue. ${topSellers.length > 1 ? `The next ${topSellers.length - 1} sellers share the remaining ${(100 - topRevShare).toFixed(1)}%.` : ""}`
+        : "Add seller attribution to unlock performance insights.",
+      bullets: [
+        topSellers[0] ? `${topSellers[0].name} — ${topSellers[0].totalOrders} orders · ${topRevShare.toFixed(1)}% revenue share` : "No seller data available",
+        topSellers[1] ? `${topSellers[1].name} — ${topSellers[1].totalOrders} orders · ${totalRevenue > 0 ? ((topSellers[1].totalRevenue / totalRevenue) * 100).toFixed(1) : 0}% revenue share` : "Only one seller on record",
+        topSellers.length > 2
+          ? `${topSellers.length} sellers active — compare their avg ticket to identify coaching opportunities`
+          : "Add more sellers to enable benchmarking",
+      ],
+    };
+    let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
+    const ai = getOpenAIClient();
+    if (ai && isAIConfigured()) {
+      try {
+        const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
+        const prompt = `You are a senior B2B fashion-retail sales analyst writing a weekly seller team insight for "${brand}". Period: ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}.
+Top sellers: ${topSellers.map((s) => `${s.name} (R$${s.totalRevenue.toFixed(0)}, ${s.totalOrders} orders)`).join("; ")}
+Total sellers active: ${topSellers.length}
+Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 sentences>","bullets":["<actionable>","<actionable>","<actionable>"]}`;
+        const completion = await ai.chat.completions.create({
+          model: "gpt-5-nano",
+          max_completion_tokens: 500,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "You write concise, actionable B2B sales-team insights for fashion brands. Always respond with the requested JSON shape only." },
+            { role: "user", content: prompt },
+          ],
+        });
+        const text = completion.choices[0]?.message?.content;
+        if (text) {
+          const parsed = JSON.parse(text) as { headline?: string; body?: string; bullets?: string[] };
+          if (typeof parsed.headline === "string" && typeof parsed.body === "string" && Array.isArray(parsed.bullets)) {
+            payload = { headline: parsed.headline.slice(0, 120), body: parsed.body.slice(0, 600), bullets: parsed.bullets.slice(0, 4).map((b) => String(b).slice(0, 160)), source: "ai" };
+          }
+        }
+      } catch (err) {
+        console.warn("[insight:sellers] AI generation failed, using heuristic:", (err as Error).message);
       }
     }
     const generatedAt = new Date().toISOString();

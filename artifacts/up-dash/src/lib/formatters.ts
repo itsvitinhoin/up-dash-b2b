@@ -16,12 +16,13 @@ export function getActiveCurrency(): { currency: string; locale: string } {
 
 export const formatCurrency = (
   value: number,
-  opts: { currency?: string; locale?: string } = {},
+  opts: { currency?: string; locale?: string; compact?: boolean } = {},
 ) => {
   return new Intl.NumberFormat(opts.locale ?? _activeLocale, {
     style: "currency",
     currency: opts.currency ?? _activeCurrency,
     maximumFractionDigits: 2,
+    ...(opts.compact ? { notation: "compact", maximumFractionDigits: 1 } : {}),
   }).format(value);
 };
 

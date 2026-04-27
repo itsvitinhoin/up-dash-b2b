@@ -45,6 +45,9 @@ import type {
   GetProductDetailParams,
   GetProductsParams,
   GetProductsSummaryParams,
+  GetSellerCustomersParams,
+  GetSellerDetailParams,
+  GetSellerOrdersParams,
   GetSellersParams,
   HealthStatus,
   InsightResponse,
@@ -73,7 +76,10 @@ import type {
   RefreshResponse,
   RegenerateInsightParams,
   SavedView,
+  SellerCustomersResponse,
+  SellerDetailResponse,
   SellerMetrics,
+  SellerOrdersResponse,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1774,6 +1780,364 @@ export function useGetSellers<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetSellersQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Paginated top buyers for a single seller
+ */
+export const getGetSellerCustomersUrl = (
+  sellerId: string,
+  params?: GetSellerCustomersParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/sellers/${sellerId}/customers?${stringifiedParams}`
+    : `/api/analytics/sellers/${sellerId}/customers`;
+};
+
+export const getSellerCustomers = async (
+  sellerId: string,
+  params?: GetSellerCustomersParams,
+  options?: RequestInit,
+): Promise<SellerCustomersResponse> => {
+  return customFetch<SellerCustomersResponse>(
+    getGetSellerCustomersUrl(sellerId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSellerCustomersQueryKey = (
+  sellerId: string,
+  params?: GetSellerCustomersParams,
+) => {
+  return [
+    `/api/analytics/sellers/${sellerId}/customers`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSellerCustomersQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSellerCustomers>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sellerId: string,
+  params?: GetSellerCustomersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSellerCustomers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSellerCustomersQueryKey(sellerId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSellerCustomers>>
+  > = ({ signal }) =>
+    getSellerCustomers(sellerId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sellerId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSellerCustomers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSellerCustomersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSellerCustomers>>
+>;
+export type GetSellerCustomersQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Paginated top buyers for a single seller
+ */
+
+export function useGetSellerCustomers<
+  TData = Awaited<ReturnType<typeof getSellerCustomers>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sellerId: string,
+  params?: GetSellerCustomersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSellerCustomers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSellerCustomersQueryOptions(
+    sellerId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Paginated recent orders for a single seller
+ */
+export const getGetSellerOrdersUrl = (
+  sellerId: string,
+  params?: GetSellerOrdersParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/sellers/${sellerId}/orders?${stringifiedParams}`
+    : `/api/analytics/sellers/${sellerId}/orders`;
+};
+
+export const getSellerOrders = async (
+  sellerId: string,
+  params?: GetSellerOrdersParams,
+  options?: RequestInit,
+): Promise<SellerOrdersResponse> => {
+  return customFetch<SellerOrdersResponse>(
+    getGetSellerOrdersUrl(sellerId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSellerOrdersQueryKey = (
+  sellerId: string,
+  params?: GetSellerOrdersParams,
+) => {
+  return [
+    `/api/analytics/sellers/${sellerId}/orders`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSellerOrdersQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSellerOrders>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sellerId: string,
+  params?: GetSellerOrdersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSellerOrders>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSellerOrdersQueryKey(sellerId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSellerOrders>>> = ({
+    signal,
+  }) => getSellerOrders(sellerId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sellerId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSellerOrders>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSellerOrdersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSellerOrders>>
+>;
+export type GetSellerOrdersQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Paginated recent orders for a single seller
+ */
+
+export function useGetSellerOrders<
+  TData = Awaited<ReturnType<typeof getSellerOrders>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sellerId: string,
+  params?: GetSellerOrdersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSellerOrders>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSellerOrdersQueryOptions(
+    sellerId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Full performance profile for a single seller
+ */
+export const getGetSellerDetailUrl = (
+  sellerId: string,
+  params?: GetSellerDetailParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/sellers/${sellerId}?${stringifiedParams}`
+    : `/api/analytics/sellers/${sellerId}`;
+};
+
+export const getSellerDetail = async (
+  sellerId: string,
+  params?: GetSellerDetailParams,
+  options?: RequestInit,
+): Promise<SellerDetailResponse> => {
+  return customFetch<SellerDetailResponse>(
+    getGetSellerDetailUrl(sellerId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSellerDetailQueryKey = (
+  sellerId: string,
+  params?: GetSellerDetailParams,
+) => {
+  return [
+    `/api/analytics/sellers/${sellerId}`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSellerDetailQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSellerDetail>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sellerId: string,
+  params?: GetSellerDetailParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSellerDetail>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSellerDetailQueryKey(sellerId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSellerDetail>>> = ({
+    signal,
+  }) => getSellerDetail(sellerId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sellerId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSellerDetail>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSellerDetailQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSellerDetail>>
+>;
+export type GetSellerDetailQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Full performance profile for a single seller
+ */
+
+export function useGetSellerDetail<
+  TData = Awaited<ReturnType<typeof getSellerDetail>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sellerId: string,
+  params?: GetSellerDetailParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSellerDetail>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSellerDetailQueryOptions(
+    sellerId,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

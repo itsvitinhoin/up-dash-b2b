@@ -150,6 +150,8 @@ export function AppLayout({ children }: AppLayoutProps) {
   const meta =
     pageMeta[location] ??
     (location.startsWith("/products/") ? { title: "Product detail", subtitle: "Performance profile", hasDateRange: false, hasFilterBar: false, requiresClient: true } : null) ??
+    (location.startsWith("/customers/") ? { title: "Customer detail", subtitle: "Purchase history and behaviour", hasDateRange: false, hasFilterBar: false, requiresClient: true } : null) ??
+    (location.startsWith("/sellers/") ? { title: "Seller detail", subtitle: "Revenue, orders and top customers", hasDateRange: false, hasFilterBar: false, requiresClient: true } : null) ??
     { title: "UP Dash", subtitle: "", hasDateRange: false, hasFilterBar: false };
   const subtitleText =
     location === "/" || location === "/dashboard"
