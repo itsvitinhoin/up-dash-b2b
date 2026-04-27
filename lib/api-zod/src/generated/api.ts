@@ -1080,6 +1080,13 @@ export const GetStockQueryParams = zod.object({
     .enum(["Stockout", "Overstock", "Healthy"])
     .optional()
     .describe("Filter by risk classification."),
+  utmSource: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict stock analysis to products ordered by customers from this UTM source.",
+    ),
+  utmMedium: zod.coerce.string().optional(),
 });
 
 export const GetStockResponse = zod.object({
@@ -1255,6 +1262,11 @@ export const GetJourneyQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
+  utmSource: zod.coerce
+    .string()
+    .optional()
+    .describe("Restrict journey data to customers from this UTM source."),
+  utmMedium: zod.coerce.string().optional(),
 });
 
 export const GetJourneyResponse = zod.object({
@@ -1340,6 +1352,11 @@ export const GetRfmQueryParams = zod.object({
     .enum(["name", "segment", "recencyDays", "frequency", "monetary"])
     .default(getRfmQuerySortByDefault),
   sortDir: zod.enum(["asc", "desc"]).default(getRfmQuerySortDirDefault),
+  utmSource: zod.coerce
+    .string()
+    .optional()
+    .describe("Restrict RFM analysis to customers from this UTM source."),
+  utmMedium: zod.coerce.string().optional(),
 });
 
 export const GetRfmResponse = zod.object({
@@ -1468,6 +1485,11 @@ export const GetUtmQueryParams = zod.object({
 
 export const GetUtmResponse = zod.object({
   kpis: zod.object({
+    totalSessions: zod
+      .number()
+      .describe(
+        "Total VISIT events from customers in the period, across all sources.",
+      ),
     totalRegistrations: zod.number(),
     totalApprovals: zod.number(),
     approvalPct: zod.number(),
@@ -1856,6 +1878,11 @@ export const GetMarketingQueryParams = zod.object({
     .min(1)
     .max(getMarketingQueryCreativesPageSizeMax)
     .default(getMarketingQueryCreativesPageSizeDefault),
+  utmSource: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter marketing analytics to this UTM source."),
+  utmMedium: zod.coerce.string().optional(),
 });
 
 export const GetMarketingResponse = zod.object({

@@ -821,6 +821,15 @@ paths:
             type: string
             enum: [Stockout, Overstock, Healthy]
           description: Filter by risk classification.
+        - in: query
+          name: utmSource
+          schema:
+            type: string
+          description: Restrict stock analysis to products ordered by customers from this UTM source.
+        - in: query
+          name: utmMedium
+          schema:
+            type: string
       responses:
         "200":
           description: Stock intelligence payload
@@ -849,6 +858,15 @@ paths:
           schema:
             type: string
             format: date-time
+        - in: query
+          name: utmSource
+          schema:
+            type: string
+          description: Restrict journey data to customers from this UTM source.
+        - in: query
+          name: utmMedium
+          schema:
+            type: string
       responses:
         "200":
           description: Journey analytics payload
@@ -904,6 +922,15 @@ paths:
             type: string
             enum: [asc, desc]
             default: desc
+        - in: query
+          name: utmSource
+          schema:
+            type: string
+          description: Restrict RFM analysis to customers from this UTM source.
+        - in: query
+          name: utmMedium
+          schema:
+            type: string
       responses:
         "200":
           description: RFM segmentation payload
@@ -1201,6 +1228,15 @@ paths:
             default: 20
             minimum: 1
             maximum: 100
+        - in: query
+          name: utmSource
+          schema:
+            type: string
+          description: Filter marketing analytics to this UTM source.
+        - in: query
+          name: utmMedium
+          schema:
+            type: string
       responses:
         "200":
           description: Marketing performance payload
@@ -2068,6 +2104,9 @@ components:
     UtmKpis:
       type: object
       properties:
+        totalSessions:
+          type: integer
+          description: Total VISIT events from customers in the period, across all sources.
         totalRegistrations:
           type: integer
         totalApprovals:
@@ -2087,7 +2126,7 @@ components:
           type: ["string", "null"]
         topSourceRevenue:
           type: number
-      required: [totalRegistrations, totalApprovals, approvalPct, totalBuyers, totalRevenue, conversionPct, topSourceRevenue]
+      required: [totalSessions, totalRegistrations, totalApprovals, approvalPct, totalBuyers, totalRevenue, conversionPct, topSourceRevenue]
 
     UtmSubRow:
       type: object

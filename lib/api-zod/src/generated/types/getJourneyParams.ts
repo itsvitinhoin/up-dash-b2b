@@ -10,4 +10,9 @@ export type GetJourneyParams = {
   clientId?: string;
   dateFrom?: Date;
   dateTo?: Date;
+  /**
+   * Restrict journey data to customers from this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
 };

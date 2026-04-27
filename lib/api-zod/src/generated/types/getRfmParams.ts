@@ -20,4 +20,9 @@ export type GetRfmParams = {
   segment?: string;
   sortBy?: GetRfmSortBy;
   sortDir?: GetRfmSortDir;
+  /**
+   * Restrict RFM analysis to customers from this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
 };

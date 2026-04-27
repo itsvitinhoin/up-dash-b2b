@@ -4185,6 +4185,22 @@ async function buildUtmAnalytics(
     subSalesMap.set(mk, { buyers: Number(r.buyers), revenue: Number(r.revenue) });
   }
 
+  // Total VISIT sessions: count events of type VISIT for customers matching the UTM scope
+  type SessionsResult = { sessions: string };
+  const sessionsRaw = await db.execute<SessionsResult>(sql`
+    SELECT COUNT(*)::int AS sessions
+    FROM events e
+    JOIN customers c ON e.customer_id = c.id AND c.client_id = ${clientId}
+    WHERE e.client_id = ${clientId}
+      AND e.event_type = 'VISIT'
+      AND e.created_at >= ${from}
+      AND e.created_at <= ${to}
+      ${srcCond}${medCond}${campCond}
+  `);
+  const totalSessions = Number(
+    ((sessionsRaw.rows ?? sessionsRaw) as unknown as SessionsResult[])[0]?.sessions ?? 0,
+  );
+
   const regRows   = (regRaw.rows   ?? regRaw)   as unknown as RegRow[];
   const salesRows = (salesRaw.rows ?? salesRaw) as unknown as SalesRow[];
 
@@ -4276,6 +4292,7 @@ async function buildUtmAnalytics(
   const totalRoas  = totalSpend > 0 ? totalRevenue / totalSpend : null;
 
   const kpis = {
+    totalSessions,
     totalRegistrations: totalReg,
     totalApprovals: totalApp,
     approvalPct: totalReg > 0 ? (totalApp / totalReg) * 100 : 0,

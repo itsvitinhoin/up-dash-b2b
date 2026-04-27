@@ -19,4 +19,9 @@ export type GetMarketingParams = {
    * @maximum 100
    */
   creativesPageSize?: number;
+  /**
+   * Filter marketing analytics to this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
 };

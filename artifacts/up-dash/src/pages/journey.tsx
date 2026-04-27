@@ -70,7 +70,7 @@ function KpiCard({
 
 export default function JourneyPage() {
   const { selectedClientId, user } = useAuth();
-  const { dateRange } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
   const variants = withReducedMotion(fadeInUp, reduced);
   const queryClient = useQueryClient();
@@ -84,6 +84,8 @@ export default function JourneyPage() {
       clientId,
       dateFrom: format(dateRange.from, "yyyy-MM-dd"),
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
+      utmSource: filters.utmSource || undefined,
+      utmMedium: filters.utmMedium || undefined,
     },
     {
       query: queryOpts({ enabled }),

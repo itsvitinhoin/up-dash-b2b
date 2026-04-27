@@ -444,6 +444,8 @@ export function FilterBar() {
             ["City", view.filters.city],
             ["Size", view.filters.size],
             ["Color", view.filters.color],
+            ["Seller", view.filters.sellerId],
+            ["Creative", view.filters.creative],
           ] as [string, string | null | undefined][])
             .filter(([, v]) => v)
             .map(([k, v]) => `${k}: ${v}`)

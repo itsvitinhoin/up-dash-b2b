@@ -29,4 +29,9 @@ export type GetStockParams = {
    * Filter by risk classification.
    */
   risk?: GetStockRisk;
+  /**
+   * Restrict stock analysis to products ordered by customers from this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
 };

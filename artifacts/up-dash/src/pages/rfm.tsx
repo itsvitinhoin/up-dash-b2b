@@ -99,7 +99,7 @@ function SegmentBadge({ segment }: { segment: string | null | undefined }) {
 
 export default function RfmPage() {
   const { selectedClientId, user } = useAuth();
-  const { dateRange } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
   const variants = withReducedMotion(fadeInUp, reduced);
   const queryClient = useQueryClient();
@@ -124,6 +124,8 @@ export default function RfmPage() {
       limit,
       sortBy,
       sortDir,
+      utmSource: filters.utmSource || undefined,
+      utmMedium: filters.utmMedium || undefined,
     },
     {
       query: queryOpts({ enabled, placeholderData: (prev) => prev }),

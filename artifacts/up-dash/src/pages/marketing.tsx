@@ -406,7 +406,7 @@ const AXIS_TICK = { fontSize: 10, fill: "hsl(var(--muted-foreground))" };
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function MarketingPage() {
   const { selectedClientId, user } = useAuth();
-  const { dateRange } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
   const queryClient = useQueryClient();
 
@@ -431,7 +431,14 @@ export default function MarketingPage() {
   const insightParams = { clientId, ...dateParams, screen: "marketing" as const };
 
   const { data, isLoading, isError, refetch } = useGetMarketing(
-    { clientId, ...dateParams, creativesPage, creativesPageSize: CREATIVES_PAGE_SIZE },
+    {
+      clientId,
+      ...dateParams,
+      creativesPage,
+      creativesPageSize: CREATIVES_PAGE_SIZE,
+      utmSource: filters.utmSource || undefined,
+      utmMedium: filters.utmMedium || undefined,
+    },
     { query: queryOpts({ enabled }) },
   );
 

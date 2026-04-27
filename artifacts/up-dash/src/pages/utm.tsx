@@ -330,7 +330,14 @@ export default function UtmPage() {
 
       {/* KPI Strip */}
       <motion.div variants={cardVariants}>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+          <KpiCard
+            label="Sessions"
+            value={kpis ? formatNumber(kpis.totalSessions) : "—"}
+            icon={TrendingUp}
+            loading={isLoading}
+            accent="bg-sky-500/10"
+          />
           <KpiCard
             label="Registrations"
             value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
@@ -810,13 +817,13 @@ export default function UtmPage() {
                                   {sub.approvalPct.toFixed(1)}%
                                 </td>
                                 <td className="px-3 py-2 text-right tabular-nums text-xs text-muted-foreground">
-                                  —
+                                  {formatNumber(sub.buyers)}
                                 </td>
                                 <td className="px-3 py-2 text-right tabular-nums text-xs text-muted-foreground">
-                                  —
+                                  {formatCurrency(sub.revenue)}
                                 </td>
                                 <td className="px-3 py-2 text-right tabular-nums text-xs text-muted-foreground">
-                                  —
+                                  {sub.conversionPct.toFixed(1)}%
                                 </td>
                                 <td className="pr-4 pl-3 py-2 text-right text-xs text-muted-foreground">
                                   —

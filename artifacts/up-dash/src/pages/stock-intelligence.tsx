@@ -206,7 +206,7 @@ function SkuTile({
 export default function StockIntelligencePage() {
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
-  const { dateRange } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const cardVariants = withReducedMotion(cardEntry, reduced);
@@ -237,6 +237,8 @@ export default function StockIntelligencePage() {
     search: search || undefined,
     category: categoryFilter !== "all" ? categoryFilter : undefined,
     risk: riskFilter !== "all" ? (riskFilter as "Stockout" | "Overstock" | "Healthy") : undefined,
+    utmSource: filters.utmSource || undefined,
+    utmMedium: filters.utmMedium || undefined,
   };
 
   const { data, isLoading, isError } = useGetStock(stockParams, {

@@ -7,6 +7,8 @@
  */
 
 export interface UtmKpis {
+  /** Total VISIT events from customers in the period, across all sources. */
+  totalSessions: number;
   totalRegistrations: number;
   totalApprovals: number;
   approvalPct: number;

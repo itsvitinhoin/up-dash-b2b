@@ -411,6 +411,8 @@ export interface RfmResponse {
 }
 
 export interface UtmKpis {
+  /** Total VISIT events from customers in the period, across all sources. */
+  totalSessions: number;
   totalRegistrations: number;
   totalApprovals: number;
   approvalPct: number;
@@ -1440,6 +1442,11 @@ export type GetStockParams = {
    * Filter by risk classification.
    */
   risk?: GetStockRisk;
+  /**
+   * Restrict stock analysis to products ordered by customers from this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
 };
 
 export type GetStockSort = (typeof GetStockSort)[keyof typeof GetStockSort];
@@ -1476,6 +1483,11 @@ export type GetJourneyParams = {
   clientId?: string;
   dateFrom?: string;
   dateTo?: string;
+  /**
+   * Restrict journey data to customers from this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
 };
 
 export type GetRfmParams = {
@@ -1490,6 +1502,11 @@ export type GetRfmParams = {
   segment?: string;
   sortBy?: GetRfmSortBy;
   sortDir?: GetRfmSortDir;
+  /**
+   * Restrict RFM analysis to customers from this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
 };
 
 export type GetRfmSortBy = (typeof GetRfmSortBy)[keyof typeof GetRfmSortBy];
@@ -1635,6 +1652,11 @@ export type GetMarketingParams = {
    * @maximum 100
    */
   creativesPageSize?: number;
+  /**
+   * Filter marketing analytics to this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
 };
 
 export type ListNotificationsParams = {
