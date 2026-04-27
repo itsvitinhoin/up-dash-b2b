@@ -506,6 +506,22 @@ export interface ProductCustomersResponse {
   limit: number;
 }
 
+export interface ProductsSummaryResponse {
+  /** Avg revenue per active SKU per day for the period. */
+  salesPower: number;
+  /** Avg revenue per active SKU per day for the prior period of equal length. */
+  prevSalesPower: number;
+  /**
+   * Percentage change in Sales Power vs prior period. Null when prior is zero.
+   * @nullable
+   */
+  salesPowerChangePct?: number | null;
+  /** Number of SKUs with at least one sale in the period. */
+  activeSkus: number;
+  /** Length of the period in days. */
+  periodDays: number;
+}
+
 export type InventoryAlertType =
   (typeof InventoryAlertType)[keyof typeof InventoryAlertType];
 
@@ -982,6 +998,12 @@ export const GetProductsSort = {
   created: "created",
 } as const;
 
+export type GetProductsSummaryParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
 export type GetProductDetailParams = {
   clientId?: string;
   dateFrom?: string;
@@ -1025,6 +1047,7 @@ export const GetInsightScreen = {
   dashboard: "dashboard",
   marketing: "marketing",
   customers: "customers",
+  products: "products",
 } as const;
 
 export type RegenerateInsightParams = {
@@ -1041,6 +1064,7 @@ export const RegenerateInsightScreen = {
   dashboard: "dashboard",
   marketing: "marketing",
   customers: "customers",
+  products: "products",
 } as const;
 
 export type GetAlertsParams = {

@@ -689,6 +689,36 @@ export const GetProductsResponseItem = zod.object({
 export const GetProductsResponse = zod.array(GetProductsResponseItem);
 
 /**
+ * @summary Sales Power KPI — avg revenue per active SKU per day vs prior period
+ */
+export const GetProductsSummaryQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+});
+
+export const GetProductsSummaryResponse = zod.object({
+  salesPower: zod
+    .number()
+    .describe("Avg revenue per active SKU per day for the period."),
+  prevSalesPower: zod
+    .number()
+    .describe(
+      "Avg revenue per active SKU per day for the prior period of equal length.",
+    ),
+  salesPowerChangePct: zod
+    .number()
+    .nullish()
+    .describe(
+      "Percentage change in Sales Power vs prior period. Null when prior is zero.",
+    ),
+  activeSkus: zod
+    .number()
+    .describe("Number of SKUs with at least one sale in the period."),
+  periodDays: zod.number().describe("Length of the period in days."),
+});
+
+/**
  * @summary Full performance profile for a single product
  */
 export const GetProductDetailParams = zod.object({
@@ -886,7 +916,7 @@ export const GetInsightQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
   screen: zod
-    .enum(["dashboard", "marketing", "customers"])
+    .enum(["dashboard", "marketing", "customers", "products"])
     .default(getInsightQueryScreenDefault),
 });
 
@@ -909,7 +939,7 @@ export const RegenerateInsightQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
   screen: zod
-    .enum(["dashboard", "marketing", "customers"])
+    .enum(["dashboard", "marketing", "customers", "products"])
     .default(regenerateInsightQueryScreenDefault),
 });
 

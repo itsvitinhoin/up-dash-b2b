@@ -16,6 +16,7 @@ import {
   ShoppingCart,
   ChevronRight,
 } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -85,9 +86,11 @@ function BreakdownChart({ data, title }: {
 }) {
   if (!data.length) {
     return (
-      <div className="flex flex-col items-center justify-center h-40 text-muted-foreground text-sm">
-        No data available
-      </div>
+      <EmptyState
+        title="No data available"
+        description="No breakdown data for this period."
+        className="h-40 border-0 bg-transparent"
+      />
     );
   }
   return (
@@ -162,13 +165,6 @@ export default function ProductDetailPage() {
   const product = data?.product;
   const kpis = data?.kpis;
 
-  const revenueChartData = (data?.revenueOverTime ?? []).map((d) => ({
-    date: d.date,
-    revenue: d.revenue,
-    prevRevenue: undefined as number | undefined,
-  }));
-
-  const prevMap = new Map((data?.prevRevenueOverTime ?? []).map((d) => [d.date, d.revenue]));
   const mergedChart = (data?.revenueOverTime ?? []).map((d, i) => {
     const prevEntry = data?.prevRevenueOverTime?.[i];
     return {
@@ -180,17 +176,13 @@ export default function ProductDetailPage() {
 
   if (isError) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
-        <Package className="h-12 w-12 text-muted-foreground" />
-        <div>
-          <p className="text-lg font-semibold">Product not found</p>
-          <p className="text-sm text-muted-foreground">This product doesn't exist or you don't have access to it.</p>
-        </div>
-        <Button onClick={() => setLocation("/products")} variant="outline">
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Products
-        </Button>
-      </div>
+      <EmptyState
+        icon={Package}
+        title="Product not found"
+        description="This product doesn't exist or you don't have access to it."
+        action={{ label: "Back to Products", onClick: () => setLocation("/products") }}
+        className="py-20"
+      />
     );
   }
 
@@ -269,7 +261,7 @@ export default function ProductDetailPage() {
           ))
         ) : kpis ? (
           <>
-            <KpiTile label="Revenue (period)" value={formatCurrency(kpis.totalRevenue)} />
+            <KpiTile label="Revenue (lifetime)" value={formatCurrency(kpis.totalRevenue)} />
             <KpiTile label="Units sold" value={formatNumber(kpis.totalUnitsSold)} />
             <KpiTile label="Avg ticket" value={formatCurrency(kpis.avgTicket)} />
             <KpiTile
@@ -293,10 +285,12 @@ export default function ProductDetailPage() {
             {isLoading ? (
               <Skeleton className="h-48 w-full" />
             ) : mergedChart.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-muted-foreground text-sm gap-2">
-                <TrendingUp className="h-8 w-8 opacity-30" />
-                No sales data for this period
-              </div>
+              <EmptyState
+                icon={TrendingUp}
+                title="No sales data for this period"
+                description="Adjust the date range or check back once orders are placed."
+                className="h-48 border-0 bg-transparent"
+              />
             ) : (
               <ResponsiveContainer width="100%" height={200}>
                 <LineChart data={mergedChart} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
@@ -412,9 +406,13 @@ export default function ProductDetailPage() {
                     ))
                   ) : !buyersData?.data.length ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-12 text-center text-muted-foreground text-sm">
-                        <ShoppingCart className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                        No purchases recorded yet
+                      <TableCell colSpan={6} className="p-0">
+                        <EmptyState
+                          icon={ShoppingCart}
+                          title="No purchases recorded yet"
+                          description="Buyers will appear here once they purchase this product."
+                          className="py-12 border-0 bg-transparent"
+                        />
                       </TableCell>
                     </TableRow>
                   ) : (

@@ -1393,12 +1393,23 @@ function computeProductLevel(
   stock: number,
   restockThreshold: number,
 ): "High Conversion" | "Standard" | "Low" | "At Risk" {
+  // Never sold at all — dead stock risk regardless of inventory level
+  if (totalSold === 0) return "At Risk";
+
   const total = totalSold + stock;
   const sellThrough = total > 0 ? totalSold / total : 0;
-  if (stock === 0 && totalSold === 0) return "At Risk";
-  if (sellThrough >= 0.7) return "High Conversion";
-  if (sellThrough >= 0.4) return "Standard";
-  if (stock > 0 && stock <= restockThreshold) return "Low";
+
+  // Highly converted: sold through 65%+ of lifetime inventory
+  if (sellThrough >= 0.65) return "High Conversion";
+
+  // At Risk: low historical sell-through AND still sitting on excess stock
+  // (more than 3× the restock threshold, showing very poor inventory turnover)
+  if (sellThrough < 0.15 && stock > restockThreshold * 3) return "At Risk";
+
+  // Moderate sell-through — healthy but not outstanding
+  if (sellThrough >= 0.35) return "Standard";
+
+  // Below 35% sell-through — low performance
   return "Low";
 }
 
@@ -1466,6 +1477,68 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   }));
 
   res.json(GetProductsResponse.parse(enriched));
+});
+
+router.get("/analytics/products/summary", async (req, res): Promise<void> => {
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const dateTo = req.query.dateTo ? new Date(req.query.dateTo as string) : new Date();
+  const dateFrom = req.query.dateFrom
+    ? new Date(req.query.dateFrom as string)
+    : new Date(dateTo.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  const periodMs = dateTo.getTime() - dateFrom.getTime();
+  const periodDays = Math.max(1, Math.round(periodMs / (24 * 60 * 60 * 1000)));
+  const prevTo = new Date(dateFrom.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - periodMs);
+
+  const [currentRows, prevRows] = await Promise.all([
+    db
+      .select({
+        productId: orderItemsTable.productId,
+        revenue: sql<number>`SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale})`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, dateFrom),
+          lte(ordersTable.createdAt, dateTo),
+        ),
+      )
+      .groupBy(orderItemsTable.productId),
+    db
+      .select({
+        productId: orderItemsTable.productId,
+        revenue: sql<number>`SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale})`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, prevFrom),
+          lte(ordersTable.createdAt, prevTo),
+        ),
+      )
+      .groupBy(orderItemsTable.productId),
+  ]);
+
+  const activeSkus = currentRows.length;
+  const totalRevenue = currentRows.reduce((s, r) => s + Number(r.revenue), 0);
+  const salesPower = activeSkus > 0 ? totalRevenue / activeSkus / periodDays : 0;
+
+  const prevActiveSkus = prevRows.length;
+  const prevTotalRevenue = prevRows.reduce((s, r) => s + Number(r.revenue), 0);
+  const prevSalesPower = prevActiveSkus > 0 ? prevTotalRevenue / prevActiveSkus / periodDays : 0;
+
+  const salesPowerChangePct = prevSalesPower > 0
+    ? ((salesPower - prevSalesPower) / prevSalesPower) * 100
+    : null;
+
+  res.json({ salesPower, prevSalesPower, salesPowerChangePct, activeSkus, periodDays });
 });
 
 router.get("/analytics/products/:productId/customers", async (req, res): Promise<void> => {
@@ -1560,6 +1633,7 @@ router.get("/analytics/products/:productId", async (req, res): Promise<void> => 
   const prevFrom = new Date(dateFrom.getTime() - prevWindowMs);
   const prevTo = new Date(dateFrom.getTime() - 1);
 
+  // KPI strip = lifetime (all-time) stats; chart and breakdowns = period-scoped
   const [kpiRows, buyerCountRows, revTimeSeries, prevTimeSeries, colorRows, sizeRows, stateRows] = await Promise.all([
     db
       .select({
@@ -1573,8 +1647,7 @@ router.get("/analytics/products/:productId", async (req, res): Promise<void> => 
         and(
           eq(orderItemsTable.productId, productId),
           eq(ordersTable.clientId, clientId),
-          gte(ordersTable.createdAt, dateFrom),
-          lte(ordersTable.createdAt, dateTo),
+          // Lifetime: no date restriction
         ),
       ),
     db
@@ -1585,8 +1658,7 @@ router.get("/analytics/products/:productId", async (req, res): Promise<void> => 
         and(
           eq(orderItemsTable.productId, productId),
           eq(ordersTable.clientId, clientId),
-          gte(ordersTable.createdAt, dateFrom),
-          lte(ordersTable.createdAt, dateTo),
+          // Lifetime: no date restriction
         ),
       ),
     db
@@ -2301,6 +2373,83 @@ No markdown, no preamble.`;
         }
       } catch (err) {
         console.warn("[insight:marketing] AI generation failed, using heuristic:", (err as Error).message);
+      }
+    }
+    const generatedAt = new Date().toISOString();
+    insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...payload, generatedAt } });
+    return { ...payload, generatedAt, cached: false };
+  }
+
+  // Products-specific insight
+  if (screen === "products") {
+    // Gather top-level product KPIs: top 5 by revenue, level distribution, sell-through
+    const [topProducts, levelCounts] = await Promise.all([
+      db
+        .select({
+          name: productsTable.name,
+          totalRevenue: productsTable.totalRevenue,
+          totalSold: productsTable.totalSold,
+          stock: productsTable.stock,
+          restockThreshold: productsTable.restockThreshold,
+        })
+        .from(productsTable)
+        .where(eq(productsTable.clientId, clientId))
+        .orderBy(desc(productsTable.totalRevenue))
+        .limit(5),
+      db
+        .select({
+          totalSold: productsTable.totalSold,
+          stock: productsTable.stock,
+          restockThreshold: productsTable.restockThreshold,
+        })
+        .from(productsTable)
+        .where(eq(productsTable.clientId, clientId)),
+    ]);
+
+    const levels = levelCounts.map((r) => computeProductLevel(r.totalSold, r.stock, r.restockThreshold));
+    const atRiskCount = levels.filter((l) => l === "At Risk").length;
+    const highConvCount = levels.filter((l) => l === "High Conversion").length;
+    const totalProducts = levels.length;
+
+    const heuristic = {
+      headline: topProducts[0]
+        ? `Top product "${topProducts[0].name}" has generated ${topProducts[0].totalRevenue.toFixed(0)} in lifetime revenue`
+        : "No product sales recorded yet",
+      body: `${highConvCount} of ${totalProducts} products are High Conversion (65%+ sell-through). ${atRiskCount > 0 ? `${atRiskCount} product${atRiskCount > 1 ? "s" : ""} are At Risk — never sold or very low turnover.` : "No products are At Risk."}`,
+      bullets: [
+        `High Conversion SKUs: ${highConvCount} of ${totalProducts} — consider re-ordering your bestsellers`,
+        atRiskCount > 0 ? `${atRiskCount} At Risk SKU${atRiskCount > 1 ? "s" : ""} — these have never sold or have very poor turnover; consider markdown or discontinuation` : "All SKUs have recorded at least one sale — good catalog health",
+        topProducts[0] ? `"${topProducts[0].name}" leads with ${topProducts[0].totalSold} units sold — study what drives its performance` : "Add sales data to unlock product performance insights",
+      ],
+    };
+
+    let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
+    const ai = getOpenAIClient();
+    if (ai && isAIConfigured()) {
+      try {
+        const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
+        const prompt = `You are a senior fashion-retail product analyst writing a weekly product catalog insight for "${brand}". Period: ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}.
+Total SKUs: ${totalProducts} | High Conversion: ${highConvCount} | At Risk: ${atRiskCount}
+Top 5 products by revenue: ${topProducts.map((p) => `${p.name} (R$${p.totalRevenue.toFixed(0)}, sold ${p.totalSold})`).join("; ")}
+Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 sentences>","bullets":["<actionable>","<actionable>","<actionable>"]}`;
+        const completion = await ai.chat.completions.create({
+          model: "gpt-5-nano",
+          max_completion_tokens: 500,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "You write concise, actionable B2B product analytics insights. Always respond with the requested JSON shape only." },
+            { role: "user", content: prompt },
+          ],
+        });
+        const text = completion.choices[0]?.message?.content;
+        if (text) {
+          const parsed = JSON.parse(text) as { headline?: string; body?: string; bullets?: string[] };
+          if (typeof parsed.headline === "string" && typeof parsed.body === "string" && Array.isArray(parsed.bullets)) {
+            payload = { headline: parsed.headline.slice(0, 120), body: parsed.body.slice(0, 600), bullets: parsed.bullets.slice(0, 4).map((b) => String(b).slice(0, 160)), source: "ai" };
+          }
+        }
+      } catch (err) {
+        console.warn("[insight:products] AI generation failed, using heuristic:", (err as Error).message);
       }
     }
     const generatedAt = new Date().toISOString();

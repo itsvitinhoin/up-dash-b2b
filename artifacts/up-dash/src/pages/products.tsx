@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
-import { useGetProducts, GetProductsSort } from "@workspace/api-client-react";
+import {
+  useGetProducts,
+  useGetProductsSummary,
+  useGetInsight,
+  useRegenerateInsight,
+  getGetInsightQueryKey,
+  GetProductsSort,
+} from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -16,14 +24,14 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, PackageOpen, ArrowDownUp, Download, X, Search, ChevronRight } from "lucide-react";
+import { AlertCircle, PackageOpen, ArrowDownUp, Download, X as XIcon, Search, ChevronRight, Sparkles, RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { CountUp } from "@/components/count-up";
 import { cardEntry, staggerContainer, useReducedMotion, withReducedMotion } from "@/lib/motion";
-import { format } from "date-fns";
+import { format, subDays } from "date-fns";
 
 const LEVEL_STYLES: Record<string, string> = {
   "High Conversion": "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -69,6 +77,8 @@ export default function ProductsPage() {
   const reduced = useReducedMotion();
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const cardVariants = withReducedMotion(cardEntry, reduced);
+  const queryClient = useQueryClient();
+  const [insightDismissed, setInsightDismissed] = useState(false);
   // useSearch reacts to URL query-string changes from in-app navigation
   // (e.g. picking a result from the topbar search palette).
   const locationSearch = useSearch();
@@ -147,6 +157,29 @@ export default function ProductsPage() {
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const queryEnabled =
     user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+
+  // Sales Power KPI — last 30 days vs prior 30 days
+  const now = new Date();
+  const summaryDateTo = format(now, "yyyy-MM-dd");
+  const summaryDateFrom = format(subDays(now, 30), "yyyy-MM-dd");
+  const summaryParams = { clientId, dateFrom: summaryDateFrom, dateTo: summaryDateTo };
+  const { data: summary, isLoading: summaryLoading } = useGetProductsSummary(
+    summaryParams,
+    { query: queryOpts({ enabled: queryEnabled }) },
+  );
+
+  // AI Insight
+  const insightParams = { clientId, dateFrom: summaryDateFrom, dateTo: summaryDateTo, screen: "products" as const };
+  const { data: insight, isLoading: insightLoading } = useGetInsight(
+    insightParams,
+    { query: queryOpts({ enabled: queryEnabled }) },
+  );
+  const regenerate = useRegenerateInsight({
+    mutation: {
+      onSuccess: () =>
+        queryClient.invalidateQueries({ queryKey: getGetInsightQueryKey(insightParams) }),
+    },
+  });
 
   const { data, isLoading, isError, refetch } = useGetProducts(
     {
@@ -310,10 +343,117 @@ export default function ProductsPage() {
             className="h-7 px-2 text-xs"
             data-testid="products-clear-filters"
           >
-            <X className="h-3 w-3 mr-1" />
+            <XIcon className="h-3 w-3 mr-1" />
             Clear
           </Button>
         </div>
+      )}
+
+      {/* Sales Power KPI strip */}
+      <motion.div variants={cardVariants}>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {summaryLoading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="p-4 rounded-lg border border-border bg-card">
+                <Skeleton className="h-3 w-20 mb-2" />
+                <Skeleton className="h-7 w-24" />
+              </div>
+            ))
+          ) : (
+            <>
+              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card" data-testid="kpi-sales-power">
+                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Sales Power</span>
+                <span className="text-2xl font-bold tabular-nums">{formatCurrency(summary?.salesPower ?? 0)}</span>
+                <span className="text-xs text-muted-foreground">Revenue / active SKU / day</span>
+              </div>
+              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card">
+                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">vs Prior Period</span>
+                {summary?.salesPowerChangePct != null ? (
+                  <span className={`text-2xl font-bold tabular-nums ${summary.salesPowerChangePct >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                    {summary.salesPowerChangePct >= 0 ? "+" : ""}{summary.salesPowerChangePct.toFixed(1)}%
+                  </span>
+                ) : (
+                  <span className="text-2xl font-bold text-muted-foreground">—</span>
+                )}
+                <span className="text-xs text-muted-foreground">Sales Power change</span>
+              </div>
+              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card">
+                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Active SKUs</span>
+                <span className="text-2xl font-bold tabular-nums">{formatNumber(summary?.activeSkus ?? 0)}</span>
+                <span className="text-xs text-muted-foreground">SKUs with sales in period</span>
+              </div>
+              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card">
+                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Period</span>
+                <span className="text-2xl font-bold tabular-nums">{summary?.periodDays ?? 30}d</span>
+                <span className="text-xs text-muted-foreground">Days in analysis window</span>
+              </div>
+            </>
+          )}
+        </div>
+      </motion.div>
+
+      {/* AI Insight card */}
+      {!insightDismissed && (
+        <motion.div variants={cardVariants}>
+          <Card className="p-5 bg-gradient-to-br from-primary/[0.04] via-card to-card border-border relative overflow-hidden" data-testid="products-insight-card">
+            <div aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-primary via-chart-3 to-chart-1 opacity-80" />
+            <div className="absolute -top-12 -right-12 h-40 w-40 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
+            <div className="relative z-10">
+              <div className="flex items-center justify-between mb-3">
+                <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
+                  <Sparkles className="h-3 w-3" />
+                  UP Insight · Catalog · {insight?.source === "ai" ? "AI" : "Auto"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setInsightDismissed(true)}
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="Dismiss insight"
+                  data-testid="products-insight-dismiss"
+                >
+                  <XIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {insightLoading || !insight ? (
+                <>
+                  <Skeleton className="h-5 w-3/4 mb-2" />
+                  <Skeleton className="h-4 w-full mb-1" />
+                  <Skeleton className="h-4 w-5/6 mb-3" />
+                </>
+              ) : (
+                <>
+                  <h3 className="text-base font-semibold leading-snug mb-2">{insight.headline}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{insight.body}</p>
+                  {insight.bullets && insight.bullets.length > 0 && (
+                    <ul className="mt-3 space-y-1.5">
+                      {insight.bullets.map((b, i) => (
+                        <li key={i} className="flex gap-2 text-xs text-muted-foreground">
+                          <span className="text-primary mt-1 leading-none">•</span>
+                          <span className="leading-relaxed">{b}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+              <div className="mt-4 flex items-center gap-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => regenerate.mutate({ params: insightParams })}
+                  disabled={regenerate.isPending || insightLoading}
+                  data-testid="products-insight-regenerate"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${regenerate.isPending ? "animate-spin" : ""}`} />
+                  {regenerate.isPending ? "Regenerating…" : "Regenerate"}
+                </Button>
+                {insight?.cached && (
+                  <span className="text-[11px] text-muted-foreground">Cached · refreshes hourly</span>
+                )}
+              </div>
+            </div>
+          </Card>
+        </motion.div>
       )}
 
       <motion.div variants={cardVariants}>

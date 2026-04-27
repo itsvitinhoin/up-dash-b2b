@@ -443,6 +443,34 @@ paths:
                 items:
                   $ref: "#/components/schemas/ProductMetrics"
 
+  /analytics/products/summary:
+    get:
+      operationId: getProductsSummary
+      tags: [analytics]
+      summary: Sales Power KPI — avg revenue per active SKU per day vs prior period
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Products summary payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductsSummaryResponse"
+
   /analytics/products/{productId}:
     get:
       operationId: getProductDetail
@@ -621,7 +649,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing, customers]
+            enum: [dashboard, marketing, customers, products]
             default: dashboard
       responses:
         "200":
@@ -653,7 +681,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing, customers]
+            enum: [dashboard, marketing, customers, products]
             default: dashboard
       responses:
         "200":
@@ -1760,6 +1788,30 @@ components:
         limit:
           type: integer
       required: [data, total, page, limit]
+
+    ProductsSummaryResponse:
+      type: object
+      properties:
+        salesPower:
+          type: number
+          description: Avg revenue per active SKU per day for the period.
+        prevSalesPower:
+          type: number
+          description: Avg revenue per active SKU per day for the prior period of equal length.
+        salesPowerChangePct:
+          type: ["number", "null"]
+          description: Percentage change in Sales Power vs prior period. Null when prior is zero.
+        activeSkus:
+          type: integer
+          description: Number of SKUs with at least one sale in the period.
+        periodDays:
+          type: integer
+          description: Length of the period in days.
+      required:
+        - salesPower
+        - prevSalesPower
+        - activeSkus
+        - periodDays
 
     InventoryAlert:
       type: object

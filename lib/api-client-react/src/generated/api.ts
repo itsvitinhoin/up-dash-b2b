@@ -44,6 +44,7 @@ import type {
   GetProductCustomersParams,
   GetProductDetailParams,
   GetProductsParams,
+  GetProductsSummaryParams,
   GetSellersParams,
   HealthStatus,
   InsightResponse,
@@ -67,6 +68,7 @@ import type {
   ProductCustomersResponse,
   ProductDetailResponse,
   ProductMetrics,
+  ProductsSummaryResponse,
   RefreshRequest,
   RefreshResponse,
   RegenerateInsightParams,
@@ -1335,6 +1337,109 @@ export function useGetProducts<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetProductsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Sales Power KPI — avg revenue per active SKU per day vs prior period
+ */
+export const getGetProductsSummaryUrl = (params?: GetProductsSummaryParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/products/summary?${stringifiedParams}`
+    : `/api/analytics/products/summary`;
+};
+
+export const getProductsSummary = async (
+  params?: GetProductsSummaryParams,
+  options?: RequestInit,
+): Promise<ProductsSummaryResponse> => {
+  return customFetch<ProductsSummaryResponse>(
+    getGetProductsSummaryUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetProductsSummaryQueryKey = (
+  params?: GetProductsSummaryParams,
+) => {
+  return [
+    `/api/analytics/products/summary`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetProductsSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getProductsSummary>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetProductsSummaryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getProductsSummary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetProductsSummaryQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getProductsSummary>>
+  > = ({ signal }) => getProductsSummary(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getProductsSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetProductsSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getProductsSummary>>
+>;
+export type GetProductsSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Sales Power KPI — avg revenue per active SKU per day vs prior period
+ */
+
+export function useGetProductsSummary<
+  TData = Awaited<ReturnType<typeof getProductsSummary>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetProductsSummaryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getProductsSummary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetProductsSummaryQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

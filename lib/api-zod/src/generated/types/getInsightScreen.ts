@@ -13,4 +13,5 @@ export const GetInsightScreen = {
   dashboard: "dashboard",
   marketing: "marketing",
   customers: "customers",
+  products: "products",
 } as const;

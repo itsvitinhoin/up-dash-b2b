@@ -13,4 +13,5 @@ export const RegenerateInsightScreen = {
   dashboard: "dashboard",
   marketing: "marketing",
   customers: "customers",
+  products: "products",
 } as const;

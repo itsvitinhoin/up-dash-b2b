@@ -140,11 +140,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
               <CommandItem
                 key={product.id}
                 value={`product-${product.id}-${product.sku}-${product.name}`}
-                onSelect={() =>
-                  handleSelect(
-                    `/products?search=${encodeURIComponent(product.sku)}`,
-                  )
-                }
+                onSelect={() => handleSelect(`/products/${product.id}`)}
                 data-testid={`search-result-product-${product.sku}`}
               >
                 <Package className="text-muted-foreground" />
