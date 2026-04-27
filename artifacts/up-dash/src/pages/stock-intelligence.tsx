@@ -292,6 +292,7 @@ export default function StockIntelligencePage() {
       category: r.category.length > 12 ? r.category.slice(0, 12) + "…" : r.category,
       stockUnits: r.stockUnits,
       unitsSold: r.unitsSold,
+      dailyVelocity: r.dailyVelocity,
     }));
   }, [data]);
 
@@ -656,11 +657,12 @@ export default function StockIntelligencePage() {
                       }}
                       formatter={(v, name) => [formatNumber(v as number), name === "stockUnits" ? "Stock Units" : "Units Sold"]}
                     />
-                    <Bar dataKey="stockUnits" name="Stock Units" radius={[0, 3, 3, 0]} barSize={10}>
+                    <Bar dataKey="stockUnits" name="Stock Units" stackId="a" radius={[0, 0, 0, 0]} barSize={10}>
                       {colorChartData.map((_, i) => (
                         <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
                       ))}
                     </Bar>
+                    <Bar dataKey="unitsSold" name="Units Sold" stackId="a" radius={[0, 3, 3, 0]} barSize={10} fill="hsl(var(--muted-foreground)/0.35)" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -715,11 +717,12 @@ export default function StockIntelligencePage() {
                       }}
                       formatter={(v, name) => [formatNumber(v as number), name === "stockUnits" ? "Stock Units" : "Units Sold"]}
                     />
-                    <Bar dataKey="stockUnits" name="Stock Units" radius={[0, 3, 3, 0]} barSize={10}>
+                    <Bar dataKey="stockUnits" name="Stock Units" stackId="a" radius={[0, 0, 0, 0]} barSize={10}>
                       {sizeChartData.map((_, i) => (
                         <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
                       ))}
                     </Bar>
+                    <Bar dataKey="unitsSold" name="Units Sold" stackId="a" radius={[0, 3, 3, 0]} barSize={10} fill="hsl(var(--muted-foreground)/0.35)" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
