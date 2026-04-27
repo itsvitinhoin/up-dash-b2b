@@ -179,7 +179,7 @@ function KpiCard({
             ) : (
               <>
                 <span
-                  className={`text-3xl font-semibold tracking-tight tabular-nums ${
+                  className={`text-2xl font-semibold tracking-tight tabular-nums ${
                     valueAccent
                       ? "bg-gradient-to-br from-foreground via-foreground to-primary bg-clip-text text-transparent"
                       : ""

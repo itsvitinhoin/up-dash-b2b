@@ -142,7 +142,7 @@ function KpiTile({
             <Skeleton className="h-9 w-32" />
           ) : (
             <>
-              <span className="text-3xl font-semibold tracking-tight tabular-nums">
+              <span className="text-2xl font-semibold tracking-tight tabular-nums">
                 <CountUp value={value} format={fmt} />
               </span>
               {unit && <span className="text-xs text-muted-foreground font-medium">{unit}</span>}
