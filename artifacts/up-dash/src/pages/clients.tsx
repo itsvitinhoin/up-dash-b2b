@@ -110,13 +110,14 @@ export default function ClientsPage() {
   const debouncedApiKey = useDebounce(newApiKey, 400);
 
   useEffect(() => {
-    if (!debouncedApiKey) {
+    if (!debouncedApiKey || !debouncedApiKey.trim().startsWith("sk_")) {
       setLookupMatch(null);
+      setIsLookingUp(false);
       return;
     }
     let cancelled = false;
     setIsLookingUp(true);
-    lookupClientByApiKey({ apiKey: debouncedApiKey })
+    lookupClientByApiKey({ apiKey: debouncedApiKey.trim() })
       .then((data) => {
         if (cancelled) return;
         setNewName(data.name);
@@ -194,6 +195,7 @@ export default function ClientsPage() {
             setNewApiKey("");
             setNewCurrencyCode("BRL");
             setLookupMatch(null);
+            setIsLookingUp(false);
           }
         }}>
           <DialogTrigger asChild>
@@ -277,7 +279,15 @@ export default function ClientsPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit" disabled={createMutation.isPending}>
+                <Button
+                  type="submit"
+                  disabled={
+                    createMutation.isPending ||
+                    !newName.trim() ||
+                    !newEmail.trim() ||
+                    !newApiKey.trim()
+                  }
+                >
                   {createMutation.isPending ? "Creating..." : "Save Client"}
                 </Button>
               </DialogFooter>
