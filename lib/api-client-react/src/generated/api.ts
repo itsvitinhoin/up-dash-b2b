@@ -86,6 +86,7 @@ import type {
   RefreshResponse,
   RegenerateInsightParams,
   RfmResponse,
+  RotateKeyResponse,
   SavedView,
   SellerCustomersResponse,
   SellerDetailResponse,
@@ -949,6 +950,90 @@ export function useGetClient<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Rotate the API key for a client (admin only)
+ */
+export const getRotateClientApiKeyUrl = (clientId: string) => {
+  return `/api/clients/${clientId}/rotate-key`;
+};
+
+export const rotateClientApiKey = async (
+  clientId: string,
+  options?: RequestInit,
+): Promise<RotateKeyResponse> => {
+  return customFetch<RotateKeyResponse>(getRotateClientApiKeyUrl(clientId), {
+    ...options,
+    method: "PATCH",
+  });
+};
+
+export const getRotateClientApiKeyMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rotateClientApiKey>>,
+    TError,
+    { clientId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rotateClientApiKey>>,
+  TError,
+  { clientId: string },
+  TContext
+> => {
+  const mutationKey = ["rotateClientApiKey"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rotateClientApiKey>>,
+    { clientId: string }
+  > = (props) => {
+    const { clientId } = props ?? {};
+
+    return rotateClientApiKey(clientId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RotateClientApiKeyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rotateClientApiKey>>
+>;
+
+export type RotateClientApiKeyMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Rotate the API key for a client (admin only)
+ */
+export const useRotateClientApiKey = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rotateClientApiKey>>,
+    TError,
+    { clientId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof rotateClientApiKey>>,
+  TError,
+  { clientId: string },
+  TContext
+> => {
+  return useMutation(getRotateClientApiKeyMutationOptions(options));
+};
 
 /**
  * @summary Dashboard KPIs and time-series

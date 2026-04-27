@@ -9,7 +9,9 @@ import {
   useListClients,
   useCreateClient,
   useImportClients,
+  useRotateClientApiKey,
   lookupClientByApiKey,
+  getListClientsQueryKey,
 } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -25,11 +27,15 @@ import {
   ArrowUpRight,
   Building2,
   CheckCircle2,
+  Copy,
+  KeyRound,
   Loader2,
   Minus,
   Plus,
+  RefreshCw,
   Search,
   Upload,
+  Wand2,
   XCircle,
 } from "lucide-react";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
@@ -52,10 +58,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useQueryClient } from "@tanstack/react-query";
-import { getListClientsQueryKey } from "@workspace/api-client-react";
 
-// Curated short list — intentionally not a full ISO list. Add more as new
-// brands onboard. Currency code drives Intl.NumberFormat at display time.
 const CURRENCY_OPTIONS: Array<{ code: string; locale: string; label: string }> = [
   { code: "BRL", locale: "pt-BR", label: "Real (BRL) — Português (Brasil)" },
   { code: "USD", locale: "en-US", label: "Dollar (USD) — English (US)" },
@@ -100,6 +103,16 @@ function validateCsvRows(rawRows: Record<string, string>[]): CsvRow[] {
 const CSV_TEMPLATE =
   "data:text/csv;charset=utf-8,name,email,apiKey,currency,locale\nAcme Corp,admin@acme.com,sk_live_example,USD,en-US\n";
 
+function generateApiKey(): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "sk_";
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  for (const byte of array) {
+    result += chars[byte % chars.length];
+  }
+  return result;
+}
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
   useEffect(() => {
@@ -132,6 +145,131 @@ function GrowthCell({ value }: { value: number | null | undefined }) {
       {isUp ? "+" : ""}
       {value.toFixed(1)}%
     </span>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="h-7 w-7 shrink-0"
+      onClick={handleCopy}
+      title="Copy to clipboard"
+    >
+      {copied ? (
+        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
+    </Button>
+  );
+}
+
+function RotateKeyDialog({ clientId, clientName }: { clientId: string; clientName: string }) {
+  const [open, setOpen] = useState(false);
+  const [newKey, setNewKey] = useState<string | null>(null);
+  const rotateMutation = useRotateClientApiKey();
+  const queryClient = useQueryClient();
+
+  const handleRotate = () => {
+    rotateMutation.mutate(
+      { clientId },
+      {
+        onSuccess: (data) => {
+          setNewKey(data.apiKey);
+          queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+        },
+      }
+    );
+  };
+
+  const handleClose = () => {
+    setOpen(false);
+    setNewKey(null);
+    rotateMutation.reset();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); else setOpen(true); }}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 text-xs"
+          title="Rotate API key"
+        >
+          <RefreshCw className="h-3 w-3" />
+          Rotate Key
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4" /> Rotate API Key
+          </DialogTitle>
+          <DialogDescription>
+            {newKey
+              ? "The API key has been rotated. Copy the new key now — it won't be shown again."
+              : `Rotating the key for "${clientName}" will immediately invalidate the current key. Any integrations using it will stop working until updated.`}
+          </DialogDescription>
+        </DialogHeader>
+
+        {newKey ? (
+          <div className="space-y-2">
+            <Label>New API Key</Label>
+            <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+              <code className="flex-1 break-all text-xs font-mono">{newKey}</code>
+              <CopyButton text={newKey} />
+            </div>
+            <p className="text-xs text-amber-400 flex items-center gap-1">
+              <AlertCircle className="h-3 w-3 shrink-0" />
+              Store this key securely — it cannot be retrieved after closing this dialog.
+            </p>
+          </div>
+        ) : (
+          rotateMutation.isError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>Failed to rotate key. Please try again.</AlertDescription>
+            </Alert>
+          )
+        )}
+
+        <DialogFooter>
+          {newKey ? (
+            <Button onClick={handleClose}>Done</Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={handleClose} disabled={rotateMutation.isPending}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleRotate}
+                disabled={rotateMutation.isPending}
+              >
+                {rotateMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Rotating…
+                  </>
+                ) : (
+                  "Rotate Key"
+                )}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -411,42 +549,57 @@ export default function ClientsPage() {
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
                   <Label htmlFor="name">Company Name</Label>
-                  <Input 
-                    id="name" 
-                    value={newName} 
-                    onChange={(e) => setNewName(e.target.value)} 
-                    placeholder="Acme Corp" 
-                    required 
+                  <Input
+                    id="name"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="Acme Corp"
+                    required
                   />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="email">Primary Contact Email</Label>
-                  <Input 
-                    id="email" 
-                    type="email" 
-                    value={newEmail} 
-                    onChange={(e) => setNewEmail(e.target.value)} 
-                    placeholder="admin@acme.com" 
-                    required 
+                  <Input
+                    id="email"
+                    type="email"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    placeholder="admin@acme.com"
+                    required
                   />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="apiKey">API Key (Integration)</Label>
-                  <div className="relative">
-                    <Input
-                      id="apiKey"
-                      value={newApiKey}
-                      onChange={(e) => {
-                        setNewApiKey(e.target.value);
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        id="apiKey"
+                        value={newApiKey}
+                        onChange={(e) => {
+                          setNewApiKey(e.target.value);
+                          setLookupMatch(null);
+                        }}
+                        placeholder="sk_..."
+                        required
+                        className={isLookingUp ? "pr-9" : ""}
+                      />
+                      {isLookingUp && (
+                        <Loader2 className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-muted-foreground" />
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 gap-1"
+                      onClick={() => {
+                        setNewApiKey(generateApiKey());
                         setLookupMatch(null);
                       }}
-                      placeholder="sk_..."
-                      required
-                      className={isLookingUp ? "pr-9" : ""}
-                    />
-                    {isLookingUp && (
-                      <Loader2 className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-muted-foreground" />
-                    )}
+                    >
+                      <Wand2 className="h-3.5 w-3.5" />
+                      Generate Key
+                    </Button>
                   </div>
                   {lookupMatch && (
                     <p className="flex items-center gap-1 text-xs text-emerald-400">
@@ -535,6 +688,7 @@ export default function ClientsPage() {
                   <TableHead className="text-right">Leads</TableHead>
                   <TableHead className="text-right">Approval</TableHead>
                   <TableHead className="text-right">Created</TableHead>
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -552,11 +706,12 @@ export default function ClientsPage() {
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-14 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-24 ml-auto" /></TableCell>
+                      <TableCell />
                     </TableRow>
                   ))
                 ) : data?.data.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="h-32 text-center text-muted-foreground">
+                    <TableCell colSpan={12} className="h-32 text-center text-muted-foreground">
                       <div className="flex flex-col items-center justify-center">
                         <Building2 className="h-8 w-8 mb-2 text-muted-foreground/50" />
                         No clients found.
@@ -620,6 +775,9 @@ export default function ClientsPage() {
                       <TableCell className="text-right text-muted-foreground tabular-nums">
                         {format(new Date(client.createdAt), "MMM d, yyyy")}
                       </TableCell>
+                      <TableCell className="text-right">
+                        <RotateKeyDialog clientId={client.id} clientName={client.name} />
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
@@ -632,17 +790,17 @@ export default function ClientsPage() {
                 Showing page {data.page} of {data.pages} ({formatNumber(data.total)} total)
               </div>
               <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
+                <Button
+                  variant="outline"
+                  size="sm"
                   disabled={page === 1}
                   onClick={() => setPage(p => p - 1)}
                 >
                   Previous
                 </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
+                <Button
+                  variant="outline"
+                  size="sm"
                   disabled={page === data.pages}
                   onClick={() => setPage(p => p + 1)}
                 >

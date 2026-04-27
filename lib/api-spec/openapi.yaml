@@ -263,6 +263,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /clients/{clientId}/rotate-key:
+    patch:
+      operationId: rotateClientApiKey
+      tags: [clients]
+      summary: Rotate the API key for a client (admin only)
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: New API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotateKeyResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /analytics/dashboard:
     get:
       operationId: getDashboard
@@ -1759,6 +1784,16 @@ components:
             $ref: "#/components/schemas/ClientImportError"
           description: Per-row validation failures.
       required: [created, skipped, errors]
+
+    RotateKeyResponse:
+      type: object
+      properties:
+        clientId:
+          type: string
+        apiKey:
+          type: string
+          description: The newly generated API key. Show this value once — it will not be retrievable again.
+      required: [clientId, apiKey]
 
     DashboardSignal:
       type: object

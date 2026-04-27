@@ -285,6 +285,22 @@ export const GetClientResponse = zod.object({
 });
 
 /**
+ * @summary Rotate the API key for a client (admin only)
+ */
+export const RotateClientApiKeyParams = zod.object({
+  clientId: zod.coerce.string(),
+});
+
+export const RotateClientApiKeyResponse = zod.object({
+  clientId: zod.string(),
+  apiKey: zod
+    .string()
+    .describe(
+      "The newly generated API key. Show this value once — it will not be retrievable again.",
+    ),
+});
+
+/**
  * @summary Dashboard KPIs and time-series
  */
 export const GetDashboardQueryParams = zod.object({

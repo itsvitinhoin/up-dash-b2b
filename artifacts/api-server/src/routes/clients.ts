@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
+import { nanoid } from "nanoid";
 import { db, clientsTable, ordersTable, eventsTable, creativesTable } from "@workspace/db";
 import {
   CreateClientBody,
@@ -7,6 +8,7 @@ import {
   GetClientResponse,
   ListClientsQueryParams,
   ListClientsResponse,
+  RotateClientApiKeyParams,
 } from "@workspace/api-zod";
 import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
@@ -411,6 +413,36 @@ router.get("/clients/lookup", requireAdmin, async (req, res): Promise<void> => {
     return;
   }
   res.json(row);
+});
+
+router.patch("/clients/:clientId/rotate-key", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = RotateClientApiKeyParams.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const { clientId } = parsed.data;
+  const newApiKey = `sk_${nanoid(32)}`;
+  const [updated] = await db
+    .update(clientsTable)
+    .set({ apiKey: newApiKey })
+    .where(eq(clientsTable.id, clientId))
+    .returning({ id: clientsTable.id });
+  if (!updated) {
+    res.status(404).json({
+      error: true,
+      code: "NOT_FOUND",
+      message: "Client not found",
+      status: 404,
+    });
+    return;
+  }
+  res.json({ clientId, apiKey: newApiKey });
 });
 
 router.get("/clients/:clientId", async (req, res): Promise<void> => {

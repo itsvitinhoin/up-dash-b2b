@@ -193,6 +193,12 @@ export interface ClientImportResponse {
   errors: ClientImportError[];
 }
 
+export interface RotateKeyResponse {
+  clientId: string;
+  /** The newly generated API key. Show this value once — it will not be retrievable again. */
+  apiKey: string;
+}
+
 export type DashboardSignalType =
   (typeof DashboardSignalType)[keyof typeof DashboardSignalType];
 

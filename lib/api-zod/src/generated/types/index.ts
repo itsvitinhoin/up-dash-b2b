@@ -138,6 +138,7 @@ export * from "./rfmCompositionPoint";
 export * from "./rfmCustomerRow";
 export * from "./rfmResponse";
 export * from "./rfmSegmentSummary";
+export * from "./rotateKeyResponse";
 export * from "./savedView";
 export * from "./savedViewFilters";
 export * from "./sellerCustomerRow";
