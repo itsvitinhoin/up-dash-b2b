@@ -1804,6 +1804,34 @@ router.get("/analytics/products/:productId", async (req, res): Promise<void> => 
     ? product.totalSold / (product.totalSold + product.stock)
     : 0;
 
+  // Compute recent velocity + catalog avg for consistent level classification
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const [recentVelocityRows, catalogRows] = await Promise.all([
+    db
+      .select({ recentSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int` })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(
+        and(
+          eq(orderItemsTable.productId, productId),
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, thirtyDaysAgo),
+        ),
+      ),
+    db
+      .select({ totalSold: productsTable.totalSold, stock: productsTable.stock })
+      .from(productsTable)
+      .where(eq(productsTable.clientId, clientId)),
+  ]);
+  const recent30dSold = Number(recentVelocityRows[0]?.recentSold ?? 0);
+  const catalogAvgSellThrough =
+    catalogRows.length > 0
+      ? catalogRows.reduce((s, r) => {
+          const t = r.totalSold + r.stock;
+          return s + (t > 0 ? r.totalSold / t : 0);
+        }, 0) / catalogRows.length
+      : 0;
+
   res.json({
     product: {
       id: product.id,
@@ -1820,7 +1848,7 @@ router.get("/analytics/products/:productId", async (req, res): Promise<void> => 
       totalRevenue: product.totalRevenue,
       status: product.status,
       percentSold,
-      level: computeProductLevel(product.totalSold, product.stock, product.restockThreshold),
+      level: computeProductLevel(product.totalSold, product.stock, product.restockThreshold, recent30dSold, catalogAvgSellThrough),
       createdAt: product.createdAt.toISOString(),
     },
     kpis: {
