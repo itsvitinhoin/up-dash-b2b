@@ -32,7 +32,7 @@ import {
   Sparkles, RefreshCw, X as XIcon, ChevronRight,
 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
-import { formatCurrency, formatNumber } from "@/lib/formatters";
+import { formatCurrency, formatCurrencySmart, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -190,7 +190,7 @@ export default function SellersPage() {
               <Skeleton className="h-8 w-32" />
             ) : (
               <div className="text-2xl font-semibold tracking-tight tabular-nums bg-gradient-to-br from-foreground via-foreground to-primary bg-clip-text text-transparent">
-                <CountUp value={totalRevenue} format={(v) => formatCurrency(v)} />
+                <CountUp value={totalRevenue} format={(v) => formatCurrencySmart(v)} />
               </div>
             )}
             <p className="text-xs text-muted-foreground mt-1">

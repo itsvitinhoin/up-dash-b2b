@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { CountUp } from "@/components/count-up";
 import { Sparkline } from "@/components/sparkline";
-import { formatCurrency } from "@/lib/formatters";
+import { formatCurrencySmart } from "@/lib/formatters";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -101,7 +101,7 @@ export default function LoginPage() {
         delta: 12.4,
         icon: TrendingUp,
         color: "hsl(var(--chart-1))",
-        format: (v: number) => formatCurrency(v),
+        format: (v: number) => formatCurrencySmart(v),
         series: buildSeries(40, 1.4, 4),
       },
       {

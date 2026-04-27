@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
-import { formatCurrency, formatNumber } from "@/lib/formatters";
+import { formatCurrency, formatCurrencySmart, formatNumber } from "@/lib/formatters";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { CountUp } from "@/components/count-up";
 import { BrazilHeatMap } from "@/components/brazil-heat-map";
@@ -210,7 +210,7 @@ export default function GeographyPage() {
                       icon={TrendingUp}
                       label="Total revenue"
                       value={totalRevenue}
-                      format={(v) => formatCurrency(v)}
+                      format={(v) => formatCurrencySmart(v)}
                       color="hsl(var(--chart-1))"
                       delay={0.05}
                       reduced={reduced}
@@ -235,7 +235,7 @@ export default function GeographyPage() {
                       icon={Trophy}
                       label={topState ? `Top · ${topState.state}` : "Top market"}
                       value={topState?.revenue ?? 0}
-                      format={(v) => formatCurrency(v)}
+                      format={(v) => formatCurrencySmart(v)}
                       tone="hot"
                       delay={0.26}
                       reduced={reduced}

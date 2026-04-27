@@ -43,7 +43,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { formatCurrency, formatPercentage, formatNumber } from "@/lib/formatters";
+import { formatCurrency, formatCurrencySmart, formatPercentage, formatNumber } from "@/lib/formatters";
 import {
   AreaChart,
   Area,
@@ -507,7 +507,7 @@ export default function DashboardPage() {
           iconClass="bg-blue-500/15 text-blue-400"
           label="Total revenue"
           value={data?.kpis.revenue ?? 0}
-          format={(v) => formatCurrency(v)}
+          format={(v) => formatCurrencySmart(v)}
           unit="BRL"
           change={revenueChange}
           changeLabel="vs. previous period"
@@ -544,7 +544,7 @@ export default function DashboardPage() {
           iconClass="bg-emerald-500/15 text-emerald-400"
           label="Avg ticket"
           value={data?.kpis.avgTicket ?? 0}
-          format={(v) => formatCurrency(v)}
+          format={(v) => formatCurrencySmart(v)}
           unit="BRL"
           change={avgTicketChange}
           changeLabel="vs. previous period"
@@ -596,7 +596,7 @@ export default function DashboardPage() {
                 <Skeleton className="h-6 w-24 mt-1" />
               ) : (
                 <p className="text-xl font-bold tabular-nums mt-0.5">
-                  <CountUp value={data?.kpis.requestedRevenue ?? 0} format={(v) => formatCurrency(v)} />
+                  <CountUp value={data?.kpis.requestedRevenue ?? 0} format={(v) => formatCurrencySmart(v)} />
                 </p>
               )}
             </div>

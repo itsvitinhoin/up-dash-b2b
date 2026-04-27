@@ -42,7 +42,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CountUp } from "@/components/count-up";
 import { EmptyState } from "@/components/empty-state";
-import { formatCurrency, formatNumber } from "@/lib/formatters";
+import { formatCurrency, formatCurrencySmart, formatNumber } from "@/lib/formatters";
 import {
   cardEntry,
   fadeInUp,
@@ -432,7 +432,7 @@ export default function OverviewPage() {
           iconClass="bg-blue-500/15 text-blue-400"
           label="Platform revenue"
           value={kpis?.revenue ?? 0}
-          format={(v) => formatCurrency(v)}
+          format={(v) => formatCurrencySmart(v)}
           change={revenueDelta}
           changeLabel="vs. previous period"
           isLoading={isLoading}
@@ -477,7 +477,7 @@ export default function OverviewPage() {
           iconClass="bg-amber-500/15 text-amber-400"
           label="Platform AOV"
           value={kpis?.avgOrderValue ?? 0}
-          format={(v) => formatCurrency(v)}
+          format={(v) => formatCurrencySmart(v)}
           change={aovDelta}
           changeLabel="vs. previous period"
           isLoading={isLoading}
@@ -497,7 +497,7 @@ export default function OverviewPage() {
           iconClass="bg-rose-500/15 text-rose-400"
           label="Ad spend"
           value={kpis?.adSpend ?? 0}
-          format={(v) => formatCurrency(v)}
+          format={(v) => formatCurrencySmart(v)}
           change={adSpendDelta}
           changeLabel="vs. previous period"
           isLoading={isLoading}

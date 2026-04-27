@@ -26,6 +26,13 @@ export const formatCurrency = (
   }).format(value);
 };
 
+// Auto-compacts to short notation (e.g. "R$ 601,2 mil") when |value| ≥ 10 000,
+// so KPI tiles never overflow their card width.
+export const formatCurrencySmart = (
+  value: number,
+  opts: { currency?: string; locale?: string } = {},
+) => formatCurrency(value, { ...opts, compact: Math.abs(value) >= 10_000 });
+
 export const formatPercentage = (value: number) => {
   return `${value.toFixed(1)}%`;
 };

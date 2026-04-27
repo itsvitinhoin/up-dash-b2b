@@ -22,7 +22,7 @@ import { EmptyState } from "@/components/empty-state";
 import { CountUp } from "@/components/count-up";
 import { Sparkline } from "@/components/sparkline";
 import { fadeInUp, useReducedMotion, withReducedMotion } from "@/lib/motion";
-import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
+import { formatCurrency, formatCurrencySmart, formatNumber, formatPercentage } from "@/lib/formatters";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import {
   Bar,
@@ -242,7 +242,7 @@ function BrandKpiCard({ clientId, name, color, dateRange, variants, onRemove }: 
           </button>
         </div>
         <p className="text-2xl font-semibold tabular-nums">
-          <CountUp value={data?.kpis.revenue ?? 0} format={(v) => formatCurrency(v)} />
+          <CountUp value={data?.kpis.revenue ?? 0} format={(v) => formatCurrencySmart(v)} />
         </p>
         <p className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">
           Revenue
