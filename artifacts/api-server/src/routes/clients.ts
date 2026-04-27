@@ -326,25 +326,45 @@ router.post("/clients/import", requireAdmin, async (req, res): Promise<void> => 
     validRows.push({ originalIndex: i, ...rowParsed.data, adminId });
   }
 
-  // Second pass: check for existing apiKeys so we can report accurate row indices.
+  // Second pass: detect conflicts against DB (apiKey, email, name all unique)
+  // and within-payload duplicates before any insert so no row causes a 500.
   let created = 0;
   if (validRows.length > 0) {
-    const keysToInsert = validRows.map((r) => r.apiKey);
-    const existing = await db
-      .select({ apiKey: clientsTable.apiKey })
-      .from(clientsTable)
-      .where(inArray(clientsTable.apiKey, keysToInsert));
-    const existingSet = new Set(existing.map((r) => r.apiKey));
+    const candidateKeys   = validRows.map((r) => r.apiKey);
+    const candidateEmails = validRows.map((r) => r.email);
+    const candidateNames  = validRows.map((r) => r.name);
+
+    const [existingKeyRows, existingEmailRows, existingNameRows] = await Promise.all([
+      db.select({ apiKey: clientsTable.apiKey }).from(clientsTable).where(inArray(clientsTable.apiKey, candidateKeys)),
+      db.select({ email: clientsTable.email }).from(clientsTable).where(inArray(clientsTable.email, candidateEmails)),
+      db.select({ name: clientsTable.name }).from(clientsTable).where(inArray(clientsTable.name, candidateNames)),
+    ]);
+
+    const existingKeys   = new Set(existingKeyRows.map((r) => r.apiKey));
+    const existingEmails = new Set(existingEmailRows.map((r) => r.email));
+    const existingNames  = new Set(existingNameRows.map((r) => r.name));
+
+    // Track within-payload uniqueness to catch intra-batch duplicates.
+    const seenKeys   = new Set<string>();
+    const seenEmails = new Set<string>();
+    const seenNames  = new Set<string>();
 
     const insertableRows = validRows.filter((r) => {
-      if (existingSet.has(r.apiKey)) {
-        errors.push({
-          index: r.originalIndex,
-          field: "apiKey",
-          message: "duplicate — a client with this API key already exists",
-        });
+      if (existingKeys.has(r.apiKey) || seenKeys.has(r.apiKey)) {
+        errors.push({ index: r.originalIndex, field: "apiKey", message: "duplicate — a client with this API key already exists" });
         return false;
       }
+      if (existingEmails.has(r.email) || seenEmails.has(r.email)) {
+        errors.push({ index: r.originalIndex, field: "email", message: "duplicate — a client with this email already exists" });
+        return false;
+      }
+      if (existingNames.has(r.name) || seenNames.has(r.name)) {
+        errors.push({ index: r.originalIndex, field: "name", message: "duplicate — a client with this name already exists" });
+        return false;
+      }
+      seenKeys.add(r.apiKey);
+      seenEmails.add(r.email);
+      seenNames.add(r.name);
       return true;
     });
 
