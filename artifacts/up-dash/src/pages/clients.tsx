@@ -1,9 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { format } from "date-fns";
+import Papa from "papaparse";
+import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
-import { useListClients, useCreateClient, lookupClientByApiKey } from "@workspace/api-client-react";
+import {
+  useListClients,
+  useCreateClient,
+  useImportClients,
+  lookupClientByApiKey,
+} from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -22,6 +29,8 @@ import {
   Minus,
   Plus,
   Search,
+  Upload,
+  XCircle,
 } from "lucide-react";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
@@ -54,6 +63,42 @@ const CURRENCY_OPTIONS: Array<{ code: string; locale: string; label: string }> =
   { code: "GBP", locale: "en-GB", label: "Pound (GBP) — English (UK)" },
   { code: "MXN", locale: "es-MX", label: "Peso (MXN) — Español (México)" },
 ];
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CSV_CURRENCY_RE = /^[A-Z]{3}$/;
+const CSV_LOCALE_RE = /^[a-zA-Z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
+
+interface CsvRow {
+  name: string;
+  email: string;
+  apiKey: string;
+  currency: string;
+  locale: string;
+  errors: string[];
+}
+
+function validateCsvRows(rawRows: Record<string, string>[]): CsvRow[] {
+  return rawRows.map((r) => {
+    const errors: string[] = [];
+    const name = (r["name"] ?? r["Name"] ?? "").trim();
+    const email = (r["email"] ?? r["Email"] ?? "").trim();
+    const apiKey = (r["apiKey"] ?? r["api_key"] ?? r["apikey"] ?? r["APIKey"] ?? "").trim();
+    const currency = (r["currency"] ?? r["Currency"] ?? "").trim();
+    const locale = (r["locale"] ?? r["Locale"] ?? "").trim();
+
+    if (!name) errors.push("name is required");
+    if (!email) errors.push("email is required");
+    else if (!EMAIL_RE.test(email)) errors.push("invalid email");
+    if (!apiKey) errors.push("apiKey is required");
+    if (currency && !CSV_CURRENCY_RE.test(currency)) errors.push("currency must be 3 uppercase letters");
+    if (locale && !CSV_LOCALE_RE.test(locale)) errors.push("invalid locale format");
+
+    return { name, email, apiKey, currency, locale, errors };
+  });
+}
+
+const CSV_TEMPLATE =
+  "data:text/csv;charset=utf-8,name,email,apiKey,currency,locale\nAcme Corp,admin@acme.com,sk_live_example,USD,en-US\n";
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
@@ -138,6 +183,59 @@ export default function ClientsPage() {
   }, [debouncedApiKey, isDialogOpen]);
 
   const createMutation = useCreateClient();
+  const importMutation = useImportClients();
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [csvRows, setCsvRows] = useState<CsvRow[]>([]);
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete(results) {
+        const rows = validateCsvRows(results.data);
+        setCsvRows(rows);
+        setIsImportOpen(true);
+      },
+    });
+    e.target.value = "";
+  }
+
+  const validCsvRows = csvRows.filter((r) => r.errors.length === 0);
+
+  function handleImportConfirm() {
+    importMutation.mutate(
+      {
+        data: {
+          rows: validCsvRows.map((r) => ({
+            name: r.name,
+            email: r.email,
+            apiKey: r.apiKey,
+            ...(r.currency ? { currency: r.currency } : {}),
+            ...(r.locale ? { locale: r.locale } : {}),
+          })),
+        },
+      },
+      {
+        onSuccess(result) {
+          setIsImportOpen(false);
+          setCsvRows([]);
+          queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+          const desc =
+            result.skipped > 0
+              ? `${result.created} created, ${result.skipped} skipped`
+              : `${result.created} created`;
+          toast.success("Import complete", { description: desc });
+        },
+        onError() {
+          toast.error("Import failed", { description: "Server error — please try again." });
+        },
+      }
+    );
+  }
 
   const { data, isLoading, isError, refetch } = useListClients(
     {
@@ -186,7 +284,106 @@ export default function ClientsPage() {
 
   return (
     <div className="space-y-6" data-testid="page-clients">
-      <div className="flex justify-end">
+      {/* Hidden file input for CSV upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
+      {/* CSV preview dialog */}
+      <Dialog open={isImportOpen} onOpenChange={(open) => {
+        if (!open) { setIsImportOpen(false); setCsvRows([]); }
+      }}>
+        <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Preview CSV Import</DialogTitle>
+            <DialogDescription>
+              Review the rows below before importing. Invalid rows (highlighted
+              in red) will be skipped automatically.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center gap-3 text-sm">
+            <span className="flex items-center gap-1.5 text-emerald-400">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              {validCsvRows.length} valid
+            </span>
+            <span className="flex items-center gap-1.5 text-red-400">
+              <XCircle className="h-3.5 w-3.5" />
+              {csvRows.length - validCsvRows.length} invalid
+            </span>
+            <a
+              href={CSV_TEMPLATE}
+              download="clients_template.csv"
+              className="ml-auto text-xs underline text-muted-foreground hover:text-foreground"
+            >
+              Download template
+            </a>
+          </div>
+
+          <div className="overflow-auto flex-1 rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8">#</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>API Key</TableHead>
+                  <TableHead>Currency</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {csvRows.map((row, i) => (
+                  <TableRow key={i} className={row.errors.length > 0 ? "bg-red-950/30" : ""}>
+                    <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
+                    <TableCell className="max-w-[120px] truncate">{row.name || <span className="text-muted-foreground">—</span>}</TableCell>
+                    <TableCell className="max-w-[160px] truncate">{row.email || <span className="text-muted-foreground">—</span>}</TableCell>
+                    <TableCell className="max-w-[140px] truncate font-mono text-xs">{row.apiKey || <span className="text-muted-foreground">—</span>}</TableCell>
+                    <TableCell>{row.currency || <span className="text-muted-foreground text-xs">default</span>}</TableCell>
+                    <TableCell>
+                      {row.errors.length === 0 ? (
+                        <span className="flex items-center gap-1 text-xs text-emerald-400">
+                          <CheckCircle2 className="h-3 w-3" /> Valid
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-xs text-red-400" title={row.errors.join("; ")}>
+                          <XCircle className="h-3 w-3" />
+                          {row.errors[0]}
+                        </span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsImportOpen(false); setCsvRows([]); }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImportConfirm}
+              disabled={validCsvRows.length === 0 || importMutation.isPending}
+            >
+              {importMutation.isPending ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing…</>
+              ) : (
+                `Import ${validCsvRows.length} row${validCsvRows.length !== 1 ? "s" : ""}`
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+          <Upload className="mr-2 h-4 w-4" /> Import CSV
+        </Button>
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
           setIsDialogOpen(open);
           if (!open) {

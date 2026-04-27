@@ -208,6 +208,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /clients/import:
+    post:
+      operationId: importClients
+      tags: [clients]
+      summary: Bulk-import clients from a JSON array (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientImportRequest"
+      responses:
+        "200":
+          description: Import complete (partial success is also 200)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientImportResponse"
+        "400":
+          description: Validation error on the outer payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /clients/{clientId}:
     get:
       operationId: getClient
@@ -1681,6 +1706,65 @@ components:
           type: string
           description: BCP 47 locale (default pt-BR)
       required: [name, email, apiKey]
+
+    ClientImportRow:
+      type: object
+      description: A single row in a bulk client import payload.
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        apiKey:
+          type: string
+        currency:
+          type: string
+          description: ISO 4217 currency code (default BRL)
+        locale:
+          type: string
+          description: BCP 47 locale (default pt-BR)
+      required: [name, email, apiKey]
+
+    ClientImportRequest:
+      type: object
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClientImportRow"
+          minItems: 1
+          maxItems: 500
+      required: [rows]
+
+    ClientImportError:
+      type: object
+      properties:
+        index:
+          type: integer
+          description: Zero-based row index in the submitted array.
+        field:
+          type: string
+          description: Field that failed validation, or "row" for structural errors.
+        message:
+          type: string
+      required: [index, field, message]
+
+    ClientImportResponse:
+      type: object
+      properties:
+        created:
+          type: integer
+          description: Number of rows successfully created.
+        skipped:
+          type: integer
+          description: Number of rows skipped due to validation errors.
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClientImportError"
+          description: Per-row validation failures.
+      required: [created, skipped, errors]
 
     DashboardSignal:
       type: object

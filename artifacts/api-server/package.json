@@ -25,7 +25,8 @@
     "nanoid": "^5.1.9",
     "openai": "^5.23.2",
     "pino": "^9",
-    "pino-http": "^10"
+    "pino-http": "^10",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",

@@ -21,6 +21,8 @@ import type {
   AuthResponse,
   AuthUser,
   Client,
+  ClientImportRequest,
+  ClientImportResponse,
   ClientLookupResult,
   CreateClientRequest,
   CreateSavedViewParams,
@@ -776,6 +778,92 @@ export function useLookupClientByApiKey<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Bulk-import clients from a JSON array (admin only)
+ */
+export const getImportClientsUrl = () => {
+  return `/api/clients/import`;
+};
+
+export const importClients = async (
+  clientImportRequest: ClientImportRequest,
+  options?: RequestInit,
+): Promise<ClientImportResponse> => {
+  return customFetch<ClientImportResponse>(getImportClientsUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(clientImportRequest),
+  });
+};
+
+export const getImportClientsMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof importClients>>,
+    TError,
+    { data: BodyType<ClientImportRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof importClients>>,
+  TError,
+  { data: BodyType<ClientImportRequest> },
+  TContext
+> => {
+  const mutationKey = ["importClients"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof importClients>>,
+    { data: BodyType<ClientImportRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return importClients(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ImportClientsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof importClients>>
+>;
+export type ImportClientsMutationBody = BodyType<ClientImportRequest>;
+export type ImportClientsMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Bulk-import clients from a JSON array (admin only)
+ */
+export const useImportClients = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof importClients>>,
+    TError,
+    { data: BodyType<ClientImportRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof importClients>>,
+  TError,
+  { data: BodyType<ClientImportRequest> },
+  TContext
+> => {
+  return useMutation(getImportClientsMutationOptions(options));
+};
 
 /**
  * @summary Get a single client by id

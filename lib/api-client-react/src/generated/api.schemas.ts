@@ -163,6 +163,44 @@ export interface CreateClientRequest {
   locale?: string;
 }
 
+/**
+ * A single row in a bulk client import payload.
+ */
+export interface ClientImportRow {
+  name: string;
+  email: string;
+  apiKey: string;
+  /** ISO 4217 currency code (default BRL) */
+  currency?: string;
+  /** BCP 47 locale (default pt-BR) */
+  locale?: string;
+}
+
+export interface ClientImportRequest {
+  /**
+   * @minItems 1
+   * @maxItems 500
+   */
+  rows: ClientImportRow[];
+}
+
+export interface ClientImportError {
+  /** Zero-based row index in the submitted array. */
+  index: number;
+  /** Field that failed validation, or "row" for structural errors. */
+  field: string;
+  message: string;
+}
+
+export interface ClientImportResponse {
+  /** Number of rows successfully created. */
+  created: number;
+  /** Number of rows skipped due to validation errors. */
+  skipped: number;
+  /** Per-row validation failures. */
+  errors: ClientImportError[];
+}
+
 export type DashboardSignalType =
   (typeof DashboardSignalType)[keyof typeof DashboardSignalType];
 

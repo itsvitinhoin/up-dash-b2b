@@ -184,6 +184,56 @@ export const LookupClientByApiKeyResponse = zod.object({
 });
 
 /**
+ * @summary Bulk-import clients from a JSON array (admin only)
+ */
+export const importClientsBodyRowsMax = 500;
+
+export const ImportClientsBody = zod.object({
+  rows: zod
+    .array(
+      zod
+        .object({
+          name: zod.string(),
+          email: zod.string().email(),
+          apiKey: zod.string(),
+          currency: zod
+            .string()
+            .optional()
+            .describe("ISO 4217 currency code (default BRL)"),
+          locale: zod
+            .string()
+            .optional()
+            .describe("BCP 47 locale (default pt-BR)"),
+        })
+        .describe("A single row in a bulk client import payload."),
+    )
+    .min(1)
+    .max(importClientsBodyRowsMax),
+});
+
+export const ImportClientsResponse = zod.object({
+  created: zod.number().describe("Number of rows successfully created."),
+  skipped: zod
+    .number()
+    .describe("Number of rows skipped due to validation errors."),
+  errors: zod
+    .array(
+      zod.object({
+        index: zod
+          .number()
+          .describe("Zero-based row index in the submitted array."),
+        field: zod
+          .string()
+          .describe(
+            'Field that failed validation, or \"row\" for structural errors.',
+          ),
+        message: zod.string(),
+      }),
+    )
+    .describe("Per-row validation failures."),
+});
+
+/**
  * @summary Get a single client by id
  */
 export const GetClientParams = zod.object({

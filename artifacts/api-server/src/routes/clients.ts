@@ -8,6 +8,7 @@ import {
   ListClientsQueryParams,
   ListClientsResponse,
 } from "@workspace/api-zod";
+import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -266,6 +267,83 @@ router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
     .values({ ...parsed.data, adminId })
     .returning();
   res.status(201).json(GetClientResponse.parse(created));
+});
+
+const ImportRowSchema = z.object({
+  name: z.string().min(1, "name is required"),
+  email: z.string().email("invalid email"),
+  apiKey: z.string().min(1, "apiKey is required"),
+  currency: z.string().optional(),
+  locale: z.string().optional(),
+});
+
+router.post("/clients/import", requireAdmin, async (req, res): Promise<void> => {
+  const outerParsed = z
+    .object({ rows: z.array(z.unknown()).min(1).max(500) })
+    .safeParse(req.body);
+  if (!outerParsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: outerParsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const adminId = req.user?.sub ?? null;
+  const errors: Array<{ index: number; field: string; message: string }> = [];
+  const validRows: Array<{
+    name: string;
+    email: string;
+    apiKey: string;
+    currency?: string;
+    locale?: string;
+    adminId: string | null;
+  }> = [];
+
+  for (let i = 0; i < outerParsed.data.rows.length; i++) {
+    const rowParsed = ImportRowSchema.safeParse(outerParsed.data.rows[i]);
+    if (!rowParsed.success) {
+      const first = rowParsed.error.errors[0];
+      errors.push({
+        index: i,
+        field: first.path.join(".") || "row",
+        message: first.message,
+      });
+      continue;
+    }
+    const { currency, locale } = rowParsed.data;
+    if (currency !== undefined && !CURRENCY_RE.test(currency)) {
+      errors.push({ index: i, field: "currency", message: "must be a 3-letter ISO 4217 code" });
+      continue;
+    }
+    if (locale !== undefined && !LOCALE_RE.test(locale)) {
+      errors.push({ index: i, field: "locale", message: "must be a BCP 47 tag" });
+      continue;
+    }
+    validRows.push({ ...rowParsed.data, adminId });
+  }
+
+  let created = 0;
+  if (validRows.length > 0) {
+    const inserted = await db
+      .insert(clientsTable)
+      .values(validRows)
+      .onConflictDoNothing()
+      .returning({ id: clientsTable.id });
+    created = inserted.length;
+    // Rows that silently conflicted (duplicate apiKey/email) count as skipped.
+    const conflicted = validRows.length - created;
+    if (conflicted > 0) {
+      for (let i = 0; i < conflicted; i++) {
+        errors.push({ index: -1, field: "apiKey", message: "duplicate key — row already exists" });
+      }
+    }
+  }
+
+  const skipped = outerParsed.data.rows.length - created;
+  res.json({ created, skipped, errors });
 });
 
 router.get("/clients/lookup", requireAdmin, async (req, res): Promise<void> => {
