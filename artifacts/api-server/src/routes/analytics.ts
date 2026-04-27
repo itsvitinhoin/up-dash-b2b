@@ -958,6 +958,32 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const { utmSource, utmMedium, utmCampaign } = parsed.data;
+
+  // If UTM filters are active, build a scoped customer list and restrict events to those customers.
+  let scopedCustomerCond: SQL | undefined;
+  if (utmSource || utmMedium || utmCampaign) {
+    const custParts: SQL[] = [eq(customersTable.clientId, clientId)];
+    if (utmSource) custParts.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
+    if (utmMedium) custParts.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
+    if (utmCampaign) custParts.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
+    const scopedIds = await db
+      .select({ id: customersTable.id })
+      .from(customersTable)
+      .where(and(...custParts));
+    if (scopedIds.length === 0) {
+      const emptySteps = [
+        { step: "VISIT", label: "Site Visits" },
+        { step: "REGISTRATION", label: "Registrations" },
+        { step: "APPROVED_REGISTRATION", label: "Approved Leads" },
+        { step: "ADD_TO_CART", label: "Added to Cart" },
+        { step: "PURCHASE", label: "Purchases" },
+      ].map((s, i) => ({ ...s, count: 0, conversionRate: i === 0 ? 100 : 0, dropOffRate: i === 0 ? 0 : 100 }));
+      res.json({ steps: emptySteps, totalVisits: 0, overallConversion: 0 });
+      return;
+    }
+    scopedCustomerCond = inArray(eventsTable.customerId, scopedIds.map((r) => r.id));
+  }
 
   const eventCounts = await db
     .select({
@@ -970,6 +996,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
         eq(eventsTable.clientId, clientId),
         gte(eventsTable.createdAt, from),
         lte(eventsTable.createdAt, to),
+        scopedCustomerCond,
       ),
     )
     .groupBy(eventsTable.eventType);
@@ -1478,7 +1505,8 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
-  const { sort = "revenue", limit = 50, search, sku, category } = parsed.data;
+  const { sort = "revenue", limit = 50, search, sku, category, state } = parsed.data;
+  // size and color are accepted but the products table has no such columns — silently ignored.
 
   const orderBy =
     sort === "units"
@@ -1501,6 +1529,16 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   }
   if (category && category.trim().length > 0) {
     conditions.push(eq(productsTable.category, category.trim()));
+  }
+  if (state && state.trim().length > 0) {
+    // Restrict to products that have been shipped to this state.
+    const stateProductIds = await db
+      .selectDistinct({ productId: orderItemsTable.productId })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(and(eq(ordersTable.clientId, clientId), eq(ordersTable.state, state.trim())));
+    const ids = stateProductIds.map((r) => r.productId).filter(Boolean) as string[];
+    conditions.push(ids.length > 0 ? inArray(productsTable.id, ids) : sql`FALSE`);
   }
 
   const rows = await db
@@ -2403,7 +2441,18 @@ router.get("/analytics/sellers", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
-  const { limit = 20 } = parsed.data;
+  const { limit = 20, state } = parsed.data;
+
+  const sellerConditions: SQL[] = [eq(sellersTable.clientId, clientId)];
+  if (state && state.trim().length > 0) {
+    // Restrict to sellers who have orders shipped to this state.
+    const stateSellerIds = await db
+      .selectDistinct({ sellerId: ordersTable.sellerId })
+      .from(ordersTable)
+      .where(and(eq(ordersTable.clientId, clientId), eq(ordersTable.state, state.trim())));
+    const ids = stateSellerIds.map((r) => r.sellerId).filter(Boolean) as string[];
+    sellerConditions.push(ids.length > 0 ? inArray(sellersTable.id, ids) : sql`FALSE`);
+  }
 
   const rows = await db
     .select({
@@ -2414,7 +2463,7 @@ router.get("/analytics/sellers", async (req, res): Promise<void> => {
       totalRevenue: sellersTable.totalRevenue,
     })
     .from(sellersTable)
-    .where(eq(sellersTable.clientId, clientId))
+    .where(and(...sellerConditions))
     .orderBy(desc(sellersTable.totalRevenue))
     .limit(limit);
 
@@ -2437,11 +2486,27 @@ router.get("/analytics/geography", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const { utmSource, utmMedium } = parsed.data;
+
+  // If UTM filters active, restrict orders to those placed by customers with matching UTM attributes.
+  let geoUtmCond: SQL | undefined;
+  if (utmSource || utmMedium) {
+    const custParts: SQL[] = [eq(customersTable.clientId, clientId)];
+    if (utmSource) custParts.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
+    if (utmMedium) custParts.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
+    const scopedCustomers = await db
+      .select({ id: customersTable.id })
+      .from(customersTable)
+      .where(and(...custParts));
+    const ids = scopedCustomers.map((r) => r.id);
+    geoUtmCond = ids.length > 0 ? inArray(ordersTable.customerId, ids) : sql`FALSE`;
+  }
 
   const orderWhere = and(
     eq(ordersTable.clientId, clientId),
     gte(ordersTable.createdAt, from),
     lte(ordersTable.createdAt, to),
+    geoUtmCond,
   );
 
   const states = await db
@@ -4069,7 +4134,7 @@ async function buildUtmAnalytics(
   `);
 
   // Buyers/revenue: restrict to the SAME customer cohort (registered in the period)
-  // to keep conversion math consistent: conversionPct = buyers / registrations.
+  // AND orders placed within the period — fully period-aware.
   type SalesRow = { key: string; buyers: string; revenue: string };
   const salesRaw = await db.execute<SalesRow>(sql`
     SELECT
@@ -4080,6 +4145,8 @@ async function buildUtmAnalytics(
     JOIN orders o
       ON  o.customer_id = c.id
       AND o.client_id   = ${clientId}
+      AND o.created_at >= ${from}
+      AND o.created_at <= ${to}
       AND o.status IN ('APPROVED','SHIPPED','DELIVERED')
     WHERE c.client_id = ${clientId}
       AND c.created_at >= ${from}
@@ -4087,6 +4154,36 @@ async function buildUtmAnalytics(
       ${srcCond}${medCond}${campCond}
     GROUP BY 1
   `);
+
+  // Sub-row sales: buyers/revenue per (source, medium, campaign) for sub-row metrics
+  type SubSalesRow = { key: string; medium: string | null; campaign: string | null; buyers: string; revenue: string };
+  const subSalesRaw = groupBy === "source" ? await db.execute<SubSalesRow>(sql`
+    SELECT
+      ${keyExpr}      AS key,
+      ${mediumExpr}   AS medium,
+      ${campaignExpr} AS campaign,
+      COUNT(DISTINCT c.id)::int AS buyers,
+      COALESCE(SUM(o.amount), 0)::float AS revenue
+    FROM customers c
+    JOIN orders o
+      ON  o.customer_id = c.id
+      AND o.client_id   = ${clientId}
+      AND o.created_at >= ${from}
+      AND o.created_at <= ${to}
+      AND o.status IN ('APPROVED','SHIPPED','DELIVERED')
+    WHERE c.client_id = ${clientId}
+      AND c.created_at >= ${from}
+      AND c.created_at <= ${to}
+      ${srcCond}${medCond}${campCond}
+    GROUP BY 1, 2, 3
+  `) : { rows: [] };
+
+  const subSalesRows = (subSalesRaw.rows ?? subSalesRaw) as unknown as SubSalesRow[];
+  const subSalesMap = new Map<string, { buyers: number; revenue: number }>();
+  for (const r of subSalesRows) {
+    const mk = `${r.key}||${r.medium ?? ""}||${r.campaign ?? ""}`;
+    subSalesMap.set(mk, { buyers: Number(r.buyers), revenue: Number(r.revenue) });
+  }
 
   const regRows   = (regRaw.rows   ?? regRaw)   as unknown as RegRow[];
   const salesRows = (salesRaw.rows ?? salesRaw) as unknown as SalesRow[];
@@ -4129,24 +4226,27 @@ async function buildUtmAnalytics(
     const spend    = spendBySource.get(key.toLowerCase()) ?? 0;
     const roas     = spend > 0 ? sales.revenue / spend : null;
 
-    // Sub-rows: when grouping by source, expose medium + campaign breakdown.
-    // Each sub-row = a unique (medium, campaign) combination under this source.
+    // Sub-rows: when grouping by source, expose medium + campaign breakdown
+    // with actual buyers/revenue from the sub-level sales query.
     const subRows =
       groupBy === "source"
-        ? entries.map((e) => ({
-            key:         e.medium ?? "(none)",
-            medium:      e.medium,
-            campaign:    e.campaign,
-            registrations: Number(e.registrations),
-            approvals:   Number(e.approvals),
-            approvalPct: Number(e.registrations) > 0
-              ? (Number(e.approvals) / Number(e.registrations)) * 100
-              : 0,
-            buyers: 0,
-            revenue: 0,
-            conversionPct: 0,
-            roas: null as number | null,
-          }))
+        ? entries.map((e) => {
+            const mk = `${key}||${e.medium ?? ""}||${e.campaign ?? ""}`;
+            const subSales = subSalesMap.get(mk) ?? { buyers: 0, revenue: 0 };
+            const subReg = Number(e.registrations);
+            return {
+              key:          e.medium ?? "(none)",
+              medium:       e.medium,
+              campaign:     e.campaign,
+              registrations: subReg,
+              approvals:    Number(e.approvals),
+              approvalPct:  subReg > 0 ? (Number(e.approvals) / subReg) * 100 : 0,
+              buyers:       subSales.buyers,
+              revenue:      subSales.revenue,
+              conversionPct: subReg > 0 ? (subSales.buyers / subReg) * 100 : 0,
+              roas:         null as number | null,
+            };
+          })
         : [];
 
     return {

@@ -430,6 +430,14 @@ export const GetFunnelQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
+  utmSource: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict funnel steps to customers who registered via this UTM source.",
+    ),
+  utmMedium: zod.coerce.string().optional(),
+  utmCampaign: zod.coerce.string().optional(),
 });
 
 export const GetFunnelResponse = zod.object({
@@ -698,6 +706,18 @@ export const GetProductsQueryParams = zod.object({
     .string()
     .optional()
     .describe("Exact-match filter on product category."),
+  size: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter to products associated with this size label."),
+  color: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter to products associated with this color."),
+  state: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter to products ordered by customers from this state."),
 });
 
 export const GetProductsResponseItem = zod.object({
@@ -870,6 +890,10 @@ export const getSellersQueryLimitDefault = 20;
 export const GetSellersQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   limit: zod.coerce.number().default(getSellersQueryLimitDefault),
+  state: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter to sellers whose customers are from this state."),
 });
 
 export const GetSellersResponseItem = zod.object({
@@ -1361,6 +1385,11 @@ export const GetGeographyQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
+  utmSource: zod.coerce
+    .string()
+    .optional()
+    .describe("Restrict geographic data to customers from this UTM source."),
+  utmMedium: zod.coerce.string().optional(),
 });
 
 export const GetGeographyResponse = zod.object({

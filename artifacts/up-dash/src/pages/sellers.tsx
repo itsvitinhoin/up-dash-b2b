@@ -60,12 +60,12 @@ export default function SellersPage() {
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
-  const { dateRange } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
 
   const { data, isLoading, isError, refetch } = useGetSellers(
-    { clientId, limit },
+    { clientId, limit, state: filters.state || undefined },
     { query: queryOpts({ enabled }) },
   );
 

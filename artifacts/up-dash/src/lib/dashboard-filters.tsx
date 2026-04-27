@@ -3,7 +3,9 @@ import {
   ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { subDays } from "date-fns";
@@ -28,6 +30,12 @@ export interface DashboardFilters {
   color: string | null;
   creative: string | null;
 }
+
+const FILTER_KEYS = [
+  "category", "sellerId", "channel", "segment",
+  "utmSource", "utmMedium", "utmCampaign",
+  "state", "city", "product", "size", "color", "creative",
+] as const satisfies ReadonlyArray<keyof DashboardFilters>;
 
 const EMPTY_FILTERS: DashboardFilters = {
   category: null,
@@ -64,12 +72,50 @@ interface DashboardFiltersContextValue {
 
 const DashboardFiltersContext = createContext<DashboardFiltersContextValue | null>(null);
 
+function parseFiltersFromUrl(): Partial<DashboardFilters> {
+  const params = new URLSearchParams(window.location.search);
+  const out: Partial<DashboardFilters> = {};
+  for (const key of FILTER_KEYS) {
+    const val = params.get(key);
+    if (val) (out as Record<string, string>)[key] = val;
+  }
+  return out;
+}
+
+function filtersToUrlParams(filters: DashboardFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const key of FILTER_KEYS) {
+    const val = filters[key];
+    if (val) params.set(key, val);
+  }
+  return params;
+}
+
 export function DashboardFiltersProvider({ children }: { children: ReactNode }) {
   const [dateRange, setDateRange] = useState<DateRange>(() => ({
     from: subDays(new Date(), 30),
     to: new Date(),
   }));
-  const [filters, setFilters] = useState<DashboardFilters>(EMPTY_FILTERS);
+
+  const [filters, setFilters] = useState<DashboardFilters>(() => ({
+    ...EMPTY_FILTERS,
+    ...parseFiltersFromUrl(),
+  }));
+
+  const isMounting = useRef(true);
+  useEffect(() => {
+    isMounting.current = false;
+  }, []);
+
+  useEffect(() => {
+    if (isMounting.current) return;
+    const params = filtersToUrlParams(filters);
+    const qs = params.toString();
+    const newUrl = qs
+      ? `${window.location.pathname}?${qs}${window.location.hash}`
+      : `${window.location.pathname}${window.location.hash}`;
+    window.history.replaceState({}, "", newUrl);
+  }, [filters]);
 
   const setFilter = useCallback(
     <K extends keyof DashboardFilters>(key: K, value: DashboardFilters[K]) => {

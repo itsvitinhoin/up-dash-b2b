@@ -10,4 +10,10 @@ export type GetFunnelParams = {
   clientId?: string;
   dateFrom?: Date;
   dateTo?: Date;
+  /**
+   * Restrict funnel steps to customers who registered via this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
 };

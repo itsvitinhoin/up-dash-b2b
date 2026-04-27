@@ -432,12 +432,32 @@ export function FilterBar() {
       )}
 
       <div className="ml-auto flex items-center gap-1.5 flex-wrap">
-        {views?.slice(0, 6).map((view) => (
+        {views?.slice(0, 6).map((view) => {
+          const viewFilterSummary = ([
+            ["Category", view.filters.category],
+            ["Channel", view.filters.channel],
+            ["Segment", view.filters.segment],
+            ["UTM Source", view.filters.utmSource],
+            ["UTM Medium", view.filters.utmMedium],
+            ["UTM Campaign", view.filters.utmCampaign],
+            ["State", view.filters.state],
+            ["City", view.filters.city],
+            ["Size", view.filters.size],
+            ["Color", view.filters.color],
+          ] as [string, string | null | undefined][])
+            .filter(([, v]) => v)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(" · ");
+          const tooltipText = viewFilterSummary
+            ? `${view.name} — ${viewFilterSummary}`
+            : view.name;
+          return (
           <Badge
             key={view.id}
             variant="outline"
             className="gap-1 pl-2 pr-1 py-0.5 cursor-pointer hover:bg-accent/40"
             data-testid={`saved-view-${view.id}`}
+            title={tooltipText}
           >
             <button
               type="button"
@@ -480,7 +500,8 @@ export function FilterBar() {
               <X className="h-3 w-3" />
             </button>
           </Badge>
-        ))}
+          );
+        })}
 
         <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
           <PopoverTrigger asChild>

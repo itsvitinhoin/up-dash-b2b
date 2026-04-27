@@ -234,11 +234,13 @@ export default function UtmPage() {
     [data],
   );
 
+  // Compute overall average from ALL rows (not just the top-10 chart slice) for an accurate baseline.
   const avgConvPct = useMemo(() => {
-    if (!barDataConv.length) return null;
-    const sum = barDataConv.reduce((s, d) => s + d.value, 0);
-    return parseFloat((sum / barDataConv.length).toFixed(1));
-  }, [barDataConv]);
+    const allRows = (data?.rows ?? []).filter((r) => r.registrations > 0);
+    if (!allRows.length) return null;
+    const sum = allRows.reduce((s, r) => s + r.conversionPct, 0);
+    return parseFloat((sum / allRows.length).toFixed(1));
+  }, [data]);
 
   const kpis = data?.kpis;
   const totalRows = data?.rows.length ?? 0;
@@ -330,16 +332,17 @@ export default function UtmPage() {
       <motion.div variants={cardVariants}>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <KpiCard
-            label="Leads / Sessions"
+            label="Registrations"
             value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
             icon={Users}
             loading={isLoading}
           />
           <KpiCard
-            label="Approvals"
-            value={kpis ? formatNumber(kpis.totalApprovals) : "—"}
+            label="Approval %"
+            value={kpis ? `${kpis.approvalPct.toFixed(1)}%` : "—"}
             icon={UserCheck}
             loading={isLoading}
+            accent="bg-amber-500/10"
           />
           <KpiCard
             label="Buyers"

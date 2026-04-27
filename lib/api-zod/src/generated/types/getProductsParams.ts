@@ -23,4 +23,16 @@ export type GetProductsParams = {
    * Exact-match filter on product category.
    */
   category?: string;
+  /**
+   * Filter to products associated with this size label.
+   */
+  size?: string;
+  /**
+   * Filter to products associated with this color.
+   */
+  color?: string;
+  /**
+   * Filter to products ordered by customers from this state.
+   */
+  state?: string;
 };

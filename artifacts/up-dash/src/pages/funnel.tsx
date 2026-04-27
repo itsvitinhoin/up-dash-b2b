@@ -48,7 +48,7 @@ const STAGE_PALETTE = [
 
 export default function FunnelPage() {
   const { selectedClientId, user } = useAuth();
-  const { dateRange } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
   const variants = withReducedMotion(fadeInUp, reduced);
 
@@ -59,6 +59,9 @@ export default function FunnelPage() {
       clientId,
       dateFrom: format(dateRange.from, "yyyy-MM-dd"),
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
+      utmSource: filters.utmSource || undefined,
+      utmMedium: filters.utmMedium || undefined,
+      utmCampaign: filters.utmCampaign || undefined,
     },
     {
       query: queryOpts({

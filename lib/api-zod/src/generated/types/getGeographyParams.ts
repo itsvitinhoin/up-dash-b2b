@@ -10,4 +10,9 @@ export type GetGeographyParams = {
   clientId?: string;
   dateFrom?: Date;
   dateTo?: Date;
+  /**
+   * Restrict geographic data to customers from this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
 };

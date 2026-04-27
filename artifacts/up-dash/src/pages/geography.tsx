@@ -38,7 +38,7 @@ import { useReducedMotion, fadeInUp, withReducedMotion } from "@/lib/motion";
 
 export default function GeographyPage() {
   const { selectedClientId, user } = useAuth();
-  const { dateRange } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
   const variants = withReducedMotion(fadeInUp, reduced);
   const [view, setView] = useState<"state" | "city">("state");
@@ -50,6 +50,8 @@ export default function GeographyPage() {
       clientId,
       dateFrom: format(dateRange.from, "yyyy-MM-dd"),
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
+      utmSource: filters.utmSource || undefined,
+      utmMedium: filters.utmMedium || undefined,
     },
     {
       query: queryOpts({

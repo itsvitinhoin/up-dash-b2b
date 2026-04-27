@@ -9,4 +9,8 @@
 export type GetSellersParams = {
   clientId?: string;
   limit?: number;
+  /**
+   * Filter to sellers whose customers are from this state.
+   */
+  state?: string;
 };

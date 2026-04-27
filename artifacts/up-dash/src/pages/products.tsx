@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
+import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
   useGetProducts,
   useGetProductsSummary,
@@ -74,6 +75,7 @@ const LOW_STOCK_THRESHOLD = 10;
 
 export default function ProductsPage() {
   const { selectedClientId, user } = useAuth();
+  const { filters } = useDashboardFilters();
   const [, setLocation] = useLocation();
   const reduced = useReducedMotion();
   const containerVariants = withReducedMotion(staggerContainer, reduced);
@@ -189,6 +191,9 @@ export default function ProductsPage() {
       limit,
       search: urlSearch || undefined,
       category: urlCategory || undefined,
+      state: filters.state || undefined,
+      size: filters.size || undefined,
+      color: filters.color || undefined,
     },
     {
       query: queryOpts({

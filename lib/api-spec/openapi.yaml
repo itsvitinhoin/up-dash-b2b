@@ -300,6 +300,19 @@ paths:
           schema:
             type: string
             format: date-time
+        - in: query
+          name: utmSource
+          schema:
+            type: string
+          description: Restrict funnel steps to customers who registered via this UTM source.
+        - in: query
+          name: utmMedium
+          schema:
+            type: string
+        - in: query
+          name: utmCampaign
+          schema:
+            type: string
       responses:
         "200":
           description: Funnel payload
@@ -458,6 +471,21 @@ paths:
           schema:
             type: string
           description: Exact-match filter on product category.
+        - in: query
+          name: size
+          schema:
+            type: string
+          description: Filter to products associated with this size label.
+        - in: query
+          name: color
+          schema:
+            type: string
+          description: Filter to products associated with this color.
+        - in: query
+          name: state
+          schema:
+            type: string
+          description: Filter to products ordered by customers from this state.
       responses:
         "200":
           description: Product list with metrics
@@ -583,6 +611,11 @@ paths:
           schema:
             type: integer
             default: 20
+        - in: query
+          name: state
+          schema:
+            type: string
+          description: Filter to sellers whose customers are from this state.
       responses:
         "200":
           description: Ranked seller list
@@ -899,6 +932,15 @@ paths:
           schema:
             type: string
             format: date-time
+        - in: query
+          name: utmSource
+          schema:
+            type: string
+          description: Restrict geographic data to customers from this UTM source.
+        - in: query
+          name: utmMedium
+          schema:
+            type: string
       responses:
         "200":
           description: Geography payload

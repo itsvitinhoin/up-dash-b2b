@@ -1291,6 +1291,12 @@ export type GetFunnelParams = {
   clientId?: string;
   dateFrom?: string;
   dateTo?: string;
+  /**
+   * Restrict funnel steps to customers who registered via this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
 };
 
 export type GetCustomersParams = {
@@ -1342,6 +1348,18 @@ export type GetProductsParams = {
    * Exact-match filter on product category.
    */
   category?: string;
+  /**
+   * Filter to products associated with this size label.
+   */
+  size?: string;
+  /**
+   * Filter to products associated with this color.
+   */
+  color?: string;
+  /**
+   * Filter to products ordered by customers from this state.
+   */
+  state?: string;
 };
 
 export type GetProductsSort =
@@ -1374,6 +1392,10 @@ export type GetProductCustomersParams = {
 export type GetSellersParams = {
   clientId?: string;
   limit?: number;
+  /**
+   * Filter to sellers whose customers are from this state.
+   */
+  state?: string;
 };
 
 export type GetSellerCustomersParams = {
@@ -1491,6 +1513,11 @@ export type GetGeographyParams = {
   clientId?: string;
   dateFrom?: string;
   dateTo?: string;
+  /**
+   * Restrict geographic data to customers from this UTM source.
+   */
+  utmSource?: string;
+  utmMedium?: string;
 };
 
 export type GetOrdersByDateParams = {
