@@ -17,7 +17,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/empty-state";
-import { formatCurrency, formatNumber } from "@/lib/formatters";
+import { formatCurrency, formatCurrencySmart, formatNumber } from "@/lib/formatters";
 import { CountUp } from "@/components/count-up";
 import { cardEntry, staggerContainer, useReducedMotion, withReducedMotion } from "@/lib/motion";
 import {
@@ -81,7 +81,7 @@ function KpiCard({
         {loading ? (
           <Skeleton className="h-6 w-20 mt-1" />
         ) : (
-          <p className="text-xl font-bold tabular-nums leading-tight">{value}</p>
+          <p className="text-2xl font-semibold tabular-nums leading-tight">{value}</p>
         )}
       </div>
     </div>
@@ -359,7 +359,7 @@ export default function UtmPage() {
           />
           <KpiCard
             label="Revenue"
-            value={kpis ? formatCurrency(kpis.totalRevenue) : "—"}
+            value={kpis ? formatCurrencySmart(kpis.totalRevenue) : "—"}
             icon={BarChart2}
             loading={isLoading}
             accent="bg-violet-500/10"
