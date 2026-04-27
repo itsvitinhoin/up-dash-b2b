@@ -1244,12 +1244,24 @@ export const GetJourneyResponse = zod.object({
         count: zod.number(),
       }),
     ),
+    topUtmSources: zod.array(
+      zod.object({
+        source: zod.string(),
+        count: zod.number(),
+      }),
+    ),
   }),
   nonBuyers: zod.object({
     avgSessionDepth: zod.number(),
     eventCounts: zod.array(
       zod.object({
         eventType: zod.string(),
+        count: zod.number(),
+      }),
+    ),
+    topUtmSources: zod.array(
+      zod.object({
+        source: zod.string(),
         count: zod.number(),
       }),
     ),

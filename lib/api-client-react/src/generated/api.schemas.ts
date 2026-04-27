@@ -351,9 +351,15 @@ export interface JourneyEventCounts {
   count: number;
 }
 
+export interface JourneyUtmSource {
+  source: string;
+  count: number;
+}
+
 export interface JourneyAudience {
   avgSessionDepth: number;
   eventCounts: JourneyEventCounts[];
+  topUtmSources: JourneyUtmSource[];
 }
 
 export interface JourneyResponse {

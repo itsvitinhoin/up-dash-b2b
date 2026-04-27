@@ -6,8 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { JourneyEventCounts } from "./journeyEventCounts";
+import type { JourneyUtmSource } from "./journeyUtmSource";
 
 export interface JourneyAudience {
   avgSessionDepth: number;
   eventCounts: JourneyEventCounts[];
+  topUtmSources: JourneyUtmSource[];
 }

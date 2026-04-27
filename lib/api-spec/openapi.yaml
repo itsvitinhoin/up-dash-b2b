@@ -1828,6 +1828,15 @@ components:
           type: integer
       required: [eventType, count]
 
+    JourneyUtmSource:
+      type: object
+      properties:
+        source:
+          type: string
+        count:
+          type: integer
+      required: [source, count]
+
     JourneyAudience:
       type: object
       properties:
@@ -1837,7 +1846,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/JourneyEventCounts"
-      required: [avgSessionDepth, eventCounts]
+        topUtmSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/JourneyUtmSource"
+      required: [avgSessionDepth, eventCounts, topUtmSources]
 
     JourneyResponse:
       type: object

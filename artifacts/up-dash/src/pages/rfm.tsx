@@ -280,7 +280,10 @@ export default function RfmPage() {
                           {formatNumber(segData?.customerCount ?? 0)}
                         </p>
                         <p className="text-[10px] text-muted-foreground">
-                          {formatCurrency(segData?.revenue ?? 0)} revenue
+                          {formatCurrency(segData?.revenue ?? 0)} rev
+                        </p>
+                        <p className="text-[10px] font-semibold tabular-nums" style={{ color: meta.color }}>
+                          avg {formatCurrency(segData?.avgTicket ?? 0)}
                         </p>
                       </div>
                     )}

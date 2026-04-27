@@ -3809,9 +3809,23 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { page, limit, segment, sortBy, sortDir } = parsed.data;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const offset = (page - 1) * limit;
 
-  // 1. Per-segment aggregates
+  // Customers who had at least one purchase in the selected date window
+  const activeBuyerIds = db
+    .select({ id: ordersTable.customerId })
+    .from(ordersTable)
+    .where(
+      and(
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, from),
+        lte(ordersTable.createdAt, to),
+        sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`,
+      ),
+    );
+
+  // 1. Per-segment aggregates — scoped to customers active in the date window
   const segmentAggs = await db
     .select({
       segment: sql<string>`COALESCE(${customersTable.rfmSegment}, 'Unsegmented')`,
@@ -3819,7 +3833,12 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
       revenue: sql<number>`COALESCE(SUM(${customersTable.totalSpent}), 0)::float`,
     })
     .from(customersTable)
-    .where(eq(customersTable.clientId, clientId))
+    .where(
+      and(
+        eq(customersTable.clientId, clientId),
+        inArray(customersTable.id, activeBuyerIds),
+      ),
+    )
     .groupBy(customersTable.rfmSegment);
 
   const totalRevenue = segmentAggs.reduce((s, r) => s + Number(r.revenue), 0);
@@ -3839,23 +3858,25 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
     };
   });
 
-  // 2. Segment composition over time (monthly, last 12 months)
+  // 2. Segment composition over time — grouped by order month within the date window
   const compositionRows = await db
     .select({
-      month: sql<string>`TO_CHAR(DATE_TRUNC('month', ${customersTable.lastPurchaseAt}), 'YYYY-MM')`,
+      month: sql<string>`TO_CHAR(DATE_TRUNC('month', ${ordersTable.createdAt}), 'YYYY-MM')`,
       segment: sql<string>`COALESCE(${customersTable.rfmSegment}, 'Unsegmented')`,
-      count: sql<number>`COUNT(*)::int`,
+      count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
     })
-    .from(customersTable)
+    .from(ordersTable)
+    .innerJoin(customersTable, eq(customersTable.id, ordersTable.customerId))
     .where(
       and(
-        eq(customersTable.clientId, clientId),
-        sql`${customersTable.lastPurchaseAt} IS NOT NULL`,
-        gte(customersTable.lastPurchaseAt, new Date(new Date().setFullYear(new Date().getFullYear() - 1))),
+        eq(ordersTable.clientId, clientId),
+        gte(ordersTable.createdAt, from),
+        lte(ordersTable.createdAt, to),
+        sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`,
       ),
     )
-    .groupBy(sql`DATE_TRUNC('month', ${customersTable.lastPurchaseAt})`, customersTable.rfmSegment)
-    .orderBy(sql`DATE_TRUNC('month', ${customersTable.lastPurchaseAt})`);
+    .groupBy(sql`DATE_TRUNC('month', ${ordersTable.createdAt})`, customersTable.rfmSegment)
+    .orderBy(sql`DATE_TRUNC('month', ${ordersTable.createdAt})`);
 
   // Pivot to monthly composition
   const monthMap = new Map<string, { Champions: number; Loyal: number; Potential: number; AtRisk: number; Lost: number }>();
@@ -3872,14 +3893,18 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
   }
   const composition = Array.from(monthMap.entries()).map(([month, v]) => ({ month, ...v }));
 
-  // 3. Paginated customer table
-  const conditions: SQL[] = [eq(customersTable.clientId, clientId)];
+  // 3. Paginated customer table — scoped to buyers active in the period
+  const conditions: SQL[] = [
+    eq(customersTable.clientId, clientId),
+    inArray(customersTable.id, activeBuyerIds),
+  ];
   if (segment) conditions.push(eq(customersTable.rfmSegment, segment));
 
+  const toTs = sql`${to.toISOString()}::timestamptz`;
   const sortColMap: Record<string, SQL> = {
     name: sql`${customersTable.name}`,
     segment: sql`${customersTable.rfmSegment}`,
-    recencyDays: sql`EXTRACT(EPOCH FROM (NOW() - ${customersTable.lastPurchaseAt})) / 86400`,
+    recencyDays: sql`EXTRACT(EPOCH FROM (${toTs} - ${customersTable.lastPurchaseAt})) / 86400`,
     frequency: sql`${customersTable.totalOrders}`,
     monetary: sql`${customersTable.totalSpent}`,
   };
@@ -3893,7 +3918,7 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
         name: customersTable.name,
         email: customersTable.email,
         segment: customersTable.rfmSegment,
-        recencyDays: sql<number | null>`CASE WHEN ${customersTable.lastPurchaseAt} IS NOT NULL THEN ROUND(EXTRACT(EPOCH FROM (NOW() - ${customersTable.lastPurchaseAt})) / 86400)::int ELSE NULL END`,
+        recencyDays: sql<number | null>`CASE WHEN ${customersTable.lastPurchaseAt} IS NOT NULL THEN ROUND(EXTRACT(EPOCH FROM (${toTs} - ${customersTable.lastPurchaseAt})) / 86400)::int ELSE NULL END`,
         frequency: customersTable.totalOrders,
         monetary: customersTable.totalSpent,
       })
@@ -4125,7 +4150,7 @@ async function buildAudienceEventProfile(
   from: Date,
   to: Date,
   isBuyer: boolean,
-): Promise<{ avgSessionDepth: number; eventCounts: Array<{ eventType: string; count: number }> }> {
+): Promise<{ avgSessionDepth: number; eventCounts: Array<{ eventType: string; count: number }>; topUtmSources: Array<{ source: string; count: number }> }> {
   const buyerIds = db
     .select({ id: ordersTable.customerId })
     .from(ordersTable)
@@ -4177,9 +4202,31 @@ async function buildAudienceEventProfile(
     .groupBy(eventsTable.eventType)
     .orderBy(sql`COUNT(*) DESC`);
 
+  // Top UTM sources for this audience (buyers or non-buyers) based on customer acquisition data
+  const utmFilter = isBuyer
+    ? inArray(customersTable.id, db.select({ id: ordersTable.customerId }).from(ordersTable).where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to), sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`)))
+    : sql`${customersTable.id} NOT IN (SELECT customer_id FROM orders WHERE client_id = ${clientId} AND created_at >= ${from} AND created_at <= ${to} AND status IN ('APPROVED','SHIPPED','DELIVERED'))`;
+
+  const utmRows = await db
+    .select({
+      source: sql<string>`COALESCE(${customersTable.utmSource}, 'direct')`,
+      count: sql<number>`COUNT(*)::int`,
+    })
+    .from(customersTable)
+    .where(
+      and(
+        eq(customersTable.clientId, clientId),
+        utmFilter,
+      ),
+    )
+    .groupBy(customersTable.utmSource)
+    .orderBy(sql`COUNT(*) DESC`)
+    .limit(5);
+
   return {
     avgSessionDepth: Number(depthRow?.avg_d) || 0,
     eventCounts: eventRows.map((r) => ({ eventType: r.eventType, count: Number(r.count) })),
+    topUtmSources: utmRows.map((r) => ({ source: r.source || "direct", count: Number(r.count) })),
   };
 }
 

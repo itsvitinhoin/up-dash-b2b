@@ -348,6 +348,46 @@ export default function JourneyPage() {
                     </BarChart>
                   </ResponsiveContainer>
                 )}
+
+                {/* UTM / acquisition channel breakdown */}
+                {!isLoading && ((buyers?.topUtmSources?.length ?? 0) > 0 || (nonBuyers?.topUtmSources?.length ?? 0) > 0) && (
+                  <div className="mt-4 grid grid-cols-2 gap-4 border-t border-border/40 pt-4">
+                    <div>
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+                        Buyer acquisition channels
+                      </p>
+                      <div className="space-y-1.5">
+                        {(buyers?.topUtmSources ?? []).slice(0, 4).map((u) => (
+                          <div key={u.source} className="flex items-center justify-between">
+                            <span className="inline-flex items-center rounded-full bg-[#6366f1]/10 px-2 py-0.5 text-[10px] font-medium text-[#6366f1]">
+                              {u.source}
+                            </span>
+                            <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
+                              {formatNumber(u.count)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+                        Non-buyer acquisition channels
+                      </p>
+                      <div className="space-y-1.5">
+                        {(nonBuyers?.topUtmSources ?? []).slice(0, 4).map((u) => (
+                          <div key={u.source} className="flex items-center justify-between">
+                            <span className="inline-flex items-center rounded-full bg-[#f59e0b]/10 px-2 py-0.5 text-[10px] font-medium text-[#f59e0b]">
+                              {u.source}
+                            </span>
+                            <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
+                              {formatNumber(u.count)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </motion.div>

@@ -81,6 +81,7 @@ export * from "./journeyEventEdge";
 export * from "./journeyEventNode";
 export * from "./journeyKpis";
 export * from "./journeyResponse";
+export * from "./journeyUtmSource";
 export * from "./listClientsParams";
 export * from "./listNotificationsParams";
 export * from "./listSavedViewsParams";
