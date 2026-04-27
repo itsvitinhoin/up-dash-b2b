@@ -219,12 +219,14 @@ export default function ClientsPage() {
       },
       {
         onSuccess(result) {
+          const previewInvalid = csvRows.length - validCsvRows.length;
+          const totalSkipped = previewInvalid + result.skipped;
           setIsImportOpen(false);
           setCsvRows([]);
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
           const desc =
-            result.skipped > 0
-              ? `${result.created} created, ${result.skipped} skipped`
+            totalSkipped > 0
+              ? `${result.created} created, ${totalSkipped} skipped`
               : `${result.created} created`;
           toast.success("Import complete", { description: desc });
         },
