@@ -92,6 +92,7 @@ import type {
   SellerDetailResponse,
   SellerMetrics,
   SellerOrdersResponse,
+  UpdateClientRequest,
   UtmResponse,
 } from "./api.schemas";
 
@@ -950,6 +951,93 @@ export function useGetClient<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Update client fields (admin only)
+ */
+export const getUpdateClientUrl = (clientId: string) => {
+  return `/api/clients/${clientId}`;
+};
+
+export const updateClient = async (
+  clientId: string,
+  updateClientRequest: UpdateClientRequest,
+  options?: RequestInit,
+): Promise<Client> => {
+  return customFetch<Client>(getUpdateClientUrl(clientId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateClientRequest),
+  });
+};
+
+export const getUpdateClientMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateClient>>,
+    TError,
+    { clientId: string; data: BodyType<UpdateClientRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateClient>>,
+  TError,
+  { clientId: string; data: BodyType<UpdateClientRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateClient"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateClient>>,
+    { clientId: string; data: BodyType<UpdateClientRequest> }
+  > = (props) => {
+    const { clientId, data } = props ?? {};
+
+    return updateClient(clientId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateClientMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateClient>>
+>;
+export type UpdateClientMutationBody = BodyType<UpdateClientRequest>;
+export type UpdateClientMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Update client fields (admin only)
+ */
+export const useUpdateClient = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateClient>>,
+    TError,
+    { clientId: string; data: BodyType<UpdateClientRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateClient>>,
+  TError,
+  { clientId: string; data: BodyType<UpdateClientRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateClientMutationOptions(options));
+};
 
 /**
  * @summary Rotate the API key for a client (admin only)

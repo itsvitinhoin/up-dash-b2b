@@ -98,6 +98,11 @@ export interface Client {
   leadsYtd: number;
   approvedLeads: number;
   isActive: boolean;
+  /**
+   * Meta Ads API key for pulling ad spend and lead data from Meta.
+   * @nullable
+   */
+  metaAdsApiKey?: string | null;
   /** ISO 4217 currency code, e.g. BRL, USD */
   currency: string;
   /** BCP 47 locale, e.g. pt-BR, en-US */
@@ -157,10 +162,23 @@ export interface CreateClientRequest {
   name: string;
   email: string;
   apiKey: string;
+  /** Optional Meta Ads API key for this client. */
+  metaAdsApiKey?: string;
   /** ISO 4217 currency code (default BRL) */
   currency?: string;
   /** BCP 47 locale (default pt-BR) */
   locale?: string;
+}
+
+/**
+ * Fields that can be updated on an existing client. All fields are optional.
+ */
+export interface UpdateClientRequest {
+  /**
+   * Meta Ads API key. Pass null to clear it.
+   * @nullable
+   */
+  metaAdsApiKey?: string | null;
 }
 
 /**

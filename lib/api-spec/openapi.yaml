@@ -262,6 +262,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateClient
+      tags: [clients]
+      summary: Update client fields (admin only)
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateClientRequest"
+      responses:
+        "200":
+          description: Updated client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /clients/{clientId}/rotate-key:
     patch:
@@ -1643,6 +1678,9 @@ components:
           type: integer
         isActive:
           type: boolean
+        metaAdsApiKey:
+          type: ["string", "null"]
+          description: Meta Ads API key for pulling ad spend and lead data from Meta.
         currency:
           type: string
           description: ISO 4217 currency code, e.g. BRL, USD
@@ -1729,6 +1767,9 @@ components:
           format: email
         apiKey:
           type: string
+        metaAdsApiKey:
+          type: string
+          description: Optional Meta Ads API key for this client.
         currency:
           type: string
           description: ISO 4217 currency code (default BRL)
@@ -1736,6 +1777,14 @@ components:
           type: string
           description: BCP 47 locale (default pt-BR)
       required: [name, email, apiKey]
+
+    UpdateClientRequest:
+      type: object
+      description: Fields that can be updated on an existing client. All fields are optional.
+      properties:
+        metaAdsApiKey:
+          type: ["string", "null"]
+          description: Meta Ads API key. Pass null to clear it.
 
     ClientImportRow:
       type: object

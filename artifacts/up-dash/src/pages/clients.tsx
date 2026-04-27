@@ -10,6 +10,7 @@ import {
   useCreateClient,
   useImportClients,
   useRotateClientApiKey,
+  useUpdateClient,
   lookupClientByApiKey,
   getListClientsQueryKey,
 } from "@workspace/api-client-react";
@@ -28,9 +29,12 @@ import {
   Building2,
   CheckCircle2,
   Copy,
+  Eye,
+  EyeOff,
   KeyRound,
   Loader2,
   Minus,
+  Network,
   Plus,
   RefreshCw,
   Search,
@@ -273,6 +277,128 @@ function RotateKeyDialog({ clientId, clientName }: { clientId: string; clientNam
   );
 }
 
+function MetaAdsKeyDialog({
+  clientId,
+  clientName,
+  currentKey,
+}: {
+  clientId: string;
+  clientName: string;
+  currentKey: string | null | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [showValue, setShowValue] = useState(false);
+  const updateMutation = useUpdateClient();
+  const queryClient = useQueryClient();
+
+  function handleOpen(o: boolean) {
+    if (o) {
+      setValue(currentKey ?? "");
+      setShowValue(false);
+      updateMutation.reset();
+    } else {
+      setOpen(false);
+    }
+    setOpen(o);
+  }
+
+  function handleSave() {
+    updateMutation.mutate(
+      { clientId, data: { metaAdsApiKey: value.trim() || null } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+          setOpen(false);
+          toast.success("Meta Ads API key updated");
+        },
+        onError: () => {
+          toast.error("Failed to update Meta Ads API key");
+        },
+      }
+    );
+  }
+
+  const hasKey = !!currentKey;
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={`h-7 gap-1 text-xs ${hasKey ? "text-emerald-400 hover:text-emerald-300" : ""}`}
+          title="Set Meta Ads API key"
+        >
+          <Network className="h-3 w-3" />
+          {hasKey ? "Meta Key ✓" : "Add Meta Key"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Network className="h-4 w-4" /> Meta Ads API Key
+          </DialogTitle>
+          <DialogDescription>
+            Set the Meta Ads API key for <strong>{clientName}</strong>. This key
+            will be used to pull ad spend and lead data from Meta. Leave blank
+            to clear the existing key.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2">
+          <Label htmlFor="meta-ads-key">API Key</Label>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Input
+                id="meta-ads-key"
+                type={showValue ? "text" : "password"}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder="Paste your Meta Ads API key…"
+                className="pr-9 font-mono text-xs"
+              />
+              <button
+                type="button"
+                className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                onClick={() => setShowValue((v) => !v)}
+                tabIndex={-1}
+              >
+                {showValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+          {hasKey && !value && (
+            <p className="text-xs text-amber-400 flex items-center gap-1">
+              <AlertCircle className="h-3 w-3 shrink-0" />
+              Saving with an empty field will remove the existing key.
+            </p>
+          )}
+          {updateMutation.isError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>Failed to save. Please try again.</AlertDescription>
+            </Alert>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={updateMutation.isPending}>
+            {updateMutation.isPending ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+            ) : (
+              "Save Key"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function ClientsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -286,6 +412,7 @@ export default function ClientsPage() {
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newApiKey, setNewApiKey] = useState("");
+  const [newMetaAdsApiKey, setNewMetaAdsApiKey] = useState("");
   const [newCurrencyCode, setNewCurrencyCode] = useState("BRL");
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupMatch, setLookupMatch] = useState<string | null>(null);
@@ -402,6 +529,7 @@ export default function ClientsPage() {
           name: newName,
           email: newEmail,
           apiKey: newApiKey,
+          ...(newMetaAdsApiKey.trim() ? { metaAdsApiKey: newMetaAdsApiKey.trim() } : {}),
           currency: picked.code,
           locale: picked.locale,
         },
@@ -412,6 +540,7 @@ export default function ClientsPage() {
           setNewName("");
           setNewEmail("");
           setNewApiKey("");
+          setNewMetaAdsApiKey("");
           setNewCurrencyCode("BRL");
           setLookupMatch(null);
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
@@ -528,6 +657,7 @@ export default function ClientsPage() {
             setNewName("");
             setNewEmail("");
             setNewApiKey("");
+            setNewMetaAdsApiKey("");
             setNewCurrencyCode("BRL");
             setLookupMatch(null);
             setIsLookingUp(false);
@@ -607,6 +737,24 @@ export default function ClientsPage() {
                       Found: {lookupMatch} — fields pre-filled
                     </p>
                   )}
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="metaAdsApiKey">
+                    Meta Ads API Key{" "}
+                    <span className="text-xs text-muted-foreground font-normal">(optional)</span>
+                  </Label>
+                  <Input
+                    id="metaAdsApiKey"
+                    type="password"
+                    value={newMetaAdsApiKey}
+                    onChange={(e) => setNewMetaAdsApiKey(e.target.value)}
+                    placeholder="Paste Meta Ads key to enable ad data…"
+                    className="font-mono text-xs"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Used to pull ad spend and lead data from Meta Ads. You can
+                    also add or update this later from the client list.
+                  </p>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="currency">Currency &amp; Locale</Label>
@@ -776,7 +924,14 @@ export default function ClientsPage() {
                         {format(new Date(client.createdAt), "MMM d, yyyy")}
                       </TableCell>
                       <TableCell className="text-right">
-                        <RotateKeyDialog clientId={client.id} clientName={client.name} />
+                        <div className="flex items-center justify-end gap-1">
+                          <MetaAdsKeyDialog
+                            clientId={client.id}
+                            clientName={client.name}
+                            currentKey={client.metaAdsApiKey}
+                          />
+                          <RotateKeyDialog clientId={client.id} clientName={client.name} />
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

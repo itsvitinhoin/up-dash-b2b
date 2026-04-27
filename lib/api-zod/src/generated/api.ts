@@ -105,6 +105,12 @@ export const ListClientsResponse = zod.object({
       leadsYtd: zod.number(),
       approvedLeads: zod.number(),
       isActive: zod.boolean(),
+      metaAdsApiKey: zod
+        .string()
+        .nullish()
+        .describe(
+          "Meta Ads API key for pulling ad spend and lead data from Meta.",
+        ),
       currency: zod.string().describe("ISO 4217 currency code, e.g. BRL, USD"),
       locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
       createdAt: zod.coerce.date(),
@@ -159,6 +165,10 @@ export const CreateClientBody = zod.object({
   name: zod.string(),
   email: zod.string().email(),
   apiKey: zod.string(),
+  metaAdsApiKey: zod
+    .string()
+    .optional()
+    .describe("Optional Meta Ads API key for this client."),
   currency: zod
     .string()
     .optional()
@@ -242,6 +252,84 @@ export const GetClientResponse = zod.object({
   leadsYtd: zod.number(),
   approvedLeads: zod.number(),
   isActive: zod.boolean(),
+  metaAdsApiKey: zod
+    .string()
+    .nullish()
+    .describe("Meta Ads API key for pulling ad spend and lead data from Meta."),
+  currency: zod.string().describe("ISO 4217 currency code, e.g. BRL, USD"),
+  locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+  avgOrderValue: zod
+    .number()
+    .optional()
+    .describe(
+      "Optional. Average order value (revenue \/ orders) over the requested\nwindow. Only present on \/clients responses when both `dateFrom` and\n`dateTo` are supplied.\n",
+    ),
+  conversionRate: zod
+    .number()
+    .optional()
+    .describe(
+      "Optional. Visit-to-purchase conversion rate as a percentage over\nthe requested window. Only present on enriched \/clients responses.\n",
+    ),
+  periodGrowthPct: zod
+    .number()
+    .nullish()
+    .describe(
+      "Optional. Revenue growth versus the prior window of equal length\n(in percent). `null` when the prior window had zero revenue and\nthe current window has zero revenue too. Only present on enriched\n\/clients responses.\n",
+    ),
+  periodRoas: zod
+    .number()
+    .nullish()
+    .describe(
+      "Optional. ROAS for the period (period revenue \/ prorated ad spend).\n`null` when the client has no creatives with spend in the window.\nOnly present on enriched \/clients responses.\n",
+    ),
+  periodLeads: zod
+    .number()
+    .nullish()
+    .describe(
+      "Optional. Prorated ad-channel leads (REGISTRATION events) in the\nrequested period. Only present on enriched \/clients responses.\n",
+    ),
+  periodApprovalRate: zod
+    .number()
+    .nullish()
+    .describe(
+      "Optional. Lead approval rate (approvedLeads \/ totalLeads × 100).\n`null` when there are zero leads. Only present on enriched \/clients responses.\n",
+    ),
+});
+
+/**
+ * @summary Update client fields (admin only)
+ */
+export const UpdateClientParams = zod.object({
+  clientId: zod.coerce.string(),
+});
+
+export const UpdateClientBody = zod
+  .object({
+    metaAdsApiKey: zod
+      .string()
+      .nullish()
+      .describe("Meta Ads API key. Pass null to clear it."),
+  })
+  .describe(
+    "Fields that can be updated on an existing client. All fields are optional.",
+  );
+
+export const UpdateClientResponse = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  email: zod.string(),
+  apiKey: zod.string(),
+  revenueYtd: zod.number(),
+  ordersYtd: zod.number(),
+  leadsYtd: zod.number(),
+  approvedLeads: zod.number(),
+  isActive: zod.boolean(),
+  metaAdsApiKey: zod
+    .string()
+    .nullish()
+    .describe("Meta Ads API key for pulling ad spend and lead data from Meta."),
   currency: zod.string().describe("ISO 4217 currency code, e.g. BRL, USD"),
   locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
   createdAt: zod.coerce.date(),

@@ -10,6 +10,8 @@ export interface CreateClientRequest {
   name: string;
   email: string;
   apiKey: string;
+  /** Optional Meta Ads API key for this client. */
+  metaAdsApiKey?: string;
   /** ISO 4217 currency code (default BRL) */
   currency?: string;
   /** BCP 47 locale (default pt-BR) */

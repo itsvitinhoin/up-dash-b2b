@@ -9,6 +9,7 @@ import {
   ListClientsQueryParams,
   ListClientsResponse,
   RotateClientApiKeyParams,
+  UpdateClientBody,
 } from "@workspace/api-zod";
 import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
@@ -443,6 +444,58 @@ router.patch("/clients/:clientId/rotate-key", requireAdmin, async (req, res): Pr
     return;
   }
   res.json({ clientId, apiKey: newApiKey });
+});
+
+router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: paramParsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const bodyParsed = UpdateClientBody.safeParse(req.body);
+  if (!bodyParsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: bodyParsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const { clientId } = paramParsed.data;
+  const updates: Partial<typeof clientsTable.$inferInsert> = {};
+  if ("metaAdsApiKey" in bodyParsed.data) {
+    updates.metaAdsApiKey = bodyParsed.data.metaAdsApiKey ?? null;
+  }
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: "No updatable fields provided",
+      status: 400,
+    });
+    return;
+  }
+  const [updated] = await db
+    .update(clientsTable)
+    .set(updates)
+    .where(eq(clientsTable.id, clientId))
+    .returning();
+  if (!updated) {
+    res.status(404).json({
+      error: true,
+      code: "NOT_FOUND",
+      message: "Client not found",
+      status: 404,
+    });
+    return;
+  }
+  res.json(GetClientResponse.parse(updated));
 });
 
 router.get("/clients/:clientId", async (req, res): Promise<void> => {
