@@ -110,7 +110,7 @@ export default function ClientsPage() {
   const debouncedApiKey = useDebounce(newApiKey, 400);
 
   useEffect(() => {
-    if (!debouncedApiKey || !debouncedApiKey.trim().startsWith("sk_")) {
+    if (!isDialogOpen || !debouncedApiKey || !debouncedApiKey.trim().startsWith("sk_")) {
       setLookupMatch(null);
       setIsLookingUp(false);
       return;
@@ -135,7 +135,7 @@ export default function ClientsPage() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedApiKey]);
+  }, [debouncedApiKey, isDialogOpen]);
 
   const createMutation = useCreateClient();
 
