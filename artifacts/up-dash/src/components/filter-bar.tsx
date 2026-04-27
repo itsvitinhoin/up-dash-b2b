@@ -442,6 +442,7 @@ export function FilterBar() {
             ["UTM Campaign", view.filters.utmCampaign],
             ["State", view.filters.state],
             ["City", view.filters.city],
+            ["Product", view.filters.product],
             ["Size", view.filters.size],
             ["Color", view.filters.color],
             ["Seller", view.filters.sellerId],

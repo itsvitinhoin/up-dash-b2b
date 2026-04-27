@@ -1505,8 +1505,7 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
-  const { sort = "revenue", limit = 50, search, sku, category, state } = parsed.data;
-  // size and color are accepted but the products table has no such columns — silently ignored.
+  const { sort = "revenue", limit = 50, search, sku, category, state, size, color } = parsed.data;
 
   const orderBy =
     sort === "units"
@@ -1538,6 +1537,26 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
       .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
       .where(and(eq(ordersTable.clientId, clientId), eq(ordersTable.state, state.trim())));
     const ids = stateProductIds.map((r) => r.productId).filter(Boolean) as string[];
+    conditions.push(ids.length > 0 ? inArray(productsTable.id, ids) : sql`FALSE`);
+  }
+  if (size && size.trim().length > 0) {
+    // Restrict to products ordered in this size variant.
+    const sizeProdIds = await db
+      .selectDistinct({ productId: orderItemsTable.productId })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(and(eq(ordersTable.clientId, clientId), ilike(orderItemsTable.size, size.trim())));
+    const ids = sizeProdIds.map((r) => r.productId).filter(Boolean) as string[];
+    conditions.push(ids.length > 0 ? inArray(productsTable.id, ids) : sql`FALSE`);
+  }
+  if (color && color.trim().length > 0) {
+    // Restrict to products ordered in this color variant.
+    const colorProdIds = await db
+      .selectDistinct({ productId: orderItemsTable.productId })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(and(eq(ordersTable.clientId, clientId), ilike(orderItemsTable.color, color.trim())));
+    const ids = colorProdIds.map((r) => r.productId).filter(Boolean) as string[];
     conditions.push(ids.length > 0 ? inArray(productsTable.id, ids) : sql`FALSE`);
   }
 
@@ -3454,6 +3473,8 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
     category?: string;
     risk?: string;
   };
+  const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
+  const utmMed = (parsed.data as Record<string, unknown>).utmMedium as string | undefined;
 
   // ── 1. Fetch all products for this client ──────────────────────────────
   const products = await db
@@ -3493,7 +3514,32 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
     return;
   }
 
-  const productIds = products.map((p) => p.id);
+  let productIds = products.map((p) => p.id);
+
+  // ── UTM filter: restrict to products purchased by UTM-source customers ──
+  if (utmSrc && productIds.length > 0) {
+    const utmConditions: SQL[] = [
+      inArray(orderItemsTable.productId, productIds),
+      eq(ordersTable.clientId, clientId),
+      sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`,
+      sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`,
+    ];
+    if (utmMed) utmConditions.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`);
+    const utmPurchasedRows = await db
+      .selectDistinct({ productId: orderItemsTable.productId })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+      .where(and(...utmConditions));
+    const utmPids = new Set(utmPurchasedRows.map((r) => r.productId).filter(Boolean) as string[]);
+    productIds = productIds.filter((id) => utmPids.has(id));
+  }
+
+  // Sync products metadata list to match filtered productIds (for SKU table display)
+  const productIdSet = new Set(productIds);
+  const filteredProducts = productIds.length < products.length
+    ? products.filter((p) => productIdSet.has(p.id))
+    : products;
 
   // ── 2. Velocity from order_items joined to orders for date filtering ────
   const fetchVelocity = async (winFrom: Date, winTo: Date) =>
@@ -3654,7 +3700,7 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
     lastRestockDate: string | null;
   };
 
-  const allSkus: SkuRow[] = products.map((p) => {
+  const allSkus: SkuRow[] = filteredProducts.map((p) => {
     const unitsSold = currVelMap.get(p.id) ?? 0;
     const { dailyVelocity, coverageDays, risk } = classify(p.stock, p.restockThreshold, unitsSold, periodDays);
     return {
@@ -3673,7 +3719,7 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
   });
 
   // Prev-period classification (using same stock levels, prev velocity)
-  const allSkusPrev: SkuRow[] = products.map((p) => {
+  const allSkusPrev: SkuRow[] = filteredProducts.map((p) => {
     const unitsSold = prevVelMap.get(p.id) ?? 0;
     const { dailyVelocity, coverageDays, risk } = classify(p.stock, p.restockThreshold, unitsSold, prevPeriodDays);
     return {
@@ -3804,7 +3850,23 @@ router.get("/analytics/journey", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+  const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
+  const utmMed = (parsed.data as Record<string, unknown>).utmMedium as string | undefined;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+
+  // UTM customer subquery condition — appended to raw SQL WHERE clauses when active
+  // utmRawCond: unqualified column, for single-table contexts (e.g. FROM orders / FROM events with no JOIN)
+  // utmRawCondEvt: qualified as e.customer_id, for contexts with JOIN that make it ambiguous
+  const utmRawCond = utmSrc
+    ? sql` AND customer_id IN (SELECT id FROM customers WHERE client_id = ${clientId} AND lower(utm_source) = lower(${utmSrc})${utmMed ? sql` AND lower(utm_medium) = lower(${utmMed})` : sql``})`
+    : sql``;
+  const utmRawCondEvt = utmSrc
+    ? sql` AND e.customer_id IN (SELECT id FROM customers WHERE client_id = ${clientId} AND lower(utm_source) = lower(${utmSrc})${utmMed ? sql` AND lower(utm_medium) = lower(${utmMed})` : sql``})`
+    : sql``;
+  // ORM conditions for customers table
+  const utmCustomerOrm: SQL[] = [];
+  if (utmSrc) utmCustomerOrm.push(sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`);
+  if (utmMed) utmCustomerOrm.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`);
 
   // 1. KPIs
   const buyerCustomerIds = db
@@ -3837,6 +3899,7 @@ router.get("/analytics/journey", async (req, res): Promise<void> => {
       WHERE e.client_id = ${clientId}
         AND e.created_at >= ${from}
         AND e.created_at < fp.first_purchase_at
+        ${utmRawCondEvt}
       GROUP BY e.customer_id
     ) sub
   `);
@@ -3853,6 +3916,7 @@ router.get("/analytics/journey", async (req, res): Promise<void> => {
         sql`${customersTable.firstPurchaseAt} IS NOT NULL`,
         gte(customersTable.firstPurchaseAt, from),
         lte(customersTable.firstPurchaseAt, to),
+        ...utmCustomerOrm,
       ),
     );
   const avgTimeToFirstPurchaseDays = Number(ttfpRow?.avg) || null;
@@ -3867,6 +3931,7 @@ router.get("/analytics/journey", async (req, res): Promise<void> => {
         sql`${customersTable.totalOrders} > 1`,
         sql`${customersTable.firstPurchaseAt} IS NOT NULL`,
         sql`${customersTable.lastPurchaseAt} IS NOT NULL`,
+        ...utmCustomerOrm,
       ),
     );
   const avgTimeBetweenPurchasesDays = Number(tbpRow?.avg) || null;
@@ -3883,6 +3948,7 @@ router.get("/analytics/journey", async (req, res): Promise<void> => {
         AND created_at >= ${from}
         AND created_at <= ${to}
         AND status IN ('APPROVED','SHIPPED','DELIVERED')
+        ${utmRawCond}
       GROUP BY customer_id
     ) o
     LEFT JOIN (
@@ -3900,15 +3966,15 @@ router.get("/analytics/journey", async (req, res): Promise<void> => {
   const pctBuyersFromFirstSession = totalBuyers > 0 ? (sameDayBuyers / totalBuyers) * 100 : 0;
 
   // 2. Top paths to purchase (top 5)
-  const topPaths = await buildTopPaths(clientId, from, to, 5);
+  const topPaths = await buildTopPaths(clientId, from, to, 5, utmRawCondEvt);
 
   // 3. Event flow graph nodes + edges
-  const eventFlowData = await buildEventFlowGraph(clientId, from, to);
+  const eventFlowData = await buildEventFlowGraph(clientId, from, to, utmRawCondEvt);
 
   // 4. Buyers vs non-buyers comparison
   const [buyersComparison, nonBuyersComparison] = await Promise.all([
-    buildAudienceEventProfile(clientId, from, to, true),
-    buildAudienceEventProfile(clientId, from, to, false),
+    buildAudienceEventProfile(clientId, from, to, true, utmRawCond),
+    buildAudienceEventProfile(clientId, from, to, false, utmRawCond),
   ]);
 
   const payload = GetJourneyResponse.parse({
@@ -3936,8 +4002,15 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { page, limit, segment, sortBy, sortDir } = parsed.data;
+  const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
+  const utmMed = (parsed.data as Record<string, unknown>).utmMedium as string | undefined;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const offset = (page - 1) * limit;
+
+  // UTM conditions applied to the customers table when source/medium filter is active
+  const utmCustomerConds: SQL[] = [];
+  if (utmSrc) utmCustomerConds.push(sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`);
+  if (utmMed) utmCustomerConds.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`);
 
   // Customers who had at least one purchase in the selected date window
   const activeBuyerIds = db
@@ -3964,6 +4037,7 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
       and(
         eq(customersTable.clientId, clientId),
         inArray(customersTable.id, activeBuyerIds),
+        ...utmCustomerConds,
       ),
     )
     .groupBy(customersTable.rfmSegment);
@@ -4000,6 +4074,7 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
         gte(ordersTable.createdAt, from),
         lte(ordersTable.createdAt, to),
         sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`,
+        ...utmCustomerConds,
       ),
     )
     .groupBy(sql`DATE_TRUNC('month', ${ordersTable.createdAt})`, customersTable.rfmSegment)
@@ -4024,6 +4099,7 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
   const conditions: SQL[] = [
     eq(customersTable.clientId, clientId),
     inArray(customersTable.id, activeBuyerIds),
+    ...utmCustomerConds,
   ];
   if (segment) conditions.push(eq(customersTable.rfmSegment, segment));
 
@@ -4401,6 +4477,7 @@ async function buildTopPaths(
   from: Date,
   to: Date,
   topN: number,
+  utmCond: SQL = sql``,
 ): Promise<Array<{ steps: string[]; visitCount: number; conversionRate: number }>> {
   // Fetch purchase-bounded events: for each buyer, only events BEFORE their first purchase in the window.
   // We include the purchase event itself as the terminal step.
@@ -4419,6 +4496,7 @@ async function buildTopPaths(
     WHERE e.client_id = ${clientId}
       AND e.created_at >= ${from}
       AND e.created_at <= fp.first_purchase_at
+      ${utmCond}
     ORDER BY e.customer_id, e.created_at
   `);
 
@@ -4473,6 +4551,7 @@ async function buildEventFlowGraph(
   clientId: string,
   from: Date,
   to: Date,
+  utmCond: SQL = sql``,
 ): Promise<{
   nodes: Array<{ id: string; label: string; count: number; layer: number }>;
   edges: Array<{ source: string; target: string; count: number }>;
@@ -4492,6 +4571,7 @@ async function buildEventFlowGraph(
     WHERE e.client_id = ${clientId}
       AND e.created_at >= ${from}
       AND e.created_at <= fp.first_purchase_at
+      ${utmCond}
     ORDER BY e.customer_id, e.created_at
   `);
 
@@ -4543,6 +4623,7 @@ async function buildAudienceEventProfile(
   from: Date,
   to: Date,
   isBuyer: boolean,
+  utmCond: SQL = sql``,
 ): Promise<{ avgSessionDepth: number; eventCounts: Array<{ eventType: string; count: number }>; topUtmSources: Array<{ source: string; count: number }> }> {
   const buyerIds = db
     .select({ id: ordersTable.customerId })
@@ -4573,6 +4654,7 @@ async function buildAudienceEventProfile(
         AND created_at >= ${from}
         AND created_at <= ${to}
         AND ${customerFilter}
+        ${utmCond}
       GROUP BY customer_id
     ) sub
   `);
@@ -5032,6 +5114,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const creativesPage = (parsed.data as Record<string, unknown>).creativesPage as number | undefined ?? 1;
   const creativesPageSize = (parsed.data as Record<string, unknown>).creativesPageSize as number | undefined ?? 20;
+  const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
 
   // Prev period of same length
   const periodMs = to.getTime() - from.getTime();
@@ -5039,11 +5122,16 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const prevFrom = new Date(prevTo.getTime() - periodMs);
 
   // All creatives for the client; sorted by prorated spend descending
-  const allCreatives = await db
+  const rawCreatives = await db
     .select()
     .from(creativesTable)
     .where(eq(creativesTable.clientId, clientId))
     .orderBy(desc(creativesTable.spend));
+
+  // When utmSource is set, restrict to creatives whose platform matches (e.g. "instagram", "google")
+  const allCreatives = utmSrc
+    ? rawCreatives.filter((c) => (c.platform ?? "").toLowerCase() === utmSrc.toLowerCase())
+    : rawCreatives;
 
   // Only creatives active (overlapping) in the current window
   const creatives = allCreatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
