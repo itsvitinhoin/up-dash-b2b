@@ -1473,17 +1473,22 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
     .orderBy(orderBy)
     .limit(limit);
 
-  // Catalog avg sell-through — used to benchmark individual product levels
+  // Catalog avg sell-through — computed from ALL products in client catalog
+  // (must NOT use filtered `rows` to avoid skew from search/category/limit)
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const catalogSellThroughRows = await db
+    .select({ totalSold: productsTable.totalSold, stock: productsTable.stock })
+    .from(productsTable)
+    .where(eq(productsTable.clientId, clientId));
   const catalogAvgSellThrough =
-    rows.length > 0
-      ? rows.reduce((sum, r) => {
+    catalogSellThroughRows.length > 0
+      ? catalogSellThroughRows.reduce((sum, r) => {
           const t = r.totalSold + r.stock;
           return sum + (t > 0 ? r.totalSold / t : 0);
-        }, 0) / rows.length
+        }, 0) / catalogSellThroughRows.length
       : 0;
 
-  // 30-day recent velocity per product (batch query)
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  // 30-day recent velocity per product (batch query for visible page rows only)
   const productIds = rows.map((r) => r.id);
   const recentSalesRows =
     productIds.length > 0
