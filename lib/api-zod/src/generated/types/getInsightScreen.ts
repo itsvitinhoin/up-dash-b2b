@@ -18,4 +18,5 @@ export const GetInsightScreen = {
   stock: "stock",
   journey: "journey",
   rfm: "rfm",
+  utm: "utm",
 } as const;

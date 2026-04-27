@@ -18,4 +18,5 @@ export const RegenerateInsightScreen = {
   stock: "stock",
   journey: "journey",
   rfm: "rfm",
+  utm: "utm",
 } as const;

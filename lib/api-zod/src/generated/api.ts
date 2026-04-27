@@ -252,6 +252,24 @@ export const GetDashboardQueryParams = zod.object({
     .describe(
       "Restrict to orders from customers in a specific RFM segment (VIP, Loyal, etc.).",
     ),
+  utmSource: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict to orders from customers acquired via this UTM source.",
+    ),
+  utmMedium: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict to orders from customers acquired via this UTM medium.",
+    ),
+  utmCampaign: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict to orders from customers acquired via this UTM campaign.",
+    ),
   compare: zod.coerce
     .boolean()
     .optional()
@@ -447,6 +465,14 @@ export const GetCustomersQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   rfmSegment: zod.coerce.string().optional(),
   state: zod.coerce.string().optional(),
+  utmSource: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter customers by UTM source."),
+  utmMedium: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter customers by UTM medium."),
   search: zod.coerce.string().optional(),
   page: zod.coerce.number().default(getCustomersQueryPageDefault),
   limit: zod.coerce.number().default(getCustomersQueryLimitDefault),
@@ -1388,6 +1414,68 @@ export const GetOrdersByDateResponse = zod.object({
 });
 
 /**
+ * @summary UTM/Source attribution analysis — registrations, buyers, revenue, and ROAS by source or campaign
+ */
+export const getUtmQueryGroupByDefault = `source`;
+
+export const GetUtmQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+  groupBy: zod.enum(["source", "campaign"]).default(getUtmQueryGroupByDefault),
+  utmSource: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter rows to a specific UTM source"),
+  utmMedium: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter rows to a specific UTM medium"),
+  utmCampaign: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter rows to a specific UTM campaign"),
+});
+
+export const GetUtmResponse = zod.object({
+  kpis: zod.object({
+    totalRegistrations: zod.number(),
+    totalApprovals: zod.number(),
+    approvalPct: zod.number(),
+    totalBuyers: zod.number(),
+    totalRevenue: zod.number(),
+    conversionPct: zod.number(),
+    topSource: zod.string().nullish(),
+    topSourceRevenue: zod.number(),
+  }),
+  rows: zod.array(
+    zod.object({
+      key: zod.string(),
+      medium: zod.string().nullish(),
+      registrations: zod.number(),
+      approvals: zod.number(),
+      approvalPct: zod.number(),
+      buyers: zod.number(),
+      revenue: zod.number(),
+      conversionPct: zod.number(),
+      roas: zod.number().nullish(),
+      subRows: zod.array(
+        zod.object({
+          key: zod.string(),
+          registrations: zod.number(),
+          approvals: zod.number(),
+          approvalPct: zod.number(),
+          buyers: zod.number(),
+          revenue: zod.number(),
+          conversionPct: zod.number(),
+          roas: zod.number().nullish(),
+        }),
+      ),
+    }),
+  ),
+});
+
+/**
  * @summary AI-generated insight for current dashboard window
  */
 export const getInsightQueryScreenDefault = `dashboard`;
@@ -1406,6 +1494,7 @@ export const GetInsightQueryParams = zod.object({
       "stock",
       "journey",
       "rfm",
+      "utm",
     ])
     .default(getInsightQueryScreenDefault),
 });
@@ -1438,6 +1527,7 @@ export const RegenerateInsightQueryParams = zod.object({
       "stock",
       "journey",
       "rfm",
+      "utm",
     ])
     .default(regenerateInsightQueryScreenDefault),
 });
@@ -1902,6 +1992,15 @@ export const ListSavedViewsResponseItem = zod.object({
     segment: zod.string().nullish(),
     category: zod.string().nullish(),
     sellerId: zod.string().nullish(),
+    utmSource: zod.string().nullish(),
+    utmMedium: zod.string().nullish(),
+    utmCampaign: zod.string().nullish(),
+    state: zod.string().nullish(),
+    city: zod.string().nullish(),
+    product: zod.string().nullish(),
+    size: zod.string().nullish(),
+    color: zod.string().nullish(),
+    creative: zod.string().nullish(),
   }),
   createdAt: zod.coerce.date(),
 });
@@ -1925,6 +2024,15 @@ export const CreateSavedViewBody = zod.object({
     segment: zod.string().nullish(),
     category: zod.string().nullish(),
     sellerId: zod.string().nullish(),
+    utmSource: zod.string().nullish(),
+    utmMedium: zod.string().nullish(),
+    utmCampaign: zod.string().nullish(),
+    state: zod.string().nullish(),
+    city: zod.string().nullish(),
+    product: zod.string().nullish(),
+    size: zod.string().nullish(),
+    color: zod.string().nullish(),
+    creative: zod.string().nullish(),
   }),
 });
 

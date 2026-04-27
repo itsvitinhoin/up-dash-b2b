@@ -32,6 +32,7 @@ import MarketingPage from "@/pages/marketing";
 import StockIntelligencePage from "@/pages/stock-intelligence";
 import JourneyPage from "@/pages/journey";
 import RfmPage from "@/pages/rfm";
+import UtmPage from "@/pages/utm";
 
 function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
   const { logout } = useAuth();
@@ -204,6 +205,14 @@ function Router() {
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="rfm"><RfmPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/utm">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="utm"><UtmPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

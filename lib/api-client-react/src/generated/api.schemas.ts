@@ -410,6 +410,50 @@ export interface RfmResponse {
   limit: number;
 }
 
+export interface UtmKpis {
+  totalRegistrations: number;
+  totalApprovals: number;
+  approvalPct: number;
+  totalBuyers: number;
+  totalRevenue: number;
+  conversionPct: number;
+  /** @nullable */
+  topSource?: string | null;
+  topSourceRevenue: number;
+}
+
+export interface UtmSubRow {
+  key: string;
+  registrations: number;
+  approvals: number;
+  approvalPct: number;
+  buyers: number;
+  revenue: number;
+  conversionPct: number;
+  /** @nullable */
+  roas?: number | null;
+}
+
+export interface UtmRow {
+  key: string;
+  /** @nullable */
+  medium?: string | null;
+  registrations: number;
+  approvals: number;
+  approvalPct: number;
+  buyers: number;
+  revenue: number;
+  conversionPct: number;
+  /** @nullable */
+  roas?: number | null;
+  subRows: UtmSubRow[];
+}
+
+export interface UtmResponse {
+  kpis: UtmKpis;
+  rows: UtmRow[];
+}
+
 export interface Customer {
   id: string;
   clientId: string;
@@ -799,6 +843,24 @@ export interface SavedViewFilters {
   category?: string | null;
   /** @nullable */
   sellerId?: string | null;
+  /** @nullable */
+  utmSource?: string | null;
+  /** @nullable */
+  utmMedium?: string | null;
+  /** @nullable */
+  utmCampaign?: string | null;
+  /** @nullable */
+  state?: string | null;
+  /** @nullable */
+  city?: string | null;
+  /** @nullable */
+  product?: string | null;
+  /** @nullable */
+  size?: string | null;
+  /** @nullable */
+  color?: string | null;
+  /** @nullable */
+  creative?: string | null;
 }
 
 export interface SavedView {
@@ -1194,6 +1256,18 @@ export type GetDashboardParams = {
    */
   segment?: string;
   /**
+   * Restrict to orders from customers acquired via this UTM source.
+   */
+  utmSource?: string;
+  /**
+   * Restrict to orders from customers acquired via this UTM medium.
+   */
+  utmMedium?: string;
+  /**
+   * Restrict to orders from customers acquired via this UTM campaign.
+   */
+  utmCampaign?: string;
+  /**
  * When true, the response also includes prior-period equivalents
 (`prevKpis`, `prevRevenueOverTime`, `prevOrdersOverTime`) covering
 the immediately preceding window of the same length. Use this so
@@ -1214,6 +1288,14 @@ export type GetCustomersParams = {
   clientId?: string;
   rfmSegment?: string;
   state?: string;
+  /**
+   * Filter customers by UTM source.
+   */
+  utmSource?: string;
+  /**
+   * Filter customers by UTM medium.
+   */
+  utmMedium?: string;
   search?: string;
   page?: number;
   limit?: number;
@@ -1408,6 +1490,32 @@ export type GetOrdersByDateParams = {
   limit?: number;
 };
 
+export type GetUtmParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  groupBy?: GetUtmGroupBy;
+  /**
+   * Filter rows to a specific UTM source
+   */
+  utmSource?: string;
+  /**
+   * Filter rows to a specific UTM medium
+   */
+  utmMedium?: string;
+  /**
+   * Filter rows to a specific UTM campaign
+   */
+  utmCampaign?: string;
+};
+
+export type GetUtmGroupBy = (typeof GetUtmGroupBy)[keyof typeof GetUtmGroupBy];
+
+export const GetUtmGroupBy = {
+  source: "source",
+  campaign: "campaign",
+} as const;
+
 export type GetInsightParams = {
   clientId?: string;
   dateFrom?: string;
@@ -1427,6 +1535,7 @@ export const GetInsightScreen = {
   stock: "stock",
   journey: "journey",
   rfm: "rfm",
+  utm: "utm",
 } as const;
 
 export type RegenerateInsightParams = {
@@ -1448,6 +1557,7 @@ export const RegenerateInsightScreen = {
   stock: "stock",
   journey: "journey",
   rfm: "rfm",
+  utm: "utm",
 } as const;
 
 export type GetAlertsParams = {

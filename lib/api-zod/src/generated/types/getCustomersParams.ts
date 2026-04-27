@@ -10,6 +10,14 @@ export type GetCustomersParams = {
   clientId?: string;
   rfmSegment?: string;
   state?: string;
+  /**
+   * Filter customers by UTM source.
+   */
+  utmSource?: string;
+  /**
+   * Filter customers by UTM medium.
+   */
+  utmMedium?: string;
   search?: string;
   page?: number;
   limit?: number;

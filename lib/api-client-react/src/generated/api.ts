@@ -53,6 +53,7 @@ import type {
   GetSellersParams,
   GetStockParams,
   GetStockResponse,
+  GetUtmParams,
   HealthStatus,
   InsightResponse,
   JourneyResponse,
@@ -86,6 +87,7 @@ import type {
   SellerDetailResponse,
   SellerMetrics,
   SellerOrdersResponse,
+  UtmResponse,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -2604,6 +2606,90 @@ export function useGetOrdersByDate<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetOrdersByDateQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary UTM/Source attribution analysis — registrations, buyers, revenue, and ROAS by source or campaign
+ */
+export const getGetUtmUrl = (params?: GetUtmParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/utm?${stringifiedParams}`
+    : `/api/analytics/utm`;
+};
+
+export const getUtm = async (
+  params?: GetUtmParams,
+  options?: RequestInit,
+): Promise<UtmResponse> => {
+  return customFetch<UtmResponse>(getGetUtmUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetUtmQueryKey = (params?: GetUtmParams) => {
+  return [`/api/analytics/utm`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetUtmQueryOptions = <
+  TData = Awaited<ReturnType<typeof getUtm>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetUtmParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getUtm>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetUtmQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getUtm>>> = ({
+    signal,
+  }) => getUtm(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getUtm>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetUtmQueryResult = NonNullable<Awaited<ReturnType<typeof getUtm>>>;
+export type GetUtmQueryError = ErrorType<unknown>;
+
+/**
+ * @summary UTM/Source attribution analysis — registrations, buyers, revenue, and ROAS by source or campaign
+ */
+
+export function useGetUtm<
+  TData = Awaited<ReturnType<typeof getUtm>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetUtmParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getUtm>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetUtmQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

@@ -127,7 +127,7 @@ type ChartTab = "timeline" | "state" | "source";
 
 export default function CustomersPage() {
   const { selectedClientId, user } = useAuth();
-  const { dateRange } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
   const locationSearch = useSearch();
   const [, navigate] = useLocation();
   const urlSearch = readQueryParam(locationSearch, "search");
@@ -164,7 +164,9 @@ export default function CustomersPage() {
       clientId,
       search: debouncedSearch || undefined,
       rfmSegment: rfmSegment && rfmSegment !== "all" ? rfmSegment : undefined,
-      state: state && state !== "all" ? state : undefined,
+      state: filters.state || (state && state !== "all" ? state : undefined),
+      utmSource: filters.utmSource || undefined,
+      utmMedium: filters.utmMedium || undefined,
       page,
       limit,
     },

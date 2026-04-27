@@ -27,6 +27,18 @@ export type GetDashboardParams = {
    */
   segment?: string;
   /**
+   * Restrict to orders from customers acquired via this UTM source.
+   */
+  utmSource?: string;
+  /**
+   * Restrict to orders from customers acquired via this UTM medium.
+   */
+  utmMedium?: string;
+  /**
+   * Restrict to orders from customers acquired via this UTM campaign.
+   */
+  utmCampaign?: string;
+  /**
  * When true, the response also includes prior-period equivalents
 (`prevKpis`, `prevRevenueOverTime`, `prevOrdersOverTime`) covering
 the immediately preceding window of the same length. Use this so

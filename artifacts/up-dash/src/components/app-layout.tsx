@@ -32,6 +32,7 @@ import {
   PackageSearch,
   Route,
   BarChart3,
+  Link2,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -85,6 +86,7 @@ const pageMeta: Record<string, PageMeta> = {
   "/stock": { title: "Stock Intelligence", subtitle: "Coverage, risk, and inventory health", hasDateRange: true, hasFilterBar: false, requiresClient: true },
   "/journey": { title: "Journey Analytics", subtitle: "Event flow, top paths, and buyer behaviour", hasDateRange: true, hasFilterBar: false, requiresClient: true },
   "/rfm": { title: "RFM Segmentation", subtitle: "Recency, frequency, and monetary analysis", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/utm": { title: "UTM / Source Analysis", subtitle: "Attribution by source, medium, and campaign", hasDateRange: true, hasFilterBar: true, requiresClient: true },
 };
 
 // Sentinel value for the topbar picker when an admin selects the
@@ -170,6 +172,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     { name: "Funnel", href: "/funnel", icon: Filter },
     { name: "Journey", href: "/journey", icon: Route },
     { name: "RFM", href: "/rfm", icon: BarChart3 },
+    { name: "UTM", href: "/utm", icon: Link2 },
     { name: "Customers", href: "/customers", icon: Users },
     { name: "Products", href: "/products", icon: Package },
     { name: "Sellers", href: "/sellers", icon: ShoppingBag },

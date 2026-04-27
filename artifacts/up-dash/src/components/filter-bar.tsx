@@ -29,7 +29,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Bookmark, BookmarkPlus, X, RotateCcw, Save } from "lucide-react";
+import { Bookmark, BookmarkPlus, X, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const CATEGORY_OPTIONS = [
@@ -56,6 +56,75 @@ const SEGMENT_OPTIONS = [
   { value: "At-Risk", label: "At Risk" },
   { value: "Hibernating", label: "Hibernating" },
 ];
+
+const UTM_SOURCE_OPTIONS = [
+  { value: "instagram", label: "Instagram" },
+  { value: "google", label: "Google" },
+  { value: "tiktok", label: "TikTok" },
+  { value: "facebook", label: "Facebook" },
+  { value: "youtube", label: "YouTube" },
+  { value: "email", label: "Email" },
+  { value: "organic", label: "Organic" },
+  { value: "referral", label: "Referral" },
+  { value: "(direct)", label: "(direct)" },
+];
+
+const UTM_MEDIUM_OPTIONS = [
+  { value: "cpc", label: "CPC" },
+  { value: "cpm", label: "CPM" },
+  { value: "social", label: "Social" },
+  { value: "email", label: "Email" },
+  { value: "organic", label: "Organic" },
+  { value: "affiliate", label: "Affiliate" },
+  { value: "display", label: "Display" },
+  { value: "referral", label: "Referral" },
+];
+
+const BRAZIL_STATES = [
+  "AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG",
+  "MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR",
+  "RS","SC","SE","SP","TO",
+].map((s) => ({ value: s, label: s }));
+
+const SIZE_OPTIONS = [
+  { value: "PP", label: "PP" },
+  { value: "P", label: "P" },
+  { value: "M", label: "M" },
+  { value: "G", label: "G" },
+  { value: "GG", label: "GG" },
+  { value: "XG", label: "XG" },
+  { value: "36", label: "36" },
+  { value: "38", label: "38" },
+  { value: "40", label: "40" },
+  { value: "42", label: "42" },
+  { value: "44", label: "44" },
+  { value: "46", label: "46" },
+];
+
+const COLOR_OPTIONS = [
+  { value: "preto", label: "Preto" },
+  { value: "branco", label: "Branco" },
+  { value: "azul", label: "Azul" },
+  { value: "vermelho", label: "Vermelho" },
+  { value: "verde", label: "Verde" },
+  { value: "amarelo", label: "Amarelo" },
+  { value: "rosa", label: "Rosa" },
+  { value: "bege", label: "Bege" },
+  { value: "cinza", label: "Cinza" },
+  { value: "laranja", label: "Laranja" },
+];
+
+const EXTRA_FILTER_LABELS: Partial<Record<keyof DashboardFilters, string>> = {
+  utmSource: "UTM Source",
+  utmMedium: "UTM Medium",
+  utmCampaign: "UTM Campaign",
+  state: "State",
+  city: "City",
+  product: "Product",
+  size: "Size",
+  color: "Color",
+  creative: "Creative",
+};
 
 export function FilterBar() {
   const { user, selectedClientId } = useAuth();
@@ -106,6 +175,7 @@ export function FilterBar() {
 
   const [newName, setNewName] = useState("");
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => {
     if (!popoverOpen) setNewName("");
   }, [popoverOpen]);
@@ -120,8 +190,49 @@ export function FilterBar() {
       chips.push({ key: "segment", label: "Segment", value: labelFor(SEGMENT_OPTIONS, filters.segment) });
     if (filters.sellerId)
       chips.push({ key: "sellerId", label: "Seller", value: labelFor(sellerOptions, filters.sellerId) });
+    if (filters.utmSource)
+      chips.push({ key: "utmSource", label: "UTM Source", value: labelFor(UTM_SOURCE_OPTIONS, filters.utmSource) });
+    if (filters.utmMedium)
+      chips.push({ key: "utmMedium", label: "UTM Medium", value: labelFor(UTM_MEDIUM_OPTIONS, filters.utmMedium) });
+    if (filters.utmCampaign)
+      chips.push({ key: "utmCampaign", label: "UTM Campaign", value: filters.utmCampaign });
+    if (filters.state)
+      chips.push({ key: "state", label: "State", value: filters.state });
+    if (filters.city)
+      chips.push({ key: "city", label: "City", value: filters.city });
+    if (filters.product)
+      chips.push({ key: "product", label: "Product", value: filters.product });
+    if (filters.size)
+      chips.push({ key: "size", label: "Size", value: labelFor(SIZE_OPTIONS, filters.size) });
+    if (filters.color)
+      chips.push({ key: "color", label: "Color", value: labelFor(COLOR_OPTIONS, filters.color) });
+    if (filters.creative)
+      chips.push({ key: "creative", label: "Creative", value: filters.creative });
     return chips;
   }, [filters, sellerOptions]);
+
+  const extraActiveCount = useMemo(() => {
+    const extraKeys: (keyof DashboardFilters)[] = ["utmSource","utmMedium","utmCampaign","state","city","product","size","color","creative"];
+    return extraKeys.filter((k) => !!filters[k]).length;
+  }, [filters]);
+
+  const saveCurrentFilters = () => ({
+    dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+    dateTo: format(dateRange.to, "yyyy-MM-dd"),
+    category: filters.category,
+    sellerId: filters.sellerId,
+    channel: filters.channel,
+    segment: filters.segment,
+    utmSource: filters.utmSource,
+    utmMedium: filters.utmMedium,
+    utmCampaign: filters.utmCampaign,
+    state: filters.state,
+    city: filters.city,
+    product: filters.product,
+    size: filters.size,
+    color: filters.color,
+    creative: filters.creative,
+  });
 
   return (
     <div
@@ -156,6 +267,135 @@ export function FilterBar() {
         onChange={(v) => setFilter("sellerId", v)}
         testId="filter-seller"
       />
+
+      {/* More Filters popover */}
+      <Popover open={moreOpen} onOpenChange={setMoreOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            size="sm"
+            variant="outline"
+            className={`h-7 px-2 text-xs gap-1.5 ${extraActiveCount > 0 ? "border-primary/40 text-primary bg-primary/5" : ""}`}
+            data-testid="filter-more"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            More filters
+            {extraActiveCount > 0 && (
+              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground font-bold">
+                {extraActiveCount}
+              </span>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-96 p-4" data-testid="filter-more-popover">
+          <div className="space-y-4">
+            {/* Attribution group */}
+            <div>
+              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Attribution</p>
+              <div className="grid grid-cols-2 gap-2">
+                <FilterSelect
+                  placeholder="UTM Source"
+                  value={filters.utmSource}
+                  options={UTM_SOURCE_OPTIONS}
+                  onChange={(v) => setFilter("utmSource", v)}
+                  testId="filter-utm-source"
+                  fullWidth
+                />
+                <FilterSelect
+                  placeholder="UTM Medium"
+                  value={filters.utmMedium}
+                  options={UTM_MEDIUM_OPTIONS}
+                  onChange={(v) => setFilter("utmMedium", v)}
+                  testId="filter-utm-medium"
+                  fullWidth
+                />
+                <div className="col-span-2">
+                  <FilterInput
+                    placeholder="UTM Campaign…"
+                    value={filters.utmCampaign}
+                    onChange={(v) => setFilter("utmCampaign", v)}
+                    testId="filter-utm-campaign"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <FilterInput
+                    placeholder="Creative name…"
+                    value={filters.creative}
+                    onChange={(v) => setFilter("creative", v)}
+                    testId="filter-creative"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Geography group */}
+            <div>
+              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Geography</p>
+              <div className="grid grid-cols-2 gap-2">
+                <FilterSelect
+                  placeholder="State"
+                  value={filters.state}
+                  options={BRAZIL_STATES}
+                  onChange={(v) => setFilter("state", v)}
+                  testId="filter-state"
+                  fullWidth
+                />
+                <FilterInput
+                  placeholder="City…"
+                  value={filters.city}
+                  onChange={(v) => setFilter("city", v)}
+                  testId="filter-city"
+                />
+              </div>
+            </div>
+
+            {/* Catalog group */}
+            <div>
+              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Catalog</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="col-span-2">
+                  <FilterInput
+                    placeholder="Product (SKU or name)…"
+                    value={filters.product}
+                    onChange={(v) => setFilter("product", v)}
+                    testId="filter-product"
+                  />
+                </div>
+                <FilterSelect
+                  placeholder="Size"
+                  value={filters.size}
+                  options={SIZE_OPTIONS}
+                  onChange={(v) => setFilter("size", v)}
+                  testId="filter-size"
+                  fullWidth
+                />
+                <FilterSelect
+                  placeholder="Color"
+                  value={filters.color}
+                  options={COLOR_OPTIONS}
+                  onChange={(v) => setFilter("color", v)}
+                  testId="filter-color"
+                  fullWidth
+                />
+              </div>
+            </div>
+
+            {extraActiveCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full h-7 text-xs text-muted-foreground"
+                onClick={() => {
+                  const extraKeys: (keyof DashboardFilters)[] = ["utmSource","utmMedium","utmCampaign","state","city","product","size","color","creative"];
+                  for (const k of extraKeys) setFilter(k, null);
+                }}
+              >
+                <RotateCcw className="h-3 w-3 mr-1" />
+                Clear extra filters
+              </Button>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
 
       {activeChips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 ml-1">
@@ -215,6 +455,15 @@ export function FilterBar() {
                     sellerId: view.filters.sellerId ?? null,
                     channel: view.filters.channel ?? null,
                     segment: view.filters.segment ?? null,
+                    utmSource: view.filters.utmSource ?? null,
+                    utmMedium: view.filters.utmMedium ?? null,
+                    utmCampaign: view.filters.utmCampaign ?? null,
+                    state: view.filters.state ?? null,
+                    city: view.filters.city ?? null,
+                    product: view.filters.product ?? null,
+                    size: view.filters.size ?? null,
+                    color: view.filters.color ?? null,
+                    creative: view.filters.creative ?? null,
                   },
                 })
               }
@@ -261,17 +510,7 @@ export function FilterBar() {
                 if (e.key === "Enter" && newName.trim()) {
                   createView.mutate({
                     params: { clientId },
-                    data: {
-                      name: newName.trim(),
-                      filters: {
-                        dateFrom: format(dateRange.from, "yyyy-MM-dd"),
-                        dateTo: format(dateRange.to, "yyyy-MM-dd"),
-                        category: filters.category,
-                        sellerId: filters.sellerId,
-                        channel: filters.channel,
-                        segment: filters.segment,
-                      },
-                    },
+                    data: { name: newName.trim(), filters: saveCurrentFilters() },
                   });
                   setPopoverOpen(false);
                 }
@@ -285,17 +524,7 @@ export function FilterBar() {
               onClick={() => {
                 createView.mutate({
                   params: { clientId },
-                  data: {
-                    name: newName.trim(),
-                    filters: {
-                      dateFrom: format(dateRange.from, "yyyy-MM-dd"),
-                      dateTo: format(dateRange.to, "yyyy-MM-dd"),
-                      category: filters.category,
-                      sellerId: filters.sellerId,
-                      channel: filters.channel,
-                      segment: filters.segment,
-                    },
-                  },
+                  data: { name: newName.trim(), filters: saveCurrentFilters() },
                 });
                 setPopoverOpen(false);
               }}
@@ -317,15 +546,19 @@ interface FilterSelectProps {
   options: { value: string; label: string }[];
   onChange: (value: string | null) => void;
   testId: string;
+  fullWidth?: boolean;
 }
 
-function FilterSelect({ placeholder, value, options, onChange, testId }: FilterSelectProps) {
+function FilterSelect({ placeholder, value, options, onChange, testId, fullWidth }: FilterSelectProps) {
   return (
     <Select
       value={value ?? "__all"}
       onValueChange={(v) => onChange(v === "__all" ? null : v)}
     >
-      <SelectTrigger className="h-7 w-[140px] text-xs bg-background" data-testid={testId}>
+      <SelectTrigger
+        className={`h-7 text-xs bg-background ${fullWidth ? "w-full" : "w-[140px]"}`}
+        data-testid={testId}
+      >
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
@@ -337,6 +570,25 @@ function FilterSelect({ placeholder, value, options, onChange, testId }: FilterS
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+interface FilterInputProps {
+  placeholder: string;
+  value: string | null;
+  onChange: (value: string | null) => void;
+  testId: string;
+}
+
+function FilterInput({ placeholder, value, onChange, testId }: FilterInputProps) {
+  return (
+    <Input
+      className="h-7 text-xs"
+      placeholder={placeholder}
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value || null)}
+      data-testid={testId}
+    />
   );
 }
 
@@ -352,6 +604,6 @@ function pluralize(word: string): string {
   return `${lower}s`;
 }
 
-// Re-export used by saved view filter shape parsing in callers.
 export type { DashboardFilters };
 export { parseISO };
+export { EXTRA_FILTER_LABELS };

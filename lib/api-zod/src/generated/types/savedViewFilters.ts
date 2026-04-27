@@ -19,4 +19,22 @@ export interface SavedViewFilters {
   category?: string | null;
   /** @nullable */
   sellerId?: string | null;
+  /** @nullable */
+  utmSource?: string | null;
+  /** @nullable */
+  utmMedium?: string | null;
+  /** @nullable */
+  utmCampaign?: string | null;
+  /** @nullable */
+  state?: string | null;
+  /** @nullable */
+  city?: string | null;
+  /** @nullable */
+  product?: string | null;
+  /** @nullable */
+  size?: string | null;
+  /** @nullable */
+  color?: string | null;
+  /** @nullable */
+  creative?: string | null;
 }

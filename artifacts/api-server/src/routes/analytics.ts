@@ -54,6 +54,8 @@ import {
   GetJourneyResponse,
   GetRfmQueryParams,
   GetRfmResponse,
+  GetUtmQueryParams,
+  GetUtmResponse,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
@@ -489,7 +491,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
-  const { category, sellerId, channel, segment, compare } = parsed.data;
+  const { category, sellerId, channel, segment, compare, utmSource: utmSourceFilter, utmMedium: utmMediumFilter, utmCampaign: utmCampaignFilter } = parsed.data;
 
   // Pre-resolve filter scopes once. Channel/segment scope (customers) is
   // window-agnostic and can be reused across the current and prior windows.
@@ -497,9 +499,12 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   // *placed in the window* whose items match the category), so it must be
   // recomputed per window.
   let scopedCustomerIds: string[] | null = null;
-  if (channel || segment) {
+  if (channel || segment || utmSourceFilter || utmMediumFilter || utmCampaignFilter) {
     const custConds: SQL[] = [eq(customersTable.clientId, clientId)];
     if (channel) custConds.push(eq(customersTable.utmSource, channel));
+    if (utmSourceFilter) custConds.push(eq(customersTable.utmSource, utmSourceFilter));
+    if (utmMediumFilter) custConds.push(eq(customersTable.utmMedium, utmMediumFilter));
+    if (utmCampaignFilter) custConds.push(eq(customersTable.utmCampaign, utmCampaignFilter));
     if (segment) custConds.push(eq(customersTable.rfmSegment, segment));
     const rows = await db
       .select({ id: customersTable.id })
@@ -1066,11 +1071,13 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
-  const { rfmSegment, state, search, page = 1, limit = 20 } = parsed.data;
+  const { rfmSegment, state, utmSource: custUtmSource, utmMedium: custUtmMedium, search, page = 1, limit = 20 } = parsed.data;
 
   const conditions: SQL[] = [eq(customersTable.clientId, clientId)];
   if (rfmSegment) conditions.push(eq(customersTable.rfmSegment, rfmSegment));
   if (state) conditions.push(eq(customersTable.state, state));
+  if (custUtmSource) conditions.push(eq(customersTable.utmSource, custUtmSource));
+  if (custUtmMedium) conditions.push(eq(customersTable.utmMedium, custUtmMedium));
   if (search) {
     const searchCond = or(
       ilike(customersTable.email, `%${search}%`),
@@ -3219,6 +3226,56 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
     return { ...payload, generatedAt: gAt, cached: false };
   }
 
+  // UTM-specific insight
+  if (screen === "utm") {
+    const utmData = await buildUtmAnalytics(clientId, from, to, "source");
+    const topRow = utmData.rows[0];
+    const heuristic = {
+      headline: topRow
+        ? `${topRow.key} drives ${topRow.revenue > 0 ? `R$${topRow.revenue.toFixed(0)} in revenue` : `${topRow.registrations} registrations`} this period`
+        : "No UTM attribution data available for this period",
+      body: `UTM attribution for this period shows ${utmData.kpis.totalRegistrations} registrations across ${utmData.rows.length} acquisition sources. ${topRow ? `Top source "${topRow.key}" converts ${topRow.conversionPct.toFixed(1)}% of registrations into buyers.` : ""} Overall approval rate: ${utmData.kpis.approvalPct.toFixed(1)}%.`,
+      bullets: [
+        topRow
+          ? `Top source: ${topRow.key} — ${topRow.buyers} buyers, R$${topRow.revenue.toFixed(0)} revenue${topRow.roas != null ? `, ROAS ${topRow.roas.toFixed(2)}x` : ""}`
+          : "No source data available for this period",
+        `Conversion rate: ${utmData.kpis.conversionPct.toFixed(1)}% of registrations become buyers — compare channels to find your highest-quality traffic`,
+        `Approval rate: ${utmData.kpis.approvalPct.toFixed(1)}% overall — low approval on a high-spend source signals lead quality issues`,
+      ],
+    };
+    let utmPayload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
+    const aiUtm = getOpenAIClient();
+    if (aiUtm && isAIConfigured() && topRow) {
+      try {
+        const sourceSummary = utmData.rows.slice(0, 6)
+          .map((r) => `${r.key}: ${r.registrations} regs, ${r.buyers} buyers, R$${r.revenue.toFixed(0)}${r.roas != null ? `, ROAS ${r.roas.toFixed(2)}x` : ""}`)
+          .join(" | ");
+        const prompt = `You are a senior performance-marketing analyst writing a weekly UTM attribution insight for a fashion B2B platform. Period: ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}. Total registrations: ${utmData.kpis.totalRegistrations}, buyers: ${utmData.kpis.totalBuyers}, revenue: R$${utmData.kpis.totalRevenue.toFixed(0)}. By source: ${sourceSummary}. Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 sentences>","bullets":["<actionable>","<actionable>","<actionable>"]}`;
+        const completion = await aiUtm.chat.completions.create({
+          model: "gpt-5-nano",
+          max_completion_tokens: 500,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "You write concise, actionable B2B UTM attribution insights for fashion brands. Always respond with the requested JSON shape only." },
+            { role: "user", content: prompt },
+          ],
+        });
+        const text = completion.choices[0]?.message?.content;
+        if (text) {
+          const parsed = JSON.parse(text) as { headline?: string; body?: string; bullets?: string[] };
+          if (typeof parsed.headline === "string" && typeof parsed.body === "string" && Array.isArray(parsed.bullets)) {
+            utmPayload = { headline: parsed.headline.slice(0, 120), body: parsed.body.slice(0, 600), bullets: parsed.bullets.slice(0, 4).map((b) => String(b).slice(0, 160)), source: "ai" };
+          }
+        }
+      } catch (err) {
+        console.warn("[insight:utm] AI generation failed, using heuristic:", (err as Error).message);
+      }
+    }
+    const utmAt = new Date().toISOString();
+    insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...utmPayload, generatedAt: utmAt } });
+    return { ...utmPayload, generatedAt: utmAt, cached: false };
+  }
+
   const ctx = await buildInsightContext(clientId, from, to);
   const heuristic = buildHeuristic(ctx.kpis, ctx.topCategory, ctx.topSeller, ctx.trend);
 
@@ -3953,6 +4010,190 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
     limit,
   });
   res.json(payload);
+});
+
+// ── UTM Attribution Helpers ──────────────────────────────────────────────────
+
+async function buildUtmAnalytics(
+  clientId: string,
+  from: Date,
+  to: Date,
+  groupBy: "source" | "campaign",
+  filterSource?: string,
+  filterMedium?: string,
+  filterCampaign?: string,
+) {
+  const keyExpr =
+    groupBy === "campaign"
+      ? sql`COALESCE(NULLIF(lower(c.utm_campaign), ''), '(campaign unset)')`
+      : sql`COALESCE(NULLIF(lower(c.utm_source), ''), '(direct)')`;
+
+  const mediumExpr =
+    groupBy === "source"
+      ? sql`COALESCE(NULLIF(lower(c.utm_medium), ''), '(none)')`
+      : sql`NULL`;
+
+  const srcCond = filterSource
+    ? sql` AND lower(c.utm_source) = lower(${filterSource})`
+    : sql``;
+  const medCond = filterMedium
+    ? sql` AND lower(c.utm_medium) = lower(${filterMedium})`
+    : sql``;
+  const campCond = filterCampaign
+    ? sql` AND lower(c.utm_campaign) = lower(${filterCampaign})`
+    : sql``;
+
+  type RegRow = { key: string; medium: string | null; registrations: string; approvals: string };
+  const regRaw = await db.execute<RegRow>(sql`
+    SELECT
+      ${keyExpr} AS key,
+      ${mediumExpr} AS medium,
+      COUNT(*)::int AS registrations,
+      COUNT(*) FILTER (WHERE c.registration_status = 'APPROVED')::int AS approvals
+    FROM customers c
+    WHERE c.client_id = ${clientId}
+      AND c.created_at >= ${from}
+      AND c.created_at <= ${to}
+      ${srcCond}${medCond}${campCond}
+    GROUP BY 1, 2
+    ORDER BY registrations DESC
+  `);
+
+  type SalesRow = { key: string; buyers: string; revenue: string };
+  const salesRaw = await db.execute<SalesRow>(sql`
+    SELECT
+      ${keyExpr} AS key,
+      COUNT(DISTINCT c.id)::int AS buyers,
+      COALESCE(SUM(o.amount), 0)::float AS revenue
+    FROM customers c
+    JOIN orders o
+      ON  o.customer_id = c.id
+      AND o.client_id   = ${clientId}
+      AND o.created_at  >= ${from}
+      AND o.created_at  <= ${to}
+      AND o.status IN ('APPROVED','SHIPPED','DELIVERED')
+    WHERE c.client_id = ${clientId}
+      ${srcCond}${medCond}${campCond}
+    GROUP BY 1
+  `);
+
+  const regRows  = (regRaw.rows  ?? regRaw)  as unknown as RegRow[];
+  const salesRows = (salesRaw.rows ?? salesRaw) as unknown as SalesRow[];
+
+  const salesMap = new Map(
+    salesRows.map((r) => [r.key, { buyers: Number(r.buyers), revenue: Number(r.revenue) }]),
+  );
+
+  // Spend per source for ROAS (only relevant when groupBy=source)
+  const spendBySource = new Map<string, number>();
+  if (groupBy === "source") {
+    const creatives = await db
+      .select()
+      .from(creativesTable)
+      .where(eq(creativesTable.clientId, clientId));
+    for (const c of creatives) {
+      if (!c.platform) continue;
+      const fraction = computeSpendOverlapFraction(c, from, to);
+      if (fraction <= 0) continue;
+      const k = c.platform.toLowerCase();
+      spendBySource.set(k, (spendBySource.get(k) ?? 0) + c.spend * fraction);
+    }
+  }
+
+  // Group registration rows by primary key
+  const entriesByKey = new Map<string, RegRow[]>();
+  for (const r of regRows) {
+    const list = entriesByKey.get(r.key) ?? [];
+    list.push(r);
+    entriesByKey.set(r.key, list);
+  }
+
+  const primaryKeys = [...new Set(regRows.map((r) => r.key))];
+
+  const rows = primaryKeys.map((key) => {
+    const entries = entriesByKey.get(key) ?? [];
+    const totalReg = entries.reduce((s, e) => s + Number(e.registrations), 0);
+    const totalApp = entries.reduce((s, e) => s + Number(e.approvals), 0);
+    const sales    = salesMap.get(key) ?? { buyers: 0, revenue: 0 };
+    const spend    = spendBySource.get(key.toLowerCase()) ?? 0;
+    const roas     = spend > 0 ? sales.revenue / spend : null;
+
+    const subRows =
+      groupBy === "source"
+        ? entries.map((e) => ({
+            key: e.medium ?? "(none)",
+            registrations: Number(e.registrations),
+            approvals: Number(e.approvals),
+            approvalPct: Number(e.registrations) > 0
+              ? (Number(e.approvals) / Number(e.registrations)) * 100
+              : 0,
+            buyers: 0,
+            revenue: 0,
+            conversionPct: 0,
+            roas: null as number | null,
+          }))
+        : [];
+
+    return {
+      key,
+      medium: null as string | null,
+      registrations: totalReg,
+      approvals: totalApp,
+      approvalPct: totalReg > 0 ? (totalApp / totalReg) * 100 : 0,
+      buyers: sales.buyers,
+      revenue: sales.revenue,
+      conversionPct: totalReg > 0 ? (sales.buyers / totalReg) * 100 : 0,
+      roas,
+      subRows,
+    };
+  });
+
+  rows.sort((a, b) => b.revenue - a.revenue || b.registrations - a.registrations);
+
+  const totalReg     = rows.reduce((s, r) => s + r.registrations, 0);
+  const totalApp     = rows.reduce((s, r) => s + r.approvals, 0);
+  const totalBuyers  = rows.reduce((s, r) => s + r.buyers, 0);
+  const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
+  const topRow       = rows[0];
+
+  const kpis = {
+    totalRegistrations: totalReg,
+    totalApprovals: totalApp,
+    approvalPct: totalReg > 0 ? (totalApp / totalReg) * 100 : 0,
+    totalBuyers,
+    totalRevenue,
+    conversionPct: totalReg > 0 ? (totalBuyers / totalReg) * 100 : 0,
+    topSource: topRow?.key ?? null,
+    topSourceRevenue: topRow?.revenue ?? 0,
+  };
+
+  return { kpis, rows };
+}
+
+router.get("/analytics/utm", async (req, res): Promise<void> => {
+  const parsed = GetUtmQueryParams.safeParse(
+    coerceDateQuery(req.query as Record<string, unknown>),
+  );
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const groupBy    = parsed.data.groupBy;
+  const filterSrc  = parsed.data.utmSource  || undefined;
+  const filterMed  = parsed.data.utmMedium  || undefined;
+  const filterCamp = parsed.data.utmCampaign || undefined;
+
+  const payload = await buildUtmAnalytics(clientId, from, to, groupBy, filterSrc, filterMed, filterCamp);
+  res.json(GetUtmResponse.parse(payload));
 });
 
 router.get("/analytics/insight", async (req, res): Promise<void> => {

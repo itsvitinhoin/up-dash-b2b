@@ -248,6 +248,21 @@ paths:
             type: string
           description: Restrict to orders from customers in a specific RFM segment (VIP, Loyal, etc.).
         - in: query
+          name: utmSource
+          schema:
+            type: string
+          description: Restrict to orders from customers acquired via this UTM source.
+        - in: query
+          name: utmMedium
+          schema:
+            type: string
+          description: Restrict to orders from customers acquired via this UTM medium.
+        - in: query
+          name: utmCampaign
+          schema:
+            type: string
+          description: Restrict to orders from customers acquired via this UTM campaign.
+        - in: query
           name: compare
           schema:
             type: boolean
@@ -311,6 +326,16 @@ paths:
           name: state
           schema:
             type: string
+        - in: query
+          name: utmSource
+          schema:
+            type: string
+          description: Filter customers by UTM source.
+        - in: query
+          name: utmMedium
+          schema:
+            type: string
+          description: Filter customers by UTM medium.
         - in: query
           name: search
           schema:
@@ -911,6 +936,55 @@ paths:
               schema:
                 $ref: "#/components/schemas/OrdersByDateResponse"
 
+  /analytics/utm:
+    get:
+      operationId: getUtm
+      tags: [analytics]
+      summary: UTM/Source attribution analysis — registrations, buyers, revenue, and ROAS by source or campaign
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: groupBy
+          schema:
+            type: string
+            enum: [source, campaign]
+            default: source
+        - in: query
+          name: utmSource
+          schema:
+            type: string
+          description: Filter rows to a specific UTM source
+        - in: query
+          name: utmMedium
+          schema:
+            type: string
+          description: Filter rows to a specific UTM medium
+        - in: query
+          name: utmCampaign
+          schema:
+            type: string
+          description: Filter rows to a specific UTM campaign
+      responses:
+        "200":
+          description: UTM attribution payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UtmResponse"
+
   /analytics/insight:
     get:
       operationId: getInsight
@@ -935,7 +1009,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing, customers, products, sellers, stock, journey, rfm]
+            enum: [dashboard, marketing, customers, products, sellers, stock, journey, rfm, utm]
             default: dashboard
       responses:
         "200":
@@ -967,7 +1041,7 @@ paths:
           name: screen
           schema:
             type: string
-            enum: [dashboard, marketing, customers, products, sellers, stock, journey, rfm]
+            enum: [dashboard, marketing, customers, products, sellers, stock, journey, rfm, utm]
             default: dashboard
       responses:
         "200":
@@ -1949,6 +2023,86 @@ components:
           type: integer
       required: [segments, composition, customers, total, page, limit]
 
+    UtmKpis:
+      type: object
+      properties:
+        totalRegistrations:
+          type: integer
+        totalApprovals:
+          type: integer
+        approvalPct:
+          type: number
+        totalBuyers:
+          type: integer
+        totalRevenue:
+          type: number
+        conversionPct:
+          type: number
+        topSource:
+          type: ["string", "null"]
+        topSourceRevenue:
+          type: number
+      required: [totalRegistrations, totalApprovals, approvalPct, totalBuyers, totalRevenue, conversionPct, topSourceRevenue]
+
+    UtmSubRow:
+      type: object
+      properties:
+        key:
+          type: string
+        registrations:
+          type: integer
+        approvals:
+          type: integer
+        approvalPct:
+          type: number
+        buyers:
+          type: integer
+        revenue:
+          type: number
+        conversionPct:
+          type: number
+        roas:
+          type: ["number", "null"]
+      required: [key, registrations, approvals, approvalPct, buyers, revenue, conversionPct]
+
+    UtmRow:
+      type: object
+      properties:
+        key:
+          type: string
+        medium:
+          type: ["string", "null"]
+        registrations:
+          type: integer
+        approvals:
+          type: integer
+        approvalPct:
+          type: number
+        buyers:
+          type: integer
+        revenue:
+          type: number
+        conversionPct:
+          type: number
+        roas:
+          type: ["number", "null"]
+        subRows:
+          type: array
+          items:
+            $ref: "#/components/schemas/UtmSubRow"
+      required: [key, registrations, approvals, approvalPct, buyers, revenue, conversionPct, subRows]
+
+    UtmResponse:
+      type: object
+      properties:
+        kpis:
+          $ref: "#/components/schemas/UtmKpis"
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/UtmRow"
+      required: [kpis, rows]
+
     Customer:
       type: object
       properties:
@@ -2543,6 +2697,24 @@ components:
         category:
           type: ["string", "null"]
         sellerId:
+          type: ["string", "null"]
+        utmSource:
+          type: ["string", "null"]
+        utmMedium:
+          type: ["string", "null"]
+        utmCampaign:
+          type: ["string", "null"]
+        state:
+          type: ["string", "null"]
+        city:
+          type: ["string", "null"]
+        product:
+          type: ["string", "null"]
+        size:
+          type: ["string", "null"]
+        color:
+          type: ["string", "null"]
+        creative:
           type: ["string", "null"]
       required: []
 

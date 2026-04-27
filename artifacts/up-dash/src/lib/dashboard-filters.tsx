@@ -18,6 +18,15 @@ export interface DashboardFilters {
   sellerId: string | null;
   channel: string | null;
   segment: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  state: string | null;
+  city: string | null;
+  product: string | null;
+  size: string | null;
+  color: string | null;
+  creative: string | null;
 }
 
 const EMPTY_FILTERS: DashboardFilters = {
@@ -25,6 +34,15 @@ const EMPTY_FILTERS: DashboardFilters = {
   sellerId: null,
   channel: null,
   segment: null,
+  utmSource: null,
+  utmMedium: null,
+  utmCampaign: null,
+  state: null,
+  city: null,
+  product: null,
+  size: null,
+  color: null,
+  creative: null,
 };
 
 export interface SavedViewSnapshot {
@@ -79,7 +97,16 @@ export function DashboardFiltersProvider({ children }: { children: ReactNode }) 
         !!filters.category ||
         !!filters.sellerId ||
         !!filters.channel ||
-        !!filters.segment,
+        !!filters.segment ||
+        !!filters.utmSource ||
+        !!filters.utmMedium ||
+        !!filters.utmCampaign ||
+        !!filters.state ||
+        !!filters.city ||
+        !!filters.product ||
+        !!filters.size ||
+        !!filters.color ||
+        !!filters.creative,
     }),
     [dateRange, filters, setFilter, resetFilters, applyView],
   );
