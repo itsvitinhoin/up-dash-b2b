@@ -116,7 +116,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   // Open the search palette on ⌘K / Ctrl+K, anywhere on the page.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
+      if (e.key?.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         setSearchOpen((prev) => !prev);
       }
