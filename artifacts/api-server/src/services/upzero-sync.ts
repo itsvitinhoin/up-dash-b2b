@@ -385,9 +385,10 @@ export async function syncUpZeroClient(
 
       if (existingProductByExtId.has(p.id)) {
         const internalId = existingProductByExtId.get(p.id)!;
+        // Fix #4: include sku in the update set
         await db
           .update(productsTable)
-          .set({ name: p.name, price, cost: cost ?? undefined, stock, status })
+          .set({ sku, name: p.name, price, cost: cost ?? undefined, stock, status })
           .where(
             and(
               eq(productsTable.clientId, clientId),
@@ -400,6 +401,9 @@ export async function syncUpZeroClient(
           if (v.sku) skuToLocalProductId.set(v.sku, internalId);
         }
       } else {
+        // Fix #1: conflict on (clientId, externalId) — the authoritative UP Zero key.
+        // If a product was previously inserted without an externalId (manual import by SKU),
+        // it won't match this conflict target and will be inserted fresh with the externalId.
         const [upserted] = await db
           .insert(productsTable)
           .values({
@@ -413,8 +417,8 @@ export async function syncUpZeroClient(
             status,
           })
           .onConflictDoUpdate({
-            target: [productsTable.clientId, productsTable.sku],
-            set: { externalId: p.id, name: p.name, price, cost: cost ?? undefined, stock, status },
+            target: [productsTable.clientId, productsTable.externalId],
+            set: { sku, name: p.name, price, cost: cost ?? undefined, stock, status },
           })
           .returning({
             id: productsTable.id,
@@ -695,41 +699,40 @@ export async function syncUpZeroClient(
         }
       }
 
-      // Sync order items — delete existing then re-insert for idempotency
-      const activeItems = (o.items ?? []).filter((item) => item.status === "active");
-      if (activeItems.length > 0) {
-        await db
-          .delete(orderItemsTable)
-          .where(eq(orderItemsTable.orderId, internalOrderId));
+      // Fix #3: always delete existing items before re-inserting — this covers
+      // the case where an order previously had items but now has none active.
+      await db
+        .delete(orderItemsTable)
+        .where(eq(orderItemsTable.orderId, internalOrderId));
 
-        for (const item of activeItems) {
-          const sku = item.sku;
-          if (!sku) continue;
-          const localProductId = skuToLocalProductId.get(sku);
-          if (!localProductId) {
-            result.errors.push(
-              `Order ${o.id} item ${item.id}: SKU "${sku}" not found in synced products, skipping`,
-            );
-            continue;
-          }
-          const attrs = item.variant_id
-            ? variantAttrs.get(item.variant_id)
-            : undefined;
-          try {
-            await db.insert(orderItemsTable).values({
-              orderId: internalOrderId,
-              productId: localProductId,
-              quantity: Math.max(1, Math.round(item.qty)),
-              priceAtSale: parseFloat(item.unit_price ?? "0") || 0,
-              size: attrs?.size ?? null,
-              color: attrs?.color ?? null,
-            });
-            result.orderItemsSynced++;
-          } catch (itemErr) {
-            result.errors.push(
-              `Order ${o.id} item ${item.id}: ${String(itemErr)}`,
-            );
-          }
+      const activeItems = (o.items ?? []).filter((item) => item.status === "active");
+      for (const item of activeItems) {
+        const sku = item.sku;
+        if (!sku) continue;
+        const localProductId = skuToLocalProductId.get(sku);
+        if (!localProductId) {
+          result.errors.push(
+            `Order ${o.id} item ${item.id}: SKU "${sku}" not found in synced products, skipping`,
+          );
+          continue;
+        }
+        const attrs = item.variant_id
+          ? variantAttrs.get(item.variant_id)
+          : undefined;
+        try {
+          await db.insert(orderItemsTable).values({
+            orderId: internalOrderId,
+            productId: localProductId,
+            quantity: Math.max(1, Math.round(item.qty)),
+            priceAtSale: parseFloat(item.unit_price ?? "0") || 0,
+            size: attrs?.size ?? null,
+            color: attrs?.color ?? null,
+          });
+          result.orderItemsSynced++;
+        } catch (itemErr) {
+          result.errors.push(
+            `Order ${o.id} item ${item.id}: ${String(itemErr)}`,
+          );
         }
       }
     } catch (err) {
@@ -739,7 +742,8 @@ export async function syncUpZeroClient(
 
   // ── 4. Post-sync aggregations ─────────────────────────────────────────────
 
-  // Recompute totalSold / totalRevenue for all products touched in this sync
+  // Fix #2: Full recompute using LEFT JOIN so products with zero qualifying
+  // order items are reset to 0 (not left with stale totals from prior syncs).
   await db.execute(sql`
     UPDATE products p
     SET
@@ -747,14 +751,16 @@ export async function syncUpZeroClient(
       total_revenue = COALESCE(agg.total_rev, 0)
     FROM (
       SELECT
-        oi.product_id,
+        p2.id AS product_id,
         SUM(oi.quantity)::int                        AS total_qty,
         SUM(oi.quantity * oi.price_at_sale)::float   AS total_rev
-      FROM order_items oi
-      JOIN orders o ON o.id = oi.order_id
-      WHERE o.client_id = ${clientId}
-        AND o.status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
-      GROUP BY oi.product_id
+      FROM products p2
+      LEFT JOIN order_items oi ON oi.product_id = p2.id
+      LEFT JOIN orders o       ON o.id = oi.order_id
+                                AND o.client_id = ${clientId}
+                                AND o.status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+      WHERE p2.client_id = ${clientId}
+      GROUP BY p2.id
     ) agg
     WHERE p.id = agg.product_id
       AND p.client_id = ${clientId}
