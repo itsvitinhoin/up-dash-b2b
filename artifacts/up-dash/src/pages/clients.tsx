@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import Papa from "papaparse";
 import { toast } from "sonner";
@@ -12,7 +13,7 @@ import {
   useRotateClientApiKey,
   useUpdateClient,
   useSyncUpZero,
-  useGetSyncJob,
+  getGetSyncJobQueryOptions,
   lookupClientByApiKey,
   getListClientsQueryKey,
 } from "@workspace/api-client-react";
@@ -534,13 +535,12 @@ function UpZeroSyncButton({
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
 
-  const jobQuery = useGetSyncJob(clientId, jobId ?? "", {
-    query: {
-      enabled: jobId !== null,
-      refetchInterval: (query) => {
-        const status = query.state.data?.status;
-        return status === "done" || status === "failed" ? false : 2000;
-      },
+  const jobQuery = useQuery({
+    ...getGetSyncJobQueryOptions(clientId, jobId ?? ""),
+    enabled: jobId !== null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "done" || status === "failed" ? false : 2000;
     },
   });
 

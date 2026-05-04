@@ -557,8 +557,12 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
 });
 
 router.get("/clients/:clientId/sync/upzero/:jobId", requireAdmin, async (req, res): Promise<void> => {
-  const clientId = req.params.clientId;
-  const jobId = req.params.jobId;
+  const paramParsed = z.object({ clientId: z.string(), jobId: z.string() }).safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: paramParsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId, jobId } = paramParsed.data;
 
   const [job] = await db
     .select()
