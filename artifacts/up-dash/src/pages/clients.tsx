@@ -12,6 +12,7 @@ import {
   useRotateClientApiKey,
   useUpdateClient,
   useSyncUpZero,
+  useGetSyncJob,
   lookupClientByApiKey,
   getListClientsQueryKey,
 } from "@workspace/api-client-react";
@@ -531,40 +532,71 @@ function UpZeroSyncButton({
   const syncMutation = useSyncUpZero();
   const queryClient = useQueryClient();
   const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const jobQuery = useGetSyncJob(clientId, jobId ?? "", {
+    query: {
+      enabled: jobId !== null,
+      refetchInterval: (query) => {
+        const status = query.state.data?.status;
+        return status === "done" || status === "failed" ? false : 2000;
+      },
+    },
+  });
+
+  useEffect(() => {
+    const status = jobQuery.data?.status;
+    if (!status || status === "pending" || status === "running") return;
+
+    setJobId(null);
+    setLastSync(new Date());
+    queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+
+    if (status === "done" && jobQuery.data?.result) {
+      const { customersCreated, customersUpdated, ordersCreated, ordersUpdated, productsCreated, productsUpdated, orderItemsSynced, errors } = jobQuery.data.result;
+      const desc = [
+        ordersCreated > 0 && `${ordersCreated} new orders`,
+        ordersUpdated > 0 && `${ordersUpdated} orders updated`,
+        customersCreated > 0 && `${customersCreated} new customers`,
+        customersUpdated > 0 && `${customersUpdated} customers updated`,
+        productsCreated > 0 && `${productsCreated} new products`,
+        productsUpdated > 0 && `${productsUpdated} products updated`,
+        orderItemsSynced > 0 && `${orderItemsSynced} order items`,
+      ]
+        .filter(Boolean)
+        .join(", ") || "No new records";
+      if (errors.length > 0) {
+        toast.warning(`Sync complete for ${clientName}`, {
+          description: `${desc} · ${errors.length} error(s)`,
+        });
+      } else {
+        toast.success(`Sync complete for ${clientName}`, { description: desc });
+      }
+    } else if (status === "failed") {
+      toast.error(`Sync failed for ${clientName}`, {
+        description: jobQuery.data?.error ?? undefined,
+      });
+    }
+  }, [jobQuery.data?.status]);
 
   function handleSync() {
     syncMutation.mutate(
       { clientId },
       {
         onSuccess: (data) => {
-          queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
-          setLastSync(new Date());
-          const { customersCreated, customersUpdated, ordersCreated, ordersUpdated, productsCreated, productsUpdated, orderItemsSynced, errors } = data;
-          const desc = [
-            ordersCreated > 0 && `${ordersCreated} new orders`,
-            ordersUpdated > 0 && `${ordersUpdated} orders updated`,
-            customersCreated > 0 && `${customersCreated} new customers`,
-            customersUpdated > 0 && `${customersUpdated} customers updated`,
-            productsCreated > 0 && `${productsCreated} new products`,
-            productsUpdated > 0 && `${productsUpdated} products updated`,
-            orderItemsSynced > 0 && `${orderItemsSynced} order items`,
-          ]
-            .filter(Boolean)
-            .join(", ") || "No new records";
-          if (errors.length > 0) {
-            toast.warning(`Sync complete for ${clientName}`, {
-              description: `${desc} · ${errors.length} error(s)`,
-            });
-          } else {
-            toast.success(`Sync complete for ${clientName}`, { description: desc });
-          }
+          setJobId(data.jobId);
+          toast.info(`Sync started for ${clientName}`, {
+            description: "This may take a minute…",
+          });
         },
         onError: () => {
-          toast.error(`Sync failed for ${clientName}`);
+          toast.error(`Could not start sync for ${clientName}`);
         },
       }
     );
   }
+
+  const isBusy = syncMutation.isPending || jobId !== null;
 
   return (
     <div className="flex items-center gap-1">
@@ -573,15 +605,15 @@ function UpZeroSyncButton({
         size="sm"
         className="h-7 gap-1 text-xs text-blue-400 hover:text-blue-300"
         onClick={handleSync}
-        disabled={syncMutation.isPending}
+        disabled={isBusy}
         title="Sync from UP Zero"
       >
-        {syncMutation.isPending ? (
+        {isBusy ? (
           <Loader2 className="h-3 w-3 animate-spin" />
         ) : (
           <RefreshCw className="h-3 w-3" />
         )}
-        {syncMutation.isPending ? "Syncing…" : "Sync"}
+        {isBusy ? "Syncing…" : "Sync"}
       </Button>
       {lastSync && (
         <span className="text-[10px] text-muted-foreground whitespace-nowrap">

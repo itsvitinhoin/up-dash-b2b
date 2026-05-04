@@ -204,6 +204,30 @@ export interface UpZeroSyncResponse {
   errors: string[];
 }
 
+export interface SyncJobStarted {
+  jobId: string;
+}
+
+export type SyncJobStatusStatus =
+  (typeof SyncJobStatusStatus)[keyof typeof SyncJobStatusStatus];
+
+export const SyncJobStatusStatus = {
+  pending: "pending",
+  running: "running",
+  done: "done",
+  failed: "failed",
+} as const;
+
+export interface SyncJobStatus {
+  jobId: string;
+  status: SyncJobStatusStatus;
+  result?: UpZeroSyncResponse | null;
+  /** @nullable */
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /**
  * A single row in a bulk client import payload.
  */

@@ -302,7 +302,7 @@ paths:
     post:
       operationId: syncUpZero
       tags: [clients]
-      summary: Sync live orders and customers from UP Zero (admin only)
+      summary: Start an async UP Zero sync job (admin only)
       parameters:
         - in: path
           name: clientId
@@ -310,20 +310,50 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: Sync complete
+        "202":
+          description: Sync job started
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UpZeroSyncResponse"
+                $ref: "#/components/schemas/SyncJobStarted"
         "400":
-          description: Missing or invalid API key
+          description: Missing or invalid API key, or sync already running
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Client not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /clients/{clientId}/sync/upzero/{jobId}:
+    get:
+      operationId: getSyncJob
+      tags: [clients]
+      summary: Poll the status of an async UP Zero sync job (admin only)
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncJobStatus"
+        "404":
+          description: Job or client not found
           content:
             application/json:
               schema:
@@ -1848,6 +1878,34 @@ components:
           items:
             type: string
       required: [customersCreated, customersUpdated, ordersCreated, ordersUpdated, productsCreated, productsUpdated, orderItemsSynced, errors]
+
+    SyncJobStarted:
+      type: object
+      properties:
+        jobId:
+          type: string
+      required: [jobId]
+
+    SyncJobStatus:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, done, failed]
+        result:
+          $ref: "#/components/schemas/UpZeroSyncResponse"
+          nullable: true
+        error:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [jobId, status, createdAt, updatedAt]
 
     ClientImportRow:
       type: object

@@ -92,7 +92,8 @@ import type {
   SellerDetailResponse,
   SellerMetrics,
   SellerOrdersResponse,
-  UpZeroSyncResponse,
+  SyncJobStarted,
+  SyncJobStatus,
   UpdateClientRequest,
   UtmResponse,
 } from "./api.schemas";
@@ -1041,7 +1042,7 @@ export const useUpdateClient = <
 };
 
 /**
- * @summary Sync live orders and customers from UP Zero (admin only)
+ * @summary Start an async UP Zero sync job (admin only)
  */
 export const getSyncUpZeroUrl = (clientId: string) => {
   return `/api/clients/${clientId}/sync/upzero`;
@@ -1050,8 +1051,8 @@ export const getSyncUpZeroUrl = (clientId: string) => {
 export const syncUpZero = async (
   clientId: string,
   options?: RequestInit,
-): Promise<UpZeroSyncResponse> => {
-  return customFetch<UpZeroSyncResponse>(getSyncUpZeroUrl(clientId), {
+): Promise<SyncJobStarted> => {
+  return customFetch<SyncJobStarted>(getSyncUpZeroUrl(clientId), {
     ...options,
     method: "POST",
   });
@@ -1102,7 +1103,7 @@ export type SyncUpZeroMutationResult = NonNullable<
 export type SyncUpZeroMutationError = ErrorType<ErrorResponse>;
 
 /**
- * @summary Sync live orders and customers from UP Zero (admin only)
+ * @summary Start an async UP Zero sync job (admin only)
  */
 export const useSyncUpZero = <
   TError = ErrorType<ErrorResponse>,
@@ -1123,6 +1124,97 @@ export const useSyncUpZero = <
 > => {
   return useMutation(getSyncUpZeroMutationOptions(options));
 };
+
+/**
+ * @summary Poll the status of an async UP Zero sync job (admin only)
+ */
+export const getGetSyncJobUrl = (clientId: string, jobId: string) => {
+  return `/api/clients/${clientId}/sync/upzero/${jobId}`;
+};
+
+export const getSyncJob = async (
+  clientId: string,
+  jobId: string,
+  options?: RequestInit,
+): Promise<SyncJobStatus> => {
+  return customFetch<SyncJobStatus>(getGetSyncJobUrl(clientId, jobId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSyncJobQueryKey = (clientId: string, jobId: string) => {
+  return [`/api/clients/${clientId}/sync/upzero/${jobId}`] as const;
+};
+
+export const getGetSyncJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSyncJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  clientId: string,
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSyncJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSyncJobQueryKey(clientId, jobId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSyncJob>>> = ({
+    signal,
+  }) => getSyncJob(clientId, jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(clientId && jobId),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSyncJob>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSyncJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSyncJob>>
+>;
+export type GetSyncJobQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Poll the status of an async UP Zero sync job (admin only)
+ */
+
+export function useGetSyncJob<
+  TData = Awaited<ReturnType<typeof getSyncJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  clientId: string,
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSyncJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSyncJobQueryOptions(clientId, jobId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Rotate the API key for a client (admin only)

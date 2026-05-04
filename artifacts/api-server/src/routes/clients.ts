@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { and, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { db, clientsTable, ordersTable, eventsTable, creativesTable } from "@workspace/db";
+import { db, clientsTable, ordersTable, eventsTable, creativesTable, syncJobsTable } from "@workspace/db";
 import {
   CreateClientBody,
   GetClientParams,
@@ -518,12 +518,59 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "No UP Zero API key configured for this client", status: 400 });
     return;
   }
-  try {
-    const result = await syncUpZeroClient(clientId, client.upZeroApiKey);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: true, code: "SYNC_ERROR", message: String(err), status: 500 });
+
+  const [existingJob] = await db
+    .select({ id: syncJobsTable.id })
+    .from(syncJobsTable)
+    .where(and(eq(syncJobsTable.clientId, clientId), eq(syncJobsTable.status, "running")));
+  if (existingJob) {
+    res.status(202).json({ jobId: existingJob.id });
+    return;
   }
+
+  const [job] = await db
+    .insert(syncJobsTable)
+    .values({ clientId, status: "pending" })
+    .returning({ id: syncJobsTable.id });
+
+  const jobId = job.id;
+  const apiKey = client.upZeroApiKey;
+
+  (async () => {
+    try {
+      await db.update(syncJobsTable).set({ status: "running" }).where(eq(syncJobsTable.id, jobId));
+      const result = await syncUpZeroClient(clientId, apiKey);
+      await db.update(syncJobsTable).set({ status: "done", result }).where(eq(syncJobsTable.id, jobId));
+    } catch (err) {
+      await db.update(syncJobsTable).set({ status: "failed", error: String(err) }).where(eq(syncJobsTable.id, jobId));
+    }
+  })();
+
+  res.status(202).json({ jobId });
+});
+
+router.get("/clients/:clientId/sync/upzero/:jobId", requireAdmin, async (req, res): Promise<void> => {
+  const clientId = req.params.clientId;
+  const jobId = req.params.jobId;
+
+  const [job] = await db
+    .select()
+    .from(syncJobsTable)
+    .where(and(eq(syncJobsTable.id, jobId), eq(syncJobsTable.clientId, clientId)));
+
+  if (!job) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Sync job not found", status: 404 });
+    return;
+  }
+
+  res.json({
+    jobId: job.id,
+    status: job.status,
+    result: job.result ?? null,
+    error: job.error ?? null,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  });
 });
 
 router.get("/clients/:clientId", async (req, res): Promise<void> => {

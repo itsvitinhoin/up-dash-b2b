@@ -395,21 +395,38 @@ export const UpdateClientResponse = zod.object({
 });
 
 /**
- * @summary Sync live orders and customers from UP Zero (admin only)
+ * @summary Start an async UP Zero sync job (admin only)
  */
 export const SyncUpZeroParams = zod.object({
   clientId: zod.coerce.string(),
 });
 
-export const SyncUpZeroResponse = zod.object({
-  customersCreated: zod.number(),
-  customersUpdated: zod.number(),
-  ordersCreated: zod.number(),
-  ordersUpdated: zod.number(),
-  productsCreated: zod.number(),
-  productsUpdated: zod.number(),
-  orderItemsSynced: zod.number(),
-  errors: zod.array(zod.string()),
+/**
+ * @summary Poll the status of an async UP Zero sync job (admin only)
+ */
+export const GetSyncJobParams = zod.object({
+  clientId: zod.coerce.string(),
+  jobId: zod.coerce.string(),
+});
+
+export const GetSyncJobResponse = zod.object({
+  jobId: zod.string(),
+  status: zod.enum(["pending", "running", "done", "failed"]),
+  result: zod
+    .object({
+      customersCreated: zod.number(),
+      customersUpdated: zod.number(),
+      ordersCreated: zod.number(),
+      ordersUpdated: zod.number(),
+      productsCreated: zod.number(),
+      productsUpdated: zod.number(),
+      orderItemsSynced: zod.number(),
+      errors: zod.array(zod.string()),
+    })
+    .nullish(),
+  error: zod.string().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
 });
 
 /**

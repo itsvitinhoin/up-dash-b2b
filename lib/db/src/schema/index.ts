@@ -9,3 +9,4 @@ export * from "./events";
 export * from "./creatives";
 export * from "./notifications";
 export * from "./savedViews";
+export * from "./syncJobs";
