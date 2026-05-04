@@ -196,16 +196,20 @@ async function fetchInventoryQty(
   apiKey: string,
   sku: string,
 ): Promise<number | null> {
-  const params = new URLSearchParams({ sku });
-  const res = await fetch(
-    `${UPZERO_BASE}/external/v1/inventory/availability?${params}`,
-    { headers: { "X-API-Key": apiKey } },
-  );
-  if (!res.ok) return null;
-  const body = await res.json() as {
-    totals?: { qty_available?: number };
-  };
-  return Math.max(0, Number(body?.totals?.qty_available ?? 0));
+  try {
+    const params = new URLSearchParams({ sku });
+    const res = await fetch(
+      `${UPZERO_BASE}/external/v1/inventory/availability?${params}`,
+      { headers: { "X-API-Key": apiKey } },
+    );
+    if (!res.ok) return null;
+    const body = await res.json() as {
+      totals?: { qty_available?: number };
+    };
+    return Math.max(0, Number(body?.totals?.qty_available ?? 0));
+  } catch {
+    return null;
+  }
 }
 
 async function runConcurrent<T, R>(
