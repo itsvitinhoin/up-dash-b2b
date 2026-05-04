@@ -1,9 +1,10 @@
-import { pgTable, text, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 import { clientsTable } from "./clients";
 import { customersTable } from "./customers";
 import { productsTable } from "./products";
 import { ordersTable } from "./orders";
+import { sql } from "drizzle-orm";
 
 export const eventsTable = pgTable(
   "events",
@@ -32,6 +33,7 @@ export const eventsTable = pgTable(
     orderId: text("order_id").references(() => ordersTable.id, {
       onDelete: "set null",
     }),
+    externalSourceId: text("external_source_id"),
     metadata: jsonb("metadata"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -43,6 +45,9 @@ export const eventsTable = pgTable(
       table.clientId,
       table.createdAt,
     ),
+    externalSourceUniq: uniqueIndex("events_external_source_uniq")
+      .on(table.clientId, table.eventType, table.externalSourceId)
+      .where(sql`external_source_id IS NOT NULL`),
   }),
 );
 

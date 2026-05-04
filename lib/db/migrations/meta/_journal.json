@@ -57,6 +57,13 @@
       "when": 1777903161731,
       "tag": "0007_acoustic_longshot",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1777907558880,
+      "tag": "0009_faithful_silhouette",
+      "breakpoints": true
     }
   ]
 }

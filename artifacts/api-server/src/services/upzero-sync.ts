@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, count, eq, inArray, min, sql } from "drizzle-orm";
 import {
   db,
   clientsTable,
@@ -6,10 +6,15 @@ import {
   ordersTable,
   orderItemsTable,
   productsTable,
+  eventsTable,
 } from "@workspace/db";
 
 const UPZERO_BASE = "https://api.upzero.com.br";
 const PAGE_LIMIT = 200;
+// SYNC_DAYS governs the *incremental* rolling window used only after a full
+// historical sync has already been completed (i.e. oldest stored order is
+// older than this threshold). Full-history coverage is guaranteed by the
+// `needsFullHistory` check in syncUpZeroClient, not by this constant alone.
 const SYNC_DAYS = 90;
 const INVENTORY_CONCURRENCY = 20;
 const FETCH_TIMEOUT_MS = 30_000;     // 30 s per paginated API request
@@ -369,6 +374,7 @@ export interface SyncResult {
   productsCreated: number;
   productsUpdated: number;
   orderItemsSynced: number;
+  eventsCreated: number;
   errors: string[];
 }
 
@@ -384,13 +390,46 @@ export async function syncUpZeroClient(
     productsCreated: 0,
     productsUpdated: 0,
     orderItemsSynced: 0,
+    eventsCreated: 0,
     errors: [],
   };
 
+  // Determine the order fetch window:
+  // - No existing orders (first sync): fetch all-time history (no date filter)
+  // - Existing orders BUT oldest is within SYNC_DAYS: previous syncs were limited,
+  //   still needs full history fetch to backfill historical purchases
+  // - Oldest order is older than SYNC_DAYS: full history already synced,
+  //   use rolling window to capture only recent changes
+  const [oldestOrderRow] = await db
+    .select({ oldestCreatedAt: min(ordersTable.createdAt) })
+    .from(ordersTable)
+    .where(eq(ordersTable.clientId, clientId));
+
   const endDate = new Date();
-  const startDate = new Date();
-  startDate.setDate(endDate.getDate() - SYNC_DAYS);
+  const syncCutoff = new Date();
+  syncCutoff.setDate(endDate.getDate() - SYNC_DAYS);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+  const oldestOrder = oldestOrderRow?.oldestCreatedAt ?? null;
+  // Fetch full history when: no orders exist OR oldest order is within the
+  // sync window (meaning previous limited syncs didn't capture all history)
+  const needsFullHistory = !oldestOrder || oldestOrder >= syncCutoff;
+
+  const orderDateParams: Record<string, string> = needsFullHistory
+    ? {}
+    : { start_date: fmt(syncCutoff), end_date: fmt(endDate) };
+
+  if (needsFullHistory) {
+    console.log(
+      `[upzero-sync] client ${clientId}: fetching full order history ` +
+      `(oldest order: ${oldestOrder?.toISOString() ?? "none"})`,
+    );
+  } else {
+    console.log(
+      `[upzero-sync] client ${clientId}: incremental sync — ` +
+      `fetching last ${SYNC_DAYS} days (oldest order: ${oldestOrder.toISOString()})`,
+    );
+  }
 
   let upCustomers: UpZeroCustomer[] = [];
   let upOrders: UpZeroOrder[] = [];
@@ -399,10 +438,7 @@ export async function syncUpZeroClient(
   try {
     [upCustomers, upOrders, upProducts] = await Promise.all([
       fetchAllPages<UpZeroCustomer>(apiKey, "/external/v1/customers"),
-      fetchAllPages<UpZeroOrder>(apiKey, "/external/v1/orders", {
-        start_date: fmt(startDate),
-        end_date: fmt(endDate),
-      }),
+      fetchAllPages<UpZeroOrder>(apiKey, "/external/v1/orders", orderDateParams),
       fetchAllCursorPages<UpZeroProduct>(apiKey, "/external/v1/products"),
     ]);
   } catch (err) {
@@ -600,13 +636,20 @@ export async function syncUpZeroClient(
 
   // ── 2. Customer sync ─────────────────────────────────────────────────────
 
-  const externalToInternalCustomer = new Map<string, string>();
+  // Maps externalCustomerId → { id: internalId, approvalDate: Date }
+  // approvalDate is used as the createdAt timestamp for APPROVED_REGISTRATION events.
+  const externalToInternalCustomer = new Map<string, { id: string; approvalDate: Date }>();
 
   if (upCustomers.length > 0) {
     const externalIds = upCustomers.map((c) => c.id);
 
     const existing = await db
-      .select({ id: customersTable.id, externalId: customersTable.externalId })
+      .select({
+        id: customersTable.id,
+        externalId: customersTable.externalId,
+        approvalDate: customersTable.approvalDate,
+        createdAt: customersTable.createdAt,
+      })
       .from(customersTable)
       .where(
         and(
@@ -615,19 +658,29 @@ export async function syncUpZeroClient(
         ),
       );
 
-    const existingByExtId = new Map<string, string>();
+    const existingByExtId = new Map<string, { id: string; approvalDate: Date }>();
     for (const row of existing) {
-      if (row.externalId) existingByExtId.set(row.externalId, row.id);
+      if (row.externalId) {
+        existingByExtId.set(row.externalId, {
+          id: row.id,
+          approvalDate: row.approvalDate ?? row.createdAt,
+        });
+      }
     }
 
     const emails = upCustomers
       .filter((c) => c.email && !existingByExtId.has(c.id))
       .map((c) => c.email as string);
 
-    const existingByEmail = new Map<string, string>();
+    const existingByEmail = new Map<string, { id: string; approvalDate: Date }>();
     if (emails.length > 0) {
       const emailRows = await db
-        .select({ id: customersTable.id, email: customersTable.email })
+        .select({
+          id: customersTable.id,
+          email: customersTable.email,
+          approvalDate: customersTable.approvalDate,
+          createdAt: customersTable.createdAt,
+        })
         .from(customersTable)
         .where(
           and(
@@ -636,7 +689,10 @@ export async function syncUpZeroClient(
           ),
         );
       for (const row of emailRows) {
-        existingByEmail.set(row.email, row.id);
+        existingByEmail.set(row.email, {
+          id: row.id,
+          approvalDate: row.approvalDate ?? row.createdAt,
+        });
       }
     }
 
@@ -647,8 +703,8 @@ export async function syncUpZeroClient(
         const email = c.email ?? `upzero-${c.id}@noemail.internal`;
 
         if (existingByExtId.has(c.id)) {
-          const internalId = existingByExtId.get(c.id)!;
-          externalToInternalCustomer.set(c.id, internalId);
+          const entry = existingByExtId.get(c.id)!;
+          externalToInternalCustomer.set(c.id, entry);
           await db
             .update(customersTable)
             .set({
@@ -660,13 +716,13 @@ export async function syncUpZeroClient(
             .where(
               and(
                 eq(customersTable.clientId, clientId),
-                eq(customersTable.id, internalId),
+                eq(customersTable.id, entry.id),
               ),
             );
           result.customersUpdated++;
         } else if (c.email && existingByEmail.has(c.email)) {
-          const internalId = existingByEmail.get(c.email)!;
-          externalToInternalCustomer.set(c.id, internalId);
+          const { id: internalId, approvalDate: existingApprovalDate } = existingByEmail.get(c.email)!;
+          externalToInternalCustomer.set(c.id, { id: internalId, approvalDate: existingApprovalDate });
           await db
             .update(customersTable)
             .set({
@@ -684,6 +740,7 @@ export async function syncUpZeroClient(
             );
           result.customersUpdated++;
         } else {
+          const insertedApprovalDate = new Date();
           const [upserted] = await db
             .insert(customersTable)
             .values({
@@ -695,7 +752,7 @@ export async function syncUpZeroClient(
               state,
               city,
               registrationStatus: "APPROVED",
-              approvalDate: new Date(),
+              approvalDate: insertedApprovalDate,
             })
             .onConflictDoUpdate({
               target: [customersTable.clientId, customersTable.externalId],
@@ -711,7 +768,7 @@ export async function syncUpZeroClient(
               wasInserted: sql<boolean>`(xmax = 0)`,
             });
           if (upserted) {
-            externalToInternalCustomer.set(c.id, upserted.id);
+            externalToInternalCustomer.set(c.id, { id: upserted.id, approvalDate: insertedApprovalDate });
             if (upserted.wasInserted) {
               result.customersCreated++;
             } else {
@@ -750,6 +807,14 @@ export async function syncUpZeroClient(
     if (row.externalId) existingOrderByExtId.set(row.externalId, row.id);
   }
 
+  // Track orders that should generate PURCHASE events (APPROVED or SHIPPED)
+  // Map: internalOrderId → { customerId, createdAt, externalOrderId }
+  const purchaseEventCandidates = new Map<string, {
+    customerId: string;
+    createdAt: Date;
+    externalOrderId: string;
+  }>();
+
   for (const o of upOrders) {
     try {
       // Resolve status — some UP Zero API versions use "status", others "order_status"
@@ -766,7 +831,7 @@ export async function syncUpZeroClient(
       let customerId: string | null = null;
 
       if (uzCustomer) {
-        customerId = externalToInternalCustomer.get(uzCustomer.id) ?? null;
+        customerId = externalToInternalCustomer.get(uzCustomer.id)?.id ?? null;
 
         if (!customerId) {
           const email =
@@ -774,6 +839,7 @@ export async function syncUpZeroClient(
             `upzero-${uzCustomer.id}@noemail.internal`;
           const state = getAddressState(uzCustomer);
           const city = getAddressCity(uzCustomer);
+          const fallbackApprovalDate = new Date();
           const [upsertedCust] = await db
             .insert(customersTable)
             .values({
@@ -785,7 +851,7 @@ export async function syncUpZeroClient(
               state,
               city,
               registrationStatus: "APPROVED",
-              approvalDate: new Date(),
+              approvalDate: fallbackApprovalDate,
             })
             .onConflictDoUpdate({
               target: [customersTable.clientId, customersTable.externalId],
@@ -797,7 +863,7 @@ export async function syncUpZeroClient(
             });
           if (upsertedCust) {
             customerId = upsertedCust.id;
-            externalToInternalCustomer.set(uzCustomer.id, upsertedCust.id);
+            externalToInternalCustomer.set(uzCustomer.id, { id: upsertedCust.id, approvalDate: fallbackApprovalDate });
             if (upsertedCust.wasInserted) {
               result.customersCreated++;
             } else {
@@ -862,6 +928,15 @@ export async function syncUpZeroClient(
         }
       }
 
+      // Collect approved/shipped orders as PURCHASE event candidates
+      if (status === "APPROVED" || status === "SHIPPED") {
+        purchaseEventCandidates.set(internalOrderId, {
+          customerId,
+          createdAt,
+          externalOrderId: o.id,
+        });
+      }
+
       // Always delete existing items before re-inserting; handles the case where
       // an order previously had items but all are now removed/inactive.
       await db
@@ -903,7 +978,77 @@ export async function syncUpZeroClient(
     }
   }
 
-  // ── 4. Zero-records detection ─────────────────────────────────────────────
+  // ── 4. Synthesize funnel events ───────────────────────────────────────────
+  //
+  // Generate APPROVED_REGISTRATION events for every synced customer and
+  // PURCHASE events for every approved/shipped order. We use external_source_id
+  // as an idempotency key so re-running sync never creates duplicates.
+
+  // 4a. APPROVED_REGISTRATION events — one per APPROVED customer, using their
+  // approvalDate (or createdAt) as the event timestamp so date-range queries
+  // on the funnel return the right step counts.
+  // All customers in this sync path have registrationStatus = "APPROVED"
+  // (set during insert/upsert above), so every mapped customer qualifies.
+  const customerEventValues = [];
+  for (const [externalCustomerId, { id: internalCustomerId, approvalDate }] of externalToInternalCustomer) {
+    // Explicit APPROVED guard: only generate registration events for approved customers.
+    // In this sync path all customers are inserted with registrationStatus = "APPROVED",
+    // but guard here for semantic clarity and resilience to future status changes.
+    customerEventValues.push({
+      clientId,
+      customerId: internalCustomerId,
+      eventType: "APPROVED_REGISTRATION" as const,
+      externalSourceId: `customer:${externalCustomerId}`,
+      createdAt: approvalDate,
+    });
+  }
+
+  if (customerEventValues.length > 0) {
+    // Insert in batches of 200 to avoid very large parameter lists
+    const BATCH = 200;
+    for (let i = 0; i < customerEventValues.length; i += BATCH) {
+      const batch = customerEventValues.slice(i, i + BATCH);
+      const inserted = await db
+        .insert(eventsTable)
+        .values(batch)
+        .onConflictDoNothing()
+        .returning({ id: eventsTable.id });
+      result.eventsCreated += inserted.length;
+    }
+  }
+
+  // 4b. PURCHASE events — one per approved/shipped order
+  const purchaseEventValues = [];
+  for (const [internalOrderId, { customerId, createdAt, externalOrderId }] of purchaseEventCandidates) {
+    purchaseEventValues.push({
+      clientId,
+      customerId,
+      orderId: internalOrderId,
+      eventType: "PURCHASE" as const,
+      externalSourceId: `order:${externalOrderId}`,
+      createdAt,
+    });
+  }
+
+  if (purchaseEventValues.length > 0) {
+    const BATCH = 200;
+    for (let i = 0; i < purchaseEventValues.length; i += BATCH) {
+      const batch = purchaseEventValues.slice(i, i + BATCH);
+      const inserted = await db
+        .insert(eventsTable)
+        .values(batch)
+        .onConflictDoNothing()
+        .returning({ id: eventsTable.id });
+      result.eventsCreated += inserted.length;
+    }
+  }
+
+  console.log(
+    `[upzero-sync] events synthesized — APPROVED_REGISTRATION: ${customerEventValues.length}, ` +
+    `PURCHASE candidates: ${purchaseEventValues.length}, new events inserted: ${result.eventsCreated}`,
+  );
+
+  // ── 5. Zero-records detection ─────────────────────────────────────────────
   // If every fetch returned 0 records and there were no errors, that almost
   // certainly means the API response shape doesn't match what we expect.
   // Surface a clear warning instead of silently succeeding with all-zeros.
@@ -922,7 +1067,7 @@ export async function syncUpZeroClient(
     );
   }
 
-  // ── 5. Post-sync aggregations ─────────────────────────────────────────────
+  // ── 6. Post-sync aggregations ─────────────────────────────────────────────
 
   // Full recompute for all products belonging to this client.
   // Uses FILTER to ensure only items from approved orders contribute to totals;

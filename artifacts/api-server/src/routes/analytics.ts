@@ -1015,16 +1015,33 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
   ];
 
   // Enforce monotonic funnel: each step cannot exceed the previous step's count.
-  let prev = Number.MAX_SAFE_INTEGER;
+  // Special case: steps with no data (count = 0) — such as VISIT when the data
+  // source doesn't track site visits — must not zero out all downstream steps.
+  // We track `prev` as the last *non-zero* step count so that an absent step is
+  // skipped in the monotonic chain (it has no data to constrain the next step).
+  // Conversion rates are expressed relative to the last non-zero ancestor.
+  let prev = Number.MAX_SAFE_INTEGER; // sentinel = "no data seen yet"
   const steps = funnelOrder.map((s, i) => {
     const raw = counts[s.step] ?? 0;
-    const count = Math.min(raw, prev);
+    // When prev is still MAX_SAFE_INTEGER we haven't seen any data yet,
+    // so treat the current step as unconstrained (use raw directly).
+    const effectivePrev = prev === Number.MAX_SAFE_INTEGER ? raw : prev;
+    const count = Math.min(raw, effectivePrev);
     let conversionRate = 100;
     if (i > 0) {
-      conversionRate = prev > 0 ? (count / prev) * 100 : 0;
+      if (prev > 0 && prev < Number.MAX_SAFE_INTEGER) {
+        // Normal case: previous non-zero step exists — compute real conversion.
+        conversionRate = (count / prev) * 100;
+      } else if (count > 0) {
+        // First step with actual data: it is its own baseline (100%).
+        conversionRate = 100;
+      } else {
+        conversionRate = 0;
+      }
     }
     const dropOffRate = i === 0 ? 0 : 100 - conversionRate;
-    prev = count;
+    // Only advance prev when this step has actual data; zero steps are skipped.
+    if (count > 0) prev = count;
     return {
       step: s.step,
       label: s.label,
@@ -1034,9 +1051,12 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     };
   });
 
-  const first = steps[0]?.count ?? 0;
-  const last = steps[steps.length - 1]?.count ?? 0;
-  const overallConversion = first > 0 ? (last / first) * 100 : 0;
+  // Overall conversion: from first non-zero step to last non-zero step.
+  // Using non-zero anchors avoids 0% when VISIT is absent but purchases exist.
+  const nonZeroSteps = steps.filter((s) => s.count > 0);
+  const firstNonZero = nonZeroSteps[0]?.count ?? 0;
+  const lastNonZero = nonZeroSteps[nonZeroSteps.length - 1]?.count ?? 0;
+  const overallConversion = firstNonZero > 0 ? (lastNonZero / firstNonZero) * 100 : 0;
 
   let worst = { idx: -1, drop: -1 };
   for (let i = 1; i < steps.length; i++) {
