@@ -522,7 +522,7 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
   const [existingJob] = await db
     .select({ id: syncJobsTable.id })
     .from(syncJobsTable)
-    .where(and(eq(syncJobsTable.clientId, clientId), eq(syncJobsTable.status, "running")));
+    .where(and(eq(syncJobsTable.clientId, clientId), inArray(syncJobsTable.status, ["pending", "running"])));
   if (existingJob) {
     res.status(202).json({ jobId: existingJob.id });
     return;
@@ -536,15 +536,22 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
   const jobId = job.id;
   const apiKey = client.upZeroApiKey;
 
-  (async () => {
+  const runner = (async () => {
     try {
       await db.update(syncJobsTable).set({ status: "running" }).where(eq(syncJobsTable.id, jobId));
       const result = await syncUpZeroClient(clientId, apiKey);
       await db.update(syncJobsTable).set({ status: "done", result }).where(eq(syncJobsTable.id, jobId));
     } catch (err) {
-      await db.update(syncJobsTable).set({ status: "failed", error: String(err) }).where(eq(syncJobsTable.id, jobId));
+      try {
+        await db.update(syncJobsTable).set({ status: "failed", error: String(err) }).where(eq(syncJobsTable.id, jobId));
+      } catch (dbErr) {
+        console.error("[sync-runner] failed to mark job %s as failed:", jobId, dbErr);
+      }
     }
   })();
+  runner.catch((err) => {
+    console.error("[sync-runner] unhandled error for job %s:", jobId, err);
+  });
 
   res.status(202).json({ jobId });
 });
