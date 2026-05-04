@@ -552,6 +552,7 @@ function UpZeroSyncButton({
     setLastSync(new Date());
     queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
 
+    const toastId = `sync-${clientId}`;
     if (status === "done" && jobQuery.data?.result) {
       const { customersCreated, customersUpdated, ordersCreated, ordersUpdated, productsCreated, productsUpdated, orderItemsSynced, errors } = jobQuery.data.result;
       const desc = [
@@ -567,13 +568,15 @@ function UpZeroSyncButton({
         .join(", ") || "No new records";
       if (errors.length > 0) {
         toast.warning(`Sync complete for ${clientName}`, {
+          id: toastId,
           description: `${desc} · ${errors.length} error(s)`,
         });
       } else {
-        toast.success(`Sync complete for ${clientName}`, { description: desc });
+        toast.success(`Sync complete for ${clientName}`, { id: toastId, description: desc });
       }
     } else if (status === "failed") {
       toast.error(`Sync failed for ${clientName}`, {
+        id: toastId,
         description: jobQuery.data?.error ?? undefined,
       });
     }
@@ -585,7 +588,8 @@ function UpZeroSyncButton({
       {
         onSuccess: (data) => {
           setJobId(data.jobId);
-          toast.info(`Sync started for ${clientName}`, {
+          toast.loading(`Syncing ${clientName}…`, {
+            id: `sync-${clientId}`,
             description: "This may take a minute…",
           });
         },
