@@ -519,12 +519,31 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
     return;
   }
 
-  const [existingJob] = await db
-    .select({ id: syncJobsTable.id })
+  // Only treat a job as "active" if it was created within the last 15 minutes.
+  // Jobs older than that are assumed to have hung (e.g., server restarted while
+  // the sync was in progress but startup cleanup hadn't run yet), so we mark
+  // them failed and proceed to start a fresh sync.
+  const STALE_THRESHOLD_MS = 15 * 60 * 1000;
+  const staleAfter = new Date(Date.now() - STALE_THRESHOLD_MS);
+
+  const activeJobs = await db
+    .select({ id: syncJobsTable.id, createdAt: syncJobsTable.createdAt })
     .from(syncJobsTable)
     .where(and(eq(syncJobsTable.clientId, clientId), inArray(syncJobsTable.status, ["pending", "running"])));
-  if (existingJob) {
-    res.status(202).json({ jobId: existingJob.id });
+
+  const freshJob = activeJobs.find((j) => j.createdAt > staleAfter);
+  const staleJobs = activeJobs.filter((j) => j.createdAt <= staleAfter);
+
+  // Expire any stale jobs so they don't block future syncs
+  if (staleJobs.length > 0) {
+    await db
+      .update(syncJobsTable)
+      .set({ status: "failed", error: "Sync job timed out — exceeded 15 minute limit without completing." })
+      .where(inArray(syncJobsTable.id, staleJobs.map((j) => j.id)));
+  }
+
+  if (freshJob) {
+    res.status(202).json({ jobId: freshJob.id });
     return;
   }
 

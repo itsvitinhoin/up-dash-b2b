@@ -12,6 +12,26 @@ const UPZERO_BASE = "https://api.upzero.com.br";
 const PAGE_LIMIT = 200;
 const SYNC_DAYS = 90;
 const INVENTORY_CONCURRENCY = 20;
+const FETCH_TIMEOUT_MS = 30_000; // 30 s per request
+
+/** Create a fetch signal that aborts after FETCH_TIMEOUT_MS. */
+function makeTimeoutSignal(): AbortSignal {
+  return AbortSignal.timeout(FETCH_TIMEOUT_MS);
+}
+
+/**
+ * Normalise a fetch/abort error into a clear human-readable message so
+ * admins can tell "timed out" from "HTTP 401" at a glance.
+ */
+function wrapFetchError(err: unknown, path: string): Error {
+  if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
+    return new Error(
+      `Connection to UP Zero API timed out after ${FETCH_TIMEOUT_MS / 1000}s — ${path}. ` +
+      `Check that the server can reach api.upzero.com.br and that the API key is valid.`,
+    );
+  }
+  return err instanceof Error ? err : new Error(String(err));
+}
 
 type UpZeroStatus =
   | "RESERVED"
@@ -195,9 +215,15 @@ async function fetchAllPages<T>(
       ...extraParams,
     });
     const url = `${UPZERO_BASE}${path}?${params}`;
-    const res = await fetch(url, {
-      headers: { "X-API-Key": apiKey },
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { "X-API-Key": apiKey },
+        signal: makeTimeoutSignal(),
+      });
+    } catch (err) {
+      throw wrapFetchError(err, path);
+    }
     if (!res.ok) {
       throw new Error(
         `UP Zero API error: ${res.status} ${res.statusText} — ${path}`,
@@ -230,9 +256,15 @@ async function fetchAllCursorPages<T>(
     });
     if (cursor) params.set("cursor", cursor);
     const url = `${UPZERO_BASE}${path}?${params}`;
-    const res = await fetch(url, {
-      headers: { "X-API-Key": apiKey },
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { "X-API-Key": apiKey },
+        signal: makeTimeoutSignal(),
+      });
+    } catch (err) {
+      throw wrapFetchError(err, path);
+    }
     if (!res.ok) {
       throw new Error(
         `UP Zero API error: ${res.status} ${res.statusText} — ${path}`,
@@ -258,7 +290,7 @@ async function fetchInventoryQty(
     const params = new URLSearchParams({ sku });
     const res = await fetch(
       `${UPZERO_BASE}/external/v1/inventory/availability?${params}`,
-      { headers: { "X-API-Key": apiKey } },
+      { headers: { "X-API-Key": apiKey }, signal: makeTimeoutSignal() },
     );
     if (!res.ok) return null;
     const body = await res.json() as {
