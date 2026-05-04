@@ -1389,8 +1389,26 @@ export const GetStockResponse = zod.object({
         .date()
         .nullish()
         .describe("Proxy for last inventory update (product updatedAt)."),
-      bySize: zod.array(zod.object({ size: zod.string(), unitsSold: zod.number() })),
-      byColor: zod.array(zod.object({ color: zod.string(), unitsSold: zod.number() })),
+      bySize: zod
+        .array(
+          zod.object({
+            size: zod.string(),
+            unitsSold: zod.number(),
+          }),
+        )
+        .describe(
+          "Per-product units sold breakdown by size in the selected period.",
+        ),
+      byColor: zod
+        .array(
+          zod.object({
+            color: zod.string(),
+            unitsSold: zod.number(),
+          }),
+        )
+        .describe(
+          "Per-product units sold breakdown by color in the selected period.",
+        ),
     }),
   ),
   overstockRisk: zod.array(
@@ -1414,8 +1432,26 @@ export const GetStockResponse = zod.object({
         .date()
         .nullish()
         .describe("Proxy for last inventory update (product updatedAt)."),
-      bySize: zod.array(zod.object({ size: zod.string(), unitsSold: zod.number() })),
-      byColor: zod.array(zod.object({ color: zod.string(), unitsSold: zod.number() })),
+      bySize: zod
+        .array(
+          zod.object({
+            size: zod.string(),
+            unitsSold: zod.number(),
+          }),
+        )
+        .describe(
+          "Per-product units sold breakdown by size in the selected period.",
+        ),
+      byColor: zod
+        .array(
+          zod.object({
+            color: zod.string(),
+            unitsSold: zod.number(),
+          }),
+        )
+        .describe(
+          "Per-product units sold breakdown by color in the selected period.",
+        ),
     }),
   ),
   highTurnover: zod.array(
@@ -1439,8 +1475,26 @@ export const GetStockResponse = zod.object({
         .date()
         .nullish()
         .describe("Proxy for last inventory update (product updatedAt)."),
-      bySize: zod.array(zod.object({ size: zod.string(), unitsSold: zod.number() })),
-      byColor: zod.array(zod.object({ color: zod.string(), unitsSold: zod.number() })),
+      bySize: zod
+        .array(
+          zod.object({
+            size: zod.string(),
+            unitsSold: zod.number(),
+          }),
+        )
+        .describe(
+          "Per-product units sold breakdown by size in the selected period.",
+        ),
+      byColor: zod
+        .array(
+          zod.object({
+            color: zod.string(),
+            unitsSold: zod.number(),
+          }),
+        )
+        .describe(
+          "Per-product units sold breakdown by color in the selected period.",
+        ),
     }),
   ),
   categoryBreakdown: zod.array(
@@ -1486,8 +1540,26 @@ export const GetStockResponse = zod.object({
         .date()
         .nullish()
         .describe("Proxy for last inventory update (product updatedAt)."),
-      bySize: zod.array(zod.object({ size: zod.string(), unitsSold: zod.number() })),
-      byColor: zod.array(zod.object({ color: zod.string(), unitsSold: zod.number() })),
+      bySize: zod
+        .array(
+          zod.object({
+            size: zod.string(),
+            unitsSold: zod.number(),
+          }),
+        )
+        .describe(
+          "Per-product units sold breakdown by size in the selected period.",
+        ),
+      byColor: zod
+        .array(
+          zod.object({
+            color: zod.string(),
+            unitsSold: zod.number(),
+          }),
+        )
+        .describe(
+          "Per-product units sold breakdown by color in the selected period.",
+        ),
     }),
   ),
   total: zod.number(),

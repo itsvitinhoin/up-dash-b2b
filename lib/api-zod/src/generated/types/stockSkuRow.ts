@@ -5,6 +5,8 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { StockSkuRowByColorItem } from "./stockSkuRowByColorItem";
+import type { StockSkuRowBySizeItem } from "./stockSkuRowBySizeItem";
 import type { StockSkuRowRisk } from "./stockSkuRowRisk";
 
 export interface StockSkuRow {
@@ -30,7 +32,7 @@ export interface StockSkuRow {
    */
   lastRestockDate?: Date | null;
   /** Per-product units sold breakdown by size in the selected period. */
-  bySize: Array<{ size: string; unitsSold: number }>;
+  bySize: StockSkuRowBySizeItem[];
   /** Per-product units sold breakdown by color in the selected period. */
-  byColor: Array<{ color: string; unitsSold: number }>;
+  byColor: StockSkuRowByColorItem[];
 }

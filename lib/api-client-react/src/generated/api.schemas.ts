@@ -1282,6 +1282,16 @@ export const StockSkuRowRisk = {
   Healthy: "Healthy",
 } as const;
 
+export type StockSkuRowBySizeItem = {
+  size: string;
+  unitsSold: number;
+};
+
+export type StockSkuRowByColorItem = {
+  color: string;
+  unitsSold: number;
+};
+
 export interface StockSkuRow {
   productId: string;
   sku: string;
@@ -1305,9 +1315,9 @@ export interface StockSkuRow {
    */
   lastRestockDate?: string | null;
   /** Per-product units sold breakdown by size in the selected period. */
-  bySize: Array<{ size: string; unitsSold: number }>;
+  bySize: StockSkuRowBySizeItem[];
   /** Per-product units sold breakdown by color in the selected period. */
-  byColor: Array<{ color: string; unitsSold: number }>;
+  byColor: StockSkuRowByColorItem[];
 }
 
 export interface CategoryStockRow {

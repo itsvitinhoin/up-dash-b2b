@@ -156,6 +156,8 @@ export * from "./sellerOrdersResponse";
 export * from "./sizeStockRow";
 export * from "./stockKpis";
 export * from "./stockSkuRow";
+export * from "./stockSkuRowByColorItem";
+export * from "./stockSkuRowBySizeItem";
 export * from "./stockSkuRowRisk";
 export * from "./syncJobStarted";
 export * from "./syncJobStatus";
