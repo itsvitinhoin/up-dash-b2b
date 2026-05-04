@@ -195,21 +195,17 @@ async function fetchAllCursorPages<T>(
 async function fetchInventoryQty(
   apiKey: string,
   sku: string,
-): Promise<number> {
-  try {
-    const params = new URLSearchParams({ sku });
-    const res = await fetch(
-      `${UPZERO_BASE}/external/v1/inventory/availability?${params}`,
-      { headers: { "X-API-Key": apiKey } },
-    );
-    if (!res.ok) return 0;
-    const body = await res.json() as {
-      totals?: { qty_available?: number };
-    };
-    return Math.max(0, Number(body?.totals?.qty_available ?? 0));
-  } catch {
-    return 0;
-  }
+): Promise<number | null> {
+  const params = new URLSearchParams({ sku });
+  const res = await fetch(
+    `${UPZERO_BASE}/external/v1/inventory/availability?${params}`,
+    { headers: { "X-API-Key": apiKey } },
+  );
+  if (!res.ok) return null;
+  const body = await res.json() as {
+    totals?: { qty_available?: number };
+  };
+  return Math.max(0, Number(body?.totals?.qty_available ?? 0));
 }
 
 async function runConcurrent<T, R>(
@@ -339,13 +335,21 @@ export async function syncUpZeroClient(
     INVENTORY_CONCURRENCY,
     async ({ productExternalId, sku }) => {
       const qty = await fetchInventoryQty(apiKey, sku);
-      return { productExternalId, qty };
+      return { productExternalId, sku, qty };
     },
   );
 
-  // Sum qty_available per product
+  // Sum qty_available per product; null means the API call failed for that SKU.
+  // Products where every inventory call failed are excluded from stockByProduct
+  // so their stored stock value is not overwritten with a potentially incorrect 0.
   const stockByProduct = new Map<string, number>();
-  for (const { productExternalId, qty } of inventoryQtys) {
+  for (const { productExternalId, sku, qty } of inventoryQtys) {
+    if (qty === null) {
+      result.errors.push(
+        `Inventory fetch failed for SKU "${sku}" (product ${productExternalId}); stock not updated`,
+      );
+      continue;
+    }
     stockByProduct.set(
       productExternalId,
       (stockByProduct.get(productExternalId) ?? 0) + qty,
@@ -384,14 +388,17 @@ export async function syncUpZeroClient(
       const sku = firstVariant.sku ?? p.code ?? p.id;
       const price = parseFloat(firstVariant.price ?? "0") || 0;
       const cost = firstVariant.cost ? parseFloat(firstVariant.cost) : null;
-      const stock = stockByProduct.get(p.id) ?? 0;
+      // Only update stock when at least one inventory call succeeded; if all
+      // calls failed the product's existing stock value is preserved.
+      const stockValue = stockByProduct.get(p.id);
+      const stockFields = stockValue !== undefined ? { stock: stockValue } : {};
       const status = mapProductStatus(p.status);
 
       if (existingProductByExtId.has(p.id)) {
         const internalId = existingProductByExtId.get(p.id)!;
         await db
           .update(productsTable)
-          .set({ sku, name: p.name, price, cost: cost ?? undefined, stock, status })
+          .set({ sku, name: p.name, price, cost: cost ?? undefined, ...stockFields, status })
           .where(
             and(
               eq(productsTable.clientId, clientId),
@@ -399,8 +406,9 @@ export async function syncUpZeroClient(
             ),
           );
         result.productsUpdated++;
-        // Register all active variant SKUs → internal ID
-        for (const v of activeVariants) {
+        // Register all variant SKUs (including inactive) so historical order
+        // items referencing retired variants still resolve to this product.
+        for (const v of p.variants ?? []) {
           if (v.sku) skuToLocalProductId.set(v.sku, internalId);
         }
       } else {
@@ -416,12 +424,12 @@ export async function syncUpZeroClient(
             name: p.name,
             price,
             cost: cost ?? undefined,
-            stock,
+            stock: stockValue ?? 0,
             status,
           })
           .onConflictDoUpdate({
             target: [productsTable.clientId, productsTable.externalId],
-            set: { sku, name: p.name, price, cost: cost ?? undefined, stock, status },
+            set: { sku, name: p.name, price, cost: cost ?? undefined, ...stockFields, status },
           })
           .returning({
             id: productsTable.id,
@@ -434,7 +442,8 @@ export async function syncUpZeroClient(
           } else {
             result.productsUpdated++;
           }
-          for (const v of activeVariants) {
+          // Register all variant SKUs (including inactive) for the same reason.
+          for (const v of p.variants ?? []) {
             if (v.sku) skuToLocalProductId.set(v.sku, upserted.id);
           }
         }
