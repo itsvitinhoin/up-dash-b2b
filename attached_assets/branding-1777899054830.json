@@ -1,0 +1,135 @@
+{
+  "colorScheme": "dark",
+  "fonts": [
+    {
+      "family": "Inter",
+      "role": "body"
+    },
+    {
+      "family": "Playfair Display",
+      "role": "heading"
+    }
+  ],
+  "colors": {
+    "primary": "#0458FE",
+    "accent": "#0458FE",
+    "background": "#020202",
+    "textPrimary": "#020202",
+    "link": "#0458FE"
+  },
+  "typography": {
+    "fontFamilies": {
+      "primary": "Inter",
+      "heading": "Playfair Display"
+    },
+    "fontStacks": {
+      "heading": [
+        "Playfair Display",
+        "Georgia",
+        "serif"
+      ],
+      "body": [
+        "Inter",
+        "system-ui",
+        "sans-serif"
+      ],
+      "paragraph": [
+        "Inter",
+        "system-ui",
+        "sans-serif"
+      ]
+    },
+    "fontSizes": {
+      "h1": "60px",
+      "h2": "48px",
+      "body": "18px"
+    }
+  },
+  "spacing": {
+    "baseUnit": 8,
+    "borderRadius": "0px"
+  },
+  "components": {
+    "buttonPrimary": {
+      "background": "#0458FE",
+      "textColor": "#FFFFFF",
+      "borderRadius": "16px",
+      "borderRadiusCorners": {
+        "topLeft": "16px",
+        "topRight": "16px",
+        "bottomRight": "16px",
+        "bottomLeft": "16px"
+      },
+      "shadow": "none"
+    },
+    "buttonSecondary": {
+      "background": "#0A0A0A",
+      "textColor": "#F8F8F8",
+      "borderColor": "#161616",
+      "borderRadius": "16px",
+      "borderRadiusCorners": {
+        "topLeft": "16px",
+        "topRight": "16px",
+        "bottomRight": "16px",
+        "bottomLeft": "16px"
+      },
+      "shadow": "none"
+    }
+  },
+  "images": {
+    "logo": "File saved at: attached_assets/logo.png",
+    "favicon": "https://upzero.com.br/icon-light-32x32.png",
+    "ogImage": null,
+    "logoHref": "File saved at: attached_assets/logoHref.html",
+    "logoAlt": "UP Zero"
+  },
+  "__llm_logo_reasoning": {
+    "selectedIndex": 0,
+    "reasoning": "Selected #0 because it is visible, located in the header, links to the homepage, and matches the brand name 'UP Zero'.",
+    "confidence": 0.9,
+    "source": "llm"
+  },
+  "__llm_button_reasoning": {
+    "primary": {
+      "index": 1,
+      "text": "Registrar",
+      "reasoning": "Button #1 is the primary CTA because it uses the vibrant brand color #0458FE, which is consistent with the site's primary color scheme. The text 'Registrar' suggests a strong call-to-action for user registration."
+    },
+    "secondary": {
+      "index": 0,
+      "text": "Área do Lojista",
+      "reasoning": "Button #0 is selected as the secondary button because it has a different background color (#0A0A0A) and serves a supportive role with the text 'Área do Lojista', which is less action-oriented than 'Registrar'."
+    },
+    "confidence": 0.95
+  },
+  "personality": {
+    "tone": "modern",
+    "energy": "medium",
+    "targetAudience": "B2B fashion retailers"
+  },
+  "designSystem": {
+    "framework": "tailwind",
+    "componentLibrary": ""
+  },
+  "confidence": {
+    "buttons": 0.95,
+    "colors": 0.9,
+    "overall": 0.925
+  },
+  "__llm_metadata": {
+    "logoSelection": {
+      "llmCalled": true,
+      "llmSucceeded": true,
+      "finalSource": "llm",
+      "rawLogoSelection": {
+        "selectedLogoIndex": 0,
+        "selectedLogoReasoning": "Selected #0 because it is visible, located in the header, links to the homepage, and matches the brand name 'UP Zero'.",
+        "confidence": 0.9
+      }
+    },
+    "buttonClassification": {
+      "llmCalled": true,
+      "llmSucceeded": true
+    }
+  }
+}
