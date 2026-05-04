@@ -22,6 +22,7 @@ import {
   Zap,
   ArrowRight,
   ChevronRight,
+  Info,
 } from "lucide-react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -70,11 +71,23 @@ export default function FunnelPage() {
     }
   );
 
+  // Hide the VISIT step from the visual funnel when it has no data (UP Zero does not
+  // track site visits — only registered leads and downstream events are available).
+  const visibleSteps = useMemo(() => {
+    if (!data?.steps) return [];
+    return data.steps.filter((s) => !(s.step === "VISIT" && s.count === 0));
+  }, [data]);
+
+  const visitStepHidden = useMemo(
+    () => !!data?.steps && data.steps.some((s) => s.step === "VISIT" && s.count === 0),
+    [data],
+  );
+
   const handleExport = () => {
     if (!data) return;
     exportRowsAsCsv(
       `funnel-${new Date().toISOString().slice(0, 10)}.csv`,
-      data.steps,
+      visibleSteps,
       [
         { header: "step", accessor: (r) => r.step },
         { header: "label", accessor: (r) => r.label },
@@ -87,17 +100,17 @@ export default function FunnelPage() {
 
   // Find biggest drop stage (skip step 0)
   const biggestDrop = useMemo(() => {
-    if (!data?.steps?.length) return null;
+    if (!visibleSteps.length) return null;
     let maxIdx = 1;
     let maxDrop = -1;
-    for (let i = 1; i < data.steps.length; i++) {
-      if (data.steps[i].dropOffRate > maxDrop) {
-        maxDrop = data.steps[i].dropOffRate;
+    for (let i = 1; i < visibleSteps.length; i++) {
+      if (visibleSteps[i].dropOffRate > maxDrop) {
+        maxDrop = visibleSteps[i].dropOffRate;
         maxIdx = i;
       }
     }
-    return { from: data.steps[maxIdx - 1], to: data.steps[maxIdx], dropPct: maxDrop };
-  }, [data]);
+    return { from: visibleSteps[maxIdx - 1], to: visibleSteps[maxIdx], dropPct: maxDrop };
+  }, [visibleSteps]);
 
   return (
     <div className="space-y-6 pb-8" data-testid="page-funnel">
@@ -180,18 +193,18 @@ export default function FunnelPage() {
                     Conversion funnel
                   </span>
                   <h2 className="mt-2 text-3xl sm:text-4xl font-bold tracking-tight">
-                    Visitors → Purchases
+                    {visitStepHidden ? "Leads → Purchases" : "Visitors → Purchases"}
                   </h2>
                   <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                    From total leads to approved purchases over the selected period.
+                    From registered leads to approved purchases over the selected period.
                     Hover any stage below to see counts, conversion, and drop-off.
                   </p>
 
                   <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <MiniStat
                       icon={Users}
-                      label="Total visits"
-                      value={data.steps[0]?.count ?? 0}
+                      label={visibleSteps[0]?.label ?? "Top of funnel"}
+                      value={visibleSteps[0]?.count ?? 0}
                       color="hsl(var(--chart-1))"
                       delay={0.05}
                       reduced={reduced}
@@ -199,7 +212,7 @@ export default function FunnelPage() {
                     <MiniStat
                       icon={ShoppingCart}
                       label="Purchases"
-                      value={data.steps[data.steps.length - 1]?.count ?? 0}
+                      value={visibleSteps[visibleSteps.length - 1]?.count ?? 0}
                       color="hsl(var(--chart-3))"
                       delay={0.12}
                       reduced={reduced}
@@ -244,10 +257,10 @@ export default function FunnelPage() {
                       Stage-by-stage flow
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {data.steps.length} stages
+                      {visibleSteps.length} stages
                     </span>
                   </div>
-                  <FunnelDiagram steps={data.steps} reduced={reduced} />
+                  <FunnelDiagram steps={visibleSteps} reduced={reduced} />
                 </CardContent>
               </Card>
             </motion.div>
@@ -373,6 +386,24 @@ export default function FunnelPage() {
                   drop first — that's where you'll move the needle fastest.
                 </p>
               </motion.div>
+
+              {/* Data availability notice */}
+              {visitStepHidden && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: reduced ? 0 : 0.5 }}
+                  className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4 text-xs"
+                >
+                  <p className="font-semibold text-foreground/80 mb-1.5 flex items-center gap-1.5">
+                    <Info className="h-3 w-3 text-blue-500" /> About this data
+                  </p>
+                  <p className="leading-relaxed text-muted-foreground">
+                    UP Zero tracks <strong className="text-foreground/80">registered leads, cart activity, and purchases</strong> — the funnel starts at your first available data point.
+                    Website visit tracking requires a separate web analytics integration (e.g. Google Analytics or a pixel).
+                  </p>
+                </motion.div>
+              )}
             </div>
           </div>
         </>

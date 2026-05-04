@@ -1070,8 +1070,9 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       `Highest drop-off (${worst.drop.toFixed(1)}%) occurs between ${steps[worst.idx - 1].label} and ${steps[worst.idx].label}.`,
     );
   }
+  const firstNonZeroLabel = nonZeroSteps[0]?.label ?? "first step";
   insights.push(
-    `Overall funnel conversion is ${overallConversion.toFixed(2)}% from first visit to purchase.`,
+    `Overall funnel conversion is ${overallConversion.toFixed(2)}% from ${firstNonZeroLabel} to purchase.`,
   );
 
   // Average events per customer that occurred BEFORE their first purchase in the window
