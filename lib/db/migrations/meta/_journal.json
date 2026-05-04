@@ -64,6 +64,13 @@
       "when": 1777907558880,
       "tag": "0009_faithful_silhouette",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1746403200000,
+      "tag": "0010_site_visits",
+      "breakpoints": true
     }
   ]
 }

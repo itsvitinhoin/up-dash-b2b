@@ -13,6 +13,7 @@ import {
   useRotateClientApiKey,
   useUpdateClient,
   useSyncUpZero,
+  useUpsertSiteVisits,
   getGetSyncJobQueryOptions,
   lookupClientByApiKey,
   getListClientsQueryKey,
@@ -45,6 +46,8 @@ import {
   Upload,
   Wand2,
   XCircle,
+  BarChart2,
+  Trash2,
 } from "lucide-react";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
@@ -178,6 +181,150 @@ function CopyButton({ text }: { text: string }) {
         <Copy className="h-3.5 w-3.5" />
       )}
     </Button>
+  );
+}
+
+function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientName: string }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<Array<{ visitDate: string; visitCount: string }>>([
+    { visitDate: new Date().toISOString().slice(0, 10), visitCount: "" },
+  ]);
+  const upsertMutation = useUpsertSiteVisits();
+
+  function handleOpen(o: boolean) {
+    if (o) {
+      setRows([{ visitDate: new Date().toISOString().slice(0, 10), visitCount: "" }]);
+      upsertMutation.reset();
+    }
+    setOpen(o);
+  }
+
+  function addRow() {
+    setRows((prev) => {
+      const last = prev[prev.length - 1];
+      let nextDate = last?.visitDate ?? new Date().toISOString().slice(0, 10);
+      const d = new Date(nextDate + "T12:00:00Z");
+      if (!isNaN(d.getTime())) {
+        d.setUTCDate(d.getUTCDate() - 1);
+        nextDate = d.toISOString().slice(0, 10);
+      }
+      return [...prev, { visitDate: nextDate, visitCount: "" }];
+    });
+  }
+
+  function removeRow(i: number) {
+    setRows((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  function updateRow(i: number, field: "visitDate" | "visitCount", value: string) {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+  }
+
+  function handleSave() {
+    const validRows = rows
+      .filter((r) => r.visitDate && r.visitCount !== "" && Number(r.visitCount) >= 0)
+      .map((r) => ({ visitDate: r.visitDate, visitCount: Number(r.visitCount) }));
+
+    if (validRows.length === 0) {
+      toast.error("Enter at least one valid date and visit count.");
+      return;
+    }
+
+    upsertMutation.mutate(
+      { data: { clientId, rows: validRows } },
+      {
+        onSuccess: (res) => {
+          toast.success(`Saved ${res.rows.length} day${res.rows.length !== 1 ? "s" : ""} of visit data for ${clientName}`);
+          setOpen(false);
+        },
+        onError: () => {
+          toast.error("Failed to save site visit data. Please try again.");
+        },
+      }
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 text-xs"
+          title="Enter daily site visit counts"
+        >
+          <BarChart2 className="h-3 w-3" />
+          Site Visits
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <BarChart2 className="h-4 w-4" /> Site Visit Data
+          </DialogTitle>
+          <DialogDescription>
+            Enter daily website visit counts for <strong>{clientName}</strong>. These populate
+            the top-of-funnel "Site Visits" step. Existing entries for the same date are overwritten.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+          {rows.map((row, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input
+                type="date"
+                value={row.visitDate}
+                onChange={(e) => updateRow(i, "visitDate", e.target.value)}
+                className="w-40 text-sm"
+              />
+              <Input
+                type="number"
+                min={0}
+                placeholder="Visits"
+                value={row.visitCount}
+                onChange={(e) => updateRow(i, "visitCount", e.target.value)}
+                className="flex-1 text-sm"
+              />
+              {rows.length > 1 && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => removeRow(i)}
+                  tabIndex={-1}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <Button variant="outline" size="sm" className="w-full" onClick={addRow}>
+          <Plus className="h-3.5 w-3.5 mr-1.5" /> Add another day
+        </Button>
+
+        {upsertMutation.isError && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>Failed to save. Please try again.</AlertDescription>
+          </Alert>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={upsertMutation.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={upsertMutation.isPending}>
+            {upsertMutation.isPending ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+            ) : (
+              "Save Visit Data"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1173,6 +1320,7 @@ export default function ClientsPage() {
                             clientName={client.name}
                             currentKey={client.metaAdsApiKey}
                           />
+                          <SiteVisitsDialog clientId={client.id} clientName={client.name} />
                           <RotateKeyDialog clientId={client.id} clientName={client.name} />
                         </div>
                       </TableCell>

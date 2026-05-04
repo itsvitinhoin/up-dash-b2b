@@ -54,6 +54,7 @@ import type {
   GetSellerDetailParams,
   GetSellerOrdersParams,
   GetSellersParams,
+  GetSiteVisitsParams,
   GetStockParams,
   GetStockResponse,
   GetUtmParams,
@@ -92,9 +93,11 @@ import type {
   SellerDetailResponse,
   SellerMetrics,
   SellerOrdersResponse,
+  SiteVisitsResponse,
   SyncJobStarted,
   SyncJobStatus,
   UpdateClientRequest,
+  UpsertSiteVisitsRequest,
   UtmResponse,
 } from "./api.schemas";
 
@@ -1487,6 +1490,186 @@ export function useGetFunnel<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Get daily site visit counts for a client and date range
+ */
+export const getGetSiteVisitsUrl = (params?: GetSiteVisitsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/analytics/site-visits?${stringifiedParams}`
+    : `/api/analytics/site-visits`;
+};
+
+export const getSiteVisits = async (
+  params?: GetSiteVisitsParams,
+  options?: RequestInit,
+): Promise<SiteVisitsResponse> => {
+  return customFetch<SiteVisitsResponse>(getGetSiteVisitsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSiteVisitsQueryKey = (params?: GetSiteVisitsParams) => {
+  return [`/api/analytics/site-visits`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetSiteVisitsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSiteVisits>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSiteVisitsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSiteVisits>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSiteVisitsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSiteVisits>>> = ({
+    signal,
+  }) => getSiteVisits(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSiteVisits>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSiteVisitsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSiteVisits>>
+>;
+export type GetSiteVisitsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get daily site visit counts for a client and date range
+ */
+
+export function useGetSiteVisits<
+  TData = Awaited<ReturnType<typeof getSiteVisits>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSiteVisitsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSiteVisits>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSiteVisitsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Upsert daily site visit counts for a client (admin only)
+ */
+export const getUpsertSiteVisitsUrl = () => {
+  return `/api/analytics/site-visits`;
+};
+
+export const upsertSiteVisits = async (
+  upsertSiteVisitsRequest: UpsertSiteVisitsRequest,
+  options?: RequestInit,
+): Promise<SiteVisitsResponse> => {
+  return customFetch<SiteVisitsResponse>(getUpsertSiteVisitsUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(upsertSiteVisitsRequest),
+  });
+};
+
+export const getUpsertSiteVisitsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof upsertSiteVisits>>,
+    TError,
+    { data: BodyType<UpsertSiteVisitsRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof upsertSiteVisits>>,
+  TError,
+  { data: BodyType<UpsertSiteVisitsRequest> },
+  TContext
+> => {
+  const mutationKey = ["upsertSiteVisits"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof upsertSiteVisits>>,
+    { data: BodyType<UpsertSiteVisitsRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return upsertSiteVisits(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpsertSiteVisitsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof upsertSiteVisits>>
+>;
+export type UpsertSiteVisitsMutationBody = BodyType<UpsertSiteVisitsRequest>;
+export type UpsertSiteVisitsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Upsert daily site visit counts for a client (admin only)
+ */
+export const useUpsertSiteVisits = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof upsertSiteVisits>>,
+    TError,
+    { data: BodyType<UpsertSiteVisitsRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof upsertSiteVisits>>,
+  TError,
+  { data: BodyType<UpsertSiteVisitsRequest> },
+  TContext
+> => {
+  return useMutation(getUpsertSiteVisitsMutationOptions(options));
+};
 
 /**
  * @summary Paginated customers with RFM segmentation

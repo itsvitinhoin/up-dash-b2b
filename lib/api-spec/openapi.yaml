@@ -498,6 +498,51 @@ paths:
               schema:
                 $ref: "#/components/schemas/FunnelResponse"
 
+  /analytics/site-visits:
+    get:
+      operationId: getSiteVisits
+      tags: [analytics]
+      summary: Get daily site visit counts for a client and date range
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Site visits list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteVisitsResponse"
+    post:
+      operationId: upsertSiteVisits
+      tags: [analytics]
+      summary: Upsert daily site visit counts for a client (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertSiteVisitsRequest"
+      responses:
+        "200":
+          description: Upserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteVisitsResponse"
+
   /analytics/customers:
     get:
       operationId: getCustomers
@@ -2251,6 +2296,50 @@ components:
         - topGrowth
         - bottomGrowth
 
+    SiteVisitRow:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        visitDate:
+          type: string
+        visitCount:
+          type: integer
+      required: [id, clientId, visitDate, visitCount]
+
+    SiteVisitsResponse:
+      type: object
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/SiteVisitRow"
+        totalVisits:
+          type: integer
+      required: [rows, totalVisits]
+
+    UpsertSiteVisitsRequest:
+      type: object
+      properties:
+        clientId:
+          type: string
+          description: Target client id (admin only — omit to use the authenticated client)
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              visitDate:
+                type: string
+                description: ISO date string (YYYY-MM-DD)
+              visitCount:
+                type: integer
+                minimum: 0
+            required: [visitDate, visitCount]
+      required: [rows]
+
     FunnelStep:
       type: object
       properties:
@@ -2302,7 +2391,10 @@ components:
           type: array
           items:
             type: string
-      required: [steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions]
+        hasSiteVisitData:
+          type: boolean
+          description: True when at least one site_visits row exists for this client (regardless of the current date range). Drives the "About this data" notice — notice hides once data is flowing even if the selected range shows zero visits.
+      required: [steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions, hasSiteVisitData]
 
     JourneyKpis:
       type: object

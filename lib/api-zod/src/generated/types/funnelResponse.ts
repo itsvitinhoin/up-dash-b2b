@@ -15,4 +15,6 @@ export interface FunnelResponse {
   avgEventsBeforePurchase: number;
   topPaths: FunnelPath[];
   suggestedActions: string[];
+  /** True when at least one site_visits row exists for this client (regardless of the current date range). Drives the "About this data" notice — notice hides once data is flowing even if the selected range shows zero visits. */
+  hasSiteVisitData: boolean;
 }

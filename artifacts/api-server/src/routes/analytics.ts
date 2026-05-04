@@ -1,5 +1,7 @@
 import { Router, type IRouter } from "express";
 import { and, desc, eq, gte, lte, sql, ilike, or, inArray, type SQL } from "drizzle-orm";
+import { nanoid } from "nanoid";
+import { z } from "zod";
 import {
   db,
   ordersTable,
@@ -10,6 +12,7 @@ import {
   orderItemsTable,
   clientsTable,
   creativesTable,
+  siteVisitsTable,
 } from "@workspace/db";
 import {
   GetDashboardQueryParams,
@@ -979,31 +982,68 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
         { step: "ADD_TO_CART", label: "Added to Cart" },
         { step: "PURCHASE", label: "Purchases" },
       ].map((s, i) => ({ ...s, count: 0, conversionRate: i === 0 ? 100 : 0, dropOffRate: i === 0 ? 0 : 100 }));
-      res.json({ steps: emptySteps, totalVisits: 0, overallConversion: 0 });
+      // Check hasSiteVisitData even on the early-return path so the notice logic is correct
+      const hasSiteVisitDataRowsEarly = await db
+        .select({ count: sql<number>`COUNT(*)::int` })
+        .from(siteVisitsTable)
+        .where(eq(siteVisitsTable.clientId, clientId));
+      const hasSiteVisitDataEarly = Number(hasSiteVisitDataRowsEarly[0]?.count ?? 0) > 0;
+      res.json(GetFunnelResponse.parse({
+        steps: emptySteps,
+        overallConversion: 0,
+        insights: [],
+        avgEventsBeforePurchase: 0,
+        topPaths: [],
+        suggestedActions: [],
+        hasSiteVisitData: hasSiteVisitDataEarly,
+      }));
       return;
     }
     scopedCustomerCond = inArray(eventsTable.customerId, scopedIds.map((r) => r.id));
   }
 
-  const eventCounts = await db
-    .select({
-      eventType: eventsTable.eventType,
-      count: sql<number>`COUNT(*)::int`,
-    })
-    .from(eventsTable)
-    .where(
-      and(
-        eq(eventsTable.clientId, clientId),
-        gte(eventsTable.createdAt, from),
-        lte(eventsTable.createdAt, to),
-        scopedCustomerCond,
-      ),
-    )
-    .groupBy(eventsTable.eventType);
+  const [eventCounts, visitTotals] = await Promise.all([
+    db
+      .select({
+        eventType: eventsTable.eventType,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.clientId, clientId),
+          gte(eventsTable.createdAt, from),
+          lte(eventsTable.createdAt, to),
+          scopedCustomerCond,
+        ),
+      )
+      .groupBy(eventsTable.eventType),
+    // Only pull site_visit totals when there are no UTM filters
+    // (visit data is not UTM-scoped — it represents total site traffic)
+    !utmSource && !utmMedium && !utmCampaign
+      ? db
+          .select({ total: sql<number>`COALESCE(SUM(${siteVisitsTable.visitCount}), 0)::int` })
+          .from(siteVisitsTable)
+          .where(
+            and(
+              eq(siteVisitsTable.clientId, clientId),
+              gte(siteVisitsTable.visitDate, from.toISOString().slice(0, 10)),
+              lte(siteVisitsTable.visitDate, to.toISOString().slice(0, 10)),
+            ),
+          )
+      : Promise.resolve([{ total: 0 }]),
+  ]);
 
   const counts: Record<string, number> = {};
   for (const row of eventCounts) {
     counts[row.eventType] = Number(row.count);
+  }
+
+  // Overlay site-visit data from the dedicated table (takes priority over any
+  // VISIT events that might exist, since the table represents real web traffic)
+  const siteVisitTotal = Number(visitTotals[0]?.total ?? 0);
+  if (siteVisitTotal > 0) {
+    counts["VISIT"] = siteVisitTotal;
   }
 
   const funnelOrder: Array<{ step: string; label: string }> = [
@@ -1106,7 +1146,90 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
   // Suggested actions based on biggest drop-off step
   const suggestedActions = buildFunnelSuggestedActions(worst, steps);
 
-  res.json(GetFunnelResponse.parse({ steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions }));
+  // Check if ANY site visit data exists for this client (not range-scoped) so the
+  // "About this data" notice in the UI hides once a data source is connected.
+  const hasSiteVisitDataRows = await db
+    .select({ count: sql<number>`COUNT(*)::int` })
+    .from(siteVisitsTable)
+    .where(eq(siteVisitsTable.clientId, clientId));
+  const hasSiteVisitData = Number(hasSiteVisitDataRows[0]?.count ?? 0) > 0;
+
+  res.json(GetFunnelResponse.parse({ steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions, hasSiteVisitData }));
+});
+
+// ─── Site Visits: GET ────────────────────────────────────────────────────────
+
+const GetSiteVisitsQueryParams = GetFunnelQueryParams.pick({ clientId: true, dateFrom: true, dateTo: true });
+
+router.get("/analytics/site-visits", async (req, res): Promise<void> => {
+  const parsed = GetSiteVisitsQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+
+  const rows = await db
+    .select()
+    .from(siteVisitsTable)
+    .where(
+      and(
+        eq(siteVisitsTable.clientId, clientId),
+        gte(siteVisitsTable.visitDate, from.toISOString().slice(0, 10)),
+        lte(siteVisitsTable.visitDate, to.toISOString().slice(0, 10)),
+      ),
+    )
+    .orderBy(siteVisitsTable.visitDate);
+
+  const totalVisits = rows.reduce((sum, r) => sum + r.visitCount, 0);
+  res.json({ rows, totalVisits });
+});
+
+// ─── Site Visits: POST (upsert) ───────────────────────────────────────────────
+
+const UpsertSiteVisitsBody = z.object({
+  clientId: z.string().optional(),
+  rows: z.array(
+    z.object({
+      visitDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "visitDate must be YYYY-MM-DD"),
+      visitCount: z.number().int().min(0),
+    }),
+  ).min(1).max(366),
+});
+
+router.post("/analytics/site-visits", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = UpsertSiteVisitsBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+
+  // Admins can specify a clientId; fall back to the authenticated client's id
+  const targetClientId = parsed.data.clientId ?? resolveClientId(req);
+  if (!targetClientId) {
+    res.status(400).json({ error: true, code: "CLIENT_REQUIRED", message: "clientId is required", status: 400 });
+    return;
+  }
+
+  const values = parsed.data.rows.map((r) => ({
+    clientId: targetClientId,
+    visitDate: r.visitDate,
+    visitCount: r.visitCount,
+  }));
+
+  const upserted = await db
+    .insert(siteVisitsTable)
+    .values(values.map((v) => ({ ...v, id: nanoid() })))
+    .onConflictDoUpdate({
+      target: [siteVisitsTable.clientId, siteVisitsTable.visitDate],
+      set: { visitCount: sql`EXCLUDED.visit_count` },
+    })
+    .returning();
+
+  const totalVisits = upserted.reduce((sum, r) => sum + r.visitCount, 0);
+  res.json({ rows: upserted, totalVisits });
 });
 
 router.get("/analytics/customers", async (req, res): Promise<void> => {

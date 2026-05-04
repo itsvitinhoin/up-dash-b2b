@@ -71,17 +71,23 @@ export default function FunnelPage() {
     }
   );
 
-  // Hide the VISIT step from the visual funnel when it has no data (UP Zero does not
-  // track site visits — only registered leads and downstream events are available).
+  // Hide the VISIT step from the visual funnel when its count is zero.
+  // The "About this data" notice is driven separately by hasSiteVisitData:
+  // once ANY visit data has been pushed for the client, the notice disappears
+  // even if the current date range shows zero visits.
   const visibleSteps = useMemo(() => {
     if (!data?.steps) return [];
     return data.steps.filter((s) => !(s.step === "VISIT" && s.count === 0));
   }, [data]);
 
+  // visitStepHidden: VISIT bar is absent from the diagram (count = 0 for the range)
   const visitStepHidden = useMemo(
     () => !!data?.steps && data.steps.some((s) => s.step === "VISIT" && s.count === 0),
     [data],
   );
+
+  // noSiteVisitSource: no visit data exists at all for this client — show the notice
+  const noSiteVisitSource = data ? !data.hasSiteVisitData : false;
 
   const handleExport = () => {
     if (!data) return;
@@ -387,8 +393,8 @@ export default function FunnelPage() {
                 </p>
               </motion.div>
 
-              {/* Data availability notice */}
-              {visitStepHidden && (
+              {/* Data availability notice — shown only when no visit data source has been set up */}
+              {noSiteVisitSource && (
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}

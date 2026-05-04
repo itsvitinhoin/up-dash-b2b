@@ -10,3 +10,4 @@ export * from "./creatives";
 export * from "./notifications";
 export * from "./savedViews";
 export * from "./syncJobs";
+export * from "./siteVisits";

@@ -410,6 +410,31 @@ export interface PlatformOverviewResponse {
   bottomGrowth: PlatformClientStat[];
 }
 
+export interface SiteVisitRow {
+  id: string;
+  clientId: string;
+  visitDate: string;
+  visitCount: number;
+}
+
+export interface SiteVisitsResponse {
+  rows: SiteVisitRow[];
+  totalVisits: number;
+}
+
+export type UpsertSiteVisitsRequestRowsItem = {
+  /** ISO date string (YYYY-MM-DD) */
+  visitDate: string;
+  /** @minimum 0 */
+  visitCount: number;
+};
+
+export interface UpsertSiteVisitsRequest {
+  /** Target client id (admin only — omit to use the authenticated client) */
+  clientId?: string;
+  rows: UpsertSiteVisitsRequestRowsItem[];
+}
+
 export interface FunnelStep {
   step: string;
   label: string;
@@ -431,6 +456,8 @@ export interface FunnelResponse {
   avgEventsBeforePurchase: number;
   topPaths: FunnelPath[];
   suggestedActions: string[];
+  /** True when at least one site_visits row exists for this client (regardless of the current date range). Drives the "About this data" notice — notice hides once data is flowing even if the selected range shows zero visits. */
+  hasSiteVisitData: boolean;
 }
 
 export interface JourneyKpis {
@@ -1429,6 +1456,12 @@ export type GetFunnelParams = {
   utmSource?: string;
   utmMedium?: string;
   utmCampaign?: string;
+};
+
+export type GetSiteVisitsParams = {
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
 };
 
 export type GetCustomersParams = {

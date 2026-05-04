@@ -681,6 +681,64 @@ export const GetFunnelResponse = zod.object({
     }),
   ),
   suggestedActions: zod.array(zod.string()),
+  hasSiteVisitData: zod
+    .boolean()
+    .describe(
+      'True when at least one site_visits row exists for this client (regardless of the current date range). Drives the \"About this data\" notice — notice hides once data is flowing even if the selected range shows zero visits.',
+    ),
+});
+
+/**
+ * @summary Get daily site visit counts for a client and date range
+ */
+export const GetSiteVisitsQueryParams = zod.object({
+  clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
+});
+
+export const GetSiteVisitsResponse = zod.object({
+  rows: zod.array(
+    zod.object({
+      id: zod.string(),
+      clientId: zod.string(),
+      visitDate: zod.string(),
+      visitCount: zod.number(),
+    }),
+  ),
+  totalVisits: zod.number(),
+});
+
+/**
+ * @summary Upsert daily site visit counts for a client (admin only)
+ */
+export const upsertSiteVisitsBodyRowsItemVisitCountMin = 0;
+
+export const UpsertSiteVisitsBody = zod.object({
+  clientId: zod
+    .string()
+    .optional()
+    .describe(
+      "Target client id (admin only — omit to use the authenticated client)",
+    ),
+  rows: zod.array(
+    zod.object({
+      visitDate: zod.string().describe("ISO date string (YYYY-MM-DD)"),
+      visitCount: zod.number().min(upsertSiteVisitsBodyRowsItemVisitCountMin),
+    }),
+  ),
+});
+
+export const UpsertSiteVisitsResponse = zod.object({
+  rows: zod.array(
+    zod.object({
+      id: zod.string(),
+      clientId: zod.string(),
+      visitDate: zod.string(),
+      visitCount: zod.number(),
+    }),
+  ),
+  totalVisits: zod.number(),
 });
 
 /**
