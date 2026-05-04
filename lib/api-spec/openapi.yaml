@@ -3729,7 +3729,29 @@ components:
           type: ["string", "null"]
           format: date-time
           description: Proxy for last inventory update (product updatedAt).
-      required: [productId, sku, name, stock, restockThreshold, dailyVelocity, risk, unitsSold]
+        bySize:
+          type: array
+          description: Per-product units sold breakdown by size in the selected period.
+          items:
+            type: object
+            properties:
+              size:
+                type: string
+              unitsSold:
+                type: integer
+            required: [size, unitsSold]
+        byColor:
+          type: array
+          description: Per-product units sold breakdown by color in the selected period.
+          items:
+            type: object
+            properties:
+              color:
+                type: string
+              unitsSold:
+                type: integer
+            required: [color, unitsSold]
+      required: [productId, sku, name, stock, restockThreshold, dailyVelocity, risk, unitsSold, bySize, byColor]
 
     CategoryStockRow:
       type: object

@@ -1304,6 +1304,10 @@ export interface StockSkuRow {
    * @nullable
    */
   lastRestockDate?: string | null;
+  /** Per-product units sold breakdown by size in the selected period. */
+  bySize: Array<{ size: string; unitsSold: number }>;
+  /** Per-product units sold breakdown by color in the selected period. */
+  byColor: Array<{ color: string; unitsSold: number }>;
 }
 
 export interface CategoryStockRow {

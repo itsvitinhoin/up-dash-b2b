@@ -3691,6 +3691,32 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
     return { dailyVelocity, coverageDays, risk };
   }
 
+  // ── 3c. Build per-product size/color lookup maps ───────────────────────
+  const productBySizeMap = new Map<string, Array<{ size: string; unitsSold: number }>>();
+  const productByColorMap = new Map<string, Array<{ color: string; unitsSold: number }>>();
+
+  for (const r of sizePerProduct) {
+    const pid = r.productId;
+    const size = String(r.size ?? "Unknown");
+    const sold = Number(r.unitsSold) || 0;
+    let arr = productBySizeMap.get(pid);
+    if (!arr) { arr = []; productBySizeMap.set(pid, arr); }
+    const existing = arr.find((x) => x.size === size);
+    if (existing) existing.unitsSold += sold;
+    else arr.push({ size, unitsSold: sold });
+  }
+
+  for (const r of colorPerProduct) {
+    const pid = r.productId;
+    const color = String(r.color ?? "Unknown");
+    const sold = Number(r.unitsSold) || 0;
+    let arr = productByColorMap.get(pid);
+    if (!arr) { arr = []; productByColorMap.set(pid, arr); }
+    const existing = arr.find((x) => x.color === color);
+    if (existing) existing.unitsSold += sold;
+    else arr.push({ color, unitsSold: sold });
+  }
+
   type SkuRow = {
     productId: string;
     sku: string;
@@ -3703,11 +3729,15 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
     risk: "Stockout" | "Overstock" | "Healthy";
     unitsSold: number;
     lastRestockDate: string | null;
+    bySize: Array<{ size: string; unitsSold: number }>;
+    byColor: Array<{ color: string; unitsSold: number }>;
   };
 
   const allSkus: SkuRow[] = filteredProducts.map((p) => {
     const unitsSold = currVelMap.get(p.id) ?? 0;
     const { dailyVelocity, coverageDays, risk } = classify(p.stock, p.restockThreshold, unitsSold, periodDays);
+    const bySize = (productBySizeMap.get(p.id) ?? []).sort((a, b) => b.unitsSold - a.unitsSold);
+    const byColor = (productByColorMap.get(p.id) ?? []).sort((a, b) => b.unitsSold - a.unitsSold);
     return {
       productId: p.id,
       sku: p.sku,
@@ -3720,6 +3750,8 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
       risk,
       unitsSold,
       lastRestockDate: p.updatedAt ? p.updatedAt.toISOString() : null,
+      bySize,
+      byColor,
     };
   });
 
@@ -3739,6 +3771,8 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
       risk,
       unitsSold,
       lastRestockDate: null,
+      bySize: [],
+      byColor: [],
     };
   });
 

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -20,6 +20,7 @@ import {
   useGetInsight,
   useRegenerateInsight,
   getGetInsightQueryKey,
+  type StockSkuRow,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -47,6 +48,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { EmptyState } from "@/components/empty-state";
 import {
   Package,
@@ -223,6 +230,7 @@ export default function StockIntelligencePage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [riskFilter, setRiskFilter] = useState<RiskFilter>("all");
   const [insightDismissed, setInsightDismissed] = useState(false);
+  const [selectedSku, setSelectedSku] = useState<StockSkuRow | null>(null);
 
   const PAGE_SIZE = 25;
 
@@ -262,6 +270,12 @@ export default function StockIntelligencePage() {
     if (!data?.categoryBreakdown) return [];
     return data.categoryBreakdown.map((c) => c.category);
   }, [data]);
+
+  useEffect(() => {
+    if (!selectedSku || !data?.skus) return;
+    const fresh = data.skus.find((s) => s.productId === selectedSku.productId);
+    if (fresh) setSelectedSku(fresh);
+  }, [data?.skus]);
 
   function toggleSort(col: StockSort) {
     if (sort === col) {
@@ -840,7 +854,12 @@ export default function StockIntelligencePage() {
                     </TableRow>
                   ) : (
                     data?.skus?.map((row) => (
-                      <TableRow key={row.productId} className="hover:bg-accent/30">
+                      <TableRow
+                        key={row.productId}
+                        className="hover:bg-accent/30 cursor-pointer"
+                        onClick={() => setSelectedSku(row)}
+                        data-testid={`stock-row-${row.productId}`}
+                      >
                         <TableCell className="font-mono text-xs">{row.sku}</TableCell>
                         <TableCell className="text-xs font-medium max-w-[180px] truncate" title={row.name}>
                           {row.name}
@@ -913,6 +932,146 @@ export default function StockIntelligencePage() {
           </CardContent>
         </Card>
       </motion.div>
+
+      {/* Product detail panel */}
+      <Sheet open={!!selectedSku} onOpenChange={(open) => { if (!open) setSelectedSku(null); }}>
+        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" data-testid="stock-sku-detail-panel">
+          {selectedSku && (
+            <>
+              <SheetHeader className="mb-5">
+                <SheetTitle className="text-base font-semibold leading-tight">
+                  {selectedSku.name}
+                </SheetTitle>
+                <div className="flex items-center gap-2 flex-wrap mt-1">
+                  <span className="font-mono text-xs text-muted-foreground">{selectedSku.sku}</span>
+                  {selectedSku.category && (
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">{selectedSku.category}</Badge>
+                  )}
+                  <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${RISK_STYLES[selectedSku.risk]}`}>
+                    {selectedSku.risk}
+                  </Badge>
+                </div>
+              </SheetHeader>
+
+              {/* Summary stats */}
+              <div className="grid grid-cols-2 gap-3 mb-6">
+                <div className="rounded-lg border border-border bg-card p-3">
+                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-1">Units Sold</p>
+                  <p className="text-lg font-bold tabular-nums">{formatNumber(selectedSku.unitsSold)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-card p-3">
+                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-1">Stock Units</p>
+                  <p className="text-lg font-bold tabular-nums">{formatNumber(selectedSku.stock)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-card p-3">
+                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-1">Daily Velocity</p>
+                  <p className="text-lg font-bold tabular-nums">{selectedSku.dailyVelocity.toFixed(2)}/d</p>
+                </div>
+                <div className="rounded-lg border border-border bg-card p-3">
+                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-1">Coverage Days</p>
+                  <p className="text-lg font-bold tabular-nums">
+                    {selectedSku.coverageDays != null ? `${selectedSku.coverageDays.toFixed(0)}d` : "—"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Sales by Size */}
+              <div className="mb-6">
+                <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-3">
+                  Sales by Size
+                </p>
+                {selectedSku.bySize.length === 0 ? (
+                  <p className="text-xs text-muted-foreground py-2">No size data for this period.</p>
+                ) : (
+                  <div style={{ height: Math.max(100, selectedSku.bySize.length * 32 + 16) }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={selectedSku.bySize}
+                        layout="vertical"
+                        margin={{ top: 2, right: 48, left: 0, bottom: 2 }}
+                        barCategoryGap={6}
+                      >
+                        <XAxis type="number" hide domain={[0, "dataMax"]} />
+                        <YAxis
+                          type="category"
+                          dataKey="size"
+                          width={52}
+                          tickLine={false}
+                          axisLine={false}
+                          interval={0}
+                          tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        />
+                        <Tooltip
+                          cursor={{ fill: "hsl(var(--accent)/0.3)" }}
+                          contentStyle={{
+                            background: "hsl(var(--card))",
+                            border: "1px solid hsl(var(--border))",
+                            borderRadius: "6px",
+                            fontSize: 11,
+                          }}
+                          formatter={(v) => [formatNumber(v as number), "Units Sold"]}
+                        />
+                        <Bar dataKey="unitsSold" name="Units Sold" radius={[0, 3, 3, 0]} barSize={12}>
+                          {selectedSku.bySize.map((_, i) => (
+                            <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+
+              {/* Sales by Color */}
+              <div>
+                <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-3">
+                  Sales by Color
+                </p>
+                {selectedSku.byColor.length === 0 ? (
+                  <p className="text-xs text-muted-foreground py-2">No color data for this period.</p>
+                ) : (
+                  <div style={{ height: Math.max(100, selectedSku.byColor.length * 32 + 16) }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={selectedSku.byColor}
+                        layout="vertical"
+                        margin={{ top: 2, right: 48, left: 0, bottom: 2 }}
+                        barCategoryGap={6}
+                      >
+                        <XAxis type="number" hide domain={[0, "dataMax"]} />
+                        <YAxis
+                          type="category"
+                          dataKey="color"
+                          width={72}
+                          tickLine={false}
+                          axisLine={false}
+                          interval={0}
+                          tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        />
+                        <Tooltip
+                          cursor={{ fill: "hsl(var(--accent)/0.3)" }}
+                          contentStyle={{
+                            background: "hsl(var(--card))",
+                            border: "1px solid hsl(var(--border))",
+                            borderRadius: "6px",
+                            fontSize: 11,
+                          }}
+                          formatter={(v) => [formatNumber(v as number), "Units Sold"]}
+                        />
+                        <Bar dataKey="unitsSold" name="Units Sold" radius={[0, 3, 3, 0]} barSize={12}>
+                          {selectedSku.byColor.map((_, i) => (
+                            <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </motion.div>
   );
 }
