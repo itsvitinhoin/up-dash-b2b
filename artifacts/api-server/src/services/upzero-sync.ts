@@ -470,20 +470,19 @@ export async function syncUpZeroClient(
   // Products where every inventory call failed are excluded from stockByProduct
   // so their stored stock value is not overwritten with a potentially incorrect 0.
   const stockByProduct = new Map<string, number>();
-  let inventoryTimeoutCount = 0;
   for (const { productExternalId, sku, qty, timeoutError } of inventoryQtys) {
     if (qty === null) {
-      if (timeoutError) inventoryTimeoutCount++;
+      // Log each individual timeout as its own non-fatal error so admins can
+      // see exactly which SKUs had connectivity problems. Generic (non-timeout)
+      // failures are swallowed to avoid spamming errors[].
+      if (timeoutError) {
+        result.errors.push(timeoutError);
+      }
       continue;
     }
     stockByProduct.set(
       productExternalId,
       (stockByProduct.get(productExternalId) ?? 0) + qty,
-    );
-  }
-  if (inventoryTimeoutCount > 0) {
-    result.errors.push(
-      `${inventoryTimeoutCount} inventory SKU fetch(es) timed out after ${INVENTORY_TIMEOUT_MS / 1000}s; stock not updated for those SKUs`,
     );
   }
 
