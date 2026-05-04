@@ -567,9 +567,12 @@ function UpZeroSyncButton({
         .filter(Boolean)
         .join(", ") || "No new records";
       if (errors.length > 0) {
+        const firstMsg = errors[0] ?? "";
+        const truncated = firstMsg.length > 120 ? firstMsg.slice(0, 117) + "…" : firstMsg;
+        const suffix = errors.length > 1 ? ` (+${errors.length - 1} more)` : "";
         toast.warning(`Sync complete for ${clientName}`, {
           id: toastId,
-          description: `${desc} · ${errors.length} error(s)`,
+          description: `${desc} · ${truncated}${suffix}`,
         });
       } else {
         toast.success(`Sync complete for ${clientName}`, { id: toastId, description: desc });
