@@ -1,4 +1,4 @@
-import { eq, isNotNull } from "drizzle-orm";
+import { isNotNull } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { syncUpZeroClient } from "./upzero-sync";
