@@ -12,11 +12,18 @@ const UPZERO_BASE = "https://api.upzero.com.br";
 const PAGE_LIMIT = 200;
 const SYNC_DAYS = 90;
 const INVENTORY_CONCURRENCY = 20;
-const FETCH_TIMEOUT_MS = 30_000; // 30 s per request
+const FETCH_TIMEOUT_MS = 30_000;     // 30 s per paginated API request
+const INVENTORY_TIMEOUT_MS = 8_000;  // 8 s per individual inventory SKU call
+const INVENTORY_BUDGET_MS = 60_000;  // 60 s wall-clock budget for entire inventory phase
 
 /** Create a fetch signal that aborts after FETCH_TIMEOUT_MS. */
 function makeTimeoutSignal(): AbortSignal {
   return AbortSignal.timeout(FETCH_TIMEOUT_MS);
+}
+
+/** Create a fetch signal that aborts after INVENTORY_TIMEOUT_MS (shorter). */
+function makeInventoryTimeoutSignal(): AbortSignal {
+  return AbortSignal.timeout(INVENTORY_TIMEOUT_MS);
 }
 
 /**
@@ -291,7 +298,7 @@ async function fetchInventoryQty(
     const params = new URLSearchParams({ sku });
     const res = await fetch(
       `${UPZERO_BASE}${path}?${params}`,
-      { headers: { "X-API-Key": apiKey }, signal: makeTimeoutSignal() },
+      { headers: { "X-API-Key": apiKey }, signal: makeInventoryTimeoutSignal() },
     );
     if (!res.ok) return { qty: null };
     const body = await res.json() as {
@@ -299,11 +306,12 @@ async function fetchInventoryQty(
     };
     return { qty: Math.max(0, Number(body?.totals?.qty_available ?? 0)) };
   } catch (err) {
-    const wrapped = wrapFetchError(err, path);
-    // Only surface a timeout-specific message; other errors are swallowed as before
     const isTimeout = err instanceof Error &&
       (err.name === "AbortError" || err.name === "TimeoutError");
-    return { qty: null, timeoutError: isTimeout ? wrapped.message : undefined };
+    const msg = isTimeout
+      ? `Inventory fetch timed out after ${INVENTORY_TIMEOUT_MS / 1000}s for SKU "${sku}"`
+      : undefined;
+    return { qty: null, timeoutError: msg };
   }
 }
 
@@ -428,33 +436,54 @@ export async function syncUpZeroClient(
     }
   }
 
-  // Fetch inventory for all SKUs concurrently (batched to avoid rate limiting)
+  // Fetch inventory for all SKUs concurrently (batched to avoid rate limiting).
+  // A global wall-clock budget of INVENTORY_BUDGET_MS caps the total time spent
+  // here so a large catalog never blocks the sync for more than ~60 seconds.
+  const inventoryBudgetStart = Date.now();
+  let inventoryBudgetExceeded = false;
+  let inventorySkipped = 0;
+
   const inventoryQtys = await runConcurrent(
     inventoryTargets,
     INVENTORY_CONCURRENCY,
     async ({ productExternalId, sku }) => {
+      if (Date.now() - inventoryBudgetStart >= INVENTORY_BUDGET_MS) {
+        inventoryBudgetExceeded = true;
+        inventorySkipped++;
+        return { productExternalId, sku, qty: null as number | null, timeoutError: undefined as string | undefined };
+      }
       const { qty, timeoutError } = await fetchInventoryQty(apiKey, sku);
       return { productExternalId, sku, qty, timeoutError };
     },
   );
 
+  if (inventoryBudgetExceeded) {
+    console.warn(
+      `[upzero-sync] inventory budget exceeded after ${Date.now() - inventoryBudgetStart}ms — skipped ${inventorySkipped} SKUs`,
+    );
+    result.errors.push(
+      `Inventory fetch budget (${INVENTORY_BUDGET_MS / 1000}s) exceeded — stock counts may be partial; ${inventorySkipped} SKU(s) skipped`,
+    );
+  }
+
   // Sum qty_available per product; null means the API call failed for that SKU.
   // Products where every inventory call failed are excluded from stockByProduct
   // so their stored stock value is not overwritten with a potentially incorrect 0.
   const stockByProduct = new Map<string, number>();
+  let inventoryTimeoutCount = 0;
   for (const { productExternalId, sku, qty, timeoutError } of inventoryQtys) {
     if (qty === null) {
-      // Surface timeout errors explicitly so admins can see them; generic
-      // failures are kept brief to avoid spamming errors[] with hundreds of lines.
-      result.errors.push(
-        timeoutError ??
-        `Inventory fetch failed for SKU "${sku}" (product ${productExternalId}); stock not updated`,
-      );
+      if (timeoutError) inventoryTimeoutCount++;
       continue;
     }
     stockByProduct.set(
       productExternalId,
       (stockByProduct.get(productExternalId) ?? 0) + qty,
+    );
+  }
+  if (inventoryTimeoutCount > 0) {
+    result.errors.push(
+      `${inventoryTimeoutCount} inventory SKU fetch(es) timed out after ${INVENTORY_TIMEOUT_MS / 1000}s; stock not updated for those SKUs`,
     );
   }
 
