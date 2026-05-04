@@ -2,7 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startScheduler } from "./services/scheduler";
 import { db, syncJobsTable } from "@workspace/db";
-import { inArray, sql } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 
 const rawPort = process.env["PORT"];
 
@@ -47,6 +47,10 @@ async function cleanupOrphanedSyncJobs(): Promise<void> {
   }
 }
 
+// Clean up orphaned sync jobs before accepting traffic so that any stuck jobs
+// from the previous server instance are cleared before the first sync request.
+await cleanupOrphanedSyncJobs();
+
 app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
@@ -54,6 +58,5 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
-  void cleanupOrphanedSyncJobs();
   startScheduler();
 });

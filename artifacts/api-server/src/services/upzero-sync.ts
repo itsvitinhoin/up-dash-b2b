@@ -285,20 +285,25 @@ async function fetchAllCursorPages<T>(
 async function fetchInventoryQty(
   apiKey: string,
   sku: string,
-): Promise<number | null> {
+): Promise<{ qty: number | null; timeoutError?: string }> {
+  const path = "/external/v1/inventory/availability";
   try {
     const params = new URLSearchParams({ sku });
     const res = await fetch(
-      `${UPZERO_BASE}/external/v1/inventory/availability?${params}`,
+      `${UPZERO_BASE}${path}?${params}`,
       { headers: { "X-API-Key": apiKey }, signal: makeTimeoutSignal() },
     );
-    if (!res.ok) return null;
+    if (!res.ok) return { qty: null };
     const body = await res.json() as {
       totals?: { qty_available?: number };
     };
-    return Math.max(0, Number(body?.totals?.qty_available ?? 0));
-  } catch {
-    return null;
+    return { qty: Math.max(0, Number(body?.totals?.qty_available ?? 0)) };
+  } catch (err) {
+    const wrapped = wrapFetchError(err, path);
+    // Only surface a timeout-specific message; other errors are swallowed as before
+    const isTimeout = err instanceof Error &&
+      (err.name === "AbortError" || err.name === "TimeoutError");
+    return { qty: null, timeoutError: isTimeout ? wrapped.message : undefined };
   }
 }
 
@@ -428,8 +433,8 @@ export async function syncUpZeroClient(
     inventoryTargets,
     INVENTORY_CONCURRENCY,
     async ({ productExternalId, sku }) => {
-      const qty = await fetchInventoryQty(apiKey, sku);
-      return { productExternalId, sku, qty };
+      const { qty, timeoutError } = await fetchInventoryQty(apiKey, sku);
+      return { productExternalId, sku, qty, timeoutError };
     },
   );
 
@@ -437,9 +442,12 @@ export async function syncUpZeroClient(
   // Products where every inventory call failed are excluded from stockByProduct
   // so their stored stock value is not overwritten with a potentially incorrect 0.
   const stockByProduct = new Map<string, number>();
-  for (const { productExternalId, sku, qty } of inventoryQtys) {
+  for (const { productExternalId, sku, qty, timeoutError } of inventoryQtys) {
     if (qty === null) {
+      // Surface timeout errors explicitly so admins can see them; generic
+      // failures are kept brief to avoid spamming errors[] with hundreds of lines.
       result.errors.push(
+        timeoutError ??
         `Inventory fetch failed for SKU "${sku}" (product ${productExternalId}); stock not updated`,
       );
       continue;
