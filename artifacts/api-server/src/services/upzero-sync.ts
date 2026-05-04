@@ -320,11 +320,15 @@ export async function syncUpZeroClient(
 
   for (const p of upProducts) {
     for (const v of p.variants ?? []) {
+      const isActive = v.active !== false;
       if (v.sku) {
         const size = extractVariantAttribute(v.attributes, ["size", "tamanho"]);
         const color = extractVariantAttribute(v.attributes, ["cor", "color", "colour"]);
         variantAttrs.set(v.id, { size, color });
-        inventoryTargets.push({ productExternalId: p.id, sku: v.sku });
+        // Only query inventory for active variants
+        if (isActive) {
+          inventoryTargets.push({ productExternalId: p.id, sku: v.sku });
+        }
       }
     }
   }
@@ -385,7 +389,6 @@ export async function syncUpZeroClient(
 
       if (existingProductByExtId.has(p.id)) {
         const internalId = existingProductByExtId.get(p.id)!;
-        // Fix #4: include sku in the update set
         await db
           .update(productsTable)
           .set({ sku, name: p.name, price, cost: cost ?? undefined, stock, status })
@@ -401,9 +404,9 @@ export async function syncUpZeroClient(
           if (v.sku) skuToLocalProductId.set(v.sku, internalId);
         }
       } else {
-        // Fix #1: conflict on (clientId, externalId) — the authoritative UP Zero key.
-        // If a product was previously inserted without an externalId (manual import by SKU),
-        // it won't match this conflict target and will be inserted fresh with the externalId.
+        // Conflict target is (clientId, externalId) — the authoritative UP Zero key.
+        // Products imported manually without an externalId won't hit this conflict
+        // and will be inserted fresh; their SKU-based row coexists independently.
         const [upserted] = await db
           .insert(productsTable)
           .values({
@@ -699,8 +702,8 @@ export async function syncUpZeroClient(
         }
       }
 
-      // Fix #3: always delete existing items before re-inserting — this covers
-      // the case where an order previously had items but now has none active.
+      // Always delete existing items before re-inserting; handles the case where
+      // an order previously had items but all are now removed/inactive.
       await db
         .delete(orderItemsTable)
         .where(eq(orderItemsTable.orderId, internalOrderId));
@@ -742,8 +745,9 @@ export async function syncUpZeroClient(
 
   // ── 4. Post-sync aggregations ─────────────────────────────────────────────
 
-  // Fix #2: Full recompute using LEFT JOIN so products with zero qualifying
-  // order items are reset to 0 (not left with stale totals from prior syncs).
+  // Full recompute for all products belonging to this client.
+  // Uses FILTER to ensure only items from approved orders contribute to totals;
+  // products with no qualifying items are correctly reset to 0.
   await db.execute(sql`
     UPDATE products p
     SET
@@ -752,13 +756,23 @@ export async function syncUpZeroClient(
     FROM (
       SELECT
         p2.id AS product_id,
-        SUM(oi.quantity)::int                        AS total_qty,
-        SUM(oi.quantity * oi.price_at_sale)::float   AS total_rev
+        COALESCE(
+          SUM(oi.quantity) FILTER (
+            WHERE o.id IS NOT NULL
+              AND o.client_id = ${clientId}
+              AND o.status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+          ), 0
+        )::int AS total_qty,
+        COALESCE(
+          SUM(oi.quantity * oi.price_at_sale) FILTER (
+            WHERE o.id IS NOT NULL
+              AND o.client_id = ${clientId}
+              AND o.status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+          ), 0
+        )::float AS total_rev
       FROM products p2
       LEFT JOIN order_items oi ON oi.product_id = p2.id
       LEFT JOIN orders o       ON o.id = oi.order_id
-                                AND o.client_id = ${clientId}
-                                AND o.status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
       WHERE p2.client_id = ${clientId}
       GROUP BY p2.id
     ) agg
