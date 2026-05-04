@@ -184,7 +184,7 @@ export async function syncUpZeroClient(
         .where(
           and(
             eq(customersTable.clientId, clientId),
-            sql`${customersTable.email} = ANY(${sql.raw(`ARRAY[${emails.map((e) => `'${e.replace(/'/g, "''")}'`).join(",")}]`)})`,
+            inArray(customersTable.email, emails),
           ),
         );
       for (const row of emailRows) {
@@ -236,7 +236,7 @@ export async function syncUpZeroClient(
             );
           result.customersUpdated++;
         } else {
-          const [inserted] = await db
+          const [upserted] = await db
             .insert(customersTable)
             .values({
               clientId,
@@ -258,10 +258,17 @@ export async function syncUpZeroClient(
                 city,
               },
             })
-            .returning({ id: customersTable.id });
-          if (inserted) {
-            externalToInternalCustomer.set(c.id, inserted.id);
-            result.customersCreated++;
+            .returning({
+              id: customersTable.id,
+              wasInserted: sql<boolean>`(xmax = 0)`,
+            });
+          if (upserted) {
+            externalToInternalCustomer.set(c.id, upserted.id);
+            if (upserted.wasInserted) {
+              result.customersCreated++;
+            } else {
+              result.customersUpdated++;
+            }
           }
         }
       } catch (err) {
@@ -313,7 +320,7 @@ export async function syncUpZeroClient(
             `upzero-${uzCustomer.id}@noemail.internal`;
           const state = getAddressState(uzCustomer);
           const city = getAddressCity(uzCustomer);
-          const [inserted] = await db
+          const [upsertedCust] = await db
             .insert(customersTable)
             .values({
               clientId,
@@ -330,11 +337,18 @@ export async function syncUpZeroClient(
               target: [customersTable.clientId, customersTable.externalId],
               set: { name: uzCustomer.name ?? null },
             })
-            .returning({ id: customersTable.id });
-          if (inserted) {
-            customerId = inserted.id;
-            externalToInternalCustomer.set(uzCustomer.id, inserted.id);
-            result.customersCreated++;
+            .returning({
+              id: customersTable.id,
+              wasInserted: sql<boolean>`(xmax = 0)`,
+            });
+          if (upsertedCust) {
+            customerId = upsertedCust.id;
+            externalToInternalCustomer.set(uzCustomer.id, upsertedCust.id);
+            if (upsertedCust.wasInserted) {
+              result.customersCreated++;
+            } else {
+              result.customersUpdated++;
+            }
           }
         }
       }
@@ -363,7 +377,7 @@ export async function syncUpZeroClient(
           );
         result.ordersUpdated++;
       } else {
-        await db
+        const [upsertedOrder] = await db
           .insert(ordersTable)
           .values({
             clientId,
@@ -379,8 +393,13 @@ export async function syncUpZeroClient(
           .onConflictDoUpdate({
             target: [ordersTable.clientId, ordersTable.externalId],
             set: { amount, status, state, city },
-          });
-        result.ordersCreated++;
+          })
+          .returning({ id: ordersTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
+        if (upsertedOrder?.wasInserted) {
+          result.ordersCreated++;
+        } else {
+          result.ordersUpdated++;
+        }
       }
     } catch (err) {
       result.errors.push(`Order ${o.id}: ${String(err)}`);
