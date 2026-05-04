@@ -17,6 +17,7 @@ export const productsTable = pgTable(
     clientId: text("client_id")
       .notNull()
       .references(() => clientsTable.id, { onDelete: "cascade" }),
+    externalId: text("external_id"),
     sku: text("sku").notNull(),
     name: text("name").notNull(),
     description: text("description"),
@@ -41,6 +42,10 @@ export const productsTable = pgTable(
     clientSkuUq: uniqueIndex("products_client_sku_uq").on(
       table.clientId,
       table.sku,
+    ),
+    clientExternalIdUq: uniqueIndex("products_client_external_id_uq").on(
+      table.clientId,
+      table.externalId,
     ),
     clientIdx: index("products_client_idx").on(table.clientId),
     categoryIdx: index("products_category_idx").on(table.category),

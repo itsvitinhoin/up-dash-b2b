@@ -539,12 +539,15 @@ function UpZeroSyncButton({
         onSuccess: (data) => {
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
           setLastSync(new Date());
-          const { customersCreated, customersUpdated, ordersCreated, ordersUpdated, errors } = data;
+          const { customersCreated, customersUpdated, ordersCreated, ordersUpdated, productsCreated, productsUpdated, orderItemsSynced, errors } = data;
           const desc = [
             ordersCreated > 0 && `${ordersCreated} new orders`,
-            ordersUpdated > 0 && `${ordersUpdated} updated`,
+            ordersUpdated > 0 && `${ordersUpdated} orders updated`,
             customersCreated > 0 && `${customersCreated} new customers`,
             customersUpdated > 0 && `${customersUpdated} customers updated`,
+            productsCreated > 0 && `${productsCreated} new products`,
+            productsUpdated > 0 && `${productsUpdated} products updated`,
+            orderItemsSynced > 0 && `${orderItemsSynced} order items`,
           ]
             .filter(Boolean)
             .join(", ") || "No new records";

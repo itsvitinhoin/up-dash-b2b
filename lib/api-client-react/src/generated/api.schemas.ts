@@ -198,6 +198,9 @@ export interface UpZeroSyncResponse {
   customersUpdated: number;
   ordersCreated: number;
   ordersUpdated: number;
+  productsCreated: number;
+  productsUpdated: number;
+  orderItemsSynced: number;
   errors: string[];
 }
 

@@ -1,9 +1,17 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { db, clientsTable, customersTable, ordersTable } from "@workspace/db";
+import {
+  db,
+  clientsTable,
+  customersTable,
+  ordersTable,
+  orderItemsTable,
+  productsTable,
+} from "@workspace/db";
 
 const UPZERO_BASE = "https://api.upzero.com.br";
 const PAGE_LIMIT = 200;
 const SYNC_DAYS = 90;
+const INVENTORY_CONCURRENCY = 20;
 
 type UpZeroStatus =
   | "RESERVED"
@@ -32,6 +40,21 @@ function mapOrderStatus(
   }
 }
 
+function mapProductStatus(
+  s: string,
+): "ACTIVE" | "INACTIVE" | "DISCONTINUED" {
+  switch (s) {
+    case "active":
+      return "ACTIVE";
+    case "inactive":
+      return "INACTIVE";
+    case "archived":
+      return "DISCONTINUED";
+    default:
+      return "ACTIVE";
+  }
+}
+
 interface UpZeroAddress {
   address_state?: string | null;
   address_city?: string | null;
@@ -48,6 +71,40 @@ interface UpZeroCustomer {
   retail_profile?: UpZeroAddress | null;
 }
 
+interface UpZeroVariantAttribute {
+  attribute: { id?: string; name?: string; code?: string };
+  term: { name?: string; code?: string };
+}
+
+interface UpZeroVariant {
+  id: string;
+  sku?: string | null;
+  price?: string | null;
+  cost?: string | null;
+  active?: boolean;
+  attributes?: UpZeroVariantAttribute[];
+}
+
+interface UpZeroProduct {
+  id: string;
+  product_id?: string;
+  code?: string | null;
+  name: string;
+  status: string;
+  variants?: UpZeroVariant[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface UpZeroOrderItem {
+  id: string;
+  variant_id?: string | null;
+  sku?: string | null;
+  qty: number;
+  unit_price?: string | null;
+  status: "active" | "removed";
+}
+
 interface UpZeroOrder {
   id: string;
   order_status: UpZeroStatus;
@@ -56,6 +113,7 @@ interface UpZeroOrder {
   created_at: string;
   customer?: UpZeroCustomer | null;
   shipping_address?: UpZeroAddress | null;
+  items?: UpZeroOrderItem[];
 }
 
 interface PagedResponse<T> {
@@ -63,6 +121,11 @@ interface PagedResponse<T> {
   page: number;
   total_pages: number;
   total: number;
+}
+
+interface CursorResponse<T> {
+  data: T[];
+  next_cursor: string | null;
 }
 
 async function fetchAllPages<T>(
@@ -97,6 +160,72 @@ async function fetchAllPages<T>(
   return results;
 }
 
+async function fetchAllCursorPages<T>(
+  apiKey: string,
+  path: string,
+  extraParams: Record<string, string> = {},
+): Promise<T[]> {
+  const results: T[] = [];
+  let cursor: string | null | undefined = undefined;
+
+  while (true) {
+    const params = new URLSearchParams({
+      limit: String(PAGE_LIMIT),
+      ...extraParams,
+    });
+    if (cursor) params.set("cursor", cursor);
+    const url = `${UPZERO_BASE}${path}?${params}`;
+    const res = await fetch(url, {
+      headers: { "X-API-Key": apiKey },
+    });
+    if (!res.ok) {
+      throw new Error(
+        `UP Zero API error: ${res.status} ${res.statusText} — ${path}`,
+      );
+    }
+    const body = (await res.json()) as CursorResponse<T>;
+    results.push(...(body.data ?? []));
+    if (!body.next_cursor) break;
+    cursor = body.next_cursor;
+  }
+
+  return results;
+}
+
+async function fetchInventoryQty(
+  apiKey: string,
+  sku: string,
+): Promise<number> {
+  try {
+    const params = new URLSearchParams({ sku });
+    const res = await fetch(
+      `${UPZERO_BASE}/external/v1/inventory/availability?${params}`,
+      { headers: { "X-API-Key": apiKey } },
+    );
+    if (!res.ok) return 0;
+    const body = await res.json() as {
+      totals?: { qty_available?: number };
+    };
+    return Math.max(0, Number(body?.totals?.qty_available ?? 0));
+  } catch {
+    return 0;
+  }
+}
+
+async function runConcurrent<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = items.slice(i, i + concurrency);
+    const batchResults = await Promise.all(batch.map(fn));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 function getAddressState(c: UpZeroCustomer): string | null {
   return (
     c.address_state ??
@@ -115,11 +244,28 @@ function getAddressCity(c: UpZeroCustomer): string | null {
   );
 }
 
+function extractVariantAttribute(
+  attributes: UpZeroVariantAttribute[] | undefined,
+  codes: string[],
+): string | null {
+  if (!attributes) return null;
+  for (const attr of attributes) {
+    const code = (attr.attribute?.code ?? "").toLowerCase();
+    if (codes.includes(code)) {
+      return attr.term?.name ?? attr.term?.code ?? null;
+    }
+  }
+  return null;
+}
+
 export interface SyncResult {
   customersCreated: number;
   customersUpdated: number;
   ordersCreated: number;
   ordersUpdated: number;
+  productsCreated: number;
+  productsUpdated: number;
+  orderItemsSynced: number;
   errors: string[];
 }
 
@@ -132,6 +278,9 @@ export async function syncUpZeroClient(
     customersUpdated: 0,
     ordersCreated: 0,
     ordersUpdated: 0,
+    productsCreated: 0,
+    productsUpdated: 0,
+    orderItemsSynced: 0,
     errors: [],
   };
 
@@ -142,19 +291,153 @@ export async function syncUpZeroClient(
 
   let upCustomers: UpZeroCustomer[] = [];
   let upOrders: UpZeroOrder[] = [];
+  let upProducts: UpZeroProduct[] = [];
 
   try {
-    [upCustomers, upOrders] = await Promise.all([
+    [upCustomers, upOrders, upProducts] = await Promise.all([
       fetchAllPages<UpZeroCustomer>(apiKey, "/external/v1/customers"),
       fetchAllPages<UpZeroOrder>(apiKey, "/external/v1/orders", {
         start_date: fmt(startDate),
         end_date: fmt(endDate),
       }),
+      fetchAllCursorPages<UpZeroProduct>(apiKey, "/external/v1/products"),
     ]);
   } catch (err) {
     result.errors.push(String(err));
     return result;
   }
+
+  // ── 1. Product sync ──────────────────────────────────────────────────────
+
+  // Build a map of variantId → {size, color} for use in order item sync
+  const variantAttrs = new Map<string, { size: string | null; color: string | null }>();
+
+  // Collect all (productExternalId, sku) pairs across all variants to fetch inventory
+  const inventoryTargets: Array<{
+    productExternalId: string;
+    sku: string;
+  }> = [];
+
+  for (const p of upProducts) {
+    for (const v of p.variants ?? []) {
+      if (v.sku) {
+        const size = extractVariantAttribute(v.attributes, ["size", "tamanho"]);
+        const color = extractVariantAttribute(v.attributes, ["cor", "color", "colour"]);
+        variantAttrs.set(v.id, { size, color });
+        inventoryTargets.push({ productExternalId: p.id, sku: v.sku });
+      }
+    }
+  }
+
+  // Fetch inventory for all SKUs concurrently (batched to avoid rate limiting)
+  const inventoryQtys = await runConcurrent(
+    inventoryTargets,
+    INVENTORY_CONCURRENCY,
+    async ({ productExternalId, sku }) => {
+      const qty = await fetchInventoryQty(apiKey, sku);
+      return { productExternalId, qty };
+    },
+  );
+
+  // Sum qty_available per product
+  const stockByProduct = new Map<string, number>();
+  for (const { productExternalId, qty } of inventoryQtys) {
+    stockByProduct.set(
+      productExternalId,
+      (stockByProduct.get(productExternalId) ?? 0) + qty,
+    );
+  }
+
+  // Fetch existing products by externalId
+  const upProductExternalIds = upProducts.map((p) => p.id);
+  const existingProducts =
+    upProductExternalIds.length > 0
+      ? await db
+          .select({ id: productsTable.id, externalId: productsTable.externalId })
+          .from(productsTable)
+          .where(
+            and(
+              eq(productsTable.clientId, clientId),
+              inArray(productsTable.externalId, upProductExternalIds),
+            ),
+          )
+      : [];
+
+  const existingProductByExtId = new Map<string, string>();
+  for (const row of existingProducts) {
+    if (row.externalId) existingProductByExtId.set(row.externalId, row.id);
+  }
+
+  // Map of SKU → local product ID (built during upsert, used for order items)
+  const skuToLocalProductId = new Map<string, string>();
+
+  for (const p of upProducts) {
+    try {
+      const activeVariants = (p.variants ?? []).filter((v) => v.active !== false && v.sku);
+      const firstVariant = activeVariants[0] ?? (p.variants ?? [])[0];
+      if (!firstVariant) continue;
+
+      const sku = firstVariant.sku ?? p.code ?? p.id;
+      const price = parseFloat(firstVariant.price ?? "0") || 0;
+      const cost = firstVariant.cost ? parseFloat(firstVariant.cost) : null;
+      const stock = stockByProduct.get(p.id) ?? 0;
+      const status = mapProductStatus(p.status);
+
+      if (existingProductByExtId.has(p.id)) {
+        const internalId = existingProductByExtId.get(p.id)!;
+        await db
+          .update(productsTable)
+          .set({ name: p.name, price, cost: cost ?? undefined, stock, status })
+          .where(
+            and(
+              eq(productsTable.clientId, clientId),
+              eq(productsTable.id, internalId),
+            ),
+          );
+        result.productsUpdated++;
+        // Register all active variant SKUs → internal ID
+        for (const v of activeVariants) {
+          if (v.sku) skuToLocalProductId.set(v.sku, internalId);
+        }
+      } else {
+        const [upserted] = await db
+          .insert(productsTable)
+          .values({
+            clientId,
+            externalId: p.id,
+            sku,
+            name: p.name,
+            price,
+            cost: cost ?? undefined,
+            stock,
+            status,
+          })
+          .onConflictDoUpdate({
+            target: [productsTable.clientId, productsTable.sku],
+            set: { externalId: p.id, name: p.name, price, cost: cost ?? undefined, stock, status },
+          })
+          .returning({
+            id: productsTable.id,
+            wasInserted: sql<boolean>`(xmax = 0)`,
+          });
+
+        if (upserted) {
+          if (upserted.wasInserted) {
+            result.productsCreated++;
+          } else {
+            result.productsUpdated++;
+          }
+          for (const v of activeVariants) {
+            if (v.sku) skuToLocalProductId.set(v.sku, upserted.id);
+          }
+        }
+      }
+    } catch (err) {
+      result.errors.push(`Product ${p.id}: ${String(err)}`);
+    }
+  }
+
+  // ── 2. Customer sync ─────────────────────────────────────────────────────
 
   const externalToInternalCustomer = new Map<string, string>();
 
@@ -281,6 +564,8 @@ export async function syncUpZeroClient(
     }
   }
 
+  // ── 3. Order + order item sync ───────────────────────────────────────────
+
   const externalOrderIds = upOrders.map((o) => o.id);
 
   const existingOrders =
@@ -368,15 +653,17 @@ export async function syncUpZeroClient(
       const city =
         (shippingAddr as UpZeroAddress | null)?.address_city ?? null;
 
+      let internalOrderId: string;
+
       if (existingOrderByExtId.has(o.id)) {
-        const internalId = existingOrderByExtId.get(o.id)!;
+        internalOrderId = existingOrderByExtId.get(o.id)!;
         await db
           .update(ordersTable)
           .set({ amount, status, state, city })
           .where(
             and(
               eq(ordersTable.clientId, clientId),
-              eq(ordersTable.id, internalId),
+              eq(ordersTable.id, internalOrderId),
             ),
           );
         result.ordersUpdated++;
@@ -399,10 +686,50 @@ export async function syncUpZeroClient(
             set: { amount, status, state, city },
           })
           .returning({ id: ordersTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
-        if (upsertedOrder?.wasInserted) {
+        if (!upsertedOrder) continue;
+        internalOrderId = upsertedOrder.id;
+        if (upsertedOrder.wasInserted) {
           result.ordersCreated++;
         } else {
           result.ordersUpdated++;
+        }
+      }
+
+      // Sync order items — delete existing then re-insert for idempotency
+      const activeItems = (o.items ?? []).filter((item) => item.status === "active");
+      if (activeItems.length > 0) {
+        await db
+          .delete(orderItemsTable)
+          .where(eq(orderItemsTable.orderId, internalOrderId));
+
+        for (const item of activeItems) {
+          const sku = item.sku;
+          if (!sku) continue;
+          const localProductId = skuToLocalProductId.get(sku);
+          if (!localProductId) {
+            result.errors.push(
+              `Order ${o.id} item ${item.id}: SKU "${sku}" not found in synced products, skipping`,
+            );
+            continue;
+          }
+          const attrs = item.variant_id
+            ? variantAttrs.get(item.variant_id)
+            : undefined;
+          try {
+            await db.insert(orderItemsTable).values({
+              orderId: internalOrderId,
+              productId: localProductId,
+              quantity: Math.max(1, Math.round(item.qty)),
+              priceAtSale: parseFloat(item.unit_price ?? "0") || 0,
+              size: attrs?.size ?? null,
+              color: attrs?.color ?? null,
+            });
+            result.orderItemsSynced++;
+          } catch (itemErr) {
+            result.errors.push(
+              `Order ${o.id} item ${item.id}: ${String(itemErr)}`,
+            );
+          }
         }
       }
     } catch (err) {
@@ -410,33 +737,50 @@ export async function syncUpZeroClient(
     }
   }
 
-  if (result.customersCreated + result.ordersCreated > 0) {
+  // ── 4. Post-sync aggregations ─────────────────────────────────────────────
+
+  // Recompute totalSold / totalRevenue for all products touched in this sync
+  await db.execute(sql`
+    UPDATE products p
+    SET
+      total_sold    = COALESCE(agg.total_qty, 0),
+      total_revenue = COALESCE(agg.total_rev, 0)
+    FROM (
+      SELECT
+        oi.product_id,
+        SUM(oi.quantity)::int                        AS total_qty,
+        SUM(oi.quantity * oi.price_at_sale)::float   AS total_rev
+      FROM order_items oi
+      JOIN orders o ON o.id = oi.order_id
+      WHERE o.client_id = ${clientId}
+        AND o.status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+      GROUP BY oi.product_id
+    ) agg
+    WHERE p.id = agg.product_id
+      AND p.client_id = ${clientId}
+  `);
+
+  // Recompute client YTD revenue / orders
+  const aggResult = await db.execute<{ revenue: number; orders: number }>(
+    sql`
+      SELECT
+        COALESCE(SUM(amount), 0)::float AS revenue,
+        COUNT(*)::int AS orders
+      FROM orders
+      WHERE client_id = ${clientId}
+        AND status IN ('APPROVED','SHIPPED','DELIVERED')
+        AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())
+    `,
+  );
+  const agg = aggResult.rows[0];
+  if (agg) {
     await db
       .update(clientsTable)
-      .set({ revenueYtd: 0, ordersYtd: 0 })
+      .set({
+        revenueYtd: Number(agg.revenue) || 0,
+        ordersYtd: Number(agg.orders) || 0,
+      })
       .where(eq(clientsTable.id, clientId));
-
-    const aggResult = await db.execute<{ revenue: number; orders: number }>(
-      sql`
-        SELECT
-          COALESCE(SUM(amount), 0)::float AS revenue,
-          COUNT(*)::int AS orders
-        FROM orders
-        WHERE client_id = ${clientId}
-          AND status IN ('APPROVED','SHIPPED','DELIVERED')
-          AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())
-      `,
-    );
-    const agg = aggResult.rows[0];
-    if (agg) {
-      await db
-        .update(clientsTable)
-        .set({
-          revenueYtd: Number(agg.revenue) || 0,
-          ordersYtd: Number(agg.orders) || 0,
-        })
-        .where(eq(clientsTable.id, clientId));
-    }
   }
 
   return result;

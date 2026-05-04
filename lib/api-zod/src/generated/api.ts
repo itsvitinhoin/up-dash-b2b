@@ -406,6 +406,9 @@ export const SyncUpZeroResponse = zod.object({
   customersUpdated: zod.number(),
   ordersCreated: zod.number(),
   ordersUpdated: zod.number(),
+  productsCreated: zod.number(),
+  productsUpdated: zod.number(),
+  orderItemsSynced: zod.number(),
   errors: zod.array(zod.string()),
 });
 

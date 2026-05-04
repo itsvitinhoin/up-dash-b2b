@@ -1837,11 +1837,17 @@ components:
           type: integer
         ordersUpdated:
           type: integer
+        productsCreated:
+          type: integer
+        productsUpdated:
+          type: integer
+        orderItemsSynced:
+          type: integer
         errors:
           type: array
           items:
             type: string
-      required: [customersCreated, customersUpdated, ordersCreated, ordersUpdated, errors]
+      required: [customersCreated, customersUpdated, ordersCreated, ordersUpdated, productsCreated, productsUpdated, orderItemsSynced, errors]
 
     ClientImportRow:
       type: object

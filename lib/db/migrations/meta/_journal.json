@@ -43,6 +43,13 @@
       "when": 1777900050564,
       "tag": "0005_sturdy_baron_strucker",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777900983143,
+      "tag": "0006_tranquil_roughhouse",
+      "breakpoints": true
     }
   ]
 }
