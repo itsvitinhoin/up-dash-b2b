@@ -556,6 +556,67 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
   res.status(202).json({ jobId });
 });
 
+/**
+ * GET /clients/:clientId/sync/upzero/probe
+ * Admin-only debug endpoint. Fetches the raw first page from each UP Zero
+ * endpoint (orders, customers, products) and returns the response shape so
+ * field-name mismatches can be spotted without triggering a full sync.
+ */
+router.get("/clients/:clientId/sync/upzero/probe", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = GetClientParams.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = parsed.data;
+  const [client] = await db.select({ upZeroApiKey: clientsTable.upZeroApiKey }).from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (!client.upZeroApiKey) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "No UP Zero API key configured for this client", status: 400 });
+    return;
+  }
+
+  const UPZERO_BASE = "https://api.upzero.com.br";
+  const headers = { "X-API-Key": client.upZeroApiKey };
+
+  async function probeEndpoint(path: string, extraParams: Record<string, string> = {}) {
+    const params = new URLSearchParams({ limit: "1", page: "1", ...extraParams });
+    const url = `${UPZERO_BASE}${path}?${params}`;
+    try {
+      const r = await fetch(url, { headers });
+      const status = r.status;
+      const raw = await r.json() as Record<string, unknown>;
+      const topLevelKeys = Object.keys(raw);
+      // Summarise each top-level field: show type + length for arrays
+      const shape: Record<string, string> = {};
+      for (const [k, v] of Object.entries(raw)) {
+        if (Array.isArray(v)) shape[k] = `Array(${v.length})`;
+        else if (v !== null && typeof v === "object") shape[k] = `Object(${Object.keys(v as object).join(", ")})`;
+        else shape[k] = `${typeof v}: ${JSON.stringify(v)}`;
+      }
+      return { path, httpStatus: status, topLevelKeys, shape };
+    } catch (err) {
+      return { path, error: String(err) };
+    }
+  }
+
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(now.getDate() - 7);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+  const [orders, customers, products] = await Promise.all([
+    probeEndpoint("/external/v1/orders", { start_date: fmt(start), end_date: fmt(now) }),
+    probeEndpoint("/external/v1/customers"),
+    probeEndpoint("/external/v1/products"),
+  ]);
+
+  res.json({ orders, customers, products });
+});
+
 router.get("/clients/:clientId/sync/upzero/:jobId", requireAdmin, async (req, res): Promise<void> => {
   const paramParsed = z.object({ clientId: z.string(), jobId: z.string() }).safeParse(req.params);
   if (!paramParsed.success) {

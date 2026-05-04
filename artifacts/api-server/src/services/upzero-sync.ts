@@ -107,8 +107,13 @@ interface UpZeroOrderItem {
 
 interface UpZeroOrder {
   id: string;
-  order_status: UpZeroStatus;
-  total: string;
+  // Some UP Zero API versions use "status", others use "order_status"
+  order_status?: UpZeroStatus;
+  status?: UpZeroStatus;
+  // Some versions use "total", others "total_amount" or "amount"
+  total?: string;
+  total_amount?: string;
+  amount?: string;
   subtotal?: string;
   created_at: string;
   customer?: UpZeroCustomer | null;
@@ -116,16 +121,63 @@ interface UpZeroOrder {
   items?: UpZeroOrderItem[];
 }
 
-interface PagedResponse<T> {
-  data: T[];
-  page: number;
-  total_pages: number;
-  total: number;
+// Loose response shapes — we resolve actual field names at runtime because
+// the UP Zero API has changed field names across versions (e.g. "data" vs
+// "items", "total_pages" vs "last_page", "next_cursor" vs "cursor").
+type AnyPagedBody = Record<string, unknown>;
+type AnyCursorBody = Record<string, unknown>;
+
+/** Pull the items array out of whatever shape the API returned. */
+function resolveItems<T>(body: AnyPagedBody, path: string, page: number): T[] {
+  // Try every known field name for the items array
+  const items =
+    (body["data"] as T[] | undefined) ??
+    (body["items"] as T[] | undefined) ??
+    (body["results"] as T[] | undefined) ??
+    (body["records"] as T[] | undefined) ??
+    (body["orders"] as T[] | undefined) ??
+    (body["customers"] as T[] | undefined) ??
+    (body["products"] as T[] | undefined) ??
+    [];
+
+  if (page === 1) {
+    // Log the top-level field names on the first page so mismatches are obvious
+    const topKeys = Object.keys(body);
+    const resolvedFrom = topKeys.find((k) =>
+      ["data","items","results","records","orders","customers","products"].includes(k)
+    ) ?? "(none matched)";
+    console.log(
+      `[upzero-sync] ${path} page 1 — top-level keys: [${topKeys.join(", ")}], ` +
+      `items resolved from: "${resolvedFrom}", count: ${items.length}`,
+    );
+  }
+
+  return items;
 }
 
-interface CursorResponse<T> {
-  data: T[];
-  next_cursor: string | null;
+/** Pull the total page count out of the paged response body. */
+function resolveTotalPages(body: AnyPagedBody): number {
+  return (
+    (body["total_pages"] as number | undefined) ??
+    (body["last_page"] as number | undefined) ??
+    (body["pages"] as number | undefined) ??
+    (body["pageCount"] as number | undefined) ??
+    // Laravel-style meta wrapper
+    ((body["meta"] as AnyPagedBody | undefined)?.["last_page"] as number | undefined) ??
+    ((body["meta"] as AnyPagedBody | undefined)?.["total_pages"] as number | undefined) ??
+    1
+  );
+}
+
+/** Pull the next cursor out of a cursor-paged response body. */
+function resolveNextCursor(body: AnyCursorBody): string | null {
+  return (
+    (body["next_cursor"] as string | null | undefined) ??
+    (body["cursor"] as string | null | undefined) ??
+    (body["next"] as string | null | undefined) ??
+    ((body["meta"] as AnyCursorBody | undefined)?.["next_cursor"] as string | null | undefined) ??
+    null
+  );
 }
 
 async function fetchAllPages<T>(
@@ -151,9 +203,11 @@ async function fetchAllPages<T>(
         `UP Zero API error: ${res.status} ${res.statusText} — ${path}`,
       );
     }
-    const body = (await res.json()) as PagedResponse<T>;
-    results.push(...(body.data ?? []));
-    if (page >= (body.total_pages ?? 1)) break;
+    const body = (await res.json()) as AnyPagedBody;
+    const items = resolveItems<T>(body, path, page);
+    results.push(...items);
+    const totalPages = resolveTotalPages(body);
+    if (page >= totalPages || items.length === 0) break;
     page++;
   }
 
@@ -167,6 +221,7 @@ async function fetchAllCursorPages<T>(
 ): Promise<T[]> {
   const results: T[] = [];
   let cursor: string | null | undefined = undefined;
+  let pageNum = 0;
 
   while (true) {
     const params = new URLSearchParams({
@@ -183,10 +238,13 @@ async function fetchAllCursorPages<T>(
         `UP Zero API error: ${res.status} ${res.statusText} — ${path}`,
       );
     }
-    const body = (await res.json()) as CursorResponse<T>;
-    results.push(...(body.data ?? []));
-    if (!body.next_cursor) break;
-    cursor = body.next_cursor;
+    const body = (await res.json()) as AnyCursorBody;
+    pageNum++;
+    const items = resolveItems<T>(body as AnyPagedBody, path, pageNum);
+    results.push(...items);
+    const nextCursor = resolveNextCursor(body);
+    if (!nextCursor || items.length === 0) break;
+    cursor = nextCursor;
   }
 
   return results;
@@ -626,8 +684,12 @@ export async function syncUpZeroClient(
 
   for (const o of upOrders) {
     try {
-      const amount = parseFloat(o.total) || 0;
-      const status = mapOrderStatus(o.order_status);
+      // Resolve status — some UP Zero API versions use "status", others "order_status"
+      const rawStatus = o.order_status ?? o.status;
+      const status = mapOrderStatus(rawStatus ?? ("CONFIRMED" as UpZeroStatus));
+      // Resolve amount — try "total", "total_amount", "amount" in order
+      const rawAmount = o.total ?? o.total_amount ?? o.amount ?? "0";
+      const amount = parseFloat(rawAmount) || 0;
       const createdAt = new Date(o.created_at);
       const approvalDate =
         status === "APPROVED" || status === "SHIPPED" ? createdAt : undefined;
@@ -678,7 +740,9 @@ export async function syncUpZeroClient(
       }
 
       if (!customerId) {
-        result.errors.push(`Order ${o.id}: no customer found, skipping`);
+        // Warn but don't count as an error — orders without customers are unusual
+        // but shouldn't block all other orders from being processed.
+        result.errors.push(`Order ${o.id}: no customer linked (order skipped)`);
         continue;
       }
 
@@ -771,7 +835,26 @@ export async function syncUpZeroClient(
     }
   }
 
-  // ── 4. Post-sync aggregations ─────────────────────────────────────────────
+  // ── 4. Zero-records detection ─────────────────────────────────────────────
+  // If every fetch returned 0 records and there were no errors, that almost
+  // certainly means the API response shape doesn't match what we expect.
+  // Surface a clear warning instead of silently succeeding with all-zeros.
+  const totalFetched = upOrders.length + upCustomers.length + upProducts.length;
+  if (totalFetched === 0 && result.errors.length === 0) {
+    result.errors.push(
+      "WARNING: All three UP Zero endpoints returned 0 records with no API error. " +
+      "This usually means the response envelope field names do not match expectations. " +
+      "Check the server logs for '[upzero-sync]' lines showing the actual top-level " +
+      "keys returned by each endpoint, then update resolveItems() in upzero-sync.ts.",
+    );
+  } else {
+    console.log(
+      `[upzero-sync] fetch totals — orders: ${upOrders.length}, ` +
+      `customers: ${upCustomers.length}, products: ${upProducts.length}`,
+    );
+  }
+
+  // ── 5. Post-sync aggregations ─────────────────────────────────────────────
 
   // Full recompute for all products belonging to this client.
   // Uses FILTER to ensure only items from approved orders contribute to totals;
