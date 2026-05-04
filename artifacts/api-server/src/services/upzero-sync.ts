@@ -42,6 +42,8 @@ interface UpZeroCustomer {
   name?: string | null;
   email?: string | null;
   phone?: string | null;
+  address_state?: string | null;
+  address_city?: string | null;
   wholesale_profile?: UpZeroAddress | null;
   retail_profile?: UpZeroAddress | null;
 }
@@ -97,6 +99,7 @@ async function fetchAllPages<T>(
 
 function getAddressState(c: UpZeroCustomer): string | null {
   return (
+    c.address_state ??
     c.wholesale_profile?.address_state ??
     c.retail_profile?.address_state ??
     null
@@ -105,6 +108,7 @@ function getAddressState(c: UpZeroCustomer): string | null {
 
 function getAddressCity(c: UpZeroCustomer): string | null {
   return (
+    c.address_city ??
     c.wholesale_profile?.address_city ??
     c.retail_profile?.address_city ??
     null
