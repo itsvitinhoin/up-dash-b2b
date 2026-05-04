@@ -356,28 +356,31 @@ export async function syncUpZeroClient(
     );
   }
 
-  // Fetch existing products by externalId
-  const upProductExternalIds = upProducts.map((p) => p.id);
-  const existingProducts =
-    upProductExternalIds.length > 0
-      ? await db
-          .select({ id: productsTable.id, externalId: productsTable.externalId })
-          .from(productsTable)
-          .where(
-            and(
-              eq(productsTable.clientId, clientId),
-              inArray(productsTable.externalId, upProductExternalIds),
-            ),
-          )
-      : [];
+  // Pre-load ALL existing products for this client, indexed by both externalId
+  // and SKU. This lets us safely merge legacy manual-import rows (which have a
+  // SKU but no externalId) without violating the (client_id, sku) unique index.
+  const allExisting = await db
+    .select({
+      id: productsTable.id,
+      sku: productsTable.sku,
+      externalId: productsTable.externalId,
+    })
+    .from(productsTable)
+    .where(eq(productsTable.clientId, clientId));
 
-  const existingProductByExtId = new Map<string, string>();
-  for (const row of existingProducts) {
+  const existingProductByExtId = new Map<string, string>(); // externalId → rowId
+  const existingProductBySku = new Map<string, string>();   // sku        → rowId
+  for (const row of allExisting) {
     if (row.externalId) existingProductByExtId.set(row.externalId, row.id);
+    existingProductBySku.set(row.sku, row.id);
   }
 
-  // Map of SKU → local product ID (built during upsert, used for order items)
+  // SKU → local product ID; seeded from DB so order-item linking works even
+  // for products not touched in this sync (e.g., manual imports, partial catalog).
   const skuToLocalProductId = new Map<string, string>();
+  for (const row of allExisting) {
+    skuToLocalProductId.set(row.sku, row.id);
+  }
 
   for (const p of upProducts) {
     try {
@@ -395,6 +398,7 @@ export async function syncUpZeroClient(
       const status = mapProductStatus(p.status);
 
       if (existingProductByExtId.has(p.id)) {
+        // Row already linked to this UP Zero product — update in place.
         const internalId = existingProductByExtId.get(p.id)!;
         await db
           .update(productsTable)
@@ -406,16 +410,38 @@ export async function syncUpZeroClient(
             ),
           );
         result.productsUpdated++;
-        // Register all variant SKUs (including inactive) so historical order
-        // items referencing retired variants still resolve to this product.
+        for (const v of p.variants ?? []) {
+          if (v.sku) skuToLocalProductId.set(v.sku, internalId);
+        }
+      } else if (existingProductBySku.has(sku)) {
+        // A row exists with the same SKU but no externalId (manual/imported).
+        // Attach the externalId so future syncs follow the fast path above,
+        // and avoid a (client_id, sku) unique-index violation on insert.
+        const internalId = existingProductBySku.get(sku)!;
+        await db
+          .update(productsTable)
+          .set({
+            externalId: p.id,
+            name: p.name,
+            price,
+            cost: cost ?? undefined,
+            ...stockFields,
+            status,
+          })
+          .where(
+            and(
+              eq(productsTable.clientId, clientId),
+              eq(productsTable.id, internalId),
+            ),
+          );
+        existingProductByExtId.set(p.id, internalId);
+        result.productsUpdated++;
         for (const v of p.variants ?? []) {
           if (v.sku) skuToLocalProductId.set(v.sku, internalId);
         }
       } else {
-        // Conflict target is (clientId, externalId) — the authoritative UP Zero key.
-        // Products imported manually without an externalId won't hit this conflict
-        // and will be inserted fresh; their SKU-based row coexists independently.
-        const [upserted] = await db
+        // Genuinely new product — insert with externalId as the primary key.
+        const [inserted] = await db
           .insert(productsTable)
           .values({
             clientId,
@@ -427,24 +453,13 @@ export async function syncUpZeroClient(
             stock: stockValue ?? 0,
             status,
           })
-          .onConflictDoUpdate({
-            target: [productsTable.clientId, productsTable.externalId],
-            set: { sku, name: p.name, price, cost: cost ?? undefined, ...stockFields, status },
-          })
-          .returning({
-            id: productsTable.id,
-            wasInserted: sql<boolean>`(xmax = 0)`,
-          });
+          .returning({ id: productsTable.id });
 
-        if (upserted) {
-          if (upserted.wasInserted) {
-            result.productsCreated++;
-          } else {
-            result.productsUpdated++;
-          }
-          // Register all variant SKUs (including inactive) for the same reason.
+        if (inserted) {
+          result.productsCreated++;
+          existingProductByExtId.set(p.id, inserted.id);
           for (const v of p.variants ?? []) {
-            if (v.sku) skuToLocalProductId.set(v.sku, upserted.id);
+            if (v.sku) skuToLocalProductId.set(v.sku, inserted.id);
           }
         }
       }
