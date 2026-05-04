@@ -5,6 +5,7 @@ import {
   doublePrecision,
   integer,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 import { clientsTable } from "./clients";
@@ -25,6 +26,7 @@ export const ordersTable = pgTable(
     sellerId: text("seller_id").references(() => sellersTable.id, {
       onDelete: "set null",
     }),
+    externalId: text("external_id"),
     amount: doublePrecision("amount").notNull(),
     status: text("status", {
       enum: ["PENDING", "APPROVED", "REJECTED", "SHIPPED", "DELIVERED"],
@@ -48,6 +50,10 @@ export const ordersTable = pgTable(
     createdAtIdx: index("orders_client_created_idx").on(
       table.clientId,
       table.createdAt,
+    ),
+    externalIdIdx: uniqueIndex("orders_client_external_id_uq").on(
+      table.clientId,
+      table.externalId,
     ),
   }),
 );

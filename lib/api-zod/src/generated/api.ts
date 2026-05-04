@@ -111,6 +111,10 @@ export const ListClientsResponse = zod.object({
         .describe(
           "Meta Ads API key for pulling ad spend and lead data from Meta.",
         ),
+      upZeroApiKey: zod
+        .string()
+        .nullish()
+        .describe("UP Zero API key for syncing live orders and customers."),
       currency: zod.string().describe("ISO 4217 currency code, e.g. BRL, USD"),
       locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
       createdAt: zod.coerce.date(),
@@ -169,6 +173,12 @@ export const CreateClientBody = zod.object({
     .string()
     .optional()
     .describe("Optional Meta Ads API key for this client."),
+  upZeroApiKey: zod
+    .string()
+    .optional()
+    .describe(
+      "Optional UP Zero API key for syncing live orders and customers.",
+    ),
   currency: zod
     .string()
     .optional()
@@ -256,6 +266,10 @@ export const GetClientResponse = zod.object({
     .string()
     .nullish()
     .describe("Meta Ads API key for pulling ad spend and lead data from Meta."),
+  upZeroApiKey: zod
+    .string()
+    .nullish()
+    .describe("UP Zero API key for syncing live orders and customers."),
   currency: zod.string().describe("ISO 4217 currency code, e.g. BRL, USD"),
   locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
   createdAt: zod.coerce.date(),
@@ -311,6 +325,10 @@ export const UpdateClientBody = zod
       .string()
       .nullish()
       .describe("Meta Ads API key. Pass null to clear it."),
+    upZeroApiKey: zod
+      .string()
+      .nullish()
+      .describe("UP Zero API key. Pass null to clear it."),
   })
   .describe(
     "Fields that can be updated on an existing client. All fields are optional.",
@@ -330,6 +348,10 @@ export const UpdateClientResponse = zod.object({
     .string()
     .nullish()
     .describe("Meta Ads API key for pulling ad spend and lead data from Meta."),
+  upZeroApiKey: zod
+    .string()
+    .nullish()
+    .describe("UP Zero API key for syncing live orders and customers."),
   currency: zod.string().describe("ISO 4217 currency code, e.g. BRL, USD"),
   locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
   createdAt: zod.coerce.date(),
@@ -370,6 +392,21 @@ export const UpdateClientResponse = zod.object({
     .describe(
       "Optional. Lead approval rate (approvedLeads \/ totalLeads × 100).\n`null` when there are zero leads. Only present on enriched \/clients responses.\n",
     ),
+});
+
+/**
+ * @summary Sync live orders and customers from UP Zero (admin only)
+ */
+export const SyncUpZeroParams = zod.object({
+  clientId: zod.coerce.string(),
+});
+
+export const SyncUpZeroResponse = zod.object({
+  customersCreated: zod.number(),
+  customersUpdated: zod.number(),
+  ordersCreated: zod.number(),
+  ordersUpdated: zod.number(),
+  errors: zod.array(zod.string()),
 });
 
 /**

@@ -103,6 +103,11 @@ export interface Client {
    * @nullable
    */
   metaAdsApiKey?: string | null;
+  /**
+   * UP Zero API key for syncing live orders and customers.
+   * @nullable
+   */
+  upZeroApiKey?: string | null;
   /** ISO 4217 currency code, e.g. BRL, USD */
   currency: string;
   /** BCP 47 locale, e.g. pt-BR, en-US */
@@ -164,6 +169,8 @@ export interface CreateClientRequest {
   apiKey: string;
   /** Optional Meta Ads API key for this client. */
   metaAdsApiKey?: string;
+  /** Optional UP Zero API key for syncing live orders and customers. */
+  upZeroApiKey?: string;
   /** ISO 4217 currency code (default BRL) */
   currency?: string;
   /** BCP 47 locale (default pt-BR) */
@@ -179,6 +186,19 @@ export interface UpdateClientRequest {
    * @nullable
    */
   metaAdsApiKey?: string | null;
+  /**
+   * UP Zero API key. Pass null to clear it.
+   * @nullable
+   */
+  upZeroApiKey?: string | null;
+}
+
+export interface UpZeroSyncResponse {
+  customersCreated: number;
+  customersUpdated: number;
+  ordersCreated: number;
+  ordersUpdated: number;
+  errors: string[];
 }
 
 /**

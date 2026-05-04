@@ -92,6 +92,7 @@ import type {
   SellerDetailResponse,
   SellerMetrics,
   SellerOrdersResponse,
+  UpZeroSyncResponse,
   UpdateClientRequest,
   UtmResponse,
 } from "./api.schemas";
@@ -1037,6 +1038,90 @@ export const useUpdateClient = <
   TContext
 > => {
   return useMutation(getUpdateClientMutationOptions(options));
+};
+
+/**
+ * @summary Sync live orders and customers from UP Zero (admin only)
+ */
+export const getSyncUpZeroUrl = (clientId: string) => {
+  return `/api/clients/${clientId}/sync/upzero`;
+};
+
+export const syncUpZero = async (
+  clientId: string,
+  options?: RequestInit,
+): Promise<UpZeroSyncResponse> => {
+  return customFetch<UpZeroSyncResponse>(getSyncUpZeroUrl(clientId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getSyncUpZeroMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof syncUpZero>>,
+    TError,
+    { clientId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof syncUpZero>>,
+  TError,
+  { clientId: string },
+  TContext
+> => {
+  const mutationKey = ["syncUpZero"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof syncUpZero>>,
+    { clientId: string }
+  > = (props) => {
+    const { clientId } = props ?? {};
+
+    return syncUpZero(clientId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SyncUpZeroMutationResult = NonNullable<
+  Awaited<ReturnType<typeof syncUpZero>>
+>;
+
+export type SyncUpZeroMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Sync live orders and customers from UP Zero (admin only)
+ */
+export const useSyncUpZero = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof syncUpZero>>,
+    TError,
+    { clientId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof syncUpZero>>,
+  TError,
+  { clientId: string },
+  TContext
+> => {
+  return useMutation(getSyncUpZeroMutationOptions(options));
 };
 
 /**

@@ -17,6 +17,7 @@ export const customersTable = pgTable(
     clientId: text("client_id")
       .notNull()
       .references(() => clientsTable.id, { onDelete: "cascade" }),
+    externalId: text("external_id"),
     email: text("email").notNull(),
     phone: text("phone"),
     name: text("name"),
@@ -51,6 +52,10 @@ export const customersTable = pgTable(
     clientEmailUq: uniqueIndex("customers_client_email_uq").on(
       table.clientId,
       table.email,
+    ),
+    externalIdIdx: uniqueIndex("customers_client_external_id_uq").on(
+      table.clientId,
+      table.externalId,
     ),
     clientIdx: index("customers_client_idx").on(table.clientId),
     rfmIdx: index("customers_rfm_idx").on(table.clientId, table.rfmSegment),

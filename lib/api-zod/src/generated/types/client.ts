@@ -21,6 +21,11 @@ export interface Client {
    * @nullable
    */
   metaAdsApiKey?: string | null;
+  /**
+   * UP Zero API key for syncing live orders and customers.
+   * @nullable
+   */
+  upZeroApiKey?: string | null;
   /** ISO 4217 currency code, e.g. BRL, USD */
   currency: string;
   /** BCP 47 locale, e.g. pt-BR, en-US */

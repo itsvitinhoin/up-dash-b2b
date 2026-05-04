@@ -11,6 +11,7 @@ import {
   useImportClients,
   useRotateClientApiKey,
   useUpdateClient,
+  useSyncUpZero,
   lookupClientByApiKey,
   getListClientsQueryKey,
 } from "@workspace/api-client-react";
@@ -28,6 +29,7 @@ import {
   ArrowUpRight,
   Building2,
   CheckCircle2,
+  CloudDownload,
   Copy,
   Eye,
   EyeOff,
@@ -396,6 +398,194 @@ function MetaAdsKeyDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function UpZeroKeyDialog({
+  clientId,
+  clientName,
+  currentKey,
+}: {
+  clientId: string;
+  clientName: string;
+  currentKey: string | null | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [showValue, setShowValue] = useState(false);
+  const updateMutation = useUpdateClient();
+  const queryClient = useQueryClient();
+
+  function handleOpen(o: boolean) {
+    if (o) {
+      setValue(currentKey ?? "");
+      setShowValue(false);
+      updateMutation.reset();
+    }
+    setOpen(o);
+  }
+
+  function handleSave() {
+    updateMutation.mutate(
+      { clientId, data: { upZeroApiKey: value.trim() || null } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+          setOpen(false);
+          toast.success("UP Zero API key updated");
+        },
+        onError: () => {
+          toast.error("Failed to update UP Zero API key");
+        },
+      }
+    );
+  }
+
+  const hasKey = !!currentKey;
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={`h-7 gap-1 text-xs ${hasKey ? "text-blue-400 hover:text-blue-300" : ""}`}
+          title="Set UP Zero API key"
+        >
+          <CloudDownload className="h-3 w-3" />
+          {hasKey ? "UPZ Key ✓" : "Add UPZ Key"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CloudDownload className="h-4 w-4" /> UP Zero API Key
+          </DialogTitle>
+          <DialogDescription>
+            Set the UP Zero API key for <strong>{clientName}</strong>. This
+            key is used to pull live orders and customers directly from their
+            UP Zero store. Leave blank to clear the existing key.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2">
+          <Label htmlFor="upzero-key">API Key</Label>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Input
+                id="upzero-key"
+                type={showValue ? "text" : "password"}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder="Paste your UP Zero API key…"
+                className="pr-9 font-mono text-xs"
+              />
+              <button
+                type="button"
+                className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                onClick={() => setShowValue((v) => !v)}
+                tabIndex={-1}
+              >
+                {showValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+          {hasKey && !value && (
+            <p className="text-xs text-amber-400 flex items-center gap-1">
+              <AlertCircle className="h-3 w-3 shrink-0" />
+              Saving with an empty field will remove the existing key.
+            </p>
+          )}
+          {updateMutation.isError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>Failed to save. Please try again.</AlertDescription>
+            </Alert>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={updateMutation.isPending}>
+            {updateMutation.isPending ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+            ) : (
+              "Save Key"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function UpZeroSyncButton({
+  clientId,
+  clientName,
+}: {
+  clientId: string;
+  clientName: string;
+}) {
+  const syncMutation = useSyncUpZero();
+  const queryClient = useQueryClient();
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+
+  function handleSync() {
+    syncMutation.mutate(
+      { clientId },
+      {
+        onSuccess: (data) => {
+          queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+          setLastSync(new Date());
+          const { customersCreated, customersUpdated, ordersCreated, ordersUpdated, errors } = data;
+          const desc = [
+            ordersCreated > 0 && `${ordersCreated} new orders`,
+            ordersUpdated > 0 && `${ordersUpdated} updated`,
+            customersCreated > 0 && `${customersCreated} new customers`,
+            customersUpdated > 0 && `${customersUpdated} customers updated`,
+          ]
+            .filter(Boolean)
+            .join(", ") || "No new records";
+          if (errors.length > 0) {
+            toast.warning(`Sync complete for ${clientName}`, {
+              description: `${desc} · ${errors.length} error(s)`,
+            });
+          } else {
+            toast.success(`Sync complete for ${clientName}`, { description: desc });
+          }
+        },
+        onError: () => {
+          toast.error(`Sync failed for ${clientName}`);
+        },
+      }
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 gap-1 text-xs text-blue-400 hover:text-blue-300"
+        onClick={handleSync}
+        disabled={syncMutation.isPending}
+        title="Sync from UP Zero"
+      >
+        {syncMutation.isPending ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <RefreshCw className="h-3 w-3" />
+        )}
+        {syncMutation.isPending ? "Syncing…" : "Sync"}
+      </Button>
+      {lastSync && (
+        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+          {format(lastSync, "HH:mm")}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -924,7 +1114,18 @@ export default function ClientsPage() {
                         {format(new Date(client.createdAt), "MMM d, yyyy")}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1 flex-wrap">
+                          <UpZeroKeyDialog
+                            clientId={client.id}
+                            clientName={client.name}
+                            currentKey={client.upZeroApiKey}
+                          />
+                          {client.upZeroApiKey && (
+                            <UpZeroSyncButton
+                              clientId={client.id}
+                              clientName={client.name}
+                            />
+                          )}
                           <MetaAdsKeyDialog
                             clientId={client.id}
                             clientName={client.name}

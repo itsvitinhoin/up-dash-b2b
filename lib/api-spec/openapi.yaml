@@ -298,6 +298,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /clients/{clientId}/sync/upzero:
+    post:
+      operationId: syncUpZero
+      tags: [clients]
+      summary: Sync live orders and customers from UP Zero (admin only)
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sync complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpZeroSyncResponse"
+        "400":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Client not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /clients/{clientId}/rotate-key:
     patch:
       operationId: rotateClientApiKey
@@ -1681,6 +1712,9 @@ components:
         metaAdsApiKey:
           type: ["string", "null"]
           description: Meta Ads API key for pulling ad spend and lead data from Meta.
+        upZeroApiKey:
+          type: ["string", "null"]
+          description: UP Zero API key for syncing live orders and customers.
         currency:
           type: string
           description: ISO 4217 currency code, e.g. BRL, USD
@@ -1770,6 +1804,9 @@ components:
         metaAdsApiKey:
           type: string
           description: Optional Meta Ads API key for this client.
+        upZeroApiKey:
+          type: string
+          description: Optional UP Zero API key for syncing live orders and customers.
         currency:
           type: string
           description: ISO 4217 currency code (default BRL)
@@ -1785,6 +1822,26 @@ components:
         metaAdsApiKey:
           type: ["string", "null"]
           description: Meta Ads API key. Pass null to clear it.
+        upZeroApiKey:
+          type: ["string", "null"]
+          description: UP Zero API key. Pass null to clear it.
+
+    UpZeroSyncResponse:
+      type: object
+      properties:
+        customersCreated:
+          type: integer
+        customersUpdated:
+          type: integer
+        ordersCreated:
+          type: integer
+        ordersUpdated:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+      required: [customersCreated, customersUpdated, ordersCreated, ordersUpdated, errors]
 
     ClientImportRow:
       type: object

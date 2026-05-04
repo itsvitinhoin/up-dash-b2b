@@ -159,6 +159,7 @@ export * from "./stockSkuRow";
 export * from "./stockSkuRowRisk";
 export * from "./timeSeriesPoint";
 export * from "./updateClientRequest";
+export * from "./upZeroSyncResponse";
 export * from "./utmKpis";
 export * from "./utmResponse";
 export * from "./utmRow";

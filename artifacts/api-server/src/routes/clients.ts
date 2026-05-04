@@ -13,6 +13,7 @@ import {
 } from "@workspace/api-zod";
 import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
+import { syncUpZeroClient } from "../services/upzero-sync";
 
 const router: IRouter = Router();
 
@@ -472,6 +473,9 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
   if ("metaAdsApiKey" in bodyParsed.data) {
     updates.metaAdsApiKey = bodyParsed.data.metaAdsApiKey ?? null;
   }
+  if ("upZeroApiKey" in bodyParsed.data) {
+    updates.upZeroApiKey = bodyParsed.data.upZeroApiKey ?? null;
+  }
   if (Object.keys(updates).length === 0) {
     res.status(400).json({
       error: true,
@@ -496,6 +500,30 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
     return;
   }
   res.json(GetClientResponse.parse(updated));
+});
+
+router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = GetClientParams.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = parsed.data;
+  const [client] = await db.select({ upZeroApiKey: clientsTable.upZeroApiKey }).from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (!client.upZeroApiKey) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "No UP Zero API key configured for this client", status: 400 });
+    return;
+  }
+  try {
+    const result = await syncUpZeroClient(clientId, client.upZeroApiKey);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: true, code: "SYNC_ERROR", message: String(err), status: 500 });
+  }
 });
 
 router.get("/clients/:clientId", async (req, res): Promise<void> => {

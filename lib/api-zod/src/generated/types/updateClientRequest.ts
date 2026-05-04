@@ -15,4 +15,9 @@ export interface UpdateClientRequest {
    * @nullable
    */
   metaAdsApiKey?: string | null;
+  /**
+   * UP Zero API key. Pass null to clear it.
+   * @nullable
+   */
+  upZeroApiKey?: string | null;
 }
