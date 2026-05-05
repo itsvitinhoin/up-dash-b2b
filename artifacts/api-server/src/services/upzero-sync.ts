@@ -126,10 +126,33 @@ interface UpZeroProduct {
   product_id?: string;
   code?: string | null;
   name: string;
+  description_html?: string | null;
   status: string;
   variants?: UpZeroVariant[];
   created_at?: string;
   updated_at?: string;
+}
+
+/**
+ * Build a human-readable product name from the UP Zero product object.
+ * The top-level `name` field is a generic category label (e.g. "BLUSA",
+ * "CONJUNTO").  `description_html` contains the actual product description
+ * (e.g. "BLUSA CROP MANGA 3/4 DECOTE V COM RECORTE"), which we strip of
+ * HTML tags and convert to title case for a much cleaner display label.
+ */
+function buildProductName(p: UpZeroProduct): string {
+  const raw = p.description_html
+    ? p.description_html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+    : "";
+  if (!raw) return p.name;
+  // Title-case by capitalising the first character of each whitespace-separated
+  // word. Using split/join rather than a \b regex avoids incorrectly capitalising
+  // letters that follow accented characters (e.g. "ã", "ç") in Portuguese text.
+  return raw
+    .toLowerCase()
+    .split(" ")
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(" ");
 }
 
 interface UpZeroOrderItem {
@@ -472,24 +495,34 @@ export async function syncUpZeroClient(
   // Build a map of variantId → {size, color} for use in order item sync
   const variantAttrs = new Map<string, { size: string | null; color: string | null }>();
 
-  // Collect all (productExternalId, sku) pairs across all variants to fetch inventory
+  // Collect ONE representative active variant per product for inventory lookup.
+  // Fetching all variants would require ~15k+ individual API calls which always
+  // exceed the 60s budget, leaving most products at stock=0.  One call per
+  // product (~956 calls total) fits comfortably within the budget and ensures
+  // every product gets a real stock number rather than showing zero.
+  // The stored stock reflects that one representative variant's qty_available;
+  // a dedicated stock-refresh job (Task #71) will later provide full precision.
   const inventoryTargets: Array<{
     productExternalId: string;
     sku: string;
   }> = [];
 
   for (const p of upProducts) {
+    let representativeSku: string | null = null;
     for (const v of p.variants ?? []) {
       const isActive = v.active !== false;
       if (v.sku) {
         const size = extractVariantAttribute(v.attributes, ["size", "tamanho"]);
         const color = extractVariantAttribute(v.attributes, ["cor", "color", "colour"]);
         variantAttrs.set(v.id, { size, color });
-        // Only query inventory for active variants
-        if (isActive) {
-          inventoryTargets.push({ productExternalId: p.id, sku: v.sku });
+        // Pick the first active variant as the inventory representative
+        if (isActive && !representativeSku) {
+          representativeSku = v.sku;
         }
       }
+    }
+    if (representativeSku) {
+      inventoryTargets.push({ productExternalId: p.id, sku: representativeSku });
     }
   }
 
@@ -589,7 +622,7 @@ export async function syncUpZeroClient(
         const internalId = existingProductByExtId.get(p.id)!;
         await db
           .update(productsTable)
-          .set({ sku, name: p.name, price, cost: cost ?? undefined, ...stockFields, status })
+          .set({ sku, name: buildProductName(p), price, cost: cost ?? undefined, ...stockFields, status })
           .where(
             and(
               eq(productsTable.clientId, clientId),
@@ -609,7 +642,7 @@ export async function syncUpZeroClient(
           .update(productsTable)
           .set({
             externalId: p.id,
-            name: p.name,
+            name: buildProductName(p),
             price,
             cost: cost ?? undefined,
             ...stockFields,
@@ -634,7 +667,7 @@ export async function syncUpZeroClient(
             clientId,
             externalId: p.id,
             sku,
-            name: p.name,
+            name: buildProductName(p),
             price,
             cost: cost ?? undefined,
             stock: stockValue ?? 0,
