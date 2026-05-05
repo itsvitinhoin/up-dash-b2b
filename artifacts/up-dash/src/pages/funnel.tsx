@@ -3,8 +3,17 @@ import { format } from "date-fns";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
-import { useGetFunnel } from "@workspace/api-client-react";
+import { useGetFunnel, useGetSiteVisits } from "@workspace/api-client-react";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -55,6 +64,8 @@ export default function FunnelPage() {
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
 
+  const queryEnabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+
   const { data, isLoading, isError, refetch } = useGetFunnel(
     {
       clientId,
@@ -65,9 +76,18 @@ export default function FunnelPage() {
       utmCampaign: filters.utmCampaign || undefined,
     },
     {
-      query: queryOpts({
-        enabled: user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId),
-      }),
+      query: queryOpts({ enabled: queryEnabled }),
+    }
+  );
+
+  const { data: visitsData } = useGetSiteVisits(
+    {
+      clientId,
+      dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+      dateTo: format(dateRange.to, "yyyy-MM-dd"),
+    },
+    {
+      query: queryOpts({ enabled: queryEnabled }),
     }
   );
 
@@ -246,6 +266,78 @@ export default function FunnelPage() {
               </CardContent>
             </Card>
           </motion.div>
+
+          {/* ── Daily site visits trend chart ─────────────────────────────────── */}
+          {visitsData && visitsData.rows.length > 0 && (
+            <motion.div
+              initial="hidden"
+              animate="visible"
+              variants={variants}
+              data-testid="site-visits-trend"
+            >
+              <Card className="overflow-hidden border-border/60">
+                <CardContent className="p-4 sm:p-6">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
+                      <TrendingUp className="h-3.5 w-3.5 text-primary" />
+                      Daily site visits
+                    </h3>
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                      {visitsData.totalVisits.toLocaleString()} total
+                    </span>
+                  </div>
+                  <div className="h-40">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={visitsData.rows.map((r) => ({
+                          date: r.visitDate,
+                          visits: r.visitCount,
+                          label: format(new Date(r.visitDate + "T00:00:00"), "MMM d, yyyy"),
+                        }))}
+                        margin={{ top: 4, right: 4, left: -24, bottom: 0 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} vertical={false} />
+                        <XAxis
+                          dataKey="label"
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                          tickLine={false}
+                          axisLine={false}
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                          tickLine={false}
+                          axisLine={false}
+                          allowDecimals={false}
+                        />
+                        <RechartsTooltip
+                          content={({ active, payload }) => {
+                            if (!active || !payload?.length) return null;
+                            const d = payload[0].payload as { date: string; visits: number; label: string };
+                            return (
+                              <div className="rounded-lg border border-border/60 bg-card px-3 py-2 shadow-md text-xs">
+                                <p className="font-semibold text-foreground">{d.label}</p>
+                                <p className="text-muted-foreground mt-0.5">
+                                  <span className="font-mono text-primary">{d.visits.toLocaleString()}</span> visits
+                                </p>
+                              </div>
+                            );
+                          }}
+                          cursor={{ fill: "hsl(var(--muted))", opacity: 0.5 }}
+                        />
+                        <Bar
+                          dataKey="visits"
+                          fill="hsl(var(--chart-1))"
+                          radius={[3, 3, 0, 0]}
+                          maxBarSize={32}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
 
           {/* ── Funnel viz + Insights ──────────────────────────────────────────── */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
