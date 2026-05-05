@@ -759,7 +759,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
         value: sql<number>`COUNT(*)::float`,
       })
       .from(ordersTable)
-      .where(baseOrderWhere)
+      .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`))
       .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
       .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
 
@@ -792,7 +792,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
           .from(orderItemsTable)
           .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
           .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
-          .where(baseOrderWhere)
+          .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`))
           .groupBy(productsTable.category)
       : [];
 
@@ -2669,6 +2669,7 @@ router.get("/analytics/geography", async (req, res): Promise<void> => {
     eq(ordersTable.clientId, clientId),
     gte(ordersTable.createdAt, from),
     lte(ordersTable.createdAt, to),
+    sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
     geoUtmCond,
   );
 
@@ -2749,7 +2750,7 @@ router.get("/analytics/orders", async (req, res): Promise<void> => {
   const [agg] = await db
     .select({
       totalOrders: sql<number>`COUNT(*)::int`,
-      totalRevenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+      totalRevenue: sql<number>`COALESCE(SUM(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN ${ordersTable.amount} ELSE 0 END), 0)::float`,
     })
     .from(ordersTable)
     .where(where);
@@ -2881,6 +2882,7 @@ async function buildInsightContext(
         eq(ordersTable.clientId, clientId),
         gte(ordersTable.createdAt, from),
         lte(ordersTable.createdAt, to),
+        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
       ),
     )
     .groupBy(productsTable.category)
@@ -2899,6 +2901,7 @@ async function buildInsightContext(
         eq(ordersTable.clientId, clientId),
         gte(ordersTable.createdAt, from),
         lte(ordersTable.createdAt, to),
+        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
       ),
     )
     .groupBy(sellersTable.id, sellersTable.name)
