@@ -135,24 +135,57 @@ interface UpZeroProduct {
 
 /**
  * Build a human-readable product name from the UP Zero product object.
- * The top-level `name` field is a generic category label (e.g. "BLUSA",
- * "CONJUNTO").  `description_html` contains the actual product description
- * (e.g. "BLUSA CROP MANGA 3/4 DECOTE V COM RECORTE"), which we strip of
- * HTML tags and convert to title case for a much cleaner display label.
+ *
+ * The top-level `name` field is a generic category label ("BLUSA", "CONJUNTO").
+ * `description_html` contains the real product description but may also include
+ * appended defect/return notices and fabric composition lines, e.g.:
+ *
+ *   "BLUSA REGATA GOLA BAIXA COM RECORTE NO OMBRO (*PRODUTO COM LEVE DEFEITO - TONALIDADE / ESTE PRODUTO NÃO TEM TROCA E/OU DEVOLUÇÃO*)"
+ *   "(*PRODUTO COM LEVE DEFEITO - TECIDO / ESTE PRODUTO NÃO TEM TROCA E/OU DEVOLUÇÃO*)"   ← only a notice, no real name
+ *   "*****PRODUTO COM DEFEITO - FORRO PODE RASGAR / ESTE PRODUTO NÃO TEM TROCA OU DEVOLUÇÃO*****"
+ *   "100% Poliéster"   ← fabric composition only
+ *
+ * Strategy:
+ *   1. Strip HTML tags.
+ *   2. Remove all defect/return-policy notices (starred prefixes and parenthetical notices).
+ *   3. If nothing meaningful remains (empty, starts with %, or starts with a digit
+ *      followed by % indicating pure fabric composition), fall back to the generic `name`.
+ *   4. Title-case via split/join (not \b regex) so Portuguese accented characters
+ *      such as ã, ç, ô are handled correctly.
  */
-function buildProductName(p: UpZeroProduct): string {
-  const raw = p.description_html
-    ? p.description_html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-    : "";
-  if (!raw) return p.name;
-  // Title-case by capitalising the first character of each whitespace-separated
-  // word. Using split/join rather than a \b regex avoids incorrectly capitalising
-  // letters that follow accented characters (e.g. "ã", "ç") in Portuguese text.
-  return raw
+function titleCase(s: string): string {
+  return s
     .toLowerCase()
     .split(" ")
     .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
     .join(" ");
+}
+
+function buildProductName(p: UpZeroProduct): string {
+  const raw = p.description_html
+    ? p.description_html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+    : "";
+  if (!raw) return titleCase(p.name);
+
+  // Remove defect/return-policy notices in two forms:
+  //   (*PRODUTO COM LEVE DEFEITO - ...*)  — parenthetical, with or without leading *
+  //   *****PRODUTO COM DEFEITO - ...*****  — asterisk-bordered block
+  //   *PRODUTO COM LEVE DEFEITO ...  — bare asterisk prefix (no closing)
+  const cleaned = raw
+    .replace(/\s*\(\s*\*+\s*produto\b[^)]*\)/gi, "")   // (*produto com defeito...)
+    .replace(/\s*\*{2,}\s*produto\b[^*]*\*{2,}/gi, "")  // *****produto com defeito*****
+    .replace(/\s*\*\s*produto\b.*/gi, "")               // *produto com leve defeito... (to EOL)
+    .trim();
+
+  // Fall back to generic name when nothing usable remains:
+  //   - empty string
+  //   - starts with '(' meaning only a parenthetical notice survived
+  //   - starts with digits followed by '%' meaning pure fabric composition ("100% Poliéster")
+  if (!cleaned || cleaned.startsWith("(") || /^\d+\s*%/.test(cleaned)) {
+    return titleCase(p.name);
+  }
+
+  return titleCase(cleaned);
 }
 
 /**
@@ -169,11 +202,7 @@ function buildCustomerName(name: string | null | undefined): string | null {
   // Detect all-caps: strip non-alpha characters and compare to uppercase version.
   const lettersOnly = trimmed.replace(/[^a-zA-ZÀ-ÖØ-öø-ÿ]/g, "");
   if (lettersOnly.length > 0 && lettersOnly === lettersOnly.toUpperCase()) {
-    return trimmed
-      .toLowerCase()
-      .split(" ")
-      .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
-      .join(" ");
+    return titleCase(trimmed);
   }
   return trimmed;
 }
