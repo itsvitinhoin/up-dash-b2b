@@ -248,10 +248,22 @@ async function fetchAllPages<T>(
     const body = (await res.json()) as AnyPagedBody;
     const items = resolveItems<T>(body, path, page);
     results.push(...items);
-    const totalPages = resolveTotalPages(body);
-    // Stop when: explicit page count reached, empty page, OR short page (fewer
-    // items than the limit) — the standard REST sentinel when total_pages is absent.
-    if (page >= totalPages || items.length === 0 || items.length < PAGE_LIMIT) break;
+
+    // Determine whether this response contains explicit pagination metadata.
+    // When metadata is present, trust it. When absent (e.g. customers endpoint
+    // returns {data:[...]} with no total_pages), rely solely on the short-page
+    // sentinel so we don't stop early because resolveTotalPages() defaults to 1.
+    const meta = body["meta"] as AnyPagedBody | undefined;
+    const hasPaginationMeta =
+      body["total_pages"] !== undefined ||
+      body["last_page"] !== undefined ||
+      body["pages"] !== undefined ||
+      body["pageCount"] !== undefined ||
+      meta?.["last_page"] !== undefined ||
+      meta?.["total_pages"] !== undefined;
+
+    if (items.length === 0 || items.length < PAGE_LIMIT) break;
+    if (hasPaginationMeta && page >= resolveTotalPages(body)) break;
     page++;
   }
 
