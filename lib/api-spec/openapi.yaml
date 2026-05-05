@@ -2318,7 +2318,19 @@ components:
             $ref: "#/components/schemas/SiteVisitRow"
         totalVisits:
           type: integer
-      required: [rows, totalVisits]
+        dailyPurchases:
+          type: array
+          description: Daily purchase event counts for the same date range, used to compute per-day conversion rate
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                description: ISO date string (YYYY-MM-DD)
+              count:
+                type: integer
+            required: [date, count]
+      required: [rows, totalVisits, dailyPurchases]
 
     UpsertSiteVisitsRequest:
       type: object

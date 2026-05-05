@@ -420,6 +420,7 @@ export interface SiteVisitRow {
 export interface SiteVisitsResponse {
   rows: SiteVisitRow[];
   totalVisits: number;
+  dailyPurchases: { date: string; count: number }[];
 }
 
 export type UpsertSiteVisitsRequestRowsItem = {

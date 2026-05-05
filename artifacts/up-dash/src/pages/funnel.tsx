@@ -6,13 +6,15 @@ import { queryOpts } from "@/lib/query-opts";
 import { useGetFunnel, useGetSiteVisits } from "@workspace/api-client-react";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
-  BarChart,
+  ComposedChart,
   Bar,
+  Line,
   XAxis,
   YAxis,
   Tooltip as RechartsTooltip,
   ResponsiveContainer,
   CartesianGrid,
+  Legend,
 } from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -280,60 +282,126 @@ export default function FunnelPage() {
                   <div className="mb-4 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <TrendingUp className="h-3.5 w-3.5 text-primary" />
-                      Daily site visits
+                      Daily site visits &amp; conversion rate
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {visitsData.totalVisits.toLocaleString()} total
+                      {visitsData.totalVisits.toLocaleString()} total visits
                     </span>
                   </div>
-                  <div className="h-40">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={visitsData.rows.map((r) => ({
-                          date: r.visitDate,
-                          visits: r.visitCount,
-                          label: format(new Date(r.visitDate + "T00:00:00"), "MMM d, yyyy"),
-                        }))}
-                        margin={{ top: 4, right: 4, left: -24, bottom: 0 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} vertical={false} />
-                        <XAxis
-                          dataKey="label"
-                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                          tickLine={false}
-                          axisLine={false}
-                          interval="preserveStartEnd"
-                        />
-                        <YAxis
-                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                          tickLine={false}
-                          axisLine={false}
-                          allowDecimals={false}
-                        />
-                        <RechartsTooltip
-                          content={({ active, payload }) => {
-                            if (!active || !payload?.length) return null;
-                            const d = payload[0].payload as { date: string; visits: number; label: string };
-                            return (
-                              <div className="rounded-lg border border-border/60 bg-card px-3 py-2 shadow-md text-xs">
-                                <p className="font-semibold text-foreground">{d.label}</p>
-                                <p className="text-muted-foreground mt-0.5">
-                                  <span className="font-mono text-primary">{d.visits.toLocaleString()}</span> visits
-                                </p>
-                              </div>
-                            );
-                          }}
-                          cursor={{ fill: "hsl(var(--muted))", opacity: 0.5 }}
-                        />
-                        <Bar
-                          dataKey="visits"
-                          fill="hsl(var(--chart-1))"
-                          radius={[3, 3, 0, 0]}
-                          maxBarSize={32}
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+                  {(() => {
+                    const purchaseMap = new Map(
+                      (visitsData.dailyPurchases ?? []).map((p) => [p.date, p.count]),
+                    );
+                    const hasConversionData = (visitsData.dailyPurchases ?? []).length > 0;
+                    const chartData = visitsData.rows.map((r) => {
+                      const purchases = purchaseMap.get(r.visitDate) ?? 0;
+                      const convRate = r.visitCount > 0 ? (purchases / r.visitCount) * 100 : null;
+                      return {
+                        date: r.visitDate,
+                        visits: r.visitCount,
+                        label: format(new Date(r.visitDate + "T00:00:00"), "MMM d, yyyy"),
+                        conversionRate: convRate,
+                      };
+                    });
+                    return (
+                      <div className="h-48">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart
+                            data={chartData}
+                            margin={{ top: 4, right: hasConversionData ? 36 : 4, left: -24, bottom: 0 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} vertical={false} />
+                            <XAxis
+                              dataKey="label"
+                              tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                              tickLine={false}
+                              axisLine={false}
+                              interval="preserveStartEnd"
+                            />
+                            <YAxis
+                              yAxisId="visits"
+                              tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                              tickLine={false}
+                              axisLine={false}
+                              allowDecimals={false}
+                              width={40}
+                            />
+                            {hasConversionData && (
+                              <YAxis
+                                yAxisId="rate"
+                                orientation="right"
+                                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                tickLine={false}
+                                axisLine={false}
+                                tickFormatter={(v) => `${v.toFixed(1)}%`}
+                                domain={[0, "auto"]}
+                                width={44}
+                              />
+                            )}
+                            <RechartsTooltip
+                              content={({ active, payload }) => {
+                                if (!active || !payload?.length) return null;
+                                const d = payload[0].payload as {
+                                  date: string;
+                                  visits: number;
+                                  label: string;
+                                  conversionRate: number | null;
+                                };
+                                return (
+                                  <div className="rounded-lg border border-border/60 bg-card px-3 py-2 shadow-md text-xs space-y-1">
+                                    <p className="font-semibold text-foreground">{d.label}</p>
+                                    <p className="text-muted-foreground">
+                                      <span className="font-mono text-primary">{d.visits.toLocaleString()}</span>{" "}
+                                      visits
+                                    </p>
+                                    {d.conversionRate !== null && (
+                                      <p className="text-muted-foreground">
+                                        <span className="font-mono text-emerald-500">
+                                          {d.conversionRate.toFixed(2)}%
+                                        </span>{" "}
+                                        conversion
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              }}
+                              cursor={{ fill: "hsl(var(--muted))", opacity: 0.5 }}
+                            />
+                            <Bar
+                              yAxisId="visits"
+                              dataKey="visits"
+                              fill="hsl(var(--chart-1))"
+                              radius={[3, 3, 0, 0]}
+                              maxBarSize={32}
+                              name="Visits"
+                            />
+                            {hasConversionData && (
+                              <Line
+                                yAxisId="rate"
+                                type="monotone"
+                                dataKey="conversionRate"
+                                stroke="hsl(var(--chart-3))"
+                                strokeWidth={2}
+                                dot={false}
+                                activeDot={{ r: 4, fill: "hsl(var(--chart-3))" }}
+                                name="Conv. rate %"
+                                connectNulls
+                              />
+                            )}
+                            {hasConversionData && (
+                              <Legend
+                                iconSize={8}
+                                wrapperStyle={{ fontSize: "10px", paddingTop: "4px" }}
+                                formatter={(value) => (
+                                  <span style={{ color: "hsl(var(--muted-foreground))" }}>{value}</span>
+                                )}
+                              />
+                            )}
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             </motion.div>

@@ -1171,20 +1171,39 @@ router.get("/analytics/site-visits", async (req, res): Promise<void> => {
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
 
-  const rows = await db
-    .select()
-    .from(siteVisitsTable)
-    .where(
-      and(
-        eq(siteVisitsTable.clientId, clientId),
-        gte(siteVisitsTable.visitDate, from.toISOString().slice(0, 10)),
-        lte(siteVisitsTable.visitDate, to.toISOString().slice(0, 10)),
-      ),
-    )
-    .orderBy(siteVisitsTable.visitDate);
+  const [rows, purchaseRows] = await Promise.all([
+    db
+      .select()
+      .from(siteVisitsTable)
+      .where(
+        and(
+          eq(siteVisitsTable.clientId, clientId),
+          gte(siteVisitsTable.visitDate, from.toISOString().slice(0, 10)),
+          lte(siteVisitsTable.visitDate, to.toISOString().slice(0, 10)),
+        ),
+      )
+      .orderBy(siteVisitsTable.visitDate),
+    db
+      .select({
+        date: sql<string>`to_char(date_trunc('day', ${eventsTable.createdAt}), 'YYYY-MM-DD')`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.clientId, clientId),
+          eq(eventsTable.eventType, "PURCHASE"),
+          gte(eventsTable.createdAt, from),
+          lte(eventsTable.createdAt, to),
+        ),
+      )
+      .groupBy(sql`date_trunc('day', ${eventsTable.createdAt})`)
+      .orderBy(sql`date_trunc('day', ${eventsTable.createdAt})`),
+  ]);
 
   const totalVisits = rows.reduce((sum, r) => sum + r.visitCount, 0);
-  res.json({ rows, totalVisits });
+  const dailyPurchases = purchaseRows.map((r) => ({ date: r.date, count: Number(r.count) || 0 }));
+  res.json({ rows, totalVisits, dailyPurchases });
 });
 
 // ─── Site Visits: POST (upsert) ───────────────────────────────────────────────
