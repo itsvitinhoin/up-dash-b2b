@@ -155,6 +155,29 @@ function buildProductName(p: UpZeroProduct): string {
     .join(" ");
 }
 
+/**
+ * Build a display name from the UP Zero customer name field.
+ * Some customers are stored in all-caps in UP Zero (e.g. "CHIRLENE IZABEL DA SILVA").
+ * When every letter in the name is uppercase we title-case it so names render
+ * naturally in the UI ("Chirlene Izabel Da Silva").  Mixed-case names such as
+ * "Renata Vilas Boas Badaró" are returned unchanged, preserving accented chars.
+ */
+function buildCustomerName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  // Detect all-caps: strip non-alpha characters and compare to uppercase version.
+  const lettersOnly = trimmed.replace(/[^a-zA-ZÀ-ÖØ-öø-ÿ]/g, "");
+  if (lettersOnly.length > 0 && lettersOnly === lettersOnly.toUpperCase()) {
+    return trimmed
+      .toLowerCase()
+      .split(" ")
+      .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+      .join(" ");
+  }
+  return trimmed;
+}
+
 interface UpZeroOrderItem {
   id: string;
   variant_id?: string | null;
@@ -762,7 +785,7 @@ export async function syncUpZeroClient(
           await db
             .update(customersTable)
             .set({
-              name: c.name ?? undefined,
+              name: buildCustomerName(c.name) ?? undefined,
               phone: c.phone ?? undefined,
               state: state ?? undefined,
               city: city ?? undefined,
@@ -781,7 +804,7 @@ export async function syncUpZeroClient(
             .update(customersTable)
             .set({
               externalId: c.id,
-              name: c.name ?? undefined,
+              name: buildCustomerName(c.name) ?? undefined,
               phone: c.phone ?? undefined,
               state: state ?? undefined,
               city: city ?? undefined,
@@ -801,7 +824,7 @@ export async function syncUpZeroClient(
               clientId,
               externalId: c.id,
               email,
-              name: c.name ?? null,
+              name: buildCustomerName(c.name),
               phone: c.phone ?? null,
               state,
               city,
@@ -811,7 +834,7 @@ export async function syncUpZeroClient(
             .onConflictDoUpdate({
               target: [customersTable.clientId, customersTable.externalId],
               set: {
-                name: c.name ?? null,
+                name: buildCustomerName(c.name),
                 phone: c.phone ?? null,
                 state,
                 city,
