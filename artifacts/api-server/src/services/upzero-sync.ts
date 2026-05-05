@@ -88,6 +88,10 @@ function mapProductStatus(
 }
 
 interface UpZeroAddress {
+  // Flat field names returned by the orders API (confirmed against live OpenAPI spec)
+  state?: string | null;
+  city?: string | null;
+  // Legacy / fallback names kept for backward compatibility with older API versions
   address_state?: string | null;
   address_city?: string | null;
 }
@@ -97,8 +101,8 @@ interface UpZeroCustomer {
   name?: string | null;
   email?: string | null;
   phone?: string | null;
-  address_state?: string | null;
-  address_city?: string | null;
+  // Top-level address fields do NOT exist on CustomerResponse per the live spec.
+  // Geography lives inside wholesale_profile and retail_profile only.
   wholesale_profile?: UpZeroAddress | null;
   retail_profile?: UpZeroAddress | null;
 }
@@ -245,7 +249,9 @@ async function fetchAllPages<T>(
     const items = resolveItems<T>(body, path, page);
     results.push(...items);
     const totalPages = resolveTotalPages(body);
-    if (page >= totalPages || items.length === 0) break;
+    // Stop when: explicit page count reached, empty page, OR short page (fewer
+    // items than the limit) — the standard REST sentinel when total_pages is absent.
+    if (page >= totalPages || items.length === 0 || items.length < PAGE_LIMIT) break;
     page++;
   }
 
@@ -335,9 +341,11 @@ async function runConcurrent<T, R>(
 }
 
 function getAddressState(c: UpZeroCustomer): string | null {
+  // CustomerResponse has no top-level address fields — only profile sub-objects.
   return (
-    c.address_state ??
+    c.wholesale_profile?.state ??
     c.wholesale_profile?.address_state ??
+    c.retail_profile?.state ??
     c.retail_profile?.address_state ??
     null
   );
@@ -345,8 +353,9 @@ function getAddressState(c: UpZeroCustomer): string | null {
 
 function getAddressCity(c: UpZeroCustomer): string | null {
   return (
-    c.address_city ??
+    c.wholesale_profile?.city ??
     c.wholesale_profile?.address_city ??
+    c.retail_profile?.city ??
     c.retail_profile?.address_city ??
     null
   );
@@ -880,11 +889,21 @@ export async function syncUpZeroClient(
         continue;
       }
 
-      const shippingAddr = o.shipping_address ?? o.customer;
+      // Prefer shipping_address for order geography; fall back to the embedded
+      // customer object. The live API returns flat `state`/`city` on shipping_address,
+      // with `address_state`/`address_city` kept as legacy fallbacks.
+      const shippingAddr = o.shipping_address ?? null;
+      const customerAddr = o.customer ?? null;
       const state =
-        (shippingAddr as UpZeroAddress | null)?.address_state ?? null;
+        shippingAddr?.state ??
+        shippingAddr?.address_state ??
+        getAddressState(customerAddr as UpZeroCustomer) ??
+        null;
       const city =
-        (shippingAddr as UpZeroAddress | null)?.address_city ?? null;
+        shippingAddr?.city ??
+        shippingAddr?.address_city ??
+        getAddressCity(customerAddr as UpZeroCustomer) ??
+        null;
 
       let internalOrderId: string;
 
