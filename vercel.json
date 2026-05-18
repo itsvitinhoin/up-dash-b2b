@@ -6,6 +6,21 @@
   "functions": {
     "api/[...path].js": {
       "maxDuration": 60
+    },
+    "api/analytics/[...path].js": {
+      "maxDuration": 60
+    },
+    "api/auth/[...path].js": {
+      "maxDuration": 60
+    },
+    "api/clients/[...path].js": {
+      "maxDuration": 60
+    },
+    "api/notifications/[...path].js": {
+      "maxDuration": 60
+    },
+    "api/saved-views/[...path].js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
