@@ -6,9 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { SiteVisitRow } from "./siteVisitRow";
+import type { SiteVisitsResponseDailyPurchasesItem } from "./siteVisitsResponseDailyPurchasesItem";
 
 export interface SiteVisitsResponse {
   rows: SiteVisitRow[];
   totalVisits: number;
-  dailyPurchases: { date: string; count: number }[];
+  /** Daily purchase event counts for the same date range, used to compute per-day conversion rate */
+  dailyPurchases: SiteVisitsResponseDailyPurchasesItem[];
 }

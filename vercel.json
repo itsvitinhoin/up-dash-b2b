@@ -1,0 +1,25 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm --filter @workspace/api-server run build && PORT=3000 BASE_PATH=/ pnpm --filter @workspace/up-dash run build",
+  "outputDirectory": "artifacts/up-dash/dist/public",
+  "functions": {
+    "api/[...path].js": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/up-dash",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/up-dash/(.*)",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/((?!api/.*).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

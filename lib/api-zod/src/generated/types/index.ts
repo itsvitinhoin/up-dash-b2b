@@ -156,6 +156,7 @@ export * from "./sellerOrderRow";
 export * from "./sellerOrdersResponse";
 export * from "./siteVisitRow";
 export * from "./siteVisitsResponse";
+export * from "./siteVisitsResponseDailyPurchasesItem";
 export * from "./sizeStockRow";
 export * from "./stockKpis";
 export * from "./stockSkuRow";

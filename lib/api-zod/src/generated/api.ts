@@ -707,6 +707,16 @@ export const GetSiteVisitsResponse = zod.object({
     }),
   ),
   totalVisits: zod.number(),
+  dailyPurchases: zod
+    .array(
+      zod.object({
+        date: zod.string().describe("ISO date string (YYYY-MM-DD)"),
+        count: zod.number(),
+      }),
+    )
+    .describe(
+      "Daily purchase event counts for the same date range, used to compute per-day conversion rate",
+    ),
 });
 
 /**
@@ -739,6 +749,16 @@ export const UpsertSiteVisitsResponse = zod.object({
     }),
   ),
   totalVisits: zod.number(),
+  dailyPurchases: zod
+    .array(
+      zod.object({
+        date: zod.string().describe("ISO date string (YYYY-MM-DD)"),
+        count: zod.number(),
+      }),
+    )
+    .describe(
+      "Daily purchase event counts for the same date range, used to compute per-day conversion rate",
+    ),
 });
 
 /**

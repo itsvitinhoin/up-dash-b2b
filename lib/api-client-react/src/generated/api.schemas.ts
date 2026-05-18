@@ -417,10 +417,17 @@ export interface SiteVisitRow {
   visitCount: number;
 }
 
+export type SiteVisitsResponseDailyPurchasesItem = {
+  /** ISO date string (YYYY-MM-DD) */
+  date: string;
+  count: number;
+};
+
 export interface SiteVisitsResponse {
   rows: SiteVisitRow[];
   totalVisits: number;
-  dailyPurchases: { date: string; count: number }[];
+  /** Daily purchase event counts for the same date range, used to compute per-day conversion rate */
+  dailyPurchases: SiteVisitsResponseDailyPurchasesItem[];
 }
 
 export type UpsertSiteVisitsRequestRowsItem = {
