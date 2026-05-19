@@ -4,6 +4,9 @@
   "buildCommand": "pnpm --filter @workspace/api-server run build && PORT=3000 BASE_PATH=/ pnpm --filter @workspace/up-dash run build",
   "outputDirectory": "artifacts/up-dash/dist/public",
   "functions": {
+    "api/index.js": {
+      "maxDuration": 60
+    },
     "api/[...path].js": {
       "maxDuration": 60
     },
@@ -24,6 +27,10 @@
     }
   },
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api?path=$1"
+    },
     {
       "source": "/up-dash",
       "destination": "/index.html"

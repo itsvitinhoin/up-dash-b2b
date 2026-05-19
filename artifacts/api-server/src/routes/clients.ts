@@ -555,24 +555,26 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
   const jobId = job.id;
   const apiKey = client.upZeroApiKey;
 
-  const runner = (async () => {
+  try {
+    await db.update(syncJobsTable).set({ status: "running" }).where(eq(syncJobsTable.id, jobId));
+    const result = await syncUpZeroClient(clientId, apiKey);
+    await db.update(syncJobsTable).set({ status: "done", result }).where(eq(syncJobsTable.id, jobId));
+    res.status(200).json({ jobId, result });
+  } catch (err) {
+    const message = String(err);
     try {
-      await db.update(syncJobsTable).set({ status: "running" }).where(eq(syncJobsTable.id, jobId));
-      const result = await syncUpZeroClient(clientId, apiKey);
-      await db.update(syncJobsTable).set({ status: "done", result }).where(eq(syncJobsTable.id, jobId));
-    } catch (err) {
-      try {
-        await db.update(syncJobsTable).set({ status: "failed", error: String(err) }).where(eq(syncJobsTable.id, jobId));
-      } catch (dbErr) {
-        console.error("[sync-runner] failed to mark job %s as failed:", jobId, dbErr);
-      }
+      await db.update(syncJobsTable).set({ status: "failed", error: message }).where(eq(syncJobsTable.id, jobId));
+    } catch (dbErr) {
+      console.error("[sync-runner] failed to mark job %s as failed:", jobId, dbErr);
     }
-  })();
-  runner.catch((err) => {
-    console.error("[sync-runner] unhandled error for job %s:", jobId, err);
-  });
-
-  res.status(202).json({ jobId });
+    res.status(500).json({
+      error: true,
+      code: "SYNC_FAILED",
+      message,
+      status: 500,
+      jobId,
+    });
+  }
 });
 
 /**

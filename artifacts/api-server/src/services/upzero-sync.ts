@@ -298,6 +298,7 @@ async function fetchAllPages<T>(
 ): Promise<T[]> {
   const results: T[] = [];
   let page = 1;
+  const seenPageSignatures = new Set<string>();
 
   while (true) {
     const params = new URLSearchParams({
@@ -322,7 +323,6 @@ async function fetchAllPages<T>(
     }
     const body = (await res.json()) as AnyPagedBody;
     const items = resolveItems<T>(body, path, page);
-    results.push(...items);
 
     // Determine whether this response contains explicit pagination metadata.
     // When metadata is present, trust it. When absent (e.g. customers endpoint
@@ -336,6 +336,23 @@ async function fetchAllPages<T>(
       body["pageCount"] !== undefined ||
       meta?.["last_page"] !== undefined ||
       meta?.["total_pages"] !== undefined;
+
+    if (!hasPaginationMeta) {
+      const signature = JSON.stringify({
+        count: items.length,
+        first: (items[0] as { id?: unknown } | undefined)?.id ?? null,
+        last: (items[items.length - 1] as { id?: unknown } | undefined)?.id ?? null,
+      });
+      if (seenPageSignatures.has(signature)) {
+        console.warn(
+          `[upzero-sync] ${path} page ${page} repeated a previous page without pagination metadata; stopping pagination`,
+        );
+        break;
+      }
+      seenPageSignatures.add(signature);
+    }
+
+    results.push(...items);
 
     if (items.length === 0 || items.length < PAGE_LIMIT) break;
     if (hasPaginationMeta && page >= resolveTotalPages(body)) break;
