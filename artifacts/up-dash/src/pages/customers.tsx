@@ -64,6 +64,12 @@ const OPPORTUNITY_COLOR: Record<string, string> = {
   LOW: "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-400",
 };
 
+const STATUS_DOT: Record<string, string> = {
+  APPROVED: "bg-emerald-500",
+  PENDING: "bg-amber-400",
+  REJECTED: "bg-red-500",
+};
+
 const SOURCE_COLORS = ["#6366f1", "#22d3ee", "#f59e0b", "#10b981", "#f43f5e", "#8b5cf6", "#ec4899", "#14b8a6"];
 
 function readQueryParam(search: string, key: string): string {
@@ -180,9 +186,6 @@ export default function CustomersPage() {
 
   const summaryParams = {
     clientId,
-    dateFrom: dateRange ? format(dateRange.from, "yyyy-MM-dd") : undefined,
-    dateTo: dateRange ? format(dateRange.to, "yyyy-MM-dd") : undefined,
-    compare: true,
   };
   const { data: summary, isLoading: summaryLoading } = useGetCustomerSummary(
     summaryParams,
@@ -735,8 +738,17 @@ export default function CustomersPage() {
                           data-testid={isMatched ? "customer-row-highlighted" : `customer-row-${customer.id}`}
                         >
                           <TableCell>
-                            <div className="font-medium">{customer.name || "Unknown"}</div>
-                            <div className="text-xs text-muted-foreground">{customer.email}</div>
+                            <div className="flex items-start gap-2">
+                              <span
+                                className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[customer.registrationStatus] ?? "bg-zinc-400"}`}
+                                title={customer.registrationStatus}
+                                aria-label={customer.registrationStatus}
+                              />
+                              <div className="min-w-0">
+                                <div className="font-medium">{customer.name || "Unknown"}</div>
+                                <div className="text-xs text-muted-foreground">{customer.email}</div>
+                              </div>
+                            </div>
                           </TableCell>
                           <TableCell>
                             {customer.documentType ? (

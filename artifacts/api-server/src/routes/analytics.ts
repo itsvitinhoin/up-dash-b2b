@@ -1372,6 +1372,7 @@ async function computeSummaryKpis(clientId: string, winFrom: Date, winTo: Date) 
           gte(customersTable.createdAt, winFrom),
           lte(customersTable.createdAt, winTo),
           sql`${customersTable.firstPurchaseAt} is not null`,
+          sql`${customersTable.firstPurchaseAt} >= ${customersTable.createdAt}`,
         ),
       );
 
@@ -1422,7 +1423,10 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
   if (!clientId) return;
 
   const { dateFrom, dateTo, compare } = parsed.data;
-  const { from, to } = dateRange(dateFrom as Date | undefined, dateTo as Date | undefined);
+  const hasExplicitRange = Boolean(dateFrom && dateTo);
+  const { from, to } = hasExplicitRange
+    ? dateRange(dateFrom as Date | undefined, dateTo as Date | undefined)
+    : { from: new Date(0), to: new Date() };
 
   const winLenMs = to.getTime() - from.getTime();
   const prevFrom = new Date(from.getTime() - winLenMs);
@@ -1431,7 +1435,7 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
   const [kpis, prevKpisRaw, registrationsOverTime, registrationsByState, registrationsBySource] =
     await Promise.all([
       computeSummaryKpis(clientId, from, to),
-      compare ? computeSummaryKpis(clientId, prevFrom, prevTo) : null,
+      compare && hasExplicitRange ? computeSummaryKpis(clientId, prevFrom, prevTo) : null,
       db
         .select({
           date: sql<string>`to_char(date_trunc('day', ${customersTable.createdAt}), 'YYYY-MM-DD')`,

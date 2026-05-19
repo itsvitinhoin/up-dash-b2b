@@ -371,6 +371,24 @@ async function fetchAllPages<T>(
   return results;
 }
 
+async function fetchCustomerById(apiKey: string, id: number): Promise<UpZeroCustomer | null> {
+  const path = `/external/v1/customers/${id}`;
+  let res: Response;
+  try {
+    res = await fetch(`${UPZERO_BASE}${path}`, {
+      headers: { "X-API-Key": apiKey },
+      signal: makeTimeoutSignal(),
+    });
+  } catch (err) {
+    throw wrapFetchError(err, path);
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`UP Zero API error: ${res.status} ${res.statusText} — ${path}`);
+  }
+  return (await res.json()) as UpZeroCustomer;
+}
+
 async function fetchAllCursorPages<T>(
   apiKey: string,
   path: string,
@@ -411,6 +429,62 @@ async function fetchAllCursorPages<T>(
   }
 
   return results;
+}
+
+async function backfillCustomersByNumericId(
+  clientId: string,
+  apiKey: string,
+  customers: UpZeroCustomer[],
+): Promise<UpZeroCustomer[]> {
+  const byId = new Map<string, UpZeroCustomer>();
+  for (const customer of customers) byId.set(customer.id, customer);
+
+  const numericIds = customers
+    .map((customer) => Number.parseInt(customer.id, 10))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  const maxId = numericIds.length > 0 ? Math.max(...numericIds) : 0;
+  if (maxId === 0) return customers;
+
+  const existingRows = await db
+    .select({ externalId: customersTable.externalId })
+    .from(customersTable)
+    .where(eq(customersTable.clientId, clientId));
+  const existingIds = new Set(
+    existingRows
+      .map((row) => Number.parseInt(row.externalId ?? "", 10))
+      .filter((id) => Number.isFinite(id) && id > 0),
+  );
+
+  const idsToFetch: number[] = [];
+  for (let id = 1; id <= maxId; id++) {
+    if (byId.has(String(id)) || existingIds.has(id)) continue;
+    idsToFetch.push(id);
+  }
+
+  if (idsToFetch.length === 0) return customers;
+  console.log(
+    `[upzero-sync] /external/v1/customers: list endpoint returned ${customers.length}; ` +
+      `backfilling ${idsToFetch.length} numeric customer IDs up to ${maxId}`,
+  );
+
+  const fetched = await runConcurrent(idsToFetch, 25, async (id) => {
+    try {
+      return await fetchCustomerById(apiKey, id);
+    } catch (err) {
+      console.warn(`[upzero-sync] customer detail ${id} failed: ${String(err)}`);
+      return null;
+    }
+  });
+
+  let added = 0;
+  for (const customer of fetched) {
+    if (!customer || byId.has(customer.id)) continue;
+    byId.set(customer.id, customer);
+    added++;
+  }
+  console.log(`[upzero-sync] /external/v1/customers: backfilled ${added} additional customers`);
+
+  return [...byId.values()];
 }
 
 async function fetchInventoryQty(
@@ -569,6 +643,7 @@ export async function syncUpZeroClient(
       fetchAllPages<UpZeroOrder>(apiKey, "/external/v1/orders", orderDateParams),
       fetchAllCursorPages<UpZeroProduct>(apiKey, "/external/v1/products"),
     ]);
+    upCustomers = await backfillCustomersByNumericId(clientId, apiKey, upCustomers);
   } catch (err) {
     result.errors.push(String(err));
     return result;
