@@ -96,15 +96,24 @@ interface UpZeroAddress {
   address_city?: string | null;
 }
 
+interface UpZeroRetailProfile extends UpZeroAddress {
+  cpf?: string | null;
+}
+
+interface UpZeroWholesaleProfile extends UpZeroAddress {
+  cnpj?: string | null;
+}
+
 interface UpZeroCustomer {
   id: string;
   name?: string | null;
   email?: string | null;
   phone?: string | null;
+  customer_type?: "RETAIL" | "WHOLESALE" | string | null;
   // Top-level address fields do NOT exist on CustomerResponse per the live spec.
   // Geography lives inside wholesale_profile and retail_profile only.
-  wholesale_profile?: UpZeroAddress | null;
-  retail_profile?: UpZeroAddress | null;
+  wholesale_profile?: UpZeroWholesaleProfile | null;
+  retail_profile?: UpZeroRetailProfile | null;
 }
 
 interface UpZeroVariantAttribute {
@@ -465,6 +474,12 @@ function getAddressCity(c: UpZeroCustomer): string | null {
   );
 }
 
+function getDocumentType(c: UpZeroCustomer): "CPF" | "CNPJ" | null {
+  if (c.wholesale_profile?.cnpj || c.customer_type === "WHOLESALE") return "CNPJ";
+  if (c.retail_profile?.cpf || c.customer_type === "RETAIL") return "CPF";
+  return null;
+}
+
 function extractVariantAttribute(
   attributes: UpZeroVariantAttribute[] | undefined,
   codes: string[],
@@ -823,6 +838,7 @@ export async function syncUpZeroClient(
       try {
         const state = getAddressState(c);
         const city = getAddressCity(c);
+        const documentType = getDocumentType(c);
         const email = c.email ?? `upzero-${c.id}@noemail.internal`;
 
         if (existingByExtId.has(c.id)) {
@@ -833,6 +849,7 @@ export async function syncUpZeroClient(
             .set({
               name: buildCustomerName(c.name) ?? undefined,
               phone: c.phone ?? undefined,
+              documentType: documentType ?? undefined,
               state: state ?? undefined,
               city: city ?? undefined,
             })
@@ -852,6 +869,7 @@ export async function syncUpZeroClient(
               externalId: c.id,
               name: buildCustomerName(c.name) ?? undefined,
               phone: c.phone ?? undefined,
+              documentType: documentType ?? undefined,
               state: state ?? undefined,
               city: city ?? undefined,
             })
@@ -872,6 +890,7 @@ export async function syncUpZeroClient(
               email,
               name: buildCustomerName(c.name),
               phone: c.phone ?? null,
+              documentType,
               state,
               city,
               registrationStatus: "APPROVED",
@@ -882,6 +901,7 @@ export async function syncUpZeroClient(
               set: {
                 name: buildCustomerName(c.name),
                 phone: c.phone ?? null,
+                documentType,
                 state,
                 city,
               },
@@ -962,6 +982,7 @@ export async function syncUpZeroClient(
             `upzero-${uzCustomer.id}@noemail.internal`;
           const state = getAddressState(uzCustomer);
           const city = getAddressCity(uzCustomer);
+          const documentType = getDocumentType(uzCustomer);
           const fallbackApprovalDate = new Date();
           const [upsertedCust] = await db
             .insert(customersTable)
@@ -971,6 +992,7 @@ export async function syncUpZeroClient(
               email,
               name: uzCustomer.name ?? null,
               phone: uzCustomer.phone ?? null,
+              documentType,
               state,
               city,
               registrationStatus: "APPROVED",
@@ -978,7 +1000,7 @@ export async function syncUpZeroClient(
             })
             .onConflictDoUpdate({
               target: [customersTable.clientId, customersTable.externalId],
-              set: { name: uzCustomer.name ?? null },
+              set: { name: uzCustomer.name ?? null, documentType },
             })
             .returning({
               id: customersTable.id,
@@ -1203,8 +1225,9 @@ export async function syncUpZeroClient(
   // ── 6. Post-sync aggregations ─────────────────────────────────────────────
 
   // Full recompute for all products belonging to this client.
-  // Uses FILTER to ensure only items from approved orders contribute to totals;
-  // products with no qualifying items are correctly reset to 0.
+  // Product/customer lists represent sales activity by item, so rejected orders
+  // are excluded but pending/reserved orders still contribute. Faturamento KPIs
+  // remain stricter and use APPROVED/SHIPPED/DELIVERED only.
   await db.execute(sql`
     UPDATE products p
     SET
@@ -1217,14 +1240,14 @@ export async function syncUpZeroClient(
           SUM(oi.quantity) FILTER (
             WHERE o.id IS NOT NULL
               AND o.client_id = ${clientId}
-              AND o.status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+              AND o.status <> 'REJECTED'
           ), 0
         )::int AS total_qty,
         COALESCE(
           SUM(oi.quantity * oi.price_at_sale) FILTER (
             WHERE o.id IS NOT NULL
               AND o.client_id = ${clientId}
-              AND o.status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+              AND o.status <> 'REJECTED'
           ), 0
         )::float AS total_rev
       FROM products p2
@@ -1235,6 +1258,47 @@ export async function syncUpZeroClient(
     ) agg
     WHERE p.id = agg.product_id
       AND p.client_id = ${clientId}
+  `);
+
+  await db.execute(sql`
+    UPDATE customers c
+    SET
+      total_orders      = COALESCE(agg.total_orders, 0),
+      total_spent       = COALESCE(agg.total_spent, 0),
+      first_purchase_at = agg.first_purchase_at,
+      last_purchase_at  = agg.last_purchase_at
+    FROM (
+      SELECT
+        c2.id AS customer_id,
+        COUNT(o.id) FILTER (
+          WHERE o.id IS NOT NULL
+            AND o.client_id = ${clientId}
+            AND o.status <> 'REJECTED'
+        )::int AS total_orders,
+        COALESCE(
+          SUM(o.amount) FILTER (
+            WHERE o.id IS NOT NULL
+              AND o.client_id = ${clientId}
+              AND o.status <> 'REJECTED'
+          ), 0
+        )::float AS total_spent,
+        MIN(o.created_at) FILTER (
+          WHERE o.id IS NOT NULL
+            AND o.client_id = ${clientId}
+            AND o.status <> 'REJECTED'
+        ) AS first_purchase_at,
+        MAX(o.created_at) FILTER (
+          WHERE o.id IS NOT NULL
+            AND o.client_id = ${clientId}
+            AND o.status <> 'REJECTED'
+        ) AS last_purchase_at
+      FROM customers c2
+      LEFT JOIN orders o ON o.customer_id = c2.id
+      WHERE c2.client_id = ${clientId}
+      GROUP BY c2.id
+    ) agg
+    WHERE c.id = agg.customer_id
+      AND c.client_id = ${clientId}
   `);
 
   // Recompute client YTD revenue / orders

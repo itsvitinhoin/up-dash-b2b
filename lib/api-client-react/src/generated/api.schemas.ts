@@ -609,6 +609,19 @@ export interface UtmResponse {
   rows: UtmRow[];
 }
 
+/**
+ * Brazilian customer document category inferred from UP Zero profile.
+ * @nullable
+ */
+export type CustomerDocumentType =
+  | (typeof CustomerDocumentType)[keyof typeof CustomerDocumentType]
+  | null;
+
+export const CustomerDocumentType = {
+  CPF: "CPF",
+  CNPJ: "CNPJ",
+} as const;
+
 export interface Customer {
   id: string;
   clientId: string;
@@ -617,6 +630,11 @@ export interface Customer {
   name?: string | null;
   /** @nullable */
   phone?: string | null;
+  /**
+   * Brazilian customer document category inferred from UP Zero profile.
+   * @nullable
+   */
+  documentType?: CustomerDocumentType;
   /** @nullable */
   state?: string | null;
   /** @nullable */

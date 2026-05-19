@@ -5,6 +5,7 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { CustomerDocumentType } from "./customerDocumentType";
 
 export interface Customer {
   id: string;
@@ -14,6 +15,11 @@ export interface Customer {
   name?: string | null;
   /** @nullable */
   phone?: string | null;
+  /**
+   * Brazilian customer document category inferred from UP Zero profile.
+   * @nullable
+   */
+  documentType?: CustomerDocumentType;
   /** @nullable */
   state?: string | null;
   /** @nullable */

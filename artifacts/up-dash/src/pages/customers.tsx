@@ -250,6 +250,7 @@ export default function CustomersPage() {
         { header: "id", accessor: (r) => r.id },
         { header: "name", accessor: (r) => r.name ?? "" },
         { header: "email", accessor: (r) => r.email ?? "" },
+        { header: "documentType", accessor: (r) => r.documentType ?? "" },
         { header: "city", accessor: (r) => r.city ?? "" },
         { header: "state", accessor: (r) => r.state ?? "" },
         { header: "utmSource", accessor: (r) => r.utmSource ?? "" },
@@ -674,6 +675,7 @@ export default function CustomersPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Customer</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Doc</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Location</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Source</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Campaign</TableHead>
@@ -691,6 +693,7 @@ export default function CustomersPage() {
                     Array.from({ length: 5 }).map((_, i) => (
                       <TableRow key={i}>
                         <TableCell><Skeleton className="h-4 w-32" /><Skeleton className="h-3 w-24 mt-1" /></TableCell>
+                        <TableCell><Skeleton className="h-6 w-12 rounded-full" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                         <TableCell><Skeleton className="h-6 w-12 rounded-full" /></TableCell>
@@ -705,7 +708,7 @@ export default function CustomersPage() {
                     ))
                   ) : data?.data.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11} className="p-0">
+                      <TableCell colSpan={12} className="p-0">
                         <EmptyState
                           icon={Inbox}
                           title="No customers match these filters"
@@ -734,6 +737,18 @@ export default function CustomersPage() {
                           <TableCell>
                             <div className="font-medium">{customer.name || "Unknown"}</div>
                             <div className="text-xs text-muted-foreground">{customer.email}</div>
+                          </TableCell>
+                          <TableCell>
+                            {customer.documentType ? (
+                              <Badge
+                                variant="outline"
+                                className="border-transparent bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300 text-[10px]"
+                              >
+                                {customer.documentType}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="text-sm">
                             {customer.city && customer.state ? `${customer.city}, ${customer.state}` : "—"}

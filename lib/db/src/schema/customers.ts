@@ -21,6 +21,7 @@ export const customersTable = pgTable(
     email: text("email").notNull(),
     phone: text("phone"),
     name: text("name"),
+    documentType: text("document_type", { enum: ["CPF", "CNPJ"] }),
     state: text("state"),
     city: text("city"),
     utmSource: text("utm_source"),

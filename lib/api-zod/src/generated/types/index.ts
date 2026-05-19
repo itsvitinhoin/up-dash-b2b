@@ -29,6 +29,7 @@ export * from "./customerDetailEventMetadata";
 export * from "./customerDetailOrder";
 export * from "./customerDetailProduct";
 export * from "./customerDetailResponse";
+export * from "./customerDocumentType";
 export * from "./customerJourney";
 export * from "./customerRegistrationPoint";
 export * from "./customerSourceRow";

@@ -2678,6 +2678,10 @@ components:
           type: ["string", "null"]
         phone:
           type: ["string", "null"]
+        documentType:
+          type: ["string", "null"]
+          enum: [CPF, CNPJ, null]
+          description: Brazilian customer document category inferred from UP Zero profile.
         state:
           type: ["string", "null"]
         city:

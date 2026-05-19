@@ -792,6 +792,12 @@ export const GetCustomersResponse = zod.object({
       email: zod.string(),
       name: zod.string().nullish(),
       phone: zod.string().nullish(),
+      documentType: zod
+        .union([zod.literal("CPF"), zod.literal("CNPJ"), zod.literal(null)])
+        .nullish()
+        .describe(
+          "Brazilian customer document category inferred from UP Zero profile.",
+        ),
       state: zod.string().nullish(),
       city: zod.string().nullish(),
       utmSource: zod.string().nullish(),
@@ -900,6 +906,12 @@ export const GetCustomerDetailResponse = zod.object({
     email: zod.string(),
     name: zod.string().nullish(),
     phone: zod.string().nullish(),
+    documentType: zod
+      .union([zod.literal("CPF"), zod.literal("CNPJ"), zod.literal(null)])
+      .nullish()
+      .describe(
+        "Brazilian customer document category inferred from UP Zero profile.",
+      ),
     state: zod.string().nullish(),
     city: zod.string().nullish(),
     utmSource: zod.string().nullish(),
