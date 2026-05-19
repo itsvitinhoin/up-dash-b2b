@@ -31,6 +31,57 @@ interface MetaCampaignRow {
   effective_status?: string;
 }
 
+interface MetaAdCreativeDetails {
+  id: string;
+  name?: string;
+  status?: string;
+  effective_status?: string;
+  preview_shareable_link?: string;
+  creative?: {
+    id?: string;
+    name?: string;
+    thumbnail_url?: string;
+    image_url?: string;
+    video_id?: string;
+    effective_object_story_id?: string;
+    object_story_spec?: {
+      video_data?: {
+        video_id?: string;
+        image_url?: string;
+        title?: string;
+        message?: string;
+      };
+      link_data?: {
+        picture?: string;
+        image_hash?: string;
+        message?: string;
+        name?: string;
+      };
+      photo_data?: {
+        url?: string;
+        image_hash?: string;
+      };
+    };
+  };
+}
+
+interface MetaVideoDetails {
+  id: string;
+  source?: string;
+  picture?: string;
+  permalink_url?: string;
+  length?: number;
+}
+
+export interface MetaAdAccountOption {
+  id: string;
+  accountId: string;
+  name: string;
+  currency?: string;
+  timezoneName?: string;
+  accountStatus?: number;
+}
+
 export interface MetaDailyPoint {
   date: string;
   spend: number;
@@ -58,10 +109,36 @@ export interface MetaAdMetric {
   dateStop: string;
 }
 
+export interface MetaCreativeMetric {
+  id: string;
+  name: string;
+  status: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  leads: number;
+  purchases: number;
+  cpl: number;
+  cpa: number;
+  previewUrl: string | null;
+  thumbnailUrl: string | null;
+  imageUrl: string | null;
+  videoUrl: string | null;
+  mediaType: "video" | "image" | "unknown";
+}
+
+export interface MetaTopCreatives {
+  ctr: MetaCreativeMetric[];
+  cpl: MetaCreativeMetric[];
+  leads: MetaCreativeMetric[];
+}
+
 export interface MetaMarketingData {
   daily: MetaDailyPoint[];
   ads: MetaAdMetric[];
   campaigns: MetaAdMetric[];
+  topCreatives: MetaTopCreatives;
   summary: {
     spend: number;
     impressions: number;
@@ -81,6 +158,15 @@ export function normalizeMetaAdAccountId(raw: string): string {
 
 function graphVersion(): string {
   return process.env.META_GRAPH_VERSION ?? DEFAULT_GRAPH_VERSION;
+}
+
+async function fetchGraph<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  const body = (await res.json()) as T & { error?: { message?: string } };
+  if (!res.ok || body.error) {
+    throw new Error(body.error?.message ?? `${res.status} ${res.statusText}`);
+  }
+  return body;
 }
 
 function numberValue(value: unknown): number {
@@ -192,6 +278,42 @@ async function fetchCampaignStatuses(accessToken: string, adAccountId: string): 
   return statuses;
 }
 
+export async function fetchMetaAdAccounts(accessToken: string): Promise<MetaAdAccountOption[]> {
+  const accounts: MetaAdAccountOption[] = [];
+  let url: string | null = `${GRAPH_BASE}/${graphVersion()}/me/adaccounts?${new URLSearchParams({
+    access_token: accessToken,
+    fields: "id,account_id,name,account_status,currency,timezone_name",
+    limit: "200",
+  })}`;
+
+  while (url) {
+    const body = await fetchGraph<{
+      data?: Array<{
+        id: string;
+        account_id?: string;
+        name?: string;
+        account_status?: number;
+        currency?: string;
+        timezone_name?: string;
+      }>;
+      paging?: { next?: string };
+    }>(url);
+    for (const account of body.data ?? []) {
+      accounts.push({
+        id: normalizeMetaAdAccountId(account.id),
+        accountId: account.account_id ?? account.id.replace(/^act_/, ""),
+        name: account.name ?? account.id,
+        currency: account.currency,
+        timezoneName: account.timezone_name,
+        accountStatus: account.account_status,
+      });
+    }
+    url = body.paging?.next ?? null;
+  }
+
+  return accounts;
+}
+
 function costPerLead(costs: MetaAction[] | undefined): number | null {
   return actionCost(costs, "lead");
 }
@@ -275,6 +397,121 @@ function summarize(daily: MetaDailyPoint[]) {
   };
 }
 
+function metricWithCtr(ad: MetaAdMetric): MetaCreativeMetric {
+  return {
+    id: ad.id,
+    name: ad.name,
+    status: ad.status ?? "UNKNOWN",
+    spend: ad.spend,
+    impressions: ad.impressions,
+    clicks: ad.clicks,
+    ctr: ad.impressions > 0 ? (ad.clicks / ad.impressions) * 100 : 0,
+    leads: ad.leads,
+    purchases: ad.purchases,
+    cpl: ad.cpl ?? (ad.leads > 0 ? ad.spend / ad.leads : 0),
+    cpa: ad.cpa ?? (ad.purchases > 0 ? ad.spend / ad.purchases : 0),
+    previewUrl: null,
+    thumbnailUrl: null,
+    imageUrl: null,
+    videoUrl: null,
+    mediaType: "unknown",
+  };
+}
+
+function imageFromCreative(details: MetaAdCreativeDetails): string | null {
+  return (
+    details.creative?.object_story_spec?.video_data?.image_url ??
+    details.creative?.object_story_spec?.link_data?.picture ??
+    details.creative?.object_story_spec?.photo_data?.url ??
+    details.creative?.image_url ??
+    details.creative?.thumbnail_url ??
+    null
+  );
+}
+
+function videoIdFromCreative(details: MetaAdCreativeDetails): string | null {
+  return (
+    details.creative?.object_story_spec?.video_data?.video_id ??
+    details.creative?.video_id ??
+    null
+  );
+}
+
+async function fetchVideoDetails(accessToken: string, videoId: string): Promise<MetaVideoDetails | null> {
+  try {
+    return await fetchGraph<MetaVideoDetails>(`${GRAPH_BASE}/${graphVersion()}/${videoId}?${new URLSearchParams({
+      access_token: accessToken,
+      fields: "id,source,picture,permalink_url,length",
+    })}`);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchAdCreativeDetails(accessToken: string, adId: string): Promise<MetaAdCreativeDetails | null> {
+  try {
+    return await fetchGraph<MetaAdCreativeDetails>(`${GRAPH_BASE}/${graphVersion()}/${adId}?${new URLSearchParams({
+      access_token: accessToken,
+      fields: "id,name,status,effective_status,preview_shareable_link,creative{id,name,thumbnail_url,image_url,video_id,effective_object_story_id,object_story_spec}",
+    })}`);
+  } catch {
+    return null;
+  }
+}
+
+async function buildTopCreatives(accessToken: string, ads: MetaAdMetric[]): Promise<MetaTopCreatives> {
+  const base = ads.map(metricWithCtr);
+  const byCtr = [...base]
+    .filter((ad) => ad.impressions > 0 && ad.clicks > 0)
+    .sort((a, b) => b.ctr - a.ctr)
+    .slice(0, 5);
+  const byCpl = [...base]
+    .filter((ad) => ad.leads > 0 && ad.cpl > 0)
+    .sort((a, b) => a.cpl - b.cpl)
+    .slice(0, 5);
+  const byLeads = [...base]
+    .filter((ad) => ad.leads > 0)
+    .sort((a, b) => b.leads - a.leads)
+    .slice(0, 5);
+
+  const ids = [...new Set([...byCtr, ...byCpl, ...byLeads].map((ad) => ad.id))];
+  const detailEntries = await Promise.all(
+    ids.map(async (id) => [id, await fetchAdCreativeDetails(accessToken, id)] as const),
+  );
+  const detailsById = new Map(detailEntries);
+
+  const videoIds = [...new Set(detailEntries.map(([, details]) => details && videoIdFromCreative(details)).filter(Boolean) as string[])];
+  const videoEntries = await Promise.all(
+    videoIds.map(async (id) => [id, await fetchVideoDetails(accessToken, id)] as const),
+  );
+  const videosById = new Map(videoEntries);
+
+  const enrich = (creative: MetaCreativeMetric): MetaCreativeMetric => {
+    const details = detailsById.get(creative.id);
+    if (!details) return creative;
+    const videoId = videoIdFromCreative(details);
+    const video = videoId ? videosById.get(videoId) : null;
+    const imageUrl = imageFromCreative(details) ?? video?.picture ?? null;
+    const videoUrl = video?.source ?? null;
+    return {
+      ...creative,
+      name: details.name ?? creative.name,
+      status: details.effective_status ?? details.status ?? creative.status,
+      previewUrl: details.preview_shareable_link ?? (video?.permalink_url ? `https://www.facebook.com${video.permalink_url}` : null),
+      thumbnailUrl: details.creative?.thumbnail_url ?? imageUrl,
+      imageUrl,
+      videoUrl,
+      mediaType: videoId ? "video" : imageUrl ? "image" : "unknown",
+    };
+  };
+
+  return {
+    ctr: byCtr.map(enrich),
+    cpl: byCpl.map(enrich),
+    leads: byLeads.map(enrich),
+  };
+}
+
 export async function fetchMetaMarketingData(params: {
   accessToken: string;
   adAccountId: string;
@@ -317,7 +554,7 @@ export async function fetchMetaMarketingData(params: {
       status: row.campaign_id ? campaignStatuses.get(row.campaign_id) ?? metric.status : metric.status,
     };
   });
-  return { daily, ads, campaigns, summary: summarize(daily) };
+  return { daily, ads, campaigns, topCreatives: await buildTopCreatives(params.accessToken, ads), summary: summarize(daily) };
 }
 
 export async function upsertMetaCreatives(clientId: string, ads: MetaAdMetric[]): Promise<void> {

@@ -12,6 +12,8 @@ export interface CreateClientRequest {
   apiKey: string;
   /** Optional Meta Ads API key for this client. */
   metaAdsApiKey?: string;
+  /** Optional Meta ad account id for this client. */
+  metaAdAccountId?: string;
   /** Optional UP Zero API key for syncing live orders and customers. */
   upZeroApiKey?: string;
   /** ISO 4217 currency code (default BRL) */

@@ -16,6 +16,11 @@ export interface UpdateClientRequest {
    */
   metaAdsApiKey?: string | null;
   /**
+   * Meta ad account id. Pass null to clear it.
+   * @nullable
+   */
+  metaAdAccountId?: string | null;
+  /**
    * UP Zero API key. Pass null to clear it.
    * @nullable
    */

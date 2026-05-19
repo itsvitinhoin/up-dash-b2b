@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { and, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { db, clientsTable, ordersTable, eventsTable, creativesTable, syncJobsTable } from "@workspace/db";
+import { db, clientsTable, ordersTable, eventsTable, creativesTable, syncJobsTable, customersTable } from "@workspace/db";
 import {
   CreateClientBody,
   GetClientParams,
@@ -14,6 +14,7 @@ import {
 import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
 import { syncUpZeroClient } from "../services/upzero-sync";
+import { fetchMetaAdAccounts, normalizeMetaAdAccountId } from "../services/meta-ads";
 
 const router: IRouter = Router();
 
@@ -28,7 +29,12 @@ function coerceClientsQuery(query: Record<string, unknown>): Record<string, unkn
     const v = out[key];
     if (typeof v === "string" && v.length > 0) {
       const parsed = new Date(v);
-      if (!Number.isNaN(parsed.getTime())) out[key] = parsed;
+      if (!Number.isNaN(parsed.getTime())) {
+        if (key === "dateTo" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+          parsed.setUTCHours(23, 59, 59, 999);
+        }
+        out[key] = parsed;
+      }
     }
   }
   return out;
@@ -83,8 +89,9 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     const prevTo = new Date(dateFrom.getTime() - 1);
     const prevFrom = new Date(prevTo.getTime() - lengthMs);
 
-    // Revenue/orders per client in the window. Same status filter the
-    // dashboard uses so AOV matches "real" revenue.
+    // Requested revenue/orders per client in the window. The client list uses
+    // demand created in the period, so it intentionally does not filter final
+    // order status.
     const orderAgg = (winFrom: Date, winTo: Date) =>
       db
         .select({
@@ -98,28 +105,25 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
             inArray(ordersTable.clientId, ids),
             gte(ordersTable.createdAt, winFrom),
             lte(ordersTable.createdAt, winTo),
-            sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
           ),
         )
         .groupBy(ordersTable.clientId);
 
-    // Visits + purchases per client for visit-to-purchase conversion. We
-    // intentionally use VISIT events from `events_table` rather than orders
-    // counted vs visits, mirroring the per-brand dashboard's definition.
-    const visitAgg = db
+    const registrationAgg = db
       .select({
-        clientId: eventsTable.clientId,
-        visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int`,
+        clientId: customersTable.clientId,
+        totalLeads: sql<number>`COUNT(*)::int`,
+        approvedLeads: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
       })
-      .from(eventsTable)
+      .from(customersTable)
       .where(
         and(
-          inArray(eventsTable.clientId, ids),
-          gte(eventsTable.createdAt, dateFrom),
-          lte(eventsTable.createdAt, dateTo),
+          inArray(customersTable.clientId, ids),
+          gte(customersTable.createdAt, dateFrom),
+          lte(customersTable.createdAt, dateTo),
         ),
       )
-      .groupBy(eventsTable.clientId);
+      .groupBy(customersTable.clientId);
 
     // Prorated creative spend/leads per client for the window.
     const creativesQuery = db
@@ -146,10 +150,10 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
         ),
       );
 
-    const [currRows, prevRows, visitRows, creativeRows] = await Promise.all([
+    const [currRows, prevRows, registrationRows, creativeRows] = await Promise.all([
       orderAgg(dateFrom, dateTo),
       orderAgg(prevFrom, prevTo),
-      visitAgg,
+      registrationAgg,
       creativesQuery,
     ]);
 
@@ -167,9 +171,12 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
         orders: Number(r.orders) || 0,
       });
     }
-    const visits = new Map<string, number>();
-    for (const r of visitRows) {
-      visits.set(r.clientId, Number(r.visits) || 0);
+    const registrations = new Map<string, { totalLeads: number; approvedLeads: number }>();
+    for (const r of registrationRows) {
+      registrations.set(r.clientId, {
+        totalLeads: Number(r.totalLeads) || 0,
+        approvedLeads: Number(r.approvedLeads) || 0,
+      });
     }
 
     // Aggregate prorated creative metrics per client.
@@ -198,7 +205,7 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     enriched = rows.map((r) => {
       const c = curr.get(r.id) ?? { revenue: 0, orders: 0 };
       const p = prev.get(r.id) ?? { revenue: 0, orders: 0 };
-      const v = visits.get(r.id) ?? 0;
+      const regs = registrations.get(r.id) ?? { totalLeads: 0, approvedLeads: 0 };
       const m = mkt.get(r.id) ?? null;
       let growthPct: number | null;
       if (p.revenue > 0) {
@@ -210,14 +217,14 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
       }
       return {
         ...r,
+        revenueYtd: c.revenue,
+        ordersYtd: c.orders,
         avgOrderValue: c.orders > 0 ? c.revenue / c.orders : 0,
-        // Clamp to 0–100 — visits can lag behind orders for back-dated
-        // imports, which would otherwise render >100% conversions.
-        conversionRate: v > 0 ? Math.min(100, (c.orders / v) * 100) : 0,
+        conversionRate: regs.approvedLeads > 0 ? (c.orders / regs.approvedLeads) * 100 : 0,
         periodGrowthPct: growthPct,
         periodRoas: m && m.adSpend > 0 ? c.revenue / m.adSpend : null,
-        periodLeads: m ? m.totalLeads : null,
-        periodApprovalRate: m && m.totalLeads > 0 ? (m.approvedLeads / m.totalLeads) * 100 : null,
+        periodLeads: regs.totalLeads,
+        periodApprovalRate: regs.totalLeads > 0 ? (regs.approvedLeads / regs.totalLeads) * 100 : null,
       };
     });
   }
@@ -266,9 +273,16 @@ router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
     return;
   }
   const adminId = req.user?.sub ?? null;
+  const values = {
+    ...parsed.data,
+    metaAdAccountId: parsed.data.metaAdAccountId?.trim()
+      ? normalizeMetaAdAccountId(parsed.data.metaAdAccountId)
+      : undefined,
+    adminId,
+  };
   const [created] = await db
     .insert(clientsTable)
-    .values({ ...parsed.data, adminId })
+    .values(values)
     .returning();
   res.status(201).json(GetClientResponse.parse(created));
 });
@@ -473,6 +487,10 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
   if ("metaAdsApiKey" in bodyParsed.data) {
     updates.metaAdsApiKey = bodyParsed.data.metaAdsApiKey ?? null;
   }
+  if ("metaAdAccountId" in bodyParsed.data) {
+    const accountId = bodyParsed.data.metaAdAccountId?.trim();
+    updates.metaAdAccountId = accountId ? normalizeMetaAdAccountId(accountId) : null;
+  }
   if ("upZeroApiKey" in bodyParsed.data) {
     updates.upZeroApiKey = bodyParsed.data.upZeroApiKey ?? null;
   }
@@ -500,6 +518,68 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
     return;
   }
   res.json(GetClientResponse.parse(updated));
+});
+
+const MetaAdAccountsBody = z.object({
+  accessToken: z.string().nullish(),
+});
+
+router.post("/clients/:clientId/meta/ad-accounts", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: paramParsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const bodyParsed = MetaAdAccountsBody.safeParse(req.body ?? {});
+  if (!bodyParsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: bodyParsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const [client] = await db
+    .select({ metaAdsApiKey: clientsTable.metaAdsApiKey })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, paramParsed.data.clientId));
+  if (!client) {
+    res.status(404).json({
+      error: true,
+      code: "NOT_FOUND",
+      message: "Client not found",
+      status: 404,
+    });
+    return;
+  }
+  const token = bodyParsed.data.accessToken?.trim() || client.metaAdsApiKey;
+  if (!token) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: "Meta Ads API key is required to detect ad accounts",
+      status: 400,
+    });
+    return;
+  }
+
+  try {
+    const accounts = await fetchMetaAdAccounts(token);
+    res.json({ accounts });
+  } catch (err) {
+    res.status(502).json({
+      error: true,
+      code: "META_AD_ACCOUNTS_FAILED",
+      message: String(err),
+      status: 502,
+    });
+  }
 });
 
 router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Promise<void> => {

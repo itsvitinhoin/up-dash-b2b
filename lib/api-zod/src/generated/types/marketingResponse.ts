@@ -12,12 +12,42 @@ import type { MarketingPlatformRow } from "./marketingPlatformRow";
 import type { MarketingStateRow } from "./marketingStateRow";
 import type { TimeSeriesPoint } from "./timeSeriesPoint";
 
+export interface MetaTopCreative {
+  id: string;
+  name: string;
+  status: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  leads: number;
+  purchases: number;
+  cpl: number;
+  cpa: number;
+  /** @nullable */
+  previewUrl?: string | null;
+  /** @nullable */
+  thumbnailUrl?: string | null;
+  /** @nullable */
+  imageUrl?: string | null;
+  /** @nullable */
+  videoUrl?: string | null;
+  mediaType: "video" | "image" | "unknown";
+}
+
+export interface MarketingTopCreatives {
+  ctr: MetaTopCreative[];
+  cpl: MetaTopCreative[];
+  leads: MetaTopCreative[];
+}
+
 export interface MarketingResponse {
   kpis: MarketingKpis;
   prevKpis: MarketingKpis;
   leadsOverTime: TimeSeriesPoint[];
   revenueOverTime: TimeSeriesPoint[];
   spendOverTime: TimeSeriesPoint[];
+  topCreatives: MarketingTopCreatives;
   creatives: CreativeMetrics[];
   platformBreakdown: MarketingPlatformRow[];
   stateBreakdown: MarketingStateRow[];

@@ -17,6 +17,7 @@ import {
   getGetSyncJobQueryOptions,
   lookupClientByApiKey,
   getListClientsQueryKey,
+  customFetch,
 } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -89,6 +90,15 @@ interface CsvRow {
   currency: string;
   locale: string;
   errors: string[];
+}
+
+interface MetaAdAccountOption {
+  id: string;
+  accountId: string;
+  name: string;
+  currency?: string;
+  timezoneName?: string;
+  accountStatus?: number;
 }
 
 function validateCsvRows(rawRows: Record<string, string>[]): CsvRow[] {
@@ -432,21 +442,29 @@ function MetaAdsKeyDialog({
   clientId,
   clientName,
   currentKey,
+  currentAdAccountId,
 }: {
   clientId: string;
   clientName: string;
   currentKey: string | null | undefined;
+  currentAdAccountId: string | null | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
+  const [adAccountId, setAdAccountId] = useState("");
   const [showValue, setShowValue] = useState(false);
+  const [accounts, setAccounts] = useState<MetaAdAccountOption[]>([]);
+  const [isDetecting, setIsDetecting] = useState(false);
   const updateMutation = useUpdateClient();
   const queryClient = useQueryClient();
 
   function handleOpen(o: boolean) {
     if (o) {
       setValue(currentKey ?? "");
+      setAdAccountId(currentAdAccountId ?? "");
       setShowValue(false);
+      setAccounts([]);
+      setIsDetecting(false);
       updateMutation.reset();
     } else {
       setOpen(false);
@@ -456,21 +474,54 @@ function MetaAdsKeyDialog({
 
   function handleSave() {
     updateMutation.mutate(
-      { clientId, data: { metaAdsApiKey: value.trim() || null } },
+      {
+        clientId,
+        data: {
+          metaAdsApiKey: value.trim() || null,
+          metaAdAccountId: adAccountId.trim() || null,
+        },
+      },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
           setOpen(false);
-          toast.success("Meta Ads API key updated");
+          toast.success("Meta Ads settings updated");
         },
         onError: () => {
-          toast.error("Failed to update Meta Ads API key");
+          toast.error("Failed to update Meta Ads settings");
         },
       }
     );
   }
 
+  async function handleDetectAccounts() {
+    setIsDetecting(true);
+    try {
+      const res = await customFetch<{ accounts: MetaAdAccountOption[] }>(
+        `/api/clients/${clientId}/meta/ad-accounts`,
+        {
+          method: "POST",
+          body: JSON.stringify({ accessToken: value.trim() || null }),
+        },
+      );
+      setAccounts(res.accounts);
+      if (res.accounts.length === 1) {
+        setAdAccountId(res.accounts[0].id);
+        toast.success(`Ad account detected: ${res.accounts[0].name}`);
+      } else if (res.accounts.length > 1) {
+        toast.success(`${res.accounts.length} ad accounts found`);
+      } else {
+        toast.warning("No ad accounts found for this Meta token");
+      }
+    } catch {
+      toast.error("Could not detect Meta ad accounts");
+    } finally {
+      setIsDetecting(false);
+    }
+  }
+
   const hasKey = !!currentKey;
+  const hasAdAccount = !!currentAdAccountId;
 
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
@@ -478,11 +529,11 @@ function MetaAdsKeyDialog({
         <Button
           variant="ghost"
           size="sm"
-          className={`h-7 gap-1 text-xs ${hasKey ? "text-emerald-400 hover:text-emerald-300" : ""}`}
-          title="Set Meta Ads API key"
+          className={`h-7 gap-1 text-xs ${hasKey && hasAdAccount ? "text-emerald-400 hover:text-emerald-300" : hasKey ? "text-amber-400 hover:text-amber-300" : ""}`}
+          title="Set Meta Ads integration"
         >
           <Network className="h-3 w-3" />
-          {hasKey ? "Meta Key ✓" : "Add Meta Key"}
+          {hasKey && hasAdAccount ? "Meta ✓" : hasKey ? "Meta Key" : "Add Meta"}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[460px]">
@@ -491,9 +542,8 @@ function MetaAdsKeyDialog({
             <Network className="h-4 w-4" /> Meta Ads API Key
           </DialogTitle>
           <DialogDescription>
-            Set the Meta Ads API key for <strong>{clientName}</strong>. This key
-            will be used to pull ad spend and lead data from Meta. Leave blank
-            to clear the existing key.
+            Set the Meta Ads API key and ad account for <strong>{clientName}</strong>.
+            Use auto-detect to pick an account from the token.
           </DialogDescription>
         </DialogHeader>
 
@@ -522,9 +572,54 @@ function MetaAdsKeyDialog({
           {hasKey && !value && (
             <p className="text-xs text-amber-400 flex items-center gap-1">
               <AlertCircle className="h-3 w-3 shrink-0" />
-              Saving with an empty field will remove the existing key.
+              Saving with an empty key will remove the Meta integration.
             </p>
           )}
+          <div className="grid gap-2 pt-2">
+            <div className="flex items-end gap-2">
+              <div className="flex-1 space-y-2">
+                <Label htmlFor="meta-ad-account">Ad Account</Label>
+                {accounts.length > 0 ? (
+                  <Select value={adAccountId} onValueChange={setAdAccountId}>
+                    <SelectTrigger id="meta-ad-account">
+                      <SelectValue placeholder="Select ad account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {accounts.map((account) => (
+                        <SelectItem key={account.id} value={account.id}>
+                          {account.name} · {account.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="meta-ad-account"
+                    value={adAccountId}
+                    onChange={(e) => setAdAccountId(e.target.value)}
+                    placeholder="act_1234567890"
+                    className="font-mono text-xs"
+                  />
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mb-0.5 shrink-0 gap-1"
+                onClick={handleDetectAccounts}
+                disabled={isDetecting || (!value.trim() && !currentKey)}
+              >
+                {isDetecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Network className="h-3.5 w-3.5" />}
+                Detect
+              </Button>
+            </div>
+            {adAccountId && (
+              <p className="text-xs text-muted-foreground">
+                Selected account: <span className="font-mono">{adAccountId}</span>
+              </p>
+            )}
+          </div>
           {updateMutation.isError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
@@ -541,7 +636,7 @@ function MetaAdsKeyDialog({
             {updateMutation.isPending ? (
               <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
             ) : (
-              "Save Key"
+              "Save Meta"
             )}
           </Button>
         </DialogFooter>
@@ -792,6 +887,7 @@ export default function ClientsPage() {
   const [newEmail, setNewEmail] = useState("");
   const [newApiKey, setNewApiKey] = useState("");
   const [newMetaAdsApiKey, setNewMetaAdsApiKey] = useState("");
+  const [newMetaAdAccountId, setNewMetaAdAccountId] = useState("");
   const [newCurrencyCode, setNewCurrencyCode] = useState("BRL");
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupMatch, setLookupMatch] = useState<string | null>(null);
@@ -909,6 +1005,7 @@ export default function ClientsPage() {
           email: newEmail,
           apiKey: newApiKey,
           ...(newMetaAdsApiKey.trim() ? { metaAdsApiKey: newMetaAdsApiKey.trim() } : {}),
+          ...(newMetaAdAccountId.trim() ? { metaAdAccountId: newMetaAdAccountId.trim() } : {}),
           currency: picked.code,
           locale: picked.locale,
         },
@@ -920,6 +1017,7 @@ export default function ClientsPage() {
           setNewEmail("");
           setNewApiKey("");
           setNewMetaAdsApiKey("");
+          setNewMetaAdAccountId("");
           setNewCurrencyCode("BRL");
           setLookupMatch(null);
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
@@ -1037,6 +1135,7 @@ export default function ClientsPage() {
             setNewEmail("");
             setNewApiKey("");
             setNewMetaAdsApiKey("");
+            setNewMetaAdAccountId("");
             setNewCurrencyCode("BRL");
             setLookupMatch(null);
             setIsLookingUp(false);
@@ -1136,6 +1235,19 @@ export default function ClientsPage() {
                   </p>
                 </div>
                 <div className="grid gap-2">
+                  <Label htmlFor="metaAdAccountId">
+                    Meta Ad Account{" "}
+                    <span className="text-xs text-muted-foreground font-normal">(optional)</span>
+                  </Label>
+                  <Input
+                    id="metaAdAccountId"
+                    value={newMetaAdAccountId}
+                    onChange={(e) => setNewMetaAdAccountId(e.target.value)}
+                    placeholder="act_1234567890"
+                    className="font-mono text-xs"
+                  />
+                </div>
+                <div className="grid gap-2">
                   <Label htmlFor="currency">Currency &amp; Locale</Label>
                   <Select value={newCurrencyCode} onValueChange={setNewCurrencyCode}>
                     <SelectTrigger id="currency">
@@ -1206,7 +1318,7 @@ export default function ClientsPage() {
                 <TableRow>
                   <TableHead>Client</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right">YTD Revenue</TableHead>
+                  <TableHead className="text-right">Revenue</TableHead>
                   <TableHead className="text-right">Orders</TableHead>
                   <TableHead className="text-right">Avg order</TableHead>
                   <TableHead className="text-right">Conv. %</TableHead>
@@ -1319,6 +1431,7 @@ export default function ClientsPage() {
                             clientId={client.id}
                             clientName={client.name}
                             currentKey={client.metaAdsApiKey}
+                            currentAdAccountId={client.metaAdAccountId}
                           />
                           <SiteVisitsDialog clientId={client.id} clientName={client.name} />
                           <RotateKeyDialog clientId={client.id} clientName={client.name} />

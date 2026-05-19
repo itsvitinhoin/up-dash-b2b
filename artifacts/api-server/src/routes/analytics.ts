@@ -5533,6 +5533,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     leadsOverTime: leadsRows,
     revenueOverTime: revenueRows,
     spendOverTime,
+    topCreatives: metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] },
     creatives: pagedMetaCampaigns
       ? buildMetaCampaignMetrics(pagedMetaCampaigns)
       : buildCreativeMetrics(pagedCreatives, attrRevForCreatives, totalProratedSpend, from, to),

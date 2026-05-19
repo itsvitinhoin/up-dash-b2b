@@ -37,6 +37,9 @@ import {
   Link2,
   MapPin,
   PersonStanding,
+  Play,
+  ExternalLink,
+  Image as ImageIcon,
 } from "lucide-react";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import {
@@ -92,6 +95,25 @@ interface CreativeRow {
   roas: number;
   cpl: number;
   cpa: number;
+}
+
+interface MetaTopCreative {
+  id: string;
+  name: string;
+  status: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  leads: number;
+  purchases: number;
+  cpl: number;
+  cpa: number;
+  previewUrl?: string | null;
+  thumbnailUrl?: string | null;
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  mediaType: "video" | "image" | "unknown";
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -333,6 +355,137 @@ function CreativeThumbnail({ imageUrl, platform, name }: { imageUrl: string | nu
     <div className="w-10 h-10 rounded-md shrink-0 flex items-center justify-center text-sm font-bold" style={{ backgroundColor: color + "22", color }}>
       {initial}
     </div>
+  );
+}
+
+function CreativeMediaPreview({ creative }: { creative: MetaTopCreative }) {
+  const image = creative.imageUrl ?? creative.thumbnailUrl ?? null;
+  return (
+    <div className="relative aspect-[4/5] w-full overflow-hidden rounded-md bg-muted">
+      {creative.videoUrl ? (
+        <video
+          src={creative.videoUrl}
+          poster={image ?? undefined}
+          className="h-full w-full object-cover"
+          muted
+          controls
+          playsInline
+          preload="metadata"
+        />
+      ) : image ? (
+        <img src={image} alt={creative.name} className="h-full w-full object-cover" loading="lazy" />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+          <ImageIcon className="h-8 w-8" />
+        </div>
+      )}
+      {creative.mediaType === "video" && !creative.videoUrl && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/15">
+          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-white">
+            <Play className="h-5 w-5 fill-current" />
+          </span>
+        </div>
+      )}
+      <div className="absolute left-2 top-2">
+        <StatusBadge status={creative.status} />
+      </div>
+      {creative.previewUrl && (
+        <a
+          href={creative.previewUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/75"
+          aria-label={`Open ${creative.name} preview`}
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function TopCreativeCard({
+  creative,
+  metricLabel,
+  metricValue,
+}: {
+  creative: MetaTopCreative;
+  metricLabel: string;
+  metricValue: string;
+}) {
+  return (
+    <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3 rounded-md border border-border bg-background/40 p-3">
+      <CreativeMediaPreview creative={creative} />
+      <div className="min-w-0 space-y-2">
+        <div>
+          <p className="truncate text-sm font-medium text-foreground" title={creative.name}>
+            {creative.name}
+          </p>
+          <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+            {metricLabel} · {metricValue}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div>
+            <p className="text-muted-foreground">CTR</p>
+            <p className="font-medium tabular-nums">{formatPercentage(creative.ctr)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">CPL</p>
+            <p className="font-medium tabular-nums">{formatCurrency(creative.cpl)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Leads</p>
+            <p className="font-medium tabular-nums">{formatNumber(creative.leads)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Spend</p>
+            <p className="font-medium tabular-nums">{formatCurrency(creative.spend)}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TopCreativesColumn({
+  title,
+  items,
+  metric,
+}: {
+  title: string;
+  items: MetaTopCreative[];
+  metric: "ctr" | "cpl" | "leads";
+}) {
+  const metricLabel = metric === "ctr" ? "CTR" : metric === "cpl" ? "CPL" : "Leads";
+  const metricValue = (creative: MetaTopCreative) =>
+    metric === "ctr"
+      ? formatPercentage(creative.ctr)
+      : metric === "cpl"
+        ? formatCurrency(creative.cpl)
+        : formatNumber(creative.leads);
+
+  return (
+    <Card className="p-4 bg-card border-border">
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Sparkles className="h-4 w-4 text-muted-foreground" />
+        {title}
+      </h3>
+      <div className="space-y-3">
+        {items.length === 0 ? (
+          <EmptyState icon={ImageIcon} title="No creatives" description="No Meta creative data in this period." className="h-36" />
+        ) : (
+          items.slice(0, 3).map((creative) => (
+            <TopCreativeCard
+              key={`${metric}-${creative.id}`}
+              creative={creative}
+              metricLabel={metricLabel}
+              metricValue={metricValue(creative)}
+            />
+          ))
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -730,6 +883,33 @@ export default function MarketingPage() {
             isLoading={isLoading}
             invertChange
           />
+        </motion.div>
+      )}
+
+      {!hasNoData && (
+        <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-foreground">Top Meta Creatives</h2>
+            <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+              CTR · CPL · Leads
+            </span>
+          </div>
+          {isLoading ? (
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+              {Array.from({ length: 3 }).map((_, idx) => (
+                <Card key={idx} className="p-4">
+                  <Skeleton className="h-4 w-32 mb-3" />
+                  <Skeleton className="h-32 w-full" />
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+              <TopCreativesColumn title="Best CTR" items={data?.topCreatives?.ctr ?? []} metric="ctr" />
+              <TopCreativesColumn title="Lowest CPL" items={data?.topCreatives?.cpl ?? []} metric="cpl" />
+              <TopCreativesColumn title="Most Leads" items={data?.topCreatives?.leads ?? []} metric="leads" />
+            </div>
+          )}
         </motion.div>
       )}
 

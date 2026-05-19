@@ -111,6 +111,10 @@ export const ListClientsResponse = zod.object({
         .describe(
           "Meta Ads API key for pulling ad spend and lead data from Meta.",
         ),
+      metaAdAccountId: zod
+        .string()
+        .nullish()
+        .describe("Meta ad account id used for Marketing API pulls."),
       upZeroApiKey: zod
         .string()
         .nullish()
@@ -173,6 +177,10 @@ export const CreateClientBody = zod.object({
     .string()
     .optional()
     .describe("Optional Meta Ads API key for this client."),
+  metaAdAccountId: zod
+    .string()
+    .optional()
+    .describe("Optional Meta ad account id for this client."),
   upZeroApiKey: zod
     .string()
     .optional()
@@ -266,6 +274,10 @@ export const GetClientResponse = zod.object({
     .string()
     .nullish()
     .describe("Meta Ads API key for pulling ad spend and lead data from Meta."),
+  metaAdAccountId: zod
+    .string()
+    .nullish()
+    .describe("Meta ad account id used for Marketing API pulls."),
   upZeroApiKey: zod
     .string()
     .nullish()
@@ -325,6 +337,10 @@ export const UpdateClientBody = zod
       .string()
       .nullish()
       .describe("Meta Ads API key. Pass null to clear it."),
+    metaAdAccountId: zod
+      .string()
+      .nullish()
+      .describe("Meta ad account id. Pass null to clear it."),
     upZeroApiKey: zod
       .string()
       .nullish()
@@ -348,6 +364,10 @@ export const UpdateClientResponse = zod.object({
     .string()
     .nullish()
     .describe("Meta Ads API key for pulling ad spend and lead data from Meta."),
+  metaAdAccountId: zod
+    .string()
+    .nullish()
+    .describe("Meta ad account id used for Marketing API pulls."),
   upZeroApiKey: zod
     .string()
     .nullish()
@@ -2367,6 +2387,68 @@ export const GetMarketingResponse = zod.object({
       value: zod.number(),
     }),
   ),
+  topCreatives: zod.object({
+    ctr: zod.array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        status: zod.string(),
+        spend: zod.number(),
+        impressions: zod.number(),
+        clicks: zod.number(),
+        ctr: zod.number(),
+        leads: zod.number(),
+        purchases: zod.number(),
+        cpl: zod.number(),
+        cpa: zod.number(),
+        previewUrl: zod.string().nullish(),
+        thumbnailUrl: zod.string().nullish(),
+        imageUrl: zod.string().nullish(),
+        videoUrl: zod.string().nullish(),
+        mediaType: zod.enum(["video", "image", "unknown"]),
+      }),
+    ),
+    cpl: zod.array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        status: zod.string(),
+        spend: zod.number(),
+        impressions: zod.number(),
+        clicks: zod.number(),
+        ctr: zod.number(),
+        leads: zod.number(),
+        purchases: zod.number(),
+        cpl: zod.number(),
+        cpa: zod.number(),
+        previewUrl: zod.string().nullish(),
+        thumbnailUrl: zod.string().nullish(),
+        imageUrl: zod.string().nullish(),
+        videoUrl: zod.string().nullish(),
+        mediaType: zod.enum(["video", "image", "unknown"]),
+      }),
+    ),
+    leads: zod.array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        status: zod.string(),
+        spend: zod.number(),
+        impressions: zod.number(),
+        clicks: zod.number(),
+        ctr: zod.number(),
+        leads: zod.number(),
+        purchases: zod.number(),
+        cpl: zod.number(),
+        cpa: zod.number(),
+        previewUrl: zod.string().nullish(),
+        thumbnailUrl: zod.string().nullish(),
+        imageUrl: zod.string().nullish(),
+        videoUrl: zod.string().nullish(),
+        mediaType: zod.enum(["video", "image", "unknown"]),
+      }),
+    ),
+  }),
   creatives: zod.array(
     zod.object({
       id: zod.string(),

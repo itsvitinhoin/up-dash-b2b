@@ -22,6 +22,11 @@ export interface Client {
    */
   metaAdsApiKey?: string | null;
   /**
+   * Meta ad account id used for Marketing API pulls.
+   * @nullable
+   */
+  metaAdAccountId?: string | null;
+  /**
    * UP Zero API key for syncing live orders and customers.
    * @nullable
    */

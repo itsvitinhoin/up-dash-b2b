@@ -104,6 +104,11 @@ export interface Client {
    */
   metaAdsApiKey?: string | null;
   /**
+   * Meta ad account id used for Marketing API pulls.
+   * @nullable
+   */
+  metaAdAccountId?: string | null;
+  /**
    * UP Zero API key for syncing live orders and customers.
    * @nullable
    */
@@ -169,6 +174,8 @@ export interface CreateClientRequest {
   apiKey: string;
   /** Optional Meta Ads API key for this client. */
   metaAdsApiKey?: string;
+  /** Optional Meta ad account id for this client. */
+  metaAdAccountId?: string;
   /** Optional UP Zero API key for syncing live orders and customers. */
   upZeroApiKey?: string;
   /** ISO 4217 currency code (default BRL) */
@@ -186,6 +193,11 @@ export interface UpdateClientRequest {
    * @nullable
    */
   metaAdsApiKey?: string | null;
+  /**
+   * Meta ad account id. Pass null to clear it.
+   * @nullable
+   */
+  metaAdAccountId?: string | null;
   /**
    * UP Zero API key. Pass null to clear it.
    * @nullable
@@ -1084,6 +1096,35 @@ export interface CreativeMetrics {
   cpa: number;
 }
 
+export interface MetaTopCreative {
+  id: string;
+  name: string;
+  status: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  leads: number;
+  purchases: number;
+  cpl: number;
+  cpa: number;
+  /** @nullable */
+  previewUrl?: string | null;
+  /** @nullable */
+  thumbnailUrl?: string | null;
+  /** @nullable */
+  imageUrl?: string | null;
+  /** @nullable */
+  videoUrl?: string | null;
+  mediaType: "video" | "image" | "unknown";
+}
+
+export interface MarketingTopCreatives {
+  ctr: MetaTopCreative[];
+  cpl: MetaTopCreative[];
+  leads: MetaTopCreative[];
+}
+
 export interface MarketingPlatformRow {
   platform: string;
   spend: number;
@@ -1115,6 +1156,7 @@ export interface MarketingResponse {
   leadsOverTime: TimeSeriesPoint[];
   revenueOverTime: TimeSeriesPoint[];
   spendOverTime: TimeSeriesPoint[];
+  topCreatives: MarketingTopCreatives;
   creatives: CreativeMetrics[];
   platformBreakdown: MarketingPlatformRow[];
   stateBreakdown: MarketingStateRow[];
