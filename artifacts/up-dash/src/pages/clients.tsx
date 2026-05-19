@@ -49,6 +49,7 @@ import {
   XCircle,
   BarChart2,
   Trash2,
+  UserRound,
 } from "lucide-react";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
@@ -432,6 +433,142 @@ function RotateKeyDialog({ clientId, clientName }: { clientId: string; clientNam
               </Button>
             </>
           )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ClientCredentialsDialog({
+  clientId,
+  clientName,
+  clientEmail,
+}: {
+  clientId: string;
+  clientName: string;
+  clientEmail: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState(clientEmail);
+  const [password, setPassword] = useState("");
+  const [firstName, setFirstName] = useState(clientName.split(" ")[0] || clientName);
+  const [lastName, setLastName] = useState("Cliente");
+  const [showPassword, setShowPassword] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  function handleOpen(o: boolean) {
+    if (o) {
+      setEmail(clientEmail);
+      setPassword("");
+      setFirstName(clientName.split(" ")[0] || clientName);
+      setLastName("Cliente");
+      setShowPassword(false);
+      setIsSaving(false);
+    }
+    setOpen(o);
+  }
+
+  async function handleSave() {
+    if (!email.trim() || !password.trim() || !firstName.trim() || !lastName.trim()) {
+      toast.error("Preencha e-mail, senha, nome e sobrenome.");
+      return;
+    }
+    if (password.length < 8) {
+      toast.error("A senha precisa ter pelo menos 8 caracteres.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await customFetch(`/api/clients/${clientId}/credentials`, {
+        method: "POST",
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+        }),
+      });
+      setOpen(false);
+      toast.success(`Login do cliente atualizado para ${clientName}`);
+    } catch {
+      toast.error("Não foi possível salvar o login do cliente.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" title="Criar ou atualizar login do cliente">
+          <UserRound className="h-3 w-3" />
+          Login
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserRound className="h-4 w-4" /> Login do Cliente
+          </DialogTitle>
+          <DialogDescription>
+            Crie ou atualize o e-mail e a senha para <strong>{clientName}</strong> acessar o dashboard como cliente.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-2">
+              <Label htmlFor={`client-first-${clientId}`}>Nome</Label>
+              <Input id={`client-first-${clientId}`} value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor={`client-last-${clientId}`}>Sobrenome</Label>
+              <Input id={`client-last-${clientId}`} value={lastName} onChange={(e) => setLastName(e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`client-email-${clientId}`}>E-mail</Label>
+            <Input
+              id={`client-email-${clientId}`}
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="cliente@marca.com"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`client-password-${clientId}`}>Senha</Label>
+            <div className="relative">
+              <Input
+                id={`client-password-${clientId}`}
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Mínimo 8 caracteres"
+                className="pr-9"
+              />
+              <button
+                type="button"
+                className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                onClick={() => setShowPassword((v) => !v)}
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Ao salvar, este login ficará vinculado apenas a este cliente.
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={isSaving}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</> : "Salvar Login"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1432,6 +1569,11 @@ export default function ClientsPage() {
                             clientName={client.name}
                             currentKey={client.metaAdsApiKey}
                             currentAdAccountId={client.metaAdAccountId}
+                          />
+                          <ClientCredentialsDialog
+                            clientId={client.id}
+                            clientName={client.name}
+                            clientEmail={client.email}
                           />
                           <SiteVisitsDialog clientId={client.id} clientName={client.name} />
                           <RotateKeyDialog clientId={client.id} clientName={client.name} />

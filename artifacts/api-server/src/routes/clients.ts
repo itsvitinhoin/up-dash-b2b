@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { and, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { db, clientsTable, ordersTable, eventsTable, creativesTable, syncJobsTable, customersTable } from "@workspace/db";
+import { db, clientsTable, ordersTable, eventsTable, creativesTable, syncJobsTable, customersTable, usersTable } from "@workspace/db";
 import {
   CreateClientBody,
   GetClientParams,
@@ -15,6 +15,7 @@ import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
 import { syncUpZeroClient } from "../services/upzero-sync";
 import { fetchMetaAdAccounts, normalizeMetaAdAccountId } from "../services/meta-ads";
+import { hashPassword } from "../lib/auth";
 
 const router: IRouter = Router();
 
@@ -459,6 +460,103 @@ router.patch("/clients/:clientId/rotate-key", requireAdmin, async (req, res): Pr
     return;
   }
   res.json({ clientId, apiKey: newApiKey });
+});
+
+const ClientCredentialsBody = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+});
+
+router.post("/clients/:clientId/credentials", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: paramParsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const bodyParsed = ClientCredentialsBody.safeParse(req.body);
+  if (!bodyParsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: bodyParsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const { clientId } = paramParsed.data;
+  const [client] = await db
+    .select({ id: clientsTable.id, userId: clientsTable.userId })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({
+      error: true,
+      code: "NOT_FOUND",
+      message: "Client not found",
+      status: 404,
+    });
+    return;
+  }
+
+  const [emailOwner] = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(eq(usersTable.email, bodyParsed.data.email));
+  if (emailOwner && emailOwner.id !== client.userId) {
+    res.status(409).json({
+      error: true,
+      code: "EMAIL_ALREADY_IN_USE",
+      message: "A user with this email already exists",
+      status: 409,
+    });
+    return;
+  }
+
+  const passwordHash = await hashPassword(bodyParsed.data.password);
+  let userId = client.userId;
+  if (userId) {
+    const [updatedUser] = await db
+      .update(usersTable)
+      .set({
+        email: bodyParsed.data.email,
+        passwordHash,
+        firstName: bodyParsed.data.firstName,
+        lastName: bodyParsed.data.lastName,
+        role: "CLIENT",
+      })
+      .where(eq(usersTable.id, userId))
+      .returning({ id: usersTable.id, email: usersTable.email });
+    userId = updatedUser?.id ?? null;
+  }
+
+  if (!userId) {
+    const [createdUser] = await db
+      .insert(usersTable)
+      .values({
+        email: bodyParsed.data.email,
+        passwordHash,
+        firstName: bodyParsed.data.firstName,
+        lastName: bodyParsed.data.lastName,
+        role: "CLIENT",
+      })
+      .returning({ id: usersTable.id, email: usersTable.email });
+    userId = createdUser.id;
+    await db.update(clientsTable).set({ userId }).where(eq(clientsTable.id, clientId));
+  }
+
+  res.json({
+    clientId,
+    userId,
+    email: bodyParsed.data.email,
+  });
 });
 
 router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void> => {

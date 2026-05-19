@@ -137,6 +137,10 @@ interface UpZeroProduct {
   name: string;
   description_html?: string | null;
   status: string;
+  tags?: string[] | null;
+  category_ids?: string[] | null;
+  category?: { name?: string | null } | string | null;
+  categories?: Array<{ name?: string | null } | string> | null;
   variants?: UpZeroVariant[];
   created_at?: string;
   updated_at?: string;
@@ -195,6 +199,29 @@ function buildProductName(p: UpZeroProduct): string {
   }
 
   return titleCase(cleaned);
+}
+
+function inferProductCategory(p: UpZeroProduct): string | null {
+  if (typeof p.category === "string" && p.category.trim()) return titleCase(p.category.trim());
+  if (p.category && typeof p.category === "object" && p.category.name?.trim()) {
+    return titleCase(p.category.name.trim());
+  }
+  const firstCategory = p.categories?.find((c) =>
+    typeof c === "string" ? c.trim() : c.name?.trim(),
+  );
+  if (typeof firstCategory === "string" && firstCategory.trim()) {
+    return titleCase(firstCategory.trim());
+  }
+  if (firstCategory && typeof firstCategory === "object" && firstCategory.name?.trim()) {
+    return titleCase(firstCategory.name.trim());
+  }
+
+  const firstWord = (p.name ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")[0];
+  if (!firstWord) return null;
+  return titleCase(firstWord);
 }
 
 /**
@@ -775,13 +802,14 @@ export async function syncUpZeroClient(
       const stockValue = stockByProduct.get(p.id);
       const stockFields = stockValue !== undefined ? { stock: stockValue } : {};
       const status = mapProductStatus(p.status);
+      const category = inferProductCategory(p);
 
       if (existingProductByExtId.has(p.id)) {
         // Row already linked to this UP Zero product — update in place.
         const internalId = existingProductByExtId.get(p.id)!;
         await db
           .update(productsTable)
-          .set({ sku, name: buildProductName(p), price, cost: cost ?? undefined, ...stockFields, status })
+          .set({ sku, name: buildProductName(p), category, price, cost: cost ?? undefined, ...stockFields, status })
           .where(
             and(
               eq(productsTable.clientId, clientId),
@@ -802,6 +830,7 @@ export async function syncUpZeroClient(
           .set({
             externalId: p.id,
             name: buildProductName(p),
+            category,
             price,
             cost: cost ?? undefined,
             ...stockFields,
@@ -827,6 +856,7 @@ export async function syncUpZeroClient(
             externalId: p.id,
             sku,
             name: buildProductName(p),
+            category,
             price,
             cost: cost ?? undefined,
             stock: stockValue ?? 0,
