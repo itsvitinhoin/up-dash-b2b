@@ -62,7 +62,7 @@ import {
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
-import { fetchMetaMarketingData, upsertMetaCreatives, type MetaMarketingData } from "../services/meta-ads";
+import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
 
 const router: IRouter = Router();
 
@@ -5179,6 +5179,52 @@ function buildCreativeMetrics(
   });
 }
 
+function metaSourceMatchesFilter(utmSource?: string): boolean {
+  if (!utmSource) return true;
+  return ["meta", "facebook", "instagram"].includes(utmSource.toLowerCase());
+}
+
+function buildMetaCampaignMetrics(campaigns: MetaAdMetric[]) {
+  return campaigns.map((campaign) => ({
+    id: `meta-campaign:${campaign.id}`,
+    name: campaign.name,
+    platform: "META",
+    status: campaign.status ?? "UNKNOWN",
+    imageUrl: null,
+    clicks: campaign.clicks,
+    impressions: campaign.impressions,
+    ctr: campaign.impressions > 0 ? (campaign.clicks / campaign.impressions) * 100 : 0,
+    leads: campaign.leads,
+    approvedLeads: campaign.purchases,
+    spend: campaign.spend,
+    attributedRevenue: campaign.revenue,
+    roas: campaign.roas ?? (campaign.spend > 0 ? campaign.revenue / campaign.spend : 0),
+    cpl: campaign.cpl ?? (campaign.leads > 0 ? campaign.spend / campaign.leads : 0),
+    cpa: campaign.cpa ?? (campaign.purchases > 0 ? campaign.spend / campaign.purchases : 0),
+  }));
+}
+
+function buildMetaPlatformBreakdown(campaigns: MetaAdMetric[]) {
+  const spend = campaigns.reduce((sum, campaign) => sum + campaign.spend, 0);
+  const leads = campaigns.reduce((sum, campaign) => sum + campaign.leads, 0);
+  const purchases = campaigns.reduce((sum, campaign) => sum + campaign.purchases, 0);
+  const clicks = campaigns.reduce((sum, campaign) => sum + campaign.clicks, 0);
+  const impressions = campaigns.reduce((sum, campaign) => sum + campaign.impressions, 0);
+  const revenue = campaigns.reduce((sum, campaign) => sum + campaign.revenue, 0);
+  return [
+    {
+      platform: "META",
+      spend,
+      leads,
+      approvedLeads: purchases,
+      clicks,
+      impressions,
+      attributedRevenue: revenue,
+      roas: spend > 0 ? revenue / spend : 0,
+    },
+  ];
+}
+
 async function computeMarketingKpis(
   clientId: string,
   creatives: Creative[],
@@ -5410,11 +5456,17 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
 
   // Only creatives active (overlapping) in the current window
   const creatives = allCreatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
-  const creativesTotal = creatives.length;
+  const metaCampaigns = metaCurrent && metaSourceMatchesFilter(utmSrc)
+    ? metaCurrent.campaigns
+      .filter((campaign) => !creativeFilt || campaign.name.toLowerCase().includes(creativeFilt.toLowerCase()))
+      .sort((a, b) => b.spend - a.spend)
+    : null;
+  const creativesTotal = metaCampaigns ? metaCampaigns.length : creatives.length;
 
   // Apply server-side pagination to the creatives slice passed to buildCreativeMetrics
   const offset = (creativesPage - 1) * creativesPageSize;
   const pagedCreatives = creatives.slice(offset, offset + creativesPageSize);
+  const pagedMetaCampaigns = metaCampaigns?.slice(offset, offset + creativesPageSize) ?? null;
 
   const [kpis, prevKpis] = await Promise.all([
     computeMarketingKpis(clientId, creatives, from, to, metaCurrent),
@@ -5481,8 +5533,12 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     leadsOverTime: leadsRows,
     revenueOverTime: revenueRows,
     spendOverTime,
-    creatives: buildCreativeMetrics(pagedCreatives, attrRevForCreatives, totalProratedSpend, from, to),
-    platformBreakdown: buildPlatformBreakdown(creatives, attrRevForCreatives, totalProratedSpend, from, to),
+    creatives: pagedMetaCampaigns
+      ? buildMetaCampaignMetrics(pagedMetaCampaigns)
+      : buildCreativeMetrics(pagedCreatives, attrRevForCreatives, totalProratedSpend, from, to),
+    platformBreakdown: metaCampaigns
+      ? buildMetaPlatformBreakdown(metaCampaigns)
+      : buildPlatformBreakdown(creatives, attrRevForCreatives, totalProratedSpend, from, to),
     stateBreakdown,
     ageBreakdown: buildAgeBreakdown(),
     creativesTotal,

@@ -510,7 +510,7 @@ export default function MarketingPage() {
   const stateRows = data?.stateBreakdown ?? [];
   const maxStateLeads = stateRows[0]?.leads ?? 0;
 
-  // ── Sorted creatives ──────────────────────────────────────────────────────
+  // ── Sorted campaigns ──────────────────────────────────────────────────────
   const sortedCreatives = useMemo(() => {
     if (!data?.creatives) return [];
     return [...data.creatives].sort((a, b) => {
@@ -532,7 +532,7 @@ export default function MarketingPage() {
   function handleExport() {
     if (!data?.creatives) return;
     exportRowsAsCsv(
-      `marketing-creatives-${format(dateRange.from, "yyyyMMdd")}-${format(dateRange.to, "yyyyMMdd")}.csv`,
+      `marketing-campaigns-${format(dateRange.from, "yyyyMMdd")}-${format(dateRange.to, "yyyyMMdd")}.csv`,
       sortedCreatives,
       [
         { header: "Name", accessor: (r) => r.name },
@@ -603,7 +603,7 @@ export default function MarketingPage() {
             <div>
               <h3 className="text-base font-semibold mb-1">No paid channel data yet</h3>
               <p className="text-sm text-muted-foreground max-w-sm">
-                Connect your ad accounts (Meta, Google, TikTok) to start tracking spend, ROAS, and creative performance in this period.
+                Connect your ad accounts (Meta, Google, TikTok) to start tracking spend, ROA, and campaign performance in this period.
               </p>
             </div>
             <Button variant="outline" size="sm" className="gap-2">
@@ -861,7 +861,7 @@ export default function MarketingPage() {
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
             ) : platformRows.length === 0 ? (
-              <EmptyState icon={Megaphone} title="No creatives" description="No active creatives found for this brand." />
+              <EmptyState icon={Megaphone} title="No campaigns" description="No active campaigns found for this brand." />
             ) : (
               <div className="space-y-5">
                 {platformRows.map((row) => (
@@ -933,12 +933,12 @@ export default function MarketingPage() {
         </motion.div>
       )}
 
-      {/* Creatives table */}
+      {/* Campaigns table */}
       {!hasNoData && (
         <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
           <Card className="bg-card border-border overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-              <h2 className="text-sm font-semibold text-foreground">Creative Performance</h2>
+              <h2 className="text-sm font-semibold text-foreground">Campaign Performance</h2>
               <p className="text-xs text-muted-foreground">
                 {data ? `${Math.min((creativesPage - 1) * CREATIVES_PAGE_SIZE + 1, data.creativesTotal)}–${Math.min(creativesPage * CREATIVES_PAGE_SIZE, data.creativesTotal)} of ${data.creativesTotal}` : "—"} · click headers to sort
               </p>
@@ -949,14 +949,14 @@ export default function MarketingPage() {
                   <tr className="border-b border-border bg-muted/30">
                     {(
                       [
-                        { key: "name" as SortKey, label: "Creative", align: "left", wide: true },
+                        { key: "name" as SortKey, label: "Campaign", align: "left", wide: true },
                         { key: "platform" as SortKey, label: "Platform", align: "left", wide: false },
                         { key: "status" as SortKey, label: "Status", align: "left", wide: false },
                         { key: "spend" as SortKey, label: "Spend", align: "right", wide: false },
                         { key: "attributedRevenue" as SortKey, label: "Revenue", align: "right", wide: false },
-                        { key: "roas" as SortKey, label: "ROAS", align: "right", wide: false },
+                        { key: "roas" as SortKey, label: "ROA", align: "right", wide: false },
                         { key: "leads" as SortKey, label: "Leads", align: "right", wide: false },
-                        { key: "approvedLeads" as SortKey, label: "Aprov.", align: "right", wide: false },
+                        { key: "approvedLeads" as SortKey, label: "Purchases", align: "right", wide: false },
                         { key: "cpl" as SortKey, label: "CPL", align: "right", wide: false },
                         { key: "cpa" as SortKey, label: "CPA", align: "right", wide: false },
                         { key: "clicks" as SortKey, label: "Clicks", align: "right", wide: false },
@@ -985,7 +985,7 @@ export default function MarketingPage() {
                   ) : sortedCreatives.length === 0 ? (
                     <tr>
                       <td colSpan={12} className="px-5 py-10 text-center text-muted-foreground text-sm">
-                        No creatives found for this brand.
+                        No campaigns found for this brand.
                       </td>
                     </tr>
                   ) : (
