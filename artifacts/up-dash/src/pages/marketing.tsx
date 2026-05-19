@@ -648,7 +648,7 @@ export default function MarketingPage() {
             testId="kpi-revenue"
             icon={DollarSign}
             iconClass="bg-teal-500/15 text-teal-400"
-            label="Attr. Revenue"
+            label="Revenue"
             value={data?.kpis.attributedRevenue ?? 0}
             format={formatCurrency}
             change={revenueChange}
@@ -660,7 +660,7 @@ export default function MarketingPage() {
             testId="kpi-roas"
             icon={TrendingUp}
             iconClass="bg-emerald-500/15 text-emerald-400"
-            label="ROAS"
+            label="ROA"
             value={data?.kpis.roas ?? 0}
             format={(v) => `${v.toFixed(2)}×`}
             change={roasChange}

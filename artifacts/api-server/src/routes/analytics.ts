@@ -62,6 +62,7 @@ import {
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
+import { fetchMetaMarketingData, upsertMetaCreatives, type MetaMarketingData } from "../services/meta-ads";
 
 const router: IRouter = Router();
 
@@ -75,7 +76,12 @@ function coerceDateQuery(query: Record<string, unknown>): Record<string, unknown
     const v = out[key];
     if (typeof v === "string" && v.length > 0) {
       const parsed = new Date(v);
-      if (!Number.isNaN(parsed.getTime())) out[key] = parsed;
+      if (!Number.isNaN(parsed.getTime())) {
+        if (key === "dateTo" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+          parsed.setUTCHours(23, 59, 59, 999);
+        }
+        out[key] = parsed;
+      }
     }
   }
   return out;
@@ -5178,49 +5184,48 @@ async function computeMarketingKpis(
   creatives: Creative[],
   from: Date,
   to: Date,
+  meta?: MetaMarketingData | null,
 ) {
-  // Prorated spend: only count each creative's spend for the overlap with the query window.
-  const totalSpend = creatives.reduce((s, c) => s + c.spend * computeSpendOverlapFraction(c, from, to), 0);
+  const creativeSpend = creatives.reduce((s, c) => s + c.spend * computeSpendOverlapFraction(c, from, to), 0);
+  const totalSpend = meta ? meta.summary.spend : creativeSpend;
 
-  // Attributed revenue: orders from paid-UTM customers in window
-  const [revRow] = await db
-    .select({ revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float` })
+  // Requested revenue: all order amounts requested in the period, regardless
+  // of final approval/shipping status. This mirrors the dashboard's
+  // requestedRevenue KPI and keeps marketing ROA aligned with demand generated.
+  const [orderRow] = await db
+    .select({
+      revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+      orders: sql<number>`COUNT(*)::int`,
+    })
     .from(ordersTable)
-    .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
     .where(
       and(
         eq(ordersTable.clientId, clientId),
         gte(ordersTable.createdAt, from),
         lte(ordersTable.createdAt, to),
-        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-        sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
       ),
     );
-  const attributedRevenue = revRow?.revenue ?? 0;
+  const attributedRevenue = Number(orderRow?.revenue) || 0;
+  const requestedOrders = Number(orderRow?.orders) || 0;
 
-  // Leads: REGISTRATION events from paid-UTM customers in window.
-  // approvedLeads: those same registrations where the customer is now APPROVED.
-  // This guarantees approvedLeads ≤ totalLeads for a sensible approval rate.
-  const [evtRow] = await db
+  const [registrationRow] = await db
     .select({
       totalLeads: sql<number>`COUNT(*)::int`,
-      approvedLeads: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
+      approvedLeads: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`
     })
-    .from(eventsTable)
-    .innerJoin(customersTable, eq(eventsTable.customerId, customersTable.id))
+    .from(customersTable)
     .where(
       and(
-        eq(eventsTable.clientId, clientId),
-        gte(eventsTable.createdAt, from),
-        lte(eventsTable.createdAt, to),
-        sql`${eventsTable.eventType} = 'REGISTRATION'`,
-        sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
+        eq(customersTable.clientId, clientId),
+        gte(customersTable.createdAt, from),
+        lte(customersTable.createdAt, to),
       ),
     );
 
-  const totalLeads = evtRow?.totalLeads ?? 0;
-  const approvedLeads = evtRow?.approvedLeads ?? 0;
+  const totalLeads = Number(registrationRow?.totalLeads) || 0;
+  const approvedLeads = Number(registrationRow?.approvedLeads) || 0;
   const approvalRate = totalLeads > 0 ? (approvedLeads / totalLeads) * 100 : 0;
+  const metaLeads = meta?.summary.leads ?? creatives.reduce((s, c) => s + c.leads * computeSpendOverlapFraction(c, from, to), 0);
 
   return {
     totalSpend,
@@ -5229,8 +5234,8 @@ async function computeMarketingKpis(
     totalLeads,
     approvedLeads,
     approvalRate,
-    cpl: totalLeads > 0 ? totalSpend / totalLeads : 0,
-    cpa: approvedLeads > 0 ? totalSpend / approvedLeads : 0,
+    cpl: meta?.summary.cpl ?? (metaLeads > 0 ? totalSpend / metaLeads : 0),
+    cpa: requestedOrders > 0 ? totalSpend / requestedOrders : 0,
   };
 }
 
@@ -5340,6 +5345,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   if (!clientId) return;
 
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const since = from.toISOString().slice(0, 10);
+  const until = to.toISOString().slice(0, 10);
   const creativesPage = (parsed.data as Record<string, unknown>).creativesPage as number | undefined ?? 1;
   const creativesPageSize = (parsed.data as Record<string, unknown>).creativesPageSize as number | undefined ?? 20;
   const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
@@ -5350,6 +5357,42 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const periodMs = to.getTime() - from.getTime();
   const prevTo = new Date(from.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - periodMs);
+  const prevSince = prevFrom.toISOString().slice(0, 10);
+  const prevUntil = prevTo.toISOString().slice(0, 10);
+
+  const [clientConfig] = await db
+    .select({
+      metaAdsApiKey: clientsTable.metaAdsApiKey,
+      metaAdAccountId: clientsTable.metaAdAccountId,
+    })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  let metaCurrent: MetaMarketingData | null = null;
+  let metaPrev: MetaMarketingData | null = null;
+  if (clientConfig?.metaAdsApiKey && clientConfig.metaAdAccountId) {
+    try {
+      [metaCurrent, metaPrev] = await Promise.all([
+        fetchMetaMarketingData({
+          accessToken: clientConfig.metaAdsApiKey,
+          adAccountId: clientConfig.metaAdAccountId,
+          since,
+          until,
+        }),
+        fetchMetaMarketingData({
+          accessToken: clientConfig.metaAdsApiKey,
+          adAccountId: clientConfig.metaAdAccountId,
+          since: prevSince,
+          until: prevUntil,
+        }),
+      ]);
+      await upsertMetaCreatives(clientId, metaCurrent.ads);
+    } catch (err) {
+      console.warn("[marketing] Meta insights fetch failed:", err);
+      metaCurrent = null;
+      metaPrev = null;
+    }
+  }
 
   // All creatives for the client; sorted by prorated spend descending
   const rawCreatives = await db
@@ -5374,34 +5417,35 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const pagedCreatives = creatives.slice(offset, offset + creativesPageSize);
 
   const [kpis, prevKpis] = await Promise.all([
-    computeMarketingKpis(clientId, creatives, from, to),
-    computeMarketingKpis(clientId, allCreatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0), prevFrom, prevTo),
+    computeMarketingKpis(clientId, creatives, from, to, metaCurrent),
+    computeMarketingKpis(clientId, allCreatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0), prevFrom, prevTo, metaPrev),
   ]);
 
-  // Daily series: paid-channel registrations by day
-  const leadsRows = await db
-    .select({
-      date: sql<string>`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')::text`,
-      value: sql<number>`COUNT(*)::int`,
-    })
-    .from(eventsTable)
-    .innerJoin(customersTable, eq(eventsTable.customerId, customersTable.id))
-    .where(
-      and(
-        eq(eventsTable.clientId, clientId),
-        gte(eventsTable.createdAt, from),
-        lte(eventsTable.createdAt, to),
-        sql`${eventsTable.eventType} = 'REGISTRATION'`,
-        utmSrc
-          ? sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`
-          : sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
-        ...(utmMed ? [sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`] : []),
-      ),
-    )
-    .groupBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`)
-    .orderBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`);
+  const leadsRows = metaCurrent
+    ? metaCurrent.daily.map((point) => ({ date: point.date, value: point.leads }))
+    : await db
+      .select({
+        date: sql<string>`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')::text`,
+        value: sql<number>`COUNT(*)::int`,
+      })
+      .from(eventsTable)
+      .innerJoin(customersTable, eq(eventsTable.customerId, customersTable.id))
+      .where(
+        and(
+          eq(eventsTable.clientId, clientId),
+          gte(eventsTable.createdAt, from),
+          lte(eventsTable.createdAt, to),
+          sql`${eventsTable.eventType} = 'REGISTRATION'`,
+          utmSrc
+            ? sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`
+            : sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
+          ...(utmMed ? [sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`] : []),
+        ),
+      )
+      .groupBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`)
+      .orderBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`);
 
-  // Daily series: attributed revenue
+  // Daily series: requested revenue
   const revenueRows = await db
     .select({
       date: sql<string>`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')::text`,
@@ -5414,8 +5458,6 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
         eq(ordersTable.clientId, clientId),
         gte(ordersTable.createdAt, from),
         lte(ordersTable.createdAt, to),
-        sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-        sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
       ),
     )
     .groupBy(sql`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')`)
@@ -5425,7 +5467,11 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const attrRevForCreatives = kpis.attributedRevenue;
 
   const [spendOverTime, stateBreakdown] = await Promise.all([
-    Promise.resolve(buildSpendOverTime(creatives, from, to)),
+    Promise.resolve(
+      metaCurrent
+        ? metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend }))
+        : buildSpendOverTime(creatives, from, to),
+    ),
     buildStateBreakdown(clientId, from, to, totalProratedSpend),
   ]);
 

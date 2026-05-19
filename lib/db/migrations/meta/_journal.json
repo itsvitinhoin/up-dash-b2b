@@ -78,6 +78,13 @@
       "when": 1779145200000,
       "tag": "0011_customer_document_type",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1779231600000,
+      "tag": "0012_client_meta_ad_account",
+      "breakpoints": true
     }
   ]
 }

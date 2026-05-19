@@ -29,6 +29,7 @@ export const clientsTable = pgTable(
     approvedLeads: integer("approved_leads").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
     metaAdsApiKey: text("meta_ads_api_key"),
+    metaAdAccountId: text("meta_ad_account_id"),
     upZeroApiKey: text("up_zero_api_key"),
     currency: text("currency").notNull().default("BRL"),
     locale: text("locale").notNull().default("pt-BR"),
