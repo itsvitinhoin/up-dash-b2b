@@ -344,18 +344,51 @@ function imageFromValue(value: unknown): string | null {
   return null;
 }
 
+function decodeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function normalizeProductImageUrl(value: string | null): string | null {
+  const url = cleanString(value);
+  if (!url) return null;
+  const decoded = decodeHtmlAttribute(url);
+  if (/^https?:\/\//i.test(decoded)) return decoded;
+  if (decoded.startsWith("//")) return `https:${decoded}`;
+  if (decoded.startsWith("/")) return `${UPZERO_BASE}${decoded}`;
+  try {
+    return new URL(decoded, UPZERO_BASE).toString();
+  } catch {
+    return decoded;
+  }
+}
+
+function extractImageFromHtml(html: string | null | undefined): string | null {
+  if (!html) return null;
+  const imgMatch = html.match(/<img\b[^>]*(?:src|data-src|data-original)=["']?([^"'\s>]+)/i);
+  if (imgMatch?.[1]) return normalizeProductImageUrl(imgMatch[1]);
+  const srcSetMatch = html.match(/<source\b[^>]*srcset=["']?([^"',\s>]+)/i);
+  return srcSetMatch?.[1] ? normalizeProductImageUrl(srcSetMatch[1]) : null;
+}
+
 function extractProductImageUrl(p: UpZeroProduct): string | null {
   const direct = firstString(p.image_url, p.imageUrl, p.thumbnail_url, p.thumbnailUrl, p.photo_url, p.picture);
-  if (direct) return direct;
+  if (direct) return normalizeProductImageUrl(direct);
   const image = imageFromValue(p.image);
-  if (image) return image;
+  if (image) return normalizeProductImageUrl(image);
   for (const source of [p.images, p.media]) {
     if (!Array.isArray(source)) continue;
     for (const entry of source) {
       const url = imageFromValue(entry);
-      if (url) return url;
+      if (url) return normalizeProductImageUrl(url);
     }
   }
+  const htmlImage = extractImageFromHtml(p.description_html);
+  if (htmlImage) return htmlImage;
   return null;
 }
 
