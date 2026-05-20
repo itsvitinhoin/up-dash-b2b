@@ -17,6 +17,7 @@ const PAGE_LIMIT = 200;
 // `needsFullHistory` check in syncUpZeroClient, not by this constant alone.
 const SYNC_DAYS = 90;
 const INVENTORY_CONCURRENCY = 20;
+const PRODUCT_IMAGE_CONCURRENCY = 20;
 const FETCH_TIMEOUT_MS = 30_000;     // 30 s per paginated API request
 const INVENTORY_TIMEOUT_MS = 8_000;  // 8 s per individual inventory SKU call
 const INVENTORY_BUDGET_MS = 60_000;  // 60 s wall-clock budget for entire inventory phase
@@ -186,6 +187,8 @@ interface UpZeroProduct {
   updated_at?: string;
 }
 
+type UpZeroProductImageBody = Record<string, unknown> | Array<unknown>;
+
 /**
  * Build a human-readable product name from the UP Zero product object.
  *
@@ -339,7 +342,23 @@ function imageFromValue(value: unknown): string | null {
   if (typeof value === "string") return cleanString(value);
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
-    return firstString(record.url, record.src, record.image_url, record.imageUrl, record.thumbnail_url);
+    const direct = firstString(
+      record.url,
+      record.src,
+      record.image_url,
+      record.imageUrl,
+      record.thumbnail_url,
+      record.thumbnailUrl,
+      record.original_url,
+      record.originalUrl,
+      record.preview_url,
+      record.previewUrl,
+      record.file_url,
+      record.fileUrl,
+      record.path,
+    );
+    if (direct) return direct;
+    return imageFromValue(record.image) ?? imageFromValue(record.file) ?? imageFromValue(record.asset);
   }
   return null;
 }
@@ -373,6 +392,34 @@ function extractImageFromHtml(html: string | null | undefined): string | null {
   if (imgMatch?.[1]) return normalizeProductImageUrl(imgMatch[1]);
   const srcSetMatch = html.match(/<source\b[^>]*srcset=["']?([^"',\s>]+)/i);
   return srcSetMatch?.[1] ? normalizeProductImageUrl(srcSetMatch[1]) : null;
+}
+
+function collectProductImageCandidates(value: unknown): unknown[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "object") return [value];
+
+  const record = value as Record<string, unknown>;
+  const nested =
+    record.data ??
+    record.images ??
+    record.items ??
+    record.results ??
+    record.records ??
+    record.product_images ??
+    record.productImages ??
+    record.media;
+
+  if (nested && nested !== value) return collectProductImageCandidates(nested);
+  return [value];
+}
+
+function extractProductImageUrlFromBody(body: UpZeroProductImageBody): string | null {
+  for (const candidate of collectProductImageCandidates(body)) {
+    const url = imageFromValue(candidate);
+    if (url) return normalizeProductImageUrl(url);
+  }
+  return null;
 }
 
 function extractProductImageUrl(p: UpZeroProduct): string | null {
@@ -780,6 +827,35 @@ async function fetchInventoryQty(
       ? `Inventory fetch timed out after ${INVENTORY_TIMEOUT_MS / 1000}s for SKU "${sku}"`
       : undefined;
     return { qty: null, timeoutError: msg };
+  }
+}
+
+async function fetchProductImageUrl(
+  apiKey: string,
+  productId: string,
+): Promise<string | null> {
+  const path = `/external/v1/products/${encodeURIComponent(productId)}/images`;
+  try {
+    const res = await fetch(`${UPZERO_BASE}${path}`, {
+      headers: { "X-API-Key": apiKey },
+      signal: makeInventoryTimeoutSignal(),
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      console.warn(`[upzero-sync] product images ${productId} failed: ${res.status} ${res.statusText}`);
+      return null;
+    }
+    const body = (await res.json()) as UpZeroProductImageBody;
+    return extractProductImageUrlFromBody(body);
+  } catch (err) {
+    const isTimeout = err instanceof Error &&
+      (err.name === "AbortError" || err.name === "TimeoutError");
+    if (isTimeout) {
+      console.warn(
+        `[upzero-sync] product images ${productId} timed out after ${INVENTORY_TIMEOUT_MS / 1000}s`,
+      );
+    }
+    return null;
   }
 }
 
@@ -1202,6 +1278,46 @@ export async function syncUpZeroClient(
     );
   }
 
+  // Product photos are exposed by UP Zero on a dedicated per-product endpoint:
+  // /external/v1/products/{product_id}/images. Prefer any URL already present
+  // in the product payload, then fill gaps from that endpoint.
+  const imageUrlByProduct = new Map<string, string>();
+  const imageTargets: UpZeroProduct[] = [];
+  for (const p of upProducts) {
+    const directImageUrl = extractProductImageUrl(p);
+    if (directImageUrl) {
+      imageUrlByProduct.set(p.id, directImageUrl);
+    } else {
+      imageTargets.push(p);
+    }
+  }
+
+  if (imageTargets.length > 0) {
+    const fetchedImages = await runConcurrent(
+      imageTargets,
+      PRODUCT_IMAGE_CONCURRENCY,
+      async (p) => {
+        const ids = Array.from(
+          new Set([p.product_id, p.id].filter(Boolean).map((id) => String(id))),
+        );
+        for (const id of ids) {
+          const imageUrl = await fetchProductImageUrl(apiKey, id);
+          if (imageUrl) return { productExternalId: p.id, imageUrl };
+        }
+        return { productExternalId: p.id, imageUrl: null };
+      },
+    );
+    let imagesFound = 0;
+    for (const { productExternalId, imageUrl } of fetchedImages) {
+      if (!imageUrl) continue;
+      imageUrlByProduct.set(productExternalId, imageUrl);
+      imagesFound++;
+    }
+    console.log(
+      `[upzero-sync] product images endpoint: found ${imagesFound}/${imageTargets.length} missing image URLs`,
+    );
+  }
+
   // Pre-load ALL existing products for this client, indexed by both externalId
   // and SKU. This lets us safely merge legacy manual-import rows (which have a
   // SKU but no externalId) without violating the (client_id, sku) unique index.
@@ -1243,7 +1359,7 @@ export async function syncUpZeroClient(
       const stockFields = stockValue !== undefined ? { stock: stockValue } : {};
       const status = mapProductStatus(p.status);
       const category = inferProductCategory(p);
-      const imageUrl = extractProductImageUrl(p);
+      const imageUrl = imageUrlByProduct.get(p.id) ?? null;
 
       if (existingProductByExtId.has(p.id)) {
         // Row already linked to this UP Zero product — update in place.
