@@ -1265,7 +1265,6 @@ export default function ClientsPage() {
             setNewName("");
             setNewEmail("");
             setNewApiKey("");
-            setNewMetaAdsApiKey("");
             setNewMetaAdAccountId("");
             setNewCurrencyCode("BRL");
             setLookupMatch(null);

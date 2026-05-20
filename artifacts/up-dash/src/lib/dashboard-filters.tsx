@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { subDays } from "date-fns";
+import { startOfDay, subDays } from "date-fns";
 
 export interface DateRange {
   from: Date;
@@ -92,10 +92,13 @@ function filtersToUrlParams(filters: DashboardFilters): URLSearchParams {
 }
 
 export function DashboardFiltersProvider({ children }: { children: ReactNode }) {
-  const [dateRange, setDateRange] = useState<DateRange>(() => ({
-    from: subDays(new Date(), 30),
-    to: new Date(),
-  }));
+  const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const to = startOfDay(new Date());
+    return {
+      from: subDays(to, 29),
+      to,
+    };
+  });
 
   const [filters, setFilters] = useState<DashboardFilters>(() => ({
     ...EMPTY_FILTERS,
