@@ -34,12 +34,13 @@ import {
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
-import { useGetAdminOverview } from "@workspace/api-client-react";
+import { useGetAdminOverview, useListClients } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CountUp } from "@/components/count-up";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatCurrencySmart, formatNumber } from "@/lib/formatters";
@@ -283,16 +284,33 @@ export default function OverviewPage() {
   const reduced = useReducedMotion();
   const [, navigate] = useLocation();
   const [seriesMetric, setSeriesMetric] = useState<SeriesMetric>("revenue");
+  const [selectedClientIds, setSelectedClientIds] = useState<string[] | null>(null);
 
   const enabled = user?.role === "ADMIN";
+  const { data: clientsData, isLoading: isLoadingClients } = useListClients(
+    { page: 1, limit: 1000 },
+    { query: queryOpts({ enabled, placeholderData: (prev) => prev }) },
+  );
+  const clientOptions = useMemo(() => clientsData?.data ?? [], [clientsData]);
+  const allClientIds = useMemo(() => clientOptions.map((client) => client.id), [clientOptions]);
+  const selectedClientParam =
+    selectedClientIds === null ? undefined : selectedClientIds.join(",");
+  const effectiveSelectedClientIds = selectedClientIds ?? allClientIds;
+  const selectedClientSet = useMemo(
+    () => new Set(effectiveSelectedClientIds),
+    [effectiveSelectedClientIds],
+  );
 
   const { data, isLoading, isError, refetch } = useGetAdminOverview(
     {
       dateFrom: format(dateRange.from, "yyyy-MM-dd"),
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
+      clientIds: selectedClientParam,
     },
     { query: queryOpts({ enabled }) },
   );
+  const selectedClientCount =
+    selectedClientIds === null ? (data?.kpis.totalClients ?? allClientIds.length) : selectedClientIds.length;
 
   const inclusiveDays = Math.max(1, differenceInDays(dateRange.to, dateRange.from) + 1);
   const prevPeriodTo = useMemo(() => subDays(dateRange.from, 1), [dateRange.from]);
@@ -347,6 +365,15 @@ export default function OverviewPage() {
   const handleSelectClient = (id: string) => {
     setSelectedClientId(id);
     navigate("/dashboard");
+  };
+
+  const handleToggleClient = (clientId: string, checked: boolean) => {
+    const baseSelection = selectedClientIds ?? allClientIds;
+    if (checked) {
+      setSelectedClientIds(Array.from(new Set([...baseSelection, clientId])));
+      return;
+    }
+    setSelectedClientIds(baseSelection.filter((id) => id !== clientId));
   };
 
   if (user?.role !== "ADMIN") {
@@ -414,10 +441,85 @@ export default function OverviewPage() {
         </div>
         {data && (
           <span className="text-muted-foreground/80">
-            {data.kpis.activeClients} of {data.kpis.totalClients} brands generated
+            {data.kpis.activeClients} of {selectedClientCount} selected brands generated
             revenue or ran marketing campaigns in this window.
           </span>
         )}
+      </motion.div>
+
+      <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
+        <Card className="p-4 bg-card border-border">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <Building2 className="h-4 w-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold leading-tight">
+                    Clients in platform totals
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {selectedClientCount} of {data?.kpis.totalClients ?? allClientIds.length} selected
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedClientIds(null)}
+                data-testid="overview-clients-select-all"
+              >
+                Select all
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedClientIds([])}
+                data-testid="overview-clients-clear"
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-4 max-h-44 overflow-y-auto pr-1">
+            {isLoadingClients ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <Skeleton key={i} className="h-9 w-full" />
+                ))}
+              </div>
+            ) : clientOptions.length === 0 ? (
+              <div className="text-xs text-muted-foreground py-2">
+                No registered clients found.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+                {clientOptions.map((client) => (
+                  <label
+                    key={client.id}
+                    htmlFor={`overview-client-filter-${client.id}`}
+                    className="flex min-w-0 items-center gap-2 rounded-md border border-border/70 bg-background/40 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
+                  >
+                    <Checkbox
+                      id={`overview-client-filter-${client.id}`}
+                      checked={selectedClientSet.has(client.id)}
+                      onCheckedChange={(checked) => handleToggleClient(client.id, checked === true)}
+                      data-testid={`overview-client-filter-${client.id}`}
+                    />
+                    <span className="truncate">{client.name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
       </motion.div>
 
       <motion.div
@@ -466,7 +568,7 @@ export default function OverviewPage() {
           label="Active brands"
           value={kpis?.activeClients ?? 0}
           format={(v) => formatNumber(v)}
-          unit={kpis ? `of ${kpis.totalClients}` : undefined}
+          unit={kpis ? `of ${selectedClientCount}` : undefined}
           change={activeDelta}
           changeLabel="vs. previous period"
           isLoading={isLoading}
@@ -544,7 +646,7 @@ export default function OverviewPage() {
               Platform-wide trend
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Daily totals summed across every brand. Dashed line shows the prior
+              Daily totals summed across selected brands. Dashed line shows the prior
               period.
             </p>
           </div>
@@ -700,7 +802,7 @@ export default function OverviewPage() {
       <Card className="p-5 bg-card border-border">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h2 className="text-base font-semibold leading-tight">All brands</h2>
+            <h2 className="text-base font-semibold leading-tight">Selected brands</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Per-brand revenue, orders and growth for the active window. Open the
               full management table for AOV and conversion details.
@@ -722,8 +824,12 @@ export default function OverviewPage() {
         ) : data && data.clientStats.length === 0 ? (
           <EmptyState
             icon={Building2}
-            title="No brands yet"
-            description="Create a brand from the Clients page to start seeing platform numbers here."
+            title={selectedClientIds?.length === 0 ? "No brands selected" : "No brands yet"}
+            description={
+              selectedClientIds?.length === 0
+                ? "Select at least one brand to see the platform totals."
+                : "Create a brand from the Clients page to start seeing platform numbers here."
+            }
           />
         ) : (
           <div className="overflow-x-auto" data-testid="overview-clients-table">

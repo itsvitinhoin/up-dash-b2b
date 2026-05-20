@@ -82,6 +82,18 @@ export interface MetaAdAccountOption {
   accountStatus?: number;
 }
 
+type MetaAdAccountsResponse = {
+  data?: Array<{
+    id: string;
+    account_id?: string;
+    name?: string;
+    account_status?: number;
+    currency?: string;
+    timezone_name?: string;
+  }>;
+  paging?: { next?: string };
+};
+
 export interface MetaDailyPoint {
   date: string;
   spend: number;
@@ -287,17 +299,7 @@ export async function fetchMetaAdAccounts(accessToken: string): Promise<MetaAdAc
   })}`;
 
   while (url) {
-    const body = await fetchGraph<{
-      data?: Array<{
-        id: string;
-        account_id?: string;
-        name?: string;
-        account_status?: number;
-        currency?: string;
-        timezone_name?: string;
-      }>;
-      paging?: { next?: string };
-    }>(url);
+    const body: MetaAdAccountsResponse = await fetchGraph<MetaAdAccountsResponse>(url);
     for (const account of body.data ?? []) {
       accounts.push({
         id: normalizeMetaAdAccountId(account.id),

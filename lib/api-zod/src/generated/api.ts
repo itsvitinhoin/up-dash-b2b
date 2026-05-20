@@ -2135,6 +2135,7 @@ bottom growth). Restricted to ADMIN users.
 export const GetAdminOverviewQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
+  clientIds: zod.string().optional(),
 });
 
 export const GetAdminOverviewResponse = zod.object({

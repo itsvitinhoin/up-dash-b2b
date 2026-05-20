@@ -9,4 +9,5 @@
 export type GetAdminOverviewParams = {
   dateFrom?: Date;
   dateTo?: Date;
+  clientIds?: string;
 };

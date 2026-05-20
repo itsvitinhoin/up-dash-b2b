@@ -1906,6 +1906,7 @@ export type GetAlertsParams = {
 export type GetAdminOverviewParams = {
   dateFrom?: string;
   dateTo?: string;
+  clientIds?: string;
 };
 
 export type GetMarketingParams = {

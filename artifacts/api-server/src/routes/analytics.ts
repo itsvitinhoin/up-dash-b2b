@@ -211,6 +211,51 @@ router.get(
       .orderBy(clientsTable.name);
 
     const totalClients = clients.length;
+    const requestedClientIds =
+      parsed.data.clientIds !== undefined
+        ? new Set(
+            parsed.data.clientIds
+              .split(",")
+              .map((id) => id.trim())
+              .filter(Boolean),
+          )
+        : null;
+    const selectedClients = requestedClientIds
+      ? clients.filter((client) => requestedClientIds.has(client.id))
+      : clients;
+    const selectedClientIds = selectedClients.map((client) => client.id);
+
+    if (selectedClientIds.length === 0) {
+      const emptyKpis = {
+        revenue: 0,
+        orders: 0,
+        customers: 0,
+        avgOrderValue: 0,
+        activeClients: 0,
+        totalClients,
+        adSpend: 0,
+        roas: 0,
+        totalLeads: 0,
+        approvedLeads: 0,
+      };
+      res.json(
+        GetAdminOverviewResponse.parse({
+          kpis: emptyKpis,
+          prevKpis: emptyKpis,
+          revenueOverTime: [],
+          ordersOverTime: [],
+          leadsOverTime: [],
+          prevRevenueOverTime: [],
+          prevOrdersOverTime: [],
+          prevLeadsOverTime: [],
+          clientStats: [],
+          topPerformers: [],
+          topGrowth: [],
+          bottomGrowth: [],
+        }),
+      );
+      return;
+    }
 
     // Window-scoped order aggregates grouped by client. Only counts revenue-
     // bearing orders to match the per-brand dashboard semantics.
@@ -226,6 +271,7 @@ router.get(
           and(
             gte(ordersTable.createdAt, winFrom),
             lte(ordersTable.createdAt, winTo),
+            inArray(ordersTable.clientId, selectedClientIds),
             sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
           ),
         )
@@ -265,6 +311,7 @@ router.get(
           and(
             gte(ordersTable.createdAt, winFrom),
             lte(ordersTable.createdAt, winTo),
+            inArray(ordersTable.clientId, selectedClientIds),
             sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
           ),
         )
@@ -289,6 +336,7 @@ router.get(
           and(
             gte(ordersTable.createdAt, winFrom),
             lte(ordersTable.createdAt, winTo),
+            inArray(ordersTable.clientId, selectedClientIds),
             sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
           ),
         );
@@ -312,6 +360,7 @@ router.get(
         .from(creativesTable)
         .where(
           and(
+            inArray(creativesTable.clientId, selectedClientIds),
             or(
               sql`${creativesTable.activeFrom} IS NULL`,
               sql`${creativesTable.activeFrom} <= ${winTo.toISOString().slice(0, 10)}`,
@@ -356,6 +405,7 @@ router.get(
             eq(eventsTable.eventType, "REGISTRATION"),
             gte(eventsTable.createdAt, winFrom),
             lte(eventsTable.createdAt, winTo),
+            inArray(eventsTable.clientId, selectedClientIds),
           ),
         )
         .groupBy(sql`date_trunc('day', ${eventsTable.createdAt})`)
@@ -382,6 +432,7 @@ router.get(
         .where(
           and(
             sql`${creativesTable.spend} > 0`,
+            inArray(creativesTable.clientId, selectedClientIds),
             or(
               sql`${creativesTable.activeFrom} IS NULL`,
               sql`${creativesTable.activeFrom} <= ${winTo.toISOString().slice(0, 10)}`,
@@ -440,7 +491,7 @@ router.get(
 
     // Per-client stats — every registered client appears in `clientStats`,
     // even brands with no activity, so the UI can show "0 / —".
-    const clientStats = clients.map((c) => {
+    const clientStats = selectedClients.map((c) => {
       const cur = currMap.get(c.id) ?? { revenue: 0, orders: 0 };
       const prv = prevMap.get(c.id) ?? { revenue: 0, orders: 0 };
       let growthPct: number | null;
