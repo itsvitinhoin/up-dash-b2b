@@ -24,7 +24,6 @@ import {
   Sun,
   Menu,
   Search,
-  Activity,
   GitCompareArrows,
   Bell,
   HelpCircle,
@@ -216,12 +215,13 @@ export function AppLayout({ children }: AppLayoutProps) {
   const SidebarContent = () => (
     <>
       <div className="flex h-16 items-center px-6">
-        <Link href="/dashboard" className="flex items-center gap-1.5 text-xl font-bold tracking-tight">
-          <Activity className="h-5 w-5 text-primary" />
-          <span>
-            <span className="text-primary">up</span>
-            <span className="text-foreground">dash</span>
-          </span>
+        <Link href="/dashboard" className="flex items-center">
+          <img
+            src="/up-dash-logo.png"
+            alt="Up Dash"
+            className="h-8 w-auto object-contain"
+            draggable={false}
+          />
         </Link>
       </div>
 

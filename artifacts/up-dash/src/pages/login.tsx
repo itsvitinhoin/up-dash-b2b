@@ -208,13 +208,12 @@ export default function LoginPage() {
           variants={fadeUp}
           className="flex items-center gap-2.5"
         >
-          <div className="relative">
-            <div className="absolute inset-0 rounded-lg bg-primary/40 blur-md" />
-            <div className="relative bg-primary text-primary-foreground rounded-lg p-1.5 ring-1 ring-white/20">
-              <Activity className="h-5 w-5" />
-            </div>
-          </div>
-          <span className="font-semibold text-lg tracking-tight">UP Dash</span>
+          <img
+            src="/up-dash-logo.png"
+            alt="Up Dash"
+            className="h-9 w-auto object-contain"
+            draggable={false}
+          />
           <span className="hidden sm:inline-flex ml-2 rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-white/70">
             v2.4 · live
           </span>
