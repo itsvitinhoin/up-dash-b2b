@@ -1,8 +1,11 @@
 import {
+  addMonths,
   differenceInDays,
   endOfMonth,
   endOfYear,
   format,
+  isAfter,
+  isBefore,
   isSameDay,
   startOfDay,
   startOfMonth,
@@ -11,10 +14,15 @@ import {
   subMonths,
   subYears,
 } from "date-fns";
-import { Calendar as CalendarIcon, Check, ChevronDown } from "lucide-react";
+import {
+  Calendar as CalendarIcon,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
 import { PeriodCalendarCard } from "@/components/ui/period-calendar-card";
 import {
   Popover,
@@ -32,6 +40,11 @@ interface DateRangePickerProps {
   value: DateRange;
   onChange: (range: DateRange) => void;
   className?: string;
+}
+
+interface DraftDateRange {
+  from?: Date;
+  to?: Date;
 }
 
 interface Preset {
@@ -123,13 +136,49 @@ function getRangeLabel(range: DateRange): string {
 export function DateRangePicker({ value, onChange, className }: DateRangePickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [customMode, setCustomMode] = useState(false);
+  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(value.from));
+  const [draftRange, setDraftRange] = useState<DraftDateRange>(() => ({
+    from: value.from,
+    to: value.to,
+  }));
   const activePreset = getMatchingPreset(value);
   const isCustomActive = customMode || !activePreset;
   const label = getRangeLabel(value);
-  const selectedDays = Math.max(1, differenceInDays(value.to, value.from) + 1);
+  const displayFrom = draftRange.from ?? value.from;
+  const displayTo = draftRange.to ?? draftRange.from ?? value.to;
+  const selectedDays = Math.max(1, differenceInDays(displayTo, displayFrom) + 1);
+
+  function handleOpenChange(open: boolean) {
+    setIsOpen(open);
+    if (open) {
+      setVisibleMonth(startOfMonth(value.from));
+      setDraftRange({ from: value.from, to: value.to });
+    }
+  }
+
+  function handleCustomDaySelect(day: Date) {
+    const picked = startOfDay(day);
+    const currentFrom = draftRange.from;
+    const currentTo = draftRange.to;
+
+    if (!currentFrom || currentTo || isBefore(picked, currentFrom)) {
+      setCustomMode(true);
+      setDraftRange({ from: picked });
+      return;
+    }
+
+    const nextRange = isAfter(picked, currentFrom)
+      ? { from: currentFrom, to: picked }
+      : { from: picked, to: currentFrom };
+
+    setCustomMode(true);
+    setDraftRange(nextRange);
+    onChange(nextRange);
+    setIsOpen(false);
+  }
 
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen}>
+    <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -186,34 +235,57 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
         <div className="grid flex-1 gap-3 p-3 lg:grid-cols-[220px_1fr]">
           <PeriodCalendarCard
             className="hidden lg:block"
-            month={value.from}
-            from={value.from}
-            to={value.to}
+            month={displayFrom}
+            from={displayFrom}
+            to={displayTo}
           />
           <div className="min-w-0">
             <div className="mb-2 flex items-center justify-between gap-3 px-1">
               <div>
                 <p className="text-sm font-medium">Período personalizado</p>
                 <p className="text-xs text-muted-foreground">
-                  {selectedDays} dia{selectedDays === 1 ? "" : "s"} selecionado{selectedDays === 1 ? "" : "s"}
+                  {draftRange.from && !draftRange.to
+                    ? "Selecione a data final"
+                    : `${selectedDays} dia${selectedDays === 1 ? "" : "s"} selecionado${selectedDays === 1 ? "" : "s"}`}
                 </p>
               </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setVisibleMonth((month) => subMonths(month, 1))}
+                  aria-label="Mês anterior"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setVisibleMonth((month) => addMonths(month, 1))}
+                  aria-label="Próximo mês"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            <Calendar
-              initialFocus
-              mode="range"
-              defaultMonth={value?.from}
-              selected={{ from: value?.from, to: value?.to }}
-              onSelect={(range) => {
-                if (range?.from && range?.to) {
-                  setCustomMode(true);
-                  onChange({ from: startOfDay(range.from), to: startOfDay(range.to) });
-                  setIsOpen(false);
-                }
-              }}
-              numberOfMonths={2}
-              className="max-w-full overflow-x-auto"
-            />
+            <div className="grid gap-3 xl:grid-cols-2">
+              <PeriodCalendarCard
+                month={visibleMonth}
+                from={draftRange.from}
+                to={draftRange.to}
+                onDaySelect={handleCustomDaySelect}
+              />
+              <PeriodCalendarCard
+                month={addMonths(visibleMonth, 1)}
+                from={draftRange.from}
+                to={draftRange.to}
+                onDaySelect={handleCustomDaySelect}
+              />
+            </div>
           </div>
         </div>
       </PopoverContent>

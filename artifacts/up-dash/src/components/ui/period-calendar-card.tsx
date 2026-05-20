@@ -8,6 +8,7 @@ interface PeriodCalendarCardProps {
   from?: Date;
   to?: Date;
   className?: string;
+  onDaySelect?: (day: Date) => void;
 }
 
 function isInRange(day: Date, from?: Date, to?: Date): boolean {
@@ -24,6 +25,7 @@ export function PeriodCalendarCard({
   from,
   to,
   className,
+  onDaySelect,
 }: PeriodCalendarCardProps) {
   const visibleMonth = startOfMonth(month);
   const firstDayOfWeek = visibleMonth.getDay();
@@ -47,10 +49,10 @@ export function PeriodCalendarCard({
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold">{format(visibleMonth, "MMMM yyyy")}</p>
-            <p className="text-xs text-muted-foreground">Dashboard period</p>
+            <p className="text-xs text-muted-foreground">Período do dashboard</p>
           </div>
           <span className="rounded-full border border-border bg-background px-2 py-1 text-xs text-muted-foreground">
-            {from && to ? `${format(from, "MMM d")} - ${format(to, "MMM d")}` : "Custom"}
+            {from && to ? `${format(from, "MMM d")} - ${format(to, "MMM d")}` : "Personalizado"}
           </span>
         </div>
 
@@ -68,17 +70,22 @@ export function PeriodCalendarCard({
             const selected = isInRange(day, from, to);
             const muted = !isSameMonth(day, visibleMonth);
             return (
-              <div
+              <button
+                type="button"
                 key={day.toISOString()}
+                onClick={() => onDaySelect?.(day)}
+                disabled={!onDaySelect}
                 className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded-md text-xs font-medium",
+                  "flex h-7 w-7 items-center justify-center rounded-md text-xs font-medium transition-colors",
                   selected ? "bg-primary text-primary-foreground" : "text-muted-foreground",
+                  onDaySelect && !selected && "hover:bg-accent hover:text-foreground",
+                  !onDaySelect && "cursor-default",
                   isSameDay(day, today) && !selected && "ring-1 ring-primary/50 text-foreground",
                   muted && "opacity-40",
                 )}
               >
                 {i + 1}
-              </div>
+              </button>
             );
           })}
         </div>
