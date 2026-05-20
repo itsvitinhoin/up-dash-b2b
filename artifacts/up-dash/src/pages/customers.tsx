@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearch, useLocation } from "wouter";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
@@ -30,6 +30,7 @@ import {
   Sparkles, RefreshCw, X as XIcon,
 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
+import { BrazilHeatMap } from "@/components/brazil-heat-map";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
@@ -270,6 +271,23 @@ export default function CustomersPage() {
   const segmentCount = data?.segmentCounts?.length ?? 0;
   const kpis = summary?.kpis;
   const prevKpis = (summary as Record<string, unknown> | undefined)?.prevKpis as typeof kpis | undefined;
+  const registrationStates = useMemo(
+    () =>
+      (summary?.registrationsByState ?? [])
+        .filter((row) => row.state && row.state !== "Unknown")
+        .map((row) => ({
+          state: row.state,
+          orders: 0,
+          customers: row.count,
+          revenue: row.count,
+        })),
+    [summary?.registrationsByState],
+  );
+  const topRegistrationStates = useMemo(
+    () => [...registrationStates].sort((a, b) => b.customers - a.customers).slice(0, 8),
+    [registrationStates],
+  );
+  const totalRegistrationStates = registrationStates.reduce((acc, row) => acc + row.customers, 0);
 
   const CHART_TABS: { key: ChartTab; label: string; icon: React.ElementType }[] = [
     { key: "timeline", label: "Registrations", icon: TrendingUp },
@@ -527,6 +545,106 @@ export default function CustomersPage() {
         </Card>
       </motion.div>
 
+      {/* Registration geography */}
+      <motion.div variants={cardVariants}>
+        <Card className="overflow-hidden">
+          <CardContent className="p-4 sm:p-6">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                  Concentração por estado
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Cadastros agrupados por UF, incluindo estados preenchidos por DDD quando disponíveis.
+                </p>
+              </div>
+              <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                {registrationStates.length} states · {formatNumber(totalRegistrationStates)} registrations
+              </span>
+            </div>
+            {summaryLoading ? (
+              <Skeleton className="h-[420px] w-full rounded-md" />
+            ) : registrationStates.length === 0 ? (
+              <EmptyState
+                icon={Globe}
+                title="No state data yet"
+                description="Once customer states are available, you'll see registration concentration here."
+                className="border-0 bg-transparent"
+              />
+            ) : (
+              <div className="grid gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(260px,0.6fr)]">
+                <BrazilHeatMap
+                  states={registrationStates}
+                  cities={[]}
+                  reduced={reduced}
+                  ariaLabel="Brazil customer registration heat map"
+                  valueFormatter={(value) => formatNumber(value)}
+                  stateExtraFormatter={(stateRow) => `${formatNumber(stateRow.customers)} cadastros`}
+                  lowLabel="Menos"
+                  highLabel="Mais"
+                />
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Top estados
+                    </h4>
+                    <Badge variant="outline" className="text-[10px]">
+                      Top {Math.min(8, topRegistrationStates.length)}
+                    </Badge>
+                  </div>
+                  <ol className="space-y-2.5" data-testid="customers-state-leaderboard">
+                    {topRegistrationStates.map((stateRow, index) => {
+                      const pct = totalRegistrationStates > 0
+                        ? (stateRow.customers / totalRegistrationStates) * 100
+                        : 0;
+                      return (
+                        <li
+                          key={stateRow.state}
+                          className="relative overflow-hidden rounded-md border border-border/60 bg-card/50 p-2.5"
+                        >
+                          <div
+                            aria-hidden
+                            className="absolute inset-y-0 left-0 bg-primary/10"
+                            style={{ width: `${pct}%` }}
+                          />
+                          <div className="relative flex items-center gap-2.5">
+                            <span
+                              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[11px] font-bold ${
+                                index === 0
+                                  ? "bg-red-500 text-white"
+                                  : index === 1
+                                    ? "bg-orange-500 text-white"
+                                    : index === 2
+                                      ? "bg-amber-500 text-white"
+                                      : "bg-muted text-muted-foreground"
+                              }`}
+                            >
+                              {stateRow.state}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <span className="text-sm font-semibold tabular-nums">
+                                  {formatNumber(stateRow.customers)}
+                                </span>
+                                <span className="font-mono text-[10px] text-muted-foreground">
+                                  {pct.toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-muted-foreground">cadastros</div>
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+
       {/* AI Insight card */}
       {!insightDismissed && (
         <motion.div variants={cardVariants}>
@@ -763,7 +881,7 @@ export default function CustomersPage() {
                             )}
                           </TableCell>
                           <TableCell className="text-sm">
-                            {customer.city && customer.state ? `${customer.city}, ${customer.state}` : "—"}
+                            {[customer.city, customer.state].filter(Boolean).join(", ") || "—"}
                           </TableCell>
                           <TableCell>
                             {customer.utmSource ? (

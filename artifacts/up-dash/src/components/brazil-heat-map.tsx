@@ -108,6 +108,12 @@ interface Props {
   states: StateData[];
   cities: CityData[];
   reduced: boolean;
+  ariaLabel?: string;
+  valueFormatter?: (value: number) => string;
+  stateExtraFormatter?: (state: StateData) => string;
+  cityExtraFormatter?: (city: CityData) => string;
+  lowLabel?: string;
+  highLabel?: string;
 }
 
 const VIEW_W = 800;
@@ -150,7 +156,17 @@ function cityCoords(state: string, city: string) {
 
 // ─────────────────────────────────────────────────────────────────────────
 
-export function BrazilHeatMap({ states, cities, reduced }: Props) {
+export function BrazilHeatMap({
+  states,
+  cities,
+  reduced,
+  ariaLabel = "Brazil revenue heat map",
+  valueFormatter = formatCurrency,
+  stateExtraFormatter,
+  cityExtraFormatter,
+  lowLabel = "Cold",
+  highLabel = "Hot",
+}: Props) {
   const [hover, setHover] = useState<{
     x: number;
     y: number;
@@ -198,7 +214,7 @@ export function BrazilHeatMap({ states, cities, reduced }: Props) {
         className="w-full h-auto"
         preserveAspectRatio="xMidYMid meet"
         role="img"
-        aria-label="Brazil revenue heat map"
+        aria-label={ariaLabel}
       >
         <defs>
           {/* Background grid */}
@@ -322,7 +338,7 @@ export function BrazilHeatMap({ states, cities, reduced }: Props) {
                   title: c.city,
                   sub: c.state,
                   revenue: c.revenue,
-                  extra: `${formatNumber(c.orders)} orders`,
+                  extra: cityExtraFormatter?.(c) ?? `${formatNumber(c.orders)} orders`,
                 })
               }
               onMouseLeave={() => setHover(null)}
@@ -333,13 +349,13 @@ export function BrazilHeatMap({ states, cities, reduced }: Props) {
                   title: c.city,
                   sub: c.state,
                   revenue: c.revenue,
-                  extra: `${formatNumber(c.orders)} orders`,
+                  extra: cityExtraFormatter?.(c) ?? `${formatNumber(c.orders)} orders`,
                 })
               }
               onBlur={() => setHover(null)}
               tabIndex={0}
               role="button"
-              aria-label={`${c.city}, ${c.state}: ${formatCurrency(c.revenue)}, ${formatNumber(c.orders)} orders`}
+              aria-label={`${c.city}, ${c.state}: ${valueFormatter(c.revenue)}, ${cityExtraFormatter?.(c) ?? `${formatNumber(c.orders)} orders`}`}
               style={{ cursor: "pointer", outline: "none" }}
             />
           );
@@ -378,7 +394,7 @@ export function BrazilHeatMap({ states, cities, reduced }: Props) {
                     title: m.fullName,
                     sub: m.state,
                     revenue: m.revenue,
-                    extra: `${formatNumber(m.customers)} customers · ${formatNumber(m.orders)} orders`,
+                    extra: stateExtraFormatter?.(m) ?? `${formatNumber(m.customers)} customers · ${formatNumber(m.orders)} orders`,
                   })
                 }
                 onMouseLeave={() => setHover(null)}
@@ -389,13 +405,13 @@ export function BrazilHeatMap({ states, cities, reduced }: Props) {
                     title: m.fullName,
                     sub: m.state,
                     revenue: m.revenue,
-                    extra: `${formatNumber(m.customers)} customers · ${formatNumber(m.orders)} orders`,
+                    extra: stateExtraFormatter?.(m) ?? `${formatNumber(m.customers)} customers · ${formatNumber(m.orders)} orders`,
                   })
                 }
                 onBlur={() => setHover(null)}
                 tabIndex={0}
                 role="button"
-                aria-label={`${m.fullName}: ${formatCurrency(m.revenue)}, ${formatNumber(m.customers)} customers, ${formatNumber(m.orders)} orders`}
+                aria-label={`${m.fullName}: ${valueFormatter(m.revenue)}, ${stateExtraFormatter?.(m) ?? `${formatNumber(m.customers)} customers · ${formatNumber(m.orders)} orders`}`}
                 style={{ cursor: "pointer", outline: "none" }}
               />
               {/* Inner glow */}
@@ -439,7 +455,7 @@ export function BrazilHeatMap({ states, cities, reduced }: Props) {
             </span>
           </div>
           <div className="mt-1 text-base font-bold tabular-nums text-foreground">
-            {formatCurrency(hover.revenue)}
+            {valueFormatter(hover.revenue)}
           </div>
           {hover.extra && (
             <div className="text-[11px] text-muted-foreground">{hover.extra}</div>
@@ -449,7 +465,7 @@ export function BrazilHeatMap({ states, cities, reduced }: Props) {
 
       {/* Heat scale legend */}
       <div className="mt-3 flex items-center justify-center gap-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-        <span>Cold</span>
+        <span>{lowLabel}</span>
         <div
           className="h-1.5 w-40 rounded-full"
           style={{
@@ -457,7 +473,7 @@ export function BrazilHeatMap({ states, cities, reduced }: Props) {
               "linear-gradient(90deg, hsl(200 80% 55%), hsl(140 70% 55%), hsl(48 96% 55%), hsl(30 95% 55%), hsl(0 84% 60%))",
           }}
         />
-        <span>Hot</span>
+        <span>{highLabel}</span>
       </div>
     </div>
   );
