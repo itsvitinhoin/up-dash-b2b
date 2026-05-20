@@ -68,6 +68,17 @@ const router: IRouter = Router();
 
 router.use("/analytics", authenticate);
 
+function getGlobalMetaAccessToken(fallback?: string | null): string | null {
+  return (
+    process.env.META_ADS_API_KEY ??
+    process.env.META_ACCESS_TOKEN ??
+    process.env.META_API_KEY ??
+    process.env.META_TOKEN ??
+    fallback ??
+    null
+  );
+}
+
 // Orval generates `zod.date()` for date-time format params, but query strings
 // arrive as strings. Coerce the relevant query fields before validation.
 function coerceDateQuery(query: Record<string, unknown>): Record<string, unknown> {
@@ -5421,17 +5432,18 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
 
   let metaCurrent: MetaMarketingData | null = null;
   let metaPrev: MetaMarketingData | null = null;
-  if (clientConfig?.metaAdsApiKey && clientConfig.metaAdAccountId) {
+  const metaAccessToken = getGlobalMetaAccessToken(clientConfig?.metaAdsApiKey);
+  if (metaAccessToken && clientConfig?.metaAdAccountId) {
     try {
       [metaCurrent, metaPrev] = await Promise.all([
         fetchMetaMarketingData({
-          accessToken: clientConfig.metaAdsApiKey,
+          accessToken: metaAccessToken,
           adAccountId: clientConfig.metaAdAccountId,
           since,
           until,
         }),
         fetchMetaMarketingData({
-          accessToken: clientConfig.metaAdsApiKey,
+          accessToken: metaAccessToken,
           adAccountId: clientConfig.metaAdAccountId,
           since: prevSince,
           until: prevUntil,

@@ -31,6 +31,7 @@ import {
   PackageSearch,
   Route,
   BarChart3,
+  KeyRound,
   Link2,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
@@ -78,6 +79,7 @@ const pageMeta: Record<string, PageMeta> = {
   "/sellers": { title: "Sellers", subtitle: "Top performers across the catalog", hasDateRange: false, hasFilterBar: true, requiresClient: true },
   "/geography": { title: "Geography", subtitle: "Sales distribution by region", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/clients": { title: "Clients", subtitle: "Brand accounts on the platform", hasDateRange: true, hasFilterBar: false },
+  "/accesses": { title: "Acessos", subtitle: "Client logins filtered by brand", hasDateRange: false, hasFilterBar: false },
   "/notifications": { title: "Notifications", subtitle: "Anomalies, top movers, and rollups", hasDateRange: false, hasFilterBar: false, requiresClient: true },
   "/compare": { title: "Compare brands", subtitle: "Benchmark up to four clients side-by-side", hasDateRange: true, hasFilterBar: false },
   "/overview": { title: "Platform overview", subtitle: "Every brand on UP Dash, at a glance", hasDateRange: true, hasFilterBar: false },
@@ -187,6 +189,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     workspaceNav.unshift({ name: "Platform overview", href: "/overview", icon: Globe2 });
     workspaceNav.push({ name: "Compare brands", href: "/compare", icon: GitCompareArrows });
     workspaceNav.push({ name: "Clients", href: "/clients", icon: Building2 });
+    workspaceNav.push({ name: "Acessos", href: "/accesses", icon: KeyRound });
   }
 
   const NavItem = ({ item }: { item: { name: string; href: string; icon: typeof Users } }) => {

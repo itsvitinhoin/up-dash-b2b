@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request } from "express";
 import { eq } from "drizzle-orm";
-import { db, usersTable, clientsTable } from "@workspace/db";
+import { db, usersTable, clientsTable, clientUserAccessesTable } from "@workspace/db";
 import {
   LoginBody,
   LogoutBody,
@@ -34,6 +34,12 @@ async function resolveClientIdForUser(
   role: "ADMIN" | "CLIENT",
 ): Promise<string | null> {
   if (role !== "CLIENT") return null;
+  const [access] = await db
+    .select({ id: clientUserAccessesTable.clientId })
+    .from(clientUserAccessesTable)
+    .where(eq(clientUserAccessesTable.userId, userId));
+  if (access?.id) return access.id;
+
   const [client] = await db
     .select({ id: clientsTable.id })
     .from(clientsTable)

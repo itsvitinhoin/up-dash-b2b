@@ -33,6 +33,7 @@ import StockIntelligencePage from "@/pages/stock-intelligence";
 import JourneyPage from "@/pages/journey";
 import RfmPage from "@/pages/rfm";
 import UtmPage from "@/pages/utm";
+import AccessesPage from "@/pages/accesses";
 
 function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
   const { logout } = useAuth();
@@ -173,6 +174,14 @@ function Router() {
           <AuthGuard adminOnly>
             <AppLayout>
               <PageTransition routeKey="clients"><ClientsPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/accesses">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="accesses"><AccessesPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

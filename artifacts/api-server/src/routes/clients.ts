@@ -1,7 +1,17 @@
 import { Router, type IRouter } from "express";
 import { and, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { db, clientsTable, ordersTable, eventsTable, creativesTable, syncJobsTable, customersTable, usersTable } from "@workspace/db";
+import {
+  db,
+  clientsTable,
+  ordersTable,
+  eventsTable,
+  creativesTable,
+  syncJobsTable,
+  customersTable,
+  usersTable,
+  clientUserAccessesTable,
+} from "@workspace/db";
 import {
   CreateClientBody,
   GetClientParams,
@@ -20,6 +30,18 @@ import { hashPassword } from "../lib/auth";
 const router: IRouter = Router();
 
 router.use("/clients", authenticate);
+router.use("/accesses", authenticate);
+
+function getGlobalMetaAccessToken(fallback?: string | null): string | null {
+  return (
+    process.env.META_ADS_API_KEY ??
+    process.env.META_ACCESS_TOKEN ??
+    process.env.META_API_KEY ??
+    process.env.META_TOKEN ??
+    fallback ??
+    null
+  );
+}
 
 // Coerce ISO date-time strings on the query before zod sees them — orval
 // generates `z.coerce.date()` for date-time params, but Express delivers
@@ -69,27 +91,31 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     .limit(limit)
     .offset(offset);
 
-  const loginRows = rows.length > 0
+  const accessRows = rows.length > 0
     ? await db
         .select({
-          clientId: clientsTable.id,
+          clientId: clientUserAccessesTable.clientId,
           email: usersTable.email,
           firstName: usersTable.firstName,
           lastName: usersTable.lastName,
         })
-        .from(clientsTable)
-        .innerJoin(usersTable, eq(clientsTable.userId, usersTable.id))
-        .where(inArray(clientsTable.id, rows.map((r) => r.id)))
+        .from(clientUserAccessesTable)
+        .innerJoin(usersTable, eq(clientUserAccessesTable.userId, usersTable.id))
+        .where(inArray(clientUserAccessesTable.clientId, rows.map((r) => r.id)))
     : [];
-  const loginByClientId = new Map(
-    loginRows.map((row) => [
-      row.clientId,
-      {
-        email: row.email,
-        name: `${row.firstName} ${row.lastName}`.trim(),
-      },
-    ]),
-  );
+  const loginByClientId = new Map<string, { email: string; name: string; count: number }>();
+  for (const row of accessRows) {
+    const current = loginByClientId.get(row.clientId);
+    if (current) {
+      current.count += 1;
+      continue;
+    }
+    loginByClientId.set(row.clientId, {
+      email: row.email,
+      name: `${row.firstName} ${row.lastName}`.trim(),
+      count: 1,
+    });
+  }
 
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -259,6 +285,7 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
       hasClientLogin: Boolean(login),
       clientLoginEmail: login?.email ?? null,
       clientLoginName: login?.name ?? null,
+      clientLoginCount: login?.count ?? 0,
     };
   });
 
@@ -501,6 +528,175 @@ const ClientCredentialsBody = z.object({
   lastName: z.string().min(1),
 });
 
+const ClientAccessBody = ClientCredentialsBody.extend({
+  clientId: z.string().min(1),
+});
+
+router.get("/accesses", requireAdmin, async (_req, res): Promise<void> => {
+  const rows = await db
+    .select({
+      id: clientUserAccessesTable.id,
+      userId: usersTable.id,
+      email: usersTable.email,
+      firstName: usersTable.firstName,
+      lastName: usersTable.lastName,
+      role: usersTable.role,
+      clientId: clientsTable.id,
+      clientName: clientsTable.name,
+      createdAt: clientUserAccessesTable.createdAt,
+      updatedAt: clientUserAccessesTable.updatedAt,
+    })
+    .from(clientUserAccessesTable)
+    .innerJoin(usersTable, eq(clientUserAccessesTable.userId, usersTable.id))
+    .innerJoin(clientsTable, eq(clientUserAccessesTable.clientId, clientsTable.id));
+
+  res.json({ data: rows });
+});
+
+router.post("/accesses", requireAdmin, async (req, res): Promise<void> => {
+  const bodyParsed = ClientAccessBody.safeParse(req.body);
+  if (!bodyParsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: bodyParsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const [client] = await db
+    .select({ id: clientsTable.id, name: clientsTable.name })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, bodyParsed.data.clientId));
+  if (!client) {
+    res.status(404).json({
+      error: true,
+      code: "NOT_FOUND",
+      message: "Client not found",
+      status: 404,
+    });
+    return;
+  }
+
+  const [emailOwner] = await db
+    .select({
+      id: usersTable.id,
+      role: usersTable.role,
+    })
+    .from(usersTable)
+    .where(eq(usersTable.email, bodyParsed.data.email));
+
+  if (emailOwner?.role === "ADMIN") {
+    res.status(409).json({
+      error: true,
+      code: "EMAIL_ALREADY_IN_USE",
+      message: "Admin users cannot be assigned as client accesses",
+      status: 409,
+    });
+    return;
+  }
+
+  const passwordHash = await hashPassword(bodyParsed.data.password);
+  let userId = emailOwner?.id ?? null;
+  if (userId) {
+    const existingAccesses = await db
+      .select({
+        id: clientUserAccessesTable.id,
+        clientId: clientUserAccessesTable.clientId,
+      })
+      .from(clientUserAccessesTable)
+      .where(eq(clientUserAccessesTable.userId, userId));
+    const sameClientAccess = existingAccesses.find((access) => access.clientId === client.id);
+    if (!sameClientAccess && existingAccesses.length > 0) {
+      res.status(409).json({
+        error: true,
+        code: "EMAIL_ALREADY_IN_USE",
+        message: "This email already has access to another client",
+        status: 409,
+      });
+      return;
+    }
+
+    await db
+      .update(usersTable)
+      .set({
+        email: bodyParsed.data.email,
+        passwordHash,
+        firstName: bodyParsed.data.firstName,
+        lastName: bodyParsed.data.lastName,
+        role: "CLIENT",
+      })
+      .where(eq(usersTable.id, userId));
+
+    if (sameClientAccess) {
+      res.json({
+        id: sameClientAccess.id,
+        userId,
+        clientId: client.id,
+        email: bodyParsed.data.email,
+      });
+      return;
+    }
+  } else {
+    const [createdUser] = await db
+      .insert(usersTable)
+      .values({
+        email: bodyParsed.data.email,
+        passwordHash,
+        firstName: bodyParsed.data.firstName,
+        lastName: bodyParsed.data.lastName,
+        role: "CLIENT",
+      })
+      .returning({ id: usersTable.id });
+    userId = createdUser.id;
+  }
+
+  const [access] = await db
+    .insert(clientUserAccessesTable)
+    .values({
+      id: nanoid(),
+      userId,
+      clientId: client.id,
+    })
+    .returning({ id: clientUserAccessesTable.id });
+
+  res.json({
+    id: access.id,
+    userId,
+    clientId: client.id,
+    email: bodyParsed.data.email,
+  });
+});
+
+router.delete("/accesses/:accessId", requireAdmin, async (req, res): Promise<void> => {
+  const accessId = z.string().min(1).safeParse(req.params.accessId);
+  if (!accessId.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: accessId.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const [deleted] = await db
+    .delete(clientUserAccessesTable)
+    .where(eq(clientUserAccessesTable.id, accessId.data))
+    .returning({ id: clientUserAccessesTable.id });
+  if (!deleted) {
+    res.status(404).json({
+      error: true,
+      code: "NOT_FOUND",
+      message: "Access not found",
+      status: 404,
+    });
+    return;
+  }
+  res.json({ id: deleted.id });
+});
+
 router.post("/clients/:clientId/credentials", requireAdmin, async (req, res): Promise<void> => {
   const paramParsed = GetClientParams.safeParse(req.params);
   if (!paramParsed.success) {
@@ -584,6 +780,21 @@ router.post("/clients/:clientId/credentials", requireAdmin, async (req, res): Pr
     await db.update(clientsTable).set({ userId }).where(eq(clientsTable.id, clientId));
   }
 
+  const [existingAccess] = await db
+    .select({ id: clientUserAccessesTable.id })
+    .from(clientUserAccessesTable)
+    .where(and(
+      eq(clientUserAccessesTable.userId, userId),
+      eq(clientUserAccessesTable.clientId, clientId),
+    ));
+  if (!existingAccess) {
+    await db.insert(clientUserAccessesTable).values({
+      id: nanoid(),
+      userId,
+      clientId,
+    });
+  }
+
   res.json({
     clientId,
     userId,
@@ -650,10 +861,6 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
   res.json(GetClientResponse.parse(updated));
 });
 
-const MetaAdAccountsBody = z.object({
-  accessToken: z.string().nullish(),
-});
-
 router.post("/clients/:clientId/meta/ad-accounts", requireAdmin, async (req, res): Promise<void> => {
   const paramParsed = GetClientParams.safeParse(req.params);
   if (!paramParsed.success) {
@@ -661,16 +868,6 @@ router.post("/clients/:clientId/meta/ad-accounts", requireAdmin, async (req, res
       error: true,
       code: "VALIDATION_ERROR",
       message: paramParsed.error.message,
-      status: 400,
-    });
-    return;
-  }
-  const bodyParsed = MetaAdAccountsBody.safeParse(req.body ?? {});
-  if (!bodyParsed.success) {
-    res.status(400).json({
-      error: true,
-      code: "VALIDATION_ERROR",
-      message: bodyParsed.error.message,
       status: 400,
     });
     return;
@@ -688,12 +885,12 @@ router.post("/clients/:clientId/meta/ad-accounts", requireAdmin, async (req, res
     });
     return;
   }
-  const token = bodyParsed.data.accessToken?.trim() || client.metaAdsApiKey;
+  const token = getGlobalMetaAccessToken(client.metaAdsApiKey);
   if (!token) {
     res.status(400).json({
       error: true,
       code: "VALIDATION_ERROR",
-      message: "Meta Ads API key is required to detect ad accounts",
+      message: "Global Meta Ads API key is required to detect ad accounts",
       status: 400,
     });
     return;

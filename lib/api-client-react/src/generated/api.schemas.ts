@@ -101,6 +101,7 @@ export interface Client {
   hasClientLogin?: boolean;
   clientLoginEmail?: string | null;
   clientLoginName?: string | null;
+  clientLoginCount?: number;
   /**
    * Meta Ads API key for pulling ad spend and lead data from Meta.
    * @nullable

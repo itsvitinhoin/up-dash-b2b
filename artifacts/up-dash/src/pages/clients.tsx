@@ -614,18 +614,14 @@ function ClientCredentialsDialog({
 function MetaAdsKeyDialog({
   clientId,
   clientName,
-  currentKey,
   currentAdAccountId,
 }: {
   clientId: string;
   clientName: string;
-  currentKey: string | null | undefined;
   currentAdAccountId: string | null | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const [value, setValue] = useState("");
   const [adAccountId, setAdAccountId] = useState("");
-  const [showValue, setShowValue] = useState(false);
   const [accounts, setAccounts] = useState<MetaAdAccountOption[]>([]);
   const [isDetecting, setIsDetecting] = useState(false);
   const updateMutation = useUpdateClient();
@@ -633,9 +629,7 @@ function MetaAdsKeyDialog({
 
   function handleOpen(o: boolean) {
     if (o) {
-      setValue(currentKey ?? "");
       setAdAccountId(currentAdAccountId ?? "");
-      setShowValue(false);
       setAccounts([]);
       setIsDetecting(false);
       updateMutation.reset();
@@ -650,7 +644,6 @@ function MetaAdsKeyDialog({
       {
         clientId,
         data: {
-          metaAdsApiKey: value.trim() || null,
           metaAdAccountId: adAccountId.trim() || null,
         },
       },
@@ -672,10 +665,7 @@ function MetaAdsKeyDialog({
     try {
       const res = await customFetch<{ accounts: MetaAdAccountOption[] }>(
         `/api/clients/${clientId}/meta/ad-accounts`,
-        {
-          method: "POST",
-          body: JSON.stringify({ accessToken: value.trim() || null }),
-        },
+        { method: "POST" },
       );
       setAccounts(res.accounts);
       if (res.accounts.length === 1) {
@@ -684,7 +674,7 @@ function MetaAdsKeyDialog({
       } else if (res.accounts.length > 1) {
         toast.success(`${res.accounts.length} ad accounts found`);
       } else {
-        toast.warning("No ad accounts found for this Meta token");
+        toast.warning("No ad accounts found for the global Meta token");
       }
     } catch {
       toast.error("Could not detect Meta ad accounts");
@@ -693,7 +683,6 @@ function MetaAdsKeyDialog({
     }
   }
 
-  const hasKey = !!currentKey;
   const hasAdAccount = !!currentAdAccountId;
 
   return (
@@ -702,52 +691,24 @@ function MetaAdsKeyDialog({
         <Button
           variant="ghost"
           size="sm"
-          className={`h-7 gap-1 text-xs ${hasKey && hasAdAccount ? "text-emerald-400 hover:text-emerald-300" : hasKey ? "text-amber-400 hover:text-amber-300" : ""}`}
+          className={`h-7 gap-1 text-xs ${hasAdAccount ? "text-emerald-400 hover:text-emerald-300" : ""}`}
           title="Set Meta Ads integration"
         >
           <Network className="h-3 w-3" />
-          {hasKey && hasAdAccount ? "Meta ✓" : hasKey ? "Meta Key" : "Add Meta"}
+          {hasAdAccount ? "Meta ✓" : "Meta account"}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Network className="h-4 w-4" /> Meta Ads API Key
+            <Network className="h-4 w-4" /> Meta Ads
           </DialogTitle>
           <DialogDescription>
-            Set the Meta Ads API key and ad account for <strong>{clientName}</strong>.
-            Use auto-detect to pick an account from the token.
+            Select the ad account for <strong>{clientName}</strong>. The Meta API key is global and fixed for all clients.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2">
-          <Label htmlFor="meta-ads-key">API Key</Label>
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Input
-                id="meta-ads-key"
-                type={showValue ? "text" : "password"}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                placeholder="Paste your Meta Ads API key…"
-                className="pr-9 font-mono text-xs"
-              />
-              <button
-                type="button"
-                className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
-                onClick={() => setShowValue((v) => !v)}
-                tabIndex={-1}
-              >
-                {showValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-          </div>
-          {hasKey && !value && (
-            <p className="text-xs text-amber-400 flex items-center gap-1">
-              <AlertCircle className="h-3 w-3 shrink-0" />
-              Saving with an empty key will remove the Meta integration.
-            </p>
-          )}
           <div className="grid gap-2 pt-2">
             <div className="flex items-end gap-2">
               <div className="flex-1 space-y-2">
@@ -781,7 +742,7 @@ function MetaAdsKeyDialog({
                 size="sm"
                 className="mb-0.5 shrink-0 gap-1"
                 onClick={handleDetectAccounts}
-                disabled={isDetecting || (!value.trim() && !currentKey)}
+                disabled={isDetecting}
               >
                 {isDetecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Network className="h-3.5 w-3.5" />}
                 Detect
@@ -1059,7 +1020,6 @@ export default function ClientsPage() {
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newApiKey, setNewApiKey] = useState("");
-  const [newMetaAdsApiKey, setNewMetaAdsApiKey] = useState("");
   const [newMetaAdAccountId, setNewMetaAdAccountId] = useState("");
   const [newCurrencyCode, setNewCurrencyCode] = useState("BRL");
   const [isLookingUp, setIsLookingUp] = useState(false);
@@ -1177,7 +1137,6 @@ export default function ClientsPage() {
           name: newName,
           email: newEmail,
           apiKey: newApiKey,
-          ...(newMetaAdsApiKey.trim() ? { metaAdsApiKey: newMetaAdsApiKey.trim() } : {}),
           ...(newMetaAdAccountId.trim() ? { metaAdAccountId: newMetaAdAccountId.trim() } : {}),
           currency: picked.code,
           locale: picked.locale,
@@ -1189,7 +1148,6 @@ export default function ClientsPage() {
           setNewName("");
           setNewEmail("");
           setNewApiKey("");
-          setNewMetaAdsApiKey("");
           setNewMetaAdAccountId("");
           setNewCurrencyCode("BRL");
           setLookupMatch(null);
@@ -1390,24 +1348,6 @@ export default function ClientsPage() {
                   )}
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="metaAdsApiKey">
-                    Meta Ads API Key{" "}
-                    <span className="text-xs text-muted-foreground font-normal">(optional)</span>
-                  </Label>
-                  <Input
-                    id="metaAdsApiKey"
-                    type="password"
-                    value={newMetaAdsApiKey}
-                    onChange={(e) => setNewMetaAdsApiKey(e.target.value)}
-                    placeholder="Paste Meta Ads key to enable ad data…"
-                    className="font-mono text-xs"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Used to pull ad spend and lead data from Meta Ads. You can
-                    also add or update this later from the client list.
-                  </p>
-                </div>
-                <div className="grid gap-2">
                   <Label htmlFor="metaAdAccountId">
                     Meta Ad Account{" "}
                     <span className="text-xs text-muted-foreground font-normal">(optional)</span>
@@ -1419,6 +1359,9 @@ export default function ClientsPage() {
                     placeholder="act_1234567890"
                     className="font-mono text-xs"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    A Meta API key is configured globally and reused for every client.
+                  </p>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="currency">Currency &amp; Locale</Label>
@@ -1487,7 +1430,7 @@ export default function ClientsPage() {
               </div>
               <Badge variant="outline" className="gap-1.5">
                 <KeyRound className="h-3 w-3" />
-                {formatNumber((data?.data ?? []).filter((client) => client.hasClientLogin).length)} configurados
+                {formatNumber((data?.data ?? []).reduce((sum, client) => sum + (client.clientLoginCount ?? 0), 0))} acessos
               </Badge>
             </div>
             {isLoading && !data ? (
@@ -1512,7 +1455,7 @@ export default function ClientsPage() {
                           variant={client.hasClientLogin ? "default" : "secondary"}
                           className="shrink-0 text-[10px]"
                         >
-                          {client.hasClientLogin ? "Ativo" : "Sem login"}
+                          {client.hasClientLogin ? `${client.clientLoginCount ?? 1} acesso${(client.clientLoginCount ?? 1) > 1 ? "s" : ""}` : "Sem login"}
                         </Badge>
                       </div>
                       <p className="mt-1 truncate text-xs text-muted-foreground">
@@ -1610,7 +1553,7 @@ export default function ClientsPage() {
                             className="w-fit gap-1"
                           >
                             <KeyRound className="h-3 w-3" />
-                            {client.hasClientLogin ? "Criado" : "Pendente"}
+                            {client.hasClientLogin ? `${client.clientLoginCount ?? 1} acesso${(client.clientLoginCount ?? 1) > 1 ? "s" : ""}` : "Pendente"}
                           </Badge>
                           {client.clientLoginEmail && (
                             <span className="max-w-[180px] truncate text-xs text-muted-foreground">
@@ -1680,7 +1623,6 @@ export default function ClientsPage() {
                           <MetaAdsKeyDialog
                             clientId={client.id}
                             clientName={client.name}
-                            currentKey={client.metaAdsApiKey}
                             currentAdAccountId={client.metaAdAccountId}
                           />
                           <ClientCredentialsDialog

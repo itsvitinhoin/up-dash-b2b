@@ -6,6 +6,7 @@ import {
   integer,
   boolean,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 import { usersTable } from "./users";
@@ -47,3 +48,32 @@ export const clientsTable = pgTable(
 
 export type Client = typeof clientsTable.$inferSelect;
 export type InsertClient = typeof clientsTable.$inferInsert;
+
+export const clientUserAccessesTable = pgTable(
+  "client_user_accesses",
+  {
+    id: text("id").primaryKey().$defaultFn(() => nanoid()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => clientsTable.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    userIdx: index("client_user_accesses_user_idx").on(table.userId),
+    clientIdx: index("client_user_accesses_client_idx").on(table.clientId),
+    userClientUnique: uniqueIndex("client_user_accesses_user_client_unique").on(
+      table.userId,
+      table.clientId,
+    ),
+  }),
+);
+
+export type ClientUserAccess = typeof clientUserAccessesTable.$inferSelect;
+export type InsertClientUserAccess = typeof clientUserAccessesTable.$inferInsert;
