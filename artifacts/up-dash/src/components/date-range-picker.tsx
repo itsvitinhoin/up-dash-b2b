@@ -144,9 +144,9 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
   const activePreset = getMatchingPreset(value);
   const isCustomActive = customMode || !activePreset;
   const label = getRangeLabel(value);
-  const displayFrom = draftRange.from ?? value.from;
-  const displayTo = draftRange.to ?? draftRange.from ?? value.to;
-  const selectedDays = Math.max(1, differenceInDays(displayTo, displayFrom) + 1);
+  const selectedFrom = draftRange.from ?? value.from;
+  const selectedTo = draftRange.to ?? draftRange.from ?? value.to;
+  const selectedDays = Math.max(1, differenceInDays(selectedTo, selectedFrom) + 1);
 
   function handleOpenChange(open: boolean) {
     setIsOpen(open);
@@ -194,7 +194,7 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="flex w-[min(calc(100vw-2rem),760px)] flex-col p-0 md:flex-row"
+        className="flex w-[min(calc(100vw-2rem),540px)] flex-col p-0 md:flex-row"
         align="end"
       >
         <div className="w-full border-b border-border p-2 md:w-[190px] md:border-b-0 md:border-r">
@@ -220,7 +220,11 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
           ))}
           <button
             type="button"
-            onClick={() => setCustomMode(true)}
+            onClick={() => {
+              setCustomMode(true);
+              setVisibleMonth(startOfMonth(value.from));
+              setDraftRange({ from: value.from, to: value.to });
+            }}
             className={cn(
               "mt-1 flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors",
               isCustomActive
@@ -232,61 +236,46 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
             {isCustomActive && <Check className="h-3.5 w-3.5" />}
           </button>
         </div>
-        <div className="grid flex-1 gap-3 p-3 lg:grid-cols-[220px_1fr]">
-          <PeriodCalendarCard
-            className="hidden lg:block"
-            month={displayFrom}
-            from={displayFrom}
-            to={displayTo}
-          />
-          <div className="min-w-0">
-            <div className="mb-2 flex items-center justify-between gap-3 px-1">
-              <div>
-                <p className="text-sm font-medium">Período personalizado</p>
-                <p className="text-xs text-muted-foreground">
-                  {draftRange.from && !draftRange.to
-                    ? "Selecione a data final"
-                    : `${selectedDays} dia${selectedDays === 1 ? "" : "s"} selecionado${selectedDays === 1 ? "" : "s"}`}
-                </p>
-              </div>
-              <div className="flex items-center gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setVisibleMonth((month) => subMonths(month, 1))}
-                  aria-label="Mês anterior"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setVisibleMonth((month) => addMonths(month, 1))}
-                  aria-label="Próximo mês"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
+        <div className="w-full p-3 md:w-[350px]">
+          <div className="mb-3 flex items-center justify-between gap-3 px-1">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Período personalizado</p>
+              <p className="text-xs text-muted-foreground">
+                {draftRange.from && !draftRange.to
+                  ? "Selecione a data final"
+                  : `${selectedDays} dia${selectedDays === 1 ? "" : "s"} selecionado${selectedDays === 1 ? "" : "s"}`}
+              </p>
             </div>
-            <div className="grid gap-3 xl:grid-cols-2">
-              <PeriodCalendarCard
-                month={visibleMonth}
-                from={draftRange.from}
-                to={draftRange.to}
-                onDaySelect={handleCustomDaySelect}
-              />
-              <PeriodCalendarCard
-                month={addMonths(visibleMonth, 1)}
-                from={draftRange.from}
-                to={draftRange.to}
-                onDaySelect={handleCustomDaySelect}
-              />
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setVisibleMonth((month) => subMonths(month, 1))}
+                aria-label="Mês anterior"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setVisibleMonth((month) => addMonths(month, 1))}
+                aria-label="Próximo mês"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
             </div>
           </div>
+          <PeriodCalendarCard
+            className="mx-auto w-full max-w-[290px]"
+            month={visibleMonth}
+            from={draftRange.from}
+            to={draftRange.to}
+            onDaySelect={handleCustomDaySelect}
+          />
         </div>
       </PopoverContent>
     </Popover>
