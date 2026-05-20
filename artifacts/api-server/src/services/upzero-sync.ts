@@ -113,8 +113,13 @@ interface UpZeroCustomer {
   email?: string | null;
   phone?: string | null;
   customer_type?: "RETAIL" | "WHOLESALE" | string | null;
+  approved?: boolean | string | number | null;
+  is_approved?: boolean | string | number | null;
+  rejected?: boolean | string | number | null;
+  is_rejected?: boolean | string | number | null;
   status?: string | null;
   registration_status?: string | null;
+  approval_status?: string | null;
   lead_status?: string | null;
   created_at?: string | null;
   registered_at?: string | null;
@@ -163,6 +168,15 @@ interface UpZeroProduct {
   status: string;
   category_name?: string | null;
   category_names?: string[] | string | null;
+  image_url?: string | null;
+  imageUrl?: string | null;
+  thumbnail_url?: string | null;
+  thumbnailUrl?: string | null;
+  photo_url?: string | null;
+  picture?: string | null;
+  image?: string | { url?: string | null; src?: string | null } | null;
+  images?: Array<string | { url?: string | null; src?: string | null; image_url?: string | null }> | null;
+  media?: Array<string | { url?: string | null; src?: string | null; image_url?: string | null; type?: string | null }> | null;
   tags?: string[] | null;
   category_ids?: string[] | null;
   category?: { name?: string | null } | string | null;
@@ -232,6 +246,19 @@ function firstString(...values: unknown[]): string | null {
     const parsed = cleanString(value);
     if (parsed) return parsed;
   }
+  return null;
+}
+
+function boolLike(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  const s = cleanString(value)?.toLowerCase();
+  if (!s) return null;
+  if (["true", "1", "yes", "sim", "approved", "aprovado"].includes(s)) return true;
+  if (["false", "0", "no", "nao", "não", "rejected", "recusado"].includes(s)) return false;
   return null;
 }
 
@@ -306,6 +333,30 @@ function inferProductCategory(p: UpZeroProduct): string | null {
     .split(" ")[0];
   if (!firstWord) return null;
   return titleCase(firstWord);
+}
+
+function imageFromValue(value: unknown): string | null {
+  if (typeof value === "string") return cleanString(value);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return firstString(record.url, record.src, record.image_url, record.imageUrl, record.thumbnail_url);
+  }
+  return null;
+}
+
+function extractProductImageUrl(p: UpZeroProduct): string | null {
+  const direct = firstString(p.image_url, p.imageUrl, p.thumbnail_url, p.thumbnailUrl, p.photo_url, p.picture);
+  if (direct) return direct;
+  const image = imageFromValue(p.image);
+  if (image) return image;
+  for (const source of [p.images, p.media]) {
+    if (!Array.isArray(source)) continue;
+    for (const entry of source) {
+      const url = imageFromValue(entry);
+      if (url) return url;
+    }
+  }
+  return null;
 }
 
 /**
@@ -734,15 +785,57 @@ function getAddressCity(c: UpZeroCustomer): string | null {
   );
 }
 
+const DDD_TO_STATE: Record<string, string> = {
+  "11": "SP", "12": "SP", "13": "SP", "14": "SP", "15": "SP", "16": "SP", "17": "SP", "18": "SP", "19": "SP",
+  "21": "RJ", "22": "RJ", "24": "RJ",
+  "27": "ES", "28": "ES",
+  "31": "MG", "32": "MG", "33": "MG", "34": "MG", "35": "MG", "37": "MG", "38": "MG",
+  "41": "PR", "42": "PR", "43": "PR", "44": "PR", "45": "PR", "46": "PR",
+  "47": "SC", "48": "SC", "49": "SC",
+  "51": "RS", "53": "RS", "54": "RS", "55": "RS",
+  "61": "DF",
+  "62": "GO", "64": "GO",
+  "63": "TO",
+  "65": "MT", "66": "MT",
+  "67": "MS",
+  "68": "AC",
+  "69": "RO",
+  "71": "BA", "73": "BA", "74": "BA", "75": "BA", "77": "BA",
+  "79": "SE",
+  "81": "PE", "87": "PE",
+  "82": "AL",
+  "83": "PB",
+  "84": "RN",
+  "85": "CE", "88": "CE",
+  "86": "PI", "89": "PI",
+  "91": "PA", "93": "PA", "94": "PA",
+  "92": "AM", "97": "AM",
+  "95": "RR",
+  "96": "AP",
+  "98": "MA", "99": "MA",
+};
+
+function stateFromPhoneDdd(phone: string | null | undefined): string | null {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  if (!digits) return null;
+  let national = digits;
+  if (national.startsWith("55") && national.length >= 12) national = national.slice(2);
+  if (national.startsWith("0") && national.length >= 11) national = national.slice(1);
+  const ddd = national.slice(0, 2);
+  return DDD_TO_STATE[ddd] ?? null;
+}
+
 function getDocumentType(c: UpZeroCustomer): "CPF" | "CNPJ" | null {
   if (c.wholesale_profile?.cnpj || c.customer_type === "WHOLESALE") return "CNPJ";
   if (c.retail_profile?.cpf || c.customer_type === "RETAIL") return "CPF";
   return null;
 }
 
-function mapRegistrationStatus(c: UpZeroCustomer): "PENDING" | "APPROVED" | "REJECTED" {
-  const raw = firstString(c.registration_status, c.lead_status, c.status)?.toLowerCase();
-  if (!raw) return "APPROVED";
+function mapRegistrationStatus(c: UpZeroCustomer): "PENDING" | "APPROVED" | "REJECTED" | null {
+  if (boolLike(c.rejected) === true || boolLike(c.is_rejected) === true) return "REJECTED";
+  if (boolLike(c.approved) === true || boolLike(c.is_approved) === true) return "APPROVED";
+  const raw = firstString(c.registration_status, c.approval_status, c.lead_status, c.status)?.toLowerCase();
+  if (!raw) return null;
   if (["approved", "aprovado", "accepted", "active", "qualified"].some((v) => raw.includes(v))) return "APPROVED";
   if (["rejected", "recusado", "declined", "denied", "canceled", "cancelado"].some((v) => raw.includes(v))) return "REJECTED";
   return "PENDING";
@@ -752,7 +845,7 @@ function getRegistrationDate(c: UpZeroCustomer, fallback = new Date()): Date {
   return firstDate(c.lead_created_at, c.registered_at, c.registration_date, c.created_at) ?? fallback;
 }
 
-function getApprovalDate(c: UpZeroCustomer, status: "PENDING" | "APPROVED" | "REJECTED", fallback: Date): Date | null {
+function getApprovalDate(c: UpZeroCustomer, status: "PENDING" | "APPROVED" | "REJECTED" | null, fallback: Date): Date | null {
   const explicit = firstDate(c.approved_at, c.approval_date);
   if (explicit) return explicit;
   return status === "APPROVED" ? fallback : null;
@@ -1117,13 +1210,14 @@ export async function syncUpZeroClient(
       const stockFields = stockValue !== undefined ? { stock: stockValue } : {};
       const status = mapProductStatus(p.status);
       const category = inferProductCategory(p);
+      const imageUrl = extractProductImageUrl(p);
 
       if (existingProductByExtId.has(p.id)) {
         // Row already linked to this UP Zero product — update in place.
         const internalId = existingProductByExtId.get(p.id)!;
         await db
           .update(productsTable)
-          .set({ sku, name: buildProductName(p), category, price, cost: cost ?? undefined, ...stockFields, status })
+          .set({ sku, name: buildProductName(p), category, imageUrl: imageUrl ?? undefined, price, cost: cost ?? undefined, ...stockFields, status })
           .where(
             and(
               eq(productsTable.clientId, clientId),
@@ -1145,6 +1239,7 @@ export async function syncUpZeroClient(
             externalId: p.id,
             name: buildProductName(p),
             category,
+            imageUrl: imageUrl ?? undefined,
             price,
             cost: cost ?? undefined,
             ...stockFields,
@@ -1171,6 +1266,7 @@ export async function syncUpZeroClient(
             sku,
             name: buildProductName(p),
             category,
+            imageUrl,
             price,
             cost: cost ?? undefined,
             stock: stockValue ?? 0,
@@ -1212,6 +1308,7 @@ export async function syncUpZeroClient(
         externalId: customersTable.externalId,
         approvalDate: customersTable.approvalDate,
         createdAt: customersTable.createdAt,
+        registrationStatus: customersTable.registrationStatus,
       })
       .from(customersTable)
       .where(
@@ -1233,7 +1330,7 @@ export async function syncUpZeroClient(
           id: row.id,
           registrationDate: row.createdAt,
           approvalDate: row.approvalDate,
-          status: "APPROVED",
+          status: row.registrationStatus as "PENDING" | "APPROVED" | "REJECTED",
         });
       }
     }
@@ -1255,6 +1352,7 @@ export async function syncUpZeroClient(
           email: customersTable.email,
           approvalDate: customersTable.approvalDate,
           createdAt: customersTable.createdAt,
+          registrationStatus: customersTable.registrationStatus,
         })
         .from(customersTable)
         .where(
@@ -1268,24 +1366,25 @@ export async function syncUpZeroClient(
           id: row.id,
           registrationDate: row.createdAt,
           approvalDate: row.approvalDate,
-          status: "APPROVED",
+          status: row.registrationStatus as "PENDING" | "APPROVED" | "REJECTED",
         });
       }
     }
 
     for (const c of upCustomers) {
       try {
-        const state = getAddressState(c);
+        const state = getAddressState(c) ?? stateFromPhoneDdd(c.phone);
         const city = getAddressCity(c);
         const documentType = getDocumentType(c);
         const email = c.email ?? `upzero-${c.id}@noemail.internal`;
-        const registrationStatus = mapRegistrationStatus(c);
+        const apiRegistrationStatus = mapRegistrationStatus(c);
         const registrationDate = getRegistrationDate(c);
-        const approvalDate = getApprovalDate(c, registrationStatus, registrationDate);
         const utm = getCustomerUtm(c);
 
         if (existingByExtId.has(c.id)) {
           const entry = existingByExtId.get(c.id)!;
+          const registrationStatus = apiRegistrationStatus ?? entry.status;
+          const approvalDate = getApprovalDate(c, registrationStatus, entry.approvalDate ?? registrationDate);
           const mapped = { id: entry.id, registrationDate, approvalDate, status: registrationStatus };
           externalToInternalCustomer.set(c.id, mapped);
           await db
@@ -1309,7 +1408,9 @@ export async function syncUpZeroClient(
             );
           result.customersUpdated++;
         } else if (c.email && existingByEmail.has(c.email)) {
-          const { id: internalId } = existingByEmail.get(c.email)!;
+          const { id: internalId, status: existingStatus, approvalDate: existingApprovalDate } = existingByEmail.get(c.email)!;
+          const registrationStatus = apiRegistrationStatus ?? existingStatus;
+          const approvalDate = getApprovalDate(c, registrationStatus, existingApprovalDate ?? registrationDate);
           externalToInternalCustomer.set(c.id, { id: internalId, registrationDate, approvalDate, status: registrationStatus });
           await db
             .update(customersTable)
@@ -1333,6 +1434,8 @@ export async function syncUpZeroClient(
             );
           result.customersUpdated++;
         } else {
+          const registrationStatus = apiRegistrationStatus ?? "PENDING";
+          const approvalDate = getApprovalDate(c, registrationStatus, registrationDate);
           const [upserted] = await db
             .insert(customersTable)
             .values({
@@ -1462,10 +1565,10 @@ export async function syncUpZeroClient(
           const email =
             uzCustomer.email ??
             `upzero-${uzCustomer.id}@noemail.internal`;
-          const state = getAddressState(uzCustomer);
+          const state = getAddressState(uzCustomer) ?? stateFromPhoneDdd(uzCustomer.phone);
           const city = getAddressCity(uzCustomer);
           const documentType = getDocumentType(uzCustomer);
-          const registrationStatus = mapRegistrationStatus(uzCustomer);
+          const registrationStatus = mapRegistrationStatus(uzCustomer) ?? "APPROVED";
           const registrationDate = getRegistrationDate(uzCustomer);
           const approvalDate = getApprovalDate(uzCustomer, registrationStatus, registrationDate);
           const utm = getCustomerUtm(uzCustomer);

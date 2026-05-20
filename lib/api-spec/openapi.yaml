@@ -3020,6 +3020,8 @@ components:
           type: string
         category:
           type: ["string", "null"]
+        imageUrl:
+          type: ["string", "null"]
         stock:
           type: integer
         restockThreshold:

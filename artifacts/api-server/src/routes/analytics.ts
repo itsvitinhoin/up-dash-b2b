@@ -2210,6 +2210,7 @@ router.get("/analytics/alerts", async (req, res): Promise<void> => {
       sku: productsTable.sku,
       name: productsTable.name,
       category: productsTable.category,
+      imageUrl: productsTable.imageUrl,
       stock: productsTable.stock,
       restockThreshold: productsTable.restockThreshold,
     })
@@ -2226,6 +2227,7 @@ router.get("/analytics/alerts", async (req, res): Promise<void> => {
     sku: string;
     name: string;
     category: string | null;
+    imageUrl: string | null;
     stock: number;
     restockThreshold: number;
     averageDailySales: number;
@@ -2247,6 +2249,7 @@ router.get("/analytics/alerts", async (req, res): Promise<void> => {
         sku: p.sku,
         name: p.name,
         category: p.category,
+        imageUrl: p.imageUrl,
         stock: p.stock,
         restockThreshold: p.restockThreshold,
         averageDailySales: avgDaily,
@@ -2265,6 +2268,7 @@ router.get("/analytics/alerts", async (req, res): Promise<void> => {
         sku: p.sku,
         name: p.name,
         category: p.category,
+        imageUrl: p.imageUrl,
         stock: p.stock,
         restockThreshold: p.restockThreshold,
         averageDailySales: avgDaily,
@@ -2282,6 +2286,7 @@ router.get("/analytics/alerts", async (req, res): Promise<void> => {
         sku: p.sku,
         name: p.name,
         category: p.category,
+        imageUrl: p.imageUrl,
         stock: p.stock,
         restockThreshold: p.restockThreshold,
         averageDailySales: avgDaily,

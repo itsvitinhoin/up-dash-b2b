@@ -869,6 +869,8 @@ export interface InventoryAlert {
   name: string;
   /** @nullable */
   category?: string | null;
+  /** @nullable */
+  imageUrl?: string | null;
   stock: number;
   restockThreshold: number;
   /** Average units sold per day during the lookback window. */

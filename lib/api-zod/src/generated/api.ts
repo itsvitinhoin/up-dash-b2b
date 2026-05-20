@@ -1484,6 +1484,7 @@ export const GetStockResponse = zod.object({
       sku: zod.string(),
       name: zod.string(),
       category: zod.string().nullish(),
+      imageUrl: zod.string().nullish(),
       stock: zod.number(),
       restockThreshold: zod.number(),
       dailyVelocity: zod

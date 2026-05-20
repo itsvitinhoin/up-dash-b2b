@@ -128,6 +128,33 @@ function MiniRing({
   );
 }
 
+function ProductMiniature({ imageUrl, name }: { imageUrl?: string | null; name: string }) {
+  const [imgError, setImgError] = useState(false);
+  const initials = name
+    .split(" ")
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
+
+  if (imageUrl && !imgError) {
+    return (
+      <img
+        src={imageUrl}
+        alt={name}
+        className="h-9 w-9 shrink-0 rounded-md border border-border object-cover"
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  return (
+    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-primary/10 text-[10px] font-semibold text-primary">
+      {initials || "PR"}
+    </div>
+  );
+}
+
 function KpiCard({
   icon: Icon,
   iconClass,
@@ -1086,8 +1113,11 @@ export default function DashboardPage() {
                     data-testid={`alert-row-${alert.sku}`}
                   >
                     <div className="col-span-5 flex items-center gap-3 min-w-0">
-                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${iconWrap}`}>
-                        <Icon className="h-4 w-4" />
+                      <div className="relative shrink-0">
+                        <ProductMiniature imageUrl={alert.imageUrl} name={alert.name} />
+                        <span className={`absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border border-background ${iconWrap}`}>
+                          <Icon className="h-2.5 w-2.5" />
+                        </span>
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
