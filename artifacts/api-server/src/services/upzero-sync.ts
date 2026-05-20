@@ -51,12 +51,13 @@ type UpZeroStatus =
   | "PROCESSING"
   | "INVOICED"
   | "SHIPPED"
+  | "DELIVERED"
   | "CANCELED";
 
 function mapOrderStatus(
-  s: UpZeroStatus,
-): "PENDING" | "APPROVED" | "SHIPPED" | "REJECTED" {
-  switch (s) {
+  s: UpZeroStatus | string,
+): "PENDING" | "APPROVED" | "SHIPPED" | "DELIVERED" | "REJECTED" {
+  switch (String(s).toUpperCase()) {
     case "RESERVED":
       return "PENDING";
     case "CONFIRMED":
@@ -65,6 +66,8 @@ function mapOrderStatus(
       return "APPROVED";
     case "SHIPPED":
       return "SHIPPED";
+    case "DELIVERED":
+      return "DELIVERED";
     case "CANCELED":
       return "REJECTED";
     default:
@@ -110,6 +113,27 @@ interface UpZeroCustomer {
   email?: string | null;
   phone?: string | null;
   customer_type?: "RETAIL" | "WHOLESALE" | string | null;
+  status?: string | null;
+  registration_status?: string | null;
+  lead_status?: string | null;
+  created_at?: string | null;
+  registered_at?: string | null;
+  registration_date?: string | null;
+  lead_created_at?: string | null;
+  approved_at?: string | null;
+  approval_date?: string | null;
+  utm_source?: string | null;
+  utm_medium?: string | null;
+  utm_campaign?: string | null;
+  utm_content?: string | null;
+  utm_term?: string | null;
+  utm?: {
+    source?: string | null;
+    medium?: string | null;
+    campaign?: string | null;
+    content?: string | null;
+    term?: string | null;
+  } | null;
   // Top-level address fields do NOT exist on CustomerResponse per the live spec.
   // Geography lives inside wholesale_profile and retail_profile only.
   wholesale_profile?: UpZeroWholesaleProfile | null;
@@ -137,6 +161,8 @@ interface UpZeroProduct {
   name: string;
   description_html?: string | null;
   status: string;
+  category_name?: string | null;
+  category_names?: string[] | string | null;
   tags?: string[] | null;
   category_ids?: string[] | null;
   category?: { name?: string | null } | string | null;
@@ -174,6 +200,56 @@ function titleCase(s: string): string {
     .join(" ");
 }
 
+function cleanString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function parseNumberLike(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string") return null;
+  const normalized = value
+    .trim()
+    .replace(/\s/g, "")
+    .replace(/\.(?=\d{3}(?:\D|$))/g, "")
+    .replace(",", ".");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function firstNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = parseNumberLike(value);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const parsed = cleanString(value);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function parseDateLike(value: unknown): Date | null {
+  const s = cleanString(value);
+  if (!s) return null;
+  const parsed = new Date(s);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function firstDate(...values: unknown[]): Date | null {
+  for (const value of values) {
+    const parsed = parseDateLike(value);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
 function buildProductName(p: UpZeroProduct): string {
   const raw = p.description_html
     ? p.description_html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
@@ -202,6 +278,14 @@ function buildProductName(p: UpZeroProduct): string {
 }
 
 function inferProductCategory(p: UpZeroProduct): string | null {
+  if (p.category_name?.trim()) return titleCase(p.category_name.trim());
+  if (typeof p.category_names === "string" && p.category_names.trim()) {
+    return titleCase(p.category_names.trim());
+  }
+  if (Array.isArray(p.category_names)) {
+    const categoryName = p.category_names.find((name) => name.trim());
+    if (categoryName) return titleCase(categoryName.trim());
+  }
   if (typeof p.category === "string" && p.category.trim()) return titleCase(p.category.trim());
   if (p.category && typeof p.category === "object" && p.category.name?.trim()) {
     return titleCase(p.category.name.trim());
@@ -247,9 +331,21 @@ interface UpZeroOrderItem {
   id: string;
   variant_id?: string | null;
   sku?: string | null;
-  qty: number;
-  unit_price?: string | null;
-  status: "active" | "removed";
+  qty?: number;
+  quantity?: number;
+  requested_qty?: number | string | null;
+  quantity_requested?: number | string | null;
+  requested_quantity?: number | string | null;
+  qty_requested?: number | string | null;
+  qtd_solicitada?: number | string | null;
+  fulfilled_qty?: number | string | null;
+  quantity_fulfilled?: number | string | null;
+  fulfilled_quantity?: number | string | null;
+  qty_fulfilled?: number | string | null;
+  attended_qty?: number | string | null;
+  qtd_atendida?: number | string | null;
+  unit_price?: string | number | null;
+  status?: "active" | "removed" | string | null;
 }
 
 interface UpZeroOrder {
@@ -261,11 +357,57 @@ interface UpZeroOrder {
   total?: string;
   total_amount?: string;
   amount?: string;
+  requested_amount?: string | number | null;
+  requested_total?: string | number | null;
+  amount_requested?: string | number | null;
+  total_requested?: string | number | null;
+  valor_solicitado?: string | number | null;
+  fulfilled_amount?: string | number | null;
+  fulfilled_total?: string | number | null;
+  amount_fulfilled?: string | number | null;
+  total_fulfilled?: string | number | null;
+  attended_amount?: string | number | null;
+  valor_atendido?: string | number | null;
+  requested_quantity?: string | number | null;
+  requested_items_qty?: string | number | null;
+  quantity_requested?: string | number | null;
+  qty_requested?: string | number | null;
+  qtd_solicitada?: string | number | null;
+  fulfilled_quantity?: string | number | null;
+  total_items_qty?: string | number | null;
+  quantity_fulfilled?: string | number | null;
+  qty_fulfilled?: string | number | null;
+  attended_quantity?: string | number | null;
+  qtd_atendida?: string | number | null;
   subtotal?: string;
   created_at: string;
+  updated_at?: string | null;
   customer?: UpZeroCustomer | null;
+  customer_id?: string | number | null;
   shipping_address?: UpZeroAddress | null;
   items?: UpZeroOrderItem[];
+  utm_source?: string | null;
+  utm_medium?: string | null;
+  utm_campaign?: string | null;
+  utm_content?: string | null;
+  utm_term?: string | null;
+}
+
+interface UpZeroEvent {
+  id?: string | number | null;
+  event_id?: string | number | null;
+  type?: string | null;
+  event_type?: string | null;
+  name?: string | null;
+  created_at?: string | null;
+  occurred_at?: string | null;
+  timestamp?: string | null;
+  customer_id?: string | number | null;
+  customer?: UpZeroCustomer | null;
+  order_id?: string | number | null;
+  product_id?: string | number | null;
+  sku?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 // Loose response shapes — we resolve actual field names at runtime because
@@ -396,6 +538,23 @@ async function fetchAllPages<T>(
   }
 
   return results;
+}
+
+async function fetchOptionalPages<T>(
+  apiKey: string,
+  path: string,
+  extraParams: Record<string, string> = {},
+): Promise<T[]> {
+  try {
+    return await fetchAllPages<T>(apiKey, path, extraParams);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("404")) {
+      console.warn(`[upzero-sync] optional endpoint ${path} is not available yet`);
+      return [];
+    }
+    throw err;
+  }
 }
 
 async function fetchCustomerById(apiKey: string, id: number): Promise<UpZeroCustomer | null> {
@@ -581,6 +740,159 @@ function getDocumentType(c: UpZeroCustomer): "CPF" | "CNPJ" | null {
   return null;
 }
 
+function mapRegistrationStatus(c: UpZeroCustomer): "PENDING" | "APPROVED" | "REJECTED" {
+  const raw = firstString(c.registration_status, c.lead_status, c.status)?.toLowerCase();
+  if (!raw) return "APPROVED";
+  if (["approved", "aprovado", "accepted", "active", "qualified"].some((v) => raw.includes(v))) return "APPROVED";
+  if (["rejected", "recusado", "declined", "denied", "canceled", "cancelado"].some((v) => raw.includes(v))) return "REJECTED";
+  return "PENDING";
+}
+
+function getRegistrationDate(c: UpZeroCustomer, fallback = new Date()): Date {
+  return firstDate(c.lead_created_at, c.registered_at, c.registration_date, c.created_at) ?? fallback;
+}
+
+function getApprovalDate(c: UpZeroCustomer, status: "PENDING" | "APPROVED" | "REJECTED", fallback: Date): Date | null {
+  const explicit = firstDate(c.approved_at, c.approval_date);
+  if (explicit) return explicit;
+  return status === "APPROVED" ? fallback : null;
+}
+
+function getCustomerUtm(c: UpZeroCustomer): {
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  utmTerm: string | null;
+} {
+  return {
+    utmSource: firstString(c.utm_source, c.utm?.source),
+    utmMedium: firstString(c.utm_medium, c.utm?.medium),
+    utmCampaign: firstString(c.utm_campaign, c.utm?.campaign),
+    utmContent: firstString(c.utm_content, c.utm?.content),
+    utmTerm: firstString(c.utm_term, c.utm?.term),
+  };
+}
+
+function getOrderUtm(o: UpZeroOrder): ReturnType<typeof getCustomerUtm> {
+  return {
+    utmSource: firstString(o.utm_source, o.customer?.utm_source, o.customer?.utm?.source),
+    utmMedium: firstString(o.utm_medium, o.customer?.utm_medium, o.customer?.utm?.medium),
+    utmCampaign: firstString(o.utm_campaign, o.customer?.utm_campaign, o.customer?.utm?.campaign),
+    utmContent: firstString(o.utm_content, o.customer?.utm_content, o.customer?.utm?.content),
+    utmTerm: firstString(o.utm_term, o.customer?.utm_term, o.customer?.utm?.term),
+  };
+}
+
+function mapEventType(raw: string | null): "VISIT" | "REGISTRATION" | "APPROVED_REGISTRATION" | "PRODUCT_VIEW" | "ADD_TO_CART" | "CHECKOUT_STARTED" | "PURCHASE" | null {
+  if (!raw) return null;
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  if (/(approved|aprovado|approval|lead_approved|cadastro_aprovado)/.test(normalized)) return "APPROVED_REGISTRATION";
+  if (/(registration|registered|register|lead|cadastro|signup|sign_up)/.test(normalized)) return "REGISTRATION";
+  if (/(add_to_cart|cart|carrinho)/.test(normalized)) return "ADD_TO_CART";
+  if (/(checkout|checkout_started|inicio_checkout|started_checkout)/.test(normalized)) return "CHECKOUT_STARTED";
+  if (/(purchase|order|pedido|paid|payment|compra)/.test(normalized)) return "PURCHASE";
+  if (/(product_view|view_product|produto_visualizado|view_item)/.test(normalized)) return "PRODUCT_VIEW";
+  if (/(visit|page_view|session|visita)/.test(normalized)) return "VISIT";
+  return null;
+}
+
+function getEventCreatedAt(e: UpZeroEvent): Date {
+  return firstDate(e.occurred_at, e.created_at, e.timestamp) ?? new Date();
+}
+
+function getEventExternalId(e: UpZeroEvent, mappedType: string, customerExternalId: string | null, orderExternalId: string | null): string {
+  if ((mappedType === "REGISTRATION" || mappedType === "APPROVED_REGISTRATION") && customerExternalId) {
+    return mappedType === "APPROVED_REGISTRATION"
+      ? `customer:${customerExternalId}`
+      : `customer:${customerExternalId}:registration`;
+  }
+  if (mappedType === "PURCHASE" && orderExternalId) return `order:${orderExternalId}`;
+  return `upzero:event:${e.id ?? e.event_id ?? `${mappedType}:${customerExternalId ?? "anon"}:${getEventCreatedAt(e).toISOString()}`}`;
+}
+
+function getItemRequestedQuantity(item: UpZeroOrderItem): number {
+  const value = firstNumber(
+    item.requested_quantity,
+    item.quantity_requested,
+    item.requested_qty,
+    item.qty_requested,
+    item.qtd_solicitada,
+    item.qty,
+    item.quantity,
+  );
+  return Math.max(1, Math.round(value ?? 1));
+}
+
+function getItemFulfilledQuantity(item: UpZeroOrderItem, requestedQuantity: number): number {
+  const value = firstNumber(
+    item.fulfilled_quantity,
+    item.quantity_fulfilled,
+    item.fulfilled_qty,
+    item.qty_fulfilled,
+    item.attended_qty,
+    item.qtd_atendida,
+  );
+  return Math.max(0, Math.round(value ?? requestedQuantity));
+}
+
+function getOrderRequestedAmount(o: UpZeroOrder): number {
+  return firstNumber(
+    o.requested_amount,
+    o.requested_total,
+    o.amount_requested,
+    o.total_requested,
+    o.valor_solicitado,
+    o.total,
+    o.total_amount,
+    o.amount,
+    o.subtotal,
+  ) ?? 0;
+}
+
+function getOrderFulfilledAmount(o: UpZeroOrder, requestedAmount: number, status: ReturnType<typeof mapOrderStatus>): number {
+  const explicit = firstNumber(
+    o.fulfilled_amount,
+    o.fulfilled_total,
+    o.amount_fulfilled,
+    o.total_fulfilled,
+    o.attended_amount,
+    o.valor_atendido,
+    o.total,
+    o.total_amount,
+    o.amount,
+  );
+  if (explicit !== null) return explicit;
+  return status === "APPROVED" || status === "SHIPPED" || status === "DELIVERED" ? requestedAmount : 0;
+}
+
+async function updateExistingFunnelEvents(
+  clientId: string,
+  eventType: "REGISTRATION" | "APPROVED_REGISTRATION" | "PURCHASE",
+  values: Array<{ externalSourceId: string; customerId: string | null; createdAt: Date }>,
+): Promise<void> {
+  const BATCH = 200;
+  for (let i = 0; i < values.length; i += BATCH) {
+    const batch = values.slice(i, i + BATCH);
+    if (batch.length === 0) continue;
+    await db.execute(sql`
+      UPDATE events e
+      SET
+        customer_id = COALESCE(v.customer_id, e.customer_id),
+        created_at = v.created_at::timestamptz
+      FROM (
+        VALUES ${sql.join(
+          batch.map((v) => sql`(${v.externalSourceId}, ${v.customerId}, ${v.createdAt})`),
+          sql`, `,
+        )}
+      ) AS v(external_source_id, customer_id, created_at)
+      WHERE e.client_id = ${clientId}
+        AND e.event_type = ${eventType}
+        AND e.external_source_id = v.external_source_id
+    `);
+  }
+}
+
 function extractVariantAttribute(
   attributes: UpZeroVariantAttribute[] | undefined,
   codes: string[],
@@ -663,12 +975,14 @@ export async function syncUpZeroClient(
   let upCustomers: UpZeroCustomer[] = [];
   let upOrders: UpZeroOrder[] = [];
   let upProducts: UpZeroProduct[] = [];
+  let upEvents: UpZeroEvent[] = [];
 
   try {
-    [upCustomers, upOrders, upProducts] = await Promise.all([
+    [upCustomers, upOrders, upProducts, upEvents] = await Promise.all([
       fetchAllPages<UpZeroCustomer>(apiKey, "/external/v1/customers"),
       fetchAllPages<UpZeroOrder>(apiKey, "/external/v1/orders", orderDateParams),
       fetchAllCursorPages<UpZeroProduct>(apiKey, "/external/v1/products"),
+      fetchOptionalPages<UpZeroEvent>(apiKey, "/external/v1/events", orderDateParams),
     ]);
     upCustomers = await backfillCustomersByNumericId(clientId, apiKey, upCustomers);
   } catch (err) {
@@ -879,9 +1193,15 @@ export async function syncUpZeroClient(
 
   // ── 2. Customer sync ─────────────────────────────────────────────────────
 
-  // Maps externalCustomerId → { id: internalId, approvalDate: Date }
-  // approvalDate is used as the createdAt timestamp for APPROVED_REGISTRATION events.
-  const externalToInternalCustomer = new Map<string, { id: string; approvalDate: Date }>();
+  // Maps externalCustomerId → customer timestamps used by real/synthesized
+  // funnel events. registrationDate now comes from the UP Zero lead creation
+  // date instead of the sync time.
+  const externalToInternalCustomer = new Map<string, {
+    id: string;
+    registrationDate: Date;
+    approvalDate: Date | null;
+    status: "PENDING" | "APPROVED" | "REJECTED";
+  }>();
 
   if (upCustomers.length > 0) {
     const externalIds = upCustomers.map((c) => c.id);
@@ -901,12 +1221,19 @@ export async function syncUpZeroClient(
         ),
       );
 
-    const existingByExtId = new Map<string, { id: string; approvalDate: Date }>();
+    const existingByExtId = new Map<string, {
+      id: string;
+      registrationDate: Date;
+      approvalDate: Date | null;
+      status: "PENDING" | "APPROVED" | "REJECTED";
+    }>();
     for (const row of existing) {
       if (row.externalId) {
         existingByExtId.set(row.externalId, {
           id: row.id,
-          approvalDate: row.approvalDate ?? row.createdAt,
+          registrationDate: row.createdAt,
+          approvalDate: row.approvalDate,
+          status: "APPROVED",
         });
       }
     }
@@ -915,7 +1242,12 @@ export async function syncUpZeroClient(
       .filter((c) => c.email && !existingByExtId.has(c.id))
       .map((c) => c.email as string);
 
-    const existingByEmail = new Map<string, { id: string; approvalDate: Date }>();
+    const existingByEmail = new Map<string, {
+      id: string;
+      registrationDate: Date;
+      approvalDate: Date | null;
+      status: "PENDING" | "APPROVED" | "REJECTED";
+    }>();
     if (emails.length > 0) {
       const emailRows = await db
         .select({
@@ -934,7 +1266,9 @@ export async function syncUpZeroClient(
       for (const row of emailRows) {
         existingByEmail.set(row.email, {
           id: row.id,
-          approvalDate: row.approvalDate ?? row.createdAt,
+          registrationDate: row.createdAt,
+          approvalDate: row.approvalDate,
+          status: "APPROVED",
         });
       }
     }
@@ -945,10 +1279,15 @@ export async function syncUpZeroClient(
         const city = getAddressCity(c);
         const documentType = getDocumentType(c);
         const email = c.email ?? `upzero-${c.id}@noemail.internal`;
+        const registrationStatus = mapRegistrationStatus(c);
+        const registrationDate = getRegistrationDate(c);
+        const approvalDate = getApprovalDate(c, registrationStatus, registrationDate);
+        const utm = getCustomerUtm(c);
 
         if (existingByExtId.has(c.id)) {
           const entry = existingByExtId.get(c.id)!;
-          externalToInternalCustomer.set(c.id, entry);
+          const mapped = { id: entry.id, registrationDate, approvalDate, status: registrationStatus };
+          externalToInternalCustomer.set(c.id, mapped);
           await db
             .update(customersTable)
             .set({
@@ -957,6 +1296,10 @@ export async function syncUpZeroClient(
               documentType: documentType ?? undefined,
               state: state ?? undefined,
               city: city ?? undefined,
+              ...utm,
+              registrationStatus,
+              approvalDate,
+              createdAt: registrationDate,
             })
             .where(
               and(
@@ -966,8 +1309,8 @@ export async function syncUpZeroClient(
             );
           result.customersUpdated++;
         } else if (c.email && existingByEmail.has(c.email)) {
-          const { id: internalId, approvalDate: existingApprovalDate } = existingByEmail.get(c.email)!;
-          externalToInternalCustomer.set(c.id, { id: internalId, approvalDate: existingApprovalDate });
+          const { id: internalId } = existingByEmail.get(c.email)!;
+          externalToInternalCustomer.set(c.id, { id: internalId, registrationDate, approvalDate, status: registrationStatus });
           await db
             .update(customersTable)
             .set({
@@ -977,6 +1320,10 @@ export async function syncUpZeroClient(
               documentType: documentType ?? undefined,
               state: state ?? undefined,
               city: city ?? undefined,
+              ...utm,
+              registrationStatus,
+              approvalDate,
+              createdAt: registrationDate,
             })
             .where(
               and(
@@ -986,7 +1333,6 @@ export async function syncUpZeroClient(
             );
           result.customersUpdated++;
         } else {
-          const insertedApprovalDate = new Date();
           const [upserted] = await db
             .insert(customersTable)
             .values({
@@ -998,8 +1344,10 @@ export async function syncUpZeroClient(
               documentType,
               state,
               city,
-              registrationStatus: "APPROVED",
-              approvalDate: insertedApprovalDate,
+              ...utm,
+              registrationStatus,
+              approvalDate,
+              createdAt: registrationDate,
             })
             .onConflictDoUpdate({
               target: [customersTable.clientId, customersTable.externalId],
@@ -1009,14 +1357,18 @@ export async function syncUpZeroClient(
                 documentType,
                 state,
                 city,
+                ...utm,
+                registrationStatus,
+                approvalDate,
+                createdAt: registrationDate,
               },
             })
             .returning({
               id: customersTable.id,
               wasInserted: sql<boolean>`(xmax = 0)`,
-            });
+          });
           if (upserted) {
-            externalToInternalCustomer.set(c.id, { id: upserted.id, approvalDate: insertedApprovalDate });
+            externalToInternalCustomer.set(c.id, { id: upserted.id, registrationDate, approvalDate, status: registrationStatus });
             if (upserted.wasInserted) {
               result.customersCreated++;
             } else {
@@ -1054,6 +1406,11 @@ export async function syncUpZeroClient(
   for (const row of existingOrders) {
     if (row.externalId) existingOrderByExtId.set(row.externalId, row.id);
   }
+  const externalToInternalOrder = new Map<string, {
+    id: string;
+    customerId: string;
+    createdAt: Date;
+  }>();
 
   // Track orders that should generate PURCHASE events (APPROVED or SHIPPED)
   // Map: internalOrderId → { customerId, createdAt, externalOrderId }
@@ -1068,12 +1425,32 @@ export async function syncUpZeroClient(
       // Resolve status — some UP Zero API versions use "status", others "order_status"
       const rawStatus = o.order_status ?? o.status;
       const status = mapOrderStatus(rawStatus ?? ("CONFIRMED" as UpZeroStatus));
-      // Resolve amount — try "total", "total_amount", "amount" in order
-      const rawAmount = o.total ?? o.total_amount ?? o.amount ?? "0";
-      const amount = parseFloat(rawAmount) || 0;
+      const activeItems = (o.items ?? []).filter((item) => item.status !== "removed");
+      const itemQuantities = activeItems.map((item) => {
+        const requested = getItemRequestedQuantity(item);
+        return { requested, fulfilled: getItemFulfilledQuantity(item, requested) };
+      });
+      const requestedQuantity = Math.max(
+        0,
+        Math.round(
+          firstNumber(o.requested_quantity, o.requested_items_qty, o.quantity_requested, o.qty_requested, o.qtd_solicitada) ??
+            itemQuantities.reduce((sum, item) => sum + item.requested, 0),
+        ),
+      );
+      const fulfilledQuantity = Math.max(
+        0,
+        Math.round(
+          firstNumber(o.fulfilled_quantity, o.total_items_qty, o.quantity_fulfilled, o.qty_fulfilled, o.attended_quantity, o.qtd_atendida) ??
+            itemQuantities.reduce((sum, item) => sum + item.fulfilled, 0),
+        ),
+      );
+      // `amount` is intentionally the requested value because the dashboard's
+      // revenue KPIs and product sales views represent demand/solicitation.
+      const amount = getOrderRequestedAmount(o);
+      const fulfilledAmount = getOrderFulfilledAmount(o, amount, status);
       const createdAt = new Date(o.created_at);
       const approvalDate =
-        status === "APPROVED" || status === "SHIPPED" ? createdAt : undefined;
+        status === "APPROVED" || status === "SHIPPED" || status === "DELIVERED" ? createdAt : undefined;
 
       const uzCustomer = o.customer;
       let customerId: string | null = null;
@@ -1088,24 +1465,39 @@ export async function syncUpZeroClient(
           const state = getAddressState(uzCustomer);
           const city = getAddressCity(uzCustomer);
           const documentType = getDocumentType(uzCustomer);
-          const fallbackApprovalDate = new Date();
+          const registrationStatus = mapRegistrationStatus(uzCustomer);
+          const registrationDate = getRegistrationDate(uzCustomer);
+          const approvalDate = getApprovalDate(uzCustomer, registrationStatus, registrationDate);
+          const utm = getCustomerUtm(uzCustomer);
           const [upsertedCust] = await db
             .insert(customersTable)
             .values({
               clientId,
               externalId: uzCustomer.id,
               email,
-              name: uzCustomer.name ?? null,
+              name: buildCustomerName(uzCustomer.name),
               phone: uzCustomer.phone ?? null,
               documentType,
               state,
               city,
-              registrationStatus: "APPROVED",
-              approvalDate: fallbackApprovalDate,
+              ...utm,
+              registrationStatus,
+              approvalDate,
+              createdAt: registrationDate,
             })
             .onConflictDoUpdate({
               target: [customersTable.clientId, customersTable.externalId],
-              set: { name: uzCustomer.name ?? null, documentType },
+              set: {
+                name: buildCustomerName(uzCustomer.name),
+                phone: uzCustomer.phone ?? null,
+                documentType,
+                state,
+                city,
+                ...utm,
+                registrationStatus,
+                approvalDate,
+                createdAt: registrationDate,
+              },
             })
             .returning({
               id: customersTable.id,
@@ -1113,7 +1505,7 @@ export async function syncUpZeroClient(
             });
           if (upsertedCust) {
             customerId = upsertedCust.id;
-            externalToInternalCustomer.set(uzCustomer.id, { id: upsertedCust.id, approvalDate: fallbackApprovalDate });
+            externalToInternalCustomer.set(uzCustomer.id, { id: upsertedCust.id, registrationDate, approvalDate, status: registrationStatus });
             if (upsertedCust.wasInserted) {
               result.customersCreated++;
             } else {
@@ -1145,6 +1537,18 @@ export async function syncUpZeroClient(
         shippingAddr?.address_city ??
         getAddressCity(customerAddr as UpZeroCustomer) ??
         null;
+      const orderUtm = getOrderUtm(o);
+      if (orderUtm.utmSource || orderUtm.utmMedium || orderUtm.utmCampaign || orderUtm.utmContent || orderUtm.utmTerm) {
+        await db
+          .update(customersTable)
+          .set(orderUtm)
+          .where(
+            and(
+              eq(customersTable.clientId, clientId),
+              eq(customersTable.id, customerId),
+            ),
+          );
+      }
 
       let internalOrderId: string;
 
@@ -1152,7 +1556,7 @@ export async function syncUpZeroClient(
         internalOrderId = existingOrderByExtId.get(o.id)!;
         await db
           .update(ordersTable)
-          .set({ amount, status, state, city })
+          .set({ requestedQuantity, fulfilledQuantity, amount, fulfilledAmount, status, state, city })
           .where(
             and(
               eq(ordersTable.clientId, clientId),
@@ -1167,7 +1571,10 @@ export async function syncUpZeroClient(
             clientId,
             customerId,
             externalId: o.id,
+            requestedQuantity,
+            fulfilledQuantity,
             amount,
+            fulfilledAmount,
             status,
             approvalDate,
             state,
@@ -1176,7 +1583,7 @@ export async function syncUpZeroClient(
           })
           .onConflictDoUpdate({
             target: [ordersTable.clientId, ordersTable.externalId],
-            set: { amount, status, state, city },
+            set: { requestedQuantity, fulfilledQuantity, amount, fulfilledAmount, status, state, city },
           })
           .returning({ id: ordersTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
         if (!upsertedOrder) continue;
@@ -1187,9 +1594,10 @@ export async function syncUpZeroClient(
           result.ordersUpdated++;
         }
       }
+      externalToInternalOrder.set(o.id, { id: internalOrderId, customerId, createdAt });
 
       // Collect approved/shipped orders as PURCHASE event candidates
-      if (status === "APPROVED" || status === "SHIPPED") {
+      if (status === "APPROVED" || status === "SHIPPED" || status === "DELIVERED") {
         purchaseEventCandidates.set(internalOrderId, {
           customerId,
           createdAt,
@@ -1203,7 +1611,6 @@ export async function syncUpZeroClient(
         .delete(orderItemsTable)
         .where(eq(orderItemsTable.orderId, internalOrderId));
 
-      const activeItems = (o.items ?? []).filter((item) => item.status === "active");
       for (const item of activeItems) {
         const sku = item.sku;
         if (!sku) continue;
@@ -1217,12 +1624,15 @@ export async function syncUpZeroClient(
         const attrs = item.variant_id
           ? variantAttrs.get(item.variant_id)
           : undefined;
+        const requestedItemQuantity = getItemRequestedQuantity(item);
+        const fulfilledItemQuantity = getItemFulfilledQuantity(item, requestedItemQuantity);
         try {
           await db.insert(orderItemsTable).values({
             orderId: internalOrderId,
             productId: localProductId,
-            quantity: Math.max(1, Math.round(item.qty)),
-            priceAtSale: parseFloat(item.unit_price ?? "0") || 0,
+            quantity: requestedItemQuantity,
+            fulfilledQuantity: fulfilledItemQuantity,
+            priceAtSale: firstNumber(item.unit_price) ?? 0,
             size: attrs?.size ?? null,
             color: attrs?.color ?? null,
           });
@@ -1238,22 +1648,96 @@ export async function syncUpZeroClient(
     }
   }
 
+  const allCustomerRows = await db
+    .select({
+      id: customersTable.id,
+      externalId: customersTable.externalId,
+      createdAt: customersTable.createdAt,
+      approvalDate: customersTable.approvalDate,
+      registrationStatus: customersTable.registrationStatus,
+    })
+    .from(customersTable)
+    .where(eq(customersTable.clientId, clientId));
+  for (const row of allCustomerRows) {
+    if (!row.externalId || externalToInternalCustomer.has(row.externalId)) continue;
+    externalToInternalCustomer.set(row.externalId, {
+      id: row.id,
+      registrationDate: row.createdAt,
+      approvalDate: row.approvalDate,
+      status: row.registrationStatus as "PENDING" | "APPROVED" | "REJECTED",
+    });
+  }
+
   // ── 4. Synthesize funnel events ───────────────────────────────────────────
   //
-  // Generate APPROVED_REGISTRATION events for every synced customer and
-  // PURCHASE events for every approved/shipped order. We use external_source_id
-  // as an idempotency key so re-running sync never creates duplicates.
+  // First insert real UP Zero funnel events when available, then synthesize
+  // registration/approval/purchase events that are missing from older API
+  // payloads. We use stable external_source_id values so re-running sync never
+  // creates duplicates.
 
-  // 4a. APPROVED_REGISTRATION events — one per APPROVED customer, using their
-  // approvalDate (or createdAt) as the event timestamp so date-range queries
-  // on the funnel return the right step counts.
-  // All customers in this sync path have registrationStatus = "APPROVED"
-  // (set during insert/upsert above), so every mapped customer qualifies.
+  const realEventValues = [];
+  for (const e of upEvents) {
+    const rawType = firstString(e.event_type, e.type, e.name);
+    const eventType = mapEventType(rawType);
+    if (!eventType) continue;
+
+    const orderExternalId = e.order_id !== undefined && e.order_id !== null ? String(e.order_id) : null;
+    const orderMatch = orderExternalId ? externalToInternalOrder.get(orderExternalId) : undefined;
+    const customerExternalId =
+      e.customer?.id ??
+      (e.customer_id !== undefined && e.customer_id !== null ? String(e.customer_id) : null) ??
+      null;
+    const customerMatch = customerExternalId ? externalToInternalCustomer.get(customerExternalId) : undefined;
+    const productExternalId = e.product_id !== undefined && e.product_id !== null ? String(e.product_id) : null;
+    const productId =
+      (productExternalId ? existingProductByExtId.get(productExternalId) : undefined) ??
+      (e.sku ? skuToLocalProductId.get(e.sku) : undefined) ??
+      null;
+    const customerId = customerMatch?.id ?? orderMatch?.customerId ?? null;
+    const orderId = orderMatch?.id ?? null;
+
+    realEventValues.push({
+      clientId,
+      customerId,
+      productId,
+      orderId,
+      eventType,
+      externalSourceId: getEventExternalId(e, eventType, customerExternalId, orderExternalId),
+      metadata: {
+        source: "upzero",
+        rawType,
+        metadata: e.metadata ?? null,
+      },
+      createdAt: getEventCreatedAt(e),
+    });
+  }
+
+  if (realEventValues.length > 0) {
+    const BATCH = 200;
+    for (let i = 0; i < realEventValues.length; i += BATCH) {
+      const batch = realEventValues.slice(i, i + BATCH);
+      const inserted = await db
+        .insert(eventsTable)
+        .values(batch)
+        .onConflictDoNothing()
+        .returning({ id: eventsTable.id });
+      result.eventsCreated += inserted.length;
+    }
+  }
+
+  // 4a. REGISTRATION / APPROVED_REGISTRATION events from synced customers.
+  // REGISTRATION uses the UP Zero lead creation date; approvals use the real
+  // approval date/status when present.
   const customerEventValues = [];
-  for (const [externalCustomerId, { id: internalCustomerId, approvalDate }] of externalToInternalCustomer) {
-    // Explicit APPROVED guard: only generate registration events for approved customers.
-    // In this sync path all customers are inserted with registrationStatus = "APPROVED",
-    // but guard here for semantic clarity and resilience to future status changes.
+  for (const [externalCustomerId, { id: internalCustomerId, registrationDate, approvalDate, status }] of externalToInternalCustomer) {
+    customerEventValues.push({
+      clientId,
+      customerId: internalCustomerId,
+      eventType: "REGISTRATION" as const,
+      externalSourceId: `customer:${externalCustomerId}:registration`,
+      createdAt: registrationDate,
+    });
+    if (status !== "APPROVED" || !approvalDate) continue;
     customerEventValues.push({
       clientId,
       customerId: internalCustomerId,
@@ -1275,6 +1759,28 @@ export async function syncUpZeroClient(
         .returning({ id: eventsTable.id });
       result.eventsCreated += inserted.length;
     }
+    await updateExistingFunnelEvents(
+      clientId,
+      "REGISTRATION",
+      customerEventValues
+        .filter((event) => event.eventType === "REGISTRATION")
+        .map((event) => ({
+          externalSourceId: event.externalSourceId,
+          customerId: event.customerId,
+          createdAt: event.createdAt,
+        })),
+    );
+    await updateExistingFunnelEvents(
+      clientId,
+      "APPROVED_REGISTRATION",
+      customerEventValues
+        .filter((event) => event.eventType === "APPROVED_REGISTRATION")
+        .map((event) => ({
+          externalSourceId: event.externalSourceId,
+          customerId: event.customerId,
+          createdAt: event.createdAt,
+        })),
+    );
   }
 
   // 4b. PURCHASE events — one per approved/shipped order
@@ -1301,10 +1807,20 @@ export async function syncUpZeroClient(
         .returning({ id: eventsTable.id });
       result.eventsCreated += inserted.length;
     }
+    await updateExistingFunnelEvents(
+      clientId,
+      "PURCHASE",
+      purchaseEventValues.map((event) => ({
+        externalSourceId: event.externalSourceId,
+        customerId: event.customerId,
+        createdAt: event.createdAt,
+      })),
+    );
   }
 
   console.log(
-    `[upzero-sync] events synthesized — APPROVED_REGISTRATION: ${customerEventValues.length}, ` +
+    `[upzero-sync] events synced — real: ${realEventValues.length}, ` +
+    `customer funnel candidates: ${customerEventValues.length}, ` +
     `PURCHASE candidates: ${purchaseEventValues.length}, new events inserted: ${result.eventsCreated}`,
   );
 
@@ -1312,7 +1828,7 @@ export async function syncUpZeroClient(
   // If every fetch returned 0 records and there were no errors, that almost
   // certainly means the API response shape doesn't match what we expect.
   // Surface a clear warning instead of silently succeeding with all-zeros.
-  const totalFetched = upOrders.length + upCustomers.length + upProducts.length;
+  const totalFetched = upOrders.length + upCustomers.length + upProducts.length + upEvents.length;
   if (totalFetched === 0 && result.errors.length === 0) {
     result.errors.push(
       "WARNING: All three UP Zero endpoints returned 0 records with no API error. " +
@@ -1323,7 +1839,7 @@ export async function syncUpZeroClient(
   } else {
     console.log(
       `[upzero-sync] fetch totals — orders: ${upOrders.length}, ` +
-      `customers: ${upCustomers.length}, products: ${upProducts.length}`,
+      `customers: ${upCustomers.length}, products: ${upProducts.length}, events: ${upEvents.length}`,
     );
   }
 

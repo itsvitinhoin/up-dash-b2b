@@ -27,7 +27,10 @@ export const ordersTable = pgTable(
       onDelete: "set null",
     }),
     externalId: text("external_id"),
+    requestedQuantity: integer("requested_quantity").notNull().default(0),
+    fulfilledQuantity: integer("fulfilled_quantity").notNull().default(0),
     amount: doublePrecision("amount").notNull(),
+    fulfilledAmount: doublePrecision("fulfilled_amount").notNull().default(0),
     status: text("status", {
       enum: ["PENDING", "APPROVED", "REJECTED", "SHIPPED", "DELIVERED"],
     })
@@ -72,6 +75,7 @@ export const orderItemsTable = pgTable(
       .notNull()
       .references(() => productsTable.id),
     quantity: integer("quantity").notNull(),
+    fulfilledQuantity: integer("fulfilled_quantity").notNull().default(0),
     priceAtSale: doublePrecision("price_at_sale").notNull(),
     size: text("size"),
     color: text("color"),

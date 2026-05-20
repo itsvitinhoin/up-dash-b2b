@@ -85,6 +85,13 @@
       "when": 1779231600000,
       "tag": "0012_client_meta_ad_account",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779284137000,
+      "tag": "0013_upzero_requested_fulfilled",
+      "breakpoints": true
     }
   ]
 }
