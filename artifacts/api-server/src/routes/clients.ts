@@ -69,6 +69,28 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     .limit(limit)
     .offset(offset);
 
+  const loginRows = rows.length > 0
+    ? await db
+        .select({
+          clientId: clientsTable.id,
+          email: usersTable.email,
+          firstName: usersTable.firstName,
+          lastName: usersTable.lastName,
+        })
+        .from(clientsTable)
+        .innerJoin(usersTable, eq(clientsTable.userId, usersTable.id))
+        .where(inArray(clientsTable.id, rows.map((r) => r.id)))
+    : [];
+  const loginByClientId = new Map(
+    loginRows.map((row) => [
+      row.clientId,
+      {
+        email: row.email,
+        name: `${row.firstName} ${row.lastName}`.trim(),
+      },
+    ]),
+  );
+
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(clientsTable)
@@ -230,9 +252,19 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     });
   }
 
+  const enrichedWithAccess = enriched.map((row) => {
+    const login = loginByClientId.get(row.id);
+    return {
+      ...row,
+      hasClientLogin: Boolean(login),
+      clientLoginEmail: login?.email ?? null,
+      clientLoginName: login?.name ?? null,
+    };
+  });
+
   res.json(
     ListClientsResponse.parse({
-      data: enriched,
+      data: enrichedWithAccess,
       total: count,
       page,
       pages: Math.max(1, Math.ceil(count / limit)),

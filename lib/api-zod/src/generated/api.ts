@@ -105,6 +105,9 @@ export const ListClientsResponse = zod.object({
       leadsYtd: zod.number(),
       approvedLeads: zod.number(),
       isActive: zod.boolean(),
+      hasClientLogin: zod.boolean().optional(),
+      clientLoginEmail: zod.string().nullish(),
+      clientLoginName: zod.string().nullish(),
       metaAdsApiKey: zod
         .string()
         .nullish()

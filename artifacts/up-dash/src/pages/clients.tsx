@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import Papa from "papaparse";
 import { toast } from "sonner";
@@ -70,7 +70,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useQueryClient } from "@tanstack/react-query";
 
 const CURRENCY_OPTIONS: Array<{ code: string; locale: string; label: string }> = [
   { code: "BRL", locale: "pt-BR", label: "Real (BRL) — Português (Brasil)" },
@@ -135,6 +134,18 @@ function generateApiKey(): string {
   }
   return result;
 }
+
+function generatePassword(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+  let result = "";
+  const array = new Uint8Array(14);
+  crypto.getRandomValues(array);
+  for (const byte of array) {
+    result += chars[byte % chars.length];
+  }
+  return result;
+}
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
   useEffect(() => {
@@ -443,25 +454,32 @@ function ClientCredentialsDialog({
   clientId,
   clientName,
   clientEmail,
+  loginEmail,
+  loginName,
 }: {
   clientId: string;
   clientName: string;
   clientEmail: string;
+  loginEmail?: string | null;
+  loginName?: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const [email, setEmail] = useState(clientEmail);
+  const [email, setEmail] = useState(loginEmail ?? clientEmail);
   const [password, setPassword] = useState("");
-  const [firstName, setFirstName] = useState(clientName.split(" ")[0] || clientName);
-  const [lastName, setLastName] = useState("Cliente");
+  const initialNameParts = (loginName || clientName).trim().split(/\s+/);
+  const [firstName, setFirstName] = useState(initialNameParts[0] || clientName);
+  const [lastName, setLastName] = useState(initialNameParts.slice(1).join(" ") || "Cliente");
   const [showPassword, setShowPassword] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const queryClient = useQueryClient();
 
   function handleOpen(o: boolean) {
     if (o) {
-      setEmail(clientEmail);
+      const nameParts = (loginName || clientName).trim().split(/\s+/);
+      setEmail(loginEmail ?? clientEmail);
       setPassword("");
-      setFirstName(clientName.split(" ")[0] || clientName);
-      setLastName("Cliente");
+      setFirstName(nameParts[0] || clientName);
+      setLastName(nameParts.slice(1).join(" ") || "Cliente");
       setShowPassword(false);
       setIsSaving(false);
     }
@@ -489,9 +507,13 @@ function ClientCredentialsDialog({
         }),
       });
       setOpen(false);
+      queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
       toast.success(`Login do cliente atualizado para ${clientName}`);
-    } catch {
-      toast.error("Não foi possível salvar o login do cliente.");
+    } catch (err) {
+      const message = err instanceof Error && err.message.includes("409")
+        ? "Este e-mail já está em uso por outro usuário."
+        : "Não foi possível salvar o login do cliente.";
+      toast.error(message);
     } finally {
       setIsSaving(false);
     }
@@ -511,7 +533,7 @@ function ClientCredentialsDialog({
             <UserRound className="h-4 w-4" /> Login do Cliente
           </DialogTitle>
           <DialogDescription>
-            Crie ou atualize o e-mail e a senha para <strong>{clientName}</strong> acessar o dashboard como cliente.
+            Crie ou atualize o e-mail e a senha para <strong>{clientName}</strong>. Este usuário verá somente os dados desta loja.
           </DialogDescription>
         </DialogHeader>
 
@@ -538,26 +560,40 @@ function ClientCredentialsDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor={`client-password-${clientId}`}>Senha</Label>
-            <div className="relative">
-              <Input
-                id={`client-password-${clientId}`}
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Mínimo 8 caracteres"
-                className="pr-9"
-              />
-              <button
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Input
+                  id={`client-password-${clientId}`}
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Mínimo 8 caracteres"
+                  className="pr-9"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowPassword((v) => !v)}
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <Button
                 type="button"
-                className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
-                onClick={() => setShowPassword((v) => !v)}
-                tabIndex={-1}
+                variant="outline"
+                className="shrink-0 gap-1"
+                onClick={() => {
+                  setPassword(generatePassword());
+                  setShowPassword(true);
+                }}
               >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+                <Wand2 className="h-3.5 w-3.5" />
+                Gerar
+              </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Ao salvar, este login ficará vinculado apenas a este cliente.
+              Ao salvar, este login ficará vinculado apenas a este cliente. Compartilhe a senha com segurança.
             </p>
           </div>
         </div>
@@ -1439,6 +1475,65 @@ export default function ClientsPage() {
         </CardContent>
       </Card>
 
+      {user?.role === "ADMIN" && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold">Acessos dos clientes</h2>
+                <p className="text-sm text-muted-foreground">
+                  Crie ou atualize login e senha. Cada acesso fica limitado aos dados da própria loja.
+                </p>
+              </div>
+              <Badge variant="outline" className="gap-1.5">
+                <KeyRound className="h-3 w-3" />
+                {formatNumber((data?.data ?? []).filter((client) => client.hasClientLogin).length)} configurados
+              </Badge>
+            </div>
+            {isLoading && !data ? (
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-20 rounded-md" />
+                ))}
+              </div>
+            ) : data?.data.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhum cliente encontrado para criar acesso.</p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {data?.data.map((client) => (
+                  <div
+                    key={`access-${client.id}`}
+                    className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-card/50 p-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-medium">{client.name}</p>
+                        <Badge
+                          variant={client.hasClientLogin ? "default" : "secondary"}
+                          className="shrink-0 text-[10px]"
+                        >
+                          {client.hasClientLogin ? "Ativo" : "Sem login"}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                        {client.clientLoginEmail ?? "Crie o primeiro acesso deste cliente"}
+                      </p>
+                    </div>
+                    <ClientCredentialsDialog
+                      clientId={client.id}
+                      clientName={client.name}
+                      clientEmail={client.email}
+                      loginEmail={client.clientLoginEmail}
+                      loginName={client.clientLoginName}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -1455,6 +1550,7 @@ export default function ClientsPage() {
                 <TableRow>
                   <TableHead>Client</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Login</TableHead>
                   <TableHead className="text-right">Revenue</TableHead>
                   <TableHead className="text-right">Orders</TableHead>
                   <TableHead className="text-right">Avg order</TableHead>
@@ -1473,6 +1569,7 @@ export default function ClientsPage() {
                     <TableRow key={i}>
                       <TableCell><Skeleton className="h-4 w-32" /><Skeleton className="h-3 w-24 mt-1" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+                      <TableCell><Skeleton className="h-5 w-24 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-24 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
@@ -1487,7 +1584,7 @@ export default function ClientsPage() {
                   ))
                 ) : data?.data.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="h-32 text-center text-muted-foreground">
+                    <TableCell colSpan={13} className="h-32 text-center text-muted-foreground">
                       <div className="flex flex-col items-center justify-center">
                         <Building2 className="h-8 w-8 mb-2 text-muted-foreground/50" />
                         No clients found.
@@ -1505,6 +1602,22 @@ export default function ClientsPage() {
                         <Badge variant={client.isActive ? 'default' : 'secondary'}>
                           {client.isActive ? 'Active' : 'Inactive'}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <Badge
+                            variant={client.hasClientLogin ? "default" : "secondary"}
+                            className="w-fit gap-1"
+                          >
+                            <KeyRound className="h-3 w-3" />
+                            {client.hasClientLogin ? "Criado" : "Pendente"}
+                          </Badge>
+                          {client.clientLoginEmail && (
+                            <span className="max-w-[180px] truncate text-xs text-muted-foreground">
+                              {client.clientLoginEmail}
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right font-medium tabular-nums">
                         {formatCurrency(client.revenueYtd, {
@@ -1574,6 +1687,8 @@ export default function ClientsPage() {
                             clientId={client.id}
                             clientName={client.name}
                             clientEmail={client.email}
+                            loginEmail={client.clientLoginEmail}
+                            loginName={client.clientLoginName}
                           />
                           <SiteVisitsDialog clientId={client.id} clientName={client.name} />
                           <RotateKeyDialog clientId={client.id} clientName={client.name} />
