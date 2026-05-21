@@ -63,6 +63,10 @@ import {
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
+import {
+  buildCustomerTimelineResponse,
+  getUpzeroAnalyticsMetrics,
+} from "../services/upzero/analytics-metrics";
 
 const router: IRouter = Router();
 
@@ -1575,6 +1579,89 @@ function deriveOpportunityLevel(c: { rfmSegment: string | null; totalOrders: num
   if (c.totalOrders > 0) return "MEDIUM";
   return "LOW";
 }
+
+const CustomerTimelineQueryParams = z.object({
+  clientId: z.coerce.string().optional(),
+  from: z.string().datetime(),
+  to: z.string().datetime(),
+  lookbackDays: z.coerce.number().int().min(1).max(365).default(30),
+});
+
+router.get("/analytics/customers/:customerId/timeline", async (req, res): Promise<void> => {
+  const pathParsed = GetCustomerDetailParams.safeParse(req.params);
+  if (!pathParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: pathParsed.error.message, status: 400 });
+    return;
+  }
+  const queryParsed = CustomerTimelineQueryParams.safeParse(req.query);
+  if (!queryParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: queryParsed.error.message, status: 400 });
+    return;
+  }
+
+  const clientId = resolveClientId(req) ?? queryParsed.data.clientId;
+  if (!clientId) {
+    res.status(400).json({ error: true, code: "CLIENT_REQUIRED", message: "clientId is required for admin users", status: 400 });
+    return;
+  }
+
+  const { customerId } = pathParsed.data;
+  const [customer, client] = await Promise.all([
+    db
+      .select({
+        id: customersTable.id,
+        externalId: customersTable.externalId,
+      })
+      .from(customersTable)
+      .where(and(eq(customersTable.id, customerId), eq(customersTable.clientId, clientId))),
+    db
+      .select({
+        upZeroApiKey: clientsTable.upZeroApiKey,
+      })
+      .from(clientsTable)
+      .where(eq(clientsTable.id, clientId)),
+  ]);
+
+  if (!customer[0]) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Customer not found", status: 404 });
+    return;
+  }
+
+  const userId = Number.parseInt(customer[0].externalId ?? "", 10);
+  if (!Number.isFinite(userId) || userId <= 0) {
+    res.status(422).json({
+      error: true,
+      code: "UPZERO_USER_ID_MISSING",
+      message: "Customer does not have a numeric UP Zero user_id linked in externalId.",
+      status: 422,
+    });
+    return;
+  }
+
+  try {
+    const metrics = await getUpzeroAnalyticsMetrics({
+      from: queryParsed.data.from,
+      to: queryParsed.data.to,
+      apiKey: client[0]?.upZeroApiKey,
+    });
+
+    res.json(
+      buildCustomerTimelineResponse(
+        userId,
+        metrics.data,
+        queryParsed.data.lookbackDays,
+      ),
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(502).json({
+      error: true,
+      code: "UPZERO_ANALYTICS_FAILED",
+      message,
+      status: 502,
+    });
+  }
+});
 
 router.get("/analytics/customers/:customerId", async (req, res): Promise<void> => {
   const pathParsed = GetCustomerDetailParams.safeParse(req.params);
