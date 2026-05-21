@@ -1539,6 +1539,7 @@ export async function syncUpZeroClient(
           await db
             .update(customersTable)
             .set({
+              email: c.email ?? undefined,
               name: buildCustomerName(c.name) ?? undefined,
               phone: c.phone ?? undefined,
               documentType: documentType ?? undefined,
@@ -1604,6 +1605,7 @@ export async function syncUpZeroClient(
             .onConflictDoUpdate({
               target: [customersTable.clientId, customersTable.externalId],
               set: {
+                email,
                 name: buildCustomerName(c.name),
                 phone: c.phone ?? null,
                 documentType,

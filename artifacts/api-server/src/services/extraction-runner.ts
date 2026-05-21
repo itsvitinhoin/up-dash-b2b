@@ -1,7 +1,7 @@
-import { and, desc, eq, isNotNull, type SQL } from "drizzle-orm";
-import { db, clientsTable, syncJobsTable } from "@workspace/db";
+import { and, desc, eq, isNotNull, sql, type SQL } from "drizzle-orm";
+import { db, clientsTable, customersTable, syncJobsTable } from "@workspace/db";
 import { fetchMetaMarketingData, upsertMetaCreatives } from "./meta-ads";
-import { getMetricUser, getUpzeroAnalyticsMetrics } from "./upzero/analytics-metrics";
+import { getMetricUser, getUpzeroAnalyticsMetrics, type UpzeroAnalyticsMetric } from "./upzero/analytics-metrics";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 
 export type ExtractionJobType =
@@ -119,6 +119,85 @@ function summarizeUpzeroAnalytics(rows: Awaited<ReturnType<typeof getUpzeroAnaly
   };
 }
 
+function buildAnalyticsCustomerName(user: NonNullable<ReturnType<typeof getMetricUser>>): string {
+  return user.name?.trim() || user.companyName?.trim() || `UP Zero #${user.id}`;
+}
+
+function getAnalyticsDocumentType(
+  user: NonNullable<ReturnType<typeof getMetricUser>>,
+): "CPF" | "CNPJ" | null {
+  if (user.cnpj) return "CNPJ";
+  if (user.cpf) return "CPF";
+  if (user.type?.toUpperCase() === "WHOLESALE") return "CNPJ";
+  if (user.type?.toUpperCase() === "RETAIL") return "CPF";
+  return null;
+}
+
+async function upsertCustomersFromAnalyticsRegistrations(
+  clientId: string,
+  rows: UpzeroAnalyticsMetric[],
+): Promise<number> {
+  const registrationsByUser = new Map<number, UpzeroAnalyticsMetric>();
+
+  for (const row of rows) {
+    if (row.event_name !== "register_submitted") continue;
+    const user = getMetricUser(row);
+    if (!user) continue;
+
+    const current = registrationsByUser.get(user.id);
+    if (
+      !current ||
+      new Date(row.period_start).getTime() < new Date(current.period_start).getTime()
+    ) {
+      registrationsByUser.set(user.id, row);
+    }
+  }
+
+  let upserted = 0;
+
+  for (const row of registrationsByUser.values()) {
+    const user = getMetricUser(row);
+    if (!user) continue;
+
+    const externalId = String(user.id);
+    const createdAt = new Date(row.period_start);
+    if (Number.isNaN(createdAt.getTime())) continue;
+
+    const email = `upzero-analytics-${externalId}@noemail.internal`;
+    const name = buildAnalyticsCustomerName(user);
+    const documentType = getAnalyticsDocumentType(user);
+
+    await db
+      .insert(customersTable)
+      .values({
+        clientId,
+        externalId,
+        email,
+        name,
+        documentType,
+        utmSource: row.utm_source,
+        utmMedium: row.utm_medium,
+        utmCampaign: row.utm_campaign,
+        registrationStatus: "PENDING",
+        createdAt,
+      })
+      .onConflictDoUpdate({
+        target: [customersTable.clientId, customersTable.externalId],
+        set: {
+          name,
+          documentType,
+          utmSource: sql`COALESCE(${customersTable.utmSource}, EXCLUDED.utm_source)`,
+          utmMedium: sql`COALESCE(${customersTable.utmMedium}, EXCLUDED.utm_medium)`,
+          utmCampaign: sql`COALESCE(${customersTable.utmCampaign}, EXCLUDED.utm_campaign)`,
+          createdAt: sql`LEAST(${customersTable.createdAt}, EXCLUDED.created_at)`,
+        },
+      });
+    upserted += 1;
+  }
+
+  return upserted;
+}
+
 export async function runUpzeroTransactionalExtraction(
   trigger: ExtractionTrigger,
 ): Promise<ExtractionRunSummary> {
@@ -174,11 +253,16 @@ export async function runUpzeroAnalyticsExtraction(
         to: to.toISOString(),
         apiKey: client.upZeroApiKey,
       });
+      const customersMaterialized = await upsertCustomersFromAnalyticsRegistrations(
+        client.id,
+        metrics.data,
+      );
       await completeJob(jobId, {
         clientName: client.name,
         from: from.toISOString(),
         to: to.toISOString(),
         apiTotal: metrics.total,
+        customersMaterialized,
         ...summarizeUpzeroAnalytics(metrics.data),
       });
       done += 1;

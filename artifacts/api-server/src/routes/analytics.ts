@@ -74,6 +74,22 @@ const router: IRouter = Router();
 
 router.use("/analytics", authenticate);
 
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function addDaysToDateOnly(value: string, days: number): string {
+  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return date.toISOString().slice(0, 10);
+}
+
+function saoPauloDateOnlyStart(value: string): Date {
+  return new Date(`${value}T03:00:00.000Z`);
+}
+
+function saoPauloDateOnlyEnd(value: string): Date {
+  return new Date(`${addDaysToDateOnly(value, 1)}T02:59:59.999Z`);
+}
+
 function getGlobalMetaAccessToken(fallback?: string | null): string | null {
   return (
     process.env.META_ADS_API_KEY ??
@@ -92,11 +108,12 @@ function coerceDateQuery(query: Record<string, unknown>): Record<string, unknown
   for (const key of ["dateFrom", "dateTo", "date"]) {
     const v = out[key];
     if (typeof v === "string" && v.length > 0) {
+      if (DATE_ONLY_RE.test(v)) {
+        out[key] = key === "dateTo" ? saoPauloDateOnlyEnd(v) : saoPauloDateOnlyStart(v);
+        continue;
+      }
       const parsed = new Date(v);
       if (!Number.isNaN(parsed.getTime())) {
-        if (key === "dateTo" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
-          parsed.setUTCHours(23, 59, 59, 999);
-        }
         out[key] = parsed;
       }
     }
@@ -113,14 +130,6 @@ function dateRange(
   const defaultFrom =
     from ?? new Date(defaultTo.getTime() - 30 * 24 * 60 * 60 * 1000);
   return { from: defaultFrom, to: defaultTo };
-}
-
-const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function addDaysToDateOnly(value: string, days: number): string {
-  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
-  const date = new Date(Date.UTC(year, month - 1, day + days));
-  return date.toISOString().slice(0, 10);
 }
 
 function upzeroIsoRange(
