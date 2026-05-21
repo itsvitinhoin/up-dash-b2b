@@ -30,6 +30,8 @@ type ExtractionRunSummary = {
   finishedAt: string;
 };
 
+const UPZERO_ANALYTICS_LOOKBACK_HOURS = 24;
+
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -240,7 +242,7 @@ export async function runUpzeroAnalyticsExtraction(
   const startedAt = new Date();
   const clients = await clientsWith(isNotNull(clientsTable.upZeroApiKey));
   const to = new Date();
-  const from = new Date(to.getTime() - 2 * 60 * 60 * 1000);
+  const from = new Date(to.getTime() - UPZERO_ANALYTICS_LOOKBACK_HOURS * 60 * 60 * 1000);
   let done = 0;
   let failed = 0;
 
