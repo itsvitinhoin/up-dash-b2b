@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
-import { format, formatDistanceToNow } from "date-fns";
+import { format } from "date-fns";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -45,16 +45,6 @@ const STATUS_ORDER: Record<string, { label: string; color: string; icon: React.E
   REJECTED: { label: "Rejected", color: "text-red-500", icon: XCircle },
   SHIPPED: { label: "Shipped", color: "text-blue-500", icon: Package },
   DELIVERED: { label: "Delivered", color: "text-emerald-500", icon: CheckCircle },
-};
-
-const EVENT_ICON: Record<string, { icon: React.ElementType; label: string; color: string }> = {
-  VISIT: { icon: Eye, label: "Page visit", color: "text-zinc-400" },
-  REGISTRATION: { icon: User, label: "Registered", color: "text-violet-500" },
-  APPROVED_REGISTRATION: { icon: CheckCircle, label: "Registration approved", color: "text-emerald-500" },
-  PRODUCT_VIEW: { icon: Package, label: "Viewed product", color: "text-blue-400" },
-  ADD_TO_CART: { icon: ShoppingCart, label: "Added to cart", color: "text-amber-500" },
-  CHECKOUT_STARTED: { icon: CreditCard, label: "Started checkout", color: "text-orange-500" },
-  PURCHASE: { icon: ShoppingBag, label: "Purchased", color: "text-emerald-600" },
 };
 
 type TimelineTab = "events" | "orders" | "products";
@@ -492,7 +482,7 @@ export default function CustomerDetailPage() {
   });
 
   const TABS: { key: TimelineTab; label: string; count: number }[] = [
-    { key: "events", label: "Timeline", count: data?.events?.length ?? 0 },
+    { key: "events", label: "Timeline", count: upzeroTimeline?.timeline.length ?? 0 },
     { key: "orders", label: "Orders", count: data?.orders?.length ?? 0 },
     { key: "products", label: "Products", count: data?.productsPurchased?.length ?? 0 },
   ];
@@ -692,14 +682,6 @@ export default function CustomerDetailPage() {
         </motion.div>
       </div>
 
-      <motion.div variants={cardVariants} initial="hidden" animate="visible">
-        <UpzeroTimelineSection
-          data={upzeroTimeline}
-          isLoading={isLoading || isTimelineLoading}
-          isError={isTimelineError}
-        />
-      </motion.div>
-
       {/* Activity tabs */}
       <motion.div variants={cardVariants} initial="hidden" animate="visible">
         <Card>
@@ -728,56 +710,11 @@ export default function CustomerDetailPage() {
           </CardHeader>
           <CardContent className="pt-4">
             {activeTab === "events" && (
-              <div className="space-y-0">
-                {isLoading ? (
-                  Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="flex gap-3 py-3 border-b border-border last:border-0">
-                      <Skeleton className="h-8 w-8 rounded-full flex-shrink-0" />
-                      <div className="flex-1">
-                        <Skeleton className="h-4 w-32 mb-1" />
-                        <Skeleton className="h-3 w-20" />
-                      </div>
-                    </div>
-                  ))
-                ) : !data?.events.length ? (
-                  <EmptyState
-                    icon={Clock}
-                    title="No events recorded"
-                    description="Events will appear here as the customer interacts with the store."
-                    className="border-0 bg-transparent py-8"
-                  />
-                ) : (
-                  <div className="relative pl-6">
-                    <div className="absolute left-[11px] top-0 bottom-0 w-px bg-border" />
-                    {data?.events.map((event, i) => {
-                      const meta = EVENT_ICON[event.eventType] ?? { icon: Clock, label: event.eventType, color: "text-muted-foreground" };
-                      return (
-                        <div key={event.id} className="relative flex gap-3 py-2.5">
-                          <div className={`absolute left-[-13px] h-6 w-6 rounded-full bg-card border-2 flex items-center justify-center flex-shrink-0 ${i === 0 ? "border-primary" : "border-border"}`}>
-                            <meta.icon className={`h-3 w-3 ${meta.color}`} />
-                          </div>
-                          <div className="min-w-0 flex-1 ml-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <span className="text-sm font-medium">{meta.label}</span>
-                                {event.productName && (
-                                  <span className="text-sm text-muted-foreground ml-1">· {event.productName}</span>
-                                )}
-                              </div>
-                              <span className="text-xs text-muted-foreground flex-shrink-0 whitespace-nowrap">
-                                {format(new Date(event.createdAt), "MMM d, HH:mm")}
-                              </span>
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              {formatDistanceToNow(new Date(event.createdAt), { addSuffix: true })}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              <UpzeroTimelineSection
+                data={upzeroTimeline}
+                isLoading={isLoading || isTimelineLoading}
+                isError={isTimelineError}
+              />
             )}
 
             {activeTab === "orders" && (
