@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, gte, lte, sql, ilike, or, inArray, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, sql, ilike, or, inArray, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -1046,24 +1046,56 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   );
 });
 
-const CAMPAIGN_ATTRIBUTION_TERMS = ["up", "instagram", "fbc"];
+const PAID_CAMPAIGN_TERMS = [
+  "fb",
+  "facebook",
+  "fbc",
+  "ig",
+  "instagram",
+  "insta",
+  "gc",
+  "google",
+  "googleads",
+  "google_ads",
+  "gads",
+  "adwords",
+  "up",
+  "upzero",
+  "up.la",
+];
 
-function metricText(row: UpzeroAnalyticsMetric): string {
-  return [
-    row.utm_source,
-    row.utm_medium,
-    row.utm_campaign,
-    row.source,
-    row.channel,
-  ]
+const ORGANIC_CAMPAIGN_EXCLUSIONS = ["linktree"];
+
+function normalizeCampaignText(value: string | null | undefined): string {
+  return value?.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() ?? "";
+}
+
+function metricUtmText(row: UpzeroAnalyticsMetric): string {
+  return [row.utm_source, row.utm_medium, row.utm_campaign]
     .filter(Boolean)
     .join(" ")
-    .toLowerCase();
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function isCampaignAttributedMetric(row: UpzeroAnalyticsMetric): boolean {
-  const text = metricText(row);
-  return CAMPAIGN_ATTRIBUTION_TERMS.some((term) => text.includes(term));
+  const source = normalizeCampaignText(row.utm_source);
+  const medium = normalizeCampaignText(row.utm_medium);
+  const campaign = normalizeCampaignText(row.utm_campaign);
+  const text = metricUtmText(row);
+
+  if (!text) return false;
+  if (ORGANIC_CAMPAIGN_EXCLUSIONS.some((term) => [source, medium, campaign].some((field) => field.includes(term)))) {
+    return false;
+  }
+
+  return PAID_CAMPAIGN_TERMS.some((term) => {
+    const normalizedTerm = normalizeCampaignText(term);
+    return text
+      .split(/[^a-z0-9.]+/)
+      .some((token) => token === normalizedTerm || token.startsWith(normalizedTerm));
+  });
 }
 
 const CampaignCustomersQueryParams = GetDashboardQueryParams.pick({
@@ -1124,6 +1156,7 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
         externalId: customersTable.externalId,
         name: customersTable.name,
         email: customersTable.email,
+        documentType: customersTable.documentType,
         registrationStatus: customersTable.registrationStatus,
         createdAt: customersTable.createdAt,
         totalOrders: customersTable.totalOrders,
@@ -1160,6 +1193,8 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
           customerId: ordersTable.customerId,
           orderCount: sql<number>`COUNT(*)::int`,
           orderValue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          firstOrderAt: sql<Date | null>`MIN(${ordersTable.createdAt})`,
+          lastOrderAt: sql<Date | null>`MAX(${ordersTable.createdAt})`,
         })
         .from(ordersTable)
         .where(
@@ -1226,11 +1261,14 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
         const orderCount = Number(orderAgg?.orderCount ?? 0);
         const orderValue = Number(orderAgg?.orderValue ?? 0);
         const itemQuantity = Number(itemMap.get(customer.id) ?? 0);
+        const firstOrderAt = orderAgg?.firstOrderAt ? new Date(orderAgg.firstOrderAt).toISOString() : null;
+        const lastOrderAt = orderAgg?.lastOrderAt ? new Date(orderAgg.lastOrderAt).toISOString() : null;
         return {
           customerId: customer.id,
           userId,
           name: customer.name,
           email: customer.email,
+          documentType: customer.documentType,
           registrationStatus: customer.registrationStatus,
           registeredAt: customer.createdAt.toISOString(),
           firstCampaign: firstMetric?.utm_campaign ?? customer.utmCampaign ?? null,
@@ -1242,6 +1280,9 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
           lastCampaignAt: lastMetric?.period_start ?? null,
           campaignImpacted: true,
           isRepurchase: Number(priorMap.get(customer.id) ?? 0) > 0,
+          madePurchase: orderCount > 0,
+          firstOrderAt,
+          lastOrderAt,
           orderCount,
           orderValue,
           itemQuantity,
@@ -1260,11 +1301,12 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
           eventCount: userMetrics.reduce((sum, row) => sum + row.total_events, 0),
         };
       })
-      .sort((a, b) => b.orderValue - a.orderValue || b.eventCount - a.eventCount)
-      .slice(0, parsed.data.limit);
+      .sort((a, b) => b.orderValue - a.orderValue || b.eventCount - a.eventCount);
+
+    const visibleRows = rows.slice(0, parsed.data.limit);
 
     res.json({
-      rows,
+      rows: visibleRows,
       total: customers.length,
       summary: {
         impactedCustomers: customers.length,
@@ -1321,6 +1363,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       FORM_START: 0,
       REGISTER_START: 0,
       REGISTRATION: 0,
+      APPROVED_REGISTRATION: 0,
       LOGIN: 0,
       ADD_TO_CART: 0,
       CHECKOUT_STARTED: 0,
@@ -1373,6 +1416,22 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
           break;
       }
     }
+
+    const approvedConditions: SQL[] = [
+      eq(customersTable.clientId, clientId),
+      eq(customersTable.registrationStatus, "APPROVED"),
+      gte(customersTable.createdAt, from),
+      lte(customersTable.createdAt, to),
+    ];
+    if (utmSource) approvedConditions.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
+    if (utmMedium) approvedConditions.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
+    if (utmCampaign) approvedConditions.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
+    const [approvedRegistrations] = await db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(customersTable)
+      .where(and(...approvedConditions));
+    counts.APPROVED_REGISTRATION = Number(approvedRegistrations?.count ?? 0);
+
     const funnelOrder: Array<{ step: string; label: string }> = [
       { step: "VISIT", label: "Visualizações de página" },
       { step: "CATEGORY_VIEW", label: "Categorias vistas" },
@@ -1380,6 +1439,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       { step: "FORM_START", label: "Formulários iniciados" },
       { step: "REGISTER_START", label: "Cadastros iniciados" },
       { step: "REGISTRATION", label: "Cadastros enviados" },
+      { step: "APPROVED_REGISTRATION", label: "Cadastros aprovados" },
       { step: "LOGIN", label: "Logins" },
       { step: "ADD_TO_CART", label: "Adições ao carrinho" },
       { step: "CHECKOUT_STARTED", label: "Checkouts iniciados" },
@@ -1387,10 +1447,25 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       { step: "PURCHASE", label: "Compras" },
       { step: "PAYMENT_APPROVED", label: "Pagamentos aprovados" },
     ];
+    const approvedBaseline = counts.APPROVED_REGISTRATION ?? 0;
+    const postApprovalSteps = new Set(["LOGIN", "ADD_TO_CART", "CHECKOUT_STARTED", "ORDER_CREATED", "PURCHASE", "PAYMENT_APPROVED"]);
     const steps = funnelOrder.map((step, index) => {
       const count = counts[step.step] ?? 0;
       const previous = index === 0 ? count : counts[funnelOrder[index - 1].step] ?? 0;
-      const conversionRate = index === 0 ? 100 : previous > 0 ? (count / previous) * 100 : 0;
+      const conversionRate =
+        index === 0
+          ? 100
+          : step.step === "APPROVED_REGISTRATION"
+            ? previous > 0
+              ? (count / previous) * 100
+              : count > 0
+                ? 100
+                : 0
+            : postApprovalSteps.has(step.step) && approvedBaseline > 0
+              ? (count / approvedBaseline) * 100
+              : previous > 0
+                ? (count / previous) * 100
+                : 0;
       return {
         ...step,
         count,
@@ -1398,17 +1473,15 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
         dropOffRate: index === 0 ? 0 : 100 - conversionRate,
       };
     });
-    const nonZeroSteps = steps.filter((step) => step.count > 0);
-    const firstNonZero = nonZeroSteps[0]?.count ?? 0;
-    const lastNonZero = nonZeroSteps[nonZeroSteps.length - 1]?.count ?? 0;
-    const overallConversion = firstNonZero > 0 ? (lastNonZero / firstNonZero) * 100 : 0;
+    const conversionCount = counts.PAYMENT_APPROVED || counts.PURCHASE || counts.ORDER_CREATED || 0;
+    const overallConversion = approvedBaseline > 0 ? (conversionCount / approvedBaseline) * 100 : 0;
     let worst = { idx: -1, drop: -1 };
     for (let i = 1; i < steps.length; i++) {
       if (steps[i].dropOffRate > worst.drop) worst = { idx: i, drop: steps[i].dropOffRate };
     }
     const insights = [
       `Funil alimentado pela UP Zero com ${scopedMetrics.length} linhas agregadas por hora no período.`,
-      `Conversão geral de ${overallConversion.toFixed(2)}% entre ${nonZeroSteps[0]?.label ?? "primeiro evento"} e ${nonZeroSteps[nonZeroSteps.length - 1]?.label ?? "último evento"}.`,
+      `Conversão geral de ${overallConversion.toFixed(2)}% calculada sobre ${approvedBaseline} cadastros aprovados.`,
     ];
     if (worst.idx > 0) {
       insights.unshift(
@@ -1525,6 +1598,20 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
   for (const row of eventCounts) {
     counts[row.eventType] = Number(row.count);
   }
+  const approvedCustomerConditions: SQL[] = [
+    eq(customersTable.clientId, clientId),
+    eq(customersTable.registrationStatus, "APPROVED"),
+    gte(customersTable.createdAt, from),
+    lte(customersTable.createdAt, to),
+  ];
+  if (utmSource) approvedCustomerConditions.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
+  if (utmMedium) approvedCustomerConditions.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
+  if (utmCampaign) approvedCustomerConditions.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
+  const [approvedCustomerRow] = await db
+    .select({ count: sql<number>`COUNT(*)::int` })
+    .from(customersTable)
+    .where(and(...approvedCustomerConditions));
+  counts.APPROVED_REGISTRATION = Number(approvedCustomerRow?.count ?? counts.APPROVED_REGISTRATION ?? 0);
 
   // Overlay site-visit data from the dedicated table (takes priority over any
   // VISIT events that might exist, since the table represents real web traffic)
@@ -1548,6 +1635,8 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
   // skipped in the monotonic chain (it has no data to constrain the next step).
   // Conversion rates are expressed relative to the last non-zero ancestor.
   let prev = Number.MAX_SAFE_INTEGER; // sentinel = "no data seen yet"
+  const approvedBaseline = counts.APPROVED_REGISTRATION ?? 0;
+  const postApprovalSteps = new Set(["ADD_TO_CART", "PURCHASE"]);
   const steps = funnelOrder.map((s, i) => {
     const raw = counts[s.step] ?? 0;
     // When prev is still MAX_SAFE_INTEGER we haven't seen any data yet,
@@ -1556,7 +1645,9 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     const count = Math.min(raw, effectivePrev);
     let conversionRate = 100;
     if (i > 0) {
-      if (prev > 0 && prev < Number.MAX_SAFE_INTEGER) {
+      if (postApprovalSteps.has(s.step) && approvedBaseline > 0) {
+        conversionRate = (count / approvedBaseline) * 100;
+      } else if (prev > 0 && prev < Number.MAX_SAFE_INTEGER) {
         // Normal case: previous non-zero step exists — compute real conversion.
         conversionRate = (count / prev) * 100;
       } else if (count > 0) {
@@ -1578,12 +1669,9 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     };
   });
 
-  // Overall conversion: from first non-zero step to last non-zero step.
-  // Using non-zero anchors avoids 0% when VISIT is absent but purchases exist.
-  const nonZeroSteps = steps.filter((s) => s.count > 0);
-  const firstNonZero = nonZeroSteps[0]?.count ?? 0;
-  const lastNonZero = nonZeroSteps[nonZeroSteps.length - 1]?.count ?? 0;
-  const overallConversion = firstNonZero > 0 ? (lastNonZero / firstNonZero) * 100 : 0;
+  // Overall conversion: purchases over approved registrations.
+  const purchaseCount = counts.PURCHASE ?? 0;
+  const overallConversion = approvedBaseline > 0 ? (purchaseCount / approvedBaseline) * 100 : 0;
 
   let worst = { idx: -1, drop: -1 };
   for (let i = 1; i < steps.length; i++) {
@@ -1597,9 +1685,8 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       `Highest drop-off (${worst.drop.toFixed(1)}%) occurs between ${steps[worst.idx - 1].label} and ${steps[worst.idx].label}.`,
     );
   }
-  const firstNonZeroLabel = nonZeroSteps[0]?.label ?? "first step";
   insights.push(
-    `Overall funnel conversion is ${overallConversion.toFixed(2)}% from ${firstNonZeroLabel} to purchase.`,
+    `Overall funnel conversion is ${overallConversion.toFixed(2)}% from approved leads to purchase.`,
   );
 
   // Average events per customer that occurred BEFORE their first purchase in the window
@@ -1748,13 +1835,30 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
-  const { rfmSegment, state, utmSource: custUtmSource, utmMedium: custUtmMedium, search, page = 1, limit = 20 } = parsed.data;
+  const {
+    rfmSegment,
+    state,
+    utmSource: custUtmSource,
+    utmMedium: custUtmMedium,
+    search,
+    documentType,
+    registrationStatus,
+    purchaseStatus,
+    sortBy = "totalSpent",
+    sortDir = "desc",
+    page = 1,
+    limit = 20,
+  } = parsed.data;
 
   const conditions: SQL[] = [eq(customersTable.clientId, clientId)];
   if (rfmSegment) conditions.push(eq(customersTable.rfmSegment, rfmSegment));
   if (state) conditions.push(eq(customersTable.state, state));
   if (custUtmSource) conditions.push(eq(customersTable.utmSource, custUtmSource));
   if (custUtmMedium) conditions.push(eq(customersTable.utmMedium, custUtmMedium));
+  if (documentType) conditions.push(eq(customersTable.documentType, documentType));
+  if (registrationStatus) conditions.push(eq(customersTable.registrationStatus, registrationStatus));
+  if (purchaseStatus === "buyers") conditions.push(sql`${customersTable.totalOrders} > 0`);
+  if (purchaseStatus === "non_buyers") conditions.push(eq(customersTable.totalOrders, 0));
   if (search) {
     const searchCond = or(
       ilike(customersTable.email, `%${search}%`),
@@ -1765,12 +1869,21 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
   const where = and(...conditions);
 
   const offset = (page - 1) * limit;
+  const sortColumns = {
+    totalSpent: customersTable.totalSpent,
+    totalOrders: customersTable.totalOrders,
+    createdAt: customersTable.createdAt,
+    firstPurchaseAt: customersTable.firstPurchaseAt,
+    lastPurchaseAt: customersTable.lastPurchaseAt,
+    name: customersTable.name,
+  } as const;
+  const sortColumn = sortColumns[sortBy as keyof typeof sortColumns] ?? customersTable.totalSpent;
 
   const data = await db
     .select()
     .from(customersTable)
     .where(where)
-    .orderBy(desc(customersTable.totalSpent))
+    .orderBy(sortDir === "asc" ? asc(sortColumn) : desc(sortColumn))
     .limit(limit)
     .offset(offset);
 

@@ -279,7 +279,9 @@ type CampaignCustomerRow = {
   userId: number;
   name: string | null;
   email: string;
+  documentType: "CPF" | "CNPJ" | null;
   registrationStatus: string;
+  registeredAt: string;
   firstCampaign: string | null;
   firstSource: string | null;
   firstMedium: string | null;
@@ -289,6 +291,9 @@ type CampaignCustomerRow = {
   lastCampaignAt: string | null;
   campaignImpacted: boolean;
   isRepurchase: boolean;
+  madePurchase: boolean;
+  firstOrderAt: string | null;
+  lastOrderAt: string | null;
   orderCount: number;
   orderValue: number;
   itemQuantity: number;
@@ -298,6 +303,15 @@ type CampaignCustomerRow = {
   purchaseEvents: number;
   eventCount: number;
 };
+
+type CampaignCustomerSortKey =
+  | "orderValue"
+  | "orderCount"
+  | "itemQuantity"
+  | "eventCount"
+  | "registeredAt"
+  | "lastOrderAt"
+  | "name";
 
 type CampaignCustomersResponse = {
   rows: CampaignCustomerRow[];
@@ -343,6 +357,72 @@ function CampaignCustomersPanel({
   isLoading: boolean;
   isError: boolean;
 }) {
+  const [documentFilter, setDocumentFilter] = useState("all");
+  const [purchaseFilter, setPurchaseFilter] = useState("all");
+  const [repurchaseFilter, setRepurchaseFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sortKey, setSortKey] = useState<CampaignCustomerSortKey>("orderValue");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const visibleRows = useMemo(() => {
+    const rows = [...(data?.rows ?? [])].filter((row) => {
+      if (documentFilter !== "all" && row.documentType !== documentFilter) return false;
+      if (statusFilter !== "all" && row.registrationStatus !== statusFilter) return false;
+      if (purchaseFilter === "buyers" && !row.madePurchase) return false;
+      if (purchaseFilter === "non_buyers" && row.madePurchase) return false;
+      if (repurchaseFilter === "yes" && !row.isRepurchase) return false;
+      if (repurchaseFilter === "no" && row.isRepurchase) return false;
+      return true;
+    });
+
+    rows.sort((a, b) => {
+      const direction = sortDir === "asc" ? 1 : -1;
+      if (sortKey === "name") {
+        return direction * (a.name || a.email).localeCompare(b.name || b.email);
+      }
+      if (sortKey === "registeredAt" || sortKey === "lastOrderAt") {
+        const aTime = a[sortKey] ? new Date(a[sortKey] as string).getTime() : 0;
+        const bTime = b[sortKey] ? new Date(b[sortKey] as string).getTime() : 0;
+        return direction * (aTime - bTime);
+      }
+      return direction * ((a[sortKey] as number) - (b[sortKey] as number));
+    });
+
+    return rows;
+  }, [data?.rows, documentFilter, purchaseFilter, repurchaseFilter, sortDir, sortKey, statusFilter]);
+
+  const setSort = (key: CampaignCustomerSortKey) => {
+    if (sortKey === key) {
+      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDir(key === "name" ? "asc" : "desc");
+  };
+
+  const SortHeader = ({
+    children,
+    sort,
+    align = "left",
+  }: {
+    children: React.ReactNode;
+    sort: CampaignCustomerSortKey;
+    align?: "left" | "right";
+  }) => (
+    <button
+      type="button"
+      onClick={() => setSort(sort)}
+      className={`inline-flex w-full items-center gap-1 font-medium hover:text-foreground ${
+        align === "right" ? "justify-end text-right" : "justify-start"
+      }`}
+    >
+      {children}
+      <span className="text-[9px] text-muted-foreground">
+        {sortKey === sort ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
+      </span>
+    </button>
+  );
+
   return (
     <Card className="p-5 bg-card border-border" data-testid="campaign-customers-panel">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
@@ -352,7 +432,7 @@ function CampaignCustomersPanel({
             Clientes atribuídos às campanhas
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Clientes com UTM contendo UP, Instagram ou FBC no período. Clique para abrir a timeline completa.
+            Clientes e cadastros com UTM de campanhas pagas: fb, ig, gc, up e derivados. Linktree fica fora desta lista.
           </p>
         </div>
         {data && (
@@ -377,6 +457,70 @@ function CampaignCustomersPanel({
         )}
       </div>
 
+      {data && data.rows.length > 0 && (
+        <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <select
+            value={documentFilter}
+            onChange={(event) => setDocumentFilter(event.target.value)}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs"
+            aria-label="Filtrar por documento"
+          >
+            <option value="all">CPF e CNPJ</option>
+            <option value="CPF">CPF</option>
+            <option value="CNPJ">CNPJ</option>
+          </select>
+          <select
+            value={purchaseFilter}
+            onChange={(event) => setPurchaseFilter(event.target.value)}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs"
+            aria-label="Filtrar por compra"
+          >
+            <option value="all">Compra: todos</option>
+            <option value="buyers">Fez compra</option>
+            <option value="non_buyers">Não comprou</option>
+          </select>
+          <select
+            value={repurchaseFilter}
+            onChange={(event) => setRepurchaseFilter(event.target.value)}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs"
+            aria-label="Filtrar por recompra"
+          >
+            <option value="all">Recompra: todos</option>
+            <option value="yes">É recompra</option>
+            <option value="no">Primeira compra/cadastro</option>
+          </select>
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs"
+            aria-label="Filtrar por status"
+          >
+            <option value="all">Status: todos</option>
+            <option value="APPROVED">Aprovado</option>
+            <option value="PENDING">Pendente</option>
+            <option value="REJECTED">Recusado</option>
+          </select>
+          <select
+            value={`${sortKey}:${sortDir}`}
+            onChange={(event) => {
+              const [key, dir] = event.target.value.split(":") as [CampaignCustomerSortKey, "asc" | "desc"];
+              setSortKey(key);
+              setSortDir(dir);
+            }}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs"
+            aria-label="Ordenar clientes atribuídos"
+          >
+            <option value="orderValue:desc">Maior valor</option>
+            <option value="orderCount:desc">Mais pedidos</option>
+            <option value="itemQuantity:desc">Mais produtos</option>
+            <option value="eventCount:desc">Mais eventos</option>
+            <option value="registeredAt:desc">Cadastro mais recente</option>
+            <option value="lastOrderAt:desc">Pedido mais recente</option>
+            <option value="name:asc">Nome A-Z</option>
+          </select>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -398,22 +542,30 @@ function CampaignCustomersPanel({
             A lista aparece quando a UP Zero retorna eventos com user_id e UTM compatível.
           </p>
         </div>
+      ) : visibleRows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <p className="text-sm font-medium">Nenhum cliente com esses filtros</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Ajuste CPF/CNPJ, compra, recompra ou status para voltar a visualizar os cadastros atribuídos.
+          </p>
+        </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-                <th className="py-2 pr-4 font-medium">Cliente</th>
+                <th className="py-2 pr-4"><SortHeader sort="name">Cliente</SortHeader></th>
+                <th className="py-2 px-3 font-medium">Tags</th>
+                <th className="py-2 px-3 font-medium">Cadastro / Pedido</th>
                 <th className="py-2 px-3 font-medium">Última campanha</th>
-                <th className="py-2 px-3 font-medium text-right">Pedidos</th>
-                <th className="py-2 px-3 font-medium text-right">Produtos</th>
-                <th className="py-2 px-3 font-medium text-right">Valor</th>
-                <th className="py-2 px-3 font-medium text-center">Impactado</th>
-                <th className="py-2 pl-3 font-medium text-center">Recompra</th>
+                <th className="py-2 px-3"><SortHeader sort="orderCount" align="right">Pedidos</SortHeader></th>
+                <th className="py-2 px-3"><SortHeader sort="itemQuantity" align="right">Produtos</SortHeader></th>
+                <th className="py-2 px-3"><SortHeader sort="orderValue" align="right">Valor</SortHeader></th>
+                <th className="py-2 pl-3"><SortHeader sort="eventCount" align="right">Eventos</SortHeader></th>
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((row) => (
+              {visibleRows.map((row) => (
                 <tr key={row.customerId} className="border-b border-border/60 last:border-0 hover-elevate">
                   <td className="py-3 pr-4 min-w-[220px]">
                     <Link href={`/customers/${row.customerId}`} className="block">
@@ -424,6 +576,36 @@ function CampaignCustomersPanel({
                         {row.email} · UP Zero {row.userId}
                       </div>
                     </Link>
+                  </td>
+                  <td className="py-3 px-3 min-w-[210px]">
+                    <div className="flex flex-wrap gap-1.5">
+                      {row.documentType && (
+                        <span className="inline-flex rounded-md bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-400">
+                          {row.documentType}
+                        </span>
+                      )}
+                      <span className="inline-flex rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {row.registrationStatus}
+                      </span>
+                      <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ${
+                        row.madePurchase ? "bg-emerald-500/10 text-emerald-400" : "bg-muted/50 text-muted-foreground"
+                      }`}>
+                        Compra: {row.madePurchase ? "Sim" : "Não"}
+                      </span>
+                      <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ${
+                        row.isRepurchase ? "bg-blue-500/10 text-blue-400" : "bg-muted/50 text-muted-foreground"
+                      }`}>
+                        Recompra: {row.isRepurchase ? "Sim" : "Não"}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-3 min-w-[170px]">
+                    <div className="text-xs text-muted-foreground">
+                      Cadastro: <span className="text-foreground">{formatCampaignDate(row.registeredAt)}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Pedido: <span className="text-foreground">{formatCampaignDate(row.lastOrderAt)}</span>
+                    </div>
                   </td>
                   <td className="py-3 px-3 min-w-[260px]">
                     <div className="font-medium truncate" title={row.lastCampaign ?? row.firstCampaign ?? "—"}>
@@ -438,18 +620,7 @@ function CampaignCustomersPanel({
                   <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.orderCount)}</td>
                   <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.itemQuantity)}</td>
                   <td className="py-3 px-3 text-right font-semibold tabular-nums">{formatCurrency(row.orderValue)}</td>
-                  <td className="py-3 px-3 text-center">
-                    <span className="inline-flex rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
-                      {row.campaignImpacted ? "Sim" : "Não"}
-                    </span>
-                  </td>
-                  <td className="py-3 pl-3 text-center">
-                    <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${
-                      row.isRepurchase ? "bg-blue-500/10 text-blue-400" : "bg-muted/50 text-muted-foreground"
-                    }`}>
-                      {row.isRepurchase ? "Sim" : "Não"}
-                    </span>
-                  </td>
+                  <td className="py-3 pl-3 text-right tabular-nums">{formatNumber(row.eventCount)}</td>
                 </tr>
               ))}
             </tbody>

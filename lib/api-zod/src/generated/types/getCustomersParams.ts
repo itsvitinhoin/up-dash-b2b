@@ -18,6 +18,17 @@ export type GetCustomersParams = {
    * Filter customers by UTM medium.
    */
   utmMedium?: string;
+  documentType?: "CPF" | "CNPJ";
+  registrationStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  purchaseStatus?: "buyers" | "non_buyers";
+  sortBy?:
+    | "totalSpent"
+    | "totalOrders"
+    | "createdAt"
+    | "firstPurchaseAt"
+    | "lastPurchaseAt"
+    | "name";
+  sortDir?: "asc" | "desc";
   search?: string;
   page?: number;
   limit?: number;

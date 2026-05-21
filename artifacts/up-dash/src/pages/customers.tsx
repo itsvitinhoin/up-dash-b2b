@@ -131,6 +131,7 @@ function SummaryKpiCard({
 }
 
 type ChartTab = "timeline" | "state" | "source";
+type CustomerSortKey = "totalSpent" | "totalOrders" | "createdAt" | "firstPurchaseAt" | "lastPurchaseAt" | "name";
 
 export default function CustomersPage() {
   const { selectedClientId, user } = useAuth();
@@ -142,6 +143,11 @@ export default function CustomersPage() {
   const debouncedSearch = useDebounce(search, 300);
   const [rfmSegment, setRfmSegment] = useState<string>("");
   const [state, setState] = useState<string>("");
+  const [documentFilter, setDocumentFilter] = useState<string>("all");
+  const [purchaseFilter, setPurchaseFilter] = useState<string>("all");
+  const [registrationStatusFilter, setRegistrationStatusFilter] = useState<string>("all");
+  const [sortKey, setSortKey] = useState<CustomerSortKey>("totalSpent");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [chartTab, setChartTab] = useState<ChartTab>("timeline");
   const [highlightTarget, setHighlightTarget] = useState<string | null>(
@@ -174,6 +180,13 @@ export default function CustomersPage() {
       state: filters.state || (state && state !== "all" ? state : undefined),
       utmSource: filters.utmSource || undefined,
       utmMedium: filters.utmMedium || undefined,
+      documentType: documentFilter !== "all" ? (documentFilter as "CPF" | "CNPJ") : undefined,
+      registrationStatus: registrationStatusFilter !== "all"
+        ? (registrationStatusFilter as "PENDING" | "APPROVED" | "REJECTED")
+        : undefined,
+      purchaseStatus: purchaseFilter !== "all" ? (purchaseFilter as "buyers" | "non_buyers") : undefined,
+      sortBy: sortKey,
+      sortDir,
       page,
       limit,
     },
@@ -246,10 +259,10 @@ export default function CustomersPage() {
   }, [matchedCustomerId]);
 
   const handleExport = () => {
-    if (!data?.data) return;
+    if (!filteredCustomers.length) return;
     exportRowsAsCsv(
       `customers-${new Date().toISOString().slice(0, 10)}.csv`,
-      data.data,
+      filteredCustomers,
       [
         { header: "id", accessor: (r) => r.id },
         { header: "name", accessor: (r) => r.name ?? "" },
@@ -266,6 +279,31 @@ export default function CustomersPage() {
       ],
     );
   };
+
+  const filteredCustomers = useMemo(() => {
+    const rows = [...(data?.data ?? [])].filter((customer) => {
+      if (documentFilter !== "all" && customer.documentType !== documentFilter) return false;
+      if (registrationStatusFilter !== "all" && customer.registrationStatus !== registrationStatusFilter) return false;
+      if (purchaseFilter === "buyers" && customer.totalOrders <= 0) return false;
+      if (purchaseFilter === "non_buyers" && customer.totalOrders > 0) return false;
+      return true;
+    });
+
+    rows.sort((a, b) => {
+      const direction = sortDir === "asc" ? 1 : -1;
+      if (sortKey === "name") {
+        return direction * (a.name || a.email || "").localeCompare(b.name || b.email || "");
+      }
+      if (sortKey === "createdAt" || sortKey === "firstPurchaseAt" || sortKey === "lastPurchaseAt") {
+        const aTime = a[sortKey] ? new Date(a[sortKey] as string).getTime() : 0;
+        const bTime = b[sortKey] ? new Date(b[sortKey] as string).getTime() : 0;
+        return direction * (aTime - bTime);
+      }
+      return direction * ((a[sortKey] ?? 0) - (b[sortKey] ?? 0));
+    });
+
+    return rows;
+  }, [data?.data, documentFilter, purchaseFilter, registrationStatusFilter, sortDir, sortKey]);
 
   const totalCount = data?.total ?? 0;
   const segmentCount = data?.segmentCounts?.length ?? 0;
@@ -331,7 +369,7 @@ export default function CustomersPage() {
           variant="outline"
           size="sm"
           onClick={handleExport}
-          disabled={!data?.data?.length}
+          disabled={!filteredCustomers.length}
           data-testid="customers-export"
         >
           <Download className="h-4 w-4 mr-1.5" />
@@ -713,7 +751,7 @@ export default function CustomersPage() {
       <motion.div variants={cardVariants}>
         <Card>
           <CardContent className="p-4">
-            <div className="flex flex-col md:flex-row gap-4">
+            <div className="flex flex-col md:flex-row md:flex-wrap gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -749,6 +787,65 @@ export default function CustomersPage() {
                     {brazilStates.map((s) => (
                       <SelectItem key={s} value={s}>{s}</SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="w-full md:w-36">
+                <Select value={documentFilter} onValueChange={(v) => { setDocumentFilter(v); setPage(1); }}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Doc" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">CPF e CNPJ</SelectItem>
+                    <SelectItem value="CPF">CPF</SelectItem>
+                    <SelectItem value="CNPJ">CNPJ</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="w-full md:w-40">
+                <Select value={purchaseFilter} onValueChange={(v) => { setPurchaseFilter(v); setPage(1); }}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Compra" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Compra: todos</SelectItem>
+                    <SelectItem value="buyers">Fez compra</SelectItem>
+                    <SelectItem value="non_buyers">Não comprou</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="w-full md:w-40">
+                <Select value={registrationStatusFilter} onValueChange={(v) => { setRegistrationStatusFilter(v); setPage(1); }}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Status: todos</SelectItem>
+                    <SelectItem value="APPROVED">Aprovado</SelectItem>
+                    <SelectItem value="PENDING">Pendente</SelectItem>
+                    <SelectItem value="REJECTED">Recusado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="w-full md:w-48">
+                <Select
+                  value={`${sortKey}:${sortDir}`}
+                  onValueChange={(value) => {
+                    const [nextSort, nextDir] = value.split(":") as [CustomerSortKey, "asc" | "desc"];
+                    setSortKey(nextSort);
+                    setSortDir(nextDir);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Ordenar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="totalSpent:desc">Maior valor</SelectItem>
+                    <SelectItem value="totalOrders:desc">Mais pedidos</SelectItem>
+                    <SelectItem value="createdAt:desc">Cadastro recente</SelectItem>
+                    <SelectItem value="firstPurchaseAt:desc">1ª compra recente</SelectItem>
+                    <SelectItem value="lastPurchaseAt:desc">Última compra recente</SelectItem>
+                    <SelectItem value="name:asc">Nome A-Z</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -827,7 +924,7 @@ export default function CustomersPage() {
                         <TableCell />
                       </TableRow>
                     ))
-                  ) : data?.data.length === 0 ? (
+                  ) : filteredCustomers.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={12} className="p-0">
                         <EmptyState
@@ -839,7 +936,7 @@ export default function CustomersPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    data?.data.map((customer) => {
+                    filteredCustomers.map((customer) => {
                       const isMatched = customer.id === matchedCustomerId;
                       const opportunityLevel = customer.opportunityLevel ?? "LOW";
 

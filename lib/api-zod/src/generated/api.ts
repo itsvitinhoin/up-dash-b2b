@@ -803,6 +803,13 @@ export const GetCustomersQueryParams = zod.object({
     .string()
     .optional()
     .describe("Filter customers by UTM medium."),
+  documentType: zod.enum(["CPF", "CNPJ"]).optional(),
+  registrationStatus: zod.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
+  purchaseStatus: zod.enum(["buyers", "non_buyers"]).optional(),
+  sortBy: zod
+    .enum(["totalSpent", "totalOrders", "createdAt", "firstPurchaseAt", "lastPurchaseAt", "name"])
+    .optional(),
+  sortDir: zod.enum(["asc", "desc"]).optional(),
   search: zod.coerce.string().optional(),
   page: zod.coerce.number().default(getCustomersQueryPageDefault),
   limit: zod.coerce.number().default(getCustomersQueryLimitDefault),
