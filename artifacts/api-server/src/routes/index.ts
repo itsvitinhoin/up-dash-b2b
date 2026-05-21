@@ -5,6 +5,7 @@ import clientsRouter from "./clients";
 import analyticsRouter from "./analytics";
 import notificationsRouter from "./notifications";
 import savedViewsRouter from "./savedViews";
+import extractionsRouter from "./extractions";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(clientsRouter);
 router.use(analyticsRouter);
 router.use(notificationsRouter);
 router.use(savedViewsRouter);
+router.use(extractionsRouter);
 
 export default router;

@@ -26,6 +26,16 @@
       "maxDuration": 60
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/extractions/hourly",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/extractions/upzero-transactional",
+      "schedule": "0 3,15 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",

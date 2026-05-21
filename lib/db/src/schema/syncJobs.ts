@@ -20,8 +20,21 @@ export const syncJobsTable = pgTable(
     })
       .notNull()
       .default("pending"),
+    jobType: text("job_type", {
+      enum: ["upzero_transactional", "upzero_analytics", "meta_ads"],
+    })
+      .notNull()
+      .default("upzero_transactional"),
+    trigger: text("trigger", {
+      enum: ["manual", "cron"],
+    })
+      .notNull()
+      .default("manual"),
+    scope: text("scope").notNull().default("client"),
     result: jsonb("result"),
     error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -31,6 +44,9 @@ export const syncJobsTable = pgTable(
   (table) => ({
     clientIdx: index("sync_jobs_client_idx").on(table.clientId),
     statusIdx: index("sync_jobs_status_idx").on(table.status),
+    typeIdx: index("sync_jobs_type_idx").on(table.jobType),
+    triggerIdx: index("sync_jobs_trigger_idx").on(table.trigger),
+    createdAtIdx: index("sync_jobs_created_at_idx").on(table.createdAt),
   }),
 );
 

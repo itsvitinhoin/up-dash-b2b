@@ -34,6 +34,7 @@ import JourneyPage from "@/pages/journey";
 import RfmPage from "@/pages/rfm";
 import UtmPage from "@/pages/utm";
 import AccessesPage from "@/pages/accesses";
+import ExtractionsPage from "@/pages/extractions";
 
 function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
   const { logout } = useAuth();
@@ -182,6 +183,14 @@ function Router() {
           <AuthGuard adminOnly>
             <AppLayout>
               <PageTransition routeKey="accesses"><AccessesPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/extractions">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="extractions"><ExtractionsPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

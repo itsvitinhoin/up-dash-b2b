@@ -936,7 +936,11 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
   const activeJobs = await db
     .select({ id: syncJobsTable.id, createdAt: syncJobsTable.createdAt })
     .from(syncJobsTable)
-    .where(and(eq(syncJobsTable.clientId, clientId), inArray(syncJobsTable.status, ["pending", "running"])));
+    .where(and(
+      eq(syncJobsTable.clientId, clientId),
+      eq(syncJobsTable.jobType, "upzero_transactional"),
+      inArray(syncJobsTable.status, ["pending", "running"]),
+    ));
 
   const freshJob = activeJobs.find((j) => j.createdAt > staleAfter);
   const staleJobs = activeJobs.filter((j) => j.createdAt <= staleAfter);
@@ -956,21 +960,27 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
 
   const [job] = await db
     .insert(syncJobsTable)
-    .values({ clientId, status: "pending" })
+    .values({
+      clientId,
+      jobType: "upzero_transactional",
+      trigger: "manual",
+      scope: "client",
+      status: "pending",
+    })
     .returning({ id: syncJobsTable.id });
 
   const jobId = job.id;
   const apiKey = client.upZeroApiKey;
 
   try {
-    await db.update(syncJobsTable).set({ status: "running" }).where(eq(syncJobsTable.id, jobId));
+    await db.update(syncJobsTable).set({ status: "running", startedAt: new Date() }).where(eq(syncJobsTable.id, jobId));
     const result = await syncUpZeroClient(clientId, apiKey);
-    await db.update(syncJobsTable).set({ status: "done", result }).where(eq(syncJobsTable.id, jobId));
+    await db.update(syncJobsTable).set({ status: "done", result, finishedAt: new Date() }).where(eq(syncJobsTable.id, jobId));
     res.status(200).json({ jobId, result });
   } catch (err) {
     const message = String(err);
     try {
-      await db.update(syncJobsTable).set({ status: "failed", error: message }).where(eq(syncJobsTable.id, jobId));
+      await db.update(syncJobsTable).set({ status: "failed", error: message, finishedAt: new Date() }).where(eq(syncJobsTable.id, jobId));
     } catch (dbErr) {
       console.error("[sync-runner] failed to mark job %s as failed:", jobId, dbErr);
     }

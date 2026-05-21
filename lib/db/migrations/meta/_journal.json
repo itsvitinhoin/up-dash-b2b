@@ -99,6 +99,13 @@
       "when": 1779299400000,
       "tag": "0014_client_user_accesses",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1779375600000,
+      "tag": "0015_sync_job_extractions",
+      "breakpoints": true
     }
   ]
 }
