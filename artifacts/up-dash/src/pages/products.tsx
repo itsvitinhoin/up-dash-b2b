@@ -32,7 +32,7 @@ import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { CountUp } from "@/components/count-up";
 import { cardEntry, staggerContainer, useReducedMotion, withReducedMotion } from "@/lib/motion";
-import { format, formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow, subDays } from "date-fns";
 
 const LEVEL_STYLES: Record<string, string> = {
   "High Conversion": "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -161,8 +161,11 @@ export default function ProductsPage() {
   const queryEnabled =
     user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
 
-  const summaryDateFrom = format(dateRange.from, "yyyy-MM-dd");
-  const summaryDateTo = format(dateRange.to, "yyyy-MM-dd");
+  const selectedDateFrom = format(dateRange.from, "yyyy-MM-dd");
+  const selectedDateTo = format(dateRange.to, "yyyy-MM-dd");
+  const fixedSummaryTo = useMemo(() => new Date(), []);
+  const summaryDateFrom = format(subDays(fixedSummaryTo, 30), "yyyy-MM-dd");
+  const summaryDateTo = format(fixedSummaryTo, "yyyy-MM-dd");
   const summaryParams = { clientId, dateFrom: summaryDateFrom, dateTo: summaryDateTo };
   const { data: summary, isLoading: summaryLoading } = useGetProductsSummary(
     summaryParams,
@@ -185,8 +188,8 @@ export default function ProductsPage() {
   const { data, isLoading, isError, refetch } = useGetProducts(
     {
       clientId,
-      dateFrom: summaryDateFrom,
-      dateTo: summaryDateTo,
+      dateFrom: selectedDateFrom,
+      dateTo: selectedDateTo,
       sort,
       limit,
       search: urlSearch || undefined,

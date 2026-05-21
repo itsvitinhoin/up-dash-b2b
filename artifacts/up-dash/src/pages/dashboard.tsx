@@ -45,6 +45,13 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatCurrency, formatCurrencySmart, formatPercentage, formatNumber } from "@/lib/formatters";
 import {
   AreaChart,
@@ -357,6 +364,44 @@ type CampaignCustomersResponse = {
   };
 };
 
+type CustomerTimelineEvent = {
+  id: string;
+  occurredAt: string;
+  eventName: string;
+  eventLabel: string;
+  productName: string | null;
+  productSku: string | null;
+  categoryName: string | null;
+  orderId: number | null;
+  utmCampaign: string | null;
+  normalizedSource: string;
+  normalizedMedium: string;
+  deviceType: string | null;
+  totalEvents: number;
+  totalQuantity: number;
+  totalValue: number;
+  attributionType: "first_touch" | "last_touch" | "return_touch" | "direct" | null;
+};
+
+type CustomerTimelineResponse = {
+  userId: number;
+  summary: {
+    totalEvents: number;
+    productViews: number;
+    categoryViews: number;
+    registerSubmitted: number;
+    logins: number;
+    addToCartEvents: number;
+    checkoutStarts: number;
+    purchases: number;
+    totalCartValue: number;
+    totalPurchaseValue: number;
+    firstSeenAt: string | null;
+    lastSeenAt: string | null;
+  };
+  timeline: CustomerTimelineEvent[];
+};
+
 function detectAnomalies(series: { date: string; value: number }[]): { date: string; value: number }[] {
   // ±2σ from the series mean — flag any point whose value is more than two
   // standard deviations away from the average for the visible date range.
@@ -380,14 +425,39 @@ function formatCampaignDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatTimelineDate(value: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function attributionLabel(value: CustomerTimelineEvent["attributionType"]) {
+  if (value === "first_touch") return "Primeira campanha";
+  if (value === "last_touch") return "Última campanha conhecida";
+  if (value === "return_touch") return "Campanha de retorno";
+  if (value === "direct") return "Direto";
+  return null;
+}
+
 function CampaignCustomersPanel({
   data,
   isLoading,
   isError,
+  clientId,
+  dateFrom,
+  dateTo,
 }: {
   data?: CampaignCustomersResponse;
   isLoading: boolean;
   isError: boolean;
+  clientId?: string;
+  dateFrom: string;
+  dateTo: string;
 }) {
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -399,6 +469,28 @@ function CampaignCustomersPanel({
   const [customerTypeFilter, setCustomerTypeFilter] = useState("all");
   const [sortKey, setSortKey] = useState<CampaignCustomerSortKey>("lastEventAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [timelineRow, setTimelineRow] = useState<CampaignCustomerRow | null>(null);
+
+  const {
+    data: timelineData,
+    isLoading: timelineLoading,
+    isError: timelineError,
+  } = useQuery<CustomerTimelineResponse>({
+    queryKey: ["campaign-customer-timeline", clientId, timelineRow?.userId, dateFrom, dateTo],
+    queryFn: () => {
+      if (!timelineRow) throw new Error("Cliente não selecionado.");
+      const params = new URLSearchParams({
+        userId: String(timelineRow.userId),
+        dateFrom,
+        dateTo,
+      });
+      if (clientId) params.set("clientId", clientId);
+      return customFetch<CustomerTimelineResponse>(
+        `/api/analytics/customer-timeline-by-user?${params.toString()}`,
+      );
+    },
+    enabled: !!timelineRow,
+  });
 
   const visibleRows = useMemo(() => {
     const rows = [...(data?.rows ?? [])].filter((row) => {
@@ -678,6 +770,7 @@ function CampaignCustomersPanel({
                 <th className="py-2 px-3"><SortHeader sort="checkoutCount" align="right">Checkouts</SortHeader></th>
                 <th className="py-2 px-3"><SortHeader sort="productViewCount" align="right">Produtos vistos</SortHeader></th>
                 <th className="py-2 pl-3"><SortHeader sort="lastEventAt" align="right">Última atividade</SortHeader></th>
+                <th className="py-2 pl-3 font-medium text-right">Histórico</th>
               </tr>
             </thead>
             <tbody>
@@ -781,12 +874,109 @@ function CampaignCustomersPanel({
                     <div className="tabular-nums">{formatCampaignDate(row.lastEventAt)}</div>
                     <div className="text-xs text-muted-foreground">{row.lastEventName ?? "—"}</div>
                   </td>
+                  <td className="py-3 pl-3 text-right min-w-[120px]">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      onClick={() => setTimelineRow(row)}
+                      data-testid={`campaign-customer-timeline-${row.userId}`}
+                    >
+                      Ver timeline
+                    </Button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      <Dialog open={!!timelineRow} onOpenChange={(open) => !open && setTimelineRow(null)}>
+        <DialogContent className="max-h-[84vh] max-w-4xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Timeline de {timelineRow?.name || timelineRow?.email || `UP Zero ${timelineRow?.userId ?? ""}`}
+            </DialogTitle>
+            <DialogDescription>
+              Eventos identificados pelo user.id da UP Zero no período selecionado.
+            </DialogDescription>
+          </DialogHeader>
+
+          {timelineLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-20 w-full" />
+              ))}
+            </div>
+          ) : timelineError ? (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>Não foi possível carregar a timeline deste cliente.</AlertDescription>
+            </Alert>
+          ) : timelineData && timelineData.timeline.length > 0 ? (
+            <div className="space-y-4">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-lg border border-border bg-muted/20 p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Eventos</p>
+                  <p className="text-lg font-semibold tabular-nums">{formatNumber(timelineData.summary.totalEvents)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/20 p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Produtos vistos</p>
+                  <p className="text-lg font-semibold tabular-nums">{formatNumber(timelineData.summary.productViews)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/20 p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Carrinhos</p>
+                  <p className="text-lg font-semibold tabular-nums">{formatNumber(timelineData.summary.addToCartEvents)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/20 p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor comprado</p>
+                  <p className="text-lg font-semibold tabular-nums">{formatCurrency(timelineData.summary.totalPurchaseValue)}</p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {timelineData.timeline.map((event) => {
+                  const attribution = attributionLabel(event.attributionType);
+                  return (
+                    <div key={event.id} className="rounded-lg border border-border bg-card p-3">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold">{event.eventLabel}</p>
+                          <p className="text-xs text-muted-foreground">{formatTimelineDate(event.occurredAt)}</p>
+                        </div>
+                        <div className="text-left text-xs text-muted-foreground sm:text-right">
+                          <div>{event.normalizedSource} / {event.normalizedMedium}</div>
+                          {event.deviceType && <div>Dispositivo: {event.deviceType}</div>}
+                        </div>
+                      </div>
+                      <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                        {event.productName && <div>Produto: <span className="text-foreground">{event.productName}</span></div>}
+                        {event.productSku && <div>SKU: <span className="text-foreground">{event.productSku}</span></div>}
+                        {event.categoryName && <div>Categoria: <span className="text-foreground">{event.categoryName}</span></div>}
+                        {event.orderId && <div>Pedido: <span className="text-foreground">#{event.orderId}</span></div>}
+                        {event.utmCampaign && <div className="sm:col-span-2">Campanha: <span className="text-foreground">{event.utmCampaign}</span></div>}
+                        <div>Eventos: <span className="text-foreground">{formatNumber(event.totalEvents)}</span></div>
+                        {event.totalQuantity > 0 && <div>Quantidade: <span className="text-foreground">{formatNumber(event.totalQuantity)}</span></div>}
+                        {event.totalValue > 0 && <div>Valor: <span className="text-foreground">{formatCurrency(event.totalValue)}</span></div>}
+                        {attribution && <div>Atribuição: <span className="text-foreground">{attribution}</span></div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-border bg-muted/20 p-6 text-center">
+              <p className="text-sm font-medium">Sem eventos identificados neste período</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Amplie o período para buscar mais eventos com user.id {timelineRow?.userId}.
+              </p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -1297,6 +1487,9 @@ export default function DashboardPage() {
           data={campaignCustomers}
           isLoading={campaignCustomersLoading}
           isError={campaignCustomersError}
+          clientId={clientId}
+          dateFrom={format(dateRange.from, "yyyy-MM-dd")}
+          dateTo={format(dateRange.to, "yyyy-MM-dd")}
         />
       </motion.div>
 

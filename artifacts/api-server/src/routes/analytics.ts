@@ -2334,6 +2334,61 @@ const CustomerTimelineQueryParams = z.object({
   lookbackDays: z.coerce.number().int().min(1).max(365).default(30),
 });
 
+const CampaignCustomerTimelineQueryParams = GetDashboardQueryParams.pick({
+  clientId: true,
+  dateFrom: true,
+  dateTo: true,
+}).extend({
+  userId: z.coerce.number().int().positive(),
+  lookbackDays: z.coerce.number().int().min(1).max(365).default(30),
+});
+
+router.get("/analytics/customer-timeline-by-user", async (req, res): Promise<void> => {
+  const queryParsed = CampaignCustomerTimelineQueryParams.safeParse(
+    coerceDateQuery(req.query as Record<string, unknown>),
+  );
+  if (!queryParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: queryParsed.error.message, status: 400 });
+    return;
+  }
+
+  const clientId = resolveClientId(req) ?? queryParsed.data.clientId;
+  if (!clientId) {
+    res.status(400).json({ error: true, code: "CLIENT_REQUIRED", message: "clientId is required for admin users", status: 400 });
+    return;
+  }
+
+  const { from, to } = dateRange(queryParsed.data.dateFrom, queryParsed.data.dateTo);
+  const upzeroRange = upzeroIsoRange(req.query as Record<string, unknown>, from, to);
+  const [client] = await db
+    .select({ upZeroApiKey: clientsTable.upZeroApiKey })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  try {
+    const metrics = await getUpzeroAnalyticsMetrics({
+      ...upzeroRange,
+      apiKey: client?.upZeroApiKey,
+    });
+
+    res.json(
+      buildCustomerTimelineResponse(
+        queryParsed.data.userId,
+        metrics.data,
+        queryParsed.data.lookbackDays,
+      ),
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(502).json({
+      error: true,
+      code: "UPZERO_ANALYTICS_FAILED",
+      message,
+      status: 502,
+    });
+  }
+});
+
 router.get("/analytics/customers/:customerId/timeline", async (req, res): Promise<void> => {
   const pathParsed = GetCustomerDetailParams.safeParse(req.params);
   if (!pathParsed.success) {

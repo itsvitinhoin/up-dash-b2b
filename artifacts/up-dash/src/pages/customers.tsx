@@ -171,12 +171,18 @@ export default function CustomersPage() {
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
   const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
+  const selectedDateFrom = format(dateRange.from, "yyyy-MM-dd");
+  const selectedDateTo = format(dateRange.to, "yyyy-MM-dd");
+
+  useEffect(() => {
+    setPage(1);
+  }, [selectedDateFrom, selectedDateTo]);
 
   const { data, isLoading, isError, refetch } = useGetCustomers(
     {
       clientId,
-      dateFrom: dateRange ? format(dateRange.from, "yyyy-MM-dd") : undefined,
-      dateTo: dateRange ? format(dateRange.to, "yyyy-MM-dd") : undefined,
+      dateFrom: selectedDateFrom,
+      dateTo: selectedDateTo,
       search: debouncedSearch || undefined,
       rfmSegment: rfmSegment && rfmSegment !== "all" ? rfmSegment : undefined,
       state: filters.state || (state && state !== "all" ? state : undefined),
@@ -202,8 +208,8 @@ export default function CustomersPage() {
 
   const summaryParams = {
     clientId,
-    dateFrom: format(dateRange.from, "yyyy-MM-dd"),
-    dateTo: format(dateRange.to, "yyyy-MM-dd"),
+    dateFrom: selectedDateFrom,
+    dateTo: selectedDateTo,
     compare: true,
   };
   const { data: summary, isLoading: summaryLoading } = useGetCustomerSummary(
@@ -213,8 +219,8 @@ export default function CustomersPage() {
 
   const insightParams = {
     clientId,
-    dateFrom: dateRange ? format(dateRange.from, "yyyy-MM-dd") : undefined,
-    dateTo: dateRange ? format(dateRange.to, "yyyy-MM-dd") : undefined,
+    dateFrom: selectedDateFrom,
+    dateTo: selectedDateTo,
     screen: "customers" as const,
   };
   const { data: insight, isLoading: insightLoading } = useGetInsight(
