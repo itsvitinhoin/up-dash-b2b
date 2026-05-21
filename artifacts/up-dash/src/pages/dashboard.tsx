@@ -322,7 +322,6 @@ type CampaignCustomerRow = {
     eventsCount: number;
   }[];
   hasPurchase: boolean;
-  isRepurchase: boolean;
   isRemarketing: boolean;
   purchaseCount: number;
   orderIds: number[];
@@ -339,9 +338,6 @@ type CampaignCustomerSortKey =
   | "totalPurchaseValue"
   | "purchaseCount"
   | "productViewCount"
-  | "addToCartCount"
-  | "checkoutCount"
-  | "registerSubmittedCount"
   | "lastEventAt"
   | "firstSeenAt"
   | "name";
@@ -464,7 +460,6 @@ function CampaignCustomersPanel({
   const [campaignFilter, setCampaignFilter] = useState("all");
   const [documentFilter, setDocumentFilter] = useState("all");
   const [purchaseFilter, setPurchaseFilter] = useState("all");
-  const [repurchaseFilter, setRepurchaseFilter] = useState("all");
   const [remarketingFilter, setRemarketingFilter] = useState("all");
   const [customerTypeFilter, setCustomerTypeFilter] = useState("all");
   const [sortKey, setSortKey] = useState<CampaignCustomerSortKey>("lastEventAt");
@@ -502,8 +497,6 @@ function CampaignCustomersPanel({
       if (customerTypeFilter !== "all" && row.type !== customerTypeFilter) return false;
       if (purchaseFilter === "buyers" && !row.hasPurchase) return false;
       if (purchaseFilter === "non_buyers" && row.hasPurchase) return false;
-      if (repurchaseFilter === "yes" && !row.isRepurchase) return false;
-      if (repurchaseFilter === "no" && row.isRepurchase) return false;
       if (remarketingFilter === "yes" && !row.isRemarketing) return false;
       if (remarketingFilter === "no" && row.isRemarketing) return false;
       if (search.trim()) {
@@ -545,7 +538,6 @@ function CampaignCustomersPanel({
     documentFilter,
     purchaseFilter,
     remarketingFilter,
-    repurchaseFilter,
     search,
     sortDir,
     sortKey,
@@ -682,16 +674,6 @@ function CampaignCustomersPanel({
             <option value="non_buyers">Não comprou</option>
           </select>
           <select
-            value={repurchaseFilter}
-            onChange={(event) => setRepurchaseFilter(event.target.value)}
-            className="h-9 rounded-md border border-border bg-background px-3 text-xs"
-            aria-label="Filtrar por recompra"
-          >
-            <option value="all">Recompra: todos</option>
-            <option value="yes">É recompra</option>
-            <option value="no">Primeira compra/cadastro</option>
-          </select>
-          <select
             value={remarketingFilter}
             onChange={(event) => setRemarketingFilter(event.target.value)}
             className="h-9 rounded-md border border-border bg-background px-3 text-xs"
@@ -715,9 +697,6 @@ function CampaignCustomersPanel({
             <option value="totalPurchaseValue:desc">Maior valor</option>
             <option value="purchaseCount:desc">Mais pedidos</option>
             <option value="productViewCount:desc">Mais produtos vistos</option>
-            <option value="addToCartCount:desc">Mais carrinhos</option>
-            <option value="checkoutCount:desc">Mais checkouts</option>
-            <option value="registerSubmittedCount:desc">Mais cadastros</option>
             <option value="firstSeenAt:desc">Primeira atividade recente</option>
             <option value="name:asc">Nome A-Z</option>
           </select>
@@ -749,7 +728,7 @@ function CampaignCustomersPanel({
         <div className="flex flex-col items-center justify-center py-8 text-center">
           <p className="text-sm font-medium">Nenhum cliente com esses filtros</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Ajuste CPF/CNPJ, compra, recompra ou status para voltar a visualizar os cadastros atribuídos.
+            Ajuste CPF/CNPJ, compra, remarketing ou status para voltar a visualizar os cadastros atribuídos.
           </p>
         </div>
       ) : (
@@ -765,9 +744,6 @@ function CampaignCustomersPanel({
                 <th className="py-2 px-3 font-medium">Status</th>
                 <th className="py-2 px-3"><SortHeader sort="purchaseCount" align="right">Pedidos</SortHeader></th>
                 <th className="py-2 px-3"><SortHeader sort="totalPurchaseValue" align="right">Valor</SortHeader></th>
-                <th className="py-2 px-3"><SortHeader sort="registerSubmittedCount" align="right">Cadastros</SortHeader></th>
-                <th className="py-2 px-3"><SortHeader sort="addToCartCount" align="right">Carrinhos</SortHeader></th>
-                <th className="py-2 px-3"><SortHeader sort="checkoutCount" align="right">Checkouts</SortHeader></th>
                 <th className="py-2 px-3"><SortHeader sort="productViewCount" align="right">Produtos vistos</SortHeader></th>
                 <th className="py-2 pl-3"><SortHeader sort="lastEventAt" align="right">Última atividade</SortHeader></th>
                 <th className="py-2 pl-3 font-medium text-right">Histórico</th>
@@ -853,11 +829,6 @@ function CampaignCustomersPanel({
                         Compra: {row.hasPurchase ? "Sim" : "Não"}
                       </span>
                       <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ${
-                        row.isRepurchase ? "bg-blue-500/10 text-blue-400" : "bg-muted/50 text-muted-foreground"
-                      }`}>
-                        Recompra: {row.isRepurchase ? "Sim" : "Não"}
-                      </span>
-                      <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ${
                         row.isRemarketing ? "bg-fuchsia-500/10 text-fuchsia-400" : "bg-muted/50 text-muted-foreground"
                       }`}>
                         RMKT: {row.isRemarketing ? "Sim" : "Não"}
@@ -866,9 +837,6 @@ function CampaignCustomersPanel({
                   </td>
                   <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.purchaseCount)}</td>
                   <td className="py-3 px-3 text-right font-semibold tabular-nums">{formatCurrency(row.totalPurchaseValue)}</td>
-                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.registerSubmittedCount)}</td>
-                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.addToCartCount)}</td>
-                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.checkoutCount)}</td>
                   <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.productViewCount)}</td>
                   <td className="py-3 pl-3 text-right min-w-[150px]">
                     <div className="tabular-nums">{formatCampaignDate(row.lastEventAt)}</div>

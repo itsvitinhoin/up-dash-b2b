@@ -1303,21 +1303,18 @@ function buildAttributedCampaignCustomers(
     const firstCampaign = firstTouchRow.utm_campaign ?? "";
     const returnTouchRow =
       campaignRows.find((row) => row !== firstTouchRow && (row.utm_campaign ?? "") && row.utm_campaign !== firstCampaign) ?? null;
-    const isRemarketing = campaignRows.some((row) => {
-      const campaign = normalizeCampaignText(row.utm_campaign);
-      return (
-        campaign.includes("rmkt") ||
-        campaign.includes("remarketing") ||
-        campaign.includes("retarget") ||
-        campaign.includes("retargeting")
-      );
-    });
     const firstSeenAt = sortedRows[0]?.period_start ?? null;
     const lastEvent = sortedRows[sortedRows.length - 1];
     const localCustomer = localCustomers.get(userId);
     const documentType = localCustomer?.documentType ?? (user?.cnpj ? "CNPJ" : user?.cpf ? "CPF" : null);
     const priorOrderCount = localCustomer ? Number(priorOrders.get(localCustomer.id) ?? 0) : 0;
     const totalHistoricalOrders = Number(localCustomer?.totalOrders ?? 0);
+    const knownHistoricalOrders = Math.max(
+      totalHistoricalOrders,
+      priorOrderCount + purchaseCount,
+      localCustomer ? 0 : purchaseCount,
+    );
+    const isRemarketing = knownHistoricalOrders > 1 || (priorOrderCount > 0 && purchaseCount > 0);
 
     customers.push({
       customerId: localCustomer?.id ?? null,
