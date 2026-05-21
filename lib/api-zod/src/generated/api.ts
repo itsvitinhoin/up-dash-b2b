@@ -793,6 +793,8 @@ export const getCustomersQueryLimitDefault = 20;
 
 export const GetCustomersQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
   rfmSegment: zod.coerce.string().optional(),
   state: zod.coerce.string().optional(),
   utmSource: zod.coerce
@@ -1027,6 +1029,8 @@ export const getProductsQueryLimitDefault = 50;
 
 export const GetProductsQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
   sort: zod
     .enum(["revenue", "units", "created"])
     .default(getProductsQuerySortDefault),

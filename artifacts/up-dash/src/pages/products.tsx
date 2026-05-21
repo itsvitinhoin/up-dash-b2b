@@ -32,7 +32,7 @@ import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { CountUp } from "@/components/count-up";
 import { cardEntry, staggerContainer, useReducedMotion, withReducedMotion } from "@/lib/motion";
-import { format, formatDistanceToNow, subDays } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 
 const LEVEL_STYLES: Record<string, string> = {
   "High Conversion": "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -75,7 +75,7 @@ const LOW_STOCK_THRESHOLD = 10;
 
 export default function ProductsPage() {
   const { selectedClientId, user } = useAuth();
-  const { filters } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
   const [, setLocation] = useLocation();
   const reduced = useReducedMotion();
   const containerVariants = withReducedMotion(staggerContainer, reduced);
@@ -161,10 +161,8 @@ export default function ProductsPage() {
   const queryEnabled =
     user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
 
-  // Sales Power KPI — last 30 days vs prior 30 days
-  const now = new Date();
-  const summaryDateTo = format(now, "yyyy-MM-dd");
-  const summaryDateFrom = format(subDays(now, 30), "yyyy-MM-dd");
+  const summaryDateFrom = format(dateRange.from, "yyyy-MM-dd");
+  const summaryDateTo = format(dateRange.to, "yyyy-MM-dd");
   const summaryParams = { clientId, dateFrom: summaryDateFrom, dateTo: summaryDateTo };
   const { data: summary, isLoading: summaryLoading } = useGetProductsSummary(
     summaryParams,
@@ -187,6 +185,8 @@ export default function ProductsPage() {
   const { data, isLoading, isError, refetch } = useGetProducts(
     {
       clientId,
+      dateFrom: summaryDateFrom,
+      dateTo: summaryDateTo,
       sort,
       limit,
       search: urlSearch || undefined,
@@ -248,7 +248,7 @@ export default function ProductsPage() {
   const handleExport = () => {
     if (!data) return;
     exportRowsAsCsv(
-      `products-${new Date().toISOString().slice(0, 10)}.csv`,
+      `products-${format(dateRange.from, "yyyyMMdd")}-${format(dateRange.to, "yyyyMMdd")}.csv`,
       data,
       [
         { header: "id", accessor: (r) => r.id },
@@ -259,7 +259,7 @@ export default function ProductsPage() {
         { header: "level", accessor: (r) => r.level },
         { header: "price", accessor: (r) => r.price },
         { header: "stock", accessor: (r) => r.stock },
-        { header: "totalSold", accessor: (r) => r.totalSold },
+        { header: "totalSoldInPeriod", accessor: (r) => r.totalSold },
         { header: "percentSold", accessor: (r) => Math.round((r.percentSold ?? 0) * 100) + "%" },
         { header: "totalRevenue", accessor: (r) => r.totalRevenue },
         { header: "createdAt", accessor: (r) => r.createdAt ? format(new Date(r.createdAt as unknown as string), "yyyy-MM-dd") : "" },
@@ -296,6 +296,9 @@ export default function ProductsPage() {
               />
             </span>{" "}
             Shown
+            <span className="ml-2 text-muted-foreground/70">
+              · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            </span>
             <span className="ml-2 text-muted-foreground/70">
               · {formatNumber(inStockCount)} In Stock
             </span>
@@ -566,7 +569,7 @@ export default function ProductsPage() {
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Status</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Price</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Stock</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Sold</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Sold in Period</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">% Sold</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Revenue</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Added</TableHead>

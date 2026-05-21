@@ -2051,6 +2051,8 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const {
+    dateFrom,
+    dateTo,
     rfmSegment,
     state,
     utmSource: custUtmSource,
@@ -2066,6 +2068,8 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
   } = parsed.data;
 
   const conditions: SQL[] = [eq(customersTable.clientId, clientId)];
+  if (dateFrom) conditions.push(gte(customersTable.createdAt, dateFrom));
+  if (dateTo) conditions.push(lte(customersTable.createdAt, dateTo));
   if (rfmSegment) conditions.push(eq(customersTable.rfmSegment, rfmSegment));
   if (state) conditions.push(eq(customersTable.state, state));
   if (custUtmSource) conditions.push(eq(customersTable.utmSource, custUtmSource));
@@ -2113,7 +2117,7 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
       count: sql<number>`count(*)::int`,
     })
     .from(customersTable)
-    .where(eq(customersTable.clientId, clientId))
+    .where(where)
     .groupBy(customersTable.rfmSegment);
 
   res.json(
@@ -2570,7 +2574,8 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
-  const { sort = "revenue", limit = 50, search, sku, category, state, size, color } = parsed.data;
+  const { sort = "revenue", limit = 50, search, sku, category, state, size, color, dateFrom, dateTo } = parsed.data;
+  const hasPeriodFilter = Boolean(dateFrom || dateTo);
 
   const orderBy =
     sort === "units"
@@ -2596,36 +2601,79 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   }
   if (state && state.trim().length > 0) {
     // Restrict to products that have been shipped to this state.
+    const stateConds: SQL[] = [eq(ordersTable.clientId, clientId), eq(ordersTable.state, state.trim())];
+    if (dateFrom) stateConds.push(gte(ordersTable.createdAt, dateFrom));
+    if (dateTo) stateConds.push(lte(ordersTable.createdAt, dateTo));
     const stateProductIds = await db
       .selectDistinct({ productId: orderItemsTable.productId })
       .from(orderItemsTable)
       .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
-      .where(and(eq(ordersTable.clientId, clientId), eq(ordersTable.state, state.trim())));
+      .where(and(...stateConds));
     const ids = stateProductIds.map((r) => r.productId).filter(Boolean) as string[];
     conditions.push(ids.length > 0 ? inArray(productsTable.id, ids) : sql`FALSE`);
   }
   if (size && size.trim().length > 0) {
     // Restrict to products ordered in this size variant.
+    const sizeConds: SQL[] = [eq(ordersTable.clientId, clientId), ilike(orderItemsTable.size, size.trim())];
+    if (dateFrom) sizeConds.push(gte(ordersTable.createdAt, dateFrom));
+    if (dateTo) sizeConds.push(lte(ordersTable.createdAt, dateTo));
     const sizeProdIds = await db
       .selectDistinct({ productId: orderItemsTable.productId })
       .from(orderItemsTable)
       .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
-      .where(and(eq(ordersTable.clientId, clientId), ilike(orderItemsTable.size, size.trim())));
+      .where(and(...sizeConds));
     const ids = sizeProdIds.map((r) => r.productId).filter(Boolean) as string[];
     conditions.push(ids.length > 0 ? inArray(productsTable.id, ids) : sql`FALSE`);
   }
   if (color && color.trim().length > 0) {
     // Restrict to products ordered in this color variant.
+    const colorConds: SQL[] = [eq(ordersTable.clientId, clientId), ilike(orderItemsTable.color, color.trim())];
+    if (dateFrom) colorConds.push(gte(ordersTable.createdAt, dateFrom));
+    if (dateTo) colorConds.push(lte(ordersTable.createdAt, dateTo));
     const colorProdIds = await db
       .selectDistinct({ productId: orderItemsTable.productId })
       .from(orderItemsTable)
       .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
-      .where(and(eq(ordersTable.clientId, clientId), ilike(orderItemsTable.color, color.trim())));
+      .where(and(...colorConds));
     const ids = colorProdIds.map((r) => r.productId).filter(Boolean) as string[];
     conditions.push(ids.length > 0 ? inArray(productsTable.id, ids) : sql`FALSE`);
   }
 
-  const rows = await db
+  const periodSalesRows = hasPeriodFilter
+    ? await db
+        .select({
+          productId: orderItemsTable.productId,
+          totalSold: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+          totalRevenue: sql<number>`COALESCE(SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale}), 0)::float`,
+        })
+        .from(orderItemsTable)
+        .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+        .where(
+          and(
+            eq(ordersTable.clientId, clientId),
+            dateFrom ? gte(ordersTable.createdAt, dateFrom) : undefined,
+            dateTo ? lte(ordersTable.createdAt, dateTo) : undefined,
+          ),
+        )
+        .groupBy(orderItemsTable.productId)
+    : [];
+  const periodSalesMap = new Map(
+    periodSalesRows
+      .filter((row) => row.productId)
+      .map((row) => [
+        row.productId as string,
+        {
+          totalSold: Number(row.totalSold ?? 0),
+          totalRevenue: Number(row.totalRevenue ?? 0),
+        },
+      ]),
+  );
+  if (hasPeriodFilter) {
+    const ids = Array.from(periodSalesMap.keys());
+    conditions.push(ids.length > 0 ? inArray(productsTable.id, ids) : sql`FALSE`);
+  }
+
+  const rawRows = await db
     .select({
       id: productsTable.id,
       sku: productsTable.sku,
@@ -2643,8 +2691,7 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
     })
     .from(productsTable)
     .where(and(...conditions))
-    .orderBy(orderBy)
-    .limit(limit);
+    .orderBy(orderBy);
 
   // Catalog avg sell-through — computed from ALL products in client catalog
   // (must NOT use filtered `rows` to avoid skew from search/category/limit)
@@ -2660,6 +2707,17 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
           return sum + (t > 0 ? r.totalSold / t : 0);
         }, 0) / catalogSellThroughRows.length
       : 0;
+
+  const sortedRows = hasPeriodFilter
+    ? [...rawRows].sort((a, b) => {
+        if (sort === "created") return b.createdAt.getTime() - a.createdAt.getTime();
+        const aSales = periodSalesMap.get(a.id) ?? { totalSold: 0, totalRevenue: 0 };
+        const bSales = periodSalesMap.get(b.id) ?? { totalSold: 0, totalRevenue: 0 };
+        if (sort === "units") return bSales.totalSold - aSales.totalSold;
+        return bSales.totalRevenue - aSales.totalRevenue;
+      })
+    : rawRows;
+  const rows = sortedRows.slice(0, limit);
 
   // 30-day recent velocity per product (batch query for visible page rows only)
   const productIds = rows.map((r) => r.id);
@@ -2683,18 +2741,25 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
       : [];
   const recentSoldMap = new Map(recentSalesRows.map((r) => [r.productId, r.recentSold]));
 
-  const enriched = rows.map((r) => ({
-    ...r,
-    percentSold: (r.totalSold + r.stock) > 0 ? r.totalSold / (r.totalSold + r.stock) : 0,
-    level: computeProductLevel(
-      r.totalSold,
-      r.stock,
-      r.restockThreshold,
-      recentSoldMap.get(r.id) ?? 0,
-      catalogAvgSellThrough,
-    ),
-    createdAt: r.createdAt.toISOString(),
-  }));
+  const enriched = rows.map((r) => {
+    const periodSales = periodSalesMap.get(r.id);
+    const totalSold = hasPeriodFilter ? periodSales?.totalSold ?? 0 : r.totalSold;
+    const totalRevenue = hasPeriodFilter ? periodSales?.totalRevenue ?? 0 : r.totalRevenue;
+    return {
+      ...r,
+      totalSold,
+      totalRevenue,
+      percentSold: (totalSold + r.stock) > 0 ? totalSold / (totalSold + r.stock) : 0,
+      level: computeProductLevel(
+        totalSold,
+        r.stock,
+        r.restockThreshold,
+        hasPeriodFilter ? totalSold : recentSoldMap.get(r.id) ?? 0,
+        catalogAvgSellThrough,
+      ),
+      createdAt: r.createdAt.toISOString(),
+    };
+  });
 
   res.json(GetProductsResponse.parse(enriched));
 });

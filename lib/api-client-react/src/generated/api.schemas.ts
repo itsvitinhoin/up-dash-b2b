@@ -1540,6 +1540,8 @@ export type GetSiteVisitsParams = {
 
 export type GetCustomersParams = {
   clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
   rfmSegment?: string;
   state?: string;
   /**
@@ -1584,6 +1586,8 @@ export type GetCustomerDetailParams = {
 
 export type GetProductsParams = {
   clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
   sort?: GetProductsSort;
   limit?: number;
   /**

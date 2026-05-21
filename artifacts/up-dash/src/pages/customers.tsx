@@ -175,6 +175,8 @@ export default function CustomersPage() {
   const { data, isLoading, isError, refetch } = useGetCustomers(
     {
       clientId,
+      dateFrom: dateRange ? format(dateRange.from, "yyyy-MM-dd") : undefined,
+      dateTo: dateRange ? format(dateRange.to, "yyyy-MM-dd") : undefined,
       search: debouncedSearch || undefined,
       rfmSegment: rfmSegment && rfmSegment !== "all" ? rfmSegment : undefined,
       state: filters.state || (state && state !== "all" ? state : undefined),
@@ -200,6 +202,9 @@ export default function CustomersPage() {
 
   const summaryParams = {
     clientId,
+    dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+    dateTo: format(dateRange.to, "yyyy-MM-dd"),
+    compare: true,
   };
   const { data: summary, isLoading: summaryLoading } = useGetCustomerSummary(
     summaryParams,
@@ -360,6 +365,9 @@ export default function CustomersPage() {
               <CountUp value={totalCount} format={(v) => formatNumber(Math.round(v))} />
             </span>{" "}
             Customers
+            <span className="ml-2 text-muted-foreground/70">
+              · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            </span>
             {segmentCount > 0 && (
               <span className="ml-2 text-muted-foreground/70">· {segmentCount} Segments</span>
             )}

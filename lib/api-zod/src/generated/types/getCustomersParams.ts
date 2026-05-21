@@ -8,6 +8,8 @@
 
 export type GetCustomersParams = {
   clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
   rfmSegment?: string;
   state?: string;
   /**
