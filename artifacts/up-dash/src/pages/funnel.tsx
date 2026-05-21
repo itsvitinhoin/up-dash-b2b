@@ -17,13 +17,13 @@ import {
   Legend,
 } from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
+import { FunnelChart, PatternLines, type FunnelStage } from "@/components/ui/funnel-chart";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertCircle,
   RefreshCw,
   Lightbulb,
-  ArrowDownRight,
   Download,
   TrendingUp,
   Users,
@@ -138,6 +138,22 @@ export default function FunnelPage() {
       }
     }
     return { from: visibleSteps[maxIdx - 1], to: visibleSteps[maxIdx], dropPct: maxDrop };
+  }, [visibleSteps]);
+
+  const funnelChartData = useMemo<FunnelStage[]>(() => {
+    return visibleSteps.map((step, index) => {
+      const baseColor = STAGE_PALETTE[index % STAGE_PALETTE.length];
+      const nextColor = STAGE_PALETTE[(index + 1) % STAGE_PALETTE.length];
+      return {
+        label: step.label,
+        value: Math.max(0, step.count),
+        displayValue: formatNumber(step.count),
+        gradient: [
+          { offset: "0%", color: baseColor },
+          { offset: "100%", color: nextColor },
+        ],
+      };
+    });
   }, [visibleSteps]);
 
   return (
@@ -426,7 +442,88 @@ export default function FunnelPage() {
                       {visibleSteps.length} stages
                     </span>
                   </div>
-                  <FunnelDiagram steps={visibleSteps} reduced={reduced} />
+                  {funnelChartData.length > 0 && funnelChartData[0].value > 0 ? (
+                    <div className="space-y-5">
+                      <div className="hidden md:block" data-testid="funnel-chart-horizontal">
+                        <FunnelChart
+                          data={funnelChartData}
+                          edges="curved"
+                          gap={6}
+                          grid={{
+                            bands: true,
+                            bandColor: "hsl(var(--muted) / 0.25)",
+                            lines: true,
+                            lineColor: "hsl(var(--border))",
+                            lineOpacity: 0.55,
+                          }}
+                          labelAlign="center"
+                          labelLayout="spread"
+                          layers={4}
+                          formatPercentage={formatPercentage}
+                          formatValue={formatNumber}
+                          renderPattern={(id, color) => (
+                            <PatternLines
+                              id={id}
+                              stroke={color}
+                              strokeWidth={1.2}
+                              width={8}
+                              height={8}
+                              orientation={["diagonal"]}
+                            />
+                          )}
+                        />
+                      </div>
+                      <div className="md:hidden" data-testid="funnel-chart-vertical">
+                        <FunnelChart
+                          data={funnelChartData}
+                          orientation="vertical"
+                          edges="curved"
+                          gap={6}
+                          grid={{
+                            bands: true,
+                            bandColor: "hsl(var(--muted) / 0.25)",
+                            lines: true,
+                            lineColor: "hsl(var(--border))",
+                            lineOpacity: 0.55,
+                          }}
+                          labelLayout="spread"
+                          layers={4}
+                          formatPercentage={formatPercentage}
+                          formatValue={formatNumber}
+                        />
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {visibleSteps.map((step, index) => (
+                          <div key={step.step} className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className="h-2 w-2 rounded-full"
+                                    style={{ backgroundColor: STAGE_PALETTE[index % STAGE_PALETTE.length] }}
+                                  />
+                                  <p className="truncate text-sm font-medium">{step.label}</p>
+                                </div>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {formatPercentage(step.conversionRate)} conversão · {formatPercentage(step.dropOffRate)} queda
+                                </p>
+                              </div>
+                              <p className="text-sm font-semibold tabular-nums">{formatNumber(step.count)}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex min-h-[260px] items-center justify-center rounded-lg border border-dashed border-border/70 bg-muted/20 text-center">
+                      <div>
+                        <p className="text-sm font-medium">Sem volume para renderizar o funil</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Ajuste o período ou os filtros para visualizar as etapas.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>
@@ -690,185 +787,6 @@ function MiniStat({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Funnel diagram (SVG trapezoids, animated)
-// ─────────────────────────────────────────────────────────────────────────
-
-function FunnelDiagram({ steps, reduced }: { steps: FunnelStep[]; reduced: boolean }) {
-  const VIEW_W = 800;
-  const ROW_H = 78;
-  const GAP = 14;
-  const PAD_X = 12;
-
-  const top = steps[0]?.count ?? 1;
-
-  // For each step, compute relative width (clamped min 8%)
-  const widths = steps.map((s) => {
-    const w = top > 0 ? Math.max(0.08, s.count / top) : 0.08;
-    return w * (VIEW_W - PAD_X * 2);
-  });
-
-  const totalH = steps.length * ROW_H + (steps.length - 1) * GAP;
-
-  return (
-    <div className="relative w-full">
-      <svg
-        viewBox={`0 0 ${VIEW_W} ${totalH}`}
-        className="w-full h-auto"
-        preserveAspectRatio="xMidYMid meet"
-        role="img"
-        aria-label="Conversion funnel diagram"
-      >
-        <defs>
-          {steps.map((_, i) => {
-            const c1 = STAGE_PALETTE[i % STAGE_PALETTE.length];
-            const c2 = STAGE_PALETTE[(i + 1) % STAGE_PALETTE.length];
-            return (
-              <linearGradient key={i} id={`fseg-${i}`} x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stopColor={c1} stopOpacity={0.85} />
-                <stop offset="100%" stopColor={c2} stopOpacity={0.85} />
-              </linearGradient>
-            );
-          })}
-        </defs>
-
-        {steps.map((step, i) => {
-          const next = steps[i + 1];
-          const wTop = widths[i];
-          const wBot = next ? widths[i + 1] : wTop;
-          const yTop = i * (ROW_H + GAP);
-          const yBot = yTop + ROW_H;
-          const cx = VIEW_W / 2;
-
-          const x1 = cx - wTop / 2;
-          const x2 = cx + wTop / 2;
-          const x3 = cx + wBot / 2;
-          const x4 = cx - wBot / 2;
-
-          const path = `M ${x1} ${yTop} L ${x2} ${yTop} L ${x3} ${yBot} L ${x4} ${yBot} Z`;
-
-          // Drop badge between this row and the next
-          const dropBadge = next ? (
-            <DropBadge
-              x={cx}
-              y={yBot + GAP / 2}
-              percent={next.dropOffRate}
-              delay={reduced ? 0 : 0.25 + i * 0.12}
-            />
-          ) : null;
-
-          return (
-            <g key={step.step}>
-              <motion.path
-                d={path}
-                fill={`url(#fseg-${i})`}
-                stroke={STAGE_PALETTE[i % STAGE_PALETTE.length]}
-                strokeOpacity={0.4}
-                strokeWidth={1}
-                initial={{ opacity: 0, scaleY: reduced ? 1 : 0.6 }}
-                animate={{ opacity: 1, scaleY: 1 }}
-                style={{ transformOrigin: `${cx}px ${yTop}px` }}
-                transition={{ duration: reduced ? 0 : 0.55, delay: reduced ? 0 : i * 0.12, ease: [0.22, 1, 0.36, 1] }}
-              />
-
-              {/* Stage label (left) */}
-              <motion.g
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.4, delay: reduced ? 0 : 0.15 + i * 0.12 }}
-              >
-                <text
-                  x={PAD_X}
-                  y={yTop + ROW_H / 2 - 6}
-                  className="fill-foreground"
-                  fontSize="14"
-                  fontWeight="600"
-                >
-                  {step.label}
-                </text>
-                <text
-                  x={PAD_X}
-                  y={yTop + ROW_H / 2 + 12}
-                  className="fill-muted-foreground"
-                  fontSize="11"
-                  fontFamily="ui-monospace, SFMono-Regular, monospace"
-                >
-                  {formatNumber(step.count)} · {formatPercentage(step.conversionRate)} cvr
-                </text>
-              </motion.g>
-
-              {/* Stage count overlay (center, on the trapezoid) */}
-              {wTop > 100 && (
-                <motion.text
-                  x={cx}
-                  y={yTop + ROW_H / 2 + 5}
-                  textAnchor="middle"
-                  fontSize="22"
-                  fontWeight="700"
-                  className="fill-white"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: reduced ? 0 : 0.4 + i * 0.12, duration: 0.4 }}
-                  style={{ textShadow: "0 1px 2px rgba(0,0,0,0.45)" }}
-                >
-                  {formatNumber(step.count)}
-                </motion.text>
-              )}
-
-              {dropBadge}
-            </g>
-          );
-        })}
-      </svg>
-    </div>
-  );
-}
-
-function DropBadge({
-  x,
-  y,
-  percent,
-  delay,
-}: {
-  x: number;
-  y: number;
-  percent: number;
-  delay: number;
-}) {
-  const text = `${formatPercentage(percent)} drop`;
-  const w = 92;
-  const h = 22;
-  const isBig = percent >= 30;
-  return (
-    <motion.g
-      initial={{ opacity: 0, y: -4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, delay }}
-      transform={`translate(${x - w / 2}, ${y - h / 2})`}
-    >
-      <rect
-        width={w}
-        height={h}
-        rx={11}
-        ry={11}
-        className={isBig ? "fill-destructive" : "fill-amber-500"}
-        opacity={0.95}
-      />
-      <text
-        x={w / 2}
-        y={h / 2 + 4}
-        textAnchor="middle"
-        fontSize="11"
-        fontWeight="600"
-        className="fill-white"
-        style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}
-      >
-        ↓ {text}
-      </text>
-    </motion.g>
-  );
-}
-
 function IconWrap({
   Icon,
   tone,
@@ -883,6 +801,3 @@ function IconWrap({
   }
   return <Icon className="h-3.5 w-3.5" style={{ color }} />;
 }
-
-// Re-export for any consumer
-export { ArrowDownRight };
