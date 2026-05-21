@@ -1,0 +1,38 @@
+name: Scheduled data extractions
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"
+    - cron: "0 3,15 * * *"
+
+jobs:
+  hourly:
+    name: Hourly analytics and Meta extraction
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 * * * *'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Run hourly extraction
+        run: |
+          curl --fail-with-body --show-error --silent \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Repository: ${{ github.repository }}" \
+            -H "X-GitHub-Run-Id: ${{ github.run_id }}" \
+            "https://www.grupoup-dash.com.br/api/cron/extractions/hourly"
+
+  upzero-transactional:
+    name: Twice daily UP Zero transactional extraction
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3,15 * * *'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Run UP Zero transactional extraction
+        run: |
+          curl --fail-with-body --show-error --silent \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Repository: ${{ github.repository }}" \
+            -H "X-GitHub-Run-Id: ${{ github.run_id }}" \
+            "https://www.grupoup-dash.com.br/api/cron/extractions/upzero-transactional"

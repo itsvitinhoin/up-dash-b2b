@@ -8,40 +8,65 @@ import {
 } from "../services/extraction-runner";
 
 const router: IRouter = Router();
+const DEFAULT_CRON_GITHUB_REPOSITORY = "itsvitinhoin/up-dash-b2b";
 
-function verifyCronRequest(req: Request, res: Response): boolean {
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+async function verifyGitHubActionsRequest(req: Request): Promise<boolean> {
+  const authHeader = req.get("authorization");
+  const repository = req.get("x-github-repository");
+  const expectedRepository =
+    process.env.CRON_GITHUB_REPOSITORY ?? DEFAULT_CRON_GITHUB_REPOSITORY;
+
+  if (!authHeader?.startsWith("Bearer ") || repository !== expectedRepository) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(`https://api.github.com/repos/${expectedRepository}`, {
+      headers: {
+        Authorization: authHeader,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+    if (!response.ok) return false;
+    const payload = asRecord(await response.json());
+    return String(payload?.full_name ?? "").toLowerCase() === expectedRepository.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+async function verifyCronRequest(req: Request, res: Response): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    res.status(500).json({
-      error: true,
-      code: "CRON_SECRET_MISSING",
-      message: "CRON_SECRET is not configured.",
-      status: 500,
-    });
-    return false;
+  if (secret && req.get("authorization") === `Bearer ${secret}`) {
+    return true;
   }
 
-  if (req.get("authorization") !== `Bearer ${secret}`) {
-    res.status(401).json({
-      error: true,
-      code: "UNAUTHORIZED",
-      message: "Unauthorized cron request.",
-      status: 401,
-    });
-    return false;
+  if (await verifyGitHubActionsRequest(req)) {
+    return true;
   }
 
-  return true;
+  res.status(401).json({
+    error: true,
+    code: "UNAUTHORIZED",
+    message: "Unauthorized cron request.",
+    status: 401,
+  });
+  return false;
 }
 
 router.get("/cron/extractions/hourly", async (req, res): Promise<void> => {
-  if (!verifyCronRequest(req, res)) return;
+  if (!(await verifyCronRequest(req, res))) return;
   const result = await runHourlyExtractionBundle("cron");
   res.json({ ok: true, result });
 });
 
 router.get("/cron/extractions/upzero-transactional", async (req, res): Promise<void> => {
-  if (!verifyCronRequest(req, res)) return;
+  if (!(await verifyCronRequest(req, res))) return;
   const result = await runUpzeroTransactionalExtraction("cron");
   res.json({ ok: true, result });
 });
