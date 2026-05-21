@@ -31,6 +31,7 @@ type ExtractionRunSummary = {
 };
 
 const UPZERO_ANALYTICS_LOOKBACK_HOURS = 24;
+const UPZERO_BASE_URL = process.env.UPZERO_BASE_URL ?? "https://api.upzero.com.br";
 
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -121,6 +122,117 @@ function summarizeUpzeroAnalytics(rows: Awaited<ReturnType<typeof getUpzeroAnaly
   };
 }
 
+type UpzeroCustomerDetail = {
+  id: string | number;
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  customer_type?: string | null;
+  approved?: boolean | string | number | null;
+  is_approved?: boolean | string | number | null;
+  rejected?: boolean | string | number | null;
+  is_rejected?: boolean | string | number | null;
+  status?: string | null;
+  registration_status?: string | null;
+  approval_status?: string | null;
+  lead_status?: string | null;
+  created_at?: string | null;
+  registered_at?: string | null;
+  registration_date?: string | null;
+  lead_created_at?: string | null;
+  approved_at?: string | null;
+  approval_date?: string | null;
+  utm_source?: string | null;
+  utm_medium?: string | null;
+  utm_campaign?: string | null;
+  retail_profile?: { cpf?: string | null } | null;
+  wholesale_profile?: { cnpj?: string | null } | null;
+};
+
+function cleanString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const parsed = cleanString(value);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function boolLike(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  const s = cleanString(value)?.toLowerCase();
+  if (!s) return null;
+  if (["true", "1", "yes", "sim", "approved", "aprovado"].includes(s)) return true;
+  if (["false", "0", "no", "nao", "não", "rejected", "recusado"].includes(s)) return false;
+  return null;
+}
+
+function firstDate(...values: unknown[]): Date | null {
+  for (const value of values) {
+    const s = cleanString(value);
+    if (!s) continue;
+    const parsed = new Date(s);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return null;
+}
+
+function mapRegistrationStatus(
+  customer: UpzeroCustomerDetail | null,
+): "PENDING" | "APPROVED" | "REJECTED" | null {
+  if (!customer) return null;
+  if (boolLike(customer.rejected) === true || boolLike(customer.is_rejected) === true) return "REJECTED";
+  if (boolLike(customer.approved) === true || boolLike(customer.is_approved) === true) return "APPROVED";
+  const raw = firstString(
+    customer.registration_status,
+    customer.approval_status,
+    customer.lead_status,
+    customer.status,
+  )?.toLowerCase();
+  if (!raw) return null;
+  if (["approved", "aprovado", "accepted", "active", "qualified"].some((v) => raw.includes(v))) return "APPROVED";
+  if (["rejected", "recusado", "declined", "denied", "canceled", "cancelado"].some((v) => raw.includes(v))) return "REJECTED";
+  return "PENDING";
+}
+
+function getDetailDocumentType(
+  user: NonNullable<ReturnType<typeof getMetricUser>>,
+  detail: UpzeroCustomerDetail | null,
+): "CPF" | "CNPJ" | null {
+  if (detail?.wholesale_profile?.cnpj || user.cnpj) return "CNPJ";
+  if (detail?.retail_profile?.cpf || user.cpf) return "CPF";
+  const type = (detail?.customer_type ?? user.type)?.toUpperCase();
+  if (type === "WHOLESALE") return "CNPJ";
+  if (type === "RETAIL") return "CPF";
+  return null;
+}
+
+async function fetchUpzeroCustomerDetail(
+  apiKey: string,
+  id: number,
+): Promise<UpzeroCustomerDetail | null> {
+  const response = await fetch(`${UPZERO_BASE_URL}/external/v1/customers/${id}`, {
+    headers: {
+      "X-API-Key": apiKey.trim().replace(/^Bearer\s+/i, ""),
+      Accept: "application/json",
+    },
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`UP Zero customer ${id} failed: ${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as UpzeroCustomerDetail;
+}
+
 function buildAnalyticsCustomerName(user: NonNullable<ReturnType<typeof getMetricUser>>): string {
   return user.name?.trim() || user.companyName?.trim() || `UP Zero #${user.id}`;
 }
@@ -137,6 +249,7 @@ function getAnalyticsDocumentType(
 
 async function upsertCustomersFromAnalyticsRegistrations(
   clientId: string,
+  apiKey: string,
   rows: UpzeroAnalyticsMetric[],
 ): Promise<number> {
   const registrationsByUser = new Map<number, UpzeroAnalyticsMetric>();
@@ -161,13 +274,33 @@ async function upsertCustomersFromAnalyticsRegistrations(
     const user = getMetricUser(row);
     if (!user) continue;
 
-    const externalId = String(user.id);
-    const createdAt = new Date(row.period_start);
+    let detail: UpzeroCustomerDetail | null = null;
+    try {
+      detail = await fetchUpzeroCustomerDetail(apiKey, user.id);
+    } catch (err) {
+      console.warn(`[upzero-analytics] customer detail ${user.id} failed: ${String(err)}`);
+    }
+
+    const externalId = String(detail?.id ?? user.id);
+    const createdAt =
+      firstDate(
+        detail?.lead_created_at,
+        detail?.registered_at,
+        detail?.registration_date,
+        detail?.created_at,
+      ) ?? new Date(row.period_start);
     if (Number.isNaN(createdAt.getTime())) continue;
 
-    const email = `upzero-analytics-${externalId}@noemail.internal`;
-    const name = buildAnalyticsCustomerName(user);
-    const documentType = getAnalyticsDocumentType(user);
+    const email = detail?.email ?? `upzero-analytics-${externalId}@noemail.internal`;
+    const name = firstString(detail?.name, user.name, user.companyName) ?? buildAnalyticsCustomerName(user);
+    const documentType = getDetailDocumentType(user, detail) ?? getAnalyticsDocumentType(user);
+    const registrationStatus = mapRegistrationStatus(detail) ?? "PENDING";
+    const approvalDate =
+      firstDate(detail?.approved_at, detail?.approval_date) ??
+      (registrationStatus === "APPROVED" ? createdAt : null);
+    const utmSource = firstString(detail?.utm_source, row.utm_source);
+    const utmMedium = firstString(detail?.utm_medium, row.utm_medium);
+    const utmCampaign = firstString(detail?.utm_campaign, row.utm_campaign);
 
     await db
       .insert(customersTable)
@@ -176,21 +309,27 @@ async function upsertCustomersFromAnalyticsRegistrations(
         externalId,
         email,
         name,
+        phone: detail?.phone ?? null,
         documentType,
-        utmSource: row.utm_source,
-        utmMedium: row.utm_medium,
-        utmCampaign: row.utm_campaign,
-        registrationStatus: "PENDING",
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        registrationStatus,
+        approvalDate,
         createdAt,
       })
       .onConflictDoUpdate({
         target: [customersTable.clientId, customersTable.externalId],
         set: {
           name,
+          email: detail?.email ? email : sql`${customersTable.email}`,
+          phone: detail?.phone ? detail.phone : sql`${customersTable.phone}`,
           documentType,
           utmSource: sql`COALESCE(${customersTable.utmSource}, EXCLUDED.utm_source)`,
           utmMedium: sql`COALESCE(${customersTable.utmMedium}, EXCLUDED.utm_medium)`,
           utmCampaign: sql`COALESCE(${customersTable.utmCampaign}, EXCLUDED.utm_campaign)`,
+          registrationStatus: detail ? registrationStatus : sql`${customersTable.registrationStatus}`,
+          approvalDate: detail ? approvalDate : sql`${customersTable.approvalDate}`,
           createdAt: sql`LEAST(${customersTable.createdAt}, EXCLUDED.created_at)`,
         },
       });
@@ -257,6 +396,7 @@ export async function runUpzeroAnalyticsExtraction(
       });
       const customersMaterialized = await upsertCustomersFromAnalyticsRegistrations(
         client.id,
+        client.upZeroApiKey,
         metrics.data,
       );
       await completeJob(jobId, {

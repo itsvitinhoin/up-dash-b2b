@@ -9,6 +9,8 @@
 export interface CustomerSummaryKpis {
   totalRegistrations: number;
   approvedRegistrations: number;
+  pendingRegistrations: number;
+  rejectedRegistrations: number;
   approvalRatePct: number;
   customersWithoutPurchase: number;
   totalBuyers: number;

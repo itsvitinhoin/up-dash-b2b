@@ -393,7 +393,7 @@ export default function CustomersPage() {
 
       {/* KPI strip */}
       <motion.div variants={cardVariants}>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
           <SummaryKpiCard
             label="Registrations"
             value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
@@ -408,6 +408,22 @@ export default function CustomersPage() {
             prevValue={prevKpis ? formatNumber(prevKpis.approvedRegistrations) : undefined}
             deltaRaw={delta(kpis?.approvedRegistrations, prevKpis?.approvedRegistrations)}
             icon={UserCheck}
+            loading={summaryLoading}
+          />
+          <SummaryKpiCard
+            label="Pending"
+            value={kpis ? formatNumber(kpis.pendingRegistrations) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.pendingRegistrations) : undefined}
+            deltaRaw={delta(kpis?.pendingRegistrations, prevKpis?.pendingRegistrations)}
+            icon={Clock}
+            loading={summaryLoading}
+          />
+          <SummaryKpiCard
+            label="Rejected"
+            value={kpis ? formatNumber(kpis.rejectedRegistrations) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.rejectedRegistrations) : undefined}
+            deltaRaw={delta(kpis?.rejectedRegistrations, prevKpis?.rejectedRegistrations)}
+            icon={UserX}
             loading={summaryLoading}
           />
           <SummaryKpiCard
@@ -427,7 +443,7 @@ export default function CustomersPage() {
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Without Purchase"
+            label="Approved No Purchase"
             value={kpis ? formatNumber(kpis.customersWithoutPurchase) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.customersWithoutPurchase) : undefined}
             deltaRaw={delta(kpis?.customersWithoutPurchase, prevKpis?.customersWithoutPurchase)}
@@ -439,14 +455,6 @@ export default function CustomersPage() {
             value={kpis?.avgTimeToFirstPurchaseDays != null ? `${kpis.avgTimeToFirstPurchaseDays}d` : "—"}
             prevValue={prevKpis?.avgTimeToFirstPurchaseDays != null ? `${prevKpis.avgTimeToFirstPurchaseDays}d` : undefined}
             deltaRaw={delta(kpis?.avgTimeToFirstPurchaseDays ?? null, prevKpis?.avgTimeToFirstPurchaseDays ?? null)}
-            icon={Clock}
-            loading={summaryLoading}
-          />
-          <SummaryKpiCard
-            label="Avg Days Between"
-            value={kpis?.avgTimeBetweenPurchasesDays != null ? `${kpis.avgTimeBetweenPurchasesDays}d` : "—"}
-            prevValue={prevKpis?.avgTimeBetweenPurchasesDays != null ? `${prevKpis.avgTimeBetweenPurchasesDays}d` : undefined}
-            deltaRaw={delta(kpis?.avgTimeBetweenPurchasesDays ?? null, prevKpis?.avgTimeBetweenPurchasesDays ?? null)}
             icon={Clock}
             loading={summaryLoading}
           />

@@ -763,18 +763,34 @@ async function backfillCustomersByNumericId(
   if (maxId === 0) return customers;
 
   const existingRows = await db
-    .select({ externalId: customersTable.externalId })
+    .select({
+      externalId: customersTable.externalId,
+      email: customersTable.email,
+      registrationStatus: customersTable.registrationStatus,
+    })
     .from(customersTable)
     .where(eq(customersTable.clientId, clientId));
-  const existingIds = new Set(
-    existingRows
-      .map((row) => Number.parseInt(row.externalId ?? "", 10))
-      .filter((id) => Number.isFinite(id) && id > 0),
-  );
+  const existingByNumericId = new Map<number, {
+    email: string;
+    registrationStatus: "PENDING" | "APPROVED" | "REJECTED";
+  }>();
+  for (const row of existingRows) {
+    const id = Number.parseInt(row.externalId ?? "", 10);
+    if (Number.isFinite(id) && id > 0) {
+      existingByNumericId.set(id, {
+        email: row.email,
+        registrationStatus: row.registrationStatus as "PENDING" | "APPROVED" | "REJECTED",
+      });
+    }
+  }
 
   const idsToFetch: number[] = [];
   for (let id = 1; id <= maxId; id++) {
-    if (byId.has(String(id)) || existingIds.has(id)) continue;
+    const existing = existingByNumericId.get(id);
+    const needsRefresh =
+      existing?.email.startsWith("upzero-analytics-") ||
+      existing?.email.endsWith("@noemail.internal");
+    if (byId.has(String(id)) || (existing && !needsRefresh)) continue;
     idsToFetch.push(id);
   }
 

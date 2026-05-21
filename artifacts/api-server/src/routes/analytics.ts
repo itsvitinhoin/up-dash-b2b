@@ -2139,24 +2139,17 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
 
 // ─── Customer Summary KPI computation (module-level for reuse in insights) ──
 async function computeSummaryKpis(clientId: string, winFrom: Date, winTo: Date) {
-    const [totalRow] = await db
-      .select({ count: sql<number>`count(*)::int` })
+    const [statusRow] = await db
+      .select({
+        total: sql<number>`count(*)::int`,
+        approved: sql<number>`count(*) filter (where ${customersTable.registrationStatus} = 'APPROVED')::int`,
+        pending: sql<number>`count(*) filter (where ${customersTable.registrationStatus} = 'PENDING')::int`,
+        rejected: sql<number>`count(*) filter (where ${customersTable.registrationStatus} = 'REJECTED')::int`,
+      })
       .from(customersTable)
       .where(
         and(
           eq(customersTable.clientId, clientId as string),
-          gte(customersTable.createdAt, winFrom),
-          lte(customersTable.createdAt, winTo),
-        ),
-      );
-
-    const [approvedRow] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(customersTable)
-      .where(
-        and(
-          eq(customersTable.clientId, clientId as string),
-          eq(customersTable.registrationStatus, "APPROVED"),
           gte(customersTable.createdAt, winFrom),
           lte(customersTable.createdAt, winTo),
         ),
@@ -2170,6 +2163,7 @@ async function computeSummaryKpis(clientId: string, winFrom: Date, winTo: Date) 
           eq(customersTable.clientId, clientId as string),
           gte(customersTable.createdAt, winFrom),
           lte(customersTable.createdAt, winTo),
+          eq(customersTable.registrationStatus, "APPROVED"),
           sql`${customersTable.firstPurchaseAt} is not null`,
         ),
       );
@@ -2182,6 +2176,7 @@ async function computeSummaryKpis(clientId: string, winFrom: Date, winTo: Date) 
           eq(customersTable.clientId, clientId as string),
           gte(customersTable.createdAt, winFrom),
           lte(customersTable.createdAt, winTo),
+          eq(customersTable.registrationStatus, "APPROVED"),
           eq(customersTable.totalOrders, 0),
         ),
       );
@@ -2219,12 +2214,14 @@ async function computeSummaryKpis(clientId: string, winFrom: Date, winTo: Date) 
         ),
       );
 
-    const total = totalRow?.count ?? 0;
-    const approved = approvedRow?.count ?? 0;
+    const total = statusRow?.total ?? 0;
+    const approved = statusRow?.approved ?? 0;
 
     return {
       totalRegistrations: total,
       approvedRegistrations: approved,
+      pendingRegistrations: statusRow?.pending ?? 0,
+      rejectedRegistrations: statusRow?.rejected ?? 0,
       approvalRatePct: total > 0 ? Math.round((approved / total) * 1000) / 10 : 0,
       customersWithoutPurchase: noBuyersRow?.count ?? 0,
       totalBuyers: buyersRow?.count ?? 0,

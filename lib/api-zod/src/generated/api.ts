@@ -883,6 +883,8 @@ export const GetCustomerSummaryResponse = zod.object({
   kpis: zod.object({
     totalRegistrations: zod.number(),
     approvedRegistrations: zod.number(),
+    pendingRegistrations: zod.number(),
+    rejectedRegistrations: zod.number(),
     approvalRatePct: zod.number(),
     customersWithoutPurchase: zod.number(),
     totalBuyers: zod.number(),
@@ -893,6 +895,8 @@ export const GetCustomerSummaryResponse = zod.object({
     .object({
       totalRegistrations: zod.number(),
       approvedRegistrations: zod.number(),
+      pendingRegistrations: zod.number(),
+      rejectedRegistrations: zod.number(),
       approvalRatePct: zod.number(),
       customersWithoutPurchase: zod.number(),
       totalBuyers: zod.number(),
