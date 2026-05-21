@@ -65,6 +65,7 @@ import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
 import {
   buildCustomerTimelineResponse,
+  getMetricUser,
   getUpzeroAnalyticsMetrics,
   type UpzeroAnalyticsMetric,
 } from "../services/upzero/analytics-metrics";
@@ -1046,55 +1047,315 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   );
 });
 
-const PAID_CAMPAIGN_TERMS = [
-  "fb",
-  "facebook",
-  "fbc",
-  "ig",
-  "instagram",
-  "insta",
-  "gc",
-  "google",
-  "googleads",
-  "google_ads",
-  "gads",
-  "adwords",
-  "up",
-  "upzero",
-  "up.la",
-];
-
-const ORGANIC_CAMPAIGN_EXCLUSIONS = ["linktree"];
-
 function normalizeCampaignText(value: string | null | undefined): string {
   return value?.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() ?? "";
 }
 
-function metricUtmText(row: UpzeroAnalyticsMetric): string {
-  return [row.utm_source, row.utm_medium, row.utm_campaign]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
-
-function isCampaignAttributedMetric(row: UpzeroAnalyticsMetric): boolean {
+function isPaidCampaignSignal(row: UpzeroAnalyticsMetric): boolean {
   const source = normalizeCampaignText(row.utm_source);
   const medium = normalizeCampaignText(row.utm_medium);
   const campaign = normalizeCampaignText(row.utm_campaign);
-  const text = metricUtmText(row);
+  const channel = normalizeCampaignText(row.channel);
+  const rawSource = normalizeCampaignText(row.source);
 
-  if (!text) return false;
-  if (ORGANIC_CAMPAIGN_EXCLUSIONS.some((term) => [source, medium, campaign].some((field) => field.includes(term)))) {
-    return false;
+  const isLinktreeOnly =
+    source === "instagram" &&
+    medium === "linktree" &&
+    campaign === "linktree";
+
+  if (isLinktreeOnly) return false;
+
+  const hasMetaSource = ["fb", "facebook", "ig", "instagram", "meta"].includes(source);
+  const hasGoogleSource = ["google", "google_ads", "googleads", "gads", "gc"].includes(source);
+  const hasPaidMedium =
+    medium.includes("paid") ||
+    medium.includes("cpc") ||
+    medium.includes("ppc") ||
+    medium.includes("pmax");
+  const hasMetaPlacement =
+    medium.includes("facebook_mobile_feed") ||
+    medium.includes("facebook_desktop_feed") ||
+    medium.includes("facebook_stories") ||
+    medium.includes("instagram_feed") ||
+    medium.includes("instagram_stories") ||
+    medium.includes("instagram_reels");
+  const hasUpCampaign =
+    campaign.includes("up.") ||
+    campaign.includes("upzero") ||
+    campaign.includes("up zero") ||
+    campaign.includes("rmkt") ||
+    campaign.includes("remarketing") ||
+    campaign.includes("frio") ||
+    campaign.includes("cadastro");
+  const hasNumericMetaCampaign = hasMetaSource && /^[0-9]{8,}$/.test(campaign);
+  const hasPaidChannel = channel.includes("paid") || channel.includes("ads") || rawSource.includes("ads");
+
+  return (
+    hasPaidMedium ||
+    hasMetaPlacement ||
+    hasUpCampaign ||
+    hasNumericMetaCampaign ||
+    hasPaidChannel ||
+    (hasMetaSource && campaign.length > 0 && campaign !== "linktree") ||
+    (hasGoogleSource && campaign.length > 0)
+  );
+}
+
+function normalizeCampaignSource(row: UpzeroAnalyticsMetric): string {
+  const source = normalizeCampaignText(row.utm_source);
+  const medium = normalizeCampaignText(row.utm_medium);
+  const campaign = normalizeCampaignText(row.utm_campaign);
+
+  if (["fb", "facebook"].includes(source) || medium.includes("facebook")) return "Facebook";
+  if (["ig", "instagram"].includes(source) || medium.includes("instagram")) return "Instagram";
+  if (
+    ["google", "google_ads", "googleads", "gads", "gc"].includes(source) ||
+    medium.includes("google") ||
+    medium.includes("pmax") ||
+    medium.includes("cpc")
+  ) {
+    return "Google";
+  }
+  if (campaign.includes("up.") || campaign.includes("upzero") || campaign.includes("up zero")) return "UP";
+  return "Não identificado";
+}
+
+function normalizeCampaignMedium(row: UpzeroAnalyticsMetric): string {
+  const medium = normalizeCampaignText(row.utm_medium);
+  if (medium.includes("instagram_feed")) return "Instagram Feed";
+  if (medium.includes("instagram_stories")) return "Instagram Stories";
+  if (medium.includes("instagram_reels")) return "Instagram Reels";
+  if (medium.includes("facebook_mobile_feed")) return "Facebook Mobile Feed";
+  if (medium.includes("facebook_desktop_feed")) return "Facebook Desktop Feed";
+  if (medium.includes("facebook_stories")) return "Facebook Stories";
+  if (medium.includes("pmax")) return "Google PMax";
+  if (medium.includes("cpc")) return "CPC";
+  if (medium.includes("paid")) return "Pago";
+  if (medium.includes("social")) return "Social";
+  if (medium.includes("linktree")) return "Linktree";
+  return row.utm_medium ?? "Não identificado";
+}
+
+type CampaignTouch = {
+  source: string | null;
+  medium: string | null;
+  campaign: string | null;
+  occurredAt: string | null;
+};
+
+type CampaignSummary = {
+  source: string | null;
+  medium: string | null;
+  campaign: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  eventsCount: number;
+};
+
+type AttributedCampaignCustomer = {
+  customerId: string | null;
+  userId: number;
+  name: string | null;
+  email: string | null;
+  type: string | null;
+  cpf: string | null;
+  cnpj: string | null;
+  companyName: string | null;
+  documentType: "CPF" | "CNPJ" | null;
+  registrationStatus: string | null;
+  registeredAt: string | null;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  firstTouch: CampaignTouch;
+  lastTouch: CampaignTouch;
+  returnTouch: CampaignTouch | null;
+  campaigns: CampaignSummary[];
+  hasPurchase: boolean;
+  isRepurchase: boolean;
+  isRemarketing: boolean;
+  purchaseCount: number;
+  orderIds: number[];
+  totalPurchaseValue: number;
+  addToCartCount: number;
+  checkoutCount: number;
+  registerSubmittedCount: number;
+  productViewCount: number;
+  lastEventName: string | null;
+  lastEventAt: string | null;
+};
+
+function touchFromMetric(row: UpzeroAnalyticsMetric): CampaignTouch {
+  return {
+    source: normalizeCampaignSource(row),
+    medium: normalizeCampaignMedium(row),
+    campaign: row.utm_campaign ?? null,
+    occurredAt: row.period_start,
+  };
+}
+
+function buildUniqueCampaigns(rows: UpzeroAnalyticsMetric[]): CampaignSummary[] {
+  const map = new Map<string, CampaignSummary>();
+
+  for (const row of rows) {
+    const source = normalizeCampaignSource(row);
+    const medium = normalizeCampaignMedium(row);
+    const campaign = row.utm_campaign ?? "Não identificado";
+    const key = [source, medium, campaign].join("||");
+    const current =
+      map.get(key) ??
+      {
+        source,
+        medium,
+        campaign,
+        firstSeenAt: row.period_start,
+        lastSeenAt: row.period_start,
+        eventsCount: 0,
+      };
+
+    current.eventsCount += row.total_events ?? 0;
+    if (new Date(row.period_start).getTime() < new Date(current.firstSeenAt).getTime()) {
+      current.firstSeenAt = row.period_start;
+    }
+    if (new Date(row.period_start).getTime() > new Date(current.lastSeenAt).getTime()) {
+      current.lastSeenAt = row.period_start;
+    }
+    map.set(key, current);
   }
 
-  return PAID_CAMPAIGN_TERMS.some((term) => {
-    const normalizedTerm = normalizeCampaignText(term);
-    return text
-      .split(/[^a-z0-9.]+/)
-      .some((token) => token === normalizedTerm || token.startsWith(normalizedTerm));
+  return Array.from(map.values());
+}
+
+function maskDocument(value: string | null | undefined, type: "CPF" | "CNPJ"): string | null {
+  const digits = value?.replace(/\D/g, "") ?? "";
+  if (!digits) return null;
+  if (type === "CPF") {
+    return digits.length >= 11 ? `***.${digits.slice(3, 6)}.${digits.slice(6, 9)}-**` : "***";
+  }
+  return digits.length >= 14 ? `**.${digits.slice(2, 5)}.${digits.slice(5, 8)}/****-**` : "***";
+}
+
+function buildAttributedCampaignCustomers(
+  rows: UpzeroAnalyticsMetric[],
+  localCustomers: Map<number, {
+    id: string;
+    name: string | null;
+    email: string;
+    documentType: "CPF" | "CNPJ" | null;
+    registrationStatus: "PENDING" | "APPROVED" | "REJECTED";
+    createdAt: Date;
+    totalOrders: number;
+  }>,
+  priorOrders: Map<string, number>,
+): AttributedCampaignCustomer[] {
+  const grouped = new Map<number, UpzeroAnalyticsMetric[]>();
+
+  for (const row of rows) {
+    const user = getMetricUser(row);
+    if (!user) continue;
+    const current = grouped.get(user.id) ?? [];
+    current.push(row);
+    grouped.set(user.id, current);
+  }
+
+  const customers: AttributedCampaignCustomer[] = [];
+
+  for (const [userId, userRows] of grouped.entries()) {
+    const sortedRows = [...userRows].sort(
+      (a, b) => new Date(a.period_start).getTime() - new Date(b.period_start).getTime(),
+    );
+    const campaignRows = sortedRows.filter(isPaidCampaignSignal);
+    if (campaignRows.length === 0) continue;
+
+    const user = sortedRows.map(getMetricUser).find((candidate) => candidate?.id === userId) ?? null;
+    const purchaseRows = sortedRows.filter((row) =>
+      ["purchase", "order_paid", "payment_approved"].includes(row.event_name),
+    );
+    const checkoutRows = sortedRows.filter((row) =>
+      ["initiate_checkout", "checkout_start"].includes(row.event_name),
+    );
+    const addToCartRows = sortedRows.filter((row) => row.event_name === "add_to_cart");
+    const registerRows = sortedRows.filter((row) => row.event_name === "register_submitted");
+    const productViewRows = sortedRows.filter((row) => row.event_name === "product_view");
+    const orderIds = Array.from(
+      new Set(
+        purchaseRows
+          .map((row) => row.order_id)
+          .filter((orderId): orderId is number => typeof orderId === "number"),
+      ),
+    );
+    const purchaseCount =
+      orderIds.length > 0
+        ? orderIds.length
+        : purchaseRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0);
+    const purchaseValueByOrder = new Map<number, number>();
+    let purchaseValueWithoutOrder = 0;
+    for (const row of purchaseRows) {
+      if (row.order_id !== null) {
+        purchaseValueByOrder.set(row.order_id, Math.max(purchaseValueByOrder.get(row.order_id) ?? 0, row.total_value ?? 0));
+      } else {
+        purchaseValueWithoutOrder += row.total_value ?? 0;
+      }
+    }
+    const totalPurchaseValue =
+      [...purchaseValueByOrder.values()].reduce((sum, value) => sum + value, 0) + purchaseValueWithoutOrder;
+    const firstTouchRow = campaignRows[0];
+    const lastTouchRow = campaignRows[campaignRows.length - 1];
+    const firstCampaign = firstTouchRow.utm_campaign ?? "";
+    const returnTouchRow =
+      campaignRows.find((row) => row !== firstTouchRow && (row.utm_campaign ?? "") && row.utm_campaign !== firstCampaign) ?? null;
+    const isRemarketing = campaignRows.some((row) => {
+      const campaign = normalizeCampaignText(row.utm_campaign);
+      return (
+        campaign.includes("rmkt") ||
+        campaign.includes("remarketing") ||
+        campaign.includes("retarget") ||
+        campaign.includes("retargeting")
+      );
+    });
+    const firstSeenAt = sortedRows[0]?.period_start ?? null;
+    const lastEvent = sortedRows[sortedRows.length - 1];
+    const localCustomer = localCustomers.get(userId);
+    const documentType = localCustomer?.documentType ?? (user?.cnpj ? "CNPJ" : user?.cpf ? "CPF" : null);
+    const priorOrderCount = localCustomer ? Number(priorOrders.get(localCustomer.id) ?? 0) : 0;
+    const totalHistoricalOrders = Number(localCustomer?.totalOrders ?? 0);
+
+    customers.push({
+      customerId: localCustomer?.id ?? null,
+      userId,
+      name: localCustomer?.name ?? user?.name ?? null,
+      email: localCustomer?.email ?? null,
+      type: user?.type ?? null,
+      cpf: maskDocument(user?.cpf, "CPF"),
+      cnpj: maskDocument(user?.cnpj, "CNPJ"),
+      companyName: user?.companyName ?? null,
+      documentType,
+      registrationStatus: localCustomer?.registrationStatus ?? null,
+      registeredAt: localCustomer?.createdAt.toISOString() ?? null,
+      firstSeenAt,
+      lastSeenAt: sortedRows[sortedRows.length - 1]?.period_start ?? null,
+      firstTouch: touchFromMetric(firstTouchRow),
+      lastTouch: touchFromMetric(lastTouchRow),
+      returnTouch: returnTouchRow ? touchFromMetric(returnTouchRow) : null,
+      campaigns: buildUniqueCampaigns(campaignRows),
+      hasPurchase: purchaseCount > 0,
+      isRepurchase: purchaseCount >= 2 || priorOrderCount > 0 || totalHistoricalOrders > purchaseCount,
+      isRemarketing,
+      purchaseCount,
+      orderIds,
+      totalPurchaseValue,
+      addToCartCount: addToCartRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
+      checkoutCount: checkoutRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
+      registerSubmittedCount: registerRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
+      productViewCount: productViewRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
+      lastEventName: lastEvent?.event_name ?? null,
+      lastEventAt: lastEvent?.period_start ?? null,
+    });
+  }
+
+  return customers.sort((a, b) => {
+    const dateA = a.lastSeenAt ? new Date(a.lastSeenAt).getTime() : 0;
+    const dateB = b.lastSeenAt ? new Date(b.lastSeenAt).getTime() : 0;
+    return dateB - dateA;
   });
 }
 
@@ -1103,7 +1364,15 @@ const CampaignCustomersQueryParams = GetDashboardQueryParams.pick({
   dateFrom: true,
   dateTo: true,
 }).extend({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: z.coerce.number().int().min(1).max(1000).default(250),
+  source: z.coerce.string().optional(),
+  campaign: z.coerce.string().optional(),
+  purchase: z.enum(["all", "yes", "no"]).default("all"),
+  repurchase: z.enum(["all", "yes", "no"]).default("all"),
+  remarketing: z.enum(["all", "yes", "no"]).default("all"),
+  customerType: z.coerce.string().optional(),
+  document: z.enum(["all", "CPF", "CNPJ", "none"]).default("all"),
+  search: z.coerce.string().optional(),
 });
 
 router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
@@ -1130,25 +1399,38 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       ...upzeroRange,
       apiKey: client?.upZeroApiKey,
     });
-    const attributedMetrics = metrics.data.filter(
-      (row) => row.user_id !== null && isCampaignAttributedMetric(row),
+    const rows = metrics.data;
+    const userIds = [...new Set(rows.map((row) => getMetricUser(row)?.id).filter((id): id is number => typeof id === "number"))];
+    const paidUserIds = new Set(
+      rows
+        .filter(isPaidCampaignSignal)
+        .map((row) => getMetricUser(row)?.id)
+        .filter((id): id is number => typeof id === "number"),
     );
-    const userIds = [...new Set(attributedMetrics.map((row) => row.user_id).filter((id): id is number => id !== null))];
 
-    if (userIds.length === 0) {
-      res.json({
-        rows: [],
-        total: 0,
-        summary: {
-          impactedCustomers: 0,
-          attributedRevenue: 0,
-          orders: 0,
-          itemQuantity: 0,
-          registrations: 0,
-        },
-      });
-      return;
-    }
+    console.log({
+      totalRows: rows.length,
+      rowsWithUserObject: rows.filter((row) => row.user?.id).length,
+      rowsWithUserId: rows.filter((row) => row.user_id).length,
+      rowsWithAnyUser: rows.filter((row) => getMetricUser(row)).length,
+      rowsWithPaidCampaignSignal: rows.filter(isPaidCampaignSignal).length,
+      uniqueUsersWithAnyUser: userIds.length,
+      uniqueUsersWithPaidCampaignSignal: paidUserIds.size,
+    });
+
+    console.log(
+      rows
+        .filter((row) => getMetricUser(row) && isPaidCampaignSignal(row))
+        .slice(0, 10)
+        .map((row) => ({
+          user: getMetricUser(row),
+          eventName: row.event_name,
+          utmSource: row.utm_source,
+          utmMedium: row.utm_medium,
+          utmCampaign: row.utm_campaign,
+          periodStart: row.period_start,
+        })),
+    );
 
     const customers = await db
       .select({
@@ -1160,160 +1442,92 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
         registrationStatus: customersTable.registrationStatus,
         createdAt: customersTable.createdAt,
         totalOrders: customersTable.totalOrders,
-        totalSpent: customersTable.totalSpent,
-        firstPurchaseAt: customersTable.firstPurchaseAt,
-        utmSource: customersTable.utmSource,
-        utmMedium: customersTable.utmMedium,
-        utmCampaign: customersTable.utmCampaign,
       })
       .from(customersTable)
-      .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.externalId, userIds.map(String))));
-
-    if (customers.length === 0) {
-      res.json({
-        rows: [],
-        total: 0,
-        summary: {
-          impactedCustomers: 0,
-          attributedRevenue: 0,
-          orders: 0,
-          itemQuantity: 0,
-          registrations: attributedMetrics
-            .filter((row) => row.event_name === "register_submitted")
-            .reduce((sum, row) => sum + row.total_events, 0),
-        },
-      });
-      return;
-    }
+      .where(and(eq(customersTable.clientId, clientId), userIds.length > 0 ? inArray(customersTable.externalId, userIds.map(String)) : undefined));
 
     const customerIds = customers.map((customer) => customer.id);
-    const [orderRows, itemRows, priorRows] = await Promise.all([
-      db
-        .select({
-          customerId: ordersTable.customerId,
-          orderCount: sql<number>`COUNT(*)::int`,
-          orderValue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
-          firstOrderAt: sql<Date | null>`MIN(${ordersTable.createdAt})`,
-          lastOrderAt: sql<Date | null>`MAX(${ordersTable.createdAt})`,
-        })
-        .from(ordersTable)
-        .where(
-          and(
-            eq(ordersTable.clientId, clientId),
-            inArray(ordersTable.customerId, customerIds),
-            gte(ordersTable.createdAt, from),
-            lte(ordersTable.createdAt, to),
-          ),
-        )
-        .groupBy(ordersTable.customerId),
-      db
-        .select({
-          customerId: ordersTable.customerId,
-          itemQuantity: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
-        })
-        .from(orderItemsTable)
-        .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
-        .where(
-          and(
-            eq(ordersTable.clientId, clientId),
-            inArray(ordersTable.customerId, customerIds),
-            gte(ordersTable.createdAt, from),
-            lte(ordersTable.createdAt, to),
-          ),
-        )
-        .groupBy(ordersTable.customerId),
-      db
-        .select({
-          customerId: ordersTable.customerId,
-          priorOrders: sql<number>`COUNT(*)::int`,
-        })
-        .from(ordersTable)
-        .where(
-          and(
-            eq(ordersTable.clientId, clientId),
-            inArray(ordersTable.customerId, customerIds),
-            lte(ordersTable.createdAt, from),
-          ),
-        )
-        .groupBy(ordersTable.customerId),
-    ]);
+    const priorRows = customerIds.length > 0
+      ? await db
+          .select({
+            customerId: ordersTable.customerId,
+            priorOrders: sql<number>`COUNT(*)::int`,
+          })
+          .from(ordersTable)
+          .where(
+            and(
+              eq(ordersTable.clientId, clientId),
+              inArray(ordersTable.customerId, customerIds),
+              lte(ordersTable.createdAt, from),
+            ),
+          )
+          .groupBy(ordersTable.customerId)
+      : [];
 
-    const orderMap = new Map(orderRows.map((row) => [row.customerId, row]));
-    const itemMap = new Map(itemRows.map((row) => [row.customerId, row.itemQuantity]));
+    const localCustomerMap = new Map(
+      customers
+        .map((customer) => {
+          const userId = Number.parseInt(customer.externalId ?? "", 10);
+          return Number.isFinite(userId) ? [userId, customer] as const : null;
+        })
+        .filter((entry): entry is readonly [number, typeof customers[number]] => entry !== null),
+    );
     const priorMap = new Map(priorRows.map((row) => [row.customerId, row.priorOrders]));
-    const metricsByUser = new Map<number, UpzeroAnalyticsMetric[]>();
-    for (const metric of attributedMetrics) {
-      if (metric.user_id === null) continue;
-      const rows = metricsByUser.get(metric.user_id) ?? [];
-      rows.push(metric);
-      metricsByUser.set(metric.user_id, rows);
-    }
 
-    const rows = customers
-      .map((customer) => {
-        const userId = Number.parseInt(customer.externalId ?? "", 10);
-        const userMetrics = [...(metricsByUser.get(userId) ?? [])].sort(
-          (a, b) => new Date(a.period_start).getTime() - new Date(b.period_start).getTime(),
-        );
-        const firstMetric = userMetrics.find((row) => row.utm_campaign || row.utm_source || row.utm_medium);
-        const lastMetric = [...userMetrics].reverse().find((row) => row.utm_campaign || row.utm_source || row.utm_medium);
-        const orderAgg = orderMap.get(customer.id);
-        const orderCount = Number(orderAgg?.orderCount ?? 0);
-        const orderValue = Number(orderAgg?.orderValue ?? 0);
-        const itemQuantity = Number(itemMap.get(customer.id) ?? 0);
-        const firstOrderAt = orderAgg?.firstOrderAt ? new Date(orderAgg.firstOrderAt).toISOString() : null;
-        const lastOrderAt = orderAgg?.lastOrderAt ? new Date(orderAgg.lastOrderAt).toISOString() : null;
-        return {
-          customerId: customer.id,
-          userId,
-          name: customer.name,
-          email: customer.email,
-          documentType: customer.documentType,
-          registrationStatus: customer.registrationStatus,
-          registeredAt: customer.createdAt.toISOString(),
-          firstCampaign: firstMetric?.utm_campaign ?? customer.utmCampaign ?? null,
-          firstSource: firstMetric?.utm_source ?? customer.utmSource ?? null,
-          firstMedium: firstMetric?.utm_medium ?? customer.utmMedium ?? null,
-          lastCampaign: lastMetric?.utm_campaign ?? null,
-          lastSource: lastMetric?.utm_source ?? null,
-          lastMedium: lastMetric?.utm_medium ?? null,
-          lastCampaignAt: lastMetric?.period_start ?? null,
-          campaignImpacted: true,
-          isRepurchase: Number(priorMap.get(customer.id) ?? 0) > 0,
-          madePurchase: orderCount > 0,
-          firstOrderAt,
-          lastOrderAt,
-          orderCount,
-          orderValue,
-          itemQuantity,
-          registrationEvents: userMetrics
-            .filter((row) => row.event_name === "register_submitted")
-            .reduce((sum, row) => sum + row.total_events, 0),
-          addToCartEvents: userMetrics
-            .filter((row) => row.event_name === "add_to_cart")
-            .reduce((sum, row) => sum + row.total_events, 0),
-          checkoutEvents: userMetrics
-            .filter((row) => row.event_name === "initiate_checkout" || row.event_name === "checkout_start")
-            .reduce((sum, row) => sum + row.total_events, 0),
-          purchaseEvents: userMetrics
-            .filter((row) => ["purchase", "order_created", "order_paid", "payment_approved"].includes(row.event_name))
-            .reduce((sum, row) => sum + row.total_events, 0),
-          eventCount: userMetrics.reduce((sum, row) => sum + row.total_events, 0),
-        };
-      })
-      .sort((a, b) => b.orderValue - a.orderValue || b.eventCount - a.eventCount);
+    const allRows = buildAttributedCampaignCustomers(rows, localCustomerMap, priorMap);
+    const filteredRows = allRows.filter((row) => {
+      if (parsed.data.source && row.lastTouch.source !== parsed.data.source) return false;
+      if (parsed.data.campaign && !row.campaigns.some((campaign) => campaign.campaign === parsed.data.campaign)) return false;
+      if (parsed.data.purchase === "yes" && !row.hasPurchase) return false;
+      if (parsed.data.purchase === "no" && row.hasPurchase) return false;
+      if (parsed.data.repurchase === "yes" && !row.isRepurchase) return false;
+      if (parsed.data.repurchase === "no" && row.isRepurchase) return false;
+      if (parsed.data.remarketing === "yes" && !row.isRemarketing) return false;
+      if (parsed.data.remarketing === "no" && row.isRemarketing) return false;
+      if (parsed.data.customerType && row.type !== parsed.data.customerType) return false;
+      if (parsed.data.document === "CPF" && row.documentType !== "CPF") return false;
+      if (parsed.data.document === "CNPJ" && row.documentType !== "CNPJ") return false;
+      if (parsed.data.document === "none" && row.documentType !== null) return false;
+      if (parsed.data.search) {
+        const search = normalizeCampaignText(parsed.data.search);
+        const haystack = [
+          row.userId.toString(),
+          row.name,
+          row.email,
+          row.companyName,
+          row.cpf,
+          row.cnpj,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      return true;
+    });
 
-    const visibleRows = rows.slice(0, parsed.data.limit);
+    const visibleRows = filteredRows.slice(0, parsed.data.limit);
+    const sources = Array.from(new Set(allRows.map((row) => row.lastTouch.source).filter((value): value is string => !!value))).sort();
+    const campaigns = Array.from(
+      new Set(allRows.flatMap((row) => row.campaigns.map((campaign) => campaign.campaign)).filter((value): value is string => !!value)),
+    ).sort();
+    const customerTypes = Array.from(new Set(allRows.map((row) => row.type).filter((value): value is string => !!value))).sort();
 
     res.json({
       rows: visibleRows,
-      total: customers.length,
+      data: visibleRows,
+      total: filteredRows.length,
+      filters: {
+        sources,
+        campaigns,
+        customerTypes,
+      },
       summary: {
-        impactedCustomers: customers.length,
-        attributedRevenue: rows.reduce((sum, row) => sum + row.orderValue, 0),
-        orders: rows.reduce((sum, row) => sum + row.orderCount, 0),
-        itemQuantity: rows.reduce((sum, row) => sum + row.itemQuantity, 0),
-        registrations: rows.reduce((sum, row) => sum + row.registrationEvents, 0),
+        impactedCustomers: filteredRows.length,
+        attributedRevenue: filteredRows.reduce((sum, row) => sum + row.totalPurchaseValue, 0),
+        orders: filteredRows.reduce((sum, row) => sum + row.purchaseCount, 0),
+        itemQuantity: 0,
+        registrations: filteredRows.reduce((sum, row) => sum + row.registerSubmittedCount, 0),
       },
     });
   } catch (err) {
@@ -1491,10 +1705,11 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     const avgEventsBeforePurchase = (() => {
       const byUser = new Map<number, UpzeroAnalyticsMetric[]>();
       for (const row of scopedMetrics) {
-        if (!row.user_id) continue;
-        const rows = byUser.get(row.user_id) ?? [];
+        const user = getMetricUser(row);
+        if (!user) continue;
+        const rows = byUser.get(user.id) ?? [];
         rows.push(row);
-        byUser.set(row.user_id, rows);
+        byUser.set(user.id, rows);
       }
       const perBuyer: number[] = [];
       for (const rows of byUser.values()) {

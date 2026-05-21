@@ -27,6 +27,14 @@ export type UpzeroAnalyticsMetric = {
     id: number;
     name: string;
   } | null;
+  user: {
+    id: number;
+    type: string | null;
+    name: string | null;
+    cpf: string | null;
+    cnpj: string | null;
+    company_name: string | null;
+  } | null;
   user_id: number | null;
   order_id: number | null;
   utm_source: string | null;
@@ -41,6 +49,15 @@ export type UpzeroAnalyticsMetric = {
   total_quantity: number;
   total_value: number;
   updated_at: string;
+};
+
+export type UpzeroMetricUser = {
+  id: number;
+  type: string | null;
+  name: string | null;
+  cpf: string | null;
+  cnpj: string | null;
+  companyName: string | null;
 };
 
 export type CustomerTimelineEvent = {
@@ -233,15 +250,56 @@ function parseCategory(value: unknown): UpzeroAnalyticsMetric["category"] {
   return { id, name };
 }
 
-function parseMetric(value: unknown): UpzeroAnalyticsMetric | null {
+function parseUser(value: unknown): UpzeroAnalyticsMetric["user"] {
+  const record = asRecord(value);
+  if (!record) return null;
+  const id = nullableNumber(record.id);
+  if (id === null) return null;
+  return {
+    id,
+    type: nullableString(record.type),
+    name: nullableString(record.name),
+    cpf: nullableString(record.cpf),
+    cnpj: nullableString(record.cnpj),
+    company_name: nullableString(record.company_name),
+  };
+}
+
+export function getMetricUser(row: UpzeroAnalyticsMetric): UpzeroMetricUser | null {
+  if (row.user && typeof row.user.id === "number") {
+    return {
+      id: row.user.id,
+      type: row.user.type ?? null,
+      name: row.user.name ?? null,
+      cpf: row.user.cpf ?? null,
+      cnpj: row.user.cnpj ?? null,
+      companyName: row.user.company_name ?? null,
+    };
+  }
+
+  if (typeof row.user_id === "number") {
+    return {
+      id: row.user_id,
+      type: null,
+      name: null,
+      cpf: null,
+      cnpj: null,
+      companyName: null,
+    };
+  }
+
+  return null;
+}
+
+function parseMetric(value: unknown, fallbackId: number): UpzeroAnalyticsMetric | null {
   const row = asRecord(value);
   if (!row) return null;
-  const id = nullableNumber(row.id);
+  const id = nullableNumber(row.id) ?? fallbackId;
   const periodStart = nullableString(row.period_start);
   const periodType = nullableString(row.period_type);
   const eventName = nullableString(row.event_name);
-  const updatedAt = nullableString(row.updated_at);
-  if (id === null || !periodStart || !periodType || !eventName || !updatedAt) return null;
+  if (!periodStart || !periodType || !eventName) return null;
+  const updatedAt = nullableString(row.updated_at) ?? periodStart;
   return {
     id,
     period_start: periodStart,
@@ -250,6 +308,7 @@ function parseMetric(value: unknown): UpzeroAnalyticsMetric | null {
     product: parseProduct(row.product),
     product_variant: row.product_variant ?? null,
     category: parseCategory(row.category),
+    user: parseUser(row.user),
     user_id: nullableNumber(row.user_id),
     order_id: nullableNumber(row.order_id),
     utm_source: nullableString(row.utm_source),
@@ -271,7 +330,7 @@ function parseAnalyticsResponse(value: unknown): UpzeroAnalyticsResponse {
   const record = asRecord(value);
   const rawRows = Array.isArray(record?.data) ? record.data : [];
   return {
-    data: rawRows.map(parseMetric).filter((row): row is UpzeroAnalyticsMetric => row !== null),
+    data: rawRows.map((row, index) => parseMetric(row, index + 1)).filter((row): row is UpzeroAnalyticsMetric => row !== null),
     total: requiredNumber(record?.total, rawRows.length),
   };
 }
@@ -310,11 +369,12 @@ export async function getUpzeroAnalyticsMetrics({
 }
 
 export function metricToTimelineEvent(row: UpzeroAnalyticsMetric): CustomerTimelineEvent | null {
-  if (!row.user_id) return null;
+  const user = getMetricUser(row);
+  if (!user) return null;
 
   return {
     id: `upzero_metric_${row.id}`,
-    userId: row.user_id,
+    userId: user.id,
     occurredAt: row.period_start,
     periodType: row.period_type,
     eventName: row.event_name,
@@ -485,7 +545,7 @@ export function buildCustomerTimelineResponse(
 ): CustomerTimelineResponse {
   const timeline = sortTimeline(
     metrics
-      .filter((row) => row.user_id === userId)
+      .filter((row) => getMetricUser(row)?.id === userId)
       .map(metricToTimelineEvent)
       .filter((event): event is CustomerTimelineEvent => event !== null),
   );

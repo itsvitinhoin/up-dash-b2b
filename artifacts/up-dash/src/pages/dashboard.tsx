@@ -275,47 +275,79 @@ const CHART_METRICS = [
 type ChartMetric = (typeof CHART_METRICS)[number]["id"];
 
 type CampaignCustomerRow = {
-  customerId: string;
+  customerId: string | null;
   userId: number;
   name: string | null;
-  email: string;
+  email: string | null;
+  type: string | null;
+  cpf: string | null;
+  cnpj: string | null;
+  companyName: string | null;
   documentType: "CPF" | "CNPJ" | null;
-  registrationStatus: string;
-  registeredAt: string;
-  firstCampaign: string | null;
-  firstSource: string | null;
-  firstMedium: string | null;
-  lastCampaign: string | null;
-  lastSource: string | null;
-  lastMedium: string | null;
-  lastCampaignAt: string | null;
-  campaignImpacted: boolean;
+  registrationStatus: string | null;
+  registeredAt: string | null;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  firstTouch: {
+    source: string | null;
+    medium: string | null;
+    campaign: string | null;
+    occurredAt: string | null;
+  };
+  lastTouch: {
+    source: string | null;
+    medium: string | null;
+    campaign: string | null;
+    occurredAt: string | null;
+  };
+  returnTouch: {
+    source: string | null;
+    medium: string | null;
+    campaign: string | null;
+    occurredAt: string | null;
+  } | null;
+  campaigns: {
+    source: string | null;
+    medium: string | null;
+    campaign: string | null;
+    firstSeenAt: string;
+    lastSeenAt: string;
+    eventsCount: number;
+  }[];
+  hasPurchase: boolean;
   isRepurchase: boolean;
-  madePurchase: boolean;
-  firstOrderAt: string | null;
-  lastOrderAt: string | null;
-  orderCount: number;
-  orderValue: number;
-  itemQuantity: number;
-  registrationEvents: number;
-  addToCartEvents: number;
-  checkoutEvents: number;
-  purchaseEvents: number;
-  eventCount: number;
+  isRemarketing: boolean;
+  purchaseCount: number;
+  orderIds: number[];
+  totalPurchaseValue: number;
+  addToCartCount: number;
+  checkoutCount: number;
+  registerSubmittedCount: number;
+  productViewCount: number;
+  lastEventName: string | null;
+  lastEventAt: string | null;
 };
 
 type CampaignCustomerSortKey =
-  | "orderValue"
-  | "orderCount"
-  | "itemQuantity"
-  | "eventCount"
-  | "registeredAt"
-  | "lastOrderAt"
+  | "totalPurchaseValue"
+  | "purchaseCount"
+  | "productViewCount"
+  | "addToCartCount"
+  | "checkoutCount"
+  | "registerSubmittedCount"
+  | "lastEventAt"
+  | "firstSeenAt"
   | "name";
 
 type CampaignCustomersResponse = {
   rows: CampaignCustomerRow[];
+  data?: CampaignCustomerRow[];
   total: number;
+  filters?: {
+    sources: string[];
+    campaigns: string[];
+    customerTypes: string[];
+  };
   summary: {
     impactedCustomers: number;
     attributedRevenue: number;
@@ -357,30 +389,55 @@ function CampaignCustomersPanel({
   isLoading: boolean;
   isError: boolean;
 }) {
+  const [search, setSearch] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [campaignFilter, setCampaignFilter] = useState("all");
   const [documentFilter, setDocumentFilter] = useState("all");
   const [purchaseFilter, setPurchaseFilter] = useState("all");
   const [repurchaseFilter, setRepurchaseFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [sortKey, setSortKey] = useState<CampaignCustomerSortKey>("orderValue");
+  const [remarketingFilter, setRemarketingFilter] = useState("all");
+  const [customerTypeFilter, setCustomerTypeFilter] = useState("all");
+  const [sortKey, setSortKey] = useState<CampaignCustomerSortKey>("lastEventAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const visibleRows = useMemo(() => {
     const rows = [...(data?.rows ?? [])].filter((row) => {
-      if (documentFilter !== "all" && row.documentType !== documentFilter) return false;
-      if (statusFilter !== "all" && row.registrationStatus !== statusFilter) return false;
-      if (purchaseFilter === "buyers" && !row.madePurchase) return false;
-      if (purchaseFilter === "non_buyers" && row.madePurchase) return false;
+      if (sourceFilter !== "all" && row.lastTouch.source !== sourceFilter) return false;
+      if (campaignFilter !== "all" && !row.campaigns.some((campaign) => campaign.campaign === campaignFilter)) return false;
+      if (documentFilter === "CPF" && row.documentType !== "CPF") return false;
+      if (documentFilter === "CNPJ" && row.documentType !== "CNPJ") return false;
+      if (documentFilter === "none" && row.documentType !== null) return false;
+      if (customerTypeFilter !== "all" && row.type !== customerTypeFilter) return false;
+      if (purchaseFilter === "buyers" && !row.hasPurchase) return false;
+      if (purchaseFilter === "non_buyers" && row.hasPurchase) return false;
       if (repurchaseFilter === "yes" && !row.isRepurchase) return false;
       if (repurchaseFilter === "no" && row.isRepurchase) return false;
+      if (remarketingFilter === "yes" && !row.isRemarketing) return false;
+      if (remarketingFilter === "no" && row.isRemarketing) return false;
+      if (search.trim()) {
+        const term = search.trim().toLowerCase();
+        const haystack = [
+          row.userId.toString(),
+          row.name,
+          row.email,
+          row.companyName,
+          row.cpf,
+          row.cnpj,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(term)) return false;
+      }
       return true;
     });
 
     rows.sort((a, b) => {
       const direction = sortDir === "asc" ? 1 : -1;
       if (sortKey === "name") {
-        return direction * (a.name || a.email).localeCompare(b.name || b.email);
+        return direction * (a.name || a.email || `UP Zero ${a.userId}`).localeCompare(b.name || b.email || `UP Zero ${b.userId}`);
       }
-      if (sortKey === "registeredAt" || sortKey === "lastOrderAt") {
+      if (sortKey === "lastEventAt" || sortKey === "firstSeenAt") {
         const aTime = a[sortKey] ? new Date(a[sortKey] as string).getTime() : 0;
         const bTime = b[sortKey] ? new Date(b[sortKey] as string).getTime() : 0;
         return direction * (aTime - bTime);
@@ -389,7 +446,19 @@ function CampaignCustomersPanel({
     });
 
     return rows;
-  }, [data?.rows, documentFilter, purchaseFilter, repurchaseFilter, sortDir, sortKey, statusFilter]);
+  }, [
+    campaignFilter,
+    customerTypeFilter,
+    data?.rows,
+    documentFilter,
+    purchaseFilter,
+    remarketingFilter,
+    repurchaseFilter,
+    search,
+    sortDir,
+    sortKey,
+    sourceFilter,
+  ]);
 
   const setSort = (key: CampaignCustomerSortKey) => {
     if (sortKey === key) {
@@ -458,16 +527,57 @@ function CampaignCustomersPanel({
       </div>
 
       {data && data.rows.length > 0 && (
-        <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs"
+            placeholder="Buscar nome, empresa, doc ou ID"
+            aria-label="Buscar cliente atribuído"
+          />
+          <select
+            value={sourceFilter}
+            onChange={(event) => setSourceFilter(event.target.value)}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs"
+            aria-label="Filtrar por origem"
+          >
+            <option value="all">Origem: todas</option>
+            {(data.filters?.sources ?? []).map((source) => (
+              <option key={source} value={source}>{source}</option>
+            ))}
+          </select>
+          <select
+            value={campaignFilter}
+            onChange={(event) => setCampaignFilter(event.target.value)}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs"
+            aria-label="Filtrar por campanha"
+          >
+            <option value="all">Campanha: todas</option>
+            {(data.filters?.campaigns ?? []).map((campaign) => (
+              <option key={campaign} value={campaign}>{campaign}</option>
+            ))}
+          </select>
           <select
             value={documentFilter}
             onChange={(event) => setDocumentFilter(event.target.value)}
             className="h-9 rounded-md border border-border bg-background px-3 text-xs"
             aria-label="Filtrar por documento"
           >
-            <option value="all">CPF e CNPJ</option>
+            <option value="all">Documento: todos</option>
             <option value="CPF">CPF</option>
             <option value="CNPJ">CNPJ</option>
+            <option value="none">Sem documento</option>
+          </select>
+          <select
+            value={customerTypeFilter}
+            onChange={(event) => setCustomerTypeFilter(event.target.value)}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs"
+            aria-label="Filtrar por tipo de cliente"
+          >
+            <option value="all">Tipo: todos</option>
+            {(data.filters?.customerTypes ?? []).map((type) => (
+              <option key={type} value={type}>{type}</option>
+            ))}
           </select>
           <select
             value={purchaseFilter}
@@ -490,15 +600,14 @@ function CampaignCustomersPanel({
             <option value="no">Primeira compra/cadastro</option>
           </select>
           <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
+            value={remarketingFilter}
+            onChange={(event) => setRemarketingFilter(event.target.value)}
             className="h-9 rounded-md border border-border bg-background px-3 text-xs"
-            aria-label="Filtrar por status"
+            aria-label="Filtrar por remarketing"
           >
-            <option value="all">Status: todos</option>
-            <option value="APPROVED">Aprovado</option>
-            <option value="PENDING">Pendente</option>
-            <option value="REJECTED">Recusado</option>
+            <option value="all">Remarketing: todos</option>
+            <option value="yes">Remarketing sim</option>
+            <option value="no">Remarketing não</option>
           </select>
           <select
             value={`${sortKey}:${sortDir}`}
@@ -510,12 +619,14 @@ function CampaignCustomersPanel({
             className="h-9 rounded-md border border-border bg-background px-3 text-xs"
             aria-label="Ordenar clientes atribuídos"
           >
-            <option value="orderValue:desc">Maior valor</option>
-            <option value="orderCount:desc">Mais pedidos</option>
-            <option value="itemQuantity:desc">Mais produtos</option>
-            <option value="eventCount:desc">Mais eventos</option>
-            <option value="registeredAt:desc">Cadastro mais recente</option>
-            <option value="lastOrderAt:desc">Pedido mais recente</option>
+            <option value="lastEventAt:desc">Última atividade</option>
+            <option value="totalPurchaseValue:desc">Maior valor</option>
+            <option value="purchaseCount:desc">Mais pedidos</option>
+            <option value="productViewCount:desc">Mais produtos vistos</option>
+            <option value="addToCartCount:desc">Mais carrinhos</option>
+            <option value="checkoutCount:desc">Mais checkouts</option>
+            <option value="registerSubmittedCount:desc">Mais cadastros</option>
+            <option value="firstSeenAt:desc">Primeira atividade recente</option>
             <option value="name:asc">Nome A-Z</option>
           </select>
         </div>
@@ -539,7 +650,7 @@ function CampaignCustomersPanel({
           </div>
           <p className="text-sm font-medium">Nenhum cliente atribuído no período</p>
           <p className="text-xs text-muted-foreground mt-1">
-            A lista aparece quando a UP Zero retorna eventos com user_id e UTM compatível.
+            A lista aparece quando a UP Zero retorna eventos identificados por user.id ou user_id com UTM/campanha paga.
           </p>
         </div>
       ) : visibleRows.length === 0 ? (
@@ -555,72 +666,121 @@ function CampaignCustomersPanel({
             <thead>
               <tr className="border-b border-border text-left text-[10px] uppercase tracking-wider text-muted-foreground">
                 <th className="py-2 pr-4"><SortHeader sort="name">Cliente</SortHeader></th>
-                <th className="py-2 px-3 font-medium">Tags</th>
-                <th className="py-2 px-3 font-medium">Cadastro / Pedido</th>
+                <th className="py-2 px-3 font-medium">Tipo / Documento</th>
+                <th className="py-2 px-3 font-medium">Empresa</th>
+                <th className="py-2 px-3 font-medium">Primeira campanha</th>
                 <th className="py-2 px-3 font-medium">Última campanha</th>
-                <th className="py-2 px-3"><SortHeader sort="orderCount" align="right">Pedidos</SortHeader></th>
-                <th className="py-2 px-3"><SortHeader sort="itemQuantity" align="right">Produtos</SortHeader></th>
-                <th className="py-2 px-3"><SortHeader sort="orderValue" align="right">Valor</SortHeader></th>
-                <th className="py-2 pl-3"><SortHeader sort="eventCount" align="right">Eventos</SortHeader></th>
+                <th className="py-2 px-3 font-medium">Status</th>
+                <th className="py-2 px-3"><SortHeader sort="purchaseCount" align="right">Pedidos</SortHeader></th>
+                <th className="py-2 px-3"><SortHeader sort="totalPurchaseValue" align="right">Valor</SortHeader></th>
+                <th className="py-2 px-3"><SortHeader sort="registerSubmittedCount" align="right">Cadastros</SortHeader></th>
+                <th className="py-2 px-3"><SortHeader sort="addToCartCount" align="right">Carrinhos</SortHeader></th>
+                <th className="py-2 px-3"><SortHeader sort="checkoutCount" align="right">Checkouts</SortHeader></th>
+                <th className="py-2 px-3"><SortHeader sort="productViewCount" align="right">Produtos vistos</SortHeader></th>
+                <th className="py-2 pl-3"><SortHeader sort="lastEventAt" align="right">Última atividade</SortHeader></th>
               </tr>
             </thead>
             <tbody>
               {visibleRows.map((row) => (
-                <tr key={row.customerId} className="border-b border-border/60 last:border-0 hover-elevate">
+                <tr key={`${row.userId}-${row.customerId ?? "upzero"}`} className="border-b border-border/60 last:border-0 hover-elevate">
                   <td className="py-3 pr-4 min-w-[220px]">
-                    <Link href={`/customers/${row.customerId}`} className="block">
-                      <div className="font-medium hover:text-primary truncate">
-                        {row.name || row.email}
+                    {row.customerId ? (
+                      <Link href={`/customers/${row.customerId}`} className="block">
+                        <div className="font-medium hover:text-primary truncate">
+                          {row.name || row.email || `UP Zero ${row.userId}`}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {[row.email, `UP Zero ${row.userId}`].filter(Boolean).join(" · ")}
+                        </div>
+                      </Link>
+                    ) : (
+                      <div>
+                        <div className="font-medium truncate">{row.name || `UP Zero ${row.userId}`}</div>
+                        <div className="text-xs text-muted-foreground truncate">Sem cadastro local · UP Zero {row.userId}</div>
                       </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {row.email} · UP Zero {row.userId}
-                      </div>
-                    </Link>
+                    )}
                   </td>
-                  <td className="py-3 px-3 min-w-[210px]">
-                    <div className="flex flex-wrap gap-1.5">
-                      {row.documentType && (
+                  <td className="py-3 px-3 min-w-[150px]">
+                    <div className="font-medium">{row.type ?? "—"}</div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {row.cpf && (
                         <span className="inline-flex rounded-md bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-400">
-                          {row.documentType}
+                          CPF {row.cpf}
                         </span>
                       )}
-                      <span className="inline-flex rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                        {row.registrationStatus}
-                      </span>
+                      {row.cnpj && (
+                        <span className="inline-flex rounded-md bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-400">
+                          CNPJ {row.cnpj}
+                        </span>
+                      )}
+                      {!row.cpf && !row.cnpj && (
+                        <span className="text-xs text-muted-foreground">Sem documento</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="py-3 px-3 min-w-[180px]">
+                    <div className="font-medium truncate" title={row.companyName ?? undefined}>
+                      {row.companyName ?? "—"}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      1ª atividade: {formatCampaignDate(row.firstSeenAt)}
+                    </div>
+                  </td>
+                  <td className="py-3 px-3 min-w-[260px]">
+                    <div className="font-medium truncate" title={row.firstTouch.campaign ?? "—"}>
+                      {row.firstTouch.campaign ?? "—"}
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {[row.firstTouch.source, row.firstTouch.medium].filter(Boolean).join(" / ") || "Origem não identificada"} · {formatCampaignDate(row.firstTouch.occurredAt)}
+                    </div>
+                  </td>
+                  <td className="py-3 px-3 min-w-[260px]">
+                    <div className="font-medium truncate" title={row.lastTouch.campaign ?? "—"}>
+                      {row.lastTouch.campaign ?? "—"}
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {[row.lastTouch.source, row.lastTouch.medium].filter(Boolean).join(" / ") || "Origem não identificada"} · {formatCampaignDate(row.lastTouch.occurredAt)}
+                    </div>
+                    {row.returnTouch && (
+                      <div className="text-xs text-muted-foreground truncate">
+                        Retorno: {row.returnTouch.campaign ?? "campanha diferente"}
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-3 px-3 min-w-[190px]">
+                    <div className="flex flex-wrap gap-1.5">
+                      {row.registrationStatus && (
+                        <span className="inline-flex rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          {row.registrationStatus}
+                        </span>
+                      )}
                       <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ${
-                        row.madePurchase ? "bg-emerald-500/10 text-emerald-400" : "bg-muted/50 text-muted-foreground"
+                        row.hasPurchase ? "bg-emerald-500/10 text-emerald-400" : "bg-muted/50 text-muted-foreground"
                       }`}>
-                        Compra: {row.madePurchase ? "Sim" : "Não"}
+                        Compra: {row.hasPurchase ? "Sim" : "Não"}
                       </span>
                       <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ${
                         row.isRepurchase ? "bg-blue-500/10 text-blue-400" : "bg-muted/50 text-muted-foreground"
                       }`}>
                         Recompra: {row.isRepurchase ? "Sim" : "Não"}
                       </span>
+                      <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ${
+                        row.isRemarketing ? "bg-fuchsia-500/10 text-fuchsia-400" : "bg-muted/50 text-muted-foreground"
+                      }`}>
+                        RMKT: {row.isRemarketing ? "Sim" : "Não"}
+                      </span>
                     </div>
                   </td>
-                  <td className="py-3 px-3 min-w-[170px]">
-                    <div className="text-xs text-muted-foreground">
-                      Cadastro: <span className="text-foreground">{formatCampaignDate(row.registeredAt)}</span>
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Pedido: <span className="text-foreground">{formatCampaignDate(row.lastOrderAt)}</span>
-                    </div>
+                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.purchaseCount)}</td>
+                  <td className="py-3 px-3 text-right font-semibold tabular-nums">{formatCurrency(row.totalPurchaseValue)}</td>
+                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.registerSubmittedCount)}</td>
+                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.addToCartCount)}</td>
+                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.checkoutCount)}</td>
+                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.productViewCount)}</td>
+                  <td className="py-3 pl-3 text-right min-w-[150px]">
+                    <div className="tabular-nums">{formatCampaignDate(row.lastEventAt)}</div>
+                    <div className="text-xs text-muted-foreground">{row.lastEventName ?? "—"}</div>
                   </td>
-                  <td className="py-3 px-3 min-w-[260px]">
-                    <div className="font-medium truncate" title={row.lastCampaign ?? row.firstCampaign ?? "—"}>
-                      {row.lastCampaign ?? row.firstCampaign ?? "—"}
-                    </div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {[row.lastSource ?? row.firstSource, row.lastMedium ?? row.firstMedium]
-                        .filter(Boolean)
-                        .join(" / ") || "Origem não identificada"} · {formatCampaignDate(row.lastCampaignAt)}
-                    </div>
-                  </td>
-                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.orderCount)}</td>
-                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.itemQuantity)}</td>
-                  <td className="py-3 px-3 text-right font-semibold tabular-nums">{formatCurrency(row.orderValue)}</td>
-                  <td className="py-3 pl-3 text-right tabular-nums">{formatNumber(row.eventCount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -716,7 +876,7 @@ export default function DashboardPage() {
       const params = new URLSearchParams({
         dateFrom: format(dateRange.from, "yyyy-MM-dd"),
         dateTo: format(dateRange.to, "yyyy-MM-dd"),
-        limit: "50",
+        limit: "500",
       });
       if (clientId) params.set("clientId", clientId);
       return customFetch<CampaignCustomersResponse>(
