@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
+  customFetch,
   useGetDashboard,
   useGetInsight,
   useRegenerateInsight,
@@ -13,7 +14,7 @@ import {
   useGetAlerts,
   useGetSellers,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -29,6 +30,7 @@ import {
   Download,
   FileText,
   Info,
+  Megaphone,
   MoreHorizontal,
   Package,
   PackageX,
@@ -272,6 +274,43 @@ const CHART_METRICS = [
 
 type ChartMetric = (typeof CHART_METRICS)[number]["id"];
 
+type CampaignCustomerRow = {
+  customerId: string;
+  userId: number;
+  name: string | null;
+  email: string;
+  registrationStatus: string;
+  firstCampaign: string | null;
+  firstSource: string | null;
+  firstMedium: string | null;
+  lastCampaign: string | null;
+  lastSource: string | null;
+  lastMedium: string | null;
+  lastCampaignAt: string | null;
+  campaignImpacted: boolean;
+  isRepurchase: boolean;
+  orderCount: number;
+  orderValue: number;
+  itemQuantity: number;
+  registrationEvents: number;
+  addToCartEvents: number;
+  checkoutEvents: number;
+  purchaseEvents: number;
+  eventCount: number;
+};
+
+type CampaignCustomersResponse = {
+  rows: CampaignCustomerRow[];
+  total: number;
+  summary: {
+    impactedCustomers: number;
+    attributedRevenue: number;
+    orders: number;
+    itemQuantity: number;
+    registrations: number;
+  };
+};
+
 function detectAnomalies(series: { date: string; value: number }[]): { date: string; value: number }[] {
   // ±2σ from the series mean — flag any point whose value is more than two
   // standard deviations away from the average for the visible date range.
@@ -282,6 +321,143 @@ function detectAnomalies(series: { date: string; value: number }[]): { date: str
   const std = Math.sqrt(variance);
   if (std === 0) return [];
   return series.filter((p) => Math.abs(p.value - mean) >= 2 * std);
+}
+
+function formatCampaignDate(value: string | null) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function CampaignCustomersPanel({
+  data,
+  isLoading,
+  isError,
+}: {
+  data?: CampaignCustomersResponse;
+  isLoading: boolean;
+  isError: boolean;
+}) {
+  return (
+    <Card className="p-5 bg-card border-border" data-testid="campaign-customers-panel">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+        <div>
+          <h2 className="text-base font-semibold leading-tight flex items-center gap-2">
+            <Megaphone className="h-4 w-4 text-primary" />
+            Clientes atribuídos às campanhas
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Clientes com UTM contendo UP, Instagram ou FBC no período. Clique para abrir a timeline completa.
+          </p>
+        </div>
+        {data && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-right">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Clientes</p>
+              <p className="text-sm font-semibold tabular-nums">{formatNumber(data.summary.impactedCustomers)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Receita</p>
+              <p className="text-sm font-semibold tabular-nums">{formatCurrency(data.summary.attributedRevenue)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pedidos</p>
+              <p className="text-sm font-semibold tabular-nums">{formatNumber(data.summary.orders)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Cadastros</p>
+              <p className="text-sm font-semibold tabular-nums">{formatNumber(data.summary.registrations)}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 w-full" />
+          ))}
+        </div>
+      ) : isError ? (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>Não foi possível carregar os clientes atribuídos às campanhas.</AlertDescription>
+        </Alert>
+      ) : !data || data.rows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary mb-3">
+            <Megaphone className="h-5 w-5" />
+          </div>
+          <p className="text-sm font-medium">Nenhum cliente atribuído no período</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            A lista aparece quando a UP Zero retorna eventos com user_id e UTM compatível.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                <th className="py-2 pr-4 font-medium">Cliente</th>
+                <th className="py-2 px-3 font-medium">Última campanha</th>
+                <th className="py-2 px-3 font-medium text-right">Pedidos</th>
+                <th className="py-2 px-3 font-medium text-right">Produtos</th>
+                <th className="py-2 px-3 font-medium text-right">Valor</th>
+                <th className="py-2 px-3 font-medium text-center">Impactado</th>
+                <th className="py-2 pl-3 font-medium text-center">Recompra</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((row) => (
+                <tr key={row.customerId} className="border-b border-border/60 last:border-0 hover-elevate">
+                  <td className="py-3 pr-4 min-w-[220px]">
+                    <Link href={`/customers/${row.customerId}`} className="block">
+                      <div className="font-medium hover:text-primary truncate">
+                        {row.name || row.email}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {row.email} · UP Zero {row.userId}
+                      </div>
+                    </Link>
+                  </td>
+                  <td className="py-3 px-3 min-w-[260px]">
+                    <div className="font-medium truncate" title={row.lastCampaign ?? row.firstCampaign ?? "—"}>
+                      {row.lastCampaign ?? row.firstCampaign ?? "—"}
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {[row.lastSource ?? row.firstSource, row.lastMedium ?? row.firstMedium]
+                        .filter(Boolean)
+                        .join(" / ") || "Origem não identificada"} · {formatCampaignDate(row.lastCampaignAt)}
+                    </div>
+                  </td>
+                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.orderCount)}</td>
+                  <td className="py-3 px-3 text-right tabular-nums">{formatNumber(row.itemQuantity)}</td>
+                  <td className="py-3 px-3 text-right font-semibold tabular-nums">{formatCurrency(row.orderValue)}</td>
+                  <td className="py-3 px-3 text-center">
+                    <span className="inline-flex rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                      {row.campaignImpacted ? "Sim" : "Não"}
+                    </span>
+                  </td>
+                  <td className="py-3 pl-3 text-center">
+                    <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${
+                      row.isRepurchase ? "bg-blue-500/10 text-blue-400" : "bg-muted/50 text-muted-foreground"
+                    }`}>
+                      {row.isRepurchase ? "Sim" : "Não"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
 }
 
 export default function DashboardPage() {
@@ -354,6 +530,30 @@ export default function DashboardPage() {
     { clientId, limit: 5 },
     { query: queryOpts({ enabled }) },
   );
+  const {
+    data: campaignCustomers,
+    isLoading: campaignCustomersLoading,
+    isError: campaignCustomersError,
+  } = useQuery({
+    queryKey: [
+      "campaign-customers",
+      clientId,
+      format(dateRange.from, "yyyy-MM-dd"),
+      format(dateRange.to, "yyyy-MM-dd"),
+    ],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+        dateTo: format(dateRange.to, "yyyy-MM-dd"),
+        limit: "50",
+      });
+      if (clientId) params.set("clientId", clientId);
+      return customFetch<CampaignCustomersResponse>(
+        `/api/analytics/campaign-customers?${params.toString()}`,
+      );
+    },
+    enabled,
+  });
 
   // Compute changes from API-provided prior-period KPIs
   const revenueChange = useMemo(
@@ -758,6 +958,14 @@ export default function DashboardPage() {
             { label: "Returning", value: data ? formatNumber(data.kpis.returningBuyers) : "—" },
           ]}
           isLoading={isLoading}
+        />
+      </motion.div>
+
+      <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
+        <CampaignCustomersPanel
+          data={campaignCustomers}
+          isLoading={campaignCustomersLoading}
+          isError={campaignCustomersError}
         />
       </motion.div>
 

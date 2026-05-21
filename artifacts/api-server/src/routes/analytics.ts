@@ -66,6 +66,7 @@ import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type Me
 import {
   buildCustomerTimelineResponse,
   getUpzeroAnalyticsMetrics,
+  type UpzeroAnalyticsMetric,
 } from "../services/upzero/analytics-metrics";
 
 const router: IRouter = Router();
@@ -111,6 +112,29 @@ function dateRange(
   const defaultFrom =
     from ?? new Date(defaultTo.getTime() - 30 * 24 * 60 * 60 * 1000);
   return { from: defaultFrom, to: defaultTo };
+}
+
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function addDaysToDateOnly(value: string, days: number): string {
+  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return date.toISOString().slice(0, 10);
+}
+
+function upzeroIsoRange(
+  query: Record<string, unknown>,
+  from: Date,
+  to: Date,
+): { from: string; to: string } {
+  const rawFrom = typeof query.dateFrom === "string" ? query.dateFrom : null;
+  const rawTo = typeof query.dateTo === "string" ? query.dateTo : null;
+  return {
+    from: rawFrom && DATE_ONLY_RE.test(rawFrom) ? `${rawFrom}T03:00:00Z` : from.toISOString(),
+    to: rawTo && DATE_ONLY_RE.test(rawTo)
+      ? `${addDaysToDateOnly(rawTo, 1)}T02:59:59Z`
+      : to.toISOString(),
+  };
 }
 
 function requireClient(
@@ -1022,6 +1046,245 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   );
 });
 
+const CAMPAIGN_ATTRIBUTION_TERMS = ["up", "instagram", "fbc"];
+
+function metricText(row: UpzeroAnalyticsMetric): string {
+  return [
+    row.utm_source,
+    row.utm_medium,
+    row.utm_campaign,
+    row.source,
+    row.channel,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function isCampaignAttributedMetric(row: UpzeroAnalyticsMetric): boolean {
+  const text = metricText(row);
+  return CAMPAIGN_ATTRIBUTION_TERMS.some((term) => text.includes(term));
+}
+
+const CampaignCustomersQueryParams = GetDashboardQueryParams.pick({
+  clientId: true,
+  dateFrom: true,
+  dateTo: true,
+}).extend({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
+  const parsed = CampaignCustomersQueryParams.safeParse(
+    coerceDateQuery(req.query as Record<string, unknown>),
+  );
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const upzeroRange = upzeroIsoRange(req.query as Record<string, unknown>, from, to);
+  const [client] = await db
+    .select({ upZeroApiKey: clientsTable.upZeroApiKey })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  try {
+    const metrics = await getUpzeroAnalyticsMetrics({
+      ...upzeroRange,
+      apiKey: client?.upZeroApiKey,
+    });
+    const attributedMetrics = metrics.data.filter(
+      (row) => row.user_id !== null && isCampaignAttributedMetric(row),
+    );
+    const userIds = [...new Set(attributedMetrics.map((row) => row.user_id).filter((id): id is number => id !== null))];
+
+    if (userIds.length === 0) {
+      res.json({
+        rows: [],
+        total: 0,
+        summary: {
+          impactedCustomers: 0,
+          attributedRevenue: 0,
+          orders: 0,
+          itemQuantity: 0,
+          registrations: 0,
+        },
+      });
+      return;
+    }
+
+    const customers = await db
+      .select({
+        id: customersTable.id,
+        externalId: customersTable.externalId,
+        name: customersTable.name,
+        email: customersTable.email,
+        registrationStatus: customersTable.registrationStatus,
+        createdAt: customersTable.createdAt,
+        totalOrders: customersTable.totalOrders,
+        totalSpent: customersTable.totalSpent,
+        firstPurchaseAt: customersTable.firstPurchaseAt,
+        utmSource: customersTable.utmSource,
+        utmMedium: customersTable.utmMedium,
+        utmCampaign: customersTable.utmCampaign,
+      })
+      .from(customersTable)
+      .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.externalId, userIds.map(String))));
+
+    if (customers.length === 0) {
+      res.json({
+        rows: [],
+        total: 0,
+        summary: {
+          impactedCustomers: 0,
+          attributedRevenue: 0,
+          orders: 0,
+          itemQuantity: 0,
+          registrations: attributedMetrics
+            .filter((row) => row.event_name === "register_submitted")
+            .reduce((sum, row) => sum + row.total_events, 0),
+        },
+      });
+      return;
+    }
+
+    const customerIds = customers.map((customer) => customer.id);
+    const [orderRows, itemRows, priorRows] = await Promise.all([
+      db
+        .select({
+          customerId: ordersTable.customerId,
+          orderCount: sql<number>`COUNT(*)::int`,
+          orderValue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+        })
+        .from(ordersTable)
+        .where(
+          and(
+            eq(ordersTable.clientId, clientId),
+            inArray(ordersTable.customerId, customerIds),
+            gte(ordersTable.createdAt, from),
+            lte(ordersTable.createdAt, to),
+          ),
+        )
+        .groupBy(ordersTable.customerId),
+      db
+        .select({
+          customerId: ordersTable.customerId,
+          itemQuantity: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::int`,
+        })
+        .from(orderItemsTable)
+        .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+        .where(
+          and(
+            eq(ordersTable.clientId, clientId),
+            inArray(ordersTable.customerId, customerIds),
+            gte(ordersTable.createdAt, from),
+            lte(ordersTable.createdAt, to),
+          ),
+        )
+        .groupBy(ordersTable.customerId),
+      db
+        .select({
+          customerId: ordersTable.customerId,
+          priorOrders: sql<number>`COUNT(*)::int`,
+        })
+        .from(ordersTable)
+        .where(
+          and(
+            eq(ordersTable.clientId, clientId),
+            inArray(ordersTable.customerId, customerIds),
+            lte(ordersTable.createdAt, from),
+          ),
+        )
+        .groupBy(ordersTable.customerId),
+    ]);
+
+    const orderMap = new Map(orderRows.map((row) => [row.customerId, row]));
+    const itemMap = new Map(itemRows.map((row) => [row.customerId, row.itemQuantity]));
+    const priorMap = new Map(priorRows.map((row) => [row.customerId, row.priorOrders]));
+    const metricsByUser = new Map<number, UpzeroAnalyticsMetric[]>();
+    for (const metric of attributedMetrics) {
+      if (metric.user_id === null) continue;
+      const rows = metricsByUser.get(metric.user_id) ?? [];
+      rows.push(metric);
+      metricsByUser.set(metric.user_id, rows);
+    }
+
+    const rows = customers
+      .map((customer) => {
+        const userId = Number.parseInt(customer.externalId ?? "", 10);
+        const userMetrics = [...(metricsByUser.get(userId) ?? [])].sort(
+          (a, b) => new Date(a.period_start).getTime() - new Date(b.period_start).getTime(),
+        );
+        const firstMetric = userMetrics.find((row) => row.utm_campaign || row.utm_source || row.utm_medium);
+        const lastMetric = [...userMetrics].reverse().find((row) => row.utm_campaign || row.utm_source || row.utm_medium);
+        const orderAgg = orderMap.get(customer.id);
+        const orderCount = Number(orderAgg?.orderCount ?? 0);
+        const orderValue = Number(orderAgg?.orderValue ?? 0);
+        const itemQuantity = Number(itemMap.get(customer.id) ?? 0);
+        return {
+          customerId: customer.id,
+          userId,
+          name: customer.name,
+          email: customer.email,
+          registrationStatus: customer.registrationStatus,
+          registeredAt: customer.createdAt.toISOString(),
+          firstCampaign: firstMetric?.utm_campaign ?? customer.utmCampaign ?? null,
+          firstSource: firstMetric?.utm_source ?? customer.utmSource ?? null,
+          firstMedium: firstMetric?.utm_medium ?? customer.utmMedium ?? null,
+          lastCampaign: lastMetric?.utm_campaign ?? null,
+          lastSource: lastMetric?.utm_source ?? null,
+          lastMedium: lastMetric?.utm_medium ?? null,
+          lastCampaignAt: lastMetric?.period_start ?? null,
+          campaignImpacted: true,
+          isRepurchase: Number(priorMap.get(customer.id) ?? 0) > 0,
+          orderCount,
+          orderValue,
+          itemQuantity,
+          registrationEvents: userMetrics
+            .filter((row) => row.event_name === "register_submitted")
+            .reduce((sum, row) => sum + row.total_events, 0),
+          addToCartEvents: userMetrics
+            .filter((row) => row.event_name === "add_to_cart")
+            .reduce((sum, row) => sum + row.total_events, 0),
+          checkoutEvents: userMetrics
+            .filter((row) => row.event_name === "initiate_checkout" || row.event_name === "checkout_start")
+            .reduce((sum, row) => sum + row.total_events, 0),
+          purchaseEvents: userMetrics
+            .filter((row) => ["purchase", "order_created", "order_paid", "payment_approved"].includes(row.event_name))
+            .reduce((sum, row) => sum + row.total_events, 0),
+          eventCount: userMetrics.reduce((sum, row) => sum + row.total_events, 0),
+        };
+      })
+      .sort((a, b) => b.orderValue - a.orderValue || b.eventCount - a.eventCount)
+      .slice(0, parsed.data.limit);
+
+    res.json({
+      rows,
+      total: customers.length,
+      summary: {
+        impactedCustomers: customers.length,
+        attributedRevenue: rows.reduce((sum, row) => sum + row.orderValue, 0),
+        orders: rows.reduce((sum, row) => sum + row.orderCount, 0),
+        itemQuantity: rows.reduce((sum, row) => sum + row.itemQuantity, 0),
+        registrations: rows.reduce((sum, row) => sum + row.registrationEvents, 0),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(502).json({
+      error: true,
+      code: "UPZERO_CAMPAIGN_CUSTOMERS_FAILED",
+      message,
+      status: 502,
+    });
+  }
+});
+
 router.get("/analytics/funnel", async (req, res): Promise<void> => {
   const parsed = GetFunnelQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
   if (!parsed.success) {
@@ -1034,6 +1297,158 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const { utmSource, utmMedium, utmCampaign } = parsed.data;
+
+  try {
+    const [client] = await db
+      .select({ upZeroApiKey: clientsTable.upZeroApiKey })
+      .from(clientsTable)
+      .where(eq(clientsTable.id, clientId));
+    const upzeroRange = upzeroIsoRange(req.query as Record<string, unknown>, from, to);
+    const metrics = await getUpzeroAnalyticsMetrics({
+      ...upzeroRange,
+      apiKey: client?.upZeroApiKey,
+    });
+    const scopedMetrics = metrics.data.filter((row) => {
+      if (utmSource && row.utm_source?.toLowerCase() !== utmSource.toLowerCase()) return false;
+      if (utmMedium && row.utm_medium?.toLowerCase() !== utmMedium.toLowerCase()) return false;
+      if (utmCampaign && row.utm_campaign?.toLowerCase() !== utmCampaign.toLowerCase()) return false;
+      return true;
+    });
+    const counts: Record<string, number> = {
+      VISIT: 0,
+      CATEGORY_VIEW: 0,
+      PRODUCT_VIEW: 0,
+      FORM_START: 0,
+      REGISTER_START: 0,
+      REGISTRATION: 0,
+      LOGIN: 0,
+      ADD_TO_CART: 0,
+      CHECKOUT_STARTED: 0,
+      ORDER_CREATED: 0,
+      PURCHASE: 0,
+      PAYMENT_APPROVED: 0,
+    };
+    for (const row of scopedMetrics) {
+      const value = row.total_events || 0;
+      switch (row.event_name) {
+        case "page_view":
+          counts.VISIT += value;
+          break;
+        case "category_view":
+          counts.CATEGORY_VIEW += value;
+          break;
+        case "product_view":
+          counts.PRODUCT_VIEW += value;
+          break;
+        case "form_start":
+          counts.FORM_START += value;
+          break;
+        case "register_start":
+          counts.REGISTER_START += value;
+          break;
+        case "register_submitted":
+          counts.REGISTRATION += value;
+          break;
+        case "login":
+          counts.LOGIN += value;
+          break;
+        case "add_to_cart":
+          counts.ADD_TO_CART += value;
+          break;
+        case "initiate_checkout":
+        case "checkout_start":
+          counts.CHECKOUT_STARTED += value;
+          break;
+        case "order_created":
+          counts.ORDER_CREATED += value;
+          break;
+        case "purchase":
+          counts.PURCHASE += value;
+          break;
+        case "order_paid":
+        case "payment_approved":
+          counts.PAYMENT_APPROVED += value;
+          break;
+        default:
+          break;
+      }
+    }
+    const funnelOrder: Array<{ step: string; label: string }> = [
+      { step: "VISIT", label: "Visualizações de página" },
+      { step: "CATEGORY_VIEW", label: "Categorias vistas" },
+      { step: "PRODUCT_VIEW", label: "Produtos vistos" },
+      { step: "FORM_START", label: "Formulários iniciados" },
+      { step: "REGISTER_START", label: "Cadastros iniciados" },
+      { step: "REGISTRATION", label: "Cadastros enviados" },
+      { step: "LOGIN", label: "Logins" },
+      { step: "ADD_TO_CART", label: "Adições ao carrinho" },
+      { step: "CHECKOUT_STARTED", label: "Checkouts iniciados" },
+      { step: "ORDER_CREATED", label: "Pedidos criados" },
+      { step: "PURCHASE", label: "Compras" },
+      { step: "PAYMENT_APPROVED", label: "Pagamentos aprovados" },
+    ];
+    const steps = funnelOrder.map((step, index) => {
+      const count = counts[step.step] ?? 0;
+      const previous = index === 0 ? count : counts[funnelOrder[index - 1].step] ?? 0;
+      const conversionRate = index === 0 ? 100 : previous > 0 ? (count / previous) * 100 : 0;
+      return {
+        ...step,
+        count,
+        conversionRate,
+        dropOffRate: index === 0 ? 0 : 100 - conversionRate,
+      };
+    });
+    const nonZeroSteps = steps.filter((step) => step.count > 0);
+    const firstNonZero = nonZeroSteps[0]?.count ?? 0;
+    const lastNonZero = nonZeroSteps[nonZeroSteps.length - 1]?.count ?? 0;
+    const overallConversion = firstNonZero > 0 ? (lastNonZero / firstNonZero) * 100 : 0;
+    let worst = { idx: -1, drop: -1 };
+    for (let i = 1; i < steps.length; i++) {
+      if (steps[i].dropOffRate > worst.drop) worst = { idx: i, drop: steps[i].dropOffRate };
+    }
+    const insights = [
+      `Funil alimentado pela UP Zero com ${scopedMetrics.length} linhas agregadas por hora no período.`,
+      `Conversão geral de ${overallConversion.toFixed(2)}% entre ${nonZeroSteps[0]?.label ?? "primeiro evento"} e ${nonZeroSteps[nonZeroSteps.length - 1]?.label ?? "último evento"}.`,
+    ];
+    if (worst.idx > 0) {
+      insights.unshift(
+        `Maior queda (${worst.drop.toFixed(1)}%) entre ${steps[worst.idx - 1].label} e ${steps[worst.idx].label}.`,
+      );
+    }
+    const avgEventsBeforePurchase = (() => {
+      const byUser = new Map<number, UpzeroAnalyticsMetric[]>();
+      for (const row of scopedMetrics) {
+        if (!row.user_id) continue;
+        const rows = byUser.get(row.user_id) ?? [];
+        rows.push(row);
+        byUser.set(row.user_id, rows);
+      }
+      const perBuyer: number[] = [];
+      for (const rows of byUser.values()) {
+        const sorted = rows.sort((a, b) => new Date(a.period_start).getTime() - new Date(b.period_start).getTime());
+        const purchaseAt = sorted.find((row) =>
+          ["purchase", "order_created", "order_paid", "payment_approved"].includes(row.event_name)
+        )?.period_start;
+        if (!purchaseAt) continue;
+        const purchaseTime = new Date(purchaseAt).getTime();
+        perBuyer.push(sorted.filter((row) => new Date(row.period_start).getTime() < purchaseTime).reduce((sum, row) => sum + row.total_events, 0));
+      }
+      return perBuyer.length > 0 ? perBuyer.reduce((sum, value) => sum + value, 0) / perBuyer.length : 0;
+    })();
+
+    res.json(GetFunnelResponse.parse({
+      steps,
+      overallConversion,
+      insights,
+      avgEventsBeforePurchase,
+      topPaths: [],
+      suggestedActions: buildFunnelSuggestedActions(worst, steps),
+      hasSiteVisitData: counts.VISIT > 0,
+    }));
+    return;
+  } catch (err) {
+    console.warn("[funnel] UP Zero analytics metrics unavailable; falling back to local events:", err);
+  }
 
   // If UTM filters are active, build a scoped customer list and restrict events to those customers.
   let scopedCustomerCond: SQL | undefined;
