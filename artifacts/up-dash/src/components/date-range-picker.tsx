@@ -59,6 +59,14 @@ function today(): Date {
 
 const presets: Preset[] = [
   {
+    id: "yesterday",
+    label: "Ontem",
+    getRange: () => {
+      const yesterday = subDays(today(), 1);
+      return { from: yesterday, to: yesterday };
+    },
+  },
+  {
     id: "7d",
     label: "7 dias",
     getRange: () => {
@@ -161,15 +169,15 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
     const currentFrom = draftRange.from;
     const currentTo = draftRange.to;
 
-    if (!currentFrom || currentTo || isBefore(picked, currentFrom)) {
+    if (!currentFrom || currentTo) {
       setCustomMode(true);
       setDraftRange({ from: picked });
       return;
     }
 
-    const nextRange = isAfter(picked, currentFrom)
-      ? { from: currentFrom, to: picked }
-      : { from: picked, to: currentFrom };
+    const nextRange = isBefore(picked, currentFrom) || isSameDay(picked, currentFrom)
+      ? { from: picked, to: currentFrom }
+      : { from: currentFrom, to: picked };
 
     setCustomMode(true);
     setDraftRange(nextRange);

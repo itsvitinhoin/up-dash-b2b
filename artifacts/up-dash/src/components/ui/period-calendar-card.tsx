@@ -12,7 +12,8 @@ interface PeriodCalendarCardProps {
 }
 
 function isInRange(day: Date, from?: Date, to?: Date): boolean {
-  if (!from || !to) return false;
+  if (!from) return false;
+  if (!to) return isSameDay(day, from);
   return (
     isSameDay(day, from) ||
     isSameDay(day, to) ||
@@ -68,6 +69,7 @@ export function PeriodCalendarCard({
           {Array.from({ length: daysInMonth }).map((_, i) => {
             const day = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), i + 1);
             const selected = isInRange(day, from, to);
+            const endpoint = Boolean(from && (isSameDay(day, from) || (to && isSameDay(day, to))));
             const muted = !isSameMonth(day, visibleMonth);
             return (
               <button
@@ -77,7 +79,9 @@ export function PeriodCalendarCard({
                 disabled={!onDaySelect}
                 className={cn(
                   "flex h-7 w-7 items-center justify-center rounded-md text-xs font-medium transition-colors",
-                  selected ? "bg-primary text-primary-foreground" : "text-muted-foreground",
+                  selected && endpoint && "bg-primary text-primary-foreground shadow-sm",
+                  selected && !endpoint && "bg-primary/15 text-primary",
+                  !selected && "text-muted-foreground",
                   onDaySelect && !selected && "hover:bg-accent hover:text-foreground",
                   !onDaySelect && "cursor-default",
                   isSameDay(day, today) && !selected && "ring-1 ring-primary/50 text-foreground",
