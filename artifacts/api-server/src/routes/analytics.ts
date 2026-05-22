@@ -90,6 +90,28 @@ function saoPauloDateOnlyEnd(value: string): Date {
   return new Date(`${addDaysToDateOnly(value, 1)}T02:59:59.999Z`);
 }
 
+function utcDateOnlyStart(value: string): Date {
+  return new Date(`${value}T00:00:00.000Z`);
+}
+
+function utcDateOnlyEnd(value: string): Date {
+  return new Date(`${value}T23:59:59.999Z`);
+}
+
+function customerDateQueryRange(
+  query: Record<string, unknown>,
+  dateFrom: Date | undefined,
+  dateTo: Date | undefined,
+): { from: Date | undefined; to: Date | undefined } {
+  const rawFrom = typeof query.dateFrom === "string" ? query.dateFrom : null;
+  const rawTo = typeof query.dateTo === "string" ? query.dateTo : null;
+
+  return {
+    from: rawFrom && DATE_ONLY_RE.test(rawFrom) ? utcDateOnlyStart(rawFrom) : dateFrom,
+    to: rawTo && DATE_ONLY_RE.test(rawTo) ? utcDateOnlyEnd(rawTo) : dateTo,
+  };
+}
+
 function getGlobalMetaAccessToken(fallback?: string | null): string | null {
   return (
     process.env.META_ADS_API_KEY ??
@@ -2072,10 +2094,11 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
     page = 1,
     limit = 20,
   } = parsed.data;
+  const customerRange = customerDateQueryRange(req.query as Record<string, unknown>, dateFrom, dateTo);
 
   const conditions: SQL[] = [eq(customersTable.clientId, clientId)];
-  if (dateFrom) conditions.push(gte(customersTable.createdAt, dateFrom));
-  if (dateTo) conditions.push(lte(customersTable.createdAt, dateTo));
+  if (customerRange.from) conditions.push(gte(customersTable.createdAt, customerRange.from));
+  if (customerRange.to) conditions.push(lte(customersTable.createdAt, customerRange.to));
   if (rfmSegment) conditions.push(eq(customersTable.rfmSegment, rfmSegment));
   if (state) conditions.push(eq(customersTable.state, state));
   if (custUtmSource) conditions.push(eq(customersTable.utmSource, custUtmSource));
@@ -2245,9 +2268,10 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
   if (!clientId) return;
 
   const { dateFrom, dateTo, compare } = parsed.data;
-  const hasExplicitRange = Boolean(dateFrom && dateTo);
+  const customerRange = customerDateQueryRange(req.query as Record<string, unknown>, dateFrom, dateTo);
+  const hasExplicitRange = Boolean(customerRange.from && customerRange.to);
   const { from, to } = hasExplicitRange
-    ? dateRange(dateFrom as Date | undefined, dateTo as Date | undefined)
+    ? dateRange(customerRange.from, customerRange.to)
     : { from: new Date(0), to: new Date() };
 
   const winLenMs = to.getTime() - from.getTime();

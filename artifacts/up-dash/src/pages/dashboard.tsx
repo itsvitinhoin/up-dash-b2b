@@ -334,6 +334,12 @@ type CampaignCustomerRow = {
   lastEventAt: string | null;
 };
 
+const CAMPAIGN_CUSTOMER_STATUS_DOT: Record<string, string> = {
+  APPROVED: "bg-emerald-500",
+  PENDING: "bg-amber-400",
+  REJECTED: "bg-red-500",
+};
+
 type CampaignCustomerSortKey =
   | "totalPurchaseValue"
   | "purchaseCount"
@@ -741,7 +747,7 @@ function CampaignCustomersPanel({
                 <th className="py-2 px-3 font-medium">Empresa</th>
                 <th className="py-2 px-3 font-medium">Primeira campanha</th>
                 <th className="py-2 px-3 font-medium">Última campanha</th>
-                <th className="py-2 px-3 font-medium">Status</th>
+                <th className="py-2 px-3 font-medium">Compra / RMKT</th>
                 <th className="py-2 px-3"><SortHeader sort="purchaseCount" align="right">Pedidos</SortHeader></th>
                 <th className="py-2 px-3"><SortHeader sort="totalPurchaseValue" align="right">Valor</SortHeader></th>
                 <th className="py-2 px-3"><SortHeader sort="productViewCount" align="right">Produtos vistos</SortHeader></th>
@@ -753,21 +759,32 @@ function CampaignCustomersPanel({
               {visibleRows.map((row) => (
                 <tr key={`${row.userId}-${row.customerId ?? "upzero"}`} className="border-b border-border/60 last:border-0 hover-elevate">
                   <td className="py-3 pr-4 min-w-[220px]">
-                    {row.customerId ? (
-                      <Link href={`/customers/${row.customerId}`} className="block">
-                        <div className="font-medium hover:text-primary truncate">
-                          {row.name || row.email || `UP Zero ${row.userId}`}
+                    <div className="flex items-start gap-2">
+                      <span
+                        className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                          row.registrationStatus
+                            ? CAMPAIGN_CUSTOMER_STATUS_DOT[row.registrationStatus] ?? "bg-zinc-400"
+                            : "bg-zinc-400"
+                        }`}
+                        title={row.registrationStatus ?? "Status não identificado"}
+                        aria-label={row.registrationStatus ?? "Status não identificado"}
+                      />
+                      {row.customerId ? (
+                        <Link href={`/customers/${row.customerId}`} className="block min-w-0">
+                          <div className="font-medium hover:text-primary truncate">
+                            {row.name || row.email || `UP Zero ${row.userId}`}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {[row.email, `UP Zero ${row.userId}`].filter(Boolean).join(" · ")}
+                          </div>
+                        </Link>
+                      ) : (
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">{row.name || `UP Zero ${row.userId}`}</div>
+                          <div className="text-xs text-muted-foreground truncate">Sem cadastro local · UP Zero {row.userId}</div>
                         </div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {[row.email, `UP Zero ${row.userId}`].filter(Boolean).join(" · ")}
-                        </div>
-                      </Link>
-                    ) : (
-                      <div>
-                        <div className="font-medium truncate">{row.name || `UP Zero ${row.userId}`}</div>
-                        <div className="text-xs text-muted-foreground truncate">Sem cadastro local · UP Zero {row.userId}</div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </td>
                   <td className="py-3 px-3 min-w-[150px]">
                     <div className="font-medium">{row.type ?? "—"}</div>
@@ -818,11 +835,6 @@ function CampaignCustomersPanel({
                   </td>
                   <td className="py-3 px-3 min-w-[190px]">
                     <div className="flex flex-wrap gap-1.5">
-                      {row.registrationStatus && (
-                        <span className="inline-flex rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                          {row.registrationStatus}
-                        </span>
-                      )}
                       <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium ${
                         row.hasPurchase ? "bg-emerald-500/10 text-emerald-400" : "bg-muted/50 text-muted-foreground"
                       }`}>
