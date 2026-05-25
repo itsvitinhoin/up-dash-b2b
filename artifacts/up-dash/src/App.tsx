@@ -29,6 +29,7 @@ import NotificationsPage from "@/pages/notifications";
 import ComparePage from "@/pages/compare";
 import OverviewPage from "@/pages/overview";
 import MarketingPage from "@/pages/marketing";
+import WhatsappPage from "@/pages/whatsapp";
 import StockIntelligencePage from "@/pages/stock-intelligence";
 import JourneyPage from "@/pages/journey";
 import RfmPage from "@/pages/rfm";
@@ -199,6 +200,14 @@ function Router() {
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="marketing"><MarketingPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/whatsapp">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="whatsapp"><WhatsappPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

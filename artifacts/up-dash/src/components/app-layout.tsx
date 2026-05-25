@@ -34,6 +34,7 @@ import {
   KeyRound,
   Link2,
   History,
+  MessageCircle,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -86,6 +87,7 @@ const pageMeta: Record<string, PageMeta> = {
   "/compare": { title: "Compare brands", subtitle: "Benchmark up to four clients side-by-side", hasDateRange: true, hasFilterBar: false },
   "/overview": { title: "Platform overview", subtitle: "Every brand on UP Dash, at a glance", hasDateRange: true, hasFilterBar: false },
   "/marketing": { title: "Marketing", subtitle: "Ad spend, ROAS, CPL, and creative performance", hasDateRange: true, hasFilterBar: true, requiresClient: true },
+  "/whatsapp": { title: "WhatsApp", subtitle: "Atendimento, velocidade e produtividade", hasDateRange: false, hasFilterBar: false, requiresClient: true },
   "/stock": { title: "Stock Intelligence", subtitle: "Coverage, risk, and inventory health", hasDateRange: false, hasFilterBar: true, requiresClient: true },
   "/journey": { title: "Journey Analytics", subtitle: "Event flow, top paths, and buyer behaviour", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/rfm": { title: "RFM Segmentation", subtitle: "Recency, frequency, and monetary analysis", hasDateRange: true, hasFilterBar: true, requiresClient: true },
@@ -172,6 +174,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const analyticsNav = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Marketing", href: "/marketing", icon: Megaphone },
+    { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle },
     { name: "Funnel", href: "/funnel", icon: Filter },
     { name: "Journey", href: "/journey", icon: Route },
     { name: "RFM", href: "/rfm", icon: BarChart3 },

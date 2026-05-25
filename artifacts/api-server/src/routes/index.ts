@@ -6,6 +6,7 @@ import analyticsRouter from "./analytics";
 import notificationsRouter from "./notifications";
 import savedViewsRouter from "./savedViews";
 import extractionsRouter from "./extractions";
+import whatsappRouter from "./whatsapp";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(analyticsRouter);
 router.use(notificationsRouter);
 router.use(savedViewsRouter);
 router.use(extractionsRouter);
+router.use(whatsappRouter);
 
 export default router;
