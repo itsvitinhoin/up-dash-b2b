@@ -1,6 +1,36 @@
-import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 import { clientsTable } from "./clients";
+
+export const whatsappIntegrationsTable = pgTable(
+  "whatsapp_integrations",
+  {
+    id: text("id").primaryKey().$defaultFn(() => nanoid()),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => clientsTable.id, { onDelete: "cascade" }),
+    appId: text("app_id"),
+    configId: text("config_id"),
+    businessId: text("business_id"),
+    wabaId: text("waba_id"),
+    phoneNumberId: text("phone_number_id"),
+    signupCode: text("signup_code"),
+    status: text("status", {
+      enum: ["not_started", "pending", "connected", "failed"],
+    }).notNull().default("not_started"),
+    rawPayload: jsonb("raw_payload"),
+    connectedAt: timestamp("connected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    clientIdx: index("whatsapp_integrations_client_idx").on(table.clientId),
+    clientUnique: uniqueIndex("whatsapp_integrations_client_unique").on(table.clientId),
+  }),
+);
 
 export const whatsappAgentsTable = pgTable(
   "whatsapp_agents",
@@ -125,6 +155,8 @@ export const whatsappConversationEventsTable = pgTable(
   }),
 );
 
+export type WhatsappIntegration = typeof whatsappIntegrationsTable.$inferSelect;
+export type InsertWhatsappIntegration = typeof whatsappIntegrationsTable.$inferInsert;
 export type WhatsappAgent = typeof whatsappAgentsTable.$inferSelect;
 export type InsertWhatsappAgent = typeof whatsappAgentsTable.$inferInsert;
 export type WhatsappContact = typeof whatsappContactsTable.$inferSelect;

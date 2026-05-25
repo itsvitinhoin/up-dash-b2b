@@ -1,8 +1,31 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { logger } from "../lib/logger";
+import { authenticate, resolveClientId } from "../middlewares/auth";
+import { clientsTable, db, whatsappIntegrationsTable } from "@workspace/db";
 
 const router: IRouter = Router();
+
+const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? "v23.0";
+
+function getWhatsappEmbeddedSignupAppId(): string | null {
+  return (
+    process.env.WHATSAPP_EMBEDDED_SIGNUP_APP_ID ??
+    process.env.META_APP_ID ??
+    process.env.FACEBOOK_APP_ID ??
+    null
+  );
+}
+
+function getWhatsappEmbeddedSignupConfigId(): string | null {
+  return (
+    process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID ??
+    process.env.WHATSAPP_LOGIN_CONFIG_ID ??
+    process.env.META_WHATSAPP_CONFIG_ID ??
+    null
+  );
+}
 
 const WhatsappWebhookQuery = z.object({
   "hub.mode": z.string().optional(),
@@ -26,6 +49,39 @@ type WhatsappWebhookPayload = {
     }>;
   }>;
 };
+
+const SaveEmbeddedSignupBody = z.object({
+  clientId: z.string().optional(),
+  code: z.string().optional().nullable(),
+  businessId: z.string().optional().nullable(),
+  wabaId: z.string().optional().nullable(),
+  phoneNumberId: z.string().optional().nullable(),
+  event: z.string().optional().nullable(),
+  rawPayload: z.unknown().optional(),
+});
+
+function serializeIntegration(row: typeof whatsappIntegrationsTable.$inferSelect | null) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    clientId: row.clientId,
+    appId: row.appId,
+    configId: row.configId,
+    businessId: row.businessId,
+    wabaId: row.wabaId,
+    phoneNumberId: row.phoneNumberId,
+    status: row.status,
+    connectedAt: row.connectedAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function resolveWritableClientId(req: Request, bodyClientId?: string): string | null {
+  if (!req.user) return null;
+  if (req.user.role === "CLIENT") return req.user.clientId;
+  return bodyClientId ?? resolveClientId(req);
+}
 
 function summarizePayload(payload: WhatsappWebhookPayload) {
   let messages = 0;
@@ -96,6 +152,126 @@ router.post("/webhooks/whatsapp", (req, res): void => {
     ok: true,
     receivedAt: new Date().toISOString(),
     summary,
+  });
+});
+
+router.use("/whatsapp", authenticate);
+
+router.get("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
+  const clientId = resolveWritableClientId(req);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client to configure WhatsApp Embedded Signup.",
+      status: 400,
+    });
+    return;
+  }
+
+  const [client] = await db
+    .select({ id: clientsTable.id, name: clientsTable.name })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId))
+    .limit(1);
+
+  if (!client) {
+    res.status(404).json({
+      error: true,
+      code: "CLIENT_NOT_FOUND",
+      message: "Client not found.",
+      status: 404,
+    });
+    return;
+  }
+
+  const [integration] = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.clientId, clientId))
+    .limit(1);
+
+  const appId = getWhatsappEmbeddedSignupAppId();
+  const configId = getWhatsappEmbeddedSignupConfigId();
+
+  res.json({
+    client,
+    facebook: {
+      appId,
+      configId,
+      graphApiVersion: GRAPH_API_VERSION,
+      isConfigured: Boolean(appId && configId),
+    },
+    integration: serializeIntegration(integration ?? null),
+  });
+});
+
+router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
+  const parsed = SaveEmbeddedSignupBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before saving WhatsApp Embedded Signup.",
+      status: 400,
+    });
+    return;
+  }
+
+  const appId = getWhatsappEmbeddedSignupAppId();
+  const configId = getWhatsappEmbeddedSignupConfigId();
+  const status = parsed.data.event === "FINISH" || parsed.data.wabaId || parsed.data.phoneNumberId
+    ? "connected"
+    : "pending";
+
+  const [integration] = await db
+    .insert(whatsappIntegrationsTable)
+    .values({
+      clientId,
+      appId,
+      configId,
+      businessId: parsed.data.businessId ?? null,
+      wabaId: parsed.data.wabaId ?? null,
+      phoneNumberId: parsed.data.phoneNumberId ?? null,
+      signupCode: parsed.data.code ?? null,
+      status,
+      rawPayload: parsed.data.rawPayload ?? null,
+      connectedAt: status === "connected" ? new Date() : null,
+    })
+    .onConflictDoUpdate({
+      target: whatsappIntegrationsTable.clientId,
+      set: {
+        appId,
+        configId,
+        businessId: parsed.data.businessId ?? null,
+        wabaId: parsed.data.wabaId ?? null,
+        phoneNumberId: parsed.data.phoneNumberId ?? null,
+        signupCode: parsed.data.code ?? null,
+        status,
+        rawPayload: parsed.data.rawPayload ?? null,
+        connectedAt: status === "connected" ? new Date() : null,
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+
+  // Future server-side completion point:
+  // Exchange `signupCode` for a customer-scoped business integration token
+  // using the Meta app secret, then store only encrypted credentials.
+  res.status(201).json({
+    ok: true,
+    integration: serializeIntegration(integration ?? null),
   });
 });
 
