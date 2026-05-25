@@ -86,11 +86,6 @@ export default function LoginPage() {
     );
   };
 
-  const fillDemo = (email: string, password: string) => {
-    form.setValue("email", email, { shouldValidate: true });
-    form.setValue("password", password, { shouldValidate: true });
-  };
-
   // Live-feeling KPI tiles
   const liveStats = useMemo(() => {
     const seed = tick;
@@ -440,27 +435,6 @@ export default function LoginPage() {
                 </form>
               </Form>
 
-              {/* Demo creds */}
-              <div className="mt-7 border-t border-white/10 pt-5">
-                <p className="mb-3 flex items-center justify-between text-[11px] uppercase tracking-wider text-white/45">
-                  <span>Demo credentials</span>
-                  <span className="font-mono text-white/30">click to fill</span>
-                </p>
-                <div className="grid gap-2">
-                  <DemoButton
-                    label="Admin"
-                    email="admin@updash.com"
-                    password="Admin123!"
-                    onClick={() => fillDemo("admin@updash.com", "Admin123!")}
-                  />
-                  <DemoButton
-                    label="Brand owner"
-                    email="owner@aurora.com"
-                    password="Client123!"
-                    onClick={() => fillDemo("owner@aurora.com", "Client123!")}
-                  />
-                </div>
-              </div>
             </div>
 
             <p className="mt-5 text-center text-xs text-white/40">
@@ -542,34 +516,5 @@ function LiveTile({
         />
       </div>
     </motion.div>
-  );
-}
-
-interface DemoButtonProps {
-  label: string;
-  email: string;
-  password: string;
-  onClick: () => void;
-}
-
-function DemoButton({ label, email, password, onClick }: DemoButtonProps) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-left transition hover:border-primary/40 hover:bg-primary/10"
-      data-testid={`demo-${label.toLowerCase().replace(/\s/g, "-")}`}
-    >
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-primary">
-            {label}
-          </span>
-          <span className="truncate text-xs text-white/70 font-mono">{email}</span>
-        </div>
-        <span className="text-[11px] text-white/40 font-mono">{password}</span>
-      </div>
-      <ArrowUpRight className="h-3.5 w-3.5 text-white/40 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-primary" />
-    </button>
   );
 }
