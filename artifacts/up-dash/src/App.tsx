@@ -15,6 +15,8 @@ import { useMemo } from "react";
 
 import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/login";
+import PrivacyPolicyPage from "@/pages/privacy-policy";
+import TermsOfServicePage from "@/pages/terms-of-service";
 import DashboardPage from "@/pages/dashboard";
 import FunnelPage from "@/pages/funnel";
 import CustomersPage from "@/pages/customers";
@@ -66,6 +68,14 @@ function Router() {
       <Switch key={location} location={location}>
         <Route path="/login">
           <LoginPage />
+        </Route>
+
+        <Route path="/privacy-policy">
+          <PrivacyPolicyPage />
+        </Route>
+
+        <Route path="/terms-of-service">
+          <TermsOfServicePage />
         </Route>
 
         <Route path="/dashboard">
