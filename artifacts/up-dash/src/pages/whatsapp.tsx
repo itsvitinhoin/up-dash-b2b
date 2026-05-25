@@ -443,6 +443,8 @@ export default function WhatsappPage() {
         },
         {
           config_id: facebook.configId,
+          scope: "public_profile,business_management,whatsapp_business_management,whatsapp_business_messaging",
+          return_scopes: true,
           response_type: "code",
           override_default_response_type: true,
           extras: {
