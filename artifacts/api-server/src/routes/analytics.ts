@@ -169,6 +169,78 @@ function upzeroIsoRange(
   };
 }
 
+const UPZERO_ANALYTICS_CHUNK_MS = 12 * 60 * 60 * 1000;
+const UPZERO_ANALYTICS_MIN_SPLIT_MS = 60 * 60 * 1000;
+const UPZERO_ANALYTICS_PAGE_CAP = 500;
+const UPZERO_ANALYTICS_CONCURRENCY = 4;
+
+function metricDedupeKey(row: UpzeroAnalyticsMetric): string {
+  return [
+    row.id,
+    row.period_start,
+    row.period_type,
+    row.event_name,
+    row.user?.id ?? row.user_id ?? "",
+    row.product?.id ?? "",
+    row.category?.id ?? "",
+    row.order_id ?? "",
+    row.utm_source ?? "",
+    row.utm_medium ?? "",
+    row.utm_campaign ?? "",
+  ].join("|");
+}
+
+async function getUpzeroAnalyticsMetricsChunked(params: {
+  from: string;
+  to: string;
+  apiKey?: string | null;
+}): Promise<UpzeroAnalyticsMetric[]> {
+  const fromMs = new Date(params.from).getTime();
+  const toMs = new Date(params.to).getTime();
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
+    return [];
+  }
+
+  async function fetchWindow(startMs: number, endMs: number): Promise<UpzeroAnalyticsMetric[]> {
+    const response = await getUpzeroAnalyticsMetrics({
+      from: new Date(startMs).toISOString(),
+      to: new Date(endMs).toISOString(),
+      apiKey: params.apiKey,
+    });
+
+    const duration = endMs - startMs;
+    if (response.data.length >= UPZERO_ANALYTICS_PAGE_CAP && duration > UPZERO_ANALYTICS_MIN_SPLIT_MS) {
+      const midMs = startMs + Math.floor(duration / 2);
+      const [left, right] = await Promise.all([
+        fetchWindow(startMs, midMs),
+        fetchWindow(midMs, endMs),
+      ]);
+      return [...left, ...right];
+    }
+
+    return response.data;
+  }
+
+  const windows: Array<[number, number]> = [];
+  for (let cursor = fromMs; cursor < toMs;) {
+    const endMs = Math.min(cursor + UPZERO_ANALYTICS_CHUNK_MS, toMs);
+    windows.push([cursor, endMs]);
+    if (endMs >= toMs) break;
+    cursor = endMs;
+  }
+
+  const chunks: UpzeroAnalyticsMetric[][] = [];
+  for (let i = 0; i < windows.length; i += UPZERO_ANALYTICS_CONCURRENCY) {
+    const batch = windows.slice(i, i + UPZERO_ANALYTICS_CONCURRENCY);
+    chunks.push(...await Promise.all(batch.map(([startMs, endMs]) => fetchWindow(startMs, endMs))));
+  }
+  const deduped = new Map<string, UpzeroAnalyticsMetric>();
+  for (const row of chunks.flat()) {
+    deduped.set(metricDedupeKey(row), row);
+  }
+  return [...deduped.values()];
+}
+
 function requireClient(
   req: import("express").Request,
   res: import("express").Response,
@@ -1423,11 +1495,10 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
     .where(eq(clientsTable.id, clientId));
 
   try {
-    const metrics = await getUpzeroAnalyticsMetrics({
+    const rows = await getUpzeroAnalyticsMetricsChunked({
       ...upzeroRange,
       apiKey: client?.upZeroApiKey,
     });
-    const rows = metrics.data;
     const userIds = [...new Set(rows.map((row) => getMetricUser(row)?.id).filter((id): id is number => typeof id === "number"))];
     const paidUserIds = new Set(
       rows
