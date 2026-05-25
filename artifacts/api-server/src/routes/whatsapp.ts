@@ -72,6 +72,10 @@ const SaveEmbeddedSignupBody = z.object({
   rawPayload: z.unknown().optional(),
 });
 
+const ResetEmbeddedSignupBody = z.object({
+  clientId: z.string().optional(),
+});
+
 function serializeIntegration(row: typeof whatsappIntegrationsTable.$inferSelect | null) {
   if (!row) return null;
   return {
@@ -321,11 +325,19 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
         error: null,
       };
   const hasSignupIdentity = parsed.data.event === "FINISH" || parsed.data.wabaId || parsed.data.phoneNumberId;
-  const status = hasSignupIdentity && token.accessToken
-    ? "connected"
-    : token.error
-      ? "failed"
-      : "pending";
+  if (!hasSignupIdentity || !token.accessToken) {
+    res.status(422).json({
+      error: true,
+      code: "WHATSAPP_SIGNUP_INCOMPLETE",
+      message:
+        token.error ??
+        "Embedded Signup ainda não retornou WABA, número e token. Refaca a conexão.",
+      status: 422,
+    });
+    return;
+  }
+
+  const status = "connected";
 
   const [integration] = await db
     .insert(whatsappIntegrationsTable)
@@ -340,7 +352,7 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
       accessToken: token.accessToken,
       tokenType: token.tokenType,
       tokenExpiresAt: token.tokenExpiresAt,
-      tokenError: token.error,
+      tokenError: null,
       status,
       rawPayload: parsed.data.rawPayload ?? null,
       connectedAt: status === "connected" ? new Date() : null,
@@ -357,7 +369,7 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
         accessToken: token.accessToken,
         tokenType: token.tokenType,
         tokenExpiresAt: token.tokenExpiresAt,
-        tokenError: token.error,
+        tokenError: null,
         status,
         rawPayload: parsed.data.rawPayload ?? null,
         connectedAt: status === "connected" ? new Date() : null,
@@ -373,6 +385,36 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
     ok: true,
     integration: serializeIntegration(integration ?? null),
   });
+});
+
+router.post("/whatsapp/embedded-signup/reset", async (req, res): Promise<void> => {
+  const parsed = ResetEmbeddedSignupBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before resetting WhatsApp Embedded Signup.",
+      status: 400,
+    });
+    return;
+  }
+
+  await db
+    .delete(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.clientId, clientId));
+
+  res.json({ ok: true });
 });
 
 export default router;

@@ -344,6 +344,23 @@ export default function WhatsappPage() {
     },
   });
 
+  const resetEmbeddedSignup = useMutation({
+    mutationFn: () =>
+      customFetch<{ ok: true }>("/api/whatsapp/embedded-signup/reset", {
+        method: "POST",
+        body: JSON.stringify({ clientId: whatsappClientId }),
+      }),
+    onSuccess: () => {
+      setSignupError(null);
+      sessionInfoRef.current = null;
+      signupCodeRef.current = null;
+      void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
+    },
+    onError: (error) => {
+      setSignupError(error instanceof Error ? error.message : "Não foi possível limpar a tentativa anterior.");
+    },
+  });
+
   const persistEmbeddedSignup = useCallback((code?: string | null, session?: WhatsappEmbeddedSignupSession | null) => {
     const data = session?.data;
     const redirectUri = `${window.location.origin}/whatsapp`;
@@ -376,6 +393,8 @@ export default function WhatsappPage() {
 
   const launchEmbeddedSignup = async () => {
     setSignupError(null);
+    sessionInfoRef.current = null;
+    signupCodeRef.current = null;
     const facebook = embeddedSignup?.facebook;
     if (!facebook?.appId || !facebook.configId) {
       setSignupError("Configure WHATSAPP_EMBEDDED_SIGNUP_APP_ID e WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID na Vercel antes de iniciar o fluxo.");
@@ -545,6 +564,7 @@ export default function WhatsappPage() {
   };
   const integration = embeddedSignup?.integration;
   const isWhatsappConnected = integration?.status === "connected";
+  const isSignupBusy = isLoadingEmbeddedSignup || saveEmbeddedSignup.isPending || resetEmbeddedSignup.isPending;
   const canLaunchEmbeddedSignup = Boolean(embeddedSignup?.facebook.isConfigured && whatsappClientId);
   const metaHostedSignupUrl = buildMetaHostedSignupUrl(
     embeddedSignup?.facebook.appId,
@@ -639,11 +659,20 @@ export default function WhatsappPage() {
               )}
               <Button
                 onClick={launchEmbeddedSignup}
-                disabled={!canLaunchEmbeddedSignup || isLoadingEmbeddedSignup || saveEmbeddedSignup.isPending}
+                disabled={!canLaunchEmbeddedSignup || isSignupBusy}
               >
                 <MessageCircle className="mr-2 h-4 w-4" />
                 {isWhatsappConnected ? "Reconectar WhatsApp" : "Conectar com Facebook"}
               </Button>
+              {integration && !isWhatsappConnected && (
+                <Button
+                  variant="ghost"
+                  onClick={() => resetEmbeddedSignup.mutate()}
+                  disabled={isSignupBusy}
+                >
+                  Limpar tentativa
+                </Button>
+              )}
             </div>
           </div>
 
@@ -665,13 +694,6 @@ export default function WhatsappPage() {
             </Alert>
           )}
 
-          {integration?.tokenError && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Code recebido, mas token não foi gerado</AlertTitle>
-              <AlertDescription>{integration.tokenError}</AlertDescription>
-            </Alert>
-          )}
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 md:grid-cols-5">
