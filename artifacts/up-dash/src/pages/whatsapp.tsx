@@ -14,6 +14,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock3,
+  ExternalLink,
   MessageCircle,
   MessageSquareReply,
   PlugZap,
@@ -125,6 +126,9 @@ type WhatsappEmbeddedSignupResponse = {
     wabaId: string | null;
     phoneNumberId: string | null;
     status: "not_started" | "pending" | "connected" | "failed";
+    hasAccessToken: boolean;
+    tokenExpiresAt: string | null;
+    tokenError: string | null;
     connectedAt: string | null;
     createdAt: string;
     updatedAt: string;
@@ -231,6 +235,15 @@ function parseEmbeddedSignupMessage(value: unknown): WhatsappEmbeddedSignupSessi
   if (!data || typeof data !== "object") return null;
   const maybe = data as WhatsappEmbeddedSignupSession;
   return maybe.type === "WA_EMBEDDED_SIGNUP" ? maybe : null;
+}
+
+function buildMetaHostedSignupUrl(appId?: string | null, configId?: string | null): string | null {
+  if (!appId || !configId) return null;
+  const url = new URL("https://business.facebook.com/messaging/whatsapp/onboard/");
+  url.searchParams.set("app_id", appId);
+  url.searchParams.set("config_id", configId);
+  url.searchParams.set("extras", JSON.stringify({ sessionInfoVersion: "3", version: "v4" }));
+  return url.toString();
 }
 
 function isConversationInRange(conversation: WhatsappConversationMock, from: Date, to: Date) {
@@ -380,9 +393,8 @@ export default function WhatsappPage() {
           response_type: "code",
           override_default_response_type: true,
           extras: {
-            feature: "whatsapp_embedded_signup",
+            version: "v4",
             sessionInfoVersion: "3",
-            featureType: "whatsapp_business_app_onboarding",
             setup: {
               business: {
                 name: businessName,
@@ -528,6 +540,10 @@ export default function WhatsappPage() {
   const integration = embeddedSignup?.integration;
   const isWhatsappConnected = integration?.status === "connected";
   const canLaunchEmbeddedSignup = Boolean(embeddedSignup?.facebook.isConfigured && whatsappClientId);
+  const metaHostedSignupUrl = buildMetaHostedSignupUrl(
+    embeddedSignup?.facebook.appId,
+    embeddedSignup?.facebook.configId,
+  );
 
   return (
     <div className="space-y-6" data-testid="page-whatsapp">
@@ -606,13 +622,23 @@ export default function WhatsappPage() {
                 Cada cliente deve concluir seu próprio Embedded Signup para vincular WABA e número ao UP Dash.
               </p>
             </div>
-            <Button
-              onClick={launchEmbeddedSignup}
-              disabled={!canLaunchEmbeddedSignup || isLoadingEmbeddedSignup || saveEmbeddedSignup.isPending}
-            >
-              <MessageCircle className="mr-2 h-4 w-4" />
-              {isWhatsappConnected ? "Reconectar WhatsApp" : "Conectar com Facebook"}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              {metaHostedSignupUrl && (
+                <Button variant="outline" asChild>
+                  <a href={metaHostedSignupUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Abrir página da Meta
+                  </a>
+                </Button>
+              )}
+              <Button
+                onClick={launchEmbeddedSignup}
+                disabled={!canLaunchEmbeddedSignup || isLoadingEmbeddedSignup || saveEmbeddedSignup.isPending}
+              >
+                <MessageCircle className="mr-2 h-4 w-4" />
+                {isWhatsappConnected ? "Reconectar WhatsApp" : "Conectar com Facebook"}
+              </Button>
+            </div>
           </div>
 
           {!embeddedSignup?.facebook.isConfigured && (
@@ -632,9 +658,17 @@ export default function WhatsappPage() {
               <AlertDescription>{signupError}</AlertDescription>
             </Alert>
           )}
+
+          {integration?.tokenError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Code recebido, mas token não foi gerado</AlertTitle>
+              <AlertDescription>{integration.tokenError}</AlertDescription>
+            </Alert>
+          )}
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-5">
             <div className="rounded-md border border-border bg-muted/20 p-3">
               <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Cliente</p>
               <p className="mt-1 truncate text-sm font-medium">{embeddedSignup?.client.name ?? "Selecione um cliente"}</p>
@@ -652,6 +686,12 @@ export default function WhatsappPage() {
             <div className="rounded-md border border-border bg-muted/20 p-3">
               <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Phone Number ID</p>
               <p className="mt-1 truncate font-mono text-xs">{integration?.phoneNumberId ?? "-"}</p>
+            </div>
+            <div className="rounded-md border border-border bg-muted/20 p-3">
+              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Token</p>
+              <p className={cn("mt-1 text-sm font-medium", integration?.hasAccessToken ? "text-emerald-500" : "text-muted-foreground")}>
+                {integration?.hasAccessToken ? "Gerado no backend" : "-"}
+              </p>
             </div>
           </div>
         </CardContent>

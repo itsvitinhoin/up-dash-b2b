@@ -27,6 +27,10 @@ function getWhatsappEmbeddedSignupConfigId(): string | null {
   );
 }
 
+function getMetaAppSecret(): string | null {
+  return process.env.META_APP_SECRET ?? process.env.FACEBOOK_APP_SECRET ?? null;
+}
+
 const WhatsappWebhookQuery = z.object({
   "hub.mode": z.string().optional(),
   "hub.verify_token": z.string().optional(),
@@ -50,6 +54,13 @@ type WhatsappWebhookPayload = {
   }>;
 };
 
+type TokenExchangeResult = {
+  accessToken: string | null;
+  tokenType: string | null;
+  tokenExpiresAt: Date | null;
+  error: string | null;
+};
+
 const SaveEmbeddedSignupBody = z.object({
   clientId: z.string().optional(),
   code: z.string().optional().nullable(),
@@ -71,10 +82,68 @@ function serializeIntegration(row: typeof whatsappIntegrationsTable.$inferSelect
     wabaId: row.wabaId,
     phoneNumberId: row.phoneNumberId,
     status: row.status,
+    hasAccessToken: Boolean(row.accessToken),
+    tokenExpiresAt: row.tokenExpiresAt?.toISOString() ?? null,
+    tokenError: row.tokenError,
     connectedAt: row.connectedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+async function exchangeEmbeddedSignupCode(code: string, appId: string | null, appSecret: string | null): Promise<TokenExchangeResult> {
+  if (!appId || !appSecret) {
+    return {
+      accessToken: null,
+      tokenType: null,
+      tokenExpiresAt: null,
+      error: "META_APP_SECRET não configurado para trocar o code por token.",
+    };
+  }
+
+  const url = new URL(`https://graph.facebook.com/${GRAPH_API_VERSION}/oauth/access_token`);
+  url.searchParams.set("client_id", appId);
+  url.searchParams.set("client_secret", appSecret);
+  url.searchParams.set("code", code);
+
+  try {
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    const payload = (await response.json()) as {
+      access_token?: string;
+      token_type?: string;
+      expires_in?: number;
+      error?: { message?: string };
+    };
+
+    if (!response.ok || !payload.access_token) {
+      return {
+        accessToken: null,
+        tokenType: null,
+        tokenExpiresAt: null,
+        error: payload.error?.message ?? `Erro Meta ${response.status} ao trocar code por token.`,
+      };
+    }
+
+    return {
+      accessToken: payload.access_token,
+      tokenType: payload.token_type ?? null,
+      tokenExpiresAt:
+        typeof payload.expires_in === "number"
+          ? new Date(Date.now() + payload.expires_in * 1000)
+          : null,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      accessToken: null,
+      tokenType: null,
+      tokenExpiresAt: null,
+      error: error instanceof Error ? error.message : "Erro inesperado ao trocar code por token.",
+    };
+  }
 }
 
 function resolveWritableClientId(req: Request, bodyClientId?: string): string | null {
@@ -231,9 +300,20 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
 
   const appId = getWhatsappEmbeddedSignupAppId();
   const configId = getWhatsappEmbeddedSignupConfigId();
-  const status = parsed.data.event === "FINISH" || parsed.data.wabaId || parsed.data.phoneNumberId
+  const token = parsed.data.code
+    ? await exchangeEmbeddedSignupCode(parsed.data.code, appId, getMetaAppSecret())
+    : {
+        accessToken: null,
+        tokenType: null,
+        tokenExpiresAt: null,
+        error: null,
+      };
+  const hasSignupIdentity = parsed.data.event === "FINISH" || parsed.data.wabaId || parsed.data.phoneNumberId;
+  const status = hasSignupIdentity && token.accessToken
     ? "connected"
-    : "pending";
+    : token.error
+      ? "failed"
+      : "pending";
 
   const [integration] = await db
     .insert(whatsappIntegrationsTable)
@@ -245,6 +325,10 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
       wabaId: parsed.data.wabaId ?? null,
       phoneNumberId: parsed.data.phoneNumberId ?? null,
       signupCode: parsed.data.code ?? null,
+      accessToken: token.accessToken,
+      tokenType: token.tokenType,
+      tokenExpiresAt: token.tokenExpiresAt,
+      tokenError: token.error,
       status,
       rawPayload: parsed.data.rawPayload ?? null,
       connectedAt: status === "connected" ? new Date() : null,
@@ -258,6 +342,10 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
         wabaId: parsed.data.wabaId ?? null,
         phoneNumberId: parsed.data.phoneNumberId ?? null,
         signupCode: parsed.data.code ?? null,
+        accessToken: token.accessToken,
+        tokenType: token.tokenType,
+        tokenExpiresAt: token.tokenExpiresAt,
+        tokenError: token.error,
         status,
         rawPayload: parsed.data.rawPayload ?? null,
         connectedAt: status === "connected" ? new Date() : null,

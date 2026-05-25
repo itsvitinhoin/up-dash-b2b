@@ -15,6 +15,10 @@ export const whatsappIntegrationsTable = pgTable(
     wabaId: text("waba_id"),
     phoneNumberId: text("phone_number_id"),
     signupCode: text("signup_code"),
+    accessToken: text("access_token"),
+    tokenType: text("token_type"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    tokenError: text("token_error"),
     status: text("status", {
       enum: ["not_started", "pending", "connected", "failed"],
     }).notNull().default("not_started"),
