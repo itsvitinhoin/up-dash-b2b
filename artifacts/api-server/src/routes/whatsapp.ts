@@ -112,7 +112,6 @@ async function exchangeEmbeddedSignupCode(
   code: string,
   appId: string | null,
   appSecret: string | null,
-  redirectUri?: string | null,
 ): Promise<TokenExchangeResult> {
   if (!appId || !appSecret) {
     return {
@@ -127,7 +126,6 @@ async function exchangeEmbeddedSignupCode(
   url.searchParams.set("client_id", appId);
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("code", code);
-  if (redirectUri) url.searchParams.set("redirect_uri", redirectUri);
 
   try {
     const response = await fetch(url.toString(), {
@@ -370,7 +368,6 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
         parsed.data.code,
         appId,
         getMetaAppSecret(),
-        parsed.data.redirectUri,
       )
     : {
         accessToken: null,
