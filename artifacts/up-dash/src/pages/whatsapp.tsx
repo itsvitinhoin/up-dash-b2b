@@ -138,6 +138,7 @@ type WhatsappEmbeddedSignupResponse = {
 type SaveWhatsappEmbeddedSignupPayload = {
   clientId?: string | null;
   code?: string | null;
+  redirectUri?: string | null;
   businessId?: string | null;
   wabaId?: string | null;
   phoneNumberId?: string | null;
@@ -345,9 +346,11 @@ export default function WhatsappPage() {
 
   const persistEmbeddedSignup = useCallback((code?: string | null, session?: WhatsappEmbeddedSignupSession | null) => {
     const data = session?.data;
+    const redirectUri = `${window.location.origin}/whatsapp`;
     saveEmbeddedSignup.mutate({
       clientId: whatsappClientId,
       code: code ?? signupCodeRef.current,
+      redirectUri,
       businessId: data?.business_id ?? null,
       wabaId: data?.waba_id ?? null,
       phoneNumberId: data?.phone_number_id ?? null,
@@ -382,6 +385,7 @@ export default function WhatsappPage() {
     try {
       await loadFacebookSdk(facebook.appId, facebook.graphApiVersion);
       const businessName = embeddedSignup?.client.name ?? "Cliente UP Dash";
+      const redirectUri = `${window.location.origin}/whatsapp`;
       window.FB?.login(
         (response) => {
           const code = response.authResponse?.code ?? null;
@@ -392,6 +396,8 @@ export default function WhatsappPage() {
           config_id: facebook.configId,
           response_type: "code",
           override_default_response_type: true,
+          redirect_uri: redirectUri,
+          fallback_redirect_uri: redirectUri,
           extras: {
             version: "v4",
             sessionInfoVersion: "3",

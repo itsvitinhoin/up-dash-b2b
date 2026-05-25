@@ -64,6 +64,7 @@ type TokenExchangeResult = {
 const SaveEmbeddedSignupBody = z.object({
   clientId: z.string().optional(),
   code: z.string().optional().nullable(),
+  redirectUri: z.string().url().optional().nullable(),
   businessId: z.string().optional().nullable(),
   wabaId: z.string().optional().nullable(),
   phoneNumberId: z.string().optional().nullable(),
@@ -91,7 +92,12 @@ function serializeIntegration(row: typeof whatsappIntegrationsTable.$inferSelect
   };
 }
 
-async function exchangeEmbeddedSignupCode(code: string, appId: string | null, appSecret: string | null): Promise<TokenExchangeResult> {
+async function exchangeEmbeddedSignupCode(
+  code: string,
+  appId: string | null,
+  appSecret: string | null,
+  redirectUri?: string | null,
+): Promise<TokenExchangeResult> {
   if (!appId || !appSecret) {
     return {
       accessToken: null,
@@ -105,6 +111,7 @@ async function exchangeEmbeddedSignupCode(code: string, appId: string | null, ap
   url.searchParams.set("client_id", appId);
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("code", code);
+  if (redirectUri) url.searchParams.set("redirect_uri", redirectUri);
 
   try {
     const response = await fetch(url.toString(), {
@@ -301,7 +308,12 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
   const appId = getWhatsappEmbeddedSignupAppId();
   const configId = getWhatsappEmbeddedSignupConfigId();
   const token = parsed.data.code
-    ? await exchangeEmbeddedSignupCode(parsed.data.code, appId, getMetaAppSecret())
+    ? await exchangeEmbeddedSignupCode(
+        parsed.data.code,
+        appId,
+        getMetaAppSecret(),
+        parsed.data.redirectUri,
+      )
     : {
         accessToken: null,
         tokenType: null,
