@@ -1,9 +1,17 @@
 import { Router, type IRouter, type Request } from "express";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { logger } from "../lib/logger";
 import { authenticate, resolveClientId } from "../middlewares/auth";
-import { clientsTable, db, whatsappIntegrationsTable } from "@workspace/db";
+import {
+  clientsTable,
+  db,
+  whatsappContactsTable,
+  whatsappConversationEventsTable,
+  whatsappConversationsTable,
+  whatsappIntegrationsTable,
+  whatsappMessagesTable,
+} from "@workspace/db";
 
 const router: IRouter = Router();
 
@@ -54,6 +62,51 @@ type WhatsappWebhookPayload = {
   }>;
 };
 
+type WhatsappWebhookContact = {
+  wa_id?: string;
+  profile?: {
+    name?: string;
+  };
+};
+
+type WhatsappWebhookMessage = {
+  id?: string;
+  from?: string;
+  timestamp?: string;
+  type?: string;
+  text?: {
+    body?: string;
+  };
+  image?: {
+    caption?: string;
+  };
+  document?: {
+    caption?: string;
+    filename?: string;
+  };
+  button?: {
+    text?: string;
+  };
+  interactive?: {
+    button_reply?: {
+      title?: string;
+    };
+    list_reply?: {
+      title?: string;
+    };
+  };
+};
+
+type WhatsappWebhookStatus = {
+  id?: string;
+  status?: string;
+  timestamp?: string;
+  recipient_id?: string;
+  conversation?: {
+    id?: string;
+  };
+};
+
 type TokenExchangeResult = {
   accessToken: string | null;
   tokenType: string | null;
@@ -86,6 +139,11 @@ const ResetEmbeddedSignupBody = z.object({
 
 const MetaTestCallsBody = z.object({
   clientId: z.string().optional(),
+});
+
+const SendWhatsappMessageBody = z.object({
+  clientId: z.string().optional(),
+  body: z.string().trim().min(1).max(4096),
 });
 
 function serializeIntegration(row: typeof whatsappIntegrationsTable.$inferSelect | null) {
@@ -239,6 +297,144 @@ function summarizePayload(payload: WhatsappWebhookPayload) {
   };
 }
 
+function getWhatsappMessageBody(message: WhatsappWebhookMessage): string | null {
+  if (message.text?.body) return message.text.body;
+  if (message.image?.caption) return message.image.caption;
+  if (message.document?.caption) return message.document.caption;
+  if (message.document?.filename) return message.document.filename;
+  if (message.button?.text) return message.button.text;
+  if (message.interactive?.button_reply?.title) return message.interactive.button_reply.title;
+  if (message.interactive?.list_reply?.title) return message.interactive.list_reply.title;
+  return null;
+}
+
+function getWhatsappMessageDate(timestamp?: string): Date {
+  const seconds = timestamp ? Number(timestamp) : NaN;
+  if (Number.isFinite(seconds) && seconds > 0) return new Date(seconds * 1000);
+  return new Date();
+}
+
+async function resolveWhatsappClientByPhoneNumber(phoneNumberId?: string | null) {
+  if (!phoneNumberId) return null;
+  const [integration] = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.phoneNumberId, phoneNumberId))
+    .limit(1);
+  return integration ?? null;
+}
+
+async function upsertWhatsappContact(params: {
+  clientId: string;
+  waId: string;
+  name: string | null;
+  rawPayload: unknown;
+}) {
+  const [contact] = await db
+    .insert(whatsappContactsTable)
+    .values({
+      clientId: params.clientId,
+      waId: params.waId,
+      phone: params.waId,
+      name: params.name,
+      rawPayload: params.rawPayload,
+    })
+    .onConflictDoUpdate({
+      target: [whatsappContactsTable.clientId, whatsappContactsTable.waId],
+      set: {
+        name: params.name,
+        phone: params.waId,
+        rawPayload: params.rawPayload,
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+
+  return contact;
+}
+
+async function findOrCreateWhatsappConversation(params: {
+  clientId: string;
+  contactId: string;
+  firstMessageAt: Date;
+  rawPayload: unknown;
+}) {
+  const [existing] = await db
+    .select()
+    .from(whatsappConversationsTable)
+    .where(
+      and(
+        eq(whatsappConversationsTable.clientId, params.clientId),
+        eq(whatsappConversationsTable.contactId, params.contactId),
+      ),
+    )
+    .orderBy(desc(whatsappConversationsTable.updatedAt))
+    .limit(1);
+
+  if (existing) {
+    const [updated] = await db
+      .update(whatsappConversationsTable)
+      .set({
+        status: existing.status === "closed" || existing.status === "lost" ? "new" : "awaiting_response",
+        rawPayload: params.rawPayload,
+        updatedAt: new Date(),
+      })
+      .where(eq(whatsappConversationsTable.id, existing.id))
+      .returning();
+    return updated ?? existing;
+  }
+
+  const [created] = await db
+    .insert(whatsappConversationsTable)
+    .values({
+      clientId: params.clientId,
+      contactId: params.contactId,
+      status: "new",
+      funnelStage: "new_lead",
+      firstMessageAt: params.firstMessageAt,
+      rawPayload: params.rawPayload,
+    })
+    .returning();
+
+  return created;
+}
+
+async function persistInboundWhatsappMessage(params: {
+  clientId: string;
+  contactId: string;
+  conversationId: string;
+  message: WhatsappWebhookMessage;
+}) {
+  await db
+    .insert(whatsappMessagesTable)
+    .values({
+      clientId: params.clientId,
+      contactId: params.contactId,
+      conversationId: params.conversationId,
+      externalMessageId: params.message.id ?? null,
+      direction: "inbound",
+      messageType: params.message.type ?? "unknown",
+      body: getWhatsappMessageBody(params.message),
+      rawPayload: params.message,
+      sentAt: getWhatsappMessageDate(params.message.timestamp),
+    })
+    .onConflictDoNothing({
+      target: [whatsappMessagesTable.clientId, whatsappMessagesTable.externalMessageId],
+    });
+}
+
+async function persistWhatsappStatus(params: {
+  clientId: string;
+  status: WhatsappWebhookStatus;
+}) {
+  await db.insert(whatsappConversationEventsTable).values({
+    clientId: params.clientId,
+    eventType: `message_${params.status.status ?? "status"}`,
+    metadata: params.status,
+    occurredAt: getWhatsappMessageDate(params.status.timestamp),
+  });
+}
+
 router.get("/webhooks/whatsapp", (req, res): void => {
   const parsed = WhatsappWebhookQuery.safeParse(req.query);
   if (!parsed.success) {
@@ -269,25 +465,410 @@ router.get("/webhooks/whatsapp", (req, res): void => {
   });
 });
 
-router.post("/webhooks/whatsapp", (req, res): void => {
+router.post("/webhooks/whatsapp", async (req, res): Promise<void> => {
   const payload = req.body as WhatsappWebhookPayload;
   const summary = summarizePayload(payload);
+  let persistedMessages = 0;
+  let persistedStatuses = 0;
 
-  // Future persistence point:
-  // 1. Resolve the client by phone_number_id.
-  // 2. Upsert WhatsappContact records from contacts/messages.
-  // 3. Upsert WhatsappConversation + WhatsappMessage rows.
-  // 4. Store the complete raw payload in rawPayload for audit/debug.
-  logger.info({ summary }, "whatsapp webhook received");
+  for (const entry of payload.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const value = change.value;
+      const phoneNumberId = value?.metadata?.phone_number_id;
+      const integration = await resolveWhatsappClientByPhoneNumber(phoneNumberId);
+      if (!integration) {
+        logger.warn({ phoneNumberId }, "whatsapp webhook received for unknown phone number");
+        continue;
+      }
+
+      const contactsByWaId = new Map<string, WhatsappWebhookContact>();
+      for (const contact of (value?.contacts ?? []) as WhatsappWebhookContact[]) {
+        if (contact.wa_id) contactsByWaId.set(contact.wa_id, contact);
+      }
+
+      for (const message of (value?.messages ?? []) as WhatsappWebhookMessage[]) {
+        if (!message.from) continue;
+        const contactPayload = contactsByWaId.get(message.from);
+        const contact = await upsertWhatsappContact({
+          clientId: integration.clientId,
+          waId: message.from,
+          name: contactPayload?.profile?.name ?? null,
+          rawPayload: contactPayload ?? null,
+        });
+        if (!contact) continue;
+
+        const sentAt = getWhatsappMessageDate(message.timestamp);
+        const conversation = await findOrCreateWhatsappConversation({
+          clientId: integration.clientId,
+          contactId: contact.id,
+          firstMessageAt: sentAt,
+          rawPayload: message,
+        });
+        if (!conversation) continue;
+
+        await persistInboundWhatsappMessage({
+          clientId: integration.clientId,
+          contactId: contact.id,
+          conversationId: conversation.id,
+          message,
+        });
+        persistedMessages += 1;
+      }
+
+      for (const status of (value?.statuses ?? []) as WhatsappWebhookStatus[]) {
+        await persistWhatsappStatus({
+          clientId: integration.clientId,
+          status,
+        });
+        persistedStatuses += 1;
+      }
+    }
+  }
+
+  logger.info({ summary, persistedMessages, persistedStatuses }, "whatsapp webhook received");
 
   res.status(200).json({
     ok: true,
     receivedAt: new Date().toISOString(),
-    summary,
+    summary: {
+      ...summary,
+      persistedMessages,
+      persistedStatuses,
+    },
   });
 });
 
 router.use("/whatsapp", authenticate);
+
+function iso(value: Date | null | undefined): string | null {
+  return value ? value.toISOString() : null;
+}
+
+router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
+  const clientId = resolveWritableClientId(req);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client to view WhatsApp conversations.",
+      status: 400,
+    });
+    return;
+  }
+
+  const limit = Math.min(Number(req.query.limit ?? 60) || 60, 100);
+  const conversations = await db
+    .select()
+    .from(whatsappConversationsTable)
+    .where(eq(whatsappConversationsTable.clientId, clientId))
+    .orderBy(desc(whatsappConversationsTable.updatedAt))
+    .limit(limit);
+
+  const contactIds = conversations
+    .map((conversation) => conversation.contactId)
+    .filter((id): id is string => Boolean(id));
+  const conversationIds = conversations.map((conversation) => conversation.id);
+
+  const contacts = contactIds.length
+    ? await db
+        .select()
+        .from(whatsappContactsTable)
+        .where(inArray(whatsappContactsTable.id, contactIds))
+    : [];
+  const contactMap = new Map(contacts.map((contact) => [contact.id, contact]));
+
+  const messages = conversationIds.length
+    ? await db
+        .select()
+        .from(whatsappMessagesTable)
+        .where(inArray(whatsappMessagesTable.conversationId, conversationIds))
+        .orderBy(desc(whatsappMessagesTable.sentAt))
+    : [];
+
+  const messagesByConversation = new Map<string, typeof messages>();
+  for (const message of messages) {
+    if (!message.conversationId) continue;
+    const current = messagesByConversation.get(message.conversationId) ?? [];
+    current.push(message);
+    messagesByConversation.set(message.conversationId, current);
+  }
+
+  const data = conversations.map((conversation) => {
+    const contact = conversation.contactId ? contactMap.get(conversation.contactId) : null;
+    const rows = messagesByConversation.get(conversation.id) ?? [];
+    const lastOutboundAt = rows
+      .filter((message) => message.direction === "outbound")
+      .map((message) => message.sentAt.getTime())
+      .sort((a, b) => b - a)[0] ?? 0;
+    const unreadCount = rows.filter(
+      (message) => message.direction === "inbound" && message.sentAt.getTime() > lastOutboundAt,
+    ).length;
+    const inboundCount = rows.filter((message) => message.direction === "inbound").length;
+    const outboundCount = rows.filter((message) => message.direction === "outbound").length;
+    const firstInbound = [...rows]
+      .filter((message) => message.direction === "inbound")
+      .sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime())[0];
+    const firstOutbound = [...rows]
+      .filter((message) => message.direction === "outbound")
+      .sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime())[0];
+    const firstResponseMinutes =
+      firstInbound && firstOutbound
+        ? Math.max(0, Math.round((firstOutbound.sentAt.getTime() - firstInbound.sentAt.getTime()) / 60000))
+        : null;
+
+    return {
+      id: conversation.id,
+      customerName: contact?.name ?? contact?.phone ?? "Contato WhatsApp",
+      phone: contact?.phone ?? contact?.waId ?? "-",
+      waId: contact?.waId ?? null,
+      status: conversation.status,
+      stage: conversation.funnelStage,
+      leadType: "new",
+      agentId: conversation.agentId ?? "unassigned",
+      firstMessageAt: iso(conversation.firstMessageAt ?? conversation.createdAt),
+      firstResponseAt: iso(conversation.firstResponseAt),
+      firstResponseMinutes,
+      messagesReceived: inboundCount,
+      messagesSent: outboundCount,
+      unreadCount,
+      followUpsSent: 0,
+      closedAt: iso(conversation.closedAt),
+      lostReason: conversation.lostReason,
+      lastMessage: rows[0]
+        ? {
+            id: rows[0].id,
+            direction: rows[0].direction,
+            body: rows[0].body,
+            messageType: rows[0].messageType,
+            sentAt: rows[0].sentAt.toISOString(),
+          }
+        : null,
+      updatedAt: conversation.updatedAt.toISOString(),
+    };
+  });
+
+  const totalUnread = data.reduce((sum, conversation) => sum + conversation.unreadCount, 0);
+
+  res.json({
+    total: data.length,
+    totalUnread,
+    data,
+  });
+});
+
+router.get("/whatsapp/conversations/:conversationId", async (req, res): Promise<void> => {
+  const clientId = resolveWritableClientId(req);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client to view WhatsApp conversations.",
+      status: 400,
+    });
+    return;
+  }
+
+  const [conversation] = await db
+    .select()
+    .from(whatsappConversationsTable)
+    .where(
+      and(
+        eq(whatsappConversationsTable.id, req.params.conversationId),
+        eq(whatsappConversationsTable.clientId, clientId),
+      ),
+    )
+    .limit(1);
+
+  if (!conversation) {
+    res.status(404).json({
+      error: true,
+      code: "CONVERSATION_NOT_FOUND",
+      message: "WhatsApp conversation not found.",
+      status: 404,
+    });
+    return;
+  }
+
+  const [contact] = conversation.contactId
+    ? await db
+        .select()
+        .from(whatsappContactsTable)
+        .where(eq(whatsappContactsTable.id, conversation.contactId))
+        .limit(1)
+    : [];
+
+  const messages = await db
+    .select()
+    .from(whatsappMessagesTable)
+    .where(
+      and(
+        eq(whatsappMessagesTable.clientId, clientId),
+        eq(whatsappMessagesTable.conversationId, conversation.id),
+      ),
+    )
+    .orderBy(whatsappMessagesTable.sentAt);
+
+  res.json({
+    conversation: {
+      id: conversation.id,
+      customerName: contact?.name ?? contact?.phone ?? "Contato WhatsApp",
+      phone: contact?.phone ?? contact?.waId ?? "-",
+      waId: contact?.waId ?? null,
+      status: conversation.status,
+      stage: conversation.funnelStage,
+      firstMessageAt: iso(conversation.firstMessageAt ?? conversation.createdAt),
+      updatedAt: conversation.updatedAt.toISOString(),
+    },
+    messages: messages.map((message) => ({
+      id: message.id,
+      externalMessageId: message.externalMessageId,
+      direction: message.direction,
+      messageType: message.messageType,
+      body: message.body,
+      sentAt: message.sentAt.toISOString(),
+    })),
+  });
+});
+
+router.post("/whatsapp/conversations/:conversationId/messages", async (req, res): Promise<void> => {
+  const parsed = SendWhatsappMessageBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client to send WhatsApp messages.",
+      status: 400,
+    });
+    return;
+  }
+
+  const [conversation] = await db
+    .select()
+    .from(whatsappConversationsTable)
+    .where(
+      and(
+        eq(whatsappConversationsTable.id, req.params.conversationId),
+        eq(whatsappConversationsTable.clientId, clientId),
+      ),
+    )
+    .limit(1);
+  if (!conversation?.contactId) {
+    res.status(404).json({
+      error: true,
+      code: "CONVERSATION_NOT_FOUND",
+      message: "WhatsApp conversation not found.",
+      status: 404,
+    });
+    return;
+  }
+
+  const [contact] = await db
+    .select()
+    .from(whatsappContactsTable)
+    .where(eq(whatsappContactsTable.id, conversation.contactId))
+    .limit(1);
+  const [integration] = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.clientId, clientId))
+    .limit(1);
+
+  if (!contact || !integration?.phoneNumberId || !integration.accessToken) {
+    res.status(409).json({
+      error: true,
+      code: "WHATSAPP_INTEGRATION_REQUIRED",
+      message: "Conecte o WhatsApp antes de enviar mensagens.",
+      status: 409,
+    });
+    return;
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.phoneNumberId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${integration.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: contact.waId,
+        type: "text",
+        text: {
+          preview_url: false,
+          body: parsed.data.body,
+        },
+      }),
+    },
+  );
+  const payload = (await response.json()) as {
+    messages?: Array<{ id?: string }>;
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    res.status(response.status).json({
+      error: true,
+      code: "META_WHATSAPP_SEND_FAILED",
+      message: payload.error?.message ?? "A Meta recusou o envio da mensagem.",
+      status: response.status,
+    });
+    return;
+  }
+
+  const sentAt = new Date();
+  const [message] = await db
+    .insert(whatsappMessagesTable)
+    .values({
+      clientId,
+      conversationId: conversation.id,
+      contactId: contact.id,
+      externalMessageId: payload.messages?.[0]?.id ?? null,
+      direction: "outbound",
+      messageType: "text",
+      body: parsed.data.body,
+      rawPayload: payload,
+      sentAt,
+    })
+    .returning();
+
+  await db
+    .update(whatsappConversationsTable)
+    .set({
+      status: "in_progress",
+      funnelStage: conversation.funnelStage === "new_lead" ? "in_service" : conversation.funnelStage,
+      firstResponseAt: sql`coalesce(${whatsappConversationsTable.firstResponseAt}, ${sentAt})`,
+      updatedAt: sentAt,
+    })
+    .where(eq(whatsappConversationsTable.id, conversation.id));
+
+  res.status(201).json({
+    ok: true,
+    message: message
+      ? {
+          id: message.id,
+          externalMessageId: message.externalMessageId,
+          direction: message.direction,
+          messageType: message.messageType,
+          body: message.body,
+          sentAt: message.sentAt.toISOString(),
+        }
+      : null,
+  });
+});
 
 router.get("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
   const clientId = resolveWritableClientId(req);

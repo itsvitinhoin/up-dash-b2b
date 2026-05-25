@@ -62,7 +62,6 @@ import {
   WHATSAPP_LOSS_REASONS,
   WHATSAPP_STAGE_LABEL,
   WHATSAPP_STATUS_LABEL,
-  buildWhatsappMockConversations,
   type WhatsappConversationMock,
   type WhatsappConversationStatus,
   type WhatsappFunnelStage,
@@ -148,6 +147,12 @@ type MetaPermissionTestResponse = {
   ok: boolean;
   testedAt: string;
   results: MetaPermissionTestResult[];
+};
+
+type WhatsappConversationsResponse = {
+  total: number;
+  totalUnread: number;
+  data: WhatsappConversationMock[];
 };
 
 type SaveWhatsappEmbeddedSignupPayload = {
@@ -316,8 +321,23 @@ export default function WhatsappPage() {
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
 
-  const conversations = useMemo(() => buildWhatsappMockConversations(), []);
   const whatsappClientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
+  const conversationsQuery = useMemo(() => {
+    const params = new URLSearchParams();
+    if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+    params.set("limit", "100");
+    return `/api/whatsapp/conversations?${params.toString()}`;
+  }, [selectedClientId, user?.role]);
+  const { data: realConversations } = useQuery<WhatsappConversationsResponse>({
+    queryKey: ["whatsapp-dashboard-conversations", whatsappClientId],
+    queryFn: () => customFetch<WhatsappConversationsResponse>(conversationsQuery),
+    enabled: Boolean(whatsappClientId),
+    refetchInterval: 10000,
+  });
+  const conversations = useMemo(
+    () => realConversations?.data ?? [],
+    [realConversations?.data],
+  );
   const embeddedSignupQuery = useMemo(() => {
     const params = new URLSearchParams();
     if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);

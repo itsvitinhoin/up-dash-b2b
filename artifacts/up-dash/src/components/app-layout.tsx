@@ -35,6 +35,7 @@ import {
   Link2,
   History,
   MessageCircle,
+  MessageSquareText,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -88,6 +89,7 @@ const pageMeta: Record<string, PageMeta> = {
   "/overview": { title: "Platform overview", subtitle: "Every brand on UP Dash, at a glance", hasDateRange: true, hasFilterBar: false },
   "/marketing": { title: "Marketing", subtitle: "Ad spend, ROAS, CPL, and creative performance", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/whatsapp": { title: "WhatsApp", subtitle: "Atendimento, velocidade e produtividade", hasDateRange: false, hasFilterBar: false, requiresClient: true },
+  "/whatsapp/conversas": { title: "Conversas WhatsApp", subtitle: "Inbox em tempo real por cliente", hasDateRange: false, hasFilterBar: false, requiresClient: true },
   "/stock": { title: "Stock Intelligence", subtitle: "Coverage, risk, and inventory health", hasDateRange: false, hasFilterBar: true, requiresClient: true },
   "/journey": { title: "Journey Analytics", subtitle: "Event flow, top paths, and buyer behaviour", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/rfm": { title: "RFM Segmentation", subtitle: "Recency, frequency, and monetary analysis", hasDateRange: true, hasFilterBar: true, requiresClient: true },
@@ -174,7 +176,14 @@ export function AppLayout({ children }: AppLayoutProps) {
   const analyticsNav = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Marketing", href: "/marketing", icon: Megaphone },
-    { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle },
+    {
+      name: "WhatsApp",
+      href: "/whatsapp",
+      icon: MessageCircle,
+      children: [
+        { name: "Conversas", href: "/whatsapp/conversas", icon: MessageSquareText },
+      ],
+    },
     { name: "Funnel", href: "/funnel", icon: Filter },
     { name: "Journey", href: "/journey", icon: Route },
     { name: "RFM", href: "/rfm", icon: BarChart3 },
@@ -198,26 +207,59 @@ export function AppLayout({ children }: AppLayoutProps) {
     workspaceNav.push({ name: "Extrações", href: "/extractions", icon: History });
   }
 
-  const NavItem = ({ item }: { item: { name: string; href: string; icon: typeof Users } }) => {
+  type NavEntry = {
+    name: string;
+    href: string;
+    icon: typeof Users;
+    children?: Array<{ name: string; href: string; icon: typeof Users }>;
+  };
+
+  const NavItem = ({ item }: { item: NavEntry }) => {
     const isActive =
-      location === item.href || (item.href === "/dashboard" && location === "/");
+      location === item.href ||
+      (item.href === "/dashboard" && location === "/") ||
+      Boolean(item.children?.some((child) => child.href === location));
     return (
-      <Link href={item.href}>
-        <span
-          data-testid={`nav-${item.name.toLowerCase().replace(/\s+/g, "-")}`}
-          className={`relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${
-            isActive
-              ? "bg-primary/10 text-primary font-medium"
-              : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
-          }`}
-        >
-          {isActive && (
-            <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r bg-primary" />
-          )}
-          <item.icon className="h-4 w-4" />
-          {item.name}
-        </span>
-      </Link>
+      <div>
+        <Link href={item.href}>
+          <span
+            data-testid={`nav-${item.name.toLowerCase().replace(/\s+/g, "-")}`}
+            className={`relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${
+              isActive
+                ? "bg-primary/10 text-primary font-medium"
+                : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+            }`}
+          >
+            {isActive && (
+              <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r bg-primary" />
+            )}
+            <item.icon className="h-4 w-4" />
+            {item.name}
+          </span>
+        </Link>
+        {item.children && isActive && (
+          <div className="ml-7 mt-1 space-y-0.5">
+            {item.children.map((child) => {
+              const childActive = location === child.href;
+              return (
+                <Link key={child.href} href={child.href}>
+                  <span
+                    data-testid={`nav-${child.name.toLowerCase().replace(/\s+/g, "-")}`}
+                    className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs transition-colors ${
+                      childActive
+                        ? "bg-primary/10 text-primary font-medium"
+                        : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+                    }`}
+                  >
+                    <child.icon className="h-3.5 w-3.5" />
+                    {child.name}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
     );
   };
 
