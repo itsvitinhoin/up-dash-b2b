@@ -61,6 +61,14 @@ type TokenExchangeResult = {
   error: string | null;
 };
 
+type MetaGraphTestResult = {
+  permission: "public_profile" | "business_management";
+  ok: boolean;
+  status: number;
+  endpoint: string;
+  message: string | null;
+};
+
 const SaveEmbeddedSignupBody = z.object({
   clientId: z.string().optional(),
   code: z.string().optional().nullable(),
@@ -73,6 +81,10 @@ const SaveEmbeddedSignupBody = z.object({
 });
 
 const ResetEmbeddedSignupBody = z.object({
+  clientId: z.string().optional(),
+});
+
+const MetaTestCallsBody = z.object({
   clientId: z.string().optional(),
 });
 
@@ -153,6 +165,48 @@ async function exchangeEmbeddedSignupCode(
       tokenType: null,
       tokenExpiresAt: null,
       error: error instanceof Error ? error.message : "Erro inesperado ao trocar code por token.",
+    };
+  }
+}
+
+async function runMetaGraphTestCall(
+  permission: MetaGraphTestResult["permission"],
+  endpoint: string,
+  accessToken: string,
+): Promise<MetaGraphTestResult> {
+  const url = new URL(`https://graph.facebook.com/${GRAPH_API_VERSION}${endpoint}`);
+
+  try {
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    const payload = (await response.json()) as {
+      error?: { message?: string };
+      data?: unknown[];
+    };
+
+    return {
+      permission,
+      ok: response.ok,
+      status: response.status,
+      endpoint,
+      message: response.ok
+        ? Array.isArray(payload.data)
+          ? `${payload.data.length} registro(s) retornado(s).`
+          : "Chamada concluída."
+        : payload.error?.message ?? "Chamada rejeitada pela Meta.",
+    };
+  } catch (error) {
+    return {
+      permission,
+      ok: false,
+      status: 0,
+      endpoint,
+      message: error instanceof Error ? error.message : "Erro inesperado ao chamar a Meta.",
     };
   }
 }
@@ -415,6 +469,72 @@ router.post("/whatsapp/embedded-signup/reset", async (req, res): Promise<void> =
     .where(eq(whatsappIntegrationsTable.clientId, clientId));
 
   res.json({ ok: true });
+});
+
+router.post("/whatsapp/meta-test-calls", async (req, res): Promise<void> => {
+  const parsed = MetaTestCallsBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before running Meta test calls.",
+      status: 400,
+    });
+    return;
+  }
+
+  const [integration] = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.clientId, clientId))
+    .limit(1);
+
+  if (!integration?.accessToken) {
+    res.status(409).json({
+      error: true,
+      code: "WHATSAPP_TOKEN_REQUIRED",
+      message: "Conclua o Embedded Signup antes de executar os testes de API da Meta.",
+      status: 409,
+    });
+    return;
+  }
+
+  const publicProfile = await runMetaGraphTestCall(
+    "public_profile",
+    "/me?fields=id,name",
+    integration.accessToken,
+  );
+
+  const businessManagementPrimary = await runMetaGraphTestCall(
+    "business_management",
+    "/me/businesses?fields=id,name,verification_status",
+    integration.accessToken,
+  );
+  const businessManagement =
+    businessManagementPrimary.ok || !integration.businessId
+      ? businessManagementPrimary
+      : await runMetaGraphTestCall(
+          "business_management",
+          `/${integration.businessId}?fields=id,name,verification_status`,
+          integration.accessToken,
+        );
+
+  res.json({
+    ok: publicProfile.ok && businessManagement.ok,
+    testedAt: new Date().toISOString(),
+    results: [publicProfile, businessManagement],
+  });
 });
 
 export default router;

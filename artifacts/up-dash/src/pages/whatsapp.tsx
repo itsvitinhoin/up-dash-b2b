@@ -17,6 +17,7 @@ import {
   ExternalLink,
   MessageCircle,
   MessageSquareReply,
+  PlayCircle,
   PlugZap,
   Send,
   Settings,
@@ -133,6 +134,20 @@ type WhatsappEmbeddedSignupResponse = {
     createdAt: string;
     updatedAt: string;
   } | null;
+};
+
+type MetaPermissionTestResult = {
+  permission: "public_profile" | "business_management";
+  ok: boolean;
+  status: number;
+  endpoint: string;
+  message: string | null;
+};
+
+type MetaPermissionTestResponse = {
+  ok: boolean;
+  testedAt: string;
+  results: MetaPermissionTestResult[];
 };
 
 type SaveWhatsappEmbeddedSignupPayload = {
@@ -314,6 +329,7 @@ export default function WhatsappPage() {
     [whatsappClientId],
   );
   const [signupError, setSignupError] = useState<string | null>(null);
+  const [metaTestResult, setMetaTestResult] = useState<MetaPermissionTestResponse | null>(null);
   const sessionInfoRef = useRef<WhatsappEmbeddedSignupSession | null>(null);
   const signupCodeRef = useRef<string | null>(null);
   const [agentFilter, setAgentFilter] = useState(() => new URLSearchParams(window.location.search).get("waAgent") ?? ALL);
@@ -358,6 +374,22 @@ export default function WhatsappPage() {
     },
     onError: (error) => {
       setSignupError(error instanceof Error ? error.message : "Não foi possível limpar a tentativa anterior.");
+    },
+  });
+
+  const runMetaTestCalls = useMutation({
+    mutationFn: () =>
+      customFetch<MetaPermissionTestResponse>("/api/whatsapp/meta-test-calls", {
+        method: "POST",
+        body: JSON.stringify({ clientId: whatsappClientId }),
+      }),
+    onSuccess: (result) => {
+      setSignupError(null);
+      setMetaTestResult(result);
+    },
+    onError: (error) => {
+      setMetaTestResult(null);
+      setSignupError(error instanceof Error ? error.message : "Não foi possível executar os testes da Meta.");
     },
   });
 
@@ -565,6 +597,7 @@ export default function WhatsappPage() {
   const integration = embeddedSignup?.integration;
   const isWhatsappConnected = integration?.status === "connected";
   const isSignupBusy = isLoadingEmbeddedSignup || saveEmbeddedSignup.isPending || resetEmbeddedSignup.isPending;
+  const isMetaTestBusy = runMetaTestCalls.isPending;
   const canLaunchEmbeddedSignup = Boolean(embeddedSignup?.facebook.isConfigured && whatsappClientId);
   const metaHostedSignupUrl = buildMetaHostedSignupUrl(
     embeddedSignup?.facebook.appId,
@@ -664,6 +697,14 @@ export default function WhatsappPage() {
                 <MessageCircle className="mr-2 h-4 w-4" />
                 {isWhatsappConnected ? "Reconectar WhatsApp" : "Conectar com Facebook"}
               </Button>
+              <Button
+                variant="outline"
+                onClick={() => runMetaTestCalls.mutate()}
+                disabled={!integration?.hasAccessToken || isMetaTestBusy}
+              >
+                <PlayCircle className="mr-2 h-4 w-4" />
+                {isMetaTestBusy ? "Testando..." : "Executar testes da Meta"}
+              </Button>
               {integration && !isWhatsappConnected && (
                 <Button
                   variant="ghost"
@@ -675,6 +716,25 @@ export default function WhatsappPage() {
               )}
             </div>
           </div>
+
+          {metaTestResult && (
+            <div className="grid gap-2 md:grid-cols-2">
+              {metaTestResult.results.map((result) => (
+                <div key={result.permission} className="rounded-md border border-border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">{result.permission}</p>
+                    <Badge variant={result.ok ? "secondary" : "destructive"}>
+                      {result.ok ? "OK" : `HTTP ${result.status || "-"}`}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">{result.endpoint}</p>
+                  {result.message && (
+                    <p className="mt-2 text-xs text-muted-foreground">{result.message}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {!embeddedSignup?.facebook.isConfigured && (
             <Alert>
