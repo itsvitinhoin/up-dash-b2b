@@ -155,6 +155,15 @@ type WhatsappConversationsResponse = {
   data: WhatsappConversationMock[];
 };
 
+type WhatsappConnectionsResponse = {
+  phoneNumbers: Array<{
+    id: string;
+    phoneNumberId: string;
+    displayPhoneNumber: string | null;
+    verifiedName: string | null;
+  }>;
+};
+
 type SaveWhatsappEmbeddedSignupPayload = {
   clientId?: string | null;
   code?: string | null;
@@ -322,14 +331,16 @@ export default function WhatsappPage() {
   const queryClient = useQueryClient();
 
   const whatsappClientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
+  const [phoneFilter, setPhoneFilter] = useState(() => new URLSearchParams(window.location.search).get("waPhone") ?? ALL);
   const conversationsQuery = useMemo(() => {
     const params = new URLSearchParams();
     if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+    if (phoneFilter !== ALL) params.set("phoneNumberId", phoneFilter);
     params.set("limit", "100");
     return `/api/whatsapp/conversations?${params.toString()}`;
-  }, [selectedClientId, user?.role]);
+  }, [phoneFilter, selectedClientId, user?.role]);
   const { data: realConversations } = useQuery<WhatsappConversationsResponse>({
-    queryKey: ["whatsapp-dashboard-conversations", whatsappClientId],
+    queryKey: ["whatsapp-dashboard-conversations", whatsappClientId, phoneFilter],
     queryFn: () => customFetch<WhatsappConversationsResponse>(conversationsQuery),
     enabled: Boolean(whatsappClientId),
     refetchInterval: 10000,
@@ -343,6 +354,12 @@ export default function WhatsappPage() {
     if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
     const query = params.toString();
     return `/api/whatsapp/embedded-signup${query ? `?${query}` : ""}`;
+  }, [selectedClientId, user?.role]);
+  const connectionsQuery = useMemo(() => {
+    const params = new URLSearchParams();
+    if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+    const query = params.toString();
+    return `/api/whatsapp/connections${query ? `?${query}` : ""}`;
   }, [selectedClientId, user?.role]);
   const embeddedSignupKey = useMemo(
     () => ["whatsapp-embedded-signup", whatsappClientId],
@@ -359,6 +376,11 @@ export default function WhatsappPage() {
   const { data: embeddedSignup, isLoading: isLoadingEmbeddedSignup } = useQuery<WhatsappEmbeddedSignupResponse>({
     queryKey: embeddedSignupKey,
     queryFn: () => customFetch<WhatsappEmbeddedSignupResponse>(embeddedSignupQuery),
+    enabled: Boolean(whatsappClientId),
+  });
+  const { data: connections } = useQuery<WhatsappConnectionsResponse>({
+    queryKey: ["whatsapp-dashboard-connections", whatsappClientId],
+    queryFn: () => customFetch<WhatsappConnectionsResponse>(connectionsQuery),
     enabled: Boolean(whatsappClientId),
   });
 
@@ -621,6 +643,8 @@ export default function WhatsappPage() {
     embeddedSignup?.facebook.appId,
     embeddedSignup?.facebook.configId,
   );
+  const phoneLabel = (phoneNumber: WhatsappConnectionsResponse["phoneNumbers"][number]) =>
+    phoneNumber.displayPhoneNumber ?? phoneNumber.verifiedName ?? phoneNumber.phoneNumberId;
 
   return (
     <div className="space-y-6" data-testid="page-whatsapp">
@@ -632,10 +656,10 @@ export default function WhatsappPage() {
               Atendimento WhatsApp
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              Dados mockados preparados para receber a WhatsApp Cloud API oficial via webhook.
+              Dados recebidos pela WhatsApp Cloud API via webhook, com atualização automática.
             </p>
           </div>
-          <div className="grid gap-2 lg:grid-cols-[minmax(0,1.5fr)_180px_180px_180px]">
+          <div className="grid gap-2 lg:grid-cols-[minmax(0,1.4fr)_180px_180px_180px_180px]">
             <div className="flex flex-wrap gap-2">
               {[
                 ["today", "Hoje"],
@@ -653,6 +677,18 @@ export default function WhatsappPage() {
                 <DateRangePicker value={dateRange} onChange={setDateRange} className="h-8" />
               </div>
             </div>
+
+            <Select value={phoneFilter} onValueChange={(value) => setUrlFilter("waPhone", value, setPhoneFilter)}>
+              <SelectTrigger><SelectValue placeholder="Número" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>Todos os números</SelectItem>
+                {(connections?.phoneNumbers ?? []).map((phoneNumber) => (
+                  <SelectItem key={phoneNumber.phoneNumberId} value={phoneNumber.phoneNumberId}>
+                    {phoneLabel(phoneNumber)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <Select value={agentFilter} onValueChange={(value) => setUrlFilter("waAgent", value, setAgentFilter)}>
               <SelectTrigger><SelectValue placeholder="Atendente" /></SelectTrigger>

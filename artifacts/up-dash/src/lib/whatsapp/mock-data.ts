@@ -27,6 +27,7 @@ export type WhatsappConversationMock = {
   id: string;
   customerName: string;
   phone: string;
+  phoneNumberId?: string | null;
   agentId: string;
   status: WhatsappConversationStatus;
   stage: WhatsappFunnelStage;
