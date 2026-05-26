@@ -108,7 +108,7 @@ export default function WhatsappConversationsPage() {
   const queryClient = useQueryClient();
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [phoneFilter, setPhoneFilter] = useState(ALL);
+  const [phoneFilter, setPhoneFilter] = useState(() => new URLSearchParams(window.location.search).get("waPhone") ?? ALL);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);

@@ -39,7 +39,7 @@ type SendResult = {
 export default function WhatsappSendsPage() {
   const { user, selectedClientId } = useAuth();
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
-  const [phoneNumberId, setPhoneNumberId] = useState("");
+  const [phoneNumberId, setPhoneNumberId] = useState(() => new URLSearchParams(window.location.search).get("waPhone") ?? "");
   const [to, setTo] = useState("");
   const [body, setBody] = useState("Teste UP Dash: mensagem enviada pela integração oficial do WhatsApp Cloud API.");
   const [result, setResult] = useState<SendResult | null>(null);
