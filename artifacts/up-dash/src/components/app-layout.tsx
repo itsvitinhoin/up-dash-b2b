@@ -36,6 +36,8 @@ import {
   History,
   MessageCircle,
   MessageSquareText,
+  PlugZap,
+  Send,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -90,6 +92,8 @@ const pageMeta: Record<string, PageMeta> = {
   "/marketing": { title: "Marketing", subtitle: "Ad spend, ROAS, CPL, and creative performance", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/whatsapp": { title: "WhatsApp", subtitle: "Atendimento, velocidade e produtividade", hasDateRange: false, hasFilterBar: false, requiresClient: true },
   "/whatsapp/conversas": { title: "Conversas WhatsApp", subtitle: "Inbox em tempo real por cliente", hasDateRange: false, hasFilterBar: false, requiresClient: true },
+  "/whatsapp/conexoes": { title: "Conexões WhatsApp", subtitle: "Números, webhooks e integrações por cliente", hasDateRange: false, hasFilterBar: false, requiresClient: true },
+  "/whatsapp/envios": { title: "Envios WhatsApp", subtitle: "Disparos teste e validação da Cloud API", hasDateRange: false, hasFilterBar: false, requiresClient: true },
   "/stock": { title: "Stock Intelligence", subtitle: "Coverage, risk, and inventory health", hasDateRange: false, hasFilterBar: true, requiresClient: true },
   "/journey": { title: "Journey Analytics", subtitle: "Event flow, top paths, and buyer behaviour", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/rfm": { title: "RFM Segmentation", subtitle: "Recency, frequency, and monetary analysis", hasDateRange: true, hasFilterBar: true, requiresClient: true },
@@ -182,6 +186,8 @@ export function AppLayout({ children }: AppLayoutProps) {
       icon: MessageCircle,
       children: [
         { name: "Conversas", href: "/whatsapp/conversas", icon: MessageSquareText },
+        { name: "Conexões", href: "/whatsapp/conexoes", icon: PlugZap },
+        { name: "Envios", href: "/whatsapp/envios", icon: Send },
       ],
     },
     { name: "Funnel", href: "/funnel", icon: Filter },

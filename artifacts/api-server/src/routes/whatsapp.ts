@@ -11,6 +11,7 @@ import {
   whatsappConversationsTable,
   whatsappIntegrationsTable,
   whatsappMessagesTable,
+  whatsappPhoneNumbersTable,
 } from "@workspace/db";
 
 const router: IRouter = Router();
@@ -143,6 +144,14 @@ const MetaTestCallsBody = z.object({
 
 const SendWhatsappMessageBody = z.object({
   clientId: z.string().optional(),
+  phoneNumberId: z.string().optional(),
+  body: z.string().trim().min(1).max(4096),
+});
+
+const TestWhatsappMessageBody = z.object({
+  clientId: z.string().optional(),
+  phoneNumberId: z.string().min(1),
+  to: z.string().trim().min(8),
   body: z.string().trim().min(1).max(4096),
 });
 
@@ -316,10 +325,108 @@ function getWhatsappMessageDate(timestamp?: string): Date {
 
 async function resolveWhatsappClientByPhoneNumber(phoneNumberId?: string | null) {
   if (!phoneNumberId) return null;
+  const [phoneNumber] = await db
+    .select()
+    .from(whatsappPhoneNumbersTable)
+    .where(eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId))
+    .limit(1);
+  if (phoneNumber) {
+    const [integration] = await db
+      .select()
+      .from(whatsappIntegrationsTable)
+      .where(eq(whatsappIntegrationsTable.clientId, phoneNumber.clientId))
+      .limit(1);
+    return integration ?? null;
+  }
+
   const [integration] = await db
     .select()
     .from(whatsappIntegrationsTable)
     .where(eq(whatsappIntegrationsTable.phoneNumberId, phoneNumberId))
+    .limit(1);
+  return integration ?? null;
+}
+
+function normalizeWhatsappRecipient(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+async function upsertWhatsappPhoneNumber(params: {
+  clientId: string;
+  integrationId: string | null;
+  wabaId: string | null;
+  phoneNumberId: string;
+  displayPhoneNumber?: string | null;
+  verifiedName?: string | null;
+  qualityRating?: string | null;
+  platformType?: string | null;
+  codeVerificationStatus?: string | null;
+  rawPayload?: unknown;
+}) {
+  const now = new Date();
+  const [phoneNumber] = await db
+    .insert(whatsappPhoneNumbersTable)
+    .values({
+      clientId: params.clientId,
+      integrationId: params.integrationId,
+      wabaId: params.wabaId,
+      phoneNumberId: params.phoneNumberId,
+      displayPhoneNumber: params.displayPhoneNumber ?? null,
+      verifiedName: params.verifiedName ?? null,
+      qualityRating: params.qualityRating ?? null,
+      platformType: params.platformType ?? null,
+      codeVerificationStatus: params.codeVerificationStatus ?? null,
+      status: "active",
+      rawPayload: params.rawPayload ?? null,
+      lastSyncedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [whatsappPhoneNumbersTable.clientId, whatsappPhoneNumbersTable.phoneNumberId],
+      set: {
+        integrationId: params.integrationId,
+        wabaId: params.wabaId,
+        displayPhoneNumber: params.displayPhoneNumber ?? null,
+        verifiedName: params.verifiedName ?? null,
+        qualityRating: params.qualityRating ?? null,
+        platformType: params.platformType ?? null,
+        codeVerificationStatus: params.codeVerificationStatus ?? null,
+        status: "active",
+        rawPayload: params.rawPayload ?? null,
+        lastSyncedAt: now,
+        updatedAt: now,
+      },
+    })
+    .returning();
+
+  return phoneNumber;
+}
+
+async function getWhatsappIntegrationForPhone(clientId: string, phoneNumberId?: string | null) {
+  if (phoneNumberId) {
+    const [phoneNumber] = await db
+      .select()
+      .from(whatsappPhoneNumbersTable)
+      .where(
+        and(
+          eq(whatsappPhoneNumbersTable.clientId, clientId),
+          eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId),
+        ),
+      )
+      .limit(1);
+    if (phoneNumber?.integrationId) {
+      const [integration] = await db
+        .select()
+        .from(whatsappIntegrationsTable)
+        .where(eq(whatsappIntegrationsTable.id, phoneNumber.integrationId))
+        .limit(1);
+      if (integration) return integration;
+    }
+  }
+
+  const [integration] = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.clientId, clientId))
     .limit(1);
   return integration ?? null;
 }
@@ -356,6 +463,7 @@ async function upsertWhatsappContact(params: {
 async function findOrCreateWhatsappConversation(params: {
   clientId: string;
   contactId: string;
+  phoneNumberId: string | null;
   firstMessageAt: Date;
   rawPayload: unknown;
 }) {
@@ -366,6 +474,9 @@ async function findOrCreateWhatsappConversation(params: {
       and(
         eq(whatsappConversationsTable.clientId, params.clientId),
         eq(whatsappConversationsTable.contactId, params.contactId),
+        params.phoneNumberId
+          ? eq(whatsappConversationsTable.phoneNumberId, params.phoneNumberId)
+          : sql`${whatsappConversationsTable.phoneNumberId} IS NULL`,
       ),
     )
     .orderBy(desc(whatsappConversationsTable.updatedAt))
@@ -389,6 +500,7 @@ async function findOrCreateWhatsappConversation(params: {
     .values({
       clientId: params.clientId,
       contactId: params.contactId,
+      phoneNumberId: params.phoneNumberId,
       status: "new",
       funnelStage: "new_lead",
       firstMessageAt: params.firstMessageAt,
@@ -403,6 +515,7 @@ async function persistInboundWhatsappMessage(params: {
   clientId: string;
   contactId: string;
   conversationId: string;
+  phoneNumberId: string | null;
   message: WhatsappWebhookMessage;
 }) {
   await db
@@ -411,6 +524,7 @@ async function persistInboundWhatsappMessage(params: {
       clientId: params.clientId,
       contactId: params.contactId,
       conversationId: params.conversationId,
+      phoneNumberId: params.phoneNumberId,
       externalMessageId: params.message.id ?? null,
       direction: "inbound",
       messageType: params.message.type ?? "unknown",
@@ -480,6 +594,16 @@ router.post("/webhooks/whatsapp", async (req, res): Promise<void> => {
         logger.warn({ phoneNumberId }, "whatsapp webhook received for unknown phone number");
         continue;
       }
+      if (phoneNumberId) {
+        await upsertWhatsappPhoneNumber({
+          clientId: integration.clientId,
+          integrationId: integration.id,
+          wabaId: integration.wabaId,
+          phoneNumberId,
+          displayPhoneNumber: value?.metadata?.display_phone_number ?? null,
+          rawPayload: value?.metadata ?? null,
+        });
+      }
 
       const contactsByWaId = new Map<string, WhatsappWebhookContact>();
       for (const contact of (value?.contacts ?? []) as WhatsappWebhookContact[]) {
@@ -501,6 +625,7 @@ router.post("/webhooks/whatsapp", async (req, res): Promise<void> => {
         const conversation = await findOrCreateWhatsappConversation({
           clientId: integration.clientId,
           contactId: contact.id,
+          phoneNumberId: phoneNumberId ?? null,
           firstMessageAt: sentAt,
           rawPayload: message,
         });
@@ -510,6 +635,7 @@ router.post("/webhooks/whatsapp", async (req, res): Promise<void> => {
           clientId: integration.clientId,
           contactId: contact.id,
           conversationId: conversation.id,
+          phoneNumberId: phoneNumberId ?? null,
           message,
         });
         persistedMessages += 1;
@@ -544,6 +670,166 @@ function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
 }
 
+function serializePhoneNumber(row: typeof whatsappPhoneNumbersTable.$inferSelect) {
+  return {
+    id: row.id,
+    clientId: row.clientId,
+    integrationId: row.integrationId,
+    wabaId: row.wabaId,
+    phoneNumberId: row.phoneNumberId,
+    displayPhoneNumber: row.displayPhoneNumber,
+    verifiedName: row.verifiedName,
+    qualityRating: row.qualityRating,
+    platformType: row.platformType,
+    codeVerificationStatus: row.codeVerificationStatus,
+    status: row.status,
+    lastSyncedAt: iso(row.lastSyncedAt),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+router.get("/whatsapp/connections", async (req, res): Promise<void> => {
+  const clientId = resolveWritableClientId(req);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client to view WhatsApp connections.",
+      status: 400,
+    });
+    return;
+  }
+
+  const integrations = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.clientId, clientId))
+    .orderBy(desc(whatsappIntegrationsTable.updatedAt));
+  const phoneNumbers = await db
+    .select()
+    .from(whatsappPhoneNumbersTable)
+    .where(eq(whatsappPhoneNumbersTable.clientId, clientId))
+    .orderBy(desc(whatsappPhoneNumbersTable.updatedAt));
+
+  for (const integration of integrations) {
+    if (!integration.phoneNumberId) continue;
+    const exists = phoneNumbers.some((row) => row.phoneNumberId === integration.phoneNumberId);
+    if (exists) continue;
+    const phoneNumber = await upsertWhatsappPhoneNumber({
+      clientId,
+      integrationId: integration.id,
+      wabaId: integration.wabaId,
+      phoneNumberId: integration.phoneNumberId,
+      rawPayload: { source: "integration_fallback" },
+    });
+    if (phoneNumber) phoneNumbers.push(phoneNumber);
+  }
+
+  res.json({
+    callbackUrl: "https://www.grupoup-dash.com.br/api/webhooks/whatsapp",
+    webhookVerifyTokenConfigured: Boolean(process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN),
+    integrations: integrations.map(serializeIntegration),
+    phoneNumbers: phoneNumbers.map(serializePhoneNumber),
+  });
+});
+
+router.post("/whatsapp/connections/sync", async (req, res): Promise<void> => {
+  const parsed = z.object({ clientId: z.string().optional() }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before syncing WhatsApp phone numbers.",
+      status: 400,
+    });
+    return;
+  }
+
+  const integrations = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.clientId, clientId));
+  const synced: Array<ReturnType<typeof serializePhoneNumber>> = [];
+  const errors: string[] = [];
+
+  for (const integration of integrations) {
+    if (integration.phoneNumberId) {
+      const fallback = await upsertWhatsappPhoneNumber({
+        clientId,
+        integrationId: integration.id,
+        wabaId: integration.wabaId,
+        phoneNumberId: integration.phoneNumberId,
+        rawPayload: { source: "integration_fallback" },
+      });
+      if (fallback) synced.push(serializePhoneNumber(fallback));
+    }
+
+    if (!integration.wabaId || !integration.accessToken) continue;
+    const url = new URL(`https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/phone_numbers`);
+    url.searchParams.set(
+      "fields",
+      "id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status",
+    );
+    const response = await fetch(url.toString(), {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${integration.accessToken}`,
+      },
+    });
+    const payload = (await response.json()) as {
+      data?: Array<{
+        id: string;
+        display_phone_number?: string;
+        verified_name?: string;
+        quality_rating?: string;
+        platform_type?: string;
+        code_verification_status?: string;
+      }>;
+      error?: { message?: string };
+    };
+
+    if (!response.ok) {
+      errors.push(payload.error?.message ?? `Erro Meta ${response.status} ao sincronizar telefones.`);
+      continue;
+    }
+
+    for (const row of payload.data ?? []) {
+      const phoneNumber = await upsertWhatsappPhoneNumber({
+        clientId,
+        integrationId: integration.id,
+        wabaId: integration.wabaId,
+        phoneNumberId: row.id,
+        displayPhoneNumber: row.display_phone_number ?? null,
+        verifiedName: row.verified_name ?? null,
+        qualityRating: row.quality_rating ?? null,
+        platformType: row.platform_type ?? null,
+        codeVerificationStatus: row.code_verification_status ?? null,
+        rawPayload: row,
+      });
+      if (phoneNumber) synced.push(serializePhoneNumber(phoneNumber));
+    }
+  }
+
+  res.json({
+    ok: errors.length === 0,
+    synced: synced.length,
+    errors,
+    phoneNumbers: synced,
+  });
+});
+
 router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
   const clientId = resolveWritableClientId(req);
   if (!clientId) {
@@ -557,10 +843,13 @@ router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
   }
 
   const limit = Math.min(Number(req.query.limit ?? 60) || 60, 100);
+  const phoneNumberId = typeof req.query.phoneNumberId === "string" ? req.query.phoneNumberId : null;
+  const conditions = [eq(whatsappConversationsTable.clientId, clientId)];
+  if (phoneNumberId) conditions.push(eq(whatsappConversationsTable.phoneNumberId, phoneNumberId));
   const conversations = await db
     .select()
     .from(whatsappConversationsTable)
-    .where(eq(whatsappConversationsTable.clientId, clientId))
+    .where(and(...conditions))
     .orderBy(desc(whatsappConversationsTable.updatedAt))
     .limit(limit);
 
@@ -621,6 +910,7 @@ router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
       customerName: contact?.name ?? contact?.phone ?? "Contato WhatsApp",
       phone: contact?.phone ?? contact?.waId ?? "-",
       waId: contact?.waId ?? null,
+      phoneNumberId: conversation.phoneNumberId,
       status: conversation.status,
       stage: conversation.funnelStage,
       leadType: "new",
@@ -714,6 +1004,7 @@ router.get("/whatsapp/conversations/:conversationId", async (req, res): Promise<
       customerName: contact?.name ?? contact?.phone ?? "Contato WhatsApp",
       phone: contact?.phone ?? contact?.waId ?? "-",
       waId: contact?.waId ?? null,
+      phoneNumberId: conversation.phoneNumberId,
       status: conversation.status,
       stage: conversation.funnelStage,
       firstMessageAt: iso(conversation.firstMessageAt ?? conversation.createdAt),
@@ -783,8 +1074,13 @@ router.post("/whatsapp/conversations/:conversationId/messages", async (req, res)
     .from(whatsappIntegrationsTable)
     .where(eq(whatsappIntegrationsTable.clientId, clientId))
     .limit(1);
+  const sendIntegration = await getWhatsappIntegrationForPhone(
+    clientId,
+    parsed.data.phoneNumberId ?? conversation.phoneNumberId ?? integration?.phoneNumberId ?? null,
+  );
+  const sendPhoneNumberId = parsed.data.phoneNumberId ?? conversation.phoneNumberId ?? sendIntegration?.phoneNumberId ?? null;
 
-  if (!contact || !integration?.phoneNumberId || !integration.accessToken) {
+  if (!contact || !sendPhoneNumberId || !sendIntegration?.accessToken) {
     res.status(409).json({
       error: true,
       code: "WHATSAPP_INTEGRATION_REQUIRED",
@@ -795,11 +1091,11 @@ router.post("/whatsapp/conversations/:conversationId/messages", async (req, res)
   }
 
   const response = await fetch(
-    `https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.phoneNumberId}/messages`,
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${sendPhoneNumberId}/messages`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${integration.accessToken}`,
+        Authorization: `Bearer ${sendIntegration.accessToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -836,6 +1132,7 @@ router.post("/whatsapp/conversations/:conversationId/messages", async (req, res)
       clientId,
       conversationId: conversation.id,
       contactId: contact.id,
+      phoneNumberId: sendPhoneNumberId,
       externalMessageId: payload.messages?.[0]?.id ?? null,
       direction: "outbound",
       messageType: "text",
@@ -857,6 +1154,127 @@ router.post("/whatsapp/conversations/:conversationId/messages", async (req, res)
 
   res.status(201).json({
     ok: true,
+    message: message
+      ? {
+          id: message.id,
+          externalMessageId: message.externalMessageId,
+          direction: message.direction,
+          messageType: message.messageType,
+          body: message.body,
+          sentAt: message.sentAt.toISOString(),
+        }
+      : null,
+  });
+});
+
+router.post("/whatsapp/test-messages", async (req, res): Promise<void> => {
+  const parsed = TestWhatsappMessageBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before sending WhatsApp test messages.",
+      status: 400,
+    });
+    return;
+  }
+
+  const integration = await getWhatsappIntegrationForPhone(clientId, parsed.data.phoneNumberId);
+  if (!integration?.accessToken) {
+    res.status(409).json({
+      error: true,
+      code: "WHATSAPP_INTEGRATION_REQUIRED",
+      message: "Conecte ou sincronize um número de WhatsApp antes de enviar teste.",
+      status: 409,
+    });
+    return;
+  }
+
+  const to = normalizeWhatsappRecipient(parsed.data.to);
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${parsed.data.phoneNumberId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${integration.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "text",
+        text: {
+          preview_url: false,
+          body: parsed.data.body,
+        },
+      }),
+    },
+  );
+  const payload = (await response.json()) as {
+    messages?: Array<{ id?: string }>;
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    res.status(response.status).json({
+      error: true,
+      code: "META_WHATSAPP_TEST_SEND_FAILED",
+      message: payload.error?.message ?? "A Meta recusou o envio do teste.",
+      status: response.status,
+    });
+    return;
+  }
+
+  const contact = await upsertWhatsappContact({
+    clientId,
+    waId: to,
+    name: null,
+    rawPayload: { source: "test_message" },
+  });
+  const sentAt = new Date();
+  const conversation = contact
+    ? await findOrCreateWhatsappConversation({
+        clientId,
+        contactId: contact.id,
+        phoneNumberId: parsed.data.phoneNumberId,
+        firstMessageAt: sentAt,
+        rawPayload: { source: "test_message" },
+      })
+    : null;
+
+  const [message] = conversation && contact
+    ? await db
+        .insert(whatsappMessagesTable)
+        .values({
+          clientId,
+          conversationId: conversation.id,
+          contactId: contact.id,
+          phoneNumberId: parsed.data.phoneNumberId,
+          externalMessageId: payload.messages?.[0]?.id ?? null,
+          direction: "outbound",
+          messageType: "text",
+          body: parsed.data.body,
+          rawPayload: payload,
+          sentAt,
+        })
+        .returning()
+    : [];
+
+  res.status(201).json({
+    ok: true,
+    conversationId: conversation?.id ?? null,
     message: message
       ? {
           id: message.id,
@@ -1009,6 +1427,16 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
       },
     })
     .returning();
+
+  if (integration?.phoneNumberId) {
+    await upsertWhatsappPhoneNumber({
+      clientId,
+      integrationId: integration.id,
+      wabaId: integration.wabaId,
+      phoneNumberId: integration.phoneNumberId,
+      rawPayload: { source: "embedded_signup" },
+    });
+  }
 
   // Future server-side completion point:
   // Exchange `signupCode` for a customer-scoped business integration token

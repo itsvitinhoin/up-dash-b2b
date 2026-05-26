@@ -41,6 +41,7 @@ export type WhatsappConversationMock = {
 };
 
 export const WHATSAPP_AGENTS: WhatsappAgentMock[] = [
+  { id: "unassigned", name: "Sem atendente" },
   { id: "ana", name: "Ana Paula" },
   { id: "bruna", name: "Bruna Lima" },
   { id: "carol", name: "Carol Mendes" },

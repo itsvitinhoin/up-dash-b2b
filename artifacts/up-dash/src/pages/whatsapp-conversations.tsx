@@ -21,13 +21,23 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+
+const ALL = "__all__";
 
 type WhatsappConversationListItem = {
   id: string;
   customerName: string;
   phone: string;
   waId: string | null;
+  phoneNumberId: string | null;
   status: keyof typeof WHATSAPP_STATUS_LABEL;
   stage: keyof typeof WHATSAPP_STAGE_LABEL;
   firstMessageAt: string | null;
@@ -56,6 +66,7 @@ type WhatsappConversationDetailResponse = {
     customerName: string;
     phone: string;
     waId: string | null;
+    phoneNumberId: string | null;
     status: keyof typeof WHATSAPP_STATUS_LABEL;
     stage: keyof typeof WHATSAPP_STAGE_LABEL;
     firstMessageAt: string | null;
@@ -68,6 +79,15 @@ type WhatsappConversationDetailResponse = {
     messageType: string | null;
     body: string | null;
     sentAt: string;
+  }>;
+};
+
+type WhatsappConnectionsResponse = {
+  phoneNumbers: Array<{
+    id: string;
+    phoneNumberId: string;
+    displayPhoneNumber: string | null;
+    verifiedName: string | null;
   }>;
 };
 
@@ -88,6 +108,7 @@ export default function WhatsappConversationsPage() {
   const queryClient = useQueryClient();
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [phoneFilter, setPhoneFilter] = useState(ALL);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
@@ -95,12 +116,26 @@ export default function WhatsappConversationsPage() {
   const conversationsQuery = useMemo(() => {
     const params = new URLSearchParams();
     if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+    if (phoneFilter !== ALL) params.set("phoneNumberId", phoneFilter);
     params.set("limit", "80");
     return `/api/whatsapp/conversations?${params.toString()}`;
+  }, [phoneFilter, selectedClientId, user?.role]);
+
+  const connectionsQuery = useMemo(() => {
+    const params = new URLSearchParams();
+    if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+    const query = params.toString();
+    return `/api/whatsapp/connections${query ? `?${query}` : ""}`;
   }, [selectedClientId, user?.role]);
 
+  const { data: connections } = useQuery<WhatsappConnectionsResponse>({
+    queryKey: ["whatsapp-connections", clientId],
+    queryFn: () => customFetch<WhatsappConnectionsResponse>(connectionsQuery),
+    enabled: Boolean(clientId),
+  });
+
   const { data, isLoading, isFetching, refetch } = useQuery<WhatsappConversationsResponse>({
-    queryKey: ["whatsapp-conversations", clientId],
+    queryKey: ["whatsapp-conversations", clientId, phoneFilter],
     queryFn: () => customFetch<WhatsappConversationsResponse>(conversationsQuery),
     enabled: Boolean(clientId),
     refetchInterval: 5000,
@@ -162,6 +197,10 @@ export default function WhatsappConversationsPage() {
   }, [data?.data, search]);
 
   const totalUnread = data?.totalUnread ?? 0;
+  const phoneLabel = (phoneNumberId: string | null) => {
+    const phone = connections?.phoneNumbers.find((row) => row.phoneNumberId === phoneNumberId);
+    return phone?.displayPhoneNumber ?? phone?.verifiedName ?? phoneNumberId ?? "Sem número";
+  };
 
   return (
     <div className="space-y-4" data-testid="page-whatsapp-conversations">
@@ -231,6 +270,19 @@ export default function WhatsappConversationsPage() {
                   className="pl-9"
                 />
               </div>
+              <Select value={phoneFilter} onValueChange={setPhoneFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Filtrar por número" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Todos os números</SelectItem>
+                  {(connections?.phoneNumbers ?? []).map((phone) => (
+                    <SelectItem key={phone.id} value={phone.phoneNumberId}>
+                      {phone.displayPhoneNumber ?? phone.verifiedName ?? phone.phoneNumberId}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </CardHeader>
             <div className="max-h-[560px] overflow-y-auto px-3 pb-3">
               {isLoading ? (
@@ -257,6 +309,7 @@ export default function WhatsappConversationsPage() {
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{conversation.customerName}</p>
                           <p className="mt-0.5 text-xs text-muted-foreground">{conversation.phone}</p>
+                          <p className="mt-0.5 text-[11px] text-muted-foreground">{phoneLabel(conversation.phoneNumberId)}</p>
                         </div>
                         {conversation.unreadCount > 0 && (
                           <Badge className="bg-emerald-500 text-white hover:bg-emerald-500">
@@ -285,6 +338,7 @@ export default function WhatsappConversationsPage() {
                   <div className="min-w-0">
                     <h2 className="truncate text-lg font-semibold">{selectedConversation.customerName}</h2>
                     <p className="text-sm text-muted-foreground">{selectedConversation.phone}</p>
+                    <p className="text-xs text-muted-foreground">{phoneLabel(selectedConversation.phoneNumberId)}</p>
                   </div>
                   <div className="flex flex-wrap justify-end gap-2">
                     <Badge variant="secondary">{WHATSAPP_STAGE_LABEL[selectedConversation.stage]}</Badge>

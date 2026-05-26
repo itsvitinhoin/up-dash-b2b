@@ -57,6 +57,36 @@ export const whatsappAgentsTable = pgTable(
   }),
 );
 
+export const whatsappPhoneNumbersTable = pgTable(
+  "whatsapp_phone_numbers",
+  {
+    id: text("id").primaryKey().$defaultFn(() => nanoid()),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => clientsTable.id, { onDelete: "cascade" }),
+    integrationId: text("integration_id").references(() => whatsappIntegrationsTable.id, { onDelete: "set null" }),
+    wabaId: text("waba_id"),
+    phoneNumberId: text("phone_number_id").notNull(),
+    displayPhoneNumber: text("display_phone_number"),
+    verifiedName: text("verified_name"),
+    qualityRating: text("quality_rating"),
+    platformType: text("platform_type"),
+    codeVerificationStatus: text("code_verification_status"),
+    status: text("status").notNull().default("active"),
+    rawPayload: jsonb("raw_payload"),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    clientIdx: index("whatsapp_phone_numbers_client_idx").on(table.clientId),
+    phoneUnique: uniqueIndex("whatsapp_phone_numbers_client_phone_unique").on(table.clientId, table.phoneNumberId),
+  }),
+);
+
 export const whatsappContactsTable = pgTable(
   "whatsapp_contacts",
   {
@@ -89,6 +119,7 @@ export const whatsappConversationsTable = pgTable(
       .references(() => clientsTable.id, { onDelete: "cascade" }),
     contactId: text("contact_id").references(() => whatsappContactsTable.id, { onDelete: "cascade" }),
     agentId: text("agent_id").references(() => whatsappAgentsTable.id, { onDelete: "set null" }),
+    phoneNumberId: text("phone_number_id"),
     externalConversationId: text("external_conversation_id"),
     status: text("status", {
       enum: ["new", "in_progress", "awaiting_response", "closed", "lost"],
@@ -109,6 +140,7 @@ export const whatsappConversationsTable = pgTable(
   },
   (table) => ({
     clientIdx: index("whatsapp_conversations_client_idx").on(table.clientId),
+    phoneIdx: index("whatsapp_conversations_phone_idx").on(table.clientId, table.phoneNumberId),
     statusIdx: index("whatsapp_conversations_status_idx").on(table.clientId, table.status),
     stageIdx: index("whatsapp_conversations_stage_idx").on(table.clientId, table.funnelStage),
   }),
@@ -123,6 +155,7 @@ export const whatsappMessagesTable = pgTable(
       .references(() => clientsTable.id, { onDelete: "cascade" }),
     conversationId: text("conversation_id").references(() => whatsappConversationsTable.id, { onDelete: "cascade" }),
     contactId: text("contact_id").references(() => whatsappContactsTable.id, { onDelete: "set null" }),
+    phoneNumberId: text("phone_number_id"),
     externalMessageId: text("external_message_id"),
     direction: text("direction", { enum: ["inbound", "outbound"] }).notNull(),
     messageType: text("message_type"),
@@ -133,6 +166,7 @@ export const whatsappMessagesTable = pgTable(
   },
   (table) => ({
     conversationIdx: index("whatsapp_messages_conversation_idx").on(table.conversationId),
+    phoneIdx: index("whatsapp_messages_phone_idx").on(table.clientId, table.phoneNumberId),
     sentAtIdx: index("whatsapp_messages_sent_at_idx").on(table.clientId, table.sentAt),
     externalMessageUnique: uniqueIndex("whatsapp_messages_external_unique").on(table.clientId, table.externalMessageId),
   }),
@@ -163,6 +197,8 @@ export type WhatsappIntegration = typeof whatsappIntegrationsTable.$inferSelect;
 export type InsertWhatsappIntegration = typeof whatsappIntegrationsTable.$inferInsert;
 export type WhatsappAgent = typeof whatsappAgentsTable.$inferSelect;
 export type InsertWhatsappAgent = typeof whatsappAgentsTable.$inferInsert;
+export type WhatsappPhoneNumber = typeof whatsappPhoneNumbersTable.$inferSelect;
+export type InsertWhatsappPhoneNumber = typeof whatsappPhoneNumbersTable.$inferInsert;
 export type WhatsappContact = typeof whatsappContactsTable.$inferSelect;
 export type InsertWhatsappContact = typeof whatsappContactsTable.$inferInsert;
 export type WhatsappConversation = typeof whatsappConversationsTable.$inferSelect;

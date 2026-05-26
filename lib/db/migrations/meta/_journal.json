@@ -127,6 +127,13 @@
       "when": 1779723600000,
       "tag": "0018_whatsapp_integration_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1779825600000,
+      "tag": "0019_whatsapp_phone_numbers",
+      "breakpoints": true
     }
   ]
 }
