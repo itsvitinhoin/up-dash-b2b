@@ -24,6 +24,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 declare global {
@@ -141,6 +143,11 @@ type WhatsappConnectionsResponse = {
   phoneNumbers: WhatsappPhoneNumber[];
 };
 
+type ImportExistingNumberResponse = {
+  ok: boolean;
+  phoneNumber: WhatsappPhoneNumber | null;
+};
+
 function dateLabel(value: string | null) {
   return value ? format(new Date(value), "dd/MM/yyyy HH:mm") : "-";
 }
@@ -211,6 +218,15 @@ export default function WhatsappConnectionsPage() {
   const queryClient = useQueryClient();
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
   const [signupError, setSignupError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<ImportExistingNumberResponse | null>(null);
+  const [importForm, setImportForm] = useState({
+    wabaId: "",
+    phoneNumberId: "",
+    displayPhoneNumber: "",
+    verifiedName: "",
+    accessToken: "",
+  });
   const [metaTestResult, setMetaTestResult] = useState<MetaPermissionTestResponse | null>(null);
   const sessionInfoRef = useRef<WhatsappEmbeddedSignupSession | null>(null);
   const signupCodeRef = useRef<string | null>(null);
@@ -305,6 +321,37 @@ export default function WhatsappConnectionsPage() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: connectionsKey });
+    },
+  });
+
+  const importExistingNumber = useMutation({
+    mutationFn: () =>
+      customFetch<ImportExistingNumberResponse>("/api/whatsapp/connections/import-existing", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId,
+          wabaId: importForm.wabaId,
+          phoneNumberId: importForm.phoneNumberId,
+          displayPhoneNumber: importForm.displayPhoneNumber || null,
+          verifiedName: importForm.verifiedName || null,
+          accessToken: importForm.accessToken || null,
+        }),
+      }),
+    onSuccess: (payload) => {
+      setImportError(null);
+      setImportResult(payload);
+      setImportForm((current) => ({
+        ...current,
+        phoneNumberId: "",
+        displayPhoneNumber: "",
+        verifiedName: "",
+      }));
+      void queryClient.invalidateQueries({ queryKey: connectionsKey });
+      void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
+    },
+    onError: (error) => {
+      setImportResult(null);
+      setImportError(error instanceof Error ? error.message : "Não foi possível importar o número existente.");
     },
   });
 
@@ -508,6 +555,98 @@ export default function WhatsappConnectionsPage() {
               </p>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Smartphone className="h-4 w-4 text-primary" />
+            Importar número existente da BM
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Use este bloco quando o telefone já está conectado no WhatsApp Manager e você só precisa trazê-lo para o UP Dash.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="space-y-2">
+              <Label>WABA ID</Label>
+              <Input
+                value={importForm.wabaId}
+                onChange={(event) => setImportForm((current) => ({ ...current, wabaId: event.target.value }))}
+                placeholder="Ex: 1681537933040235"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Phone Number ID</Label>
+              <Input
+                value={importForm.phoneNumberId}
+                onChange={(event) => setImportForm((current) => ({ ...current, phoneNumberId: event.target.value }))}
+                placeholder="Ex: 1178128622046297"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Número exibido</Label>
+              <Input
+                value={importForm.displayPhoneNumber}
+                onChange={(event) => setImportForm((current) => ({ ...current, displayPhoneNumber: event.target.value }))}
+                placeholder="Ex: 5511999999999"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Nome verificado</Label>
+              <Input
+                value={importForm.verifiedName}
+                onChange={(event) => setImportForm((current) => ({ ...current, verifiedName: event.target.value }))}
+                placeholder="Ex: CELEB"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Token Meta</Label>
+              <Input
+                value={importForm.accessToken}
+                onChange={(event) => setImportForm((current) => ({ ...current, accessToken: event.target.value }))}
+                placeholder="Opcional se já salvo"
+                type="password"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              onClick={() => importExistingNumber.mutate()}
+              disabled={
+                importExistingNumber.isPending ||
+                !importForm.wabaId.trim() ||
+                !importForm.phoneNumberId.trim()
+              }
+            >
+              <Smartphone className="mr-2 h-4 w-4" />
+              {importExistingNumber.isPending ? "Importando..." : "Importar número"}
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              O sistema valida o Phone Number ID na Meta antes de salvar.
+            </p>
+          </div>
+
+          {importResult?.phoneNumber && (
+            <Alert>
+              <CheckCircle2 className="h-4 w-4" />
+              <AlertTitle>Número importado</AlertTitle>
+              <AlertDescription>
+                {importResult.phoneNumber.displayPhoneNumber ?? importResult.phoneNumber.phoneNumberId} já está disponível nos filtros e envios.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {importError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Não foi possível importar</AlertTitle>
+              <AlertDescription>{importError}</AlertDescription>
+            </Alert>
+          )}
         </CardContent>
       </Card>
 

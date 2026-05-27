@@ -155,6 +155,15 @@ const TestWhatsappMessageBody = z.object({
   body: z.string().trim().min(1).max(4096),
 });
 
+const ImportExistingWhatsappNumberBody = z.object({
+  clientId: z.string().optional(),
+  wabaId: z.string().trim().min(4),
+  phoneNumberId: z.string().trim().min(4),
+  displayPhoneNumber: z.string().trim().optional().nullable(),
+  verifiedName: z.string().trim().optional().nullable(),
+  accessToken: z.string().trim().optional().nullable(),
+});
+
 function serializeIntegration(row: typeof whatsappIntegrationsTable.$inferSelect | null) {
   if (!row) return null;
   return {
@@ -349,6 +358,12 @@ async function resolveWhatsappClientByPhoneNumber(phoneNumberId?: string | null)
 
 function normalizeWhatsappRecipient(value: string): string {
   return value.replace(/\D/g, "");
+}
+
+function normalizeMetaAccessToken(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/^Bearer\s+/i, "").trim();
 }
 
 async function upsertWhatsappPhoneNumber(params: {
@@ -827,6 +842,147 @@ router.post("/whatsapp/connections/sync", async (req, res): Promise<void> => {
     synced: synced.length,
     errors,
     phoneNumbers: synced,
+  });
+});
+
+router.post("/whatsapp/connections/import-existing", async (req, res): Promise<void> => {
+  const parsed = ImportExistingWhatsappNumberBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before importing a WhatsApp phone number.",
+      status: 400,
+    });
+    return;
+  }
+
+  const providedToken = normalizeMetaAccessToken(parsed.data.accessToken);
+  const [currentIntegration] = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.clientId, clientId))
+    .limit(1);
+  const accessToken = providedToken ?? currentIntegration?.accessToken ?? null;
+
+  if (!accessToken) {
+    res.status(409).json({
+      error: true,
+      code: "WHATSAPP_TOKEN_REQUIRED",
+      message: "Informe um token da Meta ou conecte o WhatsApp antes de importar este número.",
+      status: 409,
+    });
+    return;
+  }
+
+  const url = new URL(`https://graph.facebook.com/${GRAPH_API_VERSION}/${parsed.data.phoneNumberId}`);
+  url.searchParams.set(
+    "fields",
+    "id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status",
+  );
+  const response = await fetch(url.toString(), {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  const payload = (await response.json()) as {
+    id?: string;
+    display_phone_number?: string;
+    verified_name?: string;
+    quality_rating?: string;
+    platform_type?: string;
+    code_verification_status?: string;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.id !== parsed.data.phoneNumberId) {
+    res.status(response.ok ? 422 : response.status).json({
+      error: true,
+      code: "WHATSAPP_PHONE_NUMBER_NOT_ACCESSIBLE",
+      message:
+        payload.error?.message ??
+        "Não foi possível validar esse Phone Number ID com o token informado.",
+      status: response.ok ? 422 : response.status,
+    });
+    return;
+  }
+
+  const [integration] = await db
+    .insert(whatsappIntegrationsTable)
+    .values({
+      clientId,
+      appId: getWhatsappEmbeddedSignupAppId(),
+      configId: getWhatsappEmbeddedSignupConfigId(),
+      wabaId: parsed.data.wabaId,
+      phoneNumberId: parsed.data.phoneNumberId,
+      accessToken,
+      tokenType: currentIntegration?.tokenType ?? null,
+      tokenExpiresAt: currentIntegration?.tokenExpiresAt ?? null,
+      tokenError: null,
+      status: "connected",
+      rawPayload: {
+        source: "manual_existing_bm_import",
+        phoneNumber: payload,
+      },
+      connectedAt: currentIntegration?.connectedAt ?? new Date(),
+    })
+    .onConflictDoUpdate({
+      target: whatsappIntegrationsTable.clientId,
+      set: {
+        appId: getWhatsappEmbeddedSignupAppId(),
+        configId: getWhatsappEmbeddedSignupConfigId(),
+        wabaId: parsed.data.wabaId,
+        phoneNumberId: parsed.data.phoneNumberId,
+        accessToken,
+        tokenError: null,
+        status: "connected",
+        rawPayload: {
+          source: "manual_existing_bm_import",
+          phoneNumber: payload,
+        },
+        connectedAt: currentIntegration?.connectedAt ?? new Date(),
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+
+  const phoneNumber = await upsertWhatsappPhoneNumber({
+    clientId,
+    integrationId: integration?.id ?? currentIntegration?.id ?? null,
+    wabaId: parsed.data.wabaId,
+    phoneNumberId: parsed.data.phoneNumberId,
+    displayPhoneNumber: payload.display_phone_number ?? parsed.data.displayPhoneNumber ?? null,
+    verifiedName: payload.verified_name ?? parsed.data.verifiedName ?? null,
+    qualityRating: payload.quality_rating ?? null,
+    platformType: payload.platform_type ?? null,
+    codeVerificationStatus: payload.code_verification_status ?? null,
+    rawPayload: {
+      source: "manual_existing_bm_import",
+      meta: payload,
+      input: {
+        wabaId: parsed.data.wabaId,
+        displayPhoneNumber: parsed.data.displayPhoneNumber ?? null,
+        verifiedName: parsed.data.verifiedName ?? null,
+      },
+    },
+  });
+
+  res.status(201).json({
+    ok: true,
+    integration: serializeIntegration(integration ?? currentIntegration ?? null),
+    phoneNumber: phoneNumber ? serializePhoneNumber(phoneNumber) : null,
   });
 });
 
