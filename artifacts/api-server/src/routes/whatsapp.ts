@@ -10,6 +10,7 @@ import {
   whatsappConversationEventsTable,
   whatsappConversationsTable,
   whatsappIntegrationsTable,
+  whatsappMessageTemplatesTable,
   whatsappMessagesTable,
   whatsappPhoneNumbersTable,
 } from "@workspace/db";
@@ -162,6 +163,25 @@ const ImportExistingWhatsappNumberBody = z.object({
   displayPhoneNumber: z.string().trim().optional().nullable(),
   verifiedName: z.string().trim().optional().nullable(),
   accessToken: z.string().trim().optional().nullable(),
+});
+
+const SyncWhatsappTemplatesBody = z.object({
+  clientId: z.string().optional(),
+  phoneNumberId: z.string().optional().nullable(),
+});
+
+const SendWhatsappTemplateBody = z.object({
+  clientId: z.string().optional(),
+  phoneNumberId: z.string().min(1),
+  to: z.string().trim().min(8),
+  templateName: z.string().trim().min(1),
+  languageCode: z.string().trim().min(2),
+  bodyParams: z.array(z.string()).optional().default([]),
+});
+
+const SubscribeWhatsappWebhookBody = z.object({
+  clientId: z.string().optional(),
+  phoneNumberId: z.string().optional().nullable(),
 });
 
 function serializeIntegration(row: typeof whatsappIntegrationsTable.$inferSelect | null) {
@@ -704,6 +724,135 @@ function serializePhoneNumber(row: typeof whatsappPhoneNumbersTable.$inferSelect
   };
 }
 
+function serializeTemplate(row: typeof whatsappMessageTemplatesTable.$inferSelect) {
+  return {
+    id: row.id,
+    clientId: row.clientId,
+    integrationId: row.integrationId,
+    wabaId: row.wabaId,
+    templateId: row.templateId,
+    name: row.name,
+    language: row.language,
+    status: row.status,
+    category: row.category,
+    components: row.components,
+    lastSyncedAt: iso(row.lastSyncedAt),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function upsertWhatsappTemplate(params: {
+  clientId: string;
+  integrationId: string | null;
+  wabaId: string;
+  templateId?: string | null;
+  name: string;
+  language: string;
+  status: string;
+  category?: string | null;
+  components?: unknown;
+  rawPayload?: unknown;
+}) {
+  const now = new Date();
+  const [template] = await db
+    .insert(whatsappMessageTemplatesTable)
+    .values({
+      clientId: params.clientId,
+      integrationId: params.integrationId,
+      wabaId: params.wabaId,
+      templateId: params.templateId ?? null,
+      name: params.name,
+      language: params.language,
+      status: params.status,
+      category: params.category ?? null,
+      components: params.components ?? null,
+      rawPayload: params.rawPayload ?? null,
+      lastSyncedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        whatsappMessageTemplatesTable.clientId,
+        whatsappMessageTemplatesTable.wabaId,
+        whatsappMessageTemplatesTable.name,
+        whatsappMessageTemplatesTable.language,
+      ],
+      set: {
+        integrationId: params.integrationId,
+        templateId: params.templateId ?? null,
+        status: params.status,
+        category: params.category ?? null,
+        components: params.components ?? null,
+        rawPayload: params.rawPayload ?? null,
+        lastSyncedAt: now,
+        updatedAt: now,
+      },
+    })
+    .returning();
+
+  return template;
+}
+
+async function syncTemplatesForIntegration(
+  clientId: string,
+  integration: typeof whatsappIntegrationsTable.$inferSelect,
+) {
+  if (!integration.wabaId || !integration.accessToken) {
+    return {
+      templates: [] as Array<ReturnType<typeof serializeTemplate>>,
+      error: "Integração sem WABA ID ou token.",
+    };
+  }
+
+  const url = new URL(`https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/message_templates`);
+  url.searchParams.set("fields", "id,name,language,status,category,components");
+  url.searchParams.set("limit", "100");
+  const response = await fetch(url.toString(), {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${integration.accessToken}`,
+    },
+  });
+  const payload = (await response.json()) as {
+    data?: Array<{
+      id?: string;
+      name?: string;
+      language?: string;
+      status?: string;
+      category?: string;
+      components?: unknown;
+    }>;
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    return {
+      templates: [] as Array<ReturnType<typeof serializeTemplate>>,
+      error: payload.error?.message ?? `Erro Meta ${response.status} ao sincronizar templates.`,
+    };
+  }
+
+  const templates: Array<ReturnType<typeof serializeTemplate>> = [];
+  for (const row of payload.data ?? []) {
+    if (!row.name || !row.language || !row.status) continue;
+    const template = await upsertWhatsappTemplate({
+      clientId,
+      integrationId: integration.id,
+      wabaId: integration.wabaId,
+      templateId: row.id ?? null,
+      name: row.name,
+      language: row.language,
+      status: row.status,
+      category: row.category ?? null,
+      components: row.components ?? null,
+      rawPayload: row,
+    });
+    if (template) templates.push(serializeTemplate(template));
+  }
+
+  return { templates, error: null };
+}
+
 router.get("/whatsapp/connections", async (req, res): Promise<void> => {
   const clientId = resolveWritableClientId(req);
   if (!clientId) {
@@ -983,6 +1132,243 @@ router.post("/whatsapp/connections/import-existing", async (req, res): Promise<v
     ok: true,
     integration: serializeIntegration(integration ?? currentIntegration ?? null),
     phoneNumber: phoneNumber ? serializePhoneNumber(phoneNumber) : null,
+  });
+});
+
+router.post("/whatsapp/connections/subscribe-webhook", async (req, res): Promise<void> => {
+  const parsed = SubscribeWhatsappWebhookBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before subscribing the WhatsApp webhook.",
+      status: 400,
+    });
+    return;
+  }
+
+  const integration = await getWhatsappIntegrationForPhone(clientId, parsed.data.phoneNumberId ?? null);
+  if (!integration?.wabaId || !integration.accessToken) {
+    res.status(409).json({
+      error: true,
+      code: "WHATSAPP_INTEGRATION_REQUIRED",
+      message: "Importe/conecte um WABA com token antes de ativar o webhook.",
+      status: 409,
+    });
+    return;
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/subscribed_apps`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${integration.accessToken}`,
+      },
+    },
+  );
+  const payload = (await response.json()) as {
+    success?: boolean;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.success === false) {
+    res.status(response.ok ? 422 : response.status).json({
+      error: true,
+      code: "WHATSAPP_WEBHOOK_SUBSCRIBE_FAILED",
+      message: payload.error?.message ?? "A Meta recusou a assinatura do app no WABA.",
+      status: response.ok ? 422 : response.status,
+    });
+    return;
+  }
+
+  res.json({
+    ok: true,
+    wabaId: integration.wabaId,
+  });
+});
+
+router.get("/whatsapp/templates", async (req, res): Promise<void> => {
+  const clientId = resolveWritableClientId(req);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client to view WhatsApp templates.",
+      status: 400,
+    });
+    return;
+  }
+
+  const phoneNumberId = typeof req.query.phoneNumberId === "string" ? req.query.phoneNumberId : null;
+  const integration = await getWhatsappIntegrationForPhone(clientId, phoneNumberId);
+  const conditions = [eq(whatsappMessageTemplatesTable.clientId, clientId)];
+  if (integration?.wabaId) conditions.push(eq(whatsappMessageTemplatesTable.wabaId, integration.wabaId));
+
+  const templates = await db
+    .select()
+    .from(whatsappMessageTemplatesTable)
+    .where(and(...conditions))
+    .orderBy(whatsappMessageTemplatesTable.name);
+
+  res.json({
+    total: templates.length,
+    data: templates.map(serializeTemplate),
+  });
+});
+
+router.post("/whatsapp/templates/sync", async (req, res): Promise<void> => {
+  const parsed = SyncWhatsappTemplatesBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before syncing WhatsApp templates.",
+      status: 400,
+    });
+    return;
+  }
+
+  const selectedIntegration = parsed.data.phoneNumberId
+    ? await getWhatsappIntegrationForPhone(clientId, parsed.data.phoneNumberId)
+    : null;
+  const integrations = selectedIntegration
+    ? [selectedIntegration]
+    : await db
+        .select()
+        .from(whatsappIntegrationsTable)
+        .where(eq(whatsappIntegrationsTable.clientId, clientId));
+
+  const templates: Array<ReturnType<typeof serializeTemplate>> = [];
+  const errors: string[] = [];
+  for (const integration of integrations) {
+    const result = await syncTemplatesForIntegration(clientId, integration);
+    templates.push(...result.templates);
+    if (result.error) errors.push(result.error);
+  }
+
+  res.json({
+    ok: errors.length === 0,
+    synced: templates.length,
+    errors,
+    templates,
+  });
+});
+
+router.post("/whatsapp/template-messages", async (req, res): Promise<void> => {
+  const parsed = SendWhatsappTemplateBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before sending WhatsApp templates.",
+      status: 400,
+    });
+    return;
+  }
+
+  const integration = await getWhatsappIntegrationForPhone(clientId, parsed.data.phoneNumberId);
+  if (!integration?.accessToken) {
+    res.status(409).json({
+      error: true,
+      code: "WHATSAPP_INTEGRATION_REQUIRED",
+      message: "Conecte ou importe o WhatsApp antes de enviar templates.",
+      status: 409,
+    });
+    return;
+  }
+
+  const bodyParams = parsed.data.bodyParams
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((text) => ({ type: "text", text }));
+  const components = bodyParams.length
+    ? [
+        {
+          type: "body",
+          parameters: bodyParams,
+        },
+      ]
+    : undefined;
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${parsed.data.phoneNumberId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${integration.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: normalizeWhatsappRecipient(parsed.data.to),
+        type: "template",
+        template: {
+          name: parsed.data.templateName,
+          language: {
+            code: parsed.data.languageCode,
+          },
+          ...(components ? { components } : {}),
+        },
+      }),
+    },
+  );
+  const payload = (await response.json()) as {
+    messages?: Array<{ id?: string }>;
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    res.status(response.status).json({
+      error: true,
+      code: "META_WHATSAPP_TEMPLATE_SEND_FAILED",
+      message: payload.error?.message ?? "A Meta recusou o envio do template.",
+      status: response.status,
+    });
+    return;
+  }
+
+  res.status(201).json({
+    ok: true,
+    message: {
+      externalMessageId: payload.messages?.[0]?.id ?? null,
+      sentAt: new Date().toISOString(),
+    },
   });
 });
 

@@ -87,6 +87,41 @@ export const whatsappPhoneNumbersTable = pgTable(
   }),
 );
 
+export const whatsappMessageTemplatesTable = pgTable(
+  "whatsapp_message_templates",
+  {
+    id: text("id").primaryKey().$defaultFn(() => nanoid()),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => clientsTable.id, { onDelete: "cascade" }),
+    integrationId: text("integration_id").references(() => whatsappIntegrationsTable.id, { onDelete: "set null" }),
+    wabaId: text("waba_id").notNull(),
+    templateId: text("template_id"),
+    name: text("name").notNull(),
+    language: text("language").notNull(),
+    status: text("status").notNull(),
+    category: text("category"),
+    components: jsonb("components"),
+    rawPayload: jsonb("raw_payload"),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    clientIdx: index("whatsapp_message_templates_client_idx").on(table.clientId),
+    wabaIdx: index("whatsapp_message_templates_waba_idx").on(table.clientId, table.wabaId),
+    templateUnique: uniqueIndex("whatsapp_message_templates_client_waba_name_lang_unique").on(
+      table.clientId,
+      table.wabaId,
+      table.name,
+      table.language,
+    ),
+  }),
+);
+
 export const whatsappContactsTable = pgTable(
   "whatsapp_contacts",
   {
@@ -199,6 +234,8 @@ export type WhatsappAgent = typeof whatsappAgentsTable.$inferSelect;
 export type InsertWhatsappAgent = typeof whatsappAgentsTable.$inferInsert;
 export type WhatsappPhoneNumber = typeof whatsappPhoneNumbersTable.$inferSelect;
 export type InsertWhatsappPhoneNumber = typeof whatsappPhoneNumbersTable.$inferInsert;
+export type WhatsappMessageTemplate = typeof whatsappMessageTemplatesTable.$inferSelect;
+export type InsertWhatsappMessageTemplate = typeof whatsappMessageTemplatesTable.$inferInsert;
 export type WhatsappContact = typeof whatsappContactsTable.$inferSelect;
 export type InsertWhatsappContact = typeof whatsappContactsTable.$inferInsert;
 export type WhatsappConversation = typeof whatsappConversationsTable.$inferSelect;

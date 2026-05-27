@@ -134,6 +134,13 @@
       "when": 1779825600000,
       "tag": "0019_whatsapp_phone_numbers",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1779887100000,
+      "tag": "0020_whatsapp_message_templates",
+      "breakpoints": true
     }
   ]
 }

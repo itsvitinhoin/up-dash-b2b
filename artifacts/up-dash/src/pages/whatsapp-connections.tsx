@@ -355,6 +355,23 @@ export default function WhatsappConnectionsPage() {
     },
   });
 
+  const subscribeWebhook = useMutation({
+    mutationFn: (phoneNumberId?: string | null) =>
+      customFetch<{ ok: boolean; wabaId: string }>("/api/whatsapp/connections/subscribe-webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId,
+          phoneNumberId,
+        }),
+      }),
+    onSuccess: () => {
+      setSignupError(null);
+    },
+    onError: (error) => {
+      setSignupError(error instanceof Error ? error.message : "Não foi possível ativar o webhook no WABA.");
+    },
+  });
+
   const persistEmbeddedSignup = useCallback((code?: string | null, session?: WhatsappEmbeddedSignupSession | null) => {
     const sessionData = session?.data;
     saveEmbeddedSignup.mutate({
@@ -743,6 +760,14 @@ export default function WhatsappConnectionsPage() {
                 <RefreshCw className={`mr-2 h-4 w-4 ${syncNumbers.isPending ? "animate-spin" : ""}`} />
                 Sincronizar números
               </Button>
+              <Button
+                variant="outline"
+                onClick={() => subscribeWebhook.mutate(null)}
+                disabled={subscribeWebhook.isPending}
+              >
+                <Webhook className="mr-2 h-4 w-4" />
+                Ativar webhook no WABA
+              </Button>
               <Button onClick={launchEmbeddedSignup} disabled={!canLaunchEmbeddedSignup || isSignupBusy}>
                 <MessageCircle className="mr-2 h-4 w-4" />
                 Adicionar número
@@ -852,6 +877,14 @@ export default function WhatsappConnectionsPage() {
                       <Button variant="outline" onClick={() => syncNumbers.mutate()} disabled={syncNumbers.isPending || isFetching}>
                         <RefreshCw className={`mr-2 h-4 w-4 ${syncNumbers.isPending ? "animate-spin" : ""}`} />
                         Atualizar dados
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => subscribeWebhook.mutate(phone.phoneNumberId)}
+                        disabled={subscribeWebhook.isPending}
+                      >
+                        <Webhook className="mr-2 h-4 w-4" />
+                        Ativar webhook
                       </Button>
                     </div>
                   </CardContent>
