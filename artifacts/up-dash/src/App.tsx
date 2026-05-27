@@ -35,6 +35,7 @@ import WhatsappPage from "@/pages/whatsapp";
 import WhatsappConversationsPage from "@/pages/whatsapp-conversations";
 import WhatsappConnectionsPage from "@/pages/whatsapp-connections";
 import WhatsappSendsPage from "@/pages/whatsapp-sends";
+import WhatsappTemplatesPage from "@/pages/whatsapp-templates";
 import StockIntelligencePage from "@/pages/stock-intelligence";
 import JourneyPage from "@/pages/journey";
 import RfmPage from "@/pages/rfm";
@@ -237,6 +238,14 @@ function Router() {
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="whatsapp-sends"><WhatsappSendsPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/whatsapp/templates">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="whatsapp-templates"><WhatsappTemplatesPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

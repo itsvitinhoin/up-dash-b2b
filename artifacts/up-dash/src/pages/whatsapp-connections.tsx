@@ -15,6 +15,7 @@ import {
   Settings,
   ShieldCheck,
   Smartphone,
+  Trash2,
   Webhook,
 } from "lucide-react";
 import { Link } from "wouter";
@@ -369,6 +370,25 @@ export default function WhatsappConnectionsPage() {
     },
     onError: (error) => {
       setSignupError(error instanceof Error ? error.message : "Não foi possível ativar o webhook no WABA.");
+    },
+  });
+
+  const deletePhoneNumber = useMutation({
+    mutationFn: (phoneNumberId: string) => {
+      const params = new URLSearchParams();
+      if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+      const query = params.toString();
+      return customFetch<{ ok: boolean }>(
+        `/api/whatsapp/connections/phone-numbers/${encodeURIComponent(phoneNumberId)}${query ? `?${query}` : ""}`,
+        { method: "DELETE" },
+      );
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: connectionsKey });
+      void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
+    },
+    onError: (error) => {
+      setSignupError(error instanceof Error ? error.message : "Não foi possível excluir o número conectado.");
     },
   });
 
@@ -885,6 +905,20 @@ export default function WhatsappConnectionsPage() {
                       >
                         <Webhook className="mr-2 h-4 w-4" />
                         Ativar webhook
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="border-red-500/30 text-red-500 hover:bg-red-500/10 hover:text-red-500"
+                        onClick={() => {
+                          const confirmed = window.confirm(
+                            "Excluir este número conectado do UP Dash? O histórico de conversas será preservado.",
+                          );
+                          if (confirmed) deletePhoneNumber.mutate(phone.phoneNumberId);
+                        }}
+                        disabled={deletePhoneNumber.isPending}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Excluir número
                       </Button>
                     </div>
                   </CardContent>

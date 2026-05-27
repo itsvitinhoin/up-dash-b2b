@@ -171,6 +171,21 @@ const SyncWhatsappTemplatesBody = z.object({
   phoneNumberId: z.string().optional().nullable(),
 });
 
+const CreateWhatsappTemplateBody = z.object({
+  clientId: z.string().optional(),
+  phoneNumberId: z.string().optional().nullable(),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(512)
+    .regex(/^[a-z0-9_]+$/, "Use apenas letras minúsculas, números e underscore no nome do template."),
+  language: z.string().trim().min(2).max(16).default("pt_BR"),
+  category: z.enum(["MARKETING", "UTILITY", "AUTHENTICATION"]).default("UTILITY"),
+  bodyText: z.string().trim().min(1).max(1024),
+  footerText: z.string().trim().max(60).optional().nullable(),
+});
+
 const SendWhatsappTemplateBody = z.object({
   clientId: z.string().optional(),
   phoneNumberId: z.string().min(1),
@@ -1206,6 +1221,60 @@ router.post("/whatsapp/connections/subscribe-webhook", async (req, res): Promise
   });
 });
 
+router.delete("/whatsapp/connections/phone-numbers/:phoneNumberId", async (req, res): Promise<void> => {
+  const phoneNumberId = req.params.phoneNumberId?.trim();
+  const clientIdFromQuery = typeof req.query.clientId === "string" ? req.query.clientId : undefined;
+  const clientId = resolveWritableClientId(req, clientIdFromQuery);
+
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before removing a WhatsApp number.",
+      status: 400,
+    });
+    return;
+  }
+
+  if (!phoneNumberId) {
+    res.status(400).json({
+      error: true,
+      code: "PHONE_NUMBER_REQUIRED",
+      message: "Phone Number ID is required.",
+      status: 400,
+    });
+    return;
+  }
+
+  const [removed] = await db
+    .delete(whatsappPhoneNumbersTable)
+    .where(
+      and(
+        eq(whatsappPhoneNumbersTable.clientId, clientId),
+        eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId),
+      ),
+    )
+    .returning();
+
+  await db
+    .update(whatsappIntegrationsTable)
+    .set({
+      phoneNumberId: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(whatsappIntegrationsTable.clientId, clientId),
+        eq(whatsappIntegrationsTable.phoneNumberId, phoneNumberId),
+      ),
+    );
+
+  res.json({
+    ok: true,
+    removed: removed ? serializePhoneNumber(removed) : null,
+  });
+});
+
 router.get("/whatsapp/templates", async (req, res): Promise<void> => {
   const clientId = resolveWritableClientId(req);
   if (!clientId) {
@@ -1232,6 +1301,106 @@ router.get("/whatsapp/templates", async (req, res): Promise<void> => {
   res.json({
     total: templates.length,
     data: templates.map(serializeTemplate),
+  });
+});
+
+router.post("/whatsapp/templates", async (req, res): Promise<void> => {
+  const parsed = CreateWhatsappTemplateBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before creating WhatsApp templates.",
+      status: 400,
+    });
+    return;
+  }
+
+  const integration = await getWhatsappIntegrationForPhone(clientId, parsed.data.phoneNumberId ?? null);
+  if (!integration?.wabaId || !integration.accessToken) {
+    res.status(409).json({
+      error: true,
+      code: "WHATSAPP_INTEGRATION_REQUIRED",
+      message: "Conecte ou importe um WABA com token antes de criar templates.",
+      status: 409,
+    });
+    return;
+  }
+
+  const components: Array<Record<string, string>> = [
+    {
+      type: "BODY",
+      text: parsed.data.bodyText,
+    },
+  ];
+  if (parsed.data.footerText) {
+    components.push({
+      type: "FOOTER",
+      text: parsed.data.footerText,
+    });
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/message_templates`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${integration.accessToken}`,
+      },
+      body: JSON.stringify({
+        name: parsed.data.name,
+        language: parsed.data.language,
+        category: parsed.data.category,
+        components,
+      }),
+    },
+  );
+  const payload = (await response.json()) as {
+    id?: string;
+    status?: string;
+    category?: string;
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    res.status(response.status).json({
+      error: true,
+      code: "META_WHATSAPP_TEMPLATE_CREATE_FAILED",
+      message: payload.error?.message ?? "A Meta recusou a criação do template.",
+      status: response.status,
+    });
+    return;
+  }
+
+  const template = await upsertWhatsappTemplate({
+    clientId,
+    integrationId: integration.id,
+    wabaId: integration.wabaId,
+    templateId: payload.id ?? null,
+    name: parsed.data.name,
+    language: parsed.data.language,
+    status: payload.status ?? "PENDING",
+    category: payload.category ?? parsed.data.category,
+    components,
+    rawPayload: payload,
+  });
+
+  res.status(201).json({
+    ok: true,
+    template: template ? serializeTemplate(template) : null,
   });
 });
 

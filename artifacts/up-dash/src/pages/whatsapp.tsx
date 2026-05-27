@@ -52,7 +52,6 @@ import { customFetch } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
-  WHATSAPP_AGENTS,
   WHATSAPP_FUNNEL_STAGES,
   WHATSAPP_LOSS_REASONS,
   WHATSAPP_STAGE_LABEL,
@@ -80,6 +79,10 @@ type WhatsappConnectionsResponse = {
     verifiedName: string | null;
   }>;
 };
+
+function phoneLabel(phoneNumber: WhatsappConnectionsResponse["phoneNumbers"][number]) {
+  return phoneNumber.verifiedName ?? phoneNumber.displayPhoneNumber ?? phoneNumber.phoneNumberId;
+}
 
 const CHART_TOOLTIP_STYLE = {
   background: "hsl(var(--card))",
@@ -127,10 +130,6 @@ function formatDateTime(value: string) {
 function inclusiveRange(date: Date) {
   const start = startOfDay(date);
   return { from: start, to: start };
-}
-
-function getAgentName(agentId: string) {
-  return WHATSAPP_AGENTS.find((agent) => agent.id === agentId)?.name ?? "Sem atendente";
 }
 
 function isConversationInRange(conversation: WhatsappConversationMock, from: Date, to: Date) {
@@ -211,7 +210,7 @@ export default function WhatsappPage() {
     const query = params.toString();
     return `/api/whatsapp/connections${query ? `?${query}` : ""}`;
   }, [selectedClientId, user?.role]);
-  const [agentFilter, setAgentFilter] = useState(() => new URLSearchParams(window.location.search).get("waAgent") ?? ALL);
+  const [profileFilter, setProfileFilter] = useState(() => new URLSearchParams(window.location.search).get("waProfile") ?? ALL);
   const [statusFilter, setStatusFilter] = useState(() => new URLSearchParams(window.location.search).get("waStatus") ?? ALL);
   const [stageFilter, setStageFilter] = useState(() => new URLSearchParams(window.location.search).get("waStage") ?? ALL);
 
@@ -233,12 +232,12 @@ export default function WhatsappPage() {
   const filteredConversations = useMemo(() => {
     return conversations.filter((conversation) => {
       if (!isConversationInRange(conversation, dateRange.from, dateRange.to)) return false;
-      if (agentFilter !== ALL && conversation.agentId !== agentFilter) return false;
+      if (profileFilter !== ALL && conversation.phoneNumberId !== profileFilter) return false;
       if (statusFilter !== ALL && conversation.status !== statusFilter) return false;
       if (stageFilter !== ALL && conversation.stage !== stageFilter) return false;
       return true;
     });
-  }, [agentFilter, conversations, dateRange.from, dateRange.to, stageFilter, statusFilter]);
+  }, [conversations, dateRange.from, dateRange.to, profileFilter, stageFilter, statusFilter]);
 
   const kpis = useMemo(() => {
     const responded = filteredConversations.filter((row) => row.firstResponseMinutes !== null);
@@ -286,13 +285,24 @@ export default function WhatsappPage() {
     }));
   }, [filteredConversations]);
 
-  const agentProductivity = useMemo(() => {
-    return WHATSAPP_AGENTS.map((agent) => {
-      const rows = filteredConversations.filter((row) => row.agentId === agent.id);
+  const phoneProfiles = useMemo(() => connections?.phoneNumbers ?? [], [connections?.phoneNumbers]);
+  const profileNameByPhoneId = useMemo(() => {
+    return new Map(phoneProfiles.map((phone) => [phone.phoneNumberId, phoneLabel(phone)]));
+  }, [phoneProfiles]);
+
+  const profileProductivity = useMemo(() => {
+    const phoneIds = new Set<string>();
+    for (const phone of phoneProfiles) phoneIds.add(phone.phoneNumberId);
+    for (const conversation of filteredConversations) {
+      if (conversation.phoneNumberId) phoneIds.add(conversation.phoneNumberId);
+    }
+
+    return Array.from(phoneIds).map((phoneNumberId) => {
+      const rows = filteredConversations.filter((row) => row.phoneNumberId === phoneNumberId);
       const responded = rows.filter((row) => row.firstResponseMinutes !== null);
       return {
-        agentId: agent.id,
-        agent: agent.name,
+        phoneNumberId,
+        profile: profileNameByPhoneId.get(phoneNumberId) ?? phoneNumberId,
         conversations: rows.length,
         responded: responded.length,
         noResponse: rows.filter((row) => row.firstResponseMinutes === null).length,
@@ -304,7 +314,7 @@ export default function WhatsappPage() {
         followUps: rows.reduce((sum, row) => sum + row.followUpsSent, 0),
       };
     }).sort((a, b) => b.conversations - a.conversations);
-  }, [filteredConversations]);
+  }, [filteredConversations, phoneProfiles, profileNameByPhoneId]);
 
   const funnelRows = useMemo(() => {
     return WHATSAPP_FUNNEL_STAGES.map((stage, index) => {
@@ -350,9 +360,6 @@ export default function WhatsappPage() {
     if (id === "30d") setDateRange({ from: subDays(today, 29), to: today });
     if (id === "month") setDateRange({ from: startOfMonth(today), to: endOfMonth(today) });
   };
-  const phoneLabel = (phoneNumber: WhatsappConnectionsResponse["phoneNumbers"][number]) =>
-    phoneNumber.displayPhoneNumber ?? phoneNumber.verifiedName ?? phoneNumber.phoneNumberId;
-
   return (
     <div className="space-y-6" data-testid="page-whatsapp">
       <Card>
@@ -397,12 +404,14 @@ export default function WhatsappPage() {
               </SelectContent>
             </Select>
 
-            <Select value={agentFilter} onValueChange={(value) => setUrlFilter("waAgent", value, setAgentFilter)}>
-              <SelectTrigger><SelectValue placeholder="Atendente" /></SelectTrigger>
+            <Select value={profileFilter} onValueChange={(value) => setUrlFilter("waProfile", value, setProfileFilter)}>
+              <SelectTrigger><SelectValue placeholder="Perfil" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL}>Todos os atendentes</SelectItem>
-                {WHATSAPP_AGENTS.map((agent) => (
-                  <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>
+                <SelectItem value={ALL}>Todos os perfis</SelectItem>
+                {phoneProfiles.map((phone) => (
+                  <SelectItem key={phone.phoneNumberId} value={phone.phoneNumberId}>
+                    {phoneLabel(phone)}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -495,10 +504,10 @@ export default function WhatsappPage() {
           <CardHeader><CardTitle className="text-base">Ranking por conversas atendidas</CardTitle></CardHeader>
           <CardContent className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <RechartsBarChart data={agentProductivity} layout="vertical" margin={{ left: 20 }}>
+              <RechartsBarChart data={profileProductivity} layout="vertical" margin={{ left: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis type="number" tick={{ fontSize: 12 }} />
-                <YAxis type="category" dataKey="agent" tick={{ fontSize: 12 }} width={95} />
+                <YAxis type="category" dataKey="profile" tick={{ fontSize: 12 }} width={95} />
                 <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                 <Bar dataKey="conversations" fill="#0ea5e9" radius={[0, 4, 4, 0]} />
               </RechartsBarChart>
@@ -555,12 +564,12 @@ export default function WhatsappPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Tempo médio de primeira resposta por atendente</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">Tempo médio de primeira resposta por perfil WhatsApp</CardTitle></CardHeader>
         <CardContent className="h-72">
           <ResponsiveContainer width="100%" height="100%">
-            <RechartsBarChart data={agentProductivity}>
+            <RechartsBarChart data={profileProductivity}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey="agent" tick={{ fontSize: 12 }} />
+              <XAxis dataKey="profile" tick={{ fontSize: 12 }} />
               <YAxis tickFormatter={(value) => `${value}m`} tick={{ fontSize: 12 }} />
               <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatMinutes(Number(value))} />
               <Bar dataKey="avgResponse" fill="#f59e0b" radius={[4, 4, 0, 0]} />
@@ -624,12 +633,12 @@ export default function WhatsappPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Produtividade por atendente</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">Produtividade por perfil WhatsApp</CardTitle></CardHeader>
         <CardContent className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Atendente</TableHead>
+                <TableHead>Perfil WhatsApp</TableHead>
                 <TableHead>Conversas atendidas</TableHead>
                 <TableHead>Leads respondidos</TableHead>
                 <TableHead>Leads sem resposta</TableHead>
@@ -639,9 +648,9 @@ export default function WhatsappPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {agentProductivity.map((row) => (
-                <TableRow key={row.agentId}>
-                  <TableCell className="font-medium">{row.agent}</TableCell>
+              {profileProductivity.map((row) => (
+                <TableRow key={row.phoneNumberId}>
+                  <TableCell className="font-medium">{row.profile}</TableCell>
                   <TableCell>{formatNumber(row.conversations)}</TableCell>
                   <TableCell>{formatNumber(row.responded)}</TableCell>
                   <TableCell>{formatNumber(row.noResponse)}</TableCell>
