@@ -18,6 +18,7 @@ import {
 const router: IRouter = Router();
 
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? "v23.0";
+const WHATSAPP_CALLBACK_URL = "https://www.grupoup-dash.com.br/api/webhooks/whatsapp";
 
 function getWhatsappEmbeddedSignupAppId(): string | null {
   return (
@@ -891,7 +892,7 @@ router.get("/whatsapp/connections", async (req, res): Promise<void> => {
   }
 
   res.json({
-    callbackUrl: "https://www.grupoup-dash.com.br/api/webhooks/whatsapp",
+    callbackUrl: WHATSAPP_CALLBACK_URL,
     webhookVerifyTokenConfigured: Boolean(process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN),
     integrations: integrations.map(serializeIntegration),
     phoneNumbers: phoneNumbers.map(serializePhoneNumber),
@@ -1175,8 +1176,13 @@ router.post("/whatsapp/connections/subscribe-webhook", async (req, res): Promise
       method: "POST",
       headers: {
         Accept: "application/json",
+        "Content-Type": "application/json",
         Authorization: `Bearer ${integration.accessToken}`,
       },
+      body: JSON.stringify({
+        override_callback_uri: WHATSAPP_CALLBACK_URL,
+        verify_token: process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
+      }),
     },
   );
   const payload = (await response.json()) as {
@@ -1363,12 +1369,60 @@ router.post("/whatsapp/template-messages", async (req, res): Promise<void> => {
     return;
   }
 
+  const to = normalizeWhatsappRecipient(parsed.data.to);
+  const contact = await upsertWhatsappContact({
+    clientId,
+    waId: to,
+    name: null,
+    rawPayload: { source: "template_message" },
+  });
+  const sentAt = new Date();
+  const conversation = contact
+    ? await findOrCreateWhatsappConversation({
+        clientId,
+        contactId: contact.id,
+        phoneNumberId: parsed.data.phoneNumberId,
+        firstMessageAt: sentAt,
+        rawPayload: {
+          source: "template_message",
+          templateName: parsed.data.templateName,
+          languageCode: parsed.data.languageCode,
+        },
+      })
+    : null;
+  const [message] = conversation && contact
+    ? await db
+        .insert(whatsappMessagesTable)
+        .values({
+          clientId,
+          conversationId: conversation.id,
+          contactId: contact.id,
+          phoneNumberId: parsed.data.phoneNumberId,
+          externalMessageId: payload.messages?.[0]?.id ?? null,
+          direction: "outbound",
+          messageType: "template",
+          body: `Template: ${parsed.data.templateName}`,
+          rawPayload: {
+            meta: payload,
+            template: {
+              name: parsed.data.templateName,
+              languageCode: parsed.data.languageCode,
+              bodyParams: parsed.data.bodyParams,
+            },
+          },
+          sentAt,
+        })
+        .returning()
+    : [];
+
   res.status(201).json({
     ok: true,
+    conversationId: conversation?.id ?? null,
     message: {
-      externalMessageId: payload.messages?.[0]?.id ?? null,
-      sentAt: new Date().toISOString(),
-    },
+      id: message?.id ?? "",
+      externalMessageId: message?.externalMessageId ?? payload.messages?.[0]?.id ?? null,
+      sentAt: message?.sentAt.toISOString() ?? sentAt.toISOString(),
+    } satisfies { id: string; externalMessageId: string | null; sentAt: string },
   });
 });
 
