@@ -5504,31 +5504,26 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
 
 // ── UTM Attribution Helpers ──────────────────────────────────────────────────
 
+type UtmGroupBy = "source" | "campaign" | "sourceMediumCampaign";
+
 async function buildUtmAnalytics(
   clientId: string,
   from: Date,
   to: Date,
-  groupBy: "source" | "campaign",
+  groupBy: UtmGroupBy,
   filterSource?: string,
   filterMedium?: string,
   filterCampaign?: string,
 ) {
+  const sourceExpr = sql`COALESCE(NULLIF(lower(c.utm_source), ''), '(direct)')`;
+  const mediumExpr = sql`COALESCE(NULLIF(lower(c.utm_medium), ''), '(none)')`;
+  const campaignExpr = sql`COALESCE(NULLIF(lower(c.utm_campaign), ''), '(campaign unset)')`;
   const keyExpr =
     groupBy === "campaign"
-      ? sql`COALESCE(NULLIF(lower(c.utm_campaign), ''), '(campaign unset)')`
-      : sql`COALESCE(NULLIF(lower(c.utm_source), ''), '(direct)')`;
-
-  // When groupBy=source: expose medium+campaign breakdown in sub-rows
-  // When groupBy=campaign: no sub-row breakdown needed
-  const mediumExpr =
-    groupBy === "source"
-      ? sql`COALESCE(NULLIF(lower(c.utm_medium), ''), '(none)')`
-      : sql`NULL`;
-
-  const campaignExpr =
-    groupBy === "source"
-      ? sql`COALESCE(NULLIF(lower(c.utm_campaign), ''), '(none)')`
-      : sql`NULL`;
+      ? campaignExpr
+      : groupBy === "sourceMediumCampaign"
+        ? sql`${sourceExpr} || ' / ' || ${mediumExpr} || ' / ' || ${campaignExpr}`
+        : sourceExpr;
 
   const srcCond = filterSource
     ? sql` AND lower(c.utm_source) = lower(${filterSource})`
@@ -5540,11 +5535,20 @@ async function buildUtmAnalytics(
     ? sql` AND lower(c.utm_campaign) = lower(${filterCampaign})`
     : sql``;
 
-  // Registrations: customers who joined in the period, grouped by source+medium+campaign
-  type RegRow = { key: string; medium: string | null; campaign: string | null; registrations: string; approvals: string };
+  // Registrations: customers who joined in the period, grouped at source/medium/campaign grain.
+  // The selected groupBy only controls how those rows are rolled up for the UI.
+  type RegRow = {
+    key: string;
+    source: string | null;
+    medium: string | null;
+    campaign: string | null;
+    registrations: string;
+    approvals: string;
+  };
   const regRaw = await db.execute<RegRow>(sql`
     SELECT
       ${keyExpr}    AS key,
+      ${sourceExpr} AS source,
       ${mediumExpr} AS medium,
       ${campaignExpr} AS campaign,
       COUNT(*)::int AS registrations,
@@ -5554,38 +5558,25 @@ async function buildUtmAnalytics(
       AND c.created_at >= ${from}
       AND c.created_at <= ${to}
       ${srcCond}${medCond}${campCond}
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2, 3, 4
     ORDER BY registrations DESC
   `);
 
   // Buyers/revenue: restrict to the SAME customer cohort (registered in the period)
   // AND orders placed within the period — fully period-aware.
-  type SalesRow = { key: string; buyers: string; revenue: string };
+  type SalesRow = {
+    key: string;
+    source: string | null;
+    medium: string | null;
+    campaign: string | null;
+    buyers: string;
+    revenue: string;
+  };
   const salesRaw = await db.execute<SalesRow>(sql`
     SELECT
       ${keyExpr} AS key,
-      COUNT(DISTINCT c.id)::int AS buyers,
-      COALESCE(SUM(o.amount), 0)::float AS revenue
-    FROM customers c
-    JOIN orders o
-      ON  o.customer_id = c.id
-      AND o.client_id   = ${clientId}
-      AND o.created_at >= ${from}
-      AND o.created_at <= ${to}
-      AND o.status IN ('APPROVED','SHIPPED','DELIVERED')
-    WHERE c.client_id = ${clientId}
-      AND c.created_at >= ${from}
-      AND c.created_at <= ${to}
-      ${srcCond}${medCond}${campCond}
-    GROUP BY 1
-  `);
-
-  // Sub-row sales: buyers/revenue per (source, medium, campaign) for sub-row metrics
-  type SubSalesRow = { key: string; medium: string | null; campaign: string | null; buyers: string; revenue: string };
-  const subSalesRaw = groupBy === "source" ? await db.execute<SubSalesRow>(sql`
-    SELECT
-      ${keyExpr}      AS key,
-      ${mediumExpr}   AS medium,
+      ${sourceExpr} AS source,
+      ${mediumExpr} AS medium,
       ${campaignExpr} AS campaign,
       COUNT(DISTINCT c.id)::int AS buyers,
       COALESCE(SUM(o.amount), 0)::float AS revenue
@@ -5600,15 +5591,8 @@ async function buildUtmAnalytics(
       AND c.created_at >= ${from}
       AND c.created_at <= ${to}
       ${srcCond}${medCond}${campCond}
-    GROUP BY 1, 2, 3
-  `) : { rows: [] };
-
-  const subSalesRows = (subSalesRaw.rows ?? subSalesRaw) as unknown as SubSalesRow[];
-  const subSalesMap = new Map<string, { buyers: number; revenue: number }>();
-  for (const r of subSalesRows) {
-    const mk = `${r.key}||${r.medium ?? ""}||${r.campaign ?? ""}`;
-    subSalesMap.set(mk, { buyers: Number(r.buyers), revenue: Number(r.revenue) });
-  }
+    GROUP BY 1, 2, 3, 4
+  `);
 
   // Total VISIT sessions: count events of type VISIT for customers matching the UTM scope
   type SessionsResult = { sessions: string };
@@ -5629,27 +5613,37 @@ async function buildUtmAnalytics(
   const regRows   = (regRaw.rows   ?? regRaw)   as unknown as RegRow[];
   const salesRows = (salesRaw.rows ?? salesRaw) as unknown as SalesRow[];
 
-  const salesMap = new Map(
-    salesRows.map((r) => [r.key, { buyers: Number(r.buyers), revenue: Number(r.revenue) }]),
-  );
+  const detailKey = (row: Pick<RegRow, "key" | "source" | "medium" | "campaign">) =>
+    `${row.key}||${row.source ?? ""}||${row.medium ?? ""}||${row.campaign ?? ""}`;
 
-  // Spend per source for ROAS (only relevant when groupBy=source)
-  const spendBySource = new Map<string, number>();
-  if (groupBy === "source") {
-    const creatives = await db
-      .select()
-      .from(creativesTable)
-      .where(eq(creativesTable.clientId, clientId));
-    for (const c of creatives) {
-      if (!c.platform) continue;
-      const fraction = computeSpendOverlapFraction(c, from, to);
-      if (fraction <= 0) continue;
-      const k = c.platform.toLowerCase();
-      spendBySource.set(k, (spendBySource.get(k) ?? 0) + c.spend * fraction);
-    }
+  const salesMap = new Map<string, { buyers: number; revenue: number }>();
+  const detailSalesMap = new Map<string, { buyers: number; revenue: number }>();
+  for (const row of salesRows) {
+    const sales = { buyers: Number(row.buyers), revenue: Number(row.revenue) };
+    const current = salesMap.get(row.key) ?? { buyers: 0, revenue: 0 };
+    salesMap.set(row.key, {
+      buyers: current.buyers + sales.buyers,
+      revenue: current.revenue + sales.revenue,
+    });
+    detailSalesMap.set(detailKey(row), sales);
   }
 
-  // Group registration rows by primary key (source or campaign)
+  // Spend is still source-level today, so row-level ROAS is only shown on source grouping.
+  // The KPI uses total spend across sources for every UTM view.
+  const spendBySource = new Map<string, number>();
+  const creatives = await db
+    .select()
+    .from(creativesTable)
+    .where(eq(creativesTable.clientId, clientId));
+  for (const c of creatives) {
+    if (!c.platform) continue;
+    const fraction = computeSpendOverlapFraction(c, from, to);
+    if (fraction <= 0) continue;
+    const k = c.platform.toLowerCase();
+    spendBySource.set(k, (spendBySource.get(k) ?? 0) + c.spend * fraction);
+  }
+
+  // Group registration rows by the selected primary dimension.
   const entriesByKey = new Map<string, RegRow[]>();
   for (const r of regRows) {
     const list = entriesByKey.get(r.key) ?? [];
@@ -5664,19 +5658,21 @@ async function buildUtmAnalytics(
     const totalReg = entries.reduce((s, e) => s + Number(e.registrations), 0);
     const totalApp = entries.reduce((s, e) => s + Number(e.approvals), 0);
     const sales    = salesMap.get(key) ?? { buyers: 0, revenue: 0 };
-    const spend    = spendBySource.get(key.toLowerCase()) ?? 0;
+    const rowSource = groupBy === "sourceMediumCampaign" ? entries[0]?.source ?? null : groupBy === "source" ? key : null;
+    const rowMedium = groupBy === "sourceMediumCampaign" ? entries[0]?.medium ?? null : null;
+    const rowCampaign = groupBy === "sourceMediumCampaign" ? entries[0]?.campaign ?? null : groupBy === "campaign" ? key : null;
+    const spend    = groupBy === "source" ? spendBySource.get(key.toLowerCase()) ?? 0 : 0;
     const roas     = spend > 0 ? sales.revenue / spend : null;
 
-    // Sub-rows: when grouping by source, expose medium + campaign breakdown
-    // with actual buyers/revenue from the sub-level sales query.
+    // Sub-rows: expose the complete source/medium/campaign grain under summarized views.
     const subRows =
-      groupBy === "source"
+      groupBy !== "sourceMediumCampaign"
         ? entries.map((e) => {
-            const mk = `${key}||${e.medium ?? ""}||${e.campaign ?? ""}`;
-            const subSales = subSalesMap.get(mk) ?? { buyers: 0, revenue: 0 };
+            const subSales = detailSalesMap.get(detailKey(e)) ?? { buyers: 0, revenue: 0 };
             const subReg = Number(e.registrations);
             return {
-              key:          e.medium ?? "(none)",
+              key:          groupBy === "source" ? e.medium ?? "(none)" : e.source ?? "(direct)",
+              source:       e.source,
               medium:       e.medium,
               campaign:     e.campaign,
               registrations: subReg,
@@ -5692,7 +5688,9 @@ async function buildUtmAnalytics(
 
     return {
       key,
-      medium: null as string | null,
+      source: rowSource,
+      medium: rowMedium,
+      campaign: rowCampaign,
       registrations: totalReg,
       approvals: totalApp,
       approvalPct: totalReg > 0 ? (totalApp / totalReg) * 100 : 0,

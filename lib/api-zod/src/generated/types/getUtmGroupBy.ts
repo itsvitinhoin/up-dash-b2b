@@ -11,4 +11,5 @@ export type GetUtmGroupBy = (typeof GetUtmGroupBy)[keyof typeof GetUtmGroupBy];
 export const GetUtmGroupBy = {
   source: "source",
   campaign: "campaign",
+  sourceMediumCampaign: "sourceMediumCampaign",
 } as const;

@@ -10,7 +10,11 @@ import type { UtmSubRow } from "./utmSubRow";
 export interface UtmRow {
   key: string;
   /** @nullable */
+  source?: string | null;
+  /** @nullable */
   medium?: string | null;
+  /** @nullable */
+  campaign?: string | null;
   registrations: number;
   approvals: number;
   approvalPct: number;

@@ -592,6 +592,8 @@ export interface UtmKpis {
 export interface UtmSubRow {
   key: string;
   /** @nullable */
+  source?: string | null;
+  /** @nullable */
   medium?: string | null;
   /** @nullable */
   campaign?: string | null;
@@ -608,7 +610,11 @@ export interface UtmSubRow {
 export interface UtmRow {
   key: string;
   /** @nullable */
+  source?: string | null;
+  /** @nullable */
   medium?: string | null;
+  /** @nullable */
+  campaign?: string | null;
   registrations: number;
   approvals: number;
   approvalPct: number;
@@ -1853,6 +1859,7 @@ export type GetUtmGroupBy = (typeof GetUtmGroupBy)[keyof typeof GetUtmGroupBy];
 export const GetUtmGroupBy = {
   source: "source",
   campaign: "campaign",
+  sourceMediumCampaign: "sourceMediumCampaign",
 } as const;
 
 export type GetInsightParams = {

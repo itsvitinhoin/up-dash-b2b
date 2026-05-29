@@ -1938,7 +1938,7 @@ export const GetUtmQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
-  groupBy: zod.enum(["source", "campaign"]).default(getUtmQueryGroupByDefault),
+  groupBy: zod.enum(["source", "campaign", "sourceMediumCampaign"]).default(getUtmQueryGroupByDefault),
   utmSource: zod.coerce
     .string()
     .optional()
@@ -1978,7 +1978,9 @@ export const GetUtmResponse = zod.object({
   rows: zod.array(
     zod.object({
       key: zod.string(),
+      source: zod.string().nullish(),
       medium: zod.string().nullish(),
+      campaign: zod.string().nullish(),
       registrations: zod.number(),
       approvals: zod.number(),
       approvalPct: zod.number(),
@@ -1989,6 +1991,7 @@ export const GetUtmResponse = zod.object({
       subRows: zod.array(
         zod.object({
           key: zod.string(),
+          source: zod.string().nullish(),
           medium: zod.string().nullish(),
           campaign: zod.string().nullish(),
           registrations: zod.number(),

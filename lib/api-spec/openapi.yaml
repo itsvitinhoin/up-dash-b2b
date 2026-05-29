@@ -1291,7 +1291,7 @@ paths:
           name: groupBy
           schema:
             type: string
-            enum: [source, campaign]
+            enum: [source, campaign, sourceMediumCampaign]
             default: source
         - in: query
           name: utmSource
@@ -2607,6 +2607,8 @@ components:
       properties:
         key:
           type: string
+        source:
+          type: ["string", "null"]
         medium:
           type: ["string", "null"]
         campaign:
@@ -2632,7 +2634,11 @@ components:
       properties:
         key:
           type: string
+        source:
+          type: ["string", "null"]
         medium:
+          type: ["string", "null"]
+        campaign:
           type: ["string", "null"]
         registrations:
           type: integer

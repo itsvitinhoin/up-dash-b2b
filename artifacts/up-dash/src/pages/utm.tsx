@@ -49,7 +49,7 @@ import {
 } from "lucide-react";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 
-type GroupBy = "source" | "campaign";
+type GroupBy = "source" | "campaign" | "sourceMediumCampaign";
 type SortKey = "registrations" | "approvals" | "approvalPct" | "buyers" | "revenue" | "conversionPct" | "roas";
 type SortDir = "asc" | "desc";
 
@@ -119,7 +119,9 @@ function SortableHeader({
 
 type UtmRowType = {
   key: string;
+  source?: string | null;
   medium?: string | null;
+  campaign?: string | null;
   registrations: number;
   approvals: number;
   approvalPct: number;
@@ -129,6 +131,7 @@ type UtmRowType = {
   roas?: number | null;
   subRows: {
     key: string;
+    source?: string | null;
     medium?: string | null;
     campaign?: string | null;
     registrations: number;
@@ -141,6 +144,23 @@ type UtmRowType = {
   }[];
 };
 
+const GROUP_LABELS: Record<GroupBy, string> = {
+  source: "Source",
+  campaign: "Campaign",
+  sourceMediumCampaign: "Source / Medium / Campaign",
+};
+
+const GROUP_SHORT_LABELS: Record<GroupBy, string> = {
+  source: "Sources",
+  campaign: "Campaigns",
+  sourceMediumCampaign: "UTM combinations",
+};
+
+function getRowLabel(row: Pick<UtmRowType, "key" | "source" | "medium" | "campaign">, groupBy: GroupBy) {
+  if (groupBy !== "sourceMediumCampaign") return row.key;
+  return [row.source, row.medium, row.campaign].filter(Boolean).join(" / ") || row.key;
+}
+
 export default function UtmPage() {
   const { selectedClientId, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
@@ -149,7 +169,7 @@ export default function UtmPage() {
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const cardVariants = withReducedMotion(cardEntry, reduced);
 
-  const [groupBy, setGroupBy] = useState<GroupBy>("source");
+  const [groupBy, setGroupBy] = useState<GroupBy>("sourceMediumCampaign");
   const [sortKey, setSortKey] = useState<SortKey>("revenue");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -220,8 +240,8 @@ export default function UtmPage() {
         .filter((r) => r.revenue > 0)
         .sort((a, b) => b.revenue - a.revenue)
         .slice(0, 10)
-        .map((r) => ({ name: r.key, value: r.revenue })),
-    [data],
+        .map((r) => ({ name: getRowLabel(r, groupBy), value: r.revenue })),
+    [data, groupBy],
   );
 
   const barDataConv = useMemo(
@@ -230,8 +250,8 @@ export default function UtmPage() {
         .filter((r) => r.registrations > 0)
         .sort((a, b) => b.conversionPct - a.conversionPct)
         .slice(0, 10)
-        .map((r) => ({ name: r.key, value: parseFloat(r.conversionPct.toFixed(1)) })),
-    [data],
+        .map((r) => ({ name: getRowLabel(r, groupBy), value: parseFloat(r.conversionPct.toFixed(1)) })),
+    [data, groupBy],
   );
 
   // Compute overall average from ALL rows (not just the top-10 chart slice) for an accurate baseline.
@@ -252,6 +272,9 @@ export default function UtmPage() {
       data.rows,
       [
         { header: "key", accessor: (r: UtmRowType) => r.key },
+        { header: "source", accessor: (r: UtmRowType) => r.source ?? "" },
+        { header: "medium", accessor: (r: UtmRowType) => r.medium ?? "" },
+        { header: "campaign", accessor: (r: UtmRowType) => r.campaign ?? "" },
         { header: "registrations", accessor: (r: UtmRowType) => r.registrations },
         { header: "approvals", accessor: (r: UtmRowType) => r.approvals },
         { header: "approvalPct", accessor: (r: UtmRowType) => r.approvalPct.toFixed(1) },
@@ -289,13 +312,13 @@ export default function UtmPage() {
             <span className="text-foreground font-semibold tabular-nums">
               <CountUp value={totalRows} format={(v) => formatNumber(Math.round(v))} />
             </span>{" "}
-            {groupBy === "source" ? "Sources" : "Campaigns"}
+            {GROUP_SHORT_LABELS[groupBy]}
           </span>
         </div>
         <div className="flex items-center gap-2">
           {/* Tab switcher */}
           <div className="flex gap-1 bg-muted/60 p-1 rounded-lg">
-            {(["source", "campaign"] as const).map((mode) => (
+            {(["sourceMediumCampaign", "source", "campaign"] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setGroupBy(mode)}
@@ -311,7 +334,7 @@ export default function UtmPage() {
                 ) : (
                   <Link2 className="h-3.5 w-3.5" />
                 )}
-                By {mode === "source" ? "Source" : "Campaign"}
+                {mode === "sourceMediumCampaign" ? "GA4 view" : `By ${GROUP_LABELS[mode]}`}
               </button>
             ))}
           </div>
@@ -461,7 +484,7 @@ export default function UtmPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold">
-                Revenue by {groupBy === "source" ? "Source" : "Campaign"}
+                Revenue by {GROUP_LABELS[groupBy]}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -517,7 +540,7 @@ export default function UtmPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold">
-                Conversion % by {groupBy === "source" ? "Source" : "Campaign"}
+                Conversion % by {GROUP_LABELS[groupBy]}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -620,12 +643,26 @@ export default function UtmPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
-                      {groupBy === "source" && (
+                      {groupBy !== "sourceMediumCampaign" && (
                         <th className="w-8 py-3 pl-4" />
                       )}
-                      <th className="py-3 pl-4 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground min-w-[140px]">
-                        {groupBy === "source" ? "Source" : "Campaign"}
-                      </th>
+                      {groupBy === "sourceMediumCampaign" ? (
+                        <>
+                          <th className="py-3 pl-4 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground min-w-[120px]">
+                            Source
+                          </th>
+                          <th className="py-3 px-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground min-w-[130px]">
+                            Medium
+                          </th>
+                          <th className="py-3 px-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground min-w-[220px]">
+                            Campaign
+                          </th>
+                        </>
+                      ) : (
+                        <th className="py-3 pl-4 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground min-w-[160px]">
+                          {GROUP_LABELS[groupBy]}
+                        </th>
+                      )}
                       <th className="py-3 px-3 text-right min-w-[100px]">
                         <SortableHeader
                           label="Registrations"
@@ -694,7 +731,7 @@ export default function UtmPage() {
                   <tbody>
                     {sortedRows.map((row, idx) => {
                       const isExpanded = expandedRows.has(row.key);
-                      const hasSubRows = groupBy === "source" && row.subRows.length > 1;
+                      const hasSubRows = groupBy !== "sourceMediumCampaign" && row.subRows.length > 1;
                       const color = SOURCE_PALETTE[idx % SOURCE_PALETTE.length];
                       return (
                         <React.Fragment key={row.key}>
@@ -703,7 +740,7 @@ export default function UtmPage() {
                             onClick={() => hasSubRows && toggleRow(row.key)}
                             data-testid={`utm-row-${row.key}`}
                           >
-                            {groupBy === "source" && (
+                            {groupBy !== "sourceMediumCampaign" && (
                               <td className="pl-4 py-3">
                                 {hasSubRows ? (
                                   isExpanded ? (
@@ -716,23 +753,50 @@ export default function UtmPage() {
                                 )}
                               </td>
                             )}
-                            <td className="pl-4 pr-3 py-3">
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className="inline-block h-2.5 w-2.5 rounded-full flex-shrink-0"
-                                  style={{ background: color }}
-                                  aria-hidden
-                                />
-                                <span className="font-medium truncate max-w-[160px]" title={row.key}>
-                                  {row.key}
-                                </span>
-                                {hasSubRows && (
-                                  <Badge variant="outline" className="text-[10px] h-4 px-1.5">
-                                    {row.subRows.length} breakdowns
-                                  </Badge>
-                                )}
-                              </div>
-                            </td>
+                            {groupBy === "sourceMediumCampaign" ? (
+                              <>
+                                <td className="pl-4 pr-3 py-3">
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      className="inline-block h-2.5 w-2.5 rounded-full flex-shrink-0"
+                                      style={{ background: color }}
+                                      aria-hidden
+                                    />
+                                    <span className="font-medium truncate max-w-[140px]" title={row.source ?? row.key}>
+                                      {row.source ?? "—"}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3 text-muted-foreground">
+                                  <span className="truncate block max-w-[150px]" title={row.medium ?? ""}>
+                                    {row.medium ?? "—"}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <span className="truncate block max-w-[260px]" title={row.campaign ?? ""}>
+                                    {row.campaign ?? "—"}
+                                  </span>
+                                </td>
+                              </>
+                            ) : (
+                              <td className="pl-4 pr-3 py-3">
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className="inline-block h-2.5 w-2.5 rounded-full flex-shrink-0"
+                                    style={{ background: color }}
+                                    aria-hidden
+                                  />
+                                  <span className="font-medium truncate max-w-[160px]" title={row.key}>
+                                    {row.key}
+                                  </span>
+                                  {hasSubRows && (
+                                    <Badge variant="outline" className="text-[10px] h-4 px-1.5">
+                                      {row.subRows.length} breakdowns
+                                    </Badge>
+                                  )}
+                                </div>
+                              </td>
+                            )}
                             <td className="px-3 py-3 text-right tabular-nums">
                               {formatNumber(row.registrations)}
                             </td>
@@ -793,13 +857,18 @@ export default function UtmPage() {
                                 className="border-b border-border/30 bg-muted/10"
                                 data-testid={`utm-subrow-${row.key}-${si}`}
                               >
-                                {groupBy === "source" && <td className="pl-4 py-2" />}
+                                {groupBy !== "sourceMediumCampaign" && <td className="pl-4 py-2" />}
                                 <td className="pl-8 pr-3 py-2">
                                   <div className="flex flex-col gap-0.5">
                                     <div className="flex items-center gap-1.5 text-muted-foreground">
                                       <span className="text-[10px] font-mono">↳</span>
                                       <span className="text-xs font-medium">{sub.key}</span>
                                     </div>
+                                    {sub.medium && groupBy === "campaign" && (
+                                      <span className="pl-4 text-[10px] font-mono text-muted-foreground/70 truncate max-w-[200px]" title={sub.medium}>
+                                        {sub.medium}
+                                      </span>
+                                    )}
                                     {sub.campaign && sub.campaign !== "(none)" && (
                                       <span className="pl-4 text-[10px] font-mono text-muted-foreground/70 truncate max-w-[200px]" title={sub.campaign}>
                                         {sub.campaign}

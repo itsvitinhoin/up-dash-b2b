@@ -9,6 +9,8 @@
 export interface UtmSubRow {
   key: string;
   /** @nullable */
+  source?: string | null;
+  /** @nullable */
   medium?: string | null;
   /** @nullable */
   campaign?: string | null;
