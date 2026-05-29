@@ -20,6 +20,11 @@ export interface ProductMetrics {
   restockThreshold: number;
   totalSold: number;
   totalRevenue: number;
+  productViews: number;
+  /**
+   * totalSold / productViews as a percentage for the selected period.
+   */
+  productConversionPct: number;
   status: string;
   /** @nullable */
   imageUrl?: string | null;

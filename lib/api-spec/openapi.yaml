@@ -2784,6 +2784,11 @@ components:
           type: integer
         totalRevenue:
           type: number
+        productViews:
+          type: integer
+        productConversionPct:
+          type: number
+          description: totalSold / productViews as a percentage for the selected period.
         status:
           type: string
         imageUrl:
@@ -2807,6 +2812,8 @@ components:
         - restockThreshold
         - totalSold
         - totalRevenue
+        - productViews
+        - productConversionPct
         - status
         - percentSold
         - level

@@ -2729,6 +2729,7 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   if (!clientId) return;
   const { sort = "revenue", limit = 50, search, sku, category, state, size, color, dateFrom, dateTo } = parsed.data;
   const hasPeriodFilter = Boolean(dateFrom || dateTo);
+  const { from, to } = dateRange(dateFrom, dateTo);
 
   const orderBy =
     sort === "units"
@@ -2821,8 +2822,64 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
         },
       ]),
   );
+
+  const periodViewCandidates = new Map<string, number>();
   if (hasPeriodFilter) {
-    const ids = Array.from(periodSalesMap.keys());
+    try {
+      const [client] = await db
+        .select({ upZeroApiKey: clientsTable.upZeroApiKey })
+        .from(clientsTable)
+        .where(eq(clientsTable.id, clientId));
+      const metrics = await getUpzeroAnalyticsMetrics({
+        ...upzeroIsoRange(req.query as Record<string, unknown>, from, to),
+        apiKey: client?.upZeroApiKey,
+      });
+
+      const viewsByExternalId = new Map<string, number>();
+      const viewsBySku = new Map<string, number>();
+      for (const row of metrics.data) {
+        if (row.event_name !== "product_view" || !row.product) continue;
+        const views = Number(row.total_events ?? 0);
+        if (views <= 0) continue;
+        viewsByExternalId.set(
+          String(row.product.id),
+          (viewsByExternalId.get(String(row.product.id)) ?? 0) + views,
+        );
+        if (row.product.sku) {
+          viewsBySku.set(row.product.sku, (viewsBySku.get(row.product.sku) ?? 0) + views);
+        }
+      }
+
+      const externalIds = Array.from(viewsByExternalId.keys());
+      const skus = Array.from(viewsBySku.keys());
+      const productViewFilters: SQL[] = [];
+      if (externalIds.length > 0) productViewFilters.push(inArray(productsTable.externalId, externalIds));
+      if (skus.length > 0) productViewFilters.push(inArray(productsTable.sku, skus));
+
+      const matchingProducts = productViewFilters.length > 0
+        ? await db
+            .select({
+              id: productsTable.id,
+              externalId: productsTable.externalId,
+              sku: productsTable.sku,
+            })
+            .from(productsTable)
+            .where(and(eq(productsTable.clientId, clientId), or(...productViewFilters)))
+        : [];
+
+      for (const product of matchingProducts) {
+        const byExternal = product.externalId ? viewsByExternalId.get(product.externalId) ?? 0 : 0;
+        const bySku = viewsBySku.get(product.sku) ?? 0;
+        const views = byExternal || bySku;
+        if (views > 0) periodViewCandidates.set(product.id, views);
+      }
+    } catch (err) {
+      console.warn("[products] UP Zero product views unavailable:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  if (hasPeriodFilter) {
+    const ids = Array.from(new Set([...periodSalesMap.keys(), ...periodViewCandidates.keys()]));
     conditions.push(ids.length > 0 ? inArray(productsTable.id, ids) : sql`FALSE`);
   }
 
@@ -2898,10 +2955,13 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
     const periodSales = periodSalesMap.get(r.id);
     const totalSold = hasPeriodFilter ? periodSales?.totalSold ?? 0 : r.totalSold;
     const totalRevenue = hasPeriodFilter ? periodSales?.totalRevenue ?? 0 : r.totalRevenue;
+    const productViews = hasPeriodFilter ? periodViewCandidates.get(r.id) ?? 0 : 0;
     return {
       ...r,
       totalSold,
       totalRevenue,
+      productViews,
+      productConversionPct: productViews > 0 ? (totalSold / productViews) * 100 : 0,
       percentSold: (totalSold + r.stock) > 0 ? totalSold / (totalSold + r.stock) : 0,
       level: computeProductLevel(
         totalSold,

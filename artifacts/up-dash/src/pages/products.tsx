@@ -262,7 +262,9 @@ export default function ProductsPage() {
         { header: "level", accessor: (r) => r.level },
         { header: "price", accessor: (r) => r.price },
         { header: "stock", accessor: (r) => r.stock },
+        { header: "viewsInPeriod", accessor: (r) => r.productViews ?? 0 },
         { header: "totalSoldInPeriod", accessor: (r) => r.totalSold },
+        { header: "productConversionPct", accessor: (r) => `${(r.productConversionPct ?? 0).toFixed(2)}%` },
         { header: "percentSold", accessor: (r) => Math.round((r.percentSold ?? 0) * 100) + "%" },
         { header: "totalRevenue", accessor: (r) => r.totalRevenue },
         { header: "createdAt", accessor: (r) => r.createdAt ? format(new Date(r.createdAt as unknown as string), "yyyy-MM-dd") : "" },
@@ -572,7 +574,9 @@ export default function ProductsPage() {
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Status</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Price</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Stock</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Views</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Sold in Period</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Conv %</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">% Sold</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Revenue</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Added</TableHead>
@@ -591,6 +595,8 @@ export default function ProductsPage() {
                       <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-16" /></TableCell>
@@ -599,7 +605,7 @@ export default function ProductsPage() {
                   ))
                 ) : data?.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="p-0">
+                    <TableCell colSpan={14} className="p-0">
                       <EmptyState
                         icon={PackageOpen}
                         title="No products to show"
@@ -639,7 +645,11 @@ export default function ProductsPage() {
                       </TableCell>
                       <TableCell className="text-right">{formatCurrency(product.price)}</TableCell>
                       <TableCell className="text-right">{formatNumber(product.stock)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatNumber(product.productViews ?? 0)}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatNumber(product.totalSold)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {(product.productConversionPct ?? 0).toFixed(1)}%
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">

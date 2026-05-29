@@ -1080,6 +1080,10 @@ export const GetProductsResponseItem = zod.object({
   restockThreshold: zod.number(),
   totalSold: zod.number(),
   totalRevenue: zod.number(),
+  productViews: zod.number(),
+  productConversionPct: zod
+    .number()
+    .describe("totalSold / productViews as a percentage for the selected period."),
   status: zod.string(),
   imageUrl: zod.string().nullish(),
   percentSold: zod
