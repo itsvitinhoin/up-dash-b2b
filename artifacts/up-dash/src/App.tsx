@@ -11,6 +11,7 @@ import { handleApiError } from "@/lib/api-error";
 import { DashboardFiltersProvider } from "@/lib/dashboard-filters";
 import { KeyboardShortcutsProvider } from "@/lib/keyboard-shortcuts";
 import { PageTransition } from "@/components/page-transition";
+import { FloatingAiAssistant } from "@/components/floating-ai-assistant";
 import { useMemo } from "react";
 
 import NotFound from "@/pages/not-found";
@@ -323,6 +324,7 @@ function App() {
               <ShortcutsBridge>
                 <TooltipProvider>
                   <Router />
+                  <FloatingAiAssistant />
                   <Toaster />
                 </TooltipProvider>
               </ShortcutsBridge>
