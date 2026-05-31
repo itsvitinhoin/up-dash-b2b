@@ -74,6 +74,19 @@ type CustomerTimelineEvent = {
   attributionType: "first_touch" | "last_touch" | "return_touch" | "direct" | null;
   rawMetricId: number;
   updatedAt: string;
+  eventId?: string | null;
+  anonymousId?: string | null;
+  sessionId?: string | null;
+  visitorId?: string | null;
+  fbclid?: string | null;
+  fbc?: string | null;
+  fbp?: string | null;
+  gclid?: string | null;
+  landingHost?: string | null;
+  landingPath?: string | null;
+  referrerHost?: string | null;
+  utmContent?: string | null;
+  utmTerm?: string | null;
 };
 
 type CustomerTimelineTouch = {
@@ -404,8 +417,40 @@ function UpzeroTimelineSection({
                             <strong>Campanha:</strong> {event.utmCampaign}
                           </span>
                         )}
+                        {event.utmContent && (
+                          <span><strong>Conteúdo:</strong> {event.utmContent}</span>
+                        )}
+                        {event.utmTerm && (
+                          <span><strong>Termo:</strong> {event.utmTerm}</span>
+                        )}
                         <span><strong>Origem:</strong> {event.normalizedSource}</span>
                         <span><strong>Medium:</strong> {event.normalizedMedium}</span>
+                        {event.landingHost && (
+                          <span><strong>Landing:</strong> {event.landingHost}{event.landingPath ?? ""}</span>
+                        )}
+                        {event.referrerHost && (
+                          <span><strong>Referrer:</strong> {event.referrerHost}</span>
+                        )}
+                        {event.fbc && (
+                          <span className="md:col-span-2 xl:col-span-3 truncate" title={event.fbc}>
+                            <strong>FBC:</strong> {event.fbc}
+                          </span>
+                        )}
+                        {event.fbclid && (
+                          <span className="md:col-span-2 xl:col-span-3 truncate" title={event.fbclid}>
+                            <strong>FBCLID:</strong> {event.fbclid}
+                          </span>
+                        )}
+                        {event.gclid && (
+                          <span className="md:col-span-2 xl:col-span-3 truncate" title={event.gclid}>
+                            <strong>GCLID:</strong> {event.gclid}
+                          </span>
+                        )}
+                        {(event.sessionId || event.visitorId || event.anonymousId) && (
+                          <span className="md:col-span-2 xl:col-span-3 truncate" title={[event.sessionId, event.visitorId, event.anonymousId].filter(Boolean).join(" / ")}>
+                            <strong>Tracking:</strong> {[event.sessionId, event.visitorId, event.anonymousId].filter(Boolean).join(" / ")}
+                          </span>
+                        )}
                         {event.deviceType && (
                           <span className="flex items-center gap-1">
                             <MonitorSmartphone className="h-3 w-3 text-muted-foreground" />

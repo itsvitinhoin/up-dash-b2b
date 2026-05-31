@@ -857,7 +857,7 @@ export default function UtmPage() {
                                 className="border-b border-border/30 bg-muted/10"
                                 data-testid={`utm-subrow-${row.key}-${si}`}
                               >
-                                {groupBy !== "sourceMediumCampaign" && <td className="pl-4 py-2" />}
+                                <td className="pl-4 py-2" />
                                 <td className="pl-8 pr-3 py-2">
                                   <div className="flex flex-col gap-0.5">
                                     <div className="flex items-center gap-1.5 text-muted-foreground">

@@ -49,6 +49,21 @@ export type UpzeroAnalyticsMetric = {
   total_quantity: number;
   total_value: number;
   updated_at: string;
+  event_id?: string | null;
+  anonymous_id?: string | null;
+  session_id?: string | null;
+  visitor_id?: string | null;
+  fbclid?: string | null;
+  fbc?: string | null;
+  fbp?: string | null;
+  gclid?: string | null;
+  landing_url?: string | null;
+  landing_host?: string | null;
+  landing_path?: string | null;
+  referrer?: string | null;
+  referrer_host?: string | null;
+  utm_content?: string | null;
+  utm_term?: string | null;
 };
 
 export type UpzeroMetricUser = {
@@ -90,6 +105,21 @@ export type CustomerTimelineEvent = {
     | null;
   rawMetricId: number;
   updatedAt: string;
+  eventId: string | null;
+  anonymousId: string | null;
+  sessionId: string | null;
+  visitorId: string | null;
+  fbclid: string | null;
+  fbc: string | null;
+  fbp: string | null;
+  gclid: string | null;
+  landingUrl: string | null;
+  landingHost: string | null;
+  landingPath: string | null;
+  referrer: string | null;
+  referrerHost: string | null;
+  utmContent: string | null;
+  utmTerm: string | null;
 };
 
 type TimelineTouch = {
@@ -128,6 +158,8 @@ export type CustomerTimelineResponse = {
 const EVENT_LABELS: Record<string, string> = {
   page_view: "Visualizou página",
   product_view: "Visualizou produto",
+  product_item_impression: "Visualizou produto",
+  product_item_click: "Clicou no produto",
   category_view: "Visualizou categoria",
   form_start: "Iniciou formulário",
   register_start: "Iniciou cadastro",
@@ -146,6 +178,8 @@ const EVENT_PRIORITY: Record<string, number> = {
   page_view: 10,
   category_view: 20,
   product_view: 30,
+  product_item_impression: 31,
+  product_item_click: 32,
   form_start: 40,
   register_start: 50,
   register_submitted: 60,
@@ -323,6 +357,21 @@ function parseMetric(value: unknown, fallbackId: number): UpzeroAnalyticsMetric 
     total_quantity: requiredNumber(row.total_quantity),
     total_value: requiredNumber(row.total_value),
     updated_at: updatedAt,
+    event_id: nullableString(row.event_id),
+    anonymous_id: nullableString(row.anonymous_id),
+    session_id: nullableString(row.session_id),
+    visitor_id: nullableString(row.visitor_id),
+    fbclid: nullableString(row.fbclid),
+    fbc: nullableString(row.fbc),
+    fbp: nullableString(row.fbp),
+    gclid: nullableString(row.gclid),
+    landing_url: nullableString(row.landing_url),
+    landing_host: nullableString(row.landing_host),
+    landing_path: nullableString(row.landing_path),
+    referrer: nullableString(row.referrer),
+    referrer_host: nullableString(row.referrer_host),
+    utm_content: nullableString(row.utm_content),
+    utm_term: nullableString(row.utm_term),
   };
 }
 
@@ -397,6 +446,21 @@ export function metricToTimelineEvent(row: UpzeroAnalyticsMetric): CustomerTimel
     attributionType: null,
     rawMetricId: row.id,
     updatedAt: row.updated_at,
+    eventId: row.event_id ?? null,
+    anonymousId: row.anonymous_id ?? null,
+    sessionId: row.session_id ?? null,
+    visitorId: row.visitor_id ?? null,
+    fbclid: row.fbclid ?? null,
+    fbc: row.fbc ?? null,
+    fbp: row.fbp ?? null,
+    gclid: row.gclid ?? null,
+    landingUrl: row.landing_url ?? null,
+    landingHost: row.landing_host ?? null,
+    landingPath: row.landing_path ?? null,
+    referrer: row.referrer ?? null,
+    referrerHost: row.referrer_host ?? null,
+    utmContent: row.utm_content ?? null,
+    utmTerm: row.utm_term ?? null,
   };
 }
 
@@ -501,7 +565,7 @@ function buildSummary(timeline: CustomerTimelineEvent[]): CustomerTimelineRespon
   return {
     totalEvents: timeline.reduce((sum, event) => sum + event.totalEvents, 0),
     productViews: timeline
-      .filter((event) => event.eventName === "product_view")
+      .filter((event) => ["product_view", "product_item_impression"].includes(event.eventName))
       .reduce((sum, event) => sum + event.totalEvents, 0),
     categoryViews: timeline
       .filter((event) => event.eventName === "category_view")

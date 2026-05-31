@@ -69,6 +69,7 @@ import {
   getUpzeroAnalyticsMetrics,
   type UpzeroAnalyticsMetric,
 } from "../services/upzero/analytics-metrics";
+import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-facts";
 
 const router: IRouter = Router();
 
@@ -173,6 +174,7 @@ const UPZERO_ANALYTICS_CHUNK_MS = 12 * 60 * 60 * 1000;
 const UPZERO_ANALYTICS_MIN_SPLIT_MS = 60 * 60 * 1000;
 const UPZERO_ANALYTICS_PAGE_CAP = 500;
 const UPZERO_ANALYTICS_CONCURRENCY = 4;
+const PRODUCT_VIEW_EVENT_NAMES = new Set(["product_view", "product_item_impression"]);
 
 function metricDedupeKey(row: UpzeroAnalyticsMetric): string {
   return [
@@ -239,6 +241,84 @@ async function getUpzeroAnalyticsMetricsChunked(params: {
     deduped.set(metricDedupeKey(row), row);
   }
   return [...deduped.values()];
+}
+
+async function getUpzeroAnalyticsFactsChunked(params: {
+  from: string;
+  to: string;
+  apiKey?: string | null;
+}): Promise<UpzeroAnalyticsMetric[]> {
+  const fromMs = new Date(params.from).getTime();
+  const toMs = new Date(params.to).getTime();
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
+    return [];
+  }
+
+  const windows: Array<[number, number]> = [];
+  for (let cursor = fromMs; cursor < toMs;) {
+    const endMs = Math.min(cursor + UPZERO_ANALYTICS_CHUNK_MS, toMs);
+    windows.push([cursor, endMs]);
+    if (endMs >= toMs) break;
+    cursor = endMs;
+  }
+
+  const chunks: UpzeroAnalyticsMetric[][] = [];
+  for (let i = 0; i < windows.length; i += UPZERO_ANALYTICS_CONCURRENCY) {
+    const batch = windows.slice(i, i + UPZERO_ANALYTICS_CONCURRENCY);
+    chunks.push(...await Promise.all(batch.map(([startMs, endMs]) =>
+      getUpzeroAnalyticsFactsAsMetrics({
+        from: new Date(startMs).toISOString(),
+        to: new Date(endMs).toISOString(),
+        apiKey: params.apiKey,
+      }),
+    )));
+  }
+
+  const deduped = new Map<string, UpzeroAnalyticsMetric>();
+  for (const row of chunks.flat()) {
+    deduped.set(row.event_id ?? metricDedupeKey(row), row);
+  }
+  return [...deduped.values()];
+}
+
+async function getUpzeroTrackingRowsChunked(params: {
+  from: string;
+  to: string;
+  apiKey?: string | null;
+  context?: string;
+}): Promise<{ rows: UpzeroAnalyticsMetric[]; source: "facts" | "metrics" }> {
+  try {
+    const rows = await getUpzeroAnalyticsFactsChunked(params);
+    return { rows, source: "facts" };
+  } catch (err) {
+    console.warn(
+      `[upzero:${params.context ?? "analytics"}] analytics facts unavailable; falling back to metrics:`,
+      err instanceof Error ? err.message : err,
+    );
+    return {
+      rows: await getUpzeroAnalyticsMetricsChunked(params),
+      source: "metrics",
+    };
+  }
+}
+
+async function getUpzeroTrackingRows(params: {
+  from: string;
+  to: string;
+  apiKey?: string | null;
+  context?: string;
+}): Promise<{ rows: UpzeroAnalyticsMetric[]; source: "facts" | "metrics" }> {
+  try {
+    const rows = await getUpzeroAnalyticsFactsAsMetrics(params);
+    return { rows, source: "facts" };
+  } catch (err) {
+    console.warn(
+      `[upzero:${params.context ?? "analytics"}] analytics facts unavailable; falling back to metrics:`,
+      err instanceof Error ? err.message : err,
+    );
+    const metrics = await getUpzeroAnalyticsMetrics(params);
+    return { rows: metrics.data, source: "metrics" };
+  }
 }
 
 function requireClient(
@@ -1378,7 +1458,7 @@ function buildAttributedCampaignCustomers(
     );
     const addToCartRows = sortedRows.filter((row) => row.event_name === "add_to_cart");
     const registerRows = sortedRows.filter((row) => row.event_name === "register_submitted");
-    const productViewRows = sortedRows.filter((row) => row.event_name === "product_view");
+    const productViewRows = sortedRows.filter((row) => PRODUCT_VIEW_EVENT_NAMES.has(row.event_name));
     const orderIds = Array.from(
       new Set(
         purchaseRows
@@ -1495,10 +1575,12 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
     .where(eq(clientsTable.id, clientId));
 
   try {
-    const rows = await getUpzeroAnalyticsMetricsChunked({
+    const tracking = await getUpzeroTrackingRowsChunked({
       ...upzeroRange,
       apiKey: client?.upZeroApiKey,
+      context: "campaign-customers",
     });
+    const rows = tracking.rows;
     const userIds = [...new Set(rows.map((row) => getMetricUser(row)?.id).filter((id): id is number => typeof id === "number"))];
     const paidUserIds = new Set(
       rows
@@ -1515,6 +1597,7 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       rowsWithPaidCampaignSignal: rows.filter(isPaidCampaignSignal).length,
       uniqueUsersWithAnyUser: userIds.length,
       uniqueUsersWithPaidCampaignSignal: paidUserIds.size,
+      analyticsSource: tracking.source,
     });
 
     console.log(
@@ -1659,11 +1742,12 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       .from(clientsTable)
       .where(eq(clientsTable.id, clientId));
     const upzeroRange = upzeroIsoRange(req.query as Record<string, unknown>, from, to);
-    const metrics = await getUpzeroAnalyticsMetrics({
+    const tracking = await getUpzeroTrackingRows({
       ...upzeroRange,
       apiKey: client?.upZeroApiKey,
+      context: "funnel",
     });
-    const scopedMetrics = metrics.data.filter((row) => {
+    const scopedMetrics = tracking.rows.filter((row) => {
       if (utmSource && row.utm_source?.toLowerCase() !== utmSource.toLowerCase()) return false;
       if (utmMedium && row.utm_medium?.toLowerCase() !== utmMedium.toLowerCase()) return false;
       if (utmCampaign && row.utm_campaign?.toLowerCase() !== utmCampaign.toLowerCase()) return false;
@@ -1694,6 +1778,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
           counts.CATEGORY_VIEW += value;
           break;
         case "product_view":
+        case "product_item_impression":
           counts.PRODUCT_VIEW += value;
           break;
         case "form_start":
@@ -1793,7 +1878,9 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       if (steps[i].dropOffRate > worst.drop) worst = { idx: i, drop: steps[i].dropOffRate };
     }
     const insights = [
-      `Funil alimentado pela UP Zero com ${scopedMetrics.length} linhas agregadas por hora no período.`,
+      tracking.source === "facts"
+        ? `Funil alimentado pela UP Zero com ${scopedMetrics.length} eventos granulares no período.`
+        : `Funil alimentado pela UP Zero com ${scopedMetrics.length} linhas agregadas por hora no período.`,
       `Conversão geral de ${overallConversion.toFixed(2)}% calculada sobre ${approvedBaseline} cadastros aprovados.`,
     ];
     if (worst.idx > 0) {
@@ -2464,15 +2551,16 @@ router.get("/analytics/customer-timeline-by-user", async (req, res): Promise<voi
     .where(eq(clientsTable.id, clientId));
 
   try {
-    const metrics = await getUpzeroAnalyticsMetrics({
+    const tracking = await getUpzeroTrackingRows({
       ...upzeroRange,
       apiKey: client?.upZeroApiKey,
+      context: "customer-timeline-by-user",
     });
 
     res.json(
       buildCustomerTimelineResponse(
         queryParsed.data.userId,
-        metrics.data,
+        tracking.rows,
         queryParsed.data.lookbackDays,
       ),
     );
@@ -2539,16 +2627,17 @@ router.get("/analytics/customers/:customerId/timeline", async (req, res): Promis
   }
 
   try {
-    const metrics = await getUpzeroAnalyticsMetrics({
+    const tracking = await getUpzeroTrackingRows({
       from: queryParsed.data.from,
       to: queryParsed.data.to,
       apiKey: client[0]?.upZeroApiKey,
+      context: "customer-timeline",
     });
 
     res.json(
       buildCustomerTimelineResponse(
         userId,
-        metrics.data,
+        tracking.rows,
         queryParsed.data.lookbackDays,
       ),
     );
@@ -2830,15 +2919,16 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
         .select({ upZeroApiKey: clientsTable.upZeroApiKey })
         .from(clientsTable)
         .where(eq(clientsTable.id, clientId));
-      const metrics = await getUpzeroAnalyticsMetrics({
+      const tracking = await getUpzeroTrackingRows({
         ...upzeroIsoRange(req.query as Record<string, unknown>, from, to),
         apiKey: client?.upZeroApiKey,
+        context: "products",
       });
 
       const viewsByExternalId = new Map<string, number>();
       const viewsBySku = new Map<string, number>();
-      for (const row of metrics.data) {
-        if (row.event_name !== "product_view" || !row.product) continue;
+      for (const row of tracking.rows) {
+        if (!PRODUCT_VIEW_EVENT_NAMES.has(row.event_name) || !row.product) continue;
         const views = Number(row.total_events ?? 0);
         if (views <= 0) continue;
         viewsByExternalId.set(

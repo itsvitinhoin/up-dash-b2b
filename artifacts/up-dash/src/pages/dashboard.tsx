@@ -383,6 +383,19 @@ type CustomerTimelineEvent = {
   totalQuantity: number;
   totalValue: number;
   attributionType: "first_touch" | "last_touch" | "return_touch" | "direct" | null;
+  eventId?: string | null;
+  anonymousId?: string | null;
+  sessionId?: string | null;
+  visitorId?: string | null;
+  fbclid?: string | null;
+  fbc?: string | null;
+  fbp?: string | null;
+  gclid?: string | null;
+  landingHost?: string | null;
+  landingPath?: string | null;
+  referrerHost?: string | null;
+  utmContent?: string | null;
+  utmTerm?: string | null;
 };
 
 type CustomerTimelineResponse = {
@@ -937,6 +950,18 @@ function CampaignCustomersPanel({
                         {event.categoryName && <div>Categoria: <span className="text-foreground">{event.categoryName}</span></div>}
                         {event.orderId && <div>Pedido: <span className="text-foreground">#{event.orderId}</span></div>}
                         {event.utmCampaign && <div className="sm:col-span-2">Campanha: <span className="text-foreground">{event.utmCampaign}</span></div>}
+                        {event.utmContent && <div>Conteúdo: <span className="text-foreground">{event.utmContent}</span></div>}
+                        {event.utmTerm && <div>Termo: <span className="text-foreground">{event.utmTerm}</span></div>}
+                        {event.landingHost && <div className="sm:col-span-2">Landing: <span className="text-foreground">{event.landingHost}{event.landingPath ?? ""}</span></div>}
+                        {event.referrerHost && <div>Referrer: <span className="text-foreground">{event.referrerHost}</span></div>}
+                        {event.fbc && <div className="truncate sm:col-span-2" title={event.fbc}>FBC: <span className="text-foreground">{event.fbc}</span></div>}
+                        {event.fbclid && <div className="truncate sm:col-span-2" title={event.fbclid}>FBCLID: <span className="text-foreground">{event.fbclid}</span></div>}
+                        {event.gclid && <div className="truncate sm:col-span-2" title={event.gclid}>GCLID: <span className="text-foreground">{event.gclid}</span></div>}
+                        {(event.sessionId || event.visitorId || event.anonymousId) && (
+                          <div className="truncate sm:col-span-2" title={[event.sessionId, event.visitorId, event.anonymousId].filter(Boolean).join(" / ")}>
+                            Tracking: <span className="text-foreground">{[event.sessionId, event.visitorId, event.anonymousId].filter(Boolean).join(" / ")}</span>
+                          </div>
+                        )}
                         <div>Eventos: <span className="text-foreground">{formatNumber(event.totalEvents)}</span></div>
                         {event.totalQuantity > 0 && <div>Quantidade: <span className="text-foreground">{formatNumber(event.totalQuantity)}</span></div>}
                         {event.totalValue > 0 && <div>Valor: <span className="text-foreground">{formatCurrency(event.totalValue)}</span></div>}
