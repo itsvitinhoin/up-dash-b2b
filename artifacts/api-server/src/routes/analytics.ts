@@ -278,7 +278,7 @@ async function getUpzeroAnalyticsFactsChunked(params: {
   for (const row of chunks.flat()) {
     deduped.set(row.event_id ?? metricDedupeKey(row), row);
   }
-  return [...deduped.values()];
+  return bridgeAnonymousRowsToIdentifiedUsers([...deduped.values()]);
 }
 
 async function getUpzeroTrackingRowsChunked(params: {
@@ -309,7 +309,7 @@ async function getUpzeroTrackingRows(params: {
   context?: string;
 }): Promise<{ rows: UpzeroAnalyticsMetric[]; source: "facts" | "metrics" }> {
   try {
-    const rows = await getUpzeroAnalyticsFactsAsMetrics(params);
+    const rows = bridgeAnonymousRowsToIdentifiedUsers(await getUpzeroAnalyticsFactsAsMetrics(params));
     return { rows, source: "facts" };
   } catch (err) {
     console.warn(
@@ -319,6 +319,57 @@ async function getUpzeroTrackingRows(params: {
     const metrics = await getUpzeroAnalyticsMetrics(params);
     return { rows: metrics.data, source: "metrics" };
   }
+}
+
+function bridgeKeysForRow(row: UpzeroAnalyticsMetric): string[] {
+  return [
+    row.session_id ? `session:${row.session_id}` : null,
+    row.visitor_id ? `visitor:${row.visitor_id}` : null,
+    row.anonymous_id ? `anonymous:${row.anonymous_id}` : null,
+  ].filter((value): value is string => Boolean(value));
+}
+
+function bridgeAnonymousRowsToIdentifiedUsers(rows: UpzeroAnalyticsMetric[]): UpzeroAnalyticsMetric[] {
+  const keyToUsers = new Map<string, Set<number>>();
+
+  for (const row of rows) {
+    const user = getMetricUser(row);
+    if (!user) continue;
+    for (const key of bridgeKeysForRow(row)) {
+      const users = keyToUsers.get(key) ?? new Set<number>();
+      users.add(user.id);
+      keyToUsers.set(key, users);
+    }
+  }
+
+  if (keyToUsers.size === 0) return rows;
+
+  let promoted = 0;
+  const bridged = rows.map((row) => {
+    if (getMetricUser(row)) return row;
+    const candidateUsers = new Set<number>();
+    for (const key of bridgeKeysForRow(row)) {
+      const users = keyToUsers.get(key);
+      if (!users) continue;
+      for (const userId of users) candidateUsers.add(userId);
+    }
+    if (candidateUsers.size !== 1) return row;
+    promoted += 1;
+    const [userId] = [...candidateUsers];
+    return {
+      ...row,
+      user_id: userId,
+    };
+  });
+
+  if (promoted > 0) {
+    console.log({
+      upzeroIdentityBridgePromotedRows: promoted,
+      upzeroIdentityBridgeKeys: keyToUsers.size,
+    });
+  }
+
+  return bridged;
 }
 
 async function enrichRowsWithProductImages(
