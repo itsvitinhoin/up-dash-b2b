@@ -170,6 +170,25 @@ function upzeroIsoRange(
   };
 }
 
+function upzeroAttributionHistoryRange(
+  query: Record<string, unknown>,
+  from: Date,
+  to: Date,
+): { from: string; to: string } {
+  const periodRange = upzeroIsoRange(query, from, to);
+  const configuredFrom = process.env.UPZERO_ATTRIBUTION_HISTORY_FROM;
+  const parsedConfiguredFrom = configuredFrom ? new Date(configuredFrom) : null;
+  const historyFrom =
+    parsedConfiguredFrom && Number.isFinite(parsedConfiguredFrom.getTime())
+      ? parsedConfiguredFrom.toISOString()
+      : "2026-05-01T03:00:00.000Z";
+
+  return {
+    from: historyFrom,
+    to: periodRange.to,
+  };
+}
+
 const UPZERO_ANALYTICS_CHUNK_MS = 12 * 60 * 60 * 1000;
 const UPZERO_ANALYTICS_MIN_SPLIT_MS = 60 * 60 * 1000;
 const UPZERO_ANALYTICS_PAGE_CAP = 500;
@@ -1742,6 +1761,7 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
 
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const upzeroRange = upzeroIsoRange(req.query as Record<string, unknown>, from, to);
+  const attributionHistoryRange = upzeroAttributionHistoryRange(req.query as Record<string, unknown>, from, to);
   const [client] = await db
     .select({ upZeroApiKey: clientsTable.upZeroApiKey })
     .from(clientsTable)
@@ -1749,19 +1769,19 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
 
   try {
     const tracking = await getUpzeroTrackingRowsChunked({
-      ...upzeroRange,
+      ...attributionHistoryRange,
       apiKey: client?.upZeroApiKey,
-      context: "campaign-customers",
+      context: "campaign-customers-history",
     });
     const trackingRows = tracking.rows;
     const trackingUserIds = [...new Set(trackingRows.map((row) => getMetricUser(row)?.id).filter((id): id is number => typeof id === "number"))];
     const numericTrackingExternalIds = trackingUserIds.map(String);
     const customerScope = trackingUserIds.length > 0
       ? or(
-          and(gte(customersTable.createdAt, from), lte(customersTable.createdAt, to)),
+          lte(customersTable.createdAt, to),
           inArray(customersTable.externalId, numericTrackingExternalIds),
         )
-      : and(gte(customersTable.createdAt, from), lte(customersTable.createdAt, to));
+      : lte(customersTable.createdAt, to);
 
     const customers = await db
       .select({
@@ -1814,6 +1834,10 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       uniqueUsersWithAnyUser: userIds.length,
       uniqueUsersWithPaidCampaignSignal: paidUserIds.size,
       analyticsSource: tracking.source,
+      periodFrom: upzeroRange.from,
+      periodTo: upzeroRange.to,
+      attributionHistoryFrom: attributionHistoryRange.from,
+      attributionHistoryTo: attributionHistoryRange.to,
     });
 
     console.log(
