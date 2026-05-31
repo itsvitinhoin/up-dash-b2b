@@ -18,7 +18,7 @@ import {
   ArrowLeft, Mail, Phone, MapPin, Tag, ShoppingBag, Clock,
   Package, AlertCircle, CheckCircle, XCircle, Eye, ShoppingCart,
   CreditCard, User, Megaphone, BarChart2, Star, Building2, Inbox, Calendar,
-  MousePointerClick, MonitorSmartphone
+  ClipboardList, LogIn, MousePointerClick, MonitorSmartphone, Trash2, UserPlus
 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import { EmptyState } from "@/components/empty-state";
@@ -231,16 +231,49 @@ function attributionLabel(type: CustomerTimelineEvent["attributionType"]) {
   }
 }
 
-function timelineIcon(eventName: string) {
-  if (eventName === "product_view") return Package;
-  if (eventName === "category_view") return Tag;
-  if (eventName === "add_to_cart") return ShoppingCart;
-  if (eventName === "initiate_checkout" || eventName === "checkout_start") return CreditCard;
-  if (["purchase", "order_created", "order_paid", "payment_approved"].includes(eventName)) return ShoppingBag;
-  if (eventName === "login") return User;
-  if (eventName === "register_submitted" || eventName === "register_start") return CheckCircle;
-  if (eventName === "page_view") return Eye;
-  return MousePointerClick;
+function timelineEventMeta(eventName: string): {
+  icon: React.ElementType;
+  bg: string;
+  border: string;
+  color: string;
+} {
+  if (["product_view", "product_item_impression"].includes(eventName)) {
+    return { icon: Package, bg: "bg-blue-500/10", border: "border-blue-500/30", color: "text-blue-400" };
+  }
+  if (eventName === "product_item_click") {
+    return { icon: MousePointerClick, bg: "bg-cyan-500/10", border: "border-cyan-500/30", color: "text-cyan-400" };
+  }
+  if (eventName === "category_view") {
+    return { icon: Tag, bg: "bg-violet-500/10", border: "border-violet-500/30", color: "text-violet-400" };
+  }
+  if (eventName === "add_to_cart") {
+    return { icon: ShoppingCart, bg: "bg-emerald-500/10", border: "border-emerald-500/30", color: "text-emerald-400" };
+  }
+  if (eventName === "remove_from_cart") {
+    return { icon: Trash2, bg: "bg-red-500/10", border: "border-red-500/30", color: "text-red-400" };
+  }
+  if (eventName === "cart_view") {
+    return { icon: ShoppingCart, bg: "bg-teal-500/10", border: "border-teal-500/30", color: "text-teal-400" };
+  }
+  if (["initiate_checkout", "checkout_start", "checkout_started"].includes(eventName)) {
+    return { icon: CreditCard, bg: "bg-amber-500/10", border: "border-amber-500/30", color: "text-amber-400" };
+  }
+  if (["purchase", "order_created", "order_paid", "payment_approved"].includes(eventName)) {
+    return { icon: ShoppingBag, bg: "bg-fuchsia-500/10", border: "border-fuchsia-500/30", color: "text-fuchsia-400" };
+  }
+  if (eventName === "login") {
+    return { icon: LogIn, bg: "bg-sky-500/10", border: "border-sky-500/30", color: "text-sky-400" };
+  }
+  if (["register_submitted", "register_start"].includes(eventName)) {
+    return { icon: UserPlus, bg: "bg-lime-500/10", border: "border-lime-500/30", color: "text-lime-400" };
+  }
+  if (eventName === "form_start") {
+    return { icon: ClipboardList, bg: "bg-orange-500/10", border: "border-orange-500/30", color: "text-orange-400" };
+  }
+  if (eventName === "page_view") {
+    return { icon: Eye, bg: "bg-muted/40", border: "border-border", color: "text-muted-foreground" };
+  }
+  return { icon: MousePointerClick, bg: "bg-primary/10", border: "border-primary/30", color: "text-primary" };
 }
 
 function TouchCard({
@@ -378,23 +411,28 @@ function UpzeroTimelineSection({
             <div className="relative pl-7">
               <div className="absolute left-[13px] top-0 bottom-0 w-px bg-border" />
               {timeline.map((event, index) => {
-                const Icon = timelineIcon(event.eventName);
+                const meta = timelineEventMeta(event.eventName);
+                const Icon = meta.icon;
                 const attribution = attributionLabel(event.attributionType);
                 return (
                   <div key={event.id} className="relative pb-5 last:pb-0">
-                    <div className={`absolute left-[-27px] top-0 h-7 w-7 rounded-full border-2 bg-card flex items-center justify-center ${index === 0 ? "border-primary" : "border-border"}`}>
-                      <Icon className="h-3.5 w-3.5 text-primary" />
+                    <div className={`absolute left-[-27px] top-0 h-7 w-7 rounded-full border-2 flex items-center justify-center ${meta.bg} ${index === 0 ? "border-primary" : meta.border}`}>
+                      <Icon className={`h-3.5 w-3.5 ${meta.color}`} />
                     </div>
                     <div className="rounded-lg border border-border/70 bg-background/40 p-3">
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 gap-3">
-                          {event.productImageUrl && (
+                          {event.productImageUrl ? (
                             <img
                               src={event.productImageUrl}
                               alt={event.productName ?? event.eventLabel}
                               className="h-14 w-14 shrink-0 rounded-md border border-border object-cover"
                               loading="lazy"
                             />
+                          ) : (
+                            <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-md border ${meta.bg} ${meta.border}`}>
+                              <Icon className={`h-6 w-6 ${meta.color}`} />
+                            </div>
                           )}
                           <div className="min-w-0">
                           <p className="text-sm font-semibold">{event.eventLabel}</p>
