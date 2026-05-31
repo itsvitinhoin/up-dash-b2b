@@ -245,6 +245,7 @@ export function factToAnalyticsMetric(fact: UpzeroAnalyticsFact): UpzeroAnalytic
     period_type: "event",
     event_name: fact.event_name,
     product: fact.product,
+    product_image_url: null,
     product_variant: fact.product_variant_id !== null ? { id: fact.product_variant_id } : null,
     category: fact.category,
     user: fact.user ?? null,

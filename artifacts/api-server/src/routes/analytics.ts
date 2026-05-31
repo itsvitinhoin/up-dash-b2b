@@ -321,6 +321,52 @@ async function getUpzeroTrackingRows(params: {
   }
 }
 
+async function enrichRowsWithProductImages(
+  rows: UpzeroAnalyticsMetric[],
+  clientId: string,
+): Promise<UpzeroAnalyticsMetric[]> {
+  const externalIds = Array.from(new Set(rows.map((row) => row.product?.id).filter((id): id is number => typeof id === "number").map(String)));
+  const skus = Array.from(new Set(rows.map((row) => row.product?.sku).filter((sku): sku is string => Boolean(sku))));
+  if (externalIds.length === 0 && skus.length === 0) return rows;
+
+  const filters: SQL[] = [];
+  if (externalIds.length > 0) filters.push(inArray(productsTable.externalId, externalIds));
+  if (skus.length > 0) filters.push(inArray(productsTable.sku, skus));
+
+  const products = await db
+    .select({
+      externalId: productsTable.externalId,
+      sku: productsTable.sku,
+      name: productsTable.name,
+      imageUrl: productsTable.imageUrl,
+    })
+    .from(productsTable)
+    .where(and(eq(productsTable.clientId, clientId), or(...filters)));
+
+  const byExternalId = new Map(products.map((product) => [product.externalId, product] as const));
+  const bySku = new Map(products.map((product) => [product.sku, product] as const));
+
+  return rows.map((row) => {
+    const matchedProduct =
+      (row.product?.id !== undefined ? byExternalId.get(String(row.product.id)) : null) ??
+      (row.product?.sku ? bySku.get(row.product.sku) : null) ??
+      null;
+    const productImageUrl =
+      matchedProduct?.imageUrl ??
+      row.product_image_url ??
+      null;
+    const matchedExternalId = Number.parseInt(matchedProduct?.externalId ?? "", 10);
+    const product = row.product ?? (matchedProduct && Number.isFinite(matchedExternalId)
+      ? {
+          id: matchedExternalId,
+          name: matchedProduct.name,
+          sku: matchedProduct.sku,
+        }
+      : null);
+    return matchedProduct || productImageUrl ? { ...row, product, product_image_url: productImageUrl } : row;
+  });
+}
+
 function requireClient(
   req: import("express").Request,
   res: import("express").Response,
@@ -1248,6 +1294,8 @@ function isPaidCampaignSignal(row: UpzeroAnalyticsMetric): boolean {
 
   if (isLinktreeOnly) return false;
 
+  const hasClickIdentifier = Boolean(row.fbc || row.fbclid || row.gclid);
+  const hasNamedCampaign = campaign.length > 0 && campaign !== "linktree";
   const hasMetaSource = ["fb", "facebook", "ig", "instagram", "meta"].includes(source);
   const hasGoogleSource = ["google", "google_ads", "googleads", "gads", "gc"].includes(source);
   const hasPaidMedium =
@@ -1274,6 +1322,8 @@ function isPaidCampaignSignal(row: UpzeroAnalyticsMetric): boolean {
   const hasPaidChannel = channel.includes("paid") || channel.includes("ads") || rawSource.includes("ads");
 
   return (
+    hasClickIdentifier ||
+    hasNamedCampaign ||
     hasPaidMedium ||
     hasMetaPlacement ||
     hasUpCampaign ||
@@ -1289,6 +1339,8 @@ function normalizeCampaignSource(row: UpzeroAnalyticsMetric): string {
   const medium = normalizeCampaignText(row.utm_medium);
   const campaign = normalizeCampaignText(row.utm_campaign);
 
+  if (row.fbc || row.fbclid) return "Meta";
+  if (row.gclid) return "Google";
   if (["fb", "facebook"].includes(source) || medium.includes("facebook")) return "Facebook";
   if (["ig", "instagram"].includes(source) || medium.includes("instagram")) return "Instagram";
   if (
@@ -1305,6 +1357,8 @@ function normalizeCampaignSource(row: UpzeroAnalyticsMetric): string {
 
 function normalizeCampaignMedium(row: UpzeroAnalyticsMetric): string {
   const medium = normalizeCampaignText(row.utm_medium);
+  if (row.fbc || row.fbclid) return "Clique pago Meta";
+  if (row.gclid) return "Clique pago Google";
   if (medium.includes("instagram_feed")) return "Instagram Feed";
   if (medium.includes("instagram_stories")) return "Instagram Stories";
   if (medium.includes("instagram_reels")) return "Instagram Reels";
@@ -1317,6 +1371,13 @@ function normalizeCampaignMedium(row: UpzeroAnalyticsMetric): string {
   if (medium.includes("social")) return "Social";
   if (medium.includes("linktree")) return "Linktree";
   return row.utm_medium ?? "Não identificado";
+}
+
+function campaignLabelForRow(row: UpzeroAnalyticsMetric): string | null {
+  if (row.utm_campaign) return row.utm_campaign;
+  if (row.fbc || row.fbclid) return "Clique Meta identificado";
+  if (row.gclid) return "Clique Google identificado";
+  return null;
 }
 
 type CampaignTouch = {
@@ -1371,7 +1432,7 @@ function touchFromMetric(row: UpzeroAnalyticsMetric): CampaignTouch {
   return {
     source: normalizeCampaignSource(row),
     medium: normalizeCampaignMedium(row),
-    campaign: row.utm_campaign ?? null,
+    campaign: campaignLabelForRow(row),
     occurredAt: row.period_start,
   };
 }
@@ -1382,7 +1443,7 @@ function buildUniqueCampaigns(rows: UpzeroAnalyticsMetric[]): CampaignSummary[] 
   for (const row of rows) {
     const source = normalizeCampaignSource(row);
     const medium = normalizeCampaignMedium(row);
-    const campaign = row.utm_campaign ?? "Não identificado";
+    const campaign = campaignLabelForRow(row) ?? "Não identificado";
     const key = [source, medium, campaign].join("||");
     const current =
       map.get(key) ??
@@ -1417,17 +1478,78 @@ function maskDocument(value: string | null | undefined, type: "CPF" | "CNPJ"): s
   return digits.length >= 14 ? `**.${digits.slice(2, 5)}.${digits.slice(5, 8)}/****-**` : "***";
 }
 
+type CampaignLocalCustomer = {
+  id: string;
+  externalId: string | null;
+  name: string | null;
+  email: string;
+  documentType: "CPF" | "CNPJ" | null;
+  registrationStatus: "PENDING" | "APPROVED" | "REJECTED";
+  createdAt: Date;
+  totalOrders: number;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  utmTerm: string | null;
+};
+
+function localCustomerToCampaignMetric(customer: CampaignLocalCustomer, index: number): UpzeroAnalyticsMetric | null {
+  const userId = Number.parseInt(customer.externalId ?? "", 10);
+  if (!Number.isFinite(userId) || userId <= 0) return null;
+
+  return {
+    id: -1_000_000 - index,
+    period_start: customer.createdAt.toISOString(),
+    period_type: "registration",
+    event_name: "register_submitted",
+    product: null,
+    product_image_url: null,
+    product_variant: null,
+    category: null,
+    user: {
+      id: userId,
+      type: null,
+      name: customer.name,
+      cpf: null,
+      cnpj: null,
+      company_name: null,
+    },
+    user_id: userId,
+    order_id: null,
+    utm_source: customer.utmSource,
+    utm_medium: customer.utmMedium,
+    utm_campaign: customer.utmCampaign,
+    source: "registration",
+    channel: null,
+    device_type: null,
+    total_events: 1,
+    unique_users: 1,
+    unique_sessions: 0,
+    total_quantity: 0,
+    total_value: 0,
+    updated_at: customer.createdAt.toISOString(),
+    event_id: `local_customer_${customer.id}`,
+    anonymous_id: null,
+    session_id: null,
+    visitor_id: null,
+    fbclid: null,
+    fbc: null,
+    fbp: null,
+    gclid: null,
+    landing_url: null,
+    landing_host: null,
+    landing_path: null,
+    referrer: null,
+    referrer_host: null,
+    utm_content: customer.utmContent,
+    utm_term: customer.utmTerm,
+  };
+}
+
 function buildAttributedCampaignCustomers(
   rows: UpzeroAnalyticsMetric[],
-  localCustomers: Map<number, {
-    id: string;
-    name: string | null;
-    email: string;
-    documentType: "CPF" | "CNPJ" | null;
-    registrationStatus: "PENDING" | "APPROVED" | "REJECTED";
-    createdAt: Date;
-    totalOrders: number;
-  }>,
+  localCustomers: Map<number, CampaignLocalCustomer>,
   priorOrders: Map<string, number>,
 ): AttributedCampaignCustomer[] {
   const grouped = new Map<number, UpzeroAnalyticsMetric[]>();
@@ -1580,7 +1702,49 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       apiKey: client?.upZeroApiKey,
       context: "campaign-customers",
     });
-    const rows = tracking.rows;
+    const trackingRows = tracking.rows;
+    const trackingUserIds = [...new Set(trackingRows.map((row) => getMetricUser(row)?.id).filter((id): id is number => typeof id === "number"))];
+    const numericTrackingExternalIds = trackingUserIds.map(String);
+    const customerScope = trackingUserIds.length > 0
+      ? or(
+          and(gte(customersTable.createdAt, from), lte(customersTable.createdAt, to)),
+          inArray(customersTable.externalId, numericTrackingExternalIds),
+        )
+      : and(gte(customersTable.createdAt, from), lte(customersTable.createdAt, to));
+
+    const customers = await db
+      .select({
+        id: customersTable.id,
+        externalId: customersTable.externalId,
+        name: customersTable.name,
+        email: customersTable.email,
+        documentType: customersTable.documentType,
+        registrationStatus: customersTable.registrationStatus,
+        createdAt: customersTable.createdAt,
+        totalOrders: customersTable.totalOrders,
+        utmSource: customersTable.utmSource,
+        utmMedium: customersTable.utmMedium,
+        utmCampaign: customersTable.utmCampaign,
+        utmContent: customersTable.utmContent,
+        utmTerm: customersTable.utmTerm,
+      })
+      .from(customersTable)
+      .where(and(eq(customersTable.clientId, clientId), customerScope));
+
+    const existingCampaignUsers = new Set(
+      trackingRows
+        .filter(isPaidCampaignSignal)
+        .map((row) => getMetricUser(row)?.id)
+        .filter((id): id is number => typeof id === "number"),
+    );
+    const localCampaignRows = customers
+      .map((customer, index) => localCustomerToCampaignMetric(customer, index))
+      .filter((row): row is UpzeroAnalyticsMetric => {
+        if (!row) return false;
+        const user = getMetricUser(row);
+        return Boolean(user && !existingCampaignUsers.has(user.id) && isPaidCampaignSignal(row));
+      });
+    const rows = [...trackingRows, ...localCampaignRows];
     const userIds = [...new Set(rows.map((row) => getMetricUser(row)?.id).filter((id): id is number => typeof id === "number"))];
     const paidUserIds = new Set(
       rows
@@ -1595,6 +1759,7 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       rowsWithUserId: rows.filter((row) => row.user_id).length,
       rowsWithAnyUser: rows.filter((row) => getMetricUser(row)).length,
       rowsWithPaidCampaignSignal: rows.filter(isPaidCampaignSignal).length,
+      localCampaignRows: localCampaignRows.length,
       uniqueUsersWithAnyUser: userIds.length,
       uniqueUsersWithPaidCampaignSignal: paidUserIds.size,
       analyticsSource: tracking.source,
@@ -1610,23 +1775,12 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
           utmSource: row.utm_source,
           utmMedium: row.utm_medium,
           utmCampaign: row.utm_campaign,
+          fbc: row.fbc,
+          fbclid: row.fbclid,
+          gclid: row.gclid,
           periodStart: row.period_start,
         })),
     );
-
-    const customers = await db
-      .select({
-        id: customersTable.id,
-        externalId: customersTable.externalId,
-        name: customersTable.name,
-        email: customersTable.email,
-        documentType: customersTable.documentType,
-        registrationStatus: customersTable.registrationStatus,
-        createdAt: customersTable.createdAt,
-        totalOrders: customersTable.totalOrders,
-      })
-      .from(customersTable)
-      .where(and(eq(customersTable.clientId, clientId), userIds.length > 0 ? inArray(customersTable.externalId, userIds.map(String)) : undefined));
 
     const customerIds = customers.map((customer) => customer.id);
     const priorRows = customerIds.length > 0
@@ -2560,7 +2714,7 @@ router.get("/analytics/customer-timeline-by-user", async (req, res): Promise<voi
     res.json(
       buildCustomerTimelineResponse(
         queryParsed.data.userId,
-        tracking.rows,
+        await enrichRowsWithProductImages(tracking.rows, clientId),
         queryParsed.data.lookbackDays,
       ),
     );
@@ -2637,7 +2791,7 @@ router.get("/analytics/customers/:customerId/timeline", async (req, res): Promis
     res.json(
       buildCustomerTimelineResponse(
         userId,
-        tracking.rows,
+        await enrichRowsWithProductImages(tracking.rows, clientId),
         queryParsed.data.lookbackDays,
       ),
     );

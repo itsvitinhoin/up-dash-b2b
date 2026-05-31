@@ -59,6 +59,7 @@ type CustomerTimelineEvent = {
   productId: number | null;
   productName: string | null;
   productSku: string | null;
+  productImageUrl?: string | null;
   categoryId: number | null;
   categoryName: string | null;
   orderId: number | null;
@@ -386,11 +387,26 @@ function UpzeroTimelineSection({
                     </div>
                     <div className="rounded-lg border border-border/70 bg-background/40 p-3">
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
+                        <div className="flex min-w-0 gap-3">
+                          {event.productImageUrl && (
+                            <img
+                              src={event.productImageUrl}
+                              alt={event.productName ?? event.eventLabel}
+                              className="h-14 w-14 shrink-0 rounded-md border border-border object-cover"
+                              loading="lazy"
+                            />
+                          )}
+                          <div className="min-w-0">
                           <p className="text-sm font-semibold">{event.eventLabel}</p>
                           <p className="text-xs text-muted-foreground">
-                            {formatSaoPauloDateTime(event.occurredAt)} · agregado por {event.periodType}
+                            {formatSaoPauloDateTime(event.occurredAt)}
                           </p>
+                          {event.productName && (
+                            <p className="mt-1 truncate text-xs text-foreground" title={event.productName}>
+                              {event.productName}
+                            </p>
+                          )}
+                          </div>
                         </div>
                         {attribution && (
                           <Badge variant="outline" className="w-fit text-[11px]">
@@ -400,9 +416,6 @@ function UpzeroTimelineSection({
                       </div>
 
                       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-5 gap-y-1.5 text-xs">
-                        {event.productName && (
-                          <span><strong>Produto:</strong> {event.productName}</span>
-                        )}
                         {event.productSku && (
                           <span><strong>SKU:</strong> {event.productSku}</span>
                         )}
@@ -417,40 +430,8 @@ function UpzeroTimelineSection({
                             <strong>Campanha:</strong> {event.utmCampaign}
                           </span>
                         )}
-                        {event.utmContent && (
-                          <span><strong>Conteúdo:</strong> {event.utmContent}</span>
-                        )}
-                        {event.utmTerm && (
-                          <span><strong>Termo:</strong> {event.utmTerm}</span>
-                        )}
                         <span><strong>Origem:</strong> {event.normalizedSource}</span>
                         <span><strong>Medium:</strong> {event.normalizedMedium}</span>
-                        {event.landingHost && (
-                          <span><strong>Landing:</strong> {event.landingHost}{event.landingPath ?? ""}</span>
-                        )}
-                        {event.referrerHost && (
-                          <span><strong>Referrer:</strong> {event.referrerHost}</span>
-                        )}
-                        {event.fbc && (
-                          <span className="md:col-span-2 xl:col-span-3 truncate" title={event.fbc}>
-                            <strong>FBC:</strong> {event.fbc}
-                          </span>
-                        )}
-                        {event.fbclid && (
-                          <span className="md:col-span-2 xl:col-span-3 truncate" title={event.fbclid}>
-                            <strong>FBCLID:</strong> {event.fbclid}
-                          </span>
-                        )}
-                        {event.gclid && (
-                          <span className="md:col-span-2 xl:col-span-3 truncate" title={event.gclid}>
-                            <strong>GCLID:</strong> {event.gclid}
-                          </span>
-                        )}
-                        {(event.sessionId || event.visitorId || event.anonymousId) && (
-                          <span className="md:col-span-2 xl:col-span-3 truncate" title={[event.sessionId, event.visitorId, event.anonymousId].filter(Boolean).join(" / ")}>
-                            <strong>Tracking:</strong> {[event.sessionId, event.visitorId, event.anonymousId].filter(Boolean).join(" / ")}
-                          </span>
-                        )}
                         {event.deviceType && (
                           <span className="flex items-center gap-1">
                             <MonitorSmartphone className="h-3 w-3 text-muted-foreground" />

@@ -22,6 +22,7 @@ export type UpzeroAnalyticsMetric = {
     name: string;
     sku: string;
   } | null;
+  product_image_url?: string | null;
   product_variant: unknown | null;
   category: {
     id: number;
@@ -85,6 +86,7 @@ export type CustomerTimelineEvent = {
   productId: number | null;
   productName: string | null;
   productSku: string | null;
+  productImageUrl: string | null;
   categoryId: number | null;
   categoryName: string | null;
   orderId: number | null;
@@ -431,6 +433,7 @@ export function metricToTimelineEvent(row: UpzeroAnalyticsMetric): CustomerTimel
     productId: row.product?.id ?? null,
     productName: row.product?.name ?? null,
     productSku: row.product?.sku ?? null,
+    productImageUrl: row.product_image_url ?? null,
     categoryId: row.category?.id ?? null,
     categoryName: row.category?.name ?? null,
     orderId: row.order_id ?? null,

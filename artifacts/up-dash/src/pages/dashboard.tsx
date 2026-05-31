@@ -373,6 +373,7 @@ type CustomerTimelineEvent = {
   eventLabel: string;
   productName: string | null;
   productSku: string | null;
+  productImageUrl?: string | null;
   categoryName: string | null;
   orderId: number | null;
   utmCampaign: string | null;
@@ -935,9 +936,24 @@ function CampaignCustomersPanel({
                   return (
                     <div key={event.id} className="rounded-lg border border-border bg-card p-3">
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
+                        <div className="flex min-w-0 gap-3">
+                          {event.productImageUrl && (
+                            <img
+                              src={event.productImageUrl}
+                              alt={event.productName ?? event.eventLabel}
+                              className="h-12 w-12 shrink-0 rounded-md border border-border object-cover"
+                              loading="lazy"
+                            />
+                          )}
+                          <div className="min-w-0">
                           <p className="text-sm font-semibold">{event.eventLabel}</p>
                           <p className="text-xs text-muted-foreground">{formatTimelineDate(event.occurredAt)}</p>
+                          {event.productName && (
+                            <p className="mt-1 truncate text-xs text-foreground" title={event.productName}>
+                              {event.productName}
+                            </p>
+                          )}
+                          </div>
                         </div>
                         <div className="text-left text-xs text-muted-foreground sm:text-right">
                           <div>{event.normalizedSource} / {event.normalizedMedium}</div>
@@ -945,23 +961,10 @@ function CampaignCustomersPanel({
                         </div>
                       </div>
                       <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                        {event.productName && <div>Produto: <span className="text-foreground">{event.productName}</span></div>}
                         {event.productSku && <div>SKU: <span className="text-foreground">{event.productSku}</span></div>}
                         {event.categoryName && <div>Categoria: <span className="text-foreground">{event.categoryName}</span></div>}
                         {event.orderId && <div>Pedido: <span className="text-foreground">#{event.orderId}</span></div>}
                         {event.utmCampaign && <div className="sm:col-span-2">Campanha: <span className="text-foreground">{event.utmCampaign}</span></div>}
-                        {event.utmContent && <div>Conteúdo: <span className="text-foreground">{event.utmContent}</span></div>}
-                        {event.utmTerm && <div>Termo: <span className="text-foreground">{event.utmTerm}</span></div>}
-                        {event.landingHost && <div className="sm:col-span-2">Landing: <span className="text-foreground">{event.landingHost}{event.landingPath ?? ""}</span></div>}
-                        {event.referrerHost && <div>Referrer: <span className="text-foreground">{event.referrerHost}</span></div>}
-                        {event.fbc && <div className="truncate sm:col-span-2" title={event.fbc}>FBC: <span className="text-foreground">{event.fbc}</span></div>}
-                        {event.fbclid && <div className="truncate sm:col-span-2" title={event.fbclid}>FBCLID: <span className="text-foreground">{event.fbclid}</span></div>}
-                        {event.gclid && <div className="truncate sm:col-span-2" title={event.gclid}>GCLID: <span className="text-foreground">{event.gclid}</span></div>}
-                        {(event.sessionId || event.visitorId || event.anonymousId) && (
-                          <div className="truncate sm:col-span-2" title={[event.sessionId, event.visitorId, event.anonymousId].filter(Boolean).join(" / ")}>
-                            Tracking: <span className="text-foreground">{[event.sessionId, event.visitorId, event.anonymousId].filter(Boolean).join(" / ")}</span>
-                          </div>
-                        )}
                         <div>Eventos: <span className="text-foreground">{formatNumber(event.totalEvents)}</span></div>
                         {event.totalQuantity > 0 && <div>Quantidade: <span className="text-foreground">{formatNumber(event.totalQuantity)}</span></div>}
                         {event.totalValue > 0 && <div>Valor: <span className="text-foreground">{formatCurrency(event.totalValue)}</span></div>}
