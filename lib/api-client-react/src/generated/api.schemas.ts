@@ -412,6 +412,22 @@ export interface CategoryShare {
   orders: number;
 }
 
+/** Traffic denominator used for B2C conversion rate. */
+export interface DashboardTraffic {
+  sessions: number;
+  orders: number;
+  source: "ga4" | "events" | "none";
+}
+
+/** Daily revenue, orders, sessions and conversion rate. */
+export interface DashboardDailyPerformance {
+  date: string;
+  revenue: number;
+  orders: number;
+  sessions: number;
+  conversionRate: number;
+}
+
 export interface DashboardResponse {
   kpis: DashboardKpis;
   revenueOverTime: TimeSeriesPoint[];
@@ -435,6 +451,10 @@ Only present when the request was made with `compare=true`.
   newBuyersOverTime: TimeSeriesPoint[];
   /** Daily returning-buyer count (prior purchases before window). */
   returningBuyersOverTime: TimeSeriesPoint[];
+  /** Traffic denominator used for B2C conversion rate. */
+  traffic?: DashboardTraffic;
+  /** Daily revenue, orders, sessions and conversion rate. */
+  dailyPerformance?: DashboardDailyPerformance[];
   /** Computed business signals for the current period. */
   signals: DashboardSignal[];
 }

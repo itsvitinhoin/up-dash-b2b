@@ -48,10 +48,12 @@ type NuvemshopProduct = {
   price?: number | string | null;
   compare_at_price?: number | string | null;
   image?: { src?: string | null } | null;
+  categories?: NuvemshopCategory[] | null;
   product?: {
     id?: number | string | null;
     name?: string | Record<string, string> | null;
     images?: Array<{ src?: string | null }> | null;
+    categories?: NuvemshopCategory[] | null;
   } | null;
 };
 
@@ -85,6 +87,19 @@ type NuvemshopOrder = {
   closed_at?: string | null;
   cancelled_at?: string | null;
   cancel_reason?: string | null;
+};
+
+type NuvemshopCategory = {
+  id?: number | string | null;
+  name?: string | Record<string, string> | null;
+  parent?: number | string | null;
+};
+
+type NuvemshopProductDetails = {
+  id?: number | string | null;
+  name?: string | Record<string, string> | null;
+  categories?: NuvemshopCategory[] | null;
+  images?: Array<{ src?: string | null; position?: number | string | null }> | null;
 };
 
 const PROVINCE_TO_STATE: Record<string, string> = {
@@ -197,6 +212,28 @@ function skuFor(item: NuvemshopProduct): string {
   return `nuvemshop-${item.product_id ?? item.id ?? "item"}`;
 }
 
+function categoryName(categories?: NuvemshopCategory[] | null): string | null {
+  const rows = categories ?? [];
+  if (rows.length === 0) return null;
+  const generic = new Set(["todos os produtos", "marcas", "tipo de pele"]);
+  const readable = rows
+    .map((category) => ({
+      name: localized(category.name).trim(),
+      parent: category.parent,
+    }))
+    .filter((category) => category.name && !generic.has(category.name.toLowerCase()));
+  const topLevel = readable.find((category) => !category.parent);
+  return topLevel?.name ?? readable[0]?.name ?? null;
+}
+
+async function fetchProductDetails(
+  storeId: string,
+  accessToken: string,
+  productId: string,
+): Promise<NuvemshopProductDetails | null> {
+  return fetchNuvemshopObject<NuvemshopProductDetails>(storeId, accessToken, `/products/${productId}`);
+}
+
 async function fetchNuvemshopPage<T>(
   storeId: string,
   accessToken: string,
@@ -222,6 +259,28 @@ async function fetchNuvemshopPage<T>(
     throw new Error(`Nuvemshop ${path} failed: ${message}`);
   }
   return Array.isArray(body) ? body as T[] : [];
+}
+
+async function fetchNuvemshopObject<T>(
+  storeId: string,
+  accessToken: string,
+  path: string,
+): Promise<T | null> {
+  const response = await fetch(`${NUVEMSHOP_BASE_URL}/${storeId}${path}`, {
+    headers: {
+      Authentication: `bearer ${accessToken}`,
+      "User-Agent": process.env.NUVEMSHOP_USER_AGENT ?? DEFAULT_USER_AGENT,
+    },
+  });
+  const body = await response.json().catch(() => null) as unknown;
+  if (!response.ok) {
+    const message =
+      body && typeof body === "object" && "message" in body
+        ? String((body as { message?: unknown }).message)
+        : `${response.status} ${response.statusText}`;
+    throw new Error(`Nuvemshop ${path} failed: ${message}`);
+  }
+  return body && typeof body === "object" ? body as T : null;
 }
 
 async function fetchOrders(
@@ -252,6 +311,7 @@ export async function syncNuvemshopClient(params: {
 }): Promise<NuvemshopSyncResult> {
   const result = emptyResult();
   const orders = await fetchOrders(params.storeId, params.accessToken, params.since, params.maxPages);
+  const productDetailsCache = new Map<string, Promise<NuvemshopProductDetails | null>>();
 
   for (const order of orders) {
     try {
@@ -366,7 +426,12 @@ export async function syncNuvemshopClient(params: {
       for (const item of items) {
         const quantity = Math.max(1, Math.round(asNumber(item.quantity) || 1));
         const sku = skuFor(item);
-        const productName = localized(item.name) || localized(item.product?.name) || sku;
+        const productId = item.product_id ? String(item.product_id) : String(item.id ?? sku);
+        const detailPromise = productDetailsCache.get(productId) ?? fetchProductDetails(params.storeId, params.accessToken, productId).catch(() => null);
+        productDetailsCache.set(productId, detailPromise);
+        const productDetails = await detailPromise;
+        const productName = localized(item.name) || localized(item.product?.name) || localized(productDetails?.name) || sku;
+        const category = categoryName(item.categories) ?? categoryName(item.product?.categories) ?? categoryName(productDetails?.categories);
         const grossUnitPrice = asNumber(item.compare_at_price) || asNumber(item.price);
         const itemGross = asNumber(item.price) * quantity;
         const itemDiscount = itemGrossTotal > 0 ? discount * (itemGross / itemGrossTotal) : 0;
@@ -376,19 +441,21 @@ export async function syncNuvemshopClient(params: {
           .insert(productsTable)
           .values({
             clientId: params.clientId,
-            externalId: item.product_id ? String(item.product_id) : String(item.id ?? sku),
+            externalId: productId,
             sku,
             name: productName,
+            category,
             price: grossUnitPrice,
-            imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? null,
+            imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
           })
           .onConflictDoUpdate({
             target: [productsTable.clientId, productsTable.sku],
             set: {
-              externalId: item.product_id ? String(item.product_id) : String(item.id ?? sku),
+              externalId: productId,
               name: productName,
+              category,
               price: grossUnitPrice,
-              imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? null,
+              imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
             },
           })
           .returning({ id: productsTable.id, wasInserted: sql<boolean>`(xmax = 0)` });

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { addDays, differenceInDays, format, subDays } from "date-fns";
 import { motion } from "framer-motion";
@@ -288,6 +288,8 @@ const CHART_METRICS = [
   { id: "revenue", label: "Revenue", formatter: (v: number) => formatCurrency(v) },
   { id: "orders", label: "Orders", formatter: (v: number) => formatNumber(v) },
   { id: "avgTicket", label: "Avg ticket", formatter: (v: number) => formatCurrency(v) },
+  { id: "sessions", label: "Sessions", formatter: (v: number) => formatNumber(v) },
+  { id: "conversionRate", label: "Conversion", formatter: (v: number) => formatPercentage(v) },
 ] as const;
 
 type ChartMetric = (typeof CHART_METRICS)[number]["id"];
@@ -428,6 +430,69 @@ type CustomerTimelineResponse = {
     lastSeenAt: string | null;
   };
   timeline: CustomerTimelineEvent[];
+};
+
+type B2COrderRow = {
+  id: string;
+  externalId: string | null;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "SHIPPED" | "DELIVERED";
+  amount: number;
+  fulfilledAmount: number;
+  grossAmount: number;
+  discountAmount: number;
+  shippingAmount: number;
+  refundedAmount: number;
+  cancelledAmount: number;
+  requestedQuantity: number;
+  fulfilledQuantity: number;
+  createdAt: string;
+  customerId: string;
+  customerName: string | null;
+  customerEmail: string | null;
+  customerPhone: string | null;
+  state: string | null;
+  city: string | null;
+};
+
+type B2COrdersResponse = {
+  rows: B2COrderRow[];
+  page: number;
+  limit: number;
+  total: number;
+};
+
+type B2COrderDetailsResponse = {
+  order: B2COrderRow & {
+    approvalDate: string | null;
+  };
+  customer: {
+    id: string | null;
+    externalId: string | null;
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    state: string | null;
+    city: string | null;
+    firstPurchaseAt: string | null;
+    lastPurchaseAt: string | null;
+    totalOrders: number | null;
+    totalSpent: number | null;
+  };
+  items: Array<{
+    id: string;
+    quantity: number;
+    fulfilledQuantity: number;
+    priceAtSale: number;
+    grossPriceAtSale: number;
+    discountAmount: number;
+    size: string | null;
+    color: string | null;
+    productId: string;
+    sku: string;
+    name: string;
+    category: string | null;
+    imageUrl: string | null;
+  }>;
 };
 
 function detectAnomalies(series: { date: string; value: number }[]): { date: string; value: number }[] {
@@ -1275,6 +1340,223 @@ function CampaignCustomersPanel({
   );
 }
 
+function B2COrdersPanel({
+  clientId,
+  dateFrom,
+  dateTo,
+  enabled,
+}: {
+  clientId?: string;
+  dateFrom: string;
+  dateTo: string;
+  enabled: boolean;
+}) {
+  const [page, setPage] = useState(1);
+  const [selectedOrder, setSelectedOrder] = useState<B2COrderRow | null>(null);
+  const limit = 10;
+
+  const { data, isLoading, isError } = useQuery<B2COrdersResponse>({
+    queryKey: ["b2c-orders", clientId, dateFrom, dateTo, page],
+    queryFn: () => {
+      const params = new URLSearchParams({ dateFrom, dateTo, page: String(page), limit: String(limit) });
+      if (clientId) params.set("clientId", clientId);
+      return customFetch<B2COrdersResponse>(`/api/analytics/b2c/orders?${params.toString()}`);
+    },
+    enabled,
+  });
+
+  const { data: details, isLoading: detailsLoading, isError: detailsError } = useQuery<B2COrderDetailsResponse>({
+    queryKey: ["b2c-order-details", clientId, selectedOrder?.id],
+    queryFn: () => {
+      if (!selectedOrder) throw new Error("Pedido não selecionado.");
+      const params = new URLSearchParams();
+      if (clientId) params.set("clientId", clientId);
+      const qs = params.toString();
+      return customFetch<B2COrderDetailsResponse>(
+        `/api/analytics/b2c/orders/${selectedOrder.id}${qs ? `?${qs}` : ""}`,
+      );
+    },
+    enabled: enabled && !!selectedOrder,
+  });
+
+  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / limit));
+
+  return (
+    <Card className="p-5 bg-card border-border" data-testid="b2c-orders-panel">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+        <div>
+          <h2 className="text-base font-semibold leading-tight flex items-center gap-2">
+            <ShoppingBag className="h-4 w-4 text-primary" />
+            Pedidos do período
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Lista paginada com detalhes de cliente, valores, frete, desconto e produtos.
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</p>
+          <p className="text-sm font-semibold tabular-nums">{formatNumber(data?.total ?? 0)} pedidos</p>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+        </div>
+      ) : isError ? (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>Não foi possível carregar os pedidos.</AlertDescription>
+        </Alert>
+      ) : !data || data.rows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <ShoppingBag className="h-8 w-8 text-muted-foreground mb-2" />
+          <p className="text-sm font-medium">Nenhum pedido no período</p>
+          <p className="text-xs text-muted-foreground mt-1">Amplie o filtro de data ou sincronize a Nuvemshop.</p>
+        </div>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <th className="py-2 pr-4">Pedido</th>
+                  <th className="py-2 px-3">Cliente</th>
+                  <th className="py-2 px-3 text-right">Pago</th>
+                  <th className="py-2 px-3 text-right">Faturado</th>
+                  <th className="py-2 px-3 text-right">Frete</th>
+                  <th className="py-2 px-3">Status</th>
+                  <th className="py-2 pl-3 text-right">Detalhes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((order) => (
+                  <tr key={order.id} className="border-b border-border/60 last:border-0 hover:bg-muted/20">
+                    <td className="py-3 pr-4 min-w-[150px]">
+                      <div className="font-medium">#{order.externalId ?? order.id.slice(0, 8)}</div>
+                      <div className="text-xs text-muted-foreground">{formatTimelineDate(order.createdAt)}</div>
+                    </td>
+                    <td className="py-3 px-3 min-w-[220px]">
+                      <div className="font-medium truncate">{order.customerName ?? order.customerEmail ?? "Cliente sem nome"}</div>
+                      <div className="text-xs text-muted-foreground truncate">{order.customerEmail ?? order.customerPhone ?? "—"}</div>
+                    </td>
+                    <td className="py-3 px-3 text-right font-semibold tabular-nums">{formatCurrency(order.fulfilledAmount)}</td>
+                    <td className="py-3 px-3 text-right tabular-nums">{formatCurrency(order.amount)}</td>
+                    <td className="py-3 px-3 text-right tabular-nums">{formatCurrency(order.shippingAmount)}</td>
+                    <td className="py-3 px-3">
+                      <span className="inline-flex rounded-md bg-muted px-2 py-0.5 text-[10px] font-semibold">
+                        {order.status}
+                      </span>
+                    </td>
+                    <td className="py-3 pl-3 text-right">
+                      <Button type="button" size="sm" variant="outline" onClick={() => setSelectedOrder(order)}>
+                        Abrir
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+            <span>Página {formatNumber(page)} de {formatNumber(totalPages)}</span>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                Anterior
+              </Button>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                Próxima
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+
+      <Dialog open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
+        <DialogContent className="max-h-[84vh] max-w-4xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Pedido #{selectedOrder?.externalId ?? selectedOrder?.id.slice(0, 8)}</DialogTitle>
+            <DialogDescription>Detalhes importados da Nuvemshop para o período filtrado.</DialogDescription>
+          </DialogHeader>
+          {detailsLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
+            </div>
+          ) : detailsError || !details ? (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>Não foi possível carregar os detalhes deste pedido.</AlertDescription>
+            </Alert>
+          ) : (
+            <div className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pago</p>
+                  <p className="text-lg font-semibold">{formatCurrency(details.order.fulfilledAmount)}</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Bruto</p>
+                  <p className="text-lg font-semibold">{formatCurrency(details.order.grossAmount)}</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Desconto</p>
+                  <p className="text-lg font-semibold">{formatCurrency(details.order.discountAmount)}</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Frete</p>
+                  <p className="text-lg font-semibold">{formatCurrency(details.order.shippingAmount)}</p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-lg border border-border p-4">
+                  <h3 className="text-sm font-semibold mb-2">Cliente</h3>
+                  <div className="space-y-1 text-sm">
+                    <p>{details.customer.name ?? "Sem nome"}</p>
+                    <p className="text-muted-foreground">{details.customer.email ?? "Sem email"}</p>
+                    <p className="text-muted-foreground">{details.customer.phone ?? "Sem telefone"}</p>
+                    <p className="text-muted-foreground">{[details.customer.city, details.customer.state].filter(Boolean).join(" / ") || "Sem localização"}</p>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-border p-4">
+                  <h3 className="text-sm font-semibold mb-2">Pedido</h3>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <span className="text-muted-foreground">Status</span><span>{details.order.status}</span>
+                    <span className="text-muted-foreground">Criado em</span><span>{formatTimelineDate(details.order.createdAt)}</span>
+                    <span className="text-muted-foreground">Itens</span><span>{formatNumber(details.order.requestedQuantity)}</span>
+                    <span className="text-muted-foreground">Cancelado</span><span>{formatCurrency(details.order.cancelledAmount)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border">
+                <div className="border-b border-border p-3">
+                  <h3 className="text-sm font-semibold">Produtos</h3>
+                </div>
+                <div className="divide-y divide-border">
+                  {details.items.map((item) => (
+                    <div key={item.id} className="flex gap-3 p-3">
+                      <ProductMiniature imageUrl={item.imageUrl} name={item.name} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{item.name}</p>
+                        <p className="text-xs text-muted-foreground">{item.sku}{item.category ? ` · ${item.category}` : ""}</p>
+                      </div>
+                      <div className="text-right text-sm">
+                        <p className="font-semibold">{formatCurrency(item.priceAtSale)}</p>
+                        <p className="text-xs text-muted-foreground">Qtd {formatNumber(item.quantity)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
 export default function DashboardPage() {
   const { selectedClientId, user, selectedDashboardMode } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
@@ -1287,6 +1569,7 @@ export default function DashboardPage() {
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled =
     user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+  const isB2C = selectedDashboardMode === "B2C";
 
   const { data, isLoading, isError, refetch } = useGetDashboard(
     {
@@ -1343,7 +1626,7 @@ export default function DashboardPage() {
   // Top sellers (mini leaderboard on the dashboard)
   const { data: topSellersData, isLoading: topSellersLoading } = useGetSellers(
     { clientId, limit: 5 },
-    { query: queryOpts({ enabled }) },
+    { query: queryOpts({ enabled: enabled && !isB2C }) },
   );
   const {
     data: campaignCustomers,
@@ -1367,7 +1650,7 @@ export default function DashboardPage() {
         `/api/analytics/campaign-customers?${params.toString()}`,
       );
     },
-    enabled,
+    enabled: enabled && !isB2C,
   });
 
   // Compute changes from API-provided prior-period KPIs
@@ -1395,12 +1678,21 @@ export default function DashboardPage() {
   // Build chart data (uses prev time series from the same response)
   const chartData = useMemo(() => {
     if (!data) return [];
+    const dailyPerformance = data.dailyPerformance ?? [];
     const current =
-      chartMetric === "revenue"
+      isB2C && chartMetric === "revenue"
+        ? dailyPerformance.map((p) => ({ date: p.date, value: p.revenue }))
+        : isB2C && chartMetric === "orders"
+          ? dailyPerformance.map((p) => ({ date: p.date, value: p.orders }))
+          : chartMetric === "revenue"
         ? data.revenueOverTime
         : chartMetric === "orders"
           ? data.ordersOverTime
-          : data.revenueOverTime.map((r, i) => {
+          : chartMetric === "sessions"
+            ? dailyPerformance.map((p) => ({ date: p.date, value: p.sessions }))
+            : chartMetric === "conversionRate"
+              ? dailyPerformance.map((p) => ({ date: p.date, value: p.conversionRate }))
+              : data.revenueOverTime.map((r, i) => {
               const o = data.ordersOverTime[i]?.value || 0;
               return { date: r.date, value: o > 0 ? r.value / o : 0 };
             });
@@ -1422,19 +1714,28 @@ export default function DashboardPage() {
       current: p.value,
       previous: previous?.[i]?.value ?? null,
     }));
-  }, [data, chartMetric]);
+  }, [data, chartMetric, isB2C]);
 
   const currentSeries = useMemo(() => {
     if (!data) return [];
-    return chartMetric === "revenue"
+    const dailyPerformance = data.dailyPerformance ?? [];
+    return isB2C && chartMetric === "revenue"
+      ? dailyPerformance.map((p) => ({ date: p.date, value: p.revenue }))
+      : isB2C && chartMetric === "orders"
+        ? dailyPerformance.map((p) => ({ date: p.date, value: p.orders }))
+        : chartMetric === "revenue"
       ? data.revenueOverTime
       : chartMetric === "orders"
         ? data.ordersOverTime
-        : data.revenueOverTime.map((r, i) => {
+        : chartMetric === "sessions"
+          ? dailyPerformance.map((p) => ({ date: p.date, value: p.sessions }))
+          : chartMetric === "conversionRate"
+            ? dailyPerformance.map((p) => ({ date: p.date, value: p.conversionRate }))
+            : data.revenueOverTime.map((r, i) => {
             const o = data.ordersOverTime[i]?.value || 0;
             return { date: r.date, value: o > 0 ? r.value / o : 0 };
           });
-  }, [data, chartMetric]);
+  }, [data, chartMetric, isB2C]);
 
   const anomalies = useMemo(() => detectAnomalies(currentSeries), [currentSeries]);
   const chartFormatter = CHART_METRICS.find((m) => m.id === chartMetric)!.formatter;
@@ -1445,7 +1746,7 @@ export default function DashboardPage() {
     return [...data.revenueByCategory].sort((a, b) => b.revenue - a.revenue).slice(0, 5);
   }, [data]);
 
-  const totalCategoryRevenue = topCategories.reduce((sum, c) => sum + c.revenue, 0);
+  const totalCategoryRevenue = (data?.revenueByCategory ?? []).reduce((sum, c) => sum + c.revenue, 0);
 
   const handlePrint = () => {
     document.body.classList.add("print-dashboard");
@@ -1474,6 +1775,16 @@ export default function DashboardPage() {
     );
   };
 
+  const chartMetrics = isB2C
+    ? CHART_METRICS
+    : CHART_METRICS.filter((metric) => metric.id !== "sessions" && metric.id !== "conversionRate");
+
+  useEffect(() => {
+    if (!isB2C && (chartMetric === "sessions" || chartMetric === "conversionRate")) {
+      setChartMetric("revenue");
+    }
+  }, [chartMetric, isB2C]);
+
   if (isError) {
     return (
       <Alert variant="destructive" data-testid="page-dashboard">
@@ -1492,14 +1803,14 @@ export default function DashboardPage() {
   const sparkRevenue = data?.revenueOverTime.map((p) => p.value) ?? [];
   const sparkOrders = data?.ordersOverTime.map((p) => p.value) ?? [];
   const sparkLeads = data?.leadsOverTime.map((p) => p.value) ?? [];
-  const sparkConv = (data?.leadsOverTime ?? []).map((leadPoint, i) => {
-    const orderVal = data?.ordersOverTime[i]?.value ?? 0;
-    return leadPoint.value > 0 ? (orderVal / leadPoint.value) * 100 : 0;
-  });
+  const sparkConv = isB2C
+    ? data?.dailyPerformance?.map((p) => p.conversionRate) ?? []
+    : (data?.leadsOverTime ?? []).map((leadPoint, i) => {
+        const orderVal = data?.ordersOverTime[i]?.value ?? 0;
+        return leadPoint.value > 0 ? (orderVal / leadPoint.value) * 100 : 0;
+      });
   const sparkNewBuyers = data?.newBuyersOverTime?.map((p) => p.value) ?? [];
   const sparkReturning = data?.returningBuyersOverTime?.map((p) => p.value) ?? [];
-  const isB2C = selectedDashboardMode === "B2C";
-
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const fadeVariants = withReducedMotion(fadeInUp, reduced);
 
@@ -1576,8 +1887,8 @@ export default function DashboardPage() {
           sparkValues={sparkOrders}
           sparkColor="#a78bfa"
           sub={[
-            { label: isB2C ? "Customers" : "Leads", value: data ? formatNumber(isB2C ? data.kpis.customers : data.kpis.leads) : "—" },
-            { label: isB2C ? "Paid orders" : "Approved leads", value: data ? formatNumber(isB2C ? data.kpis.orders : data.kpis.approvedLeads) : "—" },
+            { label: isB2C ? "Sessões" : "Leads", value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
+            { label: isB2C ? "Pedidos" : "Approved leads", value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.approvedLeads) : "—" },
           ]}
           isLoading={isLoading}
         />
@@ -1611,8 +1922,8 @@ export default function DashboardPage() {
           sparkValues={sparkConv}
           sparkColor="#38bdf8"
           sub={[
-            { label: isB2C ? "Customers" : "Leads", value: data ? formatNumber(isB2C ? data.kpis.customers : data.kpis.leads) : "—" },
-            { label: "Orders", value: data ? formatNumber(data.kpis.orders) : "—" },
+            { label: isB2C ? "Sessões" : "Leads", value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
+            { label: isB2C ? "Pedidos" : "Orders", value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
           ]}
           isLoading={isLoading}
           ringValue={data?.kpis.conversionRate ?? 0}
@@ -1780,14 +2091,23 @@ export default function DashboardPage() {
       </motion.div>
 
       <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
-        <CampaignCustomersPanel
-          data={campaignCustomers}
-          isLoading={campaignCustomersLoading}
-          isError={campaignCustomersError}
-          clientId={clientId}
-          dateFrom={format(dateRange.from, "yyyy-MM-dd")}
-          dateTo={format(dateRange.to, "yyyy-MM-dd")}
-        />
+        {isB2C ? (
+          <B2COrdersPanel
+            clientId={clientId}
+            dateFrom={format(dateRange.from, "yyyy-MM-dd")}
+            dateTo={format(dateRange.to, "yyyy-MM-dd")}
+            enabled={enabled}
+          />
+        ) : (
+          <CampaignCustomersPanel
+            data={campaignCustomers}
+            isLoading={campaignCustomersLoading}
+            isError={campaignCustomersError}
+            clientId={clientId}
+            dateFrom={format(dateRange.from, "yyyy-MM-dd")}
+            dateTo={format(dateRange.to, "yyyy-MM-dd")}
+          />
+        )}
       </motion.div>
 
       {/* Chart + insight */}
@@ -1802,11 +2122,13 @@ export default function DashboardPage() {
             <div>
               <h2 className="text-base font-semibold leading-tight">Daily performance</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Last {inclusiveDays} days vs. previous period · click any anomaly to drill in
+                {isB2C
+                  ? `Por dia: receita, pedidos, sessões e conversão${data?.traffic?.source === "ga4" ? " via GA4" : ""}`
+                  : `Last ${inclusiveDays} days vs. previous period · click any anomaly to drill in`}
               </p>
             </div>
             <div className="inline-flex items-center bg-muted/40 border border-border rounded-md p-0.5">
-              {CHART_METRICS.map((metric) => (
+              {chartMetrics.map((metric) => (
                 <button
                   key={metric.id}
                   data-testid={`chart-toggle-${metric.id}`}
@@ -1853,8 +2175,10 @@ export default function DashboardPage() {
                   />
                   <YAxis
                     tickFormatter={(val) =>
-                      chartMetric === "orders"
+                      chartMetric === "orders" || chartMetric === "sessions"
                         ? formatNumber(val)
+                        : chartMetric === "conversionRate"
+                          ? formatPercentage(val)
                         : `R$${(val / 1000).toFixed(0)}k`
                     }
                     stroke="hsl(var(--muted-foreground))"
@@ -2264,7 +2588,7 @@ export default function DashboardPage() {
       </Card>
 
       {/* Top sellers mini-leaderboard */}
-      {(topSellersLoading || (topSellersData && topSellersData.length > 0)) && (
+      {!isB2C && (topSellersLoading || (topSellersData && topSellersData.length > 0)) && (
         <Card className="p-5 bg-card border-border">
           <div className="flex items-start justify-between mb-4">
             <div>

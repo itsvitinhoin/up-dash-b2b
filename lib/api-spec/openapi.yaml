@@ -2184,6 +2184,33 @@ components:
           type: integer
       required: [category, revenue, orders]
 
+    DashboardTraffic:
+      type: object
+      properties:
+        sessions:
+          type: number
+        orders:
+          type: number
+        source:
+          type: string
+          enum: [ga4, events, none]
+      required: [sessions, orders, source]
+
+    DashboardDailyPerformance:
+      type: object
+      properties:
+        date:
+          type: string
+        revenue:
+          type: number
+        orders:
+          type: integer
+        sessions:
+          type: number
+        conversionRate:
+          type: number
+      required: [date, revenue, orders, sessions, conversionRate]
+
     DashboardResponse:
       type: object
       properties:
@@ -2236,6 +2263,14 @@ components:
           items:
             $ref: "#/components/schemas/TimeSeriesPoint"
           description: Daily returning-buyer count (prior purchases before window).
+        traffic:
+          $ref: "#/components/schemas/DashboardTraffic"
+          description: Traffic denominator used for B2C conversion rate.
+        dailyPerformance:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardDailyPerformance"
+          description: Daily revenue, orders, sessions and conversion rate.
         signals:
           type: array
           items:

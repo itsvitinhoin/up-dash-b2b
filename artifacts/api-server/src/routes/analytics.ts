@@ -63,6 +63,7 @@ import {
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
+import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
 import {
   buildCustomerTimelineResponse,
   getMetricUser,
@@ -470,6 +471,20 @@ type DashboardKpis = {
   retentionPct: number;
 };
 
+type DashboardTraffic = {
+  sessions: number;
+  orders: number;
+  source: Ga4Source;
+};
+
+type DashboardDailyPerformance = {
+  date: string;
+  revenue: number;
+  orders: number;
+  sessions: number;
+  conversionRate: number;
+};
+
 type DashboardSignal = {
   type: "high_traffic_low_sales" | "high_performing_regions";
   severity: "info" | "warning" | "critical";
@@ -493,6 +508,41 @@ const ZERO_KPIS: DashboardKpis = {
   returningBuyers: 0,
   retentionPct: 0,
 };
+
+function dateOnlyRange(from: Date, to: Date): string[] {
+  const dates: string[] = [];
+  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+  const end = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()));
+  while (cursor <= end) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+function buildDailyPerformance(params: {
+  from: Date;
+  to: Date;
+  dailyRevenue: { date: string; value: number }[];
+  dailyOrders: { date: string; value: number }[];
+  ga4Daily: Ga4DailyMetrics[] | null;
+}): DashboardDailyPerformance[] {
+  const revenueByDate = new Map(params.dailyRevenue.map((row) => [row.date, Number(row.value) || 0]));
+  const ordersByDate = new Map(params.dailyOrders.map((row) => [row.date, Number(row.value) || 0]));
+  const sessionsByDate = new Map((params.ga4Daily ?? []).map((row) => [row.date, Number(row.sessions) || 0]));
+  return dateOnlyRange(params.from, params.to).map((date) => {
+    const revenue = revenueByDate.get(date) ?? 0;
+    const orders = ordersByDate.get(date) ?? 0;
+    const sessions = sessionsByDate.get(date) ?? 0;
+    return {
+      date,
+      revenue,
+      orders,
+      sessions,
+      conversionRate: sessions > 0 ? (orders / sessions) * 100 : 0,
+    };
+  });
+}
 
 // ───────── Admin: platform-wide overview across every client ─────────
 //
@@ -890,7 +940,17 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = from.toISOString().slice(0, 10);
+  const dateToOnly = to.toISOString().slice(0, 10);
   const { category, sellerId, channel, segment, compare, utmSource: utmSourceFilter, utmMedium: utmMediumFilter, utmCampaign: utmCampaignFilter } = parsed.data;
+  const [clientConfig] = await db
+    .select({
+      dashboardType: clientsTable.dashboardType,
+      ga4PropertyId: clientsTable.ga4PropertyId,
+    })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  const isB2CClient = clientConfig?.dashboardType === "B2C";
 
   // Pre-resolve filter scopes once. Channel/segment scope (customers) is
   // window-agnostic and can be reused across the current and prior windows.
@@ -920,6 +980,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     dailyNewBuyers: { date: string; value: number }[];
     dailyReturningBuyers: { date: string; value: number }[];
     revenueByCategory: { category: string; revenue: number; orders: number }[];
+    traffic: DashboardTraffic;
+    dailyPerformance: DashboardDailyPerformance[];
   };
 
   // The prior window only needs the data the client renders for comparison
@@ -963,6 +1025,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       dailyNewBuyers: [],
       dailyReturningBuyers: [],
       revenueByCategory: [],
+      traffic: { sessions: 0, orders: 0, source: "none" },
+      dailyPerformance: [],
     };
     if (categoryOrderIds !== null) {
       if (categoryOrderIds.length === 0) return emptyWindow;
@@ -984,7 +1048,27 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     }
     const baseOrderWhere = and(...orderConds);
 
-    const [[orderAgg], [requestedRow], [eventAgg]] = await Promise.all([
+    const [ga4Funnel, ga4Daily, [orderAgg], [requestedRow], [eventAgg]] = await Promise.all([
+      isB2CClient
+        ? fetchGa4FunnelMetrics({
+            propertyId: clientConfig?.ga4PropertyId,
+            dateFrom: winFrom.toISOString().slice(0, 10),
+            dateTo: winTo.toISOString().slice(0, 10),
+          }).catch((err) => {
+            console.warn("[dashboard] GA4 funnel unavailable:", err instanceof Error ? err.message : err);
+            return null;
+          })
+        : Promise.resolve(null),
+      isB2CClient && full
+        ? fetchGa4DailyMetrics({
+            propertyId: clientConfig?.ga4PropertyId,
+            dateFrom: winFrom.toISOString().slice(0, 10),
+            dateTo: winTo.toISOString().slice(0, 10),
+          }).catch((err) => {
+            console.warn("[dashboard] GA4 daily unavailable:", err instanceof Error ? err.message : err);
+            return null;
+          })
+        : Promise.resolve(null),
       db
         .select({
           revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
@@ -1112,7 +1196,10 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
 
     const revenue = Number(orderAgg.revenue) || 0;
     const orders = Number(orderAgg.orders) || 0;
-    const visits = Number(eventAgg.visits) || 0;
+    const localVisits = Number(eventAgg.visits) || 0;
+    const ga4Sessions = ga4Funnel?.sessions ?? 0;
+    const visits = isB2CClient && ga4Sessions > 0 ? ga4Sessions : localVisits;
+    const trafficSource: Ga4Source = isB2CClient && ga4Sessions > 0 ? "ga4" : localVisits > 0 ? "events" : "none";
     const registrations = Number(eventAgg.registrations) || 0;
     const approvals = Number(eventAgg.approvals) || 0;
 
@@ -1159,6 +1246,16 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
       .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
 
+    const dailyPerformance = full
+      ? buildDailyPerformance({
+          from: winFrom,
+          to: winTo,
+          dailyRevenue,
+          dailyOrders,
+          ga4Daily: isB2CClient ? ga4Daily : null,
+        })
+      : [];
+
     const dailyLeads = full
       ? await db
           .select({
@@ -1200,6 +1297,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       dailyNewBuyers,
       dailyReturningBuyers,
       revenueByCategory,
+      traffic: { sessions: visits, orders, source: trafficSource },
+      dailyPerformance,
     };
   };
 
@@ -1334,6 +1433,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       revenueByCategory: current.revenueByCategory,
       newBuyersOverTime: current.dailyNewBuyers,
       returningBuyersOverTime: current.dailyReturningBuyers,
+      traffic: current.traffic,
+      dailyPerformance: current.dailyPerformance,
       signals,
       ...(prev
         ? {
@@ -1988,6 +2089,88 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
   if (!clientId) return;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const { utmSource, utmMedium, utmCampaign } = parsed.data;
+
+  const [funnelClient] = await db
+    .select({
+      dashboardType: clientsTable.dashboardType,
+      ga4PropertyId: clientsTable.ga4PropertyId,
+    })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  if (funnelClient?.dashboardType === "B2C" && !utmSource && !utmMedium && !utmCampaign) {
+    const ga4 = await fetchGa4FunnelMetrics({
+      propertyId: funnelClient.ga4PropertyId,
+      dateFrom: from.toISOString().slice(0, 10),
+      dateTo: to.toISOString().slice(0, 10),
+    }).catch((err) => {
+      console.warn("[funnel] GA4 unavailable:", err instanceof Error ? err.message : err);
+      return null;
+    });
+
+    if (ga4?.source === "ga4") {
+      const paidOrdersRow = await db
+        .select({ count: sql<number>`COUNT(*)::int` })
+        .from(ordersTable)
+        .where(
+          and(
+            eq(ordersTable.clientId, clientId),
+            gte(ordersTable.createdAt, from),
+            lte(ordersTable.createdAt, to),
+            sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`,
+          ),
+        );
+      const paidOrders = Number(paidOrdersRow[0]?.count ?? 0);
+      const counts = {
+        SESSIONS: ga4.sessions,
+        PAGE_VIEW: ga4.pageViews,
+        PRODUCT_VIEW: ga4.productViews,
+        ADD_TO_CART: ga4.addToCarts,
+        CHECKOUT_STARTED: ga4.checkouts,
+        PURCHASE: Math.max(ga4.purchases, paidOrders),
+      };
+      const funnelOrder = [
+        { step: "SESSIONS", label: "Sessões" },
+        { step: "PAGE_VIEW", label: "Visualizações" },
+        { step: "PRODUCT_VIEW", label: "Produtos vistos" },
+        { step: "ADD_TO_CART", label: "Adições ao carrinho" },
+        { step: "CHECKOUT_STARTED", label: "Checkouts iniciados" },
+        { step: "PURCHASE", label: "Pedidos" },
+      ];
+      const steps = funnelOrder.map((step, index) => {
+        const count = counts[step.step as keyof typeof counts] ?? 0;
+        const previous = index === 0 ? count : counts[funnelOrder[index - 1].step as keyof typeof counts] ?? 0;
+        const conversionRate = index === 0 ? 100 : previous > 0 ? (count / previous) * 100 : 0;
+        return {
+          ...step,
+          count,
+          conversionRate,
+          dropOffRate: index === 0 ? 0 : Math.max(0, 100 - conversionRate),
+        };
+      });
+      const overallConversion = ga4.sessions > 0 ? (paidOrders / ga4.sessions) * 100 : 0;
+      let worst = { idx: -1, drop: -1 };
+      for (let i = 1; i < steps.length; i++) {
+        if (steps[i].dropOffRate > worst.drop) worst = { idx: i, drop: steps[i].dropOffRate };
+      }
+      res.json(GetFunnelResponse.parse({
+        steps,
+        overallConversion,
+        insights: [
+          `Funil alimentado pelo GA4 com ${ga4.sessions} sessões no período.`,
+          `Conversão geral de ${overallConversion.toFixed(2)}% calculada por pedidos pagos / sessões.`,
+          ...(worst.idx > 0
+            ? [`Maior queda (${worst.drop.toFixed(1)}%) entre ${steps[worst.idx - 1].label} e ${steps[worst.idx].label}.`]
+            : []),
+        ],
+        avgEventsBeforePurchase: 0,
+        topPaths: [],
+        suggestedActions: buildFunnelSuggestedActions(worst, steps),
+        hasSiteVisitData: ga4.sessions > 0,
+      }));
+      return;
+    }
+  }
 
   try {
     const [client] = await db
@@ -4249,6 +4432,163 @@ router.get("/analytics/geography", async (req, res): Promise<void> => {
 });
 
 // ───────── Drill-down: orders for a specific day ─────────
+
+const GetB2cOrdersQueryParams = z.object({
+  clientId: z.coerce.string().optional(),
+  dateFrom: z.date().optional(),
+  dateTo: z.date().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
+router.get("/analytics/b2c/orders", async (req, res): Promise<void> => {
+  const parsed = GetB2cOrdersQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const page = parsed.data.page;
+  const limit = parsed.data.limit;
+  const offset = (page - 1) * limit;
+  const where = and(
+    eq(ordersTable.clientId, clientId),
+    gte(ordersTable.createdAt, from),
+    lte(ordersTable.createdAt, to),
+  );
+
+  const [rows, [countRow]] = await Promise.all([
+    db
+      .select({
+        id: ordersTable.id,
+        externalId: ordersTable.externalId,
+        status: ordersTable.status,
+        amount: ordersTable.amount,
+        fulfilledAmount: ordersTable.fulfilledAmount,
+        grossAmount: ordersTable.grossAmount,
+        discountAmount: ordersTable.discountAmount,
+        shippingAmount: ordersTable.shippingAmount,
+        refundedAmount: ordersTable.refundedAmount,
+        cancelledAmount: ordersTable.cancelledAmount,
+        requestedQuantity: ordersTable.requestedQuantity,
+        fulfilledQuantity: ordersTable.fulfilledQuantity,
+        createdAt: ordersTable.createdAt,
+        customerId: ordersTable.customerId,
+        customerName: customersTable.name,
+        customerEmail: customersTable.email,
+        customerPhone: customersTable.phone,
+        state: ordersTable.state,
+        city: ordersTable.city,
+      })
+      .from(ordersTable)
+      .leftJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+      .where(where)
+      .orderBy(desc(ordersTable.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(ordersTable)
+      .where(where),
+  ]);
+
+  res.json({
+    rows,
+    page,
+    limit,
+    total: Number(countRow?.count ?? 0),
+  });
+});
+
+router.get("/analytics/b2c/orders/:orderId", async (req, res): Promise<void> => {
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const orderId = z.string().safeParse(req.params.orderId);
+  if (!orderId.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: orderId.error.message, status: 400 });
+    return;
+  }
+
+  const [order] = await db
+    .select({
+      id: ordersTable.id,
+      externalId: ordersTable.externalId,
+      status: ordersTable.status,
+      amount: ordersTable.amount,
+      fulfilledAmount: ordersTable.fulfilledAmount,
+      grossAmount: ordersTable.grossAmount,
+      discountAmount: ordersTable.discountAmount,
+      shippingAmount: ordersTable.shippingAmount,
+      refundedAmount: ordersTable.refundedAmount,
+      cancelledAmount: ordersTable.cancelledAmount,
+      requestedQuantity: ordersTable.requestedQuantity,
+      fulfilledQuantity: ordersTable.fulfilledQuantity,
+      approvalDate: ordersTable.approvalDate,
+      createdAt: ordersTable.createdAt,
+      state: ordersTable.state,
+      city: ordersTable.city,
+      customerId: customersTable.id,
+      customerExternalId: customersTable.externalId,
+      customerName: customersTable.name,
+      customerEmail: customersTable.email,
+      customerPhone: customersTable.phone,
+      customerState: customersTable.state,
+      customerCity: customersTable.city,
+      firstPurchaseAt: customersTable.firstPurchaseAt,
+      lastPurchaseAt: customersTable.lastPurchaseAt,
+      totalOrders: customersTable.totalOrders,
+      totalSpent: customersTable.totalSpent,
+    })
+    .from(ordersTable)
+    .leftJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+    .where(and(eq(ordersTable.id, orderId.data), eq(ordersTable.clientId, clientId)));
+
+  if (!order) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Order not found", status: 404 });
+    return;
+  }
+
+  const items = await db
+    .select({
+      id: orderItemsTable.id,
+      quantity: orderItemsTable.quantity,
+      fulfilledQuantity: orderItemsTable.fulfilledQuantity,
+      priceAtSale: orderItemsTable.priceAtSale,
+      grossPriceAtSale: orderItemsTable.grossPriceAtSale,
+      discountAmount: orderItemsTable.discountAmount,
+      size: orderItemsTable.size,
+      color: orderItemsTable.color,
+      productId: productsTable.id,
+      sku: productsTable.sku,
+      name: productsTable.name,
+      category: productsTable.category,
+      imageUrl: productsTable.imageUrl,
+    })
+    .from(orderItemsTable)
+    .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+    .where(eq(orderItemsTable.orderId, order.id))
+    .orderBy(asc(productsTable.name));
+
+  res.json({
+    order,
+    customer: {
+      id: order.customerId,
+      externalId: order.customerExternalId,
+      name: order.customerName,
+      email: order.customerEmail,
+      phone: order.customerPhone,
+      state: order.customerState,
+      city: order.customerCity,
+      firstPurchaseAt: order.firstPurchaseAt,
+      lastPurchaseAt: order.lastPurchaseAt,
+      totalOrders: order.totalOrders,
+      totalSpent: order.totalSpent,
+    },
+    items,
+  });
+});
 
 router.get("/analytics/orders", async (req, res): Promise<void> => {
   const parsed = GetOrdersByDateQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));

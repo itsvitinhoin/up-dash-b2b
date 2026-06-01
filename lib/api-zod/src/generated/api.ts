@@ -788,6 +788,26 @@ export const GetDashboardResponse = zod.object({
       }),
     )
     .describe("Daily returning-buyer count (prior purchases before window)."),
+  traffic: zod
+    .object({
+      sessions: zod.number(),
+      orders: zod.number(),
+      source: zod.enum(["ga4", "events", "none"]),
+    })
+    .optional()
+    .describe("Traffic denominator used for B2C conversion rate."),
+  dailyPerformance: zod
+    .array(
+      zod.object({
+        date: zod.string(),
+        revenue: zod.number(),
+        orders: zod.number(),
+        sessions: zod.number(),
+        conversionRate: zod.number(),
+      }),
+    )
+    .optional()
+    .describe("Daily revenue, orders, sessions and conversion rate."),
   signals: zod
     .array(
       zod.object({
