@@ -1471,6 +1471,7 @@ type AttributedCampaignCustomer = {
   userId: number;
   name: string | null;
   email: string | null;
+  phone: string | null;
   type: string | null;
   cpf: string | null;
   cnpj: string | null;
@@ -1553,6 +1554,7 @@ type CampaignLocalCustomer = {
   externalId: string | null;
   name: string | null;
   email: string;
+  phone: string | null;
   documentType: "CPF" | "CNPJ" | null;
   registrationStatus: "PENDING" | "APPROVED" | "REJECTED";
   createdAt: Date;
@@ -1696,6 +1698,7 @@ function buildAttributedCampaignCustomers(
       userId,
       name: localCustomer?.name ?? user?.name ?? null,
       email: localCustomer?.email ?? null,
+      phone: localCustomer?.phone ?? null,
       type: user?.type ?? null,
       cpf: maskDocument(user?.cpf, "CPF"),
       cnpj: maskDocument(user?.cnpj, "CNPJ"),
@@ -1789,6 +1792,7 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
         externalId: customersTable.externalId,
         name: customersTable.name,
         email: customersTable.email,
+        phone: customersTable.phone,
         documentType: customersTable.documentType,
         registrationStatus: customersTable.registrationStatus,
         createdAt: customersTable.createdAt,

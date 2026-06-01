@@ -24,6 +24,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   BarChart3,
+  ChevronDown,
   ChevronRight,
   CircleDot,
   DollarSign,
@@ -33,6 +34,7 @@ import {
   Info,
   LogIn,
   Megaphone,
+  MessageCircle,
   MoreHorizontal,
   Package,
   PackageX,
@@ -295,6 +297,7 @@ type CampaignCustomerRow = {
   userId: number;
   name: string | null;
   email: string | null;
+  phone: string | null;
   type: string | null;
   cpf: string | null;
   cnpj: string | null;
@@ -514,6 +517,52 @@ function attributionLabel(value: CustomerTimelineEvent["attributionType"]) {
   return null;
 }
 
+type TimelineListItem =
+  | { type: "event"; event: CustomerTimelineEvent }
+  | { type: "product_group"; id: string; events: CustomerTimelineEvent[] };
+
+function isProductTimelineEvent(event: CustomerTimelineEvent) {
+  return ["product_view", "product_item_impression", "product_item_click"].includes(event.eventName);
+}
+
+function groupProductTimelineEvents(events: CustomerTimelineEvent[]): TimelineListItem[] {
+  const items: TimelineListItem[] = [];
+  let productEvents: CustomerTimelineEvent[] = [];
+
+  const flush = () => {
+    if (productEvents.length === 1) {
+      const event = productEvents[0];
+      if (event) items.push({ type: "event", event });
+    } else if (productEvents.length > 1) {
+      items.push({
+        type: "product_group",
+        id: `products_${productEvents[0]?.id ?? items.length}`,
+        events: productEvents,
+      });
+    }
+    productEvents = [];
+  };
+
+  for (const event of events) {
+    if (isProductTimelineEvent(event)) {
+      productEvents.push(event);
+      continue;
+    }
+    flush();
+    items.push({ type: "event", event });
+  }
+
+  flush();
+  return items;
+}
+
+function whatsappDirectUrl(phone: string | null | undefined): string | null {
+  const digits = phone?.replace(/\D/g, "") ?? "";
+  if (!digits) return null;
+  const normalized = digits.length <= 11 ? `55${digits}` : digits;
+  return `https://wa.me/${normalized}`;
+}
+
 function CampaignCustomersPanel({
   data,
   isLoading,
@@ -560,6 +609,11 @@ function CampaignCustomersPanel({
     },
     enabled: !!timelineRow,
   });
+  const groupedTimelineItems = useMemo(
+    () => groupProductTimelineEvents(timelineData?.timeline ?? []),
+    [timelineData?.timeline],
+  );
+  const timelineWhatsappUrl = whatsappDirectUrl(timelineRow?.phone);
 
   const visibleRows = useMemo(() => {
     const rows = [...(data?.rows ?? [])].filter((row) => {
@@ -965,6 +1019,22 @@ function CampaignCustomersPanel({
             </Alert>
           ) : timelineData && timelineData.timeline.length > 0 ? (
             <div className="space-y-4">
+              <div className="flex justify-end">
+                {timelineWhatsappUrl ? (
+                  <Button asChild size="sm" className="w-full sm:w-auto">
+                    <a href={timelineWhatsappUrl} target="_blank" rel="noopener noreferrer">
+                      <MessageCircle className="h-4 w-4" />
+                      Enviar mensagem no WhatsApp
+                    </a>
+                  </Button>
+                ) : (
+                  <Button type="button" size="sm" disabled className="w-full sm:w-auto">
+                    <MessageCircle className="h-4 w-4" />
+                    WhatsApp sem telefone
+                  </Button>
+                )}
+              </div>
+
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-lg border border-border bg-muted/20 p-3">
                   <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Eventos</p>
@@ -985,7 +1055,69 @@ function CampaignCustomersPanel({
               </div>
 
               <div className="space-y-3">
-                {timelineData.timeline.map((event) => {
+                {groupedTimelineItems.map((item) => {
+                  if (item.type === "product_group") {
+                    const firstEvent = item.events[0]!;
+                    const lastEvent = item.events[item.events.length - 1]!;
+                    const uniqueProducts = new Set(
+                      item.events.map((event) => event.productName ?? event.productSku ?? event.id),
+                    ).size;
+                    const totalViews = item.events.reduce((sum, event) => sum + event.totalEvents, 0);
+                    return (
+                      <details key={item.id} className="group rounded-lg border border-border bg-card">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/10">
+                              <Package className="h-5 w-5 text-blue-400" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold">Produtos visualizados</p>
+                              <p className="text-xs text-muted-foreground">
+                                {formatTimelineDate(firstEvent.occurredAt)}
+                                {lastEvent.id !== firstEvent.id ? ` - ${formatTimelineDate(lastEvent.occurredAt)}` : ""}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {formatNumber(uniqueProducts)} produto(s), {formatNumber(totalViews)} visualização(ões)
+                              </p>
+                            </div>
+                          </div>
+                          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                        </summary>
+                        <div className="space-y-2 border-t border-border p-3 pt-2">
+                          {item.events.map((event) => (
+                            <div key={event.id} className="flex gap-3 rounded-md bg-muted/20 p-2">
+                              {event.productImageUrl ? (
+                                <img
+                                  src={event.productImageUrl}
+                                  alt={event.productName ?? event.eventLabel}
+                                  className="h-10 w-10 shrink-0 rounded-md border border-border object-cover"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/10">
+                                  <Package className="h-4 w-4 text-blue-400" />
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1 text-xs">
+                                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                  <p className="truncate font-medium text-foreground" title={event.productName ?? event.eventLabel}>
+                                    {event.productName ?? event.eventLabel}
+                                  </p>
+                                  <span className="shrink-0 text-muted-foreground">{formatTimelineDate(event.occurredAt)}</span>
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+                                  {event.productSku && <span>SKU: {event.productSku}</span>}
+                                  <span>Eventos: {formatNumber(event.totalEvents)}</span>
+                                  {event.deviceType && <span>Dispositivo: {event.deviceType}</span>}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    );
+                  }
+                  const event = item.event;
                   const attribution = attributionLabel(event.attributionType);
                   const meta = timelineEventMeta(event.eventName);
                   const Icon = meta.icon;
