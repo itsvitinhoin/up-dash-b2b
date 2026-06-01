@@ -30,7 +30,7 @@ export function FloatingAiAssistant() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     newMessage(
       "assistant",
-      "Oi. Eu sou o ChatGPT do UP Dash e consulto os dados da loja selecionada. Pode perguntar, por exemplo: faturamento de ontem, produtos mais vendidos nos últimos 7 dias ou cadastros de 28/05.",
+      "Oi. Eu sou o UP Agent e consulto os dados da loja selecionada. Pode perguntar, por exemplo: faturamento de ontem, produtos mais vendidos nos últimos 7 dias ou cadastros de 28/05.",
     ),
   ]);
   const [isSending, setIsSending] = useState(false);
@@ -134,7 +134,7 @@ export function FloatingAiAssistant() {
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 <div>
-                  <p className="text-sm font-semibold">ChatGPT UP Dash</p>
+                  <p className="text-sm font-semibold">UP Agent</p>
                   <p className="text-[11px] text-muted-foreground">Estratégias com dados da loja</p>
                 </div>
               </div>
