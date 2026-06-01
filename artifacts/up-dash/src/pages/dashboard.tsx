@@ -1276,7 +1276,7 @@ function CampaignCustomersPanel({
 }
 
 export default function DashboardPage() {
-  const { selectedClientId, user } = useAuth();
+  const { selectedClientId, user, selectedDashboardMode } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const queryClient = useQueryClient();
   const [chartMetric, setChartMetric] = useState<ChartMetric>("revenue");
@@ -1498,6 +1498,7 @@ export default function DashboardPage() {
   });
   const sparkNewBuyers = data?.newBuyersOverTime?.map((p) => p.value) ?? [];
   const sparkReturning = data?.returningBuyersOverTime?.map((p) => p.value) ?? [];
+  const isB2C = selectedDashboardMode === "B2C";
 
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const fadeVariants = withReducedMotion(fadeInUp, reduced);
@@ -1547,7 +1548,7 @@ export default function DashboardPage() {
           testId="kpi-revenue"
           icon={DollarSign}
           iconClass="bg-blue-500/15 text-blue-400"
-          label="Total revenue"
+          label={isB2C ? "Valor pago" : "Total revenue"}
           value={data?.kpis.revenue ?? 0}
           format={(v) => formatCurrencySmart(v)}
           unit="BRL"
@@ -1575,8 +1576,8 @@ export default function DashboardPage() {
           sparkValues={sparkOrders}
           sparkColor="#a78bfa"
           sub={[
-            { label: "Leads", value: data ? formatNumber(data.kpis.leads) : "—" },
-            { label: "Approved leads", value: data ? formatNumber(data.kpis.approvedLeads) : "—" },
+            { label: isB2C ? "Customers" : "Leads", value: data ? formatNumber(isB2C ? data.kpis.customers : data.kpis.leads) : "—" },
+            { label: isB2C ? "Paid orders" : "Approved leads", value: data ? formatNumber(isB2C ? data.kpis.orders : data.kpis.approvedLeads) : "—" },
           ]}
           isLoading={isLoading}
         />
@@ -1594,7 +1595,7 @@ export default function DashboardPage() {
           sparkColor="#34d399"
           sub={[
             { label: "Repeat customers", value: data ? formatNumber(data.kpis.repeatCustomers) : "—" },
-            { label: "Approval rate", value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
+            { label: isB2C ? "Paid rate" : "Approval rate", value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
           ]}
           isLoading={isLoading}
         />
@@ -1610,7 +1611,7 @@ export default function DashboardPage() {
           sparkValues={sparkConv}
           sparkColor="#38bdf8"
           sub={[
-            { label: "Leads", value: data ? formatNumber(data.kpis.leads) : "—" },
+            { label: isB2C ? "Customers" : "Leads", value: data ? formatNumber(isB2C ? data.kpis.customers : data.kpis.leads) : "—" },
             { label: "Orders", value: data ? formatNumber(data.kpis.orders) : "—" },
           ]}
           isLoading={isLoading}
@@ -1633,7 +1634,9 @@ export default function DashboardPage() {
               <DollarSign className="h-4 w-4 text-blue-400" />
             </div>
             <div className="min-w-0">
-              <p className="text-xs text-muted-foreground leading-none">Requested revenue</p>
+              <p className="text-xs text-muted-foreground leading-none">
+                {isB2C ? "Valor faturado" : "Requested revenue"}
+              </p>
               {isLoading ? (
                 <Skeleton className="h-6 w-24 mt-1" />
               ) : (
@@ -1648,7 +1651,7 @@ export default function DashboardPage() {
           ) : (
             <>
               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                <span>Approved</span>
+                <span>{isB2C ? "Pago" : "Approved"}</span>
                 <span className="font-medium text-foreground tabular-nums">
                   {formatCurrency(data?.kpis.revenue ?? 0)}
                 </span>
@@ -1665,8 +1668,8 @@ export default function DashboardPage() {
               </div>
               <p className="text-[11px] text-muted-foreground mt-1">
                 {(data?.kpis.requestedRevenue ?? 0) > 0
-                  ? `${(((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100).toFixed(1)}% fulfillment rate`
-                  : "No requested revenue"}
+                  ? `${(((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100).toFixed(1)}% ${isB2C ? "paid rate" : "fulfillment rate"}`
+                  : isB2C ? "No invoiced revenue" : "No requested revenue"}
               </p>
             </>
           )}

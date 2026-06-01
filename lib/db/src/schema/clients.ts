@@ -32,6 +32,15 @@ export const clientsTable = pgTable(
     metaAdsApiKey: text("meta_ads_api_key"),
     metaAdAccountId: text("meta_ad_account_id"),
     upZeroApiKey: text("up_zero_api_key"),
+    dashboardType: text("dashboard_type", { enum: ["B2B", "B2C"] }).notNull().default("B2B"),
+    commercePlatform: text("commerce_platform", { enum: ["UPZERO", "NUVEMSHOP", "MANUAL"] })
+      .notNull()
+      .default("UPZERO"),
+    nuvemshopStoreId: text("nuvemshop_store_id"),
+    nuvemshopAccessToken: text("nuvemshop_access_token"),
+    ga4MeasurementId: text("ga4_measurement_id"),
+    ga4PropertyId: text("ga4_property_id"),
+    ga4ApiSecret: text("ga4_api_secret"),
     currency: text("currency").notNull().default("BRL"),
     locale: text("locale").notNull().default("pt-BR"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

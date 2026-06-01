@@ -16,6 +16,20 @@ export interface CreateClientRequest {
   metaAdAccountId?: string;
   /** Optional UP Zero API key for syncing live orders and customers. */
   upZeroApiKey?: string;
+  /** Dashboard family for this client. Defaults to B2B. */
+  dashboardType?: "B2B" | "B2C";
+  /** Primary commerce data source. Defaults from dashboardType. */
+  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  /** Optional Nuvemshop store id for B2C clients. */
+  nuvemshopStoreId?: string;
+  /** Optional Nuvemshop access token for B2C clients. Stored server-side and never returned. */
+  nuvemshopAccessToken?: string;
+  /** Optional GA4 measurement id for B2C clients. */
+  ga4MeasurementId?: string;
+  /** Optional GA4 property id for B2C report reads. */
+  ga4PropertyId?: string;
+  /** Optional GA4 API secret for B2C clients. Stored server-side and never returned. */
+  ga4ApiSecret?: string;
   /** ISO 4217 currency code (default BRL) */
   currency?: string;
   /** BCP 47 locale (default pt-BR) */

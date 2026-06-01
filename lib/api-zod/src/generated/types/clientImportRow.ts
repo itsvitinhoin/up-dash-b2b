@@ -13,6 +13,10 @@ export interface ClientImportRow {
   name: string;
   email: string;
   apiKey: string;
+  /** Dashboard family for this client. Defaults to B2B. */
+  dashboardType?: "B2B" | "B2C";
+  /** Primary commerce data source. Defaults from dashboardType. */
+  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
   /** ISO 4217 currency code (default BRL) */
   currency?: string;
   /** BCP 47 locale (default pt-BR) */

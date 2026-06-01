@@ -50,6 +50,7 @@ import {
   BarChart2,
   Trash2,
   UserRound,
+  Store,
 } from "lucide-react";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
@@ -1007,8 +1008,99 @@ function UpZeroSyncButton({
   );
 }
 
+type NuvemshopSyncResponse = {
+  jobId: string;
+  result?: {
+    customersCreated: number;
+    customersUpdated: number;
+    ordersCreated: number;
+    ordersUpdated: number;
+    productsCreated: number;
+    productsUpdated: number;
+    orderItemsSynced: number;
+    paidOrders: number;
+    invoicedRevenue: number;
+    paidRevenue: number;
+    errors: string[];
+  };
+};
+
+function NuvemshopSyncButton({
+  clientId,
+  clientName,
+}: {
+  clientId: string;
+  clientName: string;
+}) {
+  const [isSyncing, setIsSyncing] = useState(false);
+  const queryClient = useQueryClient();
+
+  async function handleSync() {
+    setIsSyncing(true);
+    const toastId = `nuvemshop-sync-${clientId}`;
+    toast.loading(`Syncing ${clientName} from Nuvemshop...`, {
+      id: toastId,
+      description: "Importing orders, customers, products and paid revenue.",
+    });
+    try {
+      const data = await customFetch<NuvemshopSyncResponse>(
+        `/api/clients/${clientId}/sync/nuvemshop`,
+        { method: "POST" },
+      );
+      const result = data.result;
+      queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+      if (!result) {
+        toast.success(`Nuvemshop sync started for ${clientName}`, { id: toastId });
+        return;
+      }
+      const desc = [
+        `${result.ordersCreated} new orders`,
+        `${result.ordersUpdated} updated`,
+        `${result.paidOrders} paid`,
+        `${result.productsCreated + result.productsUpdated} products`,
+      ].join(" · ");
+      if (result.errors.length > 0) {
+        toast.warning(`Nuvemshop sync complete for ${clientName}`, {
+          id: toastId,
+          description: `${desc} · ${result.errors.length} warnings`,
+        });
+      } else {
+        toast.success(`Nuvemshop sync complete for ${clientName}`, {
+          id: toastId,
+          description: desc,
+        });
+      }
+    } catch (err) {
+      toast.error(`Could not sync Nuvemshop for ${clientName}`, {
+        id: toastId,
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 gap-1 text-xs text-blue-400 hover:text-blue-300"
+      onClick={handleSync}
+      disabled={isSyncing}
+      title="Sync from Nuvemshop"
+    >
+      {isSyncing ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <RefreshCw className="h-3 w-3" />
+      )}
+      {isSyncing ? "Syncing..." : "Sync"}
+    </Button>
+  );
+}
+
 export default function ClientsPage() {
-  const { user } = useAuth();
+  const { user, selectedDashboardMode, setSelectedDashboardMode } = useAuth();
   const queryClient = useQueryClient();
   const { dateRange } = useDashboardFilters();
   const [search, setSearch] = useState("");
@@ -1020,8 +1112,16 @@ export default function ClientsPage() {
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newApiKey, setNewApiKey] = useState("");
+  const [newMetaAdsApiKey, setNewMetaAdsApiKey] = useState("");
   const [newMetaAdAccountId, setNewMetaAdAccountId] = useState("");
   const [newCurrencyCode, setNewCurrencyCode] = useState("BRL");
+  const [newDashboardType, setNewDashboardType] = useState<"B2B" | "B2C">(selectedDashboardMode);
+  const [newNuvemshopStoreId, setNewNuvemshopStoreId] = useState("");
+  const [newNuvemshopAccessToken, setNewNuvemshopAccessToken] = useState("");
+  const [newGa4MeasurementId, setNewGa4MeasurementId] = useState("");
+  const [newGa4PropertyId, setNewGa4PropertyId] = useState("");
+  const [newGa4ApiSecret, setNewGa4ApiSecret] = useState("");
+  const [showB2CSecrets, setShowB2CSecrets] = useState(false);
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupMatch, setLookupMatch] = useState<string | null>(null);
 
@@ -1058,6 +1158,10 @@ export default function ClientsPage() {
   const createMutation = useCreateClient();
   const importMutation = useImportClients();
 
+  useEffect(() => {
+    if (!isDialogOpen) setNewDashboardType(selectedDashboardMode);
+  }, [isDialogOpen, selectedDashboardMode]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [csvRows, setCsvRows] = useState<CsvRow[]>([]);
@@ -1086,6 +1190,8 @@ export default function ClientsPage() {
           name: r.name,
           email: r.email,
           apiKey: r.apiKey,
+          dashboardType: selectedDashboardMode,
+          commercePlatform: selectedDashboardMode === "B2C" ? "NUVEMSHOP" : "UPZERO",
           ...(r.currency ? { currency: r.currency } : {}),
           ...(r.locale ? { locale: r.locale } : {}),
         })),
@@ -1115,6 +1221,7 @@ export default function ClientsPage() {
       search: debouncedSearch || undefined,
       page,
       limit,
+      dashboardType: selectedDashboardMode,
       dateFrom: format(dateRange.from, "yyyy-MM-dd"),
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
     },
@@ -1125,6 +1232,7 @@ export default function ClientsPage() {
       }),
     }
   );
+  const clients = Array.isArray(data?.data) ? data.data : [];
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1137,7 +1245,25 @@ export default function ClientsPage() {
           name: newName,
           email: newEmail,
           apiKey: newApiKey,
+          dashboardType: newDashboardType,
+          commercePlatform: newDashboardType === "B2C" ? "NUVEMSHOP" : "UPZERO",
+          ...(newMetaAdsApiKey.trim() ? { metaAdsApiKey: newMetaAdsApiKey.trim() } : {}),
           ...(newMetaAdAccountId.trim() ? { metaAdAccountId: newMetaAdAccountId.trim() } : {}),
+          ...(newDashboardType === "B2C" && newNuvemshopStoreId.trim()
+            ? { nuvemshopStoreId: newNuvemshopStoreId.trim() }
+            : {}),
+          ...(newDashboardType === "B2C" && newNuvemshopAccessToken.trim()
+            ? { nuvemshopAccessToken: newNuvemshopAccessToken.trim() }
+            : {}),
+          ...(newDashboardType === "B2C" && newGa4MeasurementId.trim()
+            ? { ga4MeasurementId: newGa4MeasurementId.trim() }
+            : {}),
+          ...(newDashboardType === "B2C" && newGa4PropertyId.trim()
+            ? { ga4PropertyId: newGa4PropertyId.trim() }
+            : {}),
+          ...(newDashboardType === "B2C" && newGa4ApiSecret.trim()
+            ? { ga4ApiSecret: newGa4ApiSecret.trim() }
+            : {}),
           currency: picked.code,
           locale: picked.locale,
         },
@@ -1148,8 +1274,16 @@ export default function ClientsPage() {
           setNewName("");
           setNewEmail("");
           setNewApiKey("");
+          setNewMetaAdsApiKey("");
           setNewMetaAdAccountId("");
           setNewCurrencyCode("BRL");
+          setNewDashboardType(selectedDashboardMode);
+          setNewNuvemshopStoreId("");
+          setNewNuvemshopAccessToken("");
+          setNewGa4MeasurementId("");
+          setNewGa4PropertyId("");
+          setNewGa4ApiSecret("");
+          setShowB2CSecrets(false);
           setLookupMatch(null);
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
         },
@@ -1265,8 +1399,16 @@ export default function ClientsPage() {
             setNewName("");
             setNewEmail("");
             setNewApiKey("");
+            setNewMetaAdsApiKey("");
             setNewMetaAdAccountId("");
             setNewCurrencyCode("BRL");
+            setNewDashboardType(selectedDashboardMode);
+            setNewNuvemshopStoreId("");
+            setNewNuvemshopAccessToken("");
+            setNewGa4MeasurementId("");
+            setNewGa4PropertyId("");
+            setNewGa4ApiSecret("");
+            setShowB2CSecrets(false);
             setLookupMatch(null);
             setIsLookingUp(false);
           }
@@ -1276,7 +1418,7 @@ export default function ClientsPage() {
               <Plus className="mr-2 h-4 w-4" /> New Client
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[425px]">
+          <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-[520px]">
             <form onSubmit={handleCreate}>
               <DialogHeader>
                 <DialogTitle>Create New Client</DialogTitle>
@@ -1285,6 +1427,18 @@ export default function ClientsPage() {
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="dashboardType">Dashboard</Label>
+                  <Select value={newDashboardType} onValueChange={(value) => setNewDashboardType(value === "B2C" ? "B2C" : "B2B")}>
+                    <SelectTrigger id="dashboardType">
+                      <SelectValue placeholder="Select dashboard" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="B2B">B2B · UP Zero</SelectItem>
+                      <SelectItem value="B2C">B2C · Nuvemshop</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="grid gap-2">
                   <Label htmlFor="name">Company Name</Label>
                   <Input
@@ -1307,7 +1461,7 @@ export default function ClientsPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="apiKey">API Key (Integration)</Label>
+                  <Label htmlFor="apiKey">API Key {newDashboardType === "B2C" ? "(Internal)" : "(Integration)"}</Label>
                   <div className="flex gap-2">
                     <div className="relative flex-1">
                       <Input
@@ -1359,9 +1513,100 @@ export default function ClientsPage() {
                     className="font-mono text-xs"
                   />
                   <p className="text-xs text-muted-foreground">
-                    A Meta API key is configured globally and reused for every client.
+                    If a global Meta token is not configured, paste a client-specific token below.
                   </p>
                 </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="metaAdsApiKey">
+                    Meta access token{" "}
+                    <span className="text-xs text-muted-foreground font-normal">(optional)</span>
+                  </Label>
+                  <Input
+                    id="metaAdsApiKey"
+                    type={showB2CSecrets ? "text" : "password"}
+                    value={newMetaAdsApiKey}
+                    onChange={(e) => setNewMetaAdsApiKey(e.target.value)}
+                    placeholder="Paste token if no global token is configured"
+                    className="font-mono text-xs"
+                  />
+                </div>
+                {newDashboardType === "B2C" && (
+                  <div className="rounded-md border border-border/70 bg-muted/20 p-3">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">B2C integrations</p>
+                        <p className="text-xs text-muted-foreground">
+                          Nuvemshop and GA4 credentials are stored server-side.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => setShowB2CSecrets((value) => !value)}
+                        title={showB2CSecrets ? "Hide secrets" : "Show secrets"}
+                      >
+                        {showB2CSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                    <div className="grid gap-3">
+                      <div className="grid gap-2">
+                        <Label htmlFor="nuvemshopStoreId">Nuvemshop store ID</Label>
+                        <Input
+                          id="nuvemshopStoreId"
+                          value={newNuvemshopStoreId}
+                          onChange={(e) => setNewNuvemshopStoreId(e.target.value)}
+                          placeholder="5226087"
+                          inputMode="numeric"
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="nuvemshopAccessToken">Nuvemshop access token</Label>
+                        <Input
+                          id="nuvemshopAccessToken"
+                          type={showB2CSecrets ? "text" : "password"}
+                          value={newNuvemshopAccessToken}
+                          onChange={(e) => setNewNuvemshopAccessToken(e.target.value)}
+                          placeholder="Paste access token"
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="ga4MeasurementId">GA4 measurement ID</Label>
+                        <Input
+                          id="ga4MeasurementId"
+                          value={newGa4MeasurementId}
+                          onChange={(e) => setNewGa4MeasurementId(e.target.value)}
+                          placeholder="G-XXXXXXXXXX"
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="ga4PropertyId">GA4 property ID</Label>
+                        <Input
+                          id="ga4PropertyId"
+                          value={newGa4PropertyId}
+                          onChange={(e) => setNewGa4PropertyId(e.target.value)}
+                          placeholder="387817325"
+                          inputMode="numeric"
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="ga4ApiSecret">GA4 API secret</Label>
+                        <Input
+                          id="ga4ApiSecret"
+                          type={showB2CSecrets ? "text" : "password"}
+                          value={newGa4ApiSecret}
+                          onChange={(e) => setNewGa4ApiSecret(e.target.value)}
+                          placeholder="Paste GA4 API secret"
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="grid gap-2">
                   <Label htmlFor="currency">Currency &amp; Locale</Label>
                   <Select value={newCurrencyCode} onValueChange={setNewCurrencyCode}>
@@ -1389,7 +1634,13 @@ export default function ClientsPage() {
                     createMutation.isPending ||
                     !newName.trim() ||
                     !newEmail.trim() ||
-                    !newApiKey.trim()
+                    !newApiKey.trim() ||
+                    (newDashboardType === "B2C" &&
+                      (!newNuvemshopStoreId.trim() ||
+                        !newNuvemshopAccessToken.trim() ||
+                        !newGa4MeasurementId.trim() ||
+                        !newGa4PropertyId.trim() ||
+                        !newGa4ApiSecret.trim()))
                   }
                 >
                   {createMutation.isPending ? "Creating..." : "Save Client"}
@@ -1402,17 +1653,35 @@ export default function ClientsPage() {
 
       <Card>
         <CardContent className="p-4">
-          <div className="relative w-full max-w-sm">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search clients..."
-              className="pl-9"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
+          <div className="flex flex-wrap items-center gap-3">
+            <Select
+              value={selectedDashboardMode}
+              onValueChange={(value) => {
+                setSelectedDashboardMode(value === "B2C" ? "B2C" : "B2B");
+                setNewDashboardType(value === "B2C" ? "B2C" : "B2B");
                 setPage(1);
               }}
-            />
+            >
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="B2B">B2B clients</SelectItem>
+                <SelectItem value="B2C">B2C clients</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder={`Search ${selectedDashboardMode} clients...`}
+                className="pl-9"
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -1429,7 +1698,7 @@ export default function ClientsPage() {
               </div>
               <Badge variant="outline" className="gap-1.5">
                 <KeyRound className="h-3 w-3" />
-                {formatNumber((data?.data ?? []).reduce((sum, client) => sum + (client.clientLoginCount ?? 0), 0))} acessos
+                {formatNumber(clients.reduce((sum, client) => sum + (client.clientLoginCount ?? 0), 0))} acessos
               </Badge>
             </div>
             {isLoading && !data ? (
@@ -1438,11 +1707,11 @@ export default function ClientsPage() {
                   <Skeleton key={i} className="h-20 rounded-md" />
                 ))}
               </div>
-            ) : data?.data.length === 0 ? (
+            ) : clients.length === 0 ? (
               <p className="text-sm text-muted-foreground">Nenhum cliente encontrado para criar acesso.</p>
             ) : (
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                {data?.data.map((client) => (
+                {clients.map((client) => (
                   <div
                     key={`access-${client.id}`}
                     className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-card/50 p-3"
@@ -1492,6 +1761,7 @@ export default function ClientsPage() {
                 <TableRow>
                   <TableHead>Client</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Dashboard</TableHead>
                   <TableHead>Login</TableHead>
                   <TableHead className="text-right">Revenue</TableHead>
                   <TableHead className="text-right">Orders</TableHead>
@@ -1511,6 +1781,7 @@ export default function ClientsPage() {
                     <TableRow key={i}>
                       <TableCell><Skeleton className="h-4 w-32" /><Skeleton className="h-3 w-24 mt-1" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+                      <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-24 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-24 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
@@ -1524,17 +1795,17 @@ export default function ClientsPage() {
                       <TableCell />
                     </TableRow>
                   ))
-                ) : data?.data.length === 0 ? (
+                ) : clients.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="h-32 text-center text-muted-foreground">
+                    <TableCell colSpan={14} className="h-32 text-center text-muted-foreground">
                       <div className="flex flex-col items-center justify-center">
                         <Building2 className="h-8 w-8 mb-2 text-muted-foreground/50" />
-                        No clients found.
+                        No {selectedDashboardMode} clients found.
                       </div>
                     </TableCell>
                   </TableRow>
                 ) : (
-                  data?.data.map((client) => (
+                  clients.map((client) => (
                     <TableRow key={client.id} data-testid={`clients-row-${client.id}`}>
                       <TableCell>
                         <div className="font-medium">{client.name}</div>
@@ -1543,6 +1814,16 @@ export default function ClientsPage() {
                       <TableCell>
                         <Badge variant={client.isActive ? 'default' : 'secondary'}>
                           {client.isActive ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="gap-1">
+                          {client.dashboardType === "B2C" ? (
+                            <Store className="h-3 w-3" />
+                          ) : (
+                            <Building2 className="h-3 w-3" />
+                          )}
+                          {client.dashboardType}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -1608,16 +1889,42 @@ export default function ClientsPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1 flex-wrap">
-                          <UpZeroKeyDialog
-                            clientId={client.id}
-                            clientName={client.name}
-                            currentKey={client.upZeroApiKey}
-                          />
-                          {client.upZeroApiKey && (
-                            <UpZeroSyncButton
-                              clientId={client.id}
-                              clientName={client.name}
-                            />
+                          {client.dashboardType === "B2B" ? (
+                            <>
+                              <UpZeroKeyDialog
+                                clientId={client.id}
+                                clientName={client.name}
+                                currentKey={client.upZeroApiKey}
+                              />
+                              {client.upZeroApiKey && (
+                                <UpZeroSyncButton
+                                  clientId={client.id}
+                                  clientName={client.name}
+                                />
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <Badge
+                                variant={client.hasNuvemshopIntegration ? "default" : "secondary"}
+                                className="h-7 gap-1 text-xs"
+                              >
+                                <Store className="h-3 w-3" />
+                                {client.hasNuvemshopIntegration ? "Nuvemshop ✓" : "Nuvemshop"}
+                              </Badge>
+                              <Badge
+                                variant={client.hasGa4Integration ? "default" : "secondary"}
+                                className="h-7 gap-1 text-xs"
+                              >
+                                GA4{client.hasGa4Integration ? " ✓" : ""}
+                              </Badge>
+                              {client.hasNuvemshopIntegration && (
+                                <NuvemshopSyncButton
+                                  clientId={client.id}
+                                  clientName={client.name}
+                                />
+                              )}
+                            </>
                           )}
                           <MetaAdsKeyDialog
                             clientId={client.id}

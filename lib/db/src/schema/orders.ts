@@ -31,6 +31,11 @@ export const ordersTable = pgTable(
     fulfilledQuantity: integer("fulfilled_quantity").notNull().default(0),
     amount: doublePrecision("amount").notNull(),
     fulfilledAmount: doublePrecision("fulfilled_amount").notNull().default(0),
+    grossAmount: doublePrecision("gross_amount").notNull().default(0),
+    discountAmount: doublePrecision("discount_amount").notNull().default(0),
+    shippingAmount: doublePrecision("shipping_amount").notNull().default(0),
+    refundedAmount: doublePrecision("refunded_amount").notNull().default(0),
+    cancelledAmount: doublePrecision("cancelled_amount").notNull().default(0),
     status: text("status", {
       enum: ["PENDING", "APPROVED", "REJECTED", "SHIPPED", "DELIVERED"],
     })
@@ -77,6 +82,8 @@ export const orderItemsTable = pgTable(
     quantity: integer("quantity").notNull(),
     fulfilledQuantity: integer("fulfilled_quantity").notNull().default(0),
     priceAtSale: doublePrecision("price_at_sale").notNull(),
+    grossPriceAtSale: doublePrecision("gross_price_at_sale").notNull().default(0),
+    discountAmount: doublePrecision("discount_amount").notNull().default(0),
     size: text("size"),
     color: text("color"),
   },

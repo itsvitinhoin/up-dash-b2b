@@ -127,7 +127,7 @@ const EXTRA_FILTER_LABELS: Partial<Record<keyof DashboardFilters, string>> = {
 };
 
 export function FilterBar() {
-  const { user, selectedClientId } = useAuth();
+  const { user, selectedClientId, selectedDashboardMode } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { dateRange, filters, setFilter, resetFilters, applyView, hasAny } =
@@ -143,7 +143,7 @@ export function FilterBar() {
 
   const { data: sellers } = useGetSellers(
     { clientId, limit: 50 },
-    { query: queryOpts({ enabled }) },
+    { query: queryOpts({ enabled: enabled && selectedDashboardMode === "B2B" }) },
   );
   const sellerOptions = useMemo(
     () => (sellers ?? []).map((s) => ({ value: s.id, label: s.name })),
@@ -180,6 +180,22 @@ export function FilterBar() {
     if (!popoverOpen) setNewName("");
   }, [popoverOpen]);
 
+  useEffect(() => {
+    if (selectedDashboardMode === "B2C") {
+      if (filters.sellerId) setFilter("sellerId", null);
+      if (filters.utmSource) setFilter("utmSource", null);
+      if (filters.utmMedium) setFilter("utmMedium", null);
+      if (filters.utmCampaign) setFilter("utmCampaign", null);
+    }
+  }, [
+    filters.sellerId,
+    filters.utmCampaign,
+    filters.utmMedium,
+    filters.utmSource,
+    selectedDashboardMode,
+    setFilter,
+  ]);
+
   const activeChips = useMemo(() => {
     const chips: { key: keyof DashboardFilters; label: string; value: string }[] = [];
     if (filters.category)
@@ -188,13 +204,13 @@ export function FilterBar() {
       chips.push({ key: "channel", label: "Channel", value: labelFor(CHANNEL_OPTIONS, filters.channel) });
     if (filters.segment)
       chips.push({ key: "segment", label: "Segment", value: labelFor(SEGMENT_OPTIONS, filters.segment) });
-    if (filters.sellerId)
+    if (selectedDashboardMode === "B2B" && filters.sellerId)
       chips.push({ key: "sellerId", label: "Seller", value: labelFor(sellerOptions, filters.sellerId) });
-    if (filters.utmSource)
+    if (selectedDashboardMode === "B2B" && filters.utmSource)
       chips.push({ key: "utmSource", label: "UTM Source", value: labelFor(UTM_SOURCE_OPTIONS, filters.utmSource) });
-    if (filters.utmMedium)
+    if (selectedDashboardMode === "B2B" && filters.utmMedium)
       chips.push({ key: "utmMedium", label: "UTM Medium", value: labelFor(UTM_MEDIUM_OPTIONS, filters.utmMedium) });
-    if (filters.utmCampaign)
+    if (selectedDashboardMode === "B2B" && filters.utmCampaign)
       chips.push({ key: "utmCampaign", label: "UTM Campaign", value: filters.utmCampaign });
     if (filters.state)
       chips.push({ key: "state", label: "State", value: filters.state });
@@ -209,12 +225,14 @@ export function FilterBar() {
     if (filters.creative)
       chips.push({ key: "creative", label: "Creative", value: filters.creative });
     return chips;
-  }, [filters, sellerOptions]);
+  }, [filters, selectedDashboardMode, sellerOptions]);
 
   const extraActiveCount = useMemo(() => {
-    const extraKeys: (keyof DashboardFilters)[] = ["utmSource","utmMedium","utmCampaign","state","city","product","size","color","creative"];
+    const extraKeys: (keyof DashboardFilters)[] = selectedDashboardMode === "B2B"
+      ? ["utmSource","utmMedium","utmCampaign","state","city","product","size","color","creative"]
+      : ["state","city","product","size","color","creative"];
     return extraKeys.filter((k) => !!filters[k]).length;
-  }, [filters]);
+  }, [filters, selectedDashboardMode]);
 
   const saveCurrentFilters = () => ({
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
@@ -260,13 +278,15 @@ export function FilterBar() {
         onChange={(v) => setFilter("segment", v)}
         testId="filter-segment"
       />
-      <FilterSelect
-        placeholder="Seller"
-        value={filters.sellerId}
-        options={sellerOptions}
-        onChange={(v) => setFilter("sellerId", v)}
-        testId="filter-seller"
-      />
+      {selectedDashboardMode === "B2B" && (
+        <FilterSelect
+          placeholder="Seller"
+          value={filters.sellerId}
+          options={sellerOptions}
+          onChange={(v) => setFilter("sellerId", v)}
+          testId="filter-seller"
+        />
+      )}
 
       {/* More Filters popover */}
       <Popover open={moreOpen} onOpenChange={setMoreOpen}>
@@ -288,44 +308,57 @@ export function FilterBar() {
         </PopoverTrigger>
         <PopoverContent align="start" className="w-96 p-4" data-testid="filter-more-popover">
           <div className="space-y-4">
-            {/* Attribution group */}
-            <div>
-              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Attribution</p>
-              <div className="grid grid-cols-2 gap-2">
-                <FilterSelect
-                  placeholder="UTM Source"
-                  value={filters.utmSource}
-                  options={UTM_SOURCE_OPTIONS}
-                  onChange={(v) => setFilter("utmSource", v)}
-                  testId="filter-utm-source"
-                  fullWidth
-                />
-                <FilterSelect
-                  placeholder="UTM Medium"
-                  value={filters.utmMedium}
-                  options={UTM_MEDIUM_OPTIONS}
-                  onChange={(v) => setFilter("utmMedium", v)}
-                  testId="filter-utm-medium"
-                  fullWidth
-                />
-                <div className="col-span-2">
-                  <FilterInput
-                    placeholder="UTM Campaign…"
-                    value={filters.utmCampaign}
-                    onChange={(v) => setFilter("utmCampaign", v)}
-                    testId="filter-utm-campaign"
+            {selectedDashboardMode === "B2B" && (
+              <div>
+                <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Attribution</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <FilterSelect
+                    placeholder="UTM Source"
+                    value={filters.utmSource}
+                    options={UTM_SOURCE_OPTIONS}
+                    onChange={(v) => setFilter("utmSource", v)}
+                    testId="filter-utm-source"
+                    fullWidth
                   />
-                </div>
-                <div className="col-span-2">
-                  <FilterInput
-                    placeholder="Creative name…"
-                    value={filters.creative}
-                    onChange={(v) => setFilter("creative", v)}
-                    testId="filter-creative"
+                  <FilterSelect
+                    placeholder="UTM Medium"
+                    value={filters.utmMedium}
+                    options={UTM_MEDIUM_OPTIONS}
+                    onChange={(v) => setFilter("utmMedium", v)}
+                    testId="filter-utm-medium"
+                    fullWidth
                   />
+                  <div className="col-span-2">
+                    <FilterInput
+                      placeholder="UTM Campaign..."
+                      value={filters.utmCampaign}
+                      onChange={(v) => setFilter("utmCampaign", v)}
+                      testId="filter-utm-campaign"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <FilterInput
+                      placeholder="Creative name..."
+                      value={filters.creative}
+                      onChange={(v) => setFilter("creative", v)}
+                      testId="filter-creative"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
+
+            {selectedDashboardMode === "B2C" && (
+              <div>
+                <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Performance</p>
+                <FilterInput
+                  placeholder="Creative name..."
+                  value={filters.creative}
+                  onChange={(v) => setFilter("creative", v)}
+                  testId="filter-creative"
+                />
+              </div>
+            )}
 
             {/* Geography group */}
             <div>
@@ -385,7 +418,9 @@ export function FilterBar() {
                 size="sm"
                 className="w-full h-7 text-xs text-muted-foreground"
                 onClick={() => {
-                  const extraKeys: (keyof DashboardFilters)[] = ["utmSource","utmMedium","utmCampaign","state","city","product","size","color","creative"];
+                  const extraKeys: (keyof DashboardFilters)[] = selectedDashboardMode === "B2B"
+                    ? ["utmSource","utmMedium","utmCampaign","state","city","product","size","color","creative"]
+                    : ["state","city","product","size","color","creative"];
                   for (const k of extraKeys) setFilter(k, null);
                 }}
               >
@@ -627,4 +662,3 @@ function pluralize(word: string): string {
   if (lower.endsWith("s")) return lower;
   return `${lower}s`;
 }
-

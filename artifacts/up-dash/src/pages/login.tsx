@@ -80,7 +80,7 @@ export default function LoginPage() {
       {
         onSuccess: (res) => {
           login(res.accessToken, res.refreshToken, res.user);
-          setLocation("/dashboard");
+          setLocation(res.user.role === "ADMIN" ? "/workspace-select" : "/dashboard");
         },
       },
     );

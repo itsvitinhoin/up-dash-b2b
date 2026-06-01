@@ -38,7 +38,7 @@ function fuzzyMatch(haystack: string | null | undefined, needle: string): boolea
 
 export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
   const [, setLocation] = useLocation();
-  const { user, selectedClientId } = useAuth();
+  const { user, selectedClientId, selectedDashboardMode } = useAuth();
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query, 200);
 
@@ -62,7 +62,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
   // Sellers — fetch a generous batch and filter on the client.
   const { data: sellers } = useGetSellers(
     { clientId, limit: 100 },
-    { query: queryOpts({ enabled, staleTime: 60_000 }) },
+    { query: queryOpts({ enabled: enabled && selectedDashboardMode === "B2B", staleTime: 60_000 }) },
   );
 
   // Customers can be very numerous, so we lean on the server's search filter.
@@ -131,7 +131,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
   const hasAnyResults =
     filteredProducts.length > 0 ||
     filteredCategories.length > 0 ||
-    filteredSellers.length > 0 ||
+    (selectedDashboardMode === "B2B" && filteredSellers.length > 0) ||
     customers.length > 0;
 
   return (
@@ -204,7 +204,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
           </>
         )}
 
-        {filteredSellers.length > 0 && (
+        {selectedDashboardMode === "B2B" && filteredSellers.length > 0 && (
           <>
             {(filteredProducts.length > 0 || filteredCategories.length > 0) && (
               <CommandSeparator />

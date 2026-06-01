@@ -10,6 +10,8 @@ export type ListClientsParams = {
   search?: string;
   page?: number;
   limit?: number;
+  /** Filter clients by the dashboard family selected by the admin. */
+  dashboardType?: "B2B" | "B2C";
   /**
  * When both dateFrom and dateTo are provided, each client row in the
 response is enriched with `avgOrderValue`, `conversionRate`, and

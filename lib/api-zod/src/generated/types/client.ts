@@ -16,6 +16,29 @@ export interface Client {
   leadsYtd: number;
   approvedLeads: number;
   isActive: boolean;
+  /** Dashboard family for this client. */
+  dashboardType: "B2B" | "B2C";
+  /** Primary commerce data source for this client. */
+  commercePlatform: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  /**
+   * Nuvemshop store id for B2C data ingestion.
+   * @nullable
+   */
+  nuvemshopStoreId?: string | null;
+  /**
+   * GA4 measurement id for B2C event and attribution integration.
+   * @nullable
+   */
+  ga4MeasurementId?: string | null;
+  /**
+   * GA4 property id for report reads.
+   * @nullable
+   */
+  ga4PropertyId?: string | null;
+  /** True when both Nuvemshop store id and access token are configured. */
+  hasNuvemshopIntegration: boolean;
+  /** True when both GA4 measurement id and API secret are configured. */
+  hasGa4Integration: boolean;
   hasClientLogin?: boolean;
   clientLoginEmail?: string | null;
   clientLoginName?: string | null;

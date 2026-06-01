@@ -84,6 +84,9 @@ export const ListClientsQueryParams = zod.object({
   search: zod.coerce.string().optional(),
   page: zod.coerce.number().default(listClientsQueryPageDefault),
   limit: zod.coerce.number().default(listClientsQueryLimitDefault),
+  dashboardType: zod.enum(["B2B", "B2C"]).optional().describe(
+    "Filter clients by the dashboard family selected by the admin.",
+  ),
   dateFrom: zod
     .date()
     .optional()
@@ -105,6 +108,30 @@ export const ListClientsResponse = zod.object({
       leadsYtd: zod.number(),
       approvedLeads: zod.number(),
       isActive: zod.boolean(),
+      dashboardType: zod.enum(["B2B", "B2C"]).describe(
+        "Dashboard family for this client.",
+      ),
+      commercePlatform: zod.enum(["UPZERO", "NUVEMSHOP", "MANUAL"]).describe(
+        "Primary commerce data source for this client.",
+      ),
+      nuvemshopStoreId: zod
+        .string()
+        .nullish()
+        .describe("Nuvemshop store id for B2C data ingestion."),
+      ga4MeasurementId: zod
+        .string()
+        .nullish()
+        .describe("GA4 measurement id for B2C event and attribution integration."),
+      ga4PropertyId: zod
+        .string()
+        .nullish()
+        .describe("GA4 property id for report reads."),
+      hasNuvemshopIntegration: zod.boolean().describe(
+        "True when both Nuvemshop store id and access token are configured.",
+      ),
+      hasGa4Integration: zod.boolean().describe(
+        "True when both GA4 measurement id and API secret are configured.",
+      ),
       hasClientLogin: zod.boolean().optional(),
       clientLoginEmail: zod.string().nullish(),
       clientLoginName: zod.string().nullish(),
@@ -191,6 +218,34 @@ export const CreateClientBody = zod.object({
     .describe(
       "Optional UP Zero API key for syncing live orders and customers.",
     ),
+  dashboardType: zod
+    .enum(["B2B", "B2C"])
+    .optional()
+    .describe("Dashboard family for this client. Defaults to B2B."),
+  commercePlatform: zod
+    .enum(["UPZERO", "NUVEMSHOP", "MANUAL"])
+    .optional()
+    .describe("Primary commerce data source. Defaults from dashboardType."),
+  nuvemshopStoreId: zod
+    .string()
+    .optional()
+    .describe("Optional Nuvemshop store id for B2C clients."),
+  nuvemshopAccessToken: zod
+    .string()
+    .optional()
+    .describe("Optional Nuvemshop access token for B2C clients. Stored server-side and never returned."),
+  ga4MeasurementId: zod
+    .string()
+    .optional()
+    .describe("Optional GA4 measurement id for B2C clients."),
+  ga4PropertyId: zod
+    .string()
+    .optional()
+    .describe("Optional GA4 property id for B2C report reads."),
+  ga4ApiSecret: zod
+    .string()
+    .optional()
+    .describe("Optional GA4 API secret for B2C clients. Stored server-side and never returned."),
   currency: zod
     .string()
     .optional()
@@ -223,6 +278,14 @@ export const ImportClientsBodyItem = zod
     name: zod.string(),
     email: zod.string().email(),
     apiKey: zod.string(),
+    dashboardType: zod
+      .enum(["B2B", "B2C"])
+      .optional()
+      .describe("Dashboard family for this client. Defaults to B2B."),
+    commercePlatform: zod
+      .enum(["UPZERO", "NUVEMSHOP", "MANUAL"])
+      .optional()
+      .describe("Primary commerce data source. Defaults from dashboardType."),
     currency: zod
       .string()
       .optional()
@@ -274,6 +337,30 @@ export const GetClientResponse = zod.object({
   leadsYtd: zod.number(),
   approvedLeads: zod.number(),
   isActive: zod.boolean(),
+  dashboardType: zod.enum(["B2B", "B2C"]).describe(
+    "Dashboard family for this client.",
+  ),
+  commercePlatform: zod.enum(["UPZERO", "NUVEMSHOP", "MANUAL"]).describe(
+    "Primary commerce data source for this client.",
+  ),
+  nuvemshopStoreId: zod
+    .string()
+    .nullish()
+    .describe("Nuvemshop store id for B2C data ingestion."),
+  ga4MeasurementId: zod
+    .string()
+    .nullish()
+    .describe("GA4 measurement id for B2C event and attribution integration."),
+  ga4PropertyId: zod
+    .string()
+    .nullish()
+    .describe("GA4 property id for report reads."),
+  hasNuvemshopIntegration: zod.boolean().describe(
+    "True when both Nuvemshop store id and access token are configured.",
+  ),
+  hasGa4Integration: zod.boolean().describe(
+    "True when both GA4 measurement id and API secret are configured.",
+  ),
   metaAdsApiKey: zod
     .string()
     .nullish()
@@ -349,6 +436,34 @@ export const UpdateClientBody = zod
       .string()
       .nullish()
       .describe("UP Zero API key. Pass null to clear it."),
+    dashboardType: zod
+      .enum(["B2B", "B2C"])
+      .optional()
+      .describe("Dashboard family for this client."),
+    commercePlatform: zod
+      .enum(["UPZERO", "NUVEMSHOP", "MANUAL"])
+      .optional()
+      .describe("Primary commerce data source."),
+    nuvemshopStoreId: zod
+      .string()
+      .nullish()
+      .describe("Nuvemshop store id. Pass null to clear it."),
+    nuvemshopAccessToken: zod
+      .string()
+      .nullish()
+      .describe("Nuvemshop access token. Pass null to clear it."),
+    ga4MeasurementId: zod
+      .string()
+      .nullish()
+      .describe("GA4 measurement id. Pass null to clear it."),
+    ga4PropertyId: zod
+      .string()
+      .nullish()
+      .describe("GA4 property id. Pass null to clear it."),
+    ga4ApiSecret: zod
+      .string()
+      .nullish()
+      .describe("GA4 API secret. Pass null to clear it."),
   })
   .describe(
     "Fields that can be updated on an existing client. All fields are optional.",
@@ -364,6 +479,30 @@ export const UpdateClientResponse = zod.object({
   leadsYtd: zod.number(),
   approvedLeads: zod.number(),
   isActive: zod.boolean(),
+  dashboardType: zod.enum(["B2B", "B2C"]).describe(
+    "Dashboard family for this client.",
+  ),
+  commercePlatform: zod.enum(["UPZERO", "NUVEMSHOP", "MANUAL"]).describe(
+    "Primary commerce data source for this client.",
+  ),
+  nuvemshopStoreId: zod
+    .string()
+    .nullish()
+    .describe("Nuvemshop store id for B2C data ingestion."),
+  ga4MeasurementId: zod
+    .string()
+    .nullish()
+    .describe("GA4 measurement id for B2C event and attribution integration."),
+  ga4PropertyId: zod
+    .string()
+    .nullish()
+    .describe("GA4 property id for report reads."),
+  hasNuvemshopIntegration: zod.boolean().describe(
+    "True when both Nuvemshop store id and access token are configured.",
+  ),
+  hasGa4Integration: zod.boolean().describe(
+    "True when both GA4 measurement id and API secret are configured.",
+  ),
   metaAdsApiKey: zod
     .string()
     .nullish()

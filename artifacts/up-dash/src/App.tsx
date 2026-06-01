@@ -43,6 +43,7 @@ import RfmPage from "@/pages/rfm";
 import UtmPage from "@/pages/utm";
 import AccessesPage from "@/pages/accesses";
 import ExtractionsPage from "@/pages/extractions";
+import WorkspaceSelectPage from "@/pages/workspace-select";
 
 function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
   const { logout } = useAuth();
@@ -81,6 +82,12 @@ function Router() {
 
         <Route path="/terms-of-service">
           <TermsOfServicePage />
+        </Route>
+
+        <Route path="/workspace-select">
+          <AuthGuard adminOnly>
+            <PageTransition routeKey="workspace-select"><WorkspaceSelectPage /></PageTransition>
+          </AuthGuard>
         </Route>
 
         <Route path="/dashboard">

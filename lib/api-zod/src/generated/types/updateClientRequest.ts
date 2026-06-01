@@ -23,6 +23,35 @@ export interface UpdateClientRequest {
   /**
    * UP Zero API key. Pass null to clear it.
    * @nullable
-   */
+  */
   upZeroApiKey?: string | null;
+  /** Dashboard family for this client. */
+  dashboardType?: "B2B" | "B2C";
+  /** Primary commerce data source. */
+  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  /**
+   * Nuvemshop store id. Pass null to clear it.
+   * @nullable
+   */
+  nuvemshopStoreId?: string | null;
+  /**
+   * Nuvemshop access token. Pass null to clear it.
+   * @nullable
+   */
+  nuvemshopAccessToken?: string | null;
+  /**
+   * GA4 measurement id. Pass null to clear it.
+   * @nullable
+   */
+  ga4MeasurementId?: string | null;
+  /**
+   * GA4 property id. Pass null to clear it.
+   * @nullable
+   */
+  ga4PropertyId?: string | null;
+  /**
+   * GA4 API secret. Pass null to clear it.
+   * @nullable
+   */
+  ga4ApiSecret?: string | null;
 }

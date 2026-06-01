@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
+import { and, eq, gte, ilike, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   db,
@@ -24,6 +24,7 @@ import {
 import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
 import { syncUpZeroClient } from "../services/upzero-sync";
+import { syncNuvemshopClient } from "../services/nuvemshop-sync";
 import { fetchMetaAdAccounts, normalizeMetaAdAccountId } from "../services/meta-ads";
 import { hashPassword } from "../lib/auth";
 
@@ -41,6 +42,20 @@ function getGlobalMetaAccessToken(fallback?: string | null): string | null {
     fallback ??
     null
   );
+}
+
+function clientPublicFields<T extends typeof clientsTable.$inferSelect>(client: T) {
+  return {
+    ...client,
+    hasNuvemshopIntegration: Boolean(
+      client.nuvemshopStoreId?.trim() && client.nuvemshopAccessToken?.trim(),
+    ),
+    hasGa4Integration: Boolean(
+      client.ga4MeasurementId?.trim() &&
+        client.ga4PropertyId?.trim() &&
+        client.ga4ApiSecret?.trim(),
+    ),
+  };
 }
 
 // Coerce ISO date-time strings on the query before zod sees them — orval
@@ -76,10 +91,11 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     });
     return;
   }
-  const { search, page = 1, limit = 20, dateFrom, dateTo } = parsed.data;
-  const where = search
-    ? ilike(clientsTable.name, `%${search}%`)
-    : undefined;
+  const { search, page = 1, limit = 20, dateFrom, dateTo, dashboardType } = parsed.data;
+  const filters: SQL[] = [];
+  if (search) filters.push(ilike(clientsTable.name, `%${search}%`));
+  if (dashboardType) filters.push(eq(clientsTable.dashboardType, dashboardType));
+  const where = filters.length > 0 ? and(...filters) : undefined;
 
   const offset = (page - 1) * limit;
 
@@ -281,7 +297,7 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
   const enrichedWithAccess = enriched.map((row) => {
     const login = loginByClientId.get(row.id);
     return {
-      ...row,
+      ...clientPublicFields(row),
       hasClientLogin: Boolean(login),
       clientLoginEmail: login?.email ?? null,
       clientLoginName: login?.name ?? null,
@@ -333,10 +349,33 @@ router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
     return;
   }
   const adminId = req.user?.sub ?? null;
+  const dashboardType = parsed.data.dashboardType ?? (
+    parsed.data.commercePlatform === "NUVEMSHOP" ? "B2C" : "B2B"
+  );
+  const commercePlatform = parsed.data.commercePlatform ?? (
+    dashboardType === "B2C" ? "NUVEMSHOP" : "UPZERO"
+  );
   const values = {
     ...parsed.data,
+    dashboardType,
+    commercePlatform,
     metaAdAccountId: parsed.data.metaAdAccountId?.trim()
       ? normalizeMetaAdAccountId(parsed.data.metaAdAccountId)
+      : undefined,
+    nuvemshopStoreId: parsed.data.nuvemshopStoreId?.trim()
+      ? parsed.data.nuvemshopStoreId.trim()
+      : undefined,
+    nuvemshopAccessToken: parsed.data.nuvemshopAccessToken?.trim()
+      ? parsed.data.nuvemshopAccessToken.trim()
+      : undefined,
+    ga4MeasurementId: parsed.data.ga4MeasurementId?.trim()
+      ? parsed.data.ga4MeasurementId.trim()
+      : undefined,
+    ga4PropertyId: parsed.data.ga4PropertyId?.trim()
+      ? parsed.data.ga4PropertyId.trim()
+      : undefined,
+    ga4ApiSecret: parsed.data.ga4ApiSecret?.trim()
+      ? parsed.data.ga4ApiSecret.trim()
       : undefined,
     adminId,
   };
@@ -344,13 +383,15 @@ router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
     .insert(clientsTable)
     .values(values)
     .returning();
-  res.status(201).json(GetClientResponse.parse(created));
+  res.status(201).json(GetClientResponse.parse(clientPublicFields(created)));
 });
 
 const ImportRowSchema = z.object({
   name: z.string().min(1, "name is required"),
   email: z.string().email("invalid email"),
   apiKey: z.string().min(1, "apiKey is required"),
+  dashboardType: z.enum(["B2B", "B2C"]).optional(),
+  commercePlatform: z.enum(["UPZERO", "NUVEMSHOP", "MANUAL"]).optional(),
   currency: z.string().optional(),
   locale: z.string().optional(),
 });
@@ -376,6 +417,8 @@ router.post("/clients/import", requireAdmin, async (req, res): Promise<void> => 
     name: string;
     email: string;
     apiKey: string;
+    dashboardType?: "B2B" | "B2C";
+    commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
     currency?: string;
     locale?: string;
     adminId: string | null;
@@ -401,7 +444,13 @@ router.post("/clients/import", requireAdmin, async (req, res): Promise<void> => 
       errors.push({ index: i, field: "locale", message: "must be a BCP 47 tag" });
       continue;
     }
-    validRows.push({ originalIndex: i, ...rowParsed.data, adminId });
+    const dashboardType = rowParsed.data.dashboardType ?? (
+      rowParsed.data.commercePlatform === "NUVEMSHOP" ? "B2C" : "B2B"
+    );
+    const commercePlatform = rowParsed.data.commercePlatform ?? (
+      dashboardType === "B2C" ? "NUVEMSHOP" : "UPZERO"
+    );
+    validRows.push({ originalIndex: i, ...rowParsed.data, dashboardType, commercePlatform, adminId });
   }
 
   // Second pass: detect conflicts against DB (apiKey, email, name all unique)
@@ -835,6 +884,36 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
   if ("upZeroApiKey" in bodyParsed.data) {
     updates.upZeroApiKey = bodyParsed.data.upZeroApiKey ?? null;
   }
+  if ("dashboardType" in bodyParsed.data) {
+    updates.dashboardType = bodyParsed.data.dashboardType;
+    if (!("commercePlatform" in bodyParsed.data)) {
+      updates.commercePlatform =
+        bodyParsed.data.dashboardType === "B2C" ? "NUVEMSHOP" : "UPZERO";
+    }
+  }
+  if ("commercePlatform" in bodyParsed.data) {
+    updates.commercePlatform = bodyParsed.data.commercePlatform;
+  }
+  if ("nuvemshopStoreId" in bodyParsed.data) {
+    const storeId = bodyParsed.data.nuvemshopStoreId?.trim();
+    updates.nuvemshopStoreId = storeId || null;
+  }
+  if ("nuvemshopAccessToken" in bodyParsed.data) {
+    const token = bodyParsed.data.nuvemshopAccessToken?.trim();
+    updates.nuvemshopAccessToken = token || null;
+  }
+  if ("ga4MeasurementId" in bodyParsed.data) {
+    const measurementId = bodyParsed.data.ga4MeasurementId?.trim();
+    updates.ga4MeasurementId = measurementId || null;
+  }
+  if ("ga4PropertyId" in bodyParsed.data) {
+    const propertyId = bodyParsed.data.ga4PropertyId?.trim();
+    updates.ga4PropertyId = propertyId || null;
+  }
+  if ("ga4ApiSecret" in bodyParsed.data) {
+    const apiSecret = bodyParsed.data.ga4ApiSecret?.trim();
+    updates.ga4ApiSecret = apiSecret || null;
+  }
   if (Object.keys(updates).length === 0) {
     res.status(400).json({
       error: true,
@@ -858,7 +937,7 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
     });
     return;
   }
-  res.json(GetClientResponse.parse(updated));
+  res.json(GetClientResponse.parse(clientPublicFields(updated)));
 });
 
 router.post("/clients/:clientId/meta/ad-accounts", requireAdmin, async (req, res): Promise<void> => {
@@ -983,6 +1062,96 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
       await db.update(syncJobsTable).set({ status: "failed", error: message, finishedAt: new Date() }).where(eq(syncJobsTable.id, jobId));
     } catch (dbErr) {
       console.error("[sync-runner] failed to mark job %s as failed:", jobId, dbErr);
+    }
+    res.status(500).json({
+      error: true,
+      code: "SYNC_FAILED",
+      message,
+      status: 500,
+      jobId,
+    });
+  }
+});
+
+router.post("/clients/:clientId/sync/nuvemshop", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = GetClientParams.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = parsed.data;
+  const [client] = await db
+    .select({
+      dashboardType: clientsTable.dashboardType,
+      storeId: clientsTable.nuvemshopStoreId,
+      accessToken: clientsTable.nuvemshopAccessToken,
+    })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (client.dashboardType !== "B2C") {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "Nuvemshop sync is only available for B2C clients", status: 400 });
+    return;
+  }
+  if (!client.storeId || !client.accessToken) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "Nuvemshop store ID and access token are required for this client", status: 400 });
+    return;
+  }
+
+  const STALE_THRESHOLD_MS = 15 * 60 * 1000;
+  const staleAfter = new Date(Date.now() - STALE_THRESHOLD_MS);
+  const activeJobs = await db
+    .select({ id: syncJobsTable.id, createdAt: syncJobsTable.createdAt })
+    .from(syncJobsTable)
+    .where(and(
+      eq(syncJobsTable.clientId, clientId),
+      eq(syncJobsTable.jobType, "nuvemshop_transactional"),
+      inArray(syncJobsTable.status, ["pending", "running"]),
+    ));
+
+  const freshJob = activeJobs.find((j) => j.createdAt > staleAfter);
+  const staleJobs = activeJobs.filter((j) => j.createdAt <= staleAfter);
+  if (staleJobs.length > 0) {
+    await db
+      .update(syncJobsTable)
+      .set({ status: "failed", error: "Sync job timed out — exceeded 15 minute limit without completing." })
+      .where(inArray(syncJobsTable.id, staleJobs.map((j) => j.id)));
+  }
+  if (freshJob) {
+    res.status(202).json({ jobId: freshJob.id });
+    return;
+  }
+
+  const [job] = await db
+    .insert(syncJobsTable)
+    .values({
+      clientId,
+      jobType: "nuvemshop_transactional",
+      trigger: "manual",
+      scope: "client",
+      status: "pending",
+    })
+    .returning({ id: syncJobsTable.id });
+
+  const jobId = job.id;
+  try {
+    await db.update(syncJobsTable).set({ status: "running", startedAt: new Date() }).where(eq(syncJobsTable.id, jobId));
+    const result = await syncNuvemshopClient({
+      clientId,
+      storeId: client.storeId,
+      accessToken: client.accessToken,
+    });
+    await db.update(syncJobsTable).set({ status: "done", result, finishedAt: new Date() }).where(eq(syncJobsTable.id, jobId));
+    res.status(200).json({ jobId, result });
+  } catch (err) {
+    const message = String(err);
+    try {
+      await db.update(syncJobsTable).set({ status: "failed", error: message, finishedAt: new Date() }).where(eq(syncJobsTable.id, jobId));
+    } catch (dbErr) {
+      console.error("[nuvemshop-sync] failed to mark job %s as failed:", jobId, dbErr);
     }
     res.status(500).json({
       error: true,
@@ -1120,7 +1289,7 @@ router.get("/clients/:clientId", async (req, res): Promise<void> => {
     });
     return;
   }
-  res.json(GetClientResponse.parse(row));
+  res.json(GetClientResponse.parse(clientPublicFields(row)));
 });
 
 export default router;

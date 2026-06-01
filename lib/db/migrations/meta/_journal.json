@@ -141,6 +141,13 @@
       "when": 1779887100000,
       "tag": "0020_whatsapp_message_templates",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1780339506000,
+      "tag": "0021_b2c_client_context",
+      "breakpoints": true
     }
   ]
 }

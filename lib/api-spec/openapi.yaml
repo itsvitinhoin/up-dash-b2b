@@ -143,6 +143,12 @@ paths:
             type: integer
             default: 20
         - in: query
+          name: dashboardType
+          schema:
+            type: string
+            enum: [B2B, B2C]
+          description: Filter clients by the dashboard family selected by the admin.
+        - in: query
           name: dateFrom
           schema:
             type: string
@@ -1784,6 +1790,29 @@ components:
           type: integer
         isActive:
           type: boolean
+        dashboardType:
+          type: string
+          enum: [B2B, B2C]
+          description: Dashboard family for this client.
+        commercePlatform:
+          type: string
+          enum: [UPZERO, NUVEMSHOP, MANUAL]
+          description: Primary commerce data source for this client.
+        nuvemshopStoreId:
+          type: ["string", "null"]
+          description: Nuvemshop store id for B2C data ingestion.
+        ga4MeasurementId:
+          type: ["string", "null"]
+          description: GA4 measurement id for B2C event and attribution integration.
+        ga4PropertyId:
+          type: ["string", "null"]
+          description: GA4 property id for report reads.
+        hasNuvemshopIntegration:
+          type: boolean
+          description: True when both Nuvemshop store id and access token are configured.
+        hasGa4Integration:
+          type: boolean
+          description: True when both GA4 measurement id and API secret are configured.
         metaAdsApiKey:
           type: ["string", "null"]
           description: Meta Ads API key for pulling ad spend and lead data from Meta.
@@ -1846,6 +1875,10 @@ components:
         - leadsYtd
         - approvedLeads
         - isActive
+        - dashboardType
+        - commercePlatform
+        - hasNuvemshopIntegration
+        - hasGa4Integration
         - currency
         - locale
         - createdAt
@@ -1882,6 +1915,29 @@ components:
         upZeroApiKey:
           type: string
           description: Optional UP Zero API key for syncing live orders and customers.
+        dashboardType:
+          type: string
+          enum: [B2B, B2C]
+          description: Dashboard family for this client. Defaults to B2B.
+        commercePlatform:
+          type: string
+          enum: [UPZERO, NUVEMSHOP, MANUAL]
+          description: Primary commerce data source. Defaults from dashboardType.
+        nuvemshopStoreId:
+          type: string
+          description: Optional Nuvemshop store id for B2C clients.
+        nuvemshopAccessToken:
+          type: string
+          description: Optional Nuvemshop access token for B2C clients. Stored server-side and never returned.
+        ga4MeasurementId:
+          type: string
+          description: Optional GA4 measurement id for B2C clients.
+        ga4PropertyId:
+          type: string
+          description: Optional GA4 property id for B2C report reads.
+        ga4ApiSecret:
+          type: string
+          description: Optional GA4 API secret for B2C clients. Stored server-side and never returned.
         currency:
           type: string
           description: ISO 4217 currency code (default BRL)
@@ -1900,6 +1956,29 @@ components:
         upZeroApiKey:
           type: ["string", "null"]
           description: UP Zero API key. Pass null to clear it.
+        dashboardType:
+          type: string
+          enum: [B2B, B2C]
+          description: Dashboard family for this client.
+        commercePlatform:
+          type: string
+          enum: [UPZERO, NUVEMSHOP, MANUAL]
+          description: Primary commerce data source.
+        nuvemshopStoreId:
+          type: ["string", "null"]
+          description: Nuvemshop store id. Pass null to clear it.
+        nuvemshopAccessToken:
+          type: ["string", "null"]
+          description: Nuvemshop access token. Pass null to clear it.
+        ga4MeasurementId:
+          type: ["string", "null"]
+          description: GA4 measurement id. Pass null to clear it.
+        ga4PropertyId:
+          type: ["string", "null"]
+          description: GA4 property id. Pass null to clear it.
+        ga4ApiSecret:
+          type: ["string", "null"]
+          description: GA4 API secret. Pass null to clear it.
 
     UpZeroSyncResponse:
       type: object
@@ -1963,6 +2042,14 @@ components:
           format: email
         apiKey:
           type: string
+        dashboardType:
+          type: string
+          enum: [B2B, B2C]
+          description: Dashboard family for this client. Defaults to B2B.
+        commercePlatform:
+          type: string
+          enum: [UPZERO, NUVEMSHOP, MANUAL]
+          description: Primary commerce data source. Defaults from dashboardType.
         currency:
           type: string
           description: ISO 4217 currency code (default BRL)

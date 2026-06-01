@@ -6,14 +6,15 @@ import {
   setUnauthorizedHandler,
   logout as apiLogout,
 } from "@workspace/api-client-react";
-import { AuthContext, type AuthContextType } from "./auth-context";
+import { AuthContext, type AuthContextType, type DashboardMode } from "./auth-context";
 
-export type { AuthContextType };
+export type { AuthContextType, DashboardMode };
 
 const TOKEN_KEY = "updash.token";
 const REFRESH_KEY = "updash.refresh";
 const USER_KEY = "updash.user";
 const CLIENT_KEY = "updash.clientId";
+const DASHBOARD_MODE_KEY = "updash.dashboardMode";
 
 async function performRefresh(refresh: string): Promise<{
   accessToken: string;
@@ -54,6 +55,7 @@ function initApiClient() {
       localStorage.removeItem(REFRESH_KEY);
       localStorage.removeItem(USER_KEY);
       localStorage.removeItem(CLIENT_KEY);
+      localStorage.removeItem(DASHBOARD_MODE_KEY);
       return false;
     }
     localStorage.setItem(TOKEN_KEY, rotated.accessToken);
@@ -70,17 +72,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [, setLocation] = useLocation();
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [selectedDashboardMode, setSelectedDashboardModeState] = useState<DashboardMode>("B2B");
 
   useEffect(() => {
     const storedToken = localStorage.getItem(TOKEN_KEY);
     const storedUser = localStorage.getItem(USER_KEY);
     const storedClientId = localStorage.getItem(CLIENT_KEY);
+    const storedDashboardMode = localStorage.getItem(DASHBOARD_MODE_KEY);
 
     if (storedToken && storedUser) {
       try {
         const parsedUser = JSON.parse(storedUser);
         setToken(storedToken);
         setUser(parsedUser);
+        if (storedDashboardMode === "B2B" || storedDashboardMode === "B2C") {
+          setSelectedDashboardModeState(storedDashboardMode);
+        }
 
         if (storedClientId) {
           setSelectedClientId(storedClientId);
@@ -109,6 +116,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       setSelectedClientId(null);
       localStorage.removeItem(CLIENT_KEY);
+      setSelectedDashboardModeState("B2B");
+      localStorage.setItem(DASHBOARD_MODE_KEY, "B2B");
     }
   };
 
@@ -121,9 +130,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(REFRESH_KEY);
     localStorage.removeItem(USER_KEY);
     localStorage.removeItem(CLIENT_KEY);
+    localStorage.removeItem(DASHBOARD_MODE_KEY);
     setToken(null);
     setUser(null);
     setSelectedClientId(null);
+    setSelectedDashboardModeState("B2B");
     setLocation("/login");
   };
 
@@ -136,8 +147,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const handleSetSelectedDashboardMode = (mode: DashboardMode) => {
+    setSelectedDashboardModeState(mode);
+    setSelectedClientId(null);
+    localStorage.setItem(DASHBOARD_MODE_KEY, mode);
+    localStorage.removeItem(CLIENT_KEY);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isLoading, selectedClientId, setSelectedClientId: handleSetSelectedClientId }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        login,
+        logout,
+        isLoading,
+        selectedClientId,
+        setSelectedClientId: handleSetSelectedClientId,
+        selectedDashboardMode,
+        setSelectedDashboardMode: handleSetSelectedDashboardMode,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

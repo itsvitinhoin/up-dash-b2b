@@ -98,6 +98,29 @@ export interface Client {
   leadsYtd: number;
   approvedLeads: number;
   isActive: boolean;
+  /** Dashboard family for this client. */
+  dashboardType: "B2B" | "B2C";
+  /** Primary commerce data source for this client. */
+  commercePlatform: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  /**
+   * Nuvemshop store id for B2C data ingestion.
+   * @nullable
+   */
+  nuvemshopStoreId?: string | null;
+  /**
+   * GA4 measurement id for B2C event and attribution integration.
+   * @nullable
+   */
+  ga4MeasurementId?: string | null;
+  /**
+   * GA4 property id for report reads.
+   * @nullable
+   */
+  ga4PropertyId?: string | null;
+  /** True when both Nuvemshop store id and access token are configured. */
+  hasNuvemshopIntegration: boolean;
+  /** True when both GA4 measurement id and API secret are configured. */
+  hasGa4Integration: boolean;
   hasClientLogin?: boolean;
   clientLoginEmail?: string | null;
   clientLoginName?: string | null;
@@ -182,6 +205,20 @@ export interface CreateClientRequest {
   metaAdAccountId?: string;
   /** Optional UP Zero API key for syncing live orders and customers. */
   upZeroApiKey?: string;
+  /** Dashboard family for this client. Defaults to B2B. */
+  dashboardType?: "B2B" | "B2C";
+  /** Primary commerce data source. Defaults from dashboardType. */
+  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  /** Optional Nuvemshop store id for B2C clients. */
+  nuvemshopStoreId?: string;
+  /** Optional Nuvemshop access token for B2C clients. Stored server-side and never returned. */
+  nuvemshopAccessToken?: string;
+  /** Optional GA4 measurement id for B2C clients. */
+  ga4MeasurementId?: string;
+  /** Optional GA4 property id for B2C report reads. */
+  ga4PropertyId?: string;
+  /** Optional GA4 API secret for B2C clients. Stored server-side and never returned. */
+  ga4ApiSecret?: string;
   /** ISO 4217 currency code (default BRL) */
   currency?: string;
   /** BCP 47 locale (default pt-BR) */
@@ -205,8 +242,37 @@ export interface UpdateClientRequest {
   /**
    * UP Zero API key. Pass null to clear it.
    * @nullable
-   */
+  */
   upZeroApiKey?: string | null;
+  /** Dashboard family for this client. */
+  dashboardType?: "B2B" | "B2C";
+  /** Primary commerce data source. */
+  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  /**
+   * Nuvemshop store id. Pass null to clear it.
+   * @nullable
+  */
+  nuvemshopStoreId?: string | null;
+  /**
+   * Nuvemshop access token. Pass null to clear it.
+   * @nullable
+   */
+  nuvemshopAccessToken?: string | null;
+  /**
+   * GA4 measurement id. Pass null to clear it.
+   * @nullable
+   */
+  ga4MeasurementId?: string | null;
+  /**
+   * GA4 property id. Pass null to clear it.
+   * @nullable
+   */
+  ga4PropertyId?: string | null;
+  /**
+   * GA4 API secret. Pass null to clear it.
+   * @nullable
+   */
+  ga4ApiSecret?: string | null;
 }
 
 export interface UpZeroSyncResponse {
@@ -251,6 +317,10 @@ export interface ClientImportRow {
   name: string;
   email: string;
   apiKey: string;
+  /** Dashboard family for this client. Defaults to B2B. */
+  dashboardType?: "B2B" | "B2C";
+  /** Primary commerce data source. Defaults from dashboardType. */
+  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
   /** ISO 4217 currency code (default BRL) */
   currency?: string;
   /** BCP 47 locale (default pt-BR) */
@@ -1470,6 +1540,8 @@ export type ListClientsParams = {
   search?: string;
   page?: number;
   limit?: number;
+  /** Filter clients by the dashboard family selected by the admin. */
+  dashboardType?: "B2B" | "B2C";
   /**
  * When both dateFrom and dateTo are provided, each client row in the
 response is enriched with `avgOrderValue`, `conversionRate`, and

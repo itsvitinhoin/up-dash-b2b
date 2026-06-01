@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { Globe2 } from "lucide-react";
 import { format } from "date-fns";
@@ -17,6 +17,7 @@ import {
   Users,
   Package,
   ShoppingBag,
+  Store,
   MapPin,
   Building2,
   LogOut,
@@ -108,7 +109,14 @@ const PLATFORM_PICK = "__platform__";
 
 export function AppLayout({ children }: AppLayoutProps) {
   const [location, navigate] = useLocation();
-  const { user, logout, selectedClientId, setSelectedClientId } = useAuth();
+  const {
+    user,
+    logout,
+    selectedClientId,
+    setSelectedClientId,
+    selectedDashboardMode,
+    setSelectedDashboardMode,
+  } = useAuth();
   const { theme, setTheme } = useTheme();
   const { dateRange, setDateRange } = useDashboardFilters();
   const { setOpen: setShortcutsOpen } = useKeyboardShortcuts();
@@ -139,8 +147,12 @@ export function AppLayout({ children }: AppLayoutProps) {
   }, []);
 
   const { data: clientsData } = useListClients(
-    { limit: 100 },
+    { limit: 100, dashboardType: selectedDashboardMode },
     { query: queryOpts({ enabled: user?.role === "ADMIN" }) },
+  );
+  const adminClients = useMemo(
+    () => (Array.isArray(clientsData?.data) ? clientsData.data : []),
+    [clientsData?.data],
   );
 
   // We deliberately do NOT auto-pick a client for admins here. UP Dash is an
@@ -154,10 +166,17 @@ export function AppLayout({ children }: AppLayoutProps) {
     query: queryOpts({ enabled: user?.role === "CLIENT" && !!user?.clientId }),
   });
 
+  useEffect(() => {
+    if (user?.role !== "ADMIN" || !selectedClientId || !clientsData) return;
+    if (!adminClients.some((client) => client.id === selectedClientId)) {
+      setSelectedClientId(null);
+    }
+  }, [adminClients, clientsData, selectedClientId, setSelectedClientId, user?.role]);
+
   const activeClient =
     user?.role === "CLIENT"
       ? clientData
-      : clientsData?.data.find((c) => c.id === selectedClientId);
+      : adminClients.find((c) => c.id === selectedClientId);
   useEffect(() => {
     if (activeClient?.currency && activeClient?.locale) {
       setActiveCurrency(activeClient.currency, activeClient.locale);
@@ -179,6 +198,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       ? `${format(new Date(), "EEEE, MMM d")} · live data`
       : meta.subtitle;
 
+  const b2bOnlyRoutes = new Set(["/whatsapp", "/utm", "/sellers"]);
   const analyticsNav = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Marketing", href: "/marketing", icon: Megaphone },
@@ -201,7 +221,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     { name: "Products", href: "/products", icon: Package },
     { name: "Sellers", href: "/sellers", icon: ShoppingBag },
     { name: "Stock", href: "/stock", icon: PackageSearch },
-  ];
+  ].filter((item) => selectedDashboardMode === "B2B" || !b2bOnlyRoutes.has(item.href));
 
   const workspaceNav: { name: string; href: string; icon: typeof Users }[] = [
     { name: "Geography", href: "/geography", icon: MapPin },
@@ -388,6 +408,45 @@ export function AppLayout({ children }: AppLayoutProps) {
 
           <div className="ml-auto flex items-center gap-2">
             {user?.role === "ADMIN" && (
+              <div className="hidden sm:block w-32">
+                <Select
+                  value={selectedDashboardMode}
+                  onValueChange={(val) => {
+                    const mode = val === "B2C" ? "B2C" : "B2B";
+                    setSelectedDashboardMode(mode);
+                    if (
+                      mode === "B2C" &&
+                      (location.startsWith("/whatsapp") || location.startsWith("/sellers") || location === "/utm")
+                    ) {
+                      navigate("/dashboard");
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    data-testid="dashboard-mode-picker"
+                    className="h-9 bg-card border-border"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="B2B">
+                      <span className="flex items-center gap-2">
+                        <Building2 className="h-3.5 w-3.5 text-primary" />
+                        B2B
+                      </span>
+                    </SelectItem>
+                    <SelectItem value="B2C">
+                      <span className="flex items-center gap-2">
+                        <Store className="h-3.5 w-3.5 text-primary" />
+                        B2C
+                      </span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {user?.role === "ADMIN" && (
               <div className="hidden sm:block w-52">
                 <Select
                   // On the platform overview page no individual client is
@@ -426,10 +485,10 @@ export function AppLayout({ children }: AppLayoutProps) {
                         All Clients · Platform
                       </span>
                     </SelectItem>
-                    {clientsData && clientsData.data.length > 0 && (
+                    {adminClients.length > 0 && (
                       <div className="my-1 h-px bg-border" />
                     )}
-                    {clientsData?.data.map((client) => (
+                    {adminClients.map((client) => (
                       <SelectItem key={client.id} value={client.id}>
                         {client.name}
                       </SelectItem>
@@ -512,9 +571,9 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <Building2 className="h-6 w-6 text-muted-foreground" />
               </div>
               <div className="space-y-1">
-                <h2 className="text-lg font-semibold">Select a brand to continue</h2>
+                <h2 className="text-lg font-semibold">Select a {selectedDashboardMode} client to continue</h2>
                 <p className="text-sm text-muted-foreground">
-                  This page shows data for one brand at a time. Pick a brand from the
+                  This page shows data for one client at a time. Pick a client from the
                   selector at the top of the page, or open the platform overview to
                   see how every brand is doing.
                 </p>
