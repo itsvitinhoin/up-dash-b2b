@@ -10,6 +10,7 @@ import {
   productsTable,
 } from "@workspace/db";
 import { authenticate, resolveClientId } from "../middlewares/auth";
+import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 
 const router: IRouter = Router();
 
@@ -135,6 +136,10 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("pt-BR").format(value);
 }
 
+function compactJson(value: unknown): string {
+  return JSON.stringify(value, null, 2).slice(0, 12000);
+}
+
 function requireClient(req: import("express").Request, res: import("express").Response): string | null {
   const clientId = resolveClientId(req);
   if (!clientId) {
@@ -221,6 +226,134 @@ router.post("/assistant/chat", async (req, res): Promise<void> => {
     .groupBy(productsTable.id, productsTable.name, productsTable.sku)
     .orderBy(desc(sql`SUM(${orderItemsTable.quantity})`))
     .limit(5);
+
+  const statusRows = await db
+    .select({
+      status: ordersTable.status,
+      orders: sql<number>`COUNT(*)::int`,
+      revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+    })
+    .from(ordersTable)
+    .where(and(...orderConditions))
+    .groupBy(ordersTable.status);
+
+  const topCustomerRows = await db
+    .select({
+      name: customersTable.name,
+      email: customersTable.email,
+      orders: sql<number>`COUNT(${ordersTable.id})::int`,
+      revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+    })
+    .from(ordersTable)
+    .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+    .where(and(...orderConditions))
+    .groupBy(customersTable.id, customersTable.name, customersTable.email)
+    .orderBy(desc(sql`SUM(${ordersTable.amount})`))
+    .limit(5);
+
+  const utmRows = await db
+    .select({
+      source: sql<string>`COALESCE(NULLIF(lower(${customersTable.utmSource}), ''), 'direct')`,
+      medium: sql<string>`COALESCE(NULLIF(lower(${customersTable.utmMedium}), ''), 'none')`,
+      campaign: sql<string>`COALESCE(NULLIF(${customersTable.utmCampaign}, ''), 'sem campanha')`,
+      registrations: sql<number>`COUNT(*)::int`,
+      approved: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
+    })
+    .from(customersTable)
+    .where(and(
+      eq(customersTable.clientId, clientId),
+      gte(customersTable.createdAt, period.from),
+      lte(customersTable.createdAt, period.to),
+    ))
+    .groupBy(sql`1`, sql`2`, sql`3`)
+    .orderBy(desc(sql`COUNT(*)`))
+    .limit(8);
+
+  const context = {
+    brand: client?.name ?? "Loja selecionada",
+    period: {
+      label: period.label,
+      from: period.from.toISOString(),
+      to: period.to.toISOString(),
+    },
+    summary: {
+      orders: Number(summary?.orders ?? 0),
+      requestedRevenue: Number(summary?.requestedRevenue ?? 0),
+      fulfilledRevenue: Number(summary?.fulfilledRevenue ?? 0),
+      requestedQuantity: Number(summary?.requestedQuantity ?? 0),
+      fulfilledQuantity: Number(summary?.fulfilledQuantity ?? 0),
+      approvedOrders: Number(summary?.approvedOrders ?? 0),
+    },
+    customers: {
+      registrations: Number(customerSummary?.registrations ?? 0),
+      approved: Number(customerSummary?.approved ?? 0),
+      pending: Number(customerSummary?.pending ?? 0),
+      rejected: Number(customerSummary?.rejected ?? 0),
+    },
+    ordersByStatus: statusRows.map((row) => ({
+      status: row.status,
+      orders: Number(row.orders ?? 0),
+      revenue: Number(row.revenue ?? 0),
+    })),
+    topProducts: productRows.map((row) => ({
+      name: row.name,
+      sku: row.sku,
+      quantity: Number(row.quantity ?? 0),
+      revenue: Number(row.revenue ?? 0),
+    })),
+    topCustomers: topCustomerRows.map((row) => ({
+      name: row.name,
+      email: row.email ? row.email.replace(/(^.).*(@.*$)/, "$1***$2") : null,
+      orders: Number(row.orders ?? 0),
+      revenue: Number(row.revenue ?? 0),
+    })),
+    utmRegistrations: utmRows.map((row) => ({
+      source: row.source,
+      medium: row.medium,
+      campaign: row.campaign,
+      registrations: Number(row.registrations ?? 0),
+      approved: Number(row.approved ?? 0),
+    })),
+  };
+
+  const ai = getOpenAIClient();
+  if (ai && isAIConfigured()) {
+    try {
+      const completion = await ai.chat.completions.create({
+        model: process.env.AI_INTEGRATIONS_OPENAI_MODEL ?? "gpt-4o-mini",
+        temperature: 0.35,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Voce e o assistente estrategico do UP Dash. Responda sempre em portugues do Brasil, usando somente os dados fornecidos no contexto. Seja objetivo, consultivo e pratico. Se os dados nao forem suficientes para concluir algo, diga isso claramente e recomende o proximo dado necessario. Nunca invente numeros.",
+          },
+          {
+            role: "user",
+            content: [
+              `Pergunta do usuario: ${question}`,
+              "",
+              "Contexto real do e-commerce em JSON:",
+              compactJson(context),
+              "",
+              "Entregue uma resposta com leitura dos numeros, possiveis causas e proximas acoes prioritarias.",
+            ].join("\n"),
+          },
+        ],
+      });
+      const answer = completion.choices[0]?.message?.content?.trim();
+      if (answer) {
+        res.json({
+          answer,
+          period: context.period,
+          data: context,
+        });
+        return;
+      }
+    } catch (error) {
+      console.warn("[assistant] OpenAI completion failed; using deterministic fallback:", error);
+    }
+  }
 
   const asksProducts = /produto|sku|item|mais vendido|vendidos/.test(normalized);
   const asksCustomers = /cadastro|lead|cliente|aprovad|pendente|recusad/.test(normalized);

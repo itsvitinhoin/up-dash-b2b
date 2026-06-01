@@ -1892,7 +1892,25 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
     const priorMap = new Map(priorRows.map((row) => [row.customerId, row.priorOrders]));
 
     const allRows = buildAttributedCampaignCustomers(rows, localCustomerMap, priorMap);
+    const periodFromMs = new Date(upzeroRange.from).getTime();
+    const periodToMs = new Date(upzeroRange.to).getTime();
+    const isInSelectedPeriod = (value: string | null | undefined) => {
+      if (!value) return false;
+      const time = new Date(value).getTime();
+      return Number.isFinite(time) && time >= periodFromMs && time <= periodToMs;
+    };
+    const periodAttributedUserIds = new Set(
+      rows
+        .filter((row) => isInSelectedPeriod(row.period_start) && isPaidCampaignSignal(row))
+        .map((row) => getMetricUser(row)?.id)
+        .filter((id): id is number => typeof id === "number"),
+    );
     const filteredRows = allRows.filter((row) => {
+      const belongsToSelectedPeriod =
+        periodAttributedUserIds.has(row.userId) ||
+        isInSelectedPeriod(row.registeredAt) ||
+        isInSelectedPeriod(row.lastEventAt);
+      if (!belongsToSelectedPeriod) return false;
       if (parsed.data.source && row.lastTouch.source !== parsed.data.source) return false;
       if (parsed.data.campaign && !row.campaigns.some((campaign) => campaign.campaign === parsed.data.campaign)) return false;
       if (parsed.data.purchase === "yes" && !row.hasPurchase) return false;
@@ -5891,6 +5909,213 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
 
 type UtmGroupBy = "source" | "campaign" | "sourceMediumCampaign";
 
+type UtmDimension = {
+  source: string;
+  medium: string;
+  campaign: string;
+};
+
+type UtmAccum = {
+  key: string;
+  source: string | null;
+  medium: string | null;
+  campaign: string | null;
+  registrations: number;
+  approvals: number;
+  buyers: Set<string>;
+  revenue: number;
+  sessions: number;
+  subRows: Map<string, UtmAccum>;
+};
+
+function cleanUtmPart(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function derivedUtmDimension(row: UpzeroAnalyticsMetric): UtmDimension {
+  const rawSource = cleanUtmPart(row.utm_source);
+  const rawMedium = cleanUtmPart(row.utm_medium);
+  const rawCampaign = cleanUtmPart(row.utm_campaign);
+  const sourceText = normalizeCampaignText(rawSource);
+  const mediumText = normalizeCampaignText(rawMedium);
+  const apiSourceText = normalizeCampaignText(row.source);
+  const referrerHost = normalizeCampaignText(row.referrer_host);
+  const landingHost = normalizeCampaignText(row.landing_host);
+
+  let source = rawSource?.toLowerCase() ?? "";
+  let medium = rawMedium?.toLowerCase() ?? "";
+  let campaign = rawCampaign ?? "";
+
+  if (!source) {
+    if (row.fbc || row.fbclid) source = "meta";
+    else if (row.gclid) source = "google";
+    else if (referrerHost.includes("instagram")) source = "instagram";
+    else if (referrerHost.includes("facebook")) source = "facebook";
+    else if (referrerHost.includes("google")) source = "google";
+    else if (row.source && !["site", "web", "website"].includes(apiSourceText)) source = row.source.toLowerCase();
+    else source = "direct";
+  }
+
+  if (!medium) {
+    if (row.fbc || row.fbclid || row.gclid) medium = "paid";
+    else if (row.channel) medium = row.channel.toLowerCase();
+    else if (landingHost || referrerHost) medium = "referral";
+    else medium = "none";
+  }
+
+  if (!campaign) {
+    if (row.fbc || row.fbclid) campaign = "Clique Meta identificado";
+    else if (row.gclid) campaign = "Clique Google identificado";
+    else campaign = "sem campanha";
+  }
+
+  const linktreeOnly = sourceText === "instagram" && mediumText === "linktree" && normalizeCampaignText(rawCampaign) === "linktree";
+  if (linktreeOnly) {
+    source = "instagram";
+    medium = "linktree";
+    campaign = "linktree";
+  }
+
+  return { source, medium, campaign };
+}
+
+function dimensionFromLocalCustomer(customer: CampaignLocalCustomer): UtmDimension {
+  return derivedUtmDimension(localCustomerToCampaignMetric(customer, 0) ?? {
+    id: 0,
+    period_start: customer.createdAt.toISOString(),
+    period_type: "registration",
+    event_name: "register_submitted",
+    product: null,
+    product_variant: null,
+    category: null,
+    user: null,
+    user_id: null,
+    order_id: null,
+    utm_source: customer.utmSource,
+    utm_medium: customer.utmMedium,
+    utm_campaign: customer.utmCampaign,
+    source: null,
+    channel: null,
+    device_type: null,
+    total_events: 1,
+    unique_users: 0,
+    unique_sessions: 0,
+    total_quantity: 0,
+    total_value: 0,
+    updated_at: customer.createdAt.toISOString(),
+    utm_content: customer.utmContent,
+    utm_term: customer.utmTerm,
+  });
+}
+
+function passesUtmFilter(dimension: UtmDimension, source?: string, medium?: string, campaign?: string): boolean {
+  if (source && normalizeCampaignText(dimension.source) !== normalizeCampaignText(source)) return false;
+  if (medium && normalizeCampaignText(dimension.medium) !== normalizeCampaignText(medium)) return false;
+  if (campaign && normalizeCampaignText(dimension.campaign) !== normalizeCampaignText(campaign)) return false;
+  return true;
+}
+
+function utmKeyForGroup(dimension: UtmDimension, groupBy: UtmGroupBy): string {
+  if (groupBy === "campaign") return dimension.campaign || "sem campanha";
+  if (groupBy === "sourceMediumCampaign") {
+    return `${dimension.source || "direct"} / ${dimension.medium || "none"} / ${dimension.campaign || "sem campanha"}`;
+  }
+  return dimension.source || "direct";
+}
+
+function getOrCreateUtmAccum(map: Map<string, UtmAccum>, key: string, dimension: UtmDimension, groupBy: UtmGroupBy): UtmAccum {
+  const existing = map.get(key);
+  if (existing) return existing;
+  const row: UtmAccum = {
+    key,
+    source: groupBy === "campaign" ? null : dimension.source,
+    medium: groupBy === "sourceMediumCampaign" ? dimension.medium : null,
+    campaign: groupBy === "source" ? null : dimension.campaign,
+    registrations: 0,
+    approvals: 0,
+    buyers: new Set<string>(),
+    revenue: 0,
+    sessions: 0,
+    subRows: new Map(),
+  };
+  map.set(key, row);
+  return row;
+}
+
+function addUtmMetric(
+  map: Map<string, UtmAccum>,
+  dimension: UtmDimension,
+  groupBy: UtmGroupBy,
+  mutate: (row: UtmAccum) => void,
+) {
+  const key = utmKeyForGroup(dimension, groupBy);
+  const row = getOrCreateUtmAccum(map, key, dimension, groupBy);
+  mutate(row);
+
+  if (groupBy !== "sourceMediumCampaign") {
+    const detailKey = `${dimension.source} / ${dimension.medium} / ${dimension.campaign}`;
+    const detail = getOrCreateUtmAccum(row.subRows, detailKey, dimension, "sourceMediumCampaign");
+    mutate(detail);
+  }
+}
+
+function toUtmRows(map: Map<string, UtmAccum>) {
+  return [...map.values()]
+    .map((row) => {
+      const registrations = row.registrations;
+      const buyers = row.buyers.size;
+      const subRows = [...row.subRows.values()].map((sub) => {
+        const subRegistrations = sub.registrations;
+        const subBuyers = sub.buyers.size;
+        return {
+          key: sub.key,
+          source: sub.source,
+          medium: sub.medium,
+          campaign: sub.campaign,
+          registrations: subRegistrations,
+          approvals: sub.approvals,
+          approvalPct: subRegistrations > 0 ? (sub.approvals / subRegistrations) * 100 : 0,
+          buyers: subBuyers,
+          revenue: sub.revenue,
+          conversionPct: subRegistrations > 0 ? (subBuyers / subRegistrations) * 100 : 0,
+          roas: null as number | null,
+        };
+      });
+      return {
+        key: row.key,
+        source: row.source,
+        medium: row.medium,
+        campaign: row.campaign,
+        registrations,
+        approvals: row.approvals,
+        approvalPct: registrations > 0 ? (row.approvals / registrations) * 100 : 0,
+        buyers,
+        revenue: row.revenue,
+        conversionPct: registrations > 0 ? (buyers / registrations) * 100 : 0,
+        roas: null as number | null,
+        subRows,
+      };
+    })
+    .sort((a, b) => b.revenue - a.revenue || b.registrations - a.registrations);
+}
+
+function latestTouchBefore(
+  touches: Array<{ occurredAt: string; dimension: UtmDimension }>,
+  date: Date,
+): UtmDimension | null {
+  const limit = date.getTime();
+  let selected: UtmDimension | null = null;
+  let selectedAt = -Infinity;
+  for (const touch of touches) {
+    const occurredAt = new Date(touch.occurredAt).getTime();
+    if (!Number.isFinite(occurredAt) || occurredAt > limit || occurredAt < selectedAt) continue;
+    selected = touch.dimension;
+    selectedAt = occurredAt;
+  }
+  return selected;
+}
+
 async function buildUtmAnalytics(
   clientId: string,
   from: Date,
@@ -5899,7 +6124,167 @@ async function buildUtmAnalytics(
   filterSource?: string,
   filterMedium?: string,
   filterCampaign?: string,
+  upzeroRange?: { from: string; to: string },
 ) {
+  try {
+    const [client] = await db
+      .select({ upZeroApiKey: clientsTable.upZeroApiKey })
+      .from(clientsTable)
+      .where(eq(clientsTable.id, clientId));
+    const tracking = await getUpzeroTrackingRowsChunked({
+      from: upzeroRange?.from ?? from.toISOString(),
+      to: upzeroRange?.to ?? to.toISOString(),
+      apiKey: client?.upZeroApiKey,
+      context: "utm",
+    });
+    const trackingRows = tracking.rows;
+    const hasRealAttribution = trackingRows.some((row) => {
+      const dimension = derivedUtmDimension(row);
+      return dimension.source !== "direct" || dimension.medium !== "none" || dimension.campaign !== "sem campanha";
+    });
+
+    if (trackingRows.length > 0 && hasRealAttribution) {
+      const localCustomers = await db
+        .select({
+          id: customersTable.id,
+          externalId: customersTable.externalId,
+          name: customersTable.name,
+          email: customersTable.email,
+          phone: customersTable.phone,
+          documentType: customersTable.documentType,
+          registrationStatus: customersTable.registrationStatus,
+          createdAt: customersTable.createdAt,
+          totalOrders: customersTable.totalOrders,
+          utmSource: customersTable.utmSource,
+          utmMedium: customersTable.utmMedium,
+          utmCampaign: customersTable.utmCampaign,
+          utmContent: customersTable.utmContent,
+          utmTerm: customersTable.utmTerm,
+        })
+        .from(customersTable)
+        .where(and(eq(customersTable.clientId, clientId), lte(customersTable.createdAt, to)));
+
+      const localByExternalUserId = new Map<number, CampaignLocalCustomer>();
+      const localById = new Map<string, CampaignLocalCustomer>();
+      for (const customer of localCustomers) {
+        localById.set(customer.id, customer);
+        const userId = Number.parseInt(customer.externalId ?? "", 10);
+        if (Number.isFinite(userId)) localByExternalUserId.set(userId, customer);
+      }
+
+      const touchesByUser = new Map<number, Array<{ occurredAt: string; dimension: UtmDimension }>>();
+      const rowsBySource = new Map<string, UtmAccum>();
+      let totalSessions = 0;
+      const seenRegisterEventUsers = new Set<number>();
+
+      for (const row of trackingRows) {
+        const dimension = derivedUtmDimension(row);
+        if (!passesUtmFilter(dimension, filterSource, filterMedium, filterCampaign)) continue;
+        const user = getMetricUser(row);
+        if (user && (isPaidCampaignSignal(row) || row.utm_source || row.utm_medium || row.utm_campaign || row.fbc || row.fbclid || row.gclid)) {
+          const list = touchesByUser.get(user.id) ?? [];
+          list.push({ occurredAt: row.period_start, dimension });
+          touchesByUser.set(user.id, list);
+        }
+
+        if (row.event_name === "page_view") {
+          const sessions = Math.max(row.unique_sessions ?? 0, row.total_events ?? 0);
+          totalSessions += sessions;
+          addUtmMetric(rowsBySource, dimension, groupBy, (entry) => {
+            entry.sessions += sessions;
+          });
+        }
+
+        if (row.event_name === "register_submitted") {
+          const value = row.total_events || 1;
+          if (user) seenRegisterEventUsers.add(user.id);
+          addUtmMetric(rowsBySource, dimension, groupBy, (entry) => {
+            entry.registrations += value;
+          });
+        }
+      }
+
+      for (const list of touchesByUser.values()) {
+        list.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
+      }
+
+      for (const customer of localCustomers) {
+        if (customer.createdAt < from || customer.createdAt > to) continue;
+        const userId = Number.parseInt(customer.externalId ?? "", 10);
+        const touch = Number.isFinite(userId)
+          ? latestTouchBefore(touchesByUser.get(userId) ?? [], customer.createdAt)
+          : null;
+        const dimension = touch ?? dimensionFromLocalCustomer(customer);
+        if (!passesUtmFilter(dimension, filterSource, filterMedium, filterCampaign)) continue;
+        if (!seenRegisterEventUsers.has(userId)) {
+          addUtmMetric(rowsBySource, dimension, groupBy, (entry) => {
+            entry.registrations += 1;
+          });
+        }
+        if (customer.registrationStatus === "APPROVED") {
+          addUtmMetric(rowsBySource, dimension, groupBy, (entry) => {
+            entry.approvals += 1;
+          });
+        }
+      }
+
+      const orderRows = await db
+        .select({
+          id: ordersTable.id,
+          customerId: ordersTable.customerId,
+          amount: ordersTable.amount,
+          createdAt: ordersTable.createdAt,
+          customerExternalId: customersTable.externalId,
+        })
+        .from(ordersTable)
+        .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+        .where(and(
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, from),
+          lte(ordersTable.createdAt, to),
+          sql`${ordersTable.status} != 'REJECTED'`,
+        ));
+
+      for (const order of orderRows) {
+        const userId = Number.parseInt(order.customerExternalId ?? "", 10);
+        const customer = localById.get(order.customerId);
+        const touch = Number.isFinite(userId)
+          ? latestTouchBefore(touchesByUser.get(userId) ?? [], order.createdAt)
+          : null;
+        const dimension = touch ?? (customer ? dimensionFromLocalCustomer(customer) : { source: "direct", medium: "none", campaign: "sem campanha" });
+        if (!passesUtmFilter(dimension, filterSource, filterMedium, filterCampaign)) continue;
+        addUtmMetric(rowsBySource, dimension, groupBy, (entry) => {
+          entry.buyers.add(order.customerId);
+          entry.revenue += Number(order.amount ?? 0);
+        });
+      }
+
+      const rows = toUtmRows(rowsBySource);
+      const totalReg = rows.reduce((sum, row) => sum + row.registrations, 0);
+      const totalApp = rows.reduce((sum, row) => sum + row.approvals, 0);
+      const totalBuyers = rows.reduce((sum, row) => sum + row.buyers, 0);
+      const totalRevenue = rows.reduce((sum, row) => sum + row.revenue, 0);
+      const topRow = rows[0];
+      return {
+        kpis: {
+          totalSessions,
+          totalRegistrations: totalReg,
+          totalApprovals: totalApp,
+          approvalPct: totalReg > 0 ? (totalApp / totalReg) * 100 : 0,
+          totalBuyers,
+          totalRevenue,
+          conversionPct: totalReg > 0 ? (totalBuyers / totalReg) * 100 : 0,
+          totalRoas: null,
+          topSource: topRow?.key ?? null,
+          topSourceRevenue: topRow?.revenue ?? 0,
+        },
+        rows,
+      };
+    }
+  } catch (error) {
+    console.warn("[utm] UP Zero tracking unavailable; using local UTM fallback:", error);
+  }
+
   const sourceExpr = sql`COALESCE(NULLIF(lower(c.utm_source), ''), '(direct)')`;
   const mediumExpr = sql`COALESCE(NULLIF(lower(c.utm_medium), ''), '(none)')`;
   const campaignExpr = sql`COALESCE(NULLIF(lower(c.utm_campaign), ''), '(campaign unset)')`;
@@ -6137,7 +6522,16 @@ router.get("/analytics/utm", async (req, res): Promise<void> => {
   const filterMed  = parsed.data.utmMedium  || undefined;
   const filterCamp = parsed.data.utmCampaign || undefined;
 
-  const payload = await buildUtmAnalytics(clientId, from, to, groupBy, filterSrc, filterMed, filterCamp);
+  const payload = await buildUtmAnalytics(
+    clientId,
+    from,
+    to,
+    groupBy,
+    filterSrc,
+    filterMed,
+    filterCamp,
+    upzeroIsoRange(req.query as Record<string, unknown>, from, to),
+  );
   res.json(GetUtmResponse.parse(payload));
 });
 
