@@ -6060,11 +6060,12 @@ function addUtmMetric(
   }
 }
 
-function toUtmRows(map: Map<string, UtmAccum>) {
+function toUtmRows(map: Map<string, UtmAccum>, groupBy: UtmGroupBy, spendBySource = new Map<string, number>()) {
   return [...map.values()]
     .map((row) => {
       const registrations = row.registrations;
       const buyers = row.buyers.size;
+      const spend = groupBy === "source" ? spendBySource.get(row.key.toLowerCase()) ?? 0 : 0;
       const subRows = [...row.subRows.values()].map((sub) => {
         const subRegistrations = sub.registrations;
         const subBuyers = sub.buyers.size;
@@ -6093,11 +6094,27 @@ function toUtmRows(map: Map<string, UtmAccum>) {
         buyers,
         revenue: row.revenue,
         conversionPct: registrations > 0 ? (buyers / registrations) * 100 : 0,
-        roas: null as number | null,
+        roas: spend > 0 ? row.revenue / spend : null as number | null,
         subRows,
       };
     })
     .sort((a, b) => b.revenue - a.revenue || b.registrations - a.registrations);
+}
+
+async function loadSpendBySource(clientId: string, from: Date, to: Date): Promise<Map<string, number>> {
+  const spendBySource = new Map<string, number>();
+  const creatives = await db
+    .select()
+    .from(creativesTable)
+    .where(eq(creativesTable.clientId, clientId));
+  for (const creative of creatives) {
+    if (!creative.platform) continue;
+    const fraction = computeSpendOverlapFraction(creative, from, to);
+    if (fraction <= 0) continue;
+    const key = creative.platform.toLowerCase();
+    spendBySource.set(key, (spendBySource.get(key) ?? 0) + creative.spend * fraction);
+  }
+  return spendBySource;
 }
 
 function latestTouchBefore(
@@ -6259,7 +6276,8 @@ async function buildUtmAnalytics(
         });
       }
 
-      const rows = toUtmRows(rowsBySource);
+      const spendBySource = await loadSpendBySource(clientId, from, to);
+      const rows = toUtmRows(rowsBySource, groupBy, spendBySource);
       const totalReg = rows.reduce((sum, row) => sum + row.registrations, 0);
       const totalApp = rows.reduce((sum, row) => sum + row.approvals, 0);
       const totalBuyers = rows.reduce((sum, row) => sum + row.buyers, 0);
@@ -6274,7 +6292,9 @@ async function buildUtmAnalytics(
           totalBuyers,
           totalRevenue,
           conversionPct: totalReg > 0 ? (totalBuyers / totalReg) * 100 : 0,
-          totalRoas: null,
+          totalRoas: [...spendBySource.values()].reduce((sum, value) => sum + value, 0) > 0
+            ? totalRevenue / [...spendBySource.values()].reduce((sum, value) => sum + value, 0)
+            : null,
           topSource: topRow?.key ?? null,
           topSourceRevenue: topRow?.revenue ?? 0,
         },
