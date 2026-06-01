@@ -235,6 +235,12 @@ type TimelineListItem =
   | { type: "event"; event: CustomerTimelineEvent }
   | { type: "product_group"; id: string; events: CustomerTimelineEvent[] };
 
+type TimelineDayGroup = {
+  key: string;
+  date: string;
+  items: TimelineListItem[];
+};
+
 function isProductTimelineEvent(event: CustomerTimelineEvent) {
   return ["product_view", "product_item_impression", "product_item_click"].includes(event.eventName);
 }
@@ -268,6 +274,50 @@ function groupProductTimelineEvents(events: CustomerTimelineEvent[]): TimelineLi
 
   flush();
   return items;
+}
+
+function timelineDateKey(value: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatTimelineDay(value: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function groupTimelineItemsByDay(items: TimelineListItem[]): TimelineDayGroup[] {
+  const groups = new Map<string, TimelineDayGroup>();
+
+  for (const item of items) {
+    const date = item.type === "event" ? item.event.occurredAt : item.events[0]!.occurredAt;
+    const key = timelineDateKey(date);
+    const current = groups.get(key) ?? { key, date, items: [] };
+    current.items.push(item);
+    groups.set(key, current);
+  }
+
+  return Array.from(groups.values());
+}
+
+function productPreviewImages(events: CustomerTimelineEvent[]) {
+  const seen = new Set<string>();
+  const images: Array<{ src: string; alt: string }> = [];
+  for (const event of events) {
+    if (!event.productImageUrl || seen.has(event.productImageUrl)) continue;
+    seen.add(event.productImageUrl);
+    images.push({ src: event.productImageUrl, alt: event.productName ?? event.eventLabel });
+    if (images.length >= 4) break;
+  }
+  return images;
 }
 
 function whatsappDirectUrl(phone: string | null | undefined): string | null {
@@ -383,6 +433,10 @@ function UpzeroTimelineSection({
 }) {
   const timeline = data?.timeline ?? [];
   const groupedTimelineItems = useMemo(() => groupProductTimelineEvents(timeline), [timeline]);
+  const timelineDayGroups = useMemo(
+    () => groupTimelineItemsByDay(groupedTimelineItems),
+    [groupedTimelineItems],
+  );
   const timelineWhatsappUrl = whatsappDirectUrl(phone);
   return (
     <section className="space-y-4" data-testid="customer-upzero-timeline">
@@ -473,148 +527,177 @@ function UpzeroTimelineSection({
           </div>
 
           <Card className="p-5">
-            <div className="relative pl-7">
-              <div className="absolute left-[13px] top-0 bottom-0 w-px bg-border" />
-              {groupedTimelineItems.map((item, index) => {
-                if (item.type === "product_group") {
-                  const firstEvent = item.events[0]!;
-                  const lastEvent = item.events[item.events.length - 1]!;
-                  const uniqueProducts = new Set(
-                    item.events.map((event) => event.productName ?? event.productSku ?? event.id),
-                  ).size;
-                  const totalViews = item.events.reduce((sum, event) => sum + event.totalEvents, 0);
-                  return (
-                    <div key={item.id} className="relative pb-5 last:pb-0">
-                      <div className={`absolute left-[-27px] top-0 h-7 w-7 rounded-full border-2 flex items-center justify-center bg-blue-500/10 ${index === 0 ? "border-primary" : "border-blue-500/30"}`}>
-                        <Package className="h-3.5 w-3.5 text-blue-400" />
-                      </div>
-                      <details className="group rounded-lg border border-border/70 bg-background/40">
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold">Produtos visualizados</p>
-                            <p className="text-xs text-muted-foreground">
-                              {formatSaoPauloDateTime(firstEvent.occurredAt)}
-                              {lastEvent.id !== firstEvent.id ? ` - ${formatSaoPauloDateTime(lastEvent.occurredAt)}` : ""}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {formatNumber(uniqueProducts)} produto(s), {formatNumber(totalViews)} visualização(ões)
-                            </p>
-                          </div>
-                          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-                        </summary>
-                        <div className="space-y-2 border-t border-border p-3 pt-2">
-                          {item.events.map((event) => (
-                            <div key={event.id} className="flex gap-3 rounded-md bg-muted/20 p-2">
-                              {event.productImageUrl ? (
-                                <img
-                                  src={event.productImageUrl}
-                                  alt={event.productName ?? event.eventLabel}
-                                  className="h-10 w-10 shrink-0 rounded-md border border-border object-cover"
-                                  loading="lazy"
-                                />
-                              ) : (
-                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/10">
-                                  <Package className="h-4 w-4 text-blue-400" />
+            <div className="space-y-6">
+              {timelineDayGroups.map((group) => (
+                <div key={group.key} className="grid gap-3 md:grid-cols-9 md:items-start">
+                  <div className="md:col-span-2">
+                    <time dateTime={group.key} className="text-sm font-semibold text-muted-foreground md:text-base">
+                      {formatTimelineDay(group.date)}
+                    </time>
+                  </div>
+                  <div className="relative md:col-span-7">
+                    <div className="absolute left-3 top-0 bottom-0 hidden w-px bg-border md:block" />
+                    <div className="space-y-3 md:pl-10">
+                      {group.items.map((item, index) => {
+                        if (item.type === "product_group") {
+                          const firstEvent = item.events[0]!;
+                          const lastEvent = item.events[item.events.length - 1]!;
+                          const uniqueProducts = new Set(
+                            item.events.map((event) => event.productName ?? event.productSku ?? event.id),
+                          ).size;
+                          const totalViews = item.events.reduce((sum, event) => sum + event.totalEvents, 0);
+                          const previewImages = productPreviewImages(item.events);
+                          return (
+                            <details key={item.id} className="group relative rounded-lg border border-border/70 bg-background/40">
+                              <div className="absolute -left-[39px] top-4 hidden h-6 w-6 items-center justify-center rounded-full border border-blue-500/30 bg-blue-500/10 md:flex">
+                                <Package className="h-3.5 w-3.5 text-blue-400" />
+                              </div>
+                              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <div className="flex -space-x-2">
+                                    {previewImages.length > 0 ? (
+                                      previewImages.map((image) => (
+                                        <img
+                                          key={image.src}
+                                          src={image.src}
+                                          alt={image.alt}
+                                          className="h-10 w-10 rounded-md border border-background object-cover shadow-sm"
+                                          loading="lazy"
+                                        />
+                                      ))
+                                    ) : (
+                                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/10">
+                                        <Package className="h-4 w-4 text-blue-400" />
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-semibold">Produtos visualizados</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {formatSaoPauloDateTime(firstEvent.occurredAt)}
+                                      {lastEvent.id !== firstEvent.id ? ` - ${formatSaoPauloDateTime(lastEvent.occurredAt)}` : ""}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {formatNumber(uniqueProducts)} produto(s), {formatNumber(totalViews)} visualização(ões)
+                                    </p>
+                                  </div>
                                 </div>
-                              )}
-                              <div className="min-w-0 flex-1 text-xs">
-                                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                                  <p className="truncate font-medium text-foreground" title={event.productName ?? event.eventLabel}>
-                                    {event.productName ?? event.eventLabel}
+                                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                              </summary>
+                              <div className="space-y-2 border-t border-border p-3 pt-2">
+                                {item.events.map((event) => (
+                                  <div key={event.id} className="flex gap-3 rounded-md bg-muted/20 p-2">
+                                    {event.productImageUrl ? (
+                                      <img
+                                        src={event.productImageUrl}
+                                        alt={event.productName ?? event.eventLabel}
+                                        className="h-10 w-10 shrink-0 rounded-md border border-border object-cover"
+                                        loading="lazy"
+                                      />
+                                    ) : (
+                                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/10">
+                                        <Package className="h-4 w-4 text-blue-400" />
+                                      </div>
+                                    )}
+                                    <div className="min-w-0 flex-1 text-xs">
+                                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                        <p className="truncate font-medium text-foreground" title={event.productName ?? event.eventLabel}>
+                                          {event.productName ?? event.eventLabel}
+                                        </p>
+                                        <span className="shrink-0 text-muted-foreground">{formatSaoPauloDateTime(event.occurredAt)}</span>
+                                      </div>
+                                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+                                        {event.productSku && <span>SKU: {event.productSku}</span>}
+                                        <span>Eventos: {formatNumber(event.totalEvents)}</span>
+                                        {event.deviceType && <span>Dispositivo: {event.deviceType}</span>}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          );
+                        }
+                        const event = item.event;
+                        const meta = timelineEventMeta(event.eventName);
+                        const Icon = meta.icon;
+                        const attribution = attributionLabel(event.attributionType);
+                        return (
+                          <div key={event.id} className="relative rounded-lg border border-border/70 bg-background/40 p-3">
+                            <div className={`absolute -left-[39px] top-4 hidden h-6 w-6 items-center justify-center rounded-full border md:flex ${meta.bg} ${index === 0 ? "border-primary" : meta.border}`}>
+                              <Icon className={`h-3.5 w-3.5 ${meta.color}`} />
+                            </div>
+                            <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="flex min-w-0 gap-3">
+                                {event.productImageUrl ? (
+                                  <img
+                                    src={event.productImageUrl}
+                                    alt={event.productName ?? event.eventLabel}
+                                    className="h-14 w-14 shrink-0 rounded-md border border-border object-cover"
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-md border ${meta.bg} ${meta.border}`}>
+                                    <Icon className={`h-6 w-6 ${meta.color}`} />
+                                  </div>
+                                )}
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold">{event.eventLabel}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {formatSaoPauloDateTime(event.occurredAt)}
                                   </p>
-                                  <span className="shrink-0 text-muted-foreground">{formatSaoPauloDateTime(event.occurredAt)}</span>
-                                </div>
-                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
-                                  {event.productSku && <span>SKU: {event.productSku}</span>}
-                                  <span>Eventos: {formatNumber(event.totalEvents)}</span>
-                                  {event.deviceType && <span>Dispositivo: {event.deviceType}</span>}
+                                  {event.productName && (
+                                    <p className="mt-1 truncate text-xs text-foreground" title={event.productName}>
+                                      {event.productName}
+                                    </p>
+                                  )}
                                 </div>
                               </div>
+                              {attribution && (
+                                <Badge variant="outline" className="w-fit text-[11px]">
+                                  {attribution}
+                                </Badge>
+                              )}
                             </div>
-                          ))}
-                        </div>
-                      </details>
-                    </div>
-                  );
-                }
-                const event = item.event;
-                const meta = timelineEventMeta(event.eventName);
-                const Icon = meta.icon;
-                const attribution = attributionLabel(event.attributionType);
-                return (
-                  <div key={event.id} className="relative pb-5 last:pb-0">
-                    <div className={`absolute left-[-27px] top-0 h-7 w-7 rounded-full border-2 flex items-center justify-center ${meta.bg} ${index === 0 ? "border-primary" : meta.border}`}>
-                      <Icon className={`h-3.5 w-3.5 ${meta.color}`} />
-                    </div>
-                    <div className="rounded-lg border border-border/70 bg-background/40 p-3">
-                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex min-w-0 gap-3">
-                          {event.productImageUrl ? (
-                            <img
-                              src={event.productImageUrl}
-                              alt={event.productName ?? event.eventLabel}
-                              className="h-14 w-14 shrink-0 rounded-md border border-border object-cover"
-                              loading="lazy"
-                            />
-                          ) : (
-                            <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-md border ${meta.bg} ${meta.border}`}>
-                              <Icon className={`h-6 w-6 ${meta.color}`} />
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                          <p className="text-sm font-semibold">{event.eventLabel}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatSaoPauloDateTime(event.occurredAt)}
-                          </p>
-                          {event.productName && (
-                            <p className="mt-1 truncate text-xs text-foreground" title={event.productName}>
-                              {event.productName}
-                            </p>
-                          )}
-                          </div>
-                        </div>
-                        {attribution && (
-                          <Badge variant="outline" className="w-fit text-[11px]">
-                            {attribution}
-                          </Badge>
-                        )}
-                      </div>
 
-                      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-5 gap-y-1.5 text-xs">
-                        {event.productSku && (
-                          <span><strong>SKU:</strong> {event.productSku}</span>
-                        )}
-                        {event.categoryName && (
-                          <span><strong>Categoria:</strong> {event.categoryName}</span>
-                        )}
-                        {event.orderId !== null && (
-                          <span><strong>Pedido:</strong> #{event.orderId}</span>
-                        )}
-                        {event.utmCampaign && (
-                          <span className="md:col-span-2 xl:col-span-3">
-                            <strong>Campanha:</strong> {event.utmCampaign}
-                          </span>
-                        )}
-                        <span><strong>Origem:</strong> {event.normalizedSource}</span>
-                        <span><strong>Medium:</strong> {event.normalizedMedium}</span>
-                        {event.deviceType && (
-                          <span className="flex items-center gap-1">
-                            <MonitorSmartphone className="h-3 w-3 text-muted-foreground" />
-                            <strong>Dispositivo:</strong> {event.deviceType}
-                          </span>
-                        )}
-                        <span><strong>Eventos:</strong> {formatNumber(event.totalEvents)}</span>
-                        {event.totalQuantity > 0 && (
-                          <span><strong>Quantidade:</strong> {formatNumber(event.totalQuantity)}</span>
-                        )}
-                        {event.totalValue > 0 && (
-                          <span><strong>Valor:</strong> {formatCurrency(event.totalValue)}</span>
-                        )}
-                      </div>
+                            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-5 gap-y-1.5 text-xs">
+                              {event.productSku && (
+                                <span><strong>SKU:</strong> {event.productSku}</span>
+                              )}
+                              {event.categoryName && (
+                                <span><strong>Categoria:</strong> {event.categoryName}</span>
+                              )}
+                              {event.orderId !== null && (
+                                <span><strong>Pedido:</strong> #{event.orderId}</span>
+                              )}
+                              {event.utmCampaign && (
+                                <span className="md:col-span-2 xl:col-span-3">
+                                  <strong>Campanha:</strong> {event.utmCampaign}
+                                </span>
+                              )}
+                              <span><strong>Origem:</strong> {event.normalizedSource}</span>
+                              <span><strong>Medium:</strong> {event.normalizedMedium}</span>
+                              {event.deviceType && (
+                                <span className="flex items-center gap-1">
+                                  <MonitorSmartphone className="h-3 w-3 text-muted-foreground" />
+                                  <strong>Dispositivo:</strong> {event.deviceType}
+                                </span>
+                              )}
+                              <span><strong>Eventos:</strong> {formatNumber(event.totalEvents)}</span>
+                              {event.totalQuantity > 0 && (
+                                <span><strong>Quantidade:</strong> {formatNumber(event.totalQuantity)}</span>
+                              )}
+                              {event.totalValue > 0 && (
+                                <span><strong>Valor:</strong> {formatCurrency(event.totalValue)}</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           </Card>
         </>

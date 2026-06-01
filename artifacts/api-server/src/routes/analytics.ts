@@ -1683,7 +1683,9 @@ function buildAttributedCampaignCustomers(
     const firstSeenAt = sortedRows[0]?.period_start ?? null;
     const lastEvent = sortedRows[sortedRows.length - 1];
     const localCustomer = localCustomers.get(userId);
-    const documentType = localCustomer?.documentType ?? (user?.cnpj ? "CNPJ" : user?.cpf ? "CPF" : null);
+    const documentType =
+      localCustomer?.documentType ??
+      (user?.cnpj ? "CNPJ" : user?.cpf ? "CPF" : user?.type === "WHOLESALE" ? "CNPJ" : user?.type === "RETAIL" ? "CPF" : null);
     const priorOrderCount = localCustomer ? Number(priorOrders.get(localCustomer.id) ?? 0) : 0;
     const totalHistoricalOrders = Number(localCustomer?.totalOrders ?? 0);
     const knownHistoricalOrders = Math.max(

@@ -521,6 +521,12 @@ type TimelineListItem =
   | { type: "event"; event: CustomerTimelineEvent }
   | { type: "product_group"; id: string; events: CustomerTimelineEvent[] };
 
+type TimelineDayGroup = {
+  key: string;
+  date: string;
+  items: TimelineListItem[];
+};
+
 function isProductTimelineEvent(event: CustomerTimelineEvent) {
   return ["product_view", "product_item_impression", "product_item_click"].includes(event.eventName);
 }
@@ -554,6 +560,50 @@ function groupProductTimelineEvents(events: CustomerTimelineEvent[]): TimelineLi
 
   flush();
   return items;
+}
+
+function timelineDateKey(value: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatTimelineDay(value: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function groupTimelineItemsByDay(items: TimelineListItem[]): TimelineDayGroup[] {
+  const groups = new Map<string, TimelineDayGroup>();
+
+  for (const item of items) {
+    const date = item.type === "event" ? item.event.occurredAt : item.events[0]!.occurredAt;
+    const key = timelineDateKey(date);
+    const current = groups.get(key) ?? { key, date, items: [] };
+    current.items.push(item);
+    groups.set(key, current);
+  }
+
+  return Array.from(groups.values());
+}
+
+function productPreviewImages(events: CustomerTimelineEvent[]) {
+  const seen = new Set<string>();
+  const images: Array<{ src: string; alt: string }> = [];
+  for (const event of events) {
+    if (!event.productImageUrl || seen.has(event.productImageUrl)) continue;
+    seen.add(event.productImageUrl);
+    images.push({ src: event.productImageUrl, alt: event.productName ?? event.eventLabel });
+    if (images.length >= 4) break;
+  }
+  return images;
 }
 
 function whatsappDirectUrl(phone: string | null | undefined): string | null {
@@ -612,6 +662,10 @@ function CampaignCustomersPanel({
   const groupedTimelineItems = useMemo(
     () => groupProductTimelineEvents(timelineData?.timeline ?? []),
     [timelineData?.timeline],
+  );
+  const timelineDayGroups = useMemo(
+    () => groupTimelineItemsByDay(groupedTimelineItems),
+    [groupedTimelineItems],
   );
   const timelineWhatsappUrl = whatsappDirectUrl(timelineRow?.phone);
 
@@ -921,8 +975,13 @@ function CampaignCustomersPanel({
                           CNPJ {row.cnpj}
                         </span>
                       )}
-                      {!row.cpf && !row.cnpj && (
-                        <span className="text-xs text-muted-foreground">Sem documento</span>
+                      {!row.cpf && !row.cnpj && row.documentType && (
+                        <span className="inline-flex rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          {row.documentType} cadastrado
+                        </span>
+                      )}
+                      {!row.cpf && !row.cnpj && !row.documentType && (
+                        <span className="text-xs text-muted-foreground">Documento não retornado</span>
                       )}
                     </div>
                   </td>
@@ -1054,117 +1113,152 @@ function CampaignCustomersPanel({
                 </div>
               </div>
 
-              <div className="space-y-3">
-                {groupedTimelineItems.map((item) => {
-                  if (item.type === "product_group") {
-                    const firstEvent = item.events[0]!;
-                    const lastEvent = item.events[item.events.length - 1]!;
-                    const uniqueProducts = new Set(
-                      item.events.map((event) => event.productName ?? event.productSku ?? event.id),
-                    ).size;
-                    const totalViews = item.events.reduce((sum, event) => sum + event.totalEvents, 0);
-                    return (
-                      <details key={item.id} className="group rounded-lg border border-border bg-card">
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
-                          <div className="flex min-w-0 items-center gap-3">
-                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/10">
-                              <Package className="h-5 w-5 text-blue-400" />
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold">Produtos visualizados</p>
-                              <p className="text-xs text-muted-foreground">
-                                {formatTimelineDate(firstEvent.occurredAt)}
-                                {lastEvent.id !== firstEvent.id ? ` - ${formatTimelineDate(lastEvent.occurredAt)}` : ""}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {formatNumber(uniqueProducts)} produto(s), {formatNumber(totalViews)} visualização(ões)
-                              </p>
-                            </div>
-                          </div>
-                          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-                        </summary>
-                        <div className="space-y-2 border-t border-border p-3 pt-2">
-                          {item.events.map((event) => (
-                            <div key={event.id} className="flex gap-3 rounded-md bg-muted/20 p-2">
-                              {event.productImageUrl ? (
-                                <img
-                                  src={event.productImageUrl}
-                                  alt={event.productName ?? event.eventLabel}
-                                  className="h-10 w-10 shrink-0 rounded-md border border-border object-cover"
-                                  loading="lazy"
-                                />
-                              ) : (
-                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/10">
-                                  <Package className="h-4 w-4 text-blue-400" />
+              <div className="space-y-6">
+                {timelineDayGroups.map((group) => (
+                  <div key={group.key} className="grid gap-3 md:grid-cols-9 md:items-start">
+                    <div className="md:col-span-2">
+                      <time dateTime={group.key} className="text-sm font-semibold text-muted-foreground md:text-base">
+                        {formatTimelineDay(group.date)}
+                      </time>
+                    </div>
+                    <div className="relative md:col-span-7">
+                      <div className="absolute left-3 top-0 bottom-0 hidden w-px bg-border md:block" />
+                      <div className="space-y-3 md:pl-10">
+                        {group.items.map((item, index) => {
+                          if (item.type === "product_group") {
+                            const firstEvent = item.events[0]!;
+                            const lastEvent = item.events[item.events.length - 1]!;
+                            const uniqueProducts = new Set(
+                              item.events.map((event) => event.productName ?? event.productSku ?? event.id),
+                            ).size;
+                            const totalViews = item.events.reduce((sum, event) => sum + event.totalEvents, 0);
+                            const previewImages = productPreviewImages(item.events);
+                            return (
+                              <details key={item.id} className="group relative rounded-lg border border-border bg-card">
+                                <div className="absolute -left-[39px] top-4 hidden h-6 w-6 items-center justify-center rounded-full border border-blue-500/30 bg-blue-500/10 md:flex">
+                                  <Package className="h-3.5 w-3.5 text-blue-400" />
                                 </div>
-                              )}
-                              <div className="min-w-0 flex-1 text-xs">
-                                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                                  <p className="truncate font-medium text-foreground" title={event.productName ?? event.eventLabel}>
-                                    {event.productName ?? event.eventLabel}
-                                  </p>
-                                  <span className="shrink-0 text-muted-foreground">{formatTimelineDate(event.occurredAt)}</span>
+                                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
+                                  <div className="flex min-w-0 items-center gap-3">
+                                    <div className="flex -space-x-2">
+                                      {previewImages.length > 0 ? (
+                                        previewImages.map((image) => (
+                                          <img
+                                            key={image.src}
+                                            src={image.src}
+                                            alt={image.alt}
+                                            className="h-10 w-10 rounded-md border border-background object-cover shadow-sm"
+                                            loading="lazy"
+                                          />
+                                        ))
+                                      ) : (
+                                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/10">
+                                          <Package className="h-4 w-4 text-blue-400" />
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-semibold">Produtos visualizados</p>
+                                      <p className="text-xs text-muted-foreground">
+                                        {formatTimelineDate(firstEvent.occurredAt)}
+                                        {lastEvent.id !== firstEvent.id ? ` - ${formatTimelineDate(lastEvent.occurredAt)}` : ""}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        {formatNumber(uniqueProducts)} produto(s), {formatNumber(totalViews)} visualização(ões)
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                                </summary>
+                                <div className="space-y-2 border-t border-border p-3 pt-2">
+                                  {item.events.map((event) => (
+                                    <div key={event.id} className="flex gap-3 rounded-md bg-muted/20 p-2">
+                                      {event.productImageUrl ? (
+                                        <img
+                                          src={event.productImageUrl}
+                                          alt={event.productName ?? event.eventLabel}
+                                          className="h-10 w-10 shrink-0 rounded-md border border-border object-cover"
+                                          loading="lazy"
+                                        />
+                                      ) : (
+                                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/10">
+                                          <Package className="h-4 w-4 text-blue-400" />
+                                        </div>
+                                      )}
+                                      <div className="min-w-0 flex-1 text-xs">
+                                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                          <p className="truncate font-medium text-foreground" title={event.productName ?? event.eventLabel}>
+                                            {event.productName ?? event.eventLabel}
+                                          </p>
+                                          <span className="shrink-0 text-muted-foreground">{formatTimelineDate(event.occurredAt)}</span>
+                                        </div>
+                                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+                                          {event.productSku && <span>SKU: {event.productSku}</span>}
+                                          <span>Eventos: {formatNumber(event.totalEvents)}</span>
+                                          {event.deviceType && <span>Dispositivo: {event.deviceType}</span>}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
                                 </div>
-                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
-                                  {event.productSku && <span>SKU: {event.productSku}</span>}
-                                  <span>Eventos: {formatNumber(event.totalEvents)}</span>
-                                  {event.deviceType && <span>Dispositivo: {event.deviceType}</span>}
+                              </details>
+                            );
+                          }
+                          const event = item.event;
+                          const attribution = attributionLabel(event.attributionType);
+                          const meta = timelineEventMeta(event.eventName);
+                          const Icon = meta.icon;
+                          return (
+                            <div key={event.id} className="relative rounded-lg border border-border bg-card p-3">
+                              <div className={`absolute -left-[39px] top-4 hidden h-6 w-6 items-center justify-center rounded-full border md:flex ${meta.bg} ${index === 0 ? "border-primary" : meta.border}`}>
+                                <Icon className={`h-3.5 w-3.5 ${meta.color}`} />
+                              </div>
+                              <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="flex min-w-0 gap-3">
+                                  {event.productImageUrl ? (
+                                    <img
+                                      src={event.productImageUrl}
+                                      alt={event.productName ?? event.eventLabel}
+                                      className="h-12 w-12 shrink-0 rounded-md border border-border object-cover"
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-md border ${meta.bg} ${meta.border}`}>
+                                      <Icon className={`h-5 w-5 ${meta.color}`} />
+                                    </div>
+                                  )}
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-semibold">{event.eventLabel}</p>
+                                    <p className="text-xs text-muted-foreground">{formatTimelineDate(event.occurredAt)}</p>
+                                    {event.productName && (
+                                      <p className="mt-1 truncate text-xs text-foreground" title={event.productName}>
+                                        {event.productName}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="text-left text-xs text-muted-foreground sm:text-right">
+                                  <div>{event.normalizedSource} / {event.normalizedMedium}</div>
+                                  {event.deviceType && <div>Dispositivo: {event.deviceType}</div>}
                                 </div>
                               </div>
+                              <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                                {event.productSku && <div>SKU: <span className="text-foreground">{event.productSku}</span></div>}
+                                {event.categoryName && <div>Categoria: <span className="text-foreground">{event.categoryName}</span></div>}
+                                {event.orderId && <div>Pedido: <span className="text-foreground">#{event.orderId}</span></div>}
+                                {event.utmCampaign && <div className="sm:col-span-2">Campanha: <span className="text-foreground">{event.utmCampaign}</span></div>}
+                                <div>Eventos: <span className="text-foreground">{formatNumber(event.totalEvents)}</span></div>
+                                {event.totalQuantity > 0 && <div>Quantidade: <span className="text-foreground">{formatNumber(event.totalQuantity)}</span></div>}
+                                {event.totalValue > 0 && <div>Valor: <span className="text-foreground">{formatCurrency(event.totalValue)}</span></div>}
+                                {attribution && <div>Atribuição: <span className="text-foreground">{attribution}</span></div>}
+                              </div>
                             </div>
-                          ))}
-                        </div>
-                      </details>
-                    );
-                  }
-                  const event = item.event;
-                  const attribution = attributionLabel(event.attributionType);
-                  const meta = timelineEventMeta(event.eventName);
-                  const Icon = meta.icon;
-                  return (
-                    <div key={event.id} className="rounded-lg border border-border bg-card p-3">
-                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex min-w-0 gap-3">
-                          {event.productImageUrl ? (
-                            <img
-                              src={event.productImageUrl}
-                              alt={event.productName ?? event.eventLabel}
-                              className="h-12 w-12 shrink-0 rounded-md border border-border object-cover"
-                              loading="lazy"
-                            />
-                          ) : (
-                            <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-md border ${meta.bg} ${meta.border}`}>
-                              <Icon className={`h-5 w-5 ${meta.color}`} />
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                          <p className="text-sm font-semibold">{event.eventLabel}</p>
-                          <p className="text-xs text-muted-foreground">{formatTimelineDate(event.occurredAt)}</p>
-                          {event.productName && (
-                            <p className="mt-1 truncate text-xs text-foreground" title={event.productName}>
-                              {event.productName}
-                            </p>
-                          )}
-                          </div>
-                        </div>
-                        <div className="text-left text-xs text-muted-foreground sm:text-right">
-                          <div>{event.normalizedSource} / {event.normalizedMedium}</div>
-                          {event.deviceType && <div>Dispositivo: {event.deviceType}</div>}
-                        </div>
-                      </div>
-                      <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                        {event.productSku && <div>SKU: <span className="text-foreground">{event.productSku}</span></div>}
-                        {event.categoryName && <div>Categoria: <span className="text-foreground">{event.categoryName}</span></div>}
-                        {event.orderId && <div>Pedido: <span className="text-foreground">#{event.orderId}</span></div>}
-                        {event.utmCampaign && <div className="sm:col-span-2">Campanha: <span className="text-foreground">{event.utmCampaign}</span></div>}
-                        <div>Eventos: <span className="text-foreground">{formatNumber(event.totalEvents)}</span></div>
-                        {event.totalQuantity > 0 && <div>Quantidade: <span className="text-foreground">{formatNumber(event.totalQuantity)}</span></div>}
-                        {event.totalValue > 0 && <div>Valor: <span className="text-foreground">{formatCurrency(event.totalValue)}</span></div>}
-                        {attribution && <div>Atribuição: <span className="text-foreground">{attribution}</span></div>}
+                          );
+                        })}
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             </div>
           ) : (
