@@ -92,6 +92,19 @@ function saoPauloDateOnlyEnd(value: string): Date {
   return new Date(`${addDaysToDateOnly(value, 1)}T02:59:59.999Z`);
 }
 
+function saoPauloDateOnly(value: Date): string {
+  return new Date(value.getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function queryDateOnly(
+  query: Record<string, unknown>,
+  key: "dateFrom" | "dateTo",
+  fallback: Date,
+): string {
+  const raw = typeof query[key] === "string" ? query[key] : null;
+  return raw && DATE_ONLY_RE.test(raw) ? raw : saoPauloDateOnly(fallback);
+}
+
 function utcDateOnlyStart(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
@@ -509,10 +522,12 @@ const ZERO_KPIS: DashboardKpis = {
   retentionPct: 0,
 };
 
-function dateOnlyRange(from: Date, to: Date): string[] {
+function dateOnlyRange(from: string, to: string): string[] {
   const dates: string[] = [];
-  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
-  const end = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()));
+  const [fromYear, fromMonth, fromDay] = from.split("-").map((part) => Number.parseInt(part, 10));
+  const [toYear, toMonth, toDay] = to.split("-").map((part) => Number.parseInt(part, 10));
+  const cursor = new Date(Date.UTC(fromYear, fromMonth - 1, fromDay));
+  const end = new Date(Date.UTC(toYear, toMonth - 1, toDay));
   while (cursor <= end) {
     dates.push(cursor.toISOString().slice(0, 10));
     cursor.setUTCDate(cursor.getUTCDate() + 1);
@@ -521,8 +536,8 @@ function dateOnlyRange(from: Date, to: Date): string[] {
 }
 
 function buildDailyPerformance(params: {
-  from: Date;
-  to: Date;
+  dateFrom: string;
+  dateTo: string;
   dailyRevenue: { date: string; value: number }[];
   dailyOrders: { date: string; value: number }[];
   ga4Daily: Ga4DailyMetrics[] | null;
@@ -530,7 +545,7 @@ function buildDailyPerformance(params: {
   const revenueByDate = new Map(params.dailyRevenue.map((row) => [row.date, Number(row.value) || 0]));
   const ordersByDate = new Map(params.dailyOrders.map((row) => [row.date, Number(row.value) || 0]));
   const sessionsByDate = new Map((params.ga4Daily ?? []).map((row) => [row.date, Number(row.sessions) || 0]));
-  return dateOnlyRange(params.from, params.to).map((date) => {
+  return dateOnlyRange(params.dateFrom, params.dateTo).map((date) => {
     const revenue = revenueByDate.get(date) ?? 0;
     const orders = ordersByDate.get(date) ?? 0;
     const sessions = sessionsByDate.get(date) ?? 0;
@@ -939,9 +954,10 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+  const rawQuery = req.query as Record<string, unknown>;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
-  const dateFromOnly = from.toISOString().slice(0, 10);
-  const dateToOnly = to.toISOString().slice(0, 10);
+  const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
+  const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
   const { category, sellerId, channel, segment, compare, utmSource: utmSourceFilter, utmMedium: utmMediumFilter, utmCampaign: utmCampaignFilter } = parsed.data;
   const [clientConfig] = await db
     .select({
@@ -992,6 +1008,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     winFrom: Date,
     winTo: Date,
     full: boolean,
+    winDateFromOnly = saoPauloDateOnly(winFrom),
+    winDateToOnly = saoPauloDateOnly(winTo),
   ): Promise<WindowAggregates> => {
     let categoryOrderIds: string[] | null = null;
     if (category) {
@@ -1052,8 +1070,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       isB2CClient
         ? fetchGa4FunnelMetrics({
             propertyId: clientConfig?.ga4PropertyId,
-            dateFrom: winFrom.toISOString().slice(0, 10),
-            dateTo: winTo.toISOString().slice(0, 10),
+            dateFrom: winDateFromOnly,
+            dateTo: winDateToOnly,
           }).catch((err) => {
             console.warn("[dashboard] GA4 funnel unavailable:", err instanceof Error ? err.message : err);
             return null;
@@ -1062,8 +1080,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       isB2CClient && full
         ? fetchGa4DailyMetrics({
             propertyId: clientConfig?.ga4PropertyId,
-            dateFrom: winFrom.toISOString().slice(0, 10),
-            dateTo: winTo.toISOString().slice(0, 10),
+            dateFrom: winDateFromOnly,
+            dateTo: winDateToOnly,
           }).catch((err) => {
             console.warn("[dashboard] GA4 daily unavailable:", err instanceof Error ? err.message : err);
             return null;
@@ -1248,8 +1266,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
 
     const dailyPerformance = full
       ? buildDailyPerformance({
-          from: winFrom,
-          to: winTo,
+          dateFrom: winDateFromOnly,
+          dateTo: winDateToOnly,
           dailyRevenue,
           dailyOrders,
           ga4Daily: isB2CClient ? ga4Daily : null,
@@ -1302,7 +1320,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     };
   };
 
-  const current = await computeWindow(from, to, true);
+  const current = await computeWindow(from, to, true, dateFromOnly, dateToOnly);
 
   // Equivalent prior window: same length, ending the day before `from`.
   // We use millisecond arithmetic so the window length matches exactly even
@@ -2087,7 +2105,10 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+  const rawQuery = req.query as Record<string, unknown>;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
+  const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
   const { utmSource, utmMedium, utmCampaign } = parsed.data;
 
   const [funnelClient] = await db
@@ -2101,8 +2122,8 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
   if (funnelClient?.dashboardType === "B2C" && !utmSource && !utmMedium && !utmCampaign) {
     const ga4 = await fetchGa4FunnelMetrics({
       propertyId: funnelClient.ga4PropertyId,
-      dateFrom: from.toISOString().slice(0, 10),
-      dateTo: to.toISOString().slice(0, 10),
+      dateFrom: dateFromOnly,
+      dateTo: dateToOnly,
     }).catch((err) => {
       console.warn("[funnel] GA4 unavailable:", err instanceof Error ? err.message : err);
       return null;
