@@ -7746,7 +7746,7 @@ async function generateDailyReportText(params: {
 
   try {
     const completion = await ai.chat.completions.create({
-      model: "gpt-5-nano",
+      model: process.env.AI_INTEGRATIONS_OPENAI_MODEL ?? "gpt-5-nano",
       max_completion_tokens: 1200,
       response_format: { type: "json_object" },
       messages: [
