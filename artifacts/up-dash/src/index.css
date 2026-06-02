@@ -204,37 +204,86 @@
 }
 
 @media print {
+  html,
+  body,
+  #root {
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+
   body.print-dashboard aside,
   body.print-dashboard header,
   body.print-dashboard .no-print,
   body.print-dashboard [data-radix-popper-content-wrapper] {
     display: none !important;
   }
+
+  body.print-dashboard > #root,
+  body.print-dashboard > #root > div,
+  body.print-dashboard main {
+    display: block !important;
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+
   body.print-dashboard .print-area {
     overflow: visible !important;
     height: auto !important;
-    padding: 0 !important;
+    min-height: auto !important;
+    padding: 18px !important;
   }
+
   body.print-dashboard .dashboard-printable {
     background: white !important;
     color: black !important;
   }
-  body.print-dashboard .daily-printable {
-    font-size: 12px !important;
-  }
-  body.print-dashboard .daily-printable [class*="bg-card"],
-  body.print-dashboard .daily-printable [class*="bg-background"],
-  body.print-dashboard .daily-printable [class*="bg-muted"] {
-    background: white !important;
-  }
-  body.print-dashboard .daily-printable [class*="text-muted-foreground"] {
-    color: #4b5563 !important;
-  }
-  body.print-dashboard .daily-printable [class*="border"] {
-    border-color: #d1d5db !important;
-  }
+
   body.print-dashboard {
     background: white !important;
     color: black !important;
+  }
+
+  body.print-dashboard.print-daily,
+  body.print-dashboard.print-daily #root,
+  body.print-dashboard.print-daily > #root > div,
+  body.print-dashboard.print-daily main,
+  body.print-dashboard.print-daily .dashboard-printable {
+    background: hsl(222 47% 5%) !important;
+    color: hsl(213 31% 96%) !important;
+  }
+
+  body.print-dashboard.print-daily .daily-printable {
+    font-size: 12px !important;
+    background: hsl(222 47% 5%) !important;
+    color: hsl(213 31% 96%) !important;
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  body.print-dashboard.print-daily .daily-printable * {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  body.print-dashboard.print-daily .daily-printable [class*="bg-card"],
+  body.print-dashboard.print-daily .daily-printable tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body.print-dashboard.print-daily .daily-printable [class*="bg-card"],
+  body.print-dashboard.print-daily .daily-printable [class*="bg-background"],
+  body.print-dashboard.print-daily .daily-printable [class*="bg-muted"] {
+    background-color: hsl(222 47% 8%) !important;
+  }
+
+  body.print-dashboard.print-daily .daily-printable [class*="text-muted-foreground"] {
+    color: hsl(215 16% 70%) !important;
+  }
+
+  body.print-dashboard.print-daily .daily-printable [class*="border"] {
+    border-color: hsl(220 22% 16%) !important;
   }
 }

@@ -7714,6 +7714,15 @@ function dailyHeuristic(params: {
   };
 }
 
+function sanitizeDailyInsightText(text: string): string {
+  return text
+    .replace(/campanha(s)? (nao|não) (tem|têm) eficiencia/gi, "campanha$1 precisa de ajuste de verba, criativo e segmentação")
+    .replace(/campanha(s)? ineficiente(s)?/gi, "campanha$1 que precisa de otimização")
+    .replace(/sem eficiencia/gi, "com necessidade de otimização")
+    .replace(/sem eficiência/gi, "com necessidade de otimização")
+    .trim();
+}
+
 async function generateDailyReportText(params: {
   brand: string;
   dateFrom: string;
@@ -7752,7 +7761,7 @@ async function generateDailyReportText(params: {
       messages: [
         {
           role: "system",
-          content: "Você é um analista sênior de e-commerce B2C e mídia paga. Responda somente JSON válido, em português do Brasil, com análise objetiva para enviar ao cliente.",
+          content: "Você é um analista sênior de e-commerce B2C e mídia paga. Responda somente JSON válido, em português do Brasil, com análise objetiva para enviar ao cliente. Nunca diga que uma campanha não tem eficiência ou é ineficiente; quando houver queda ou baixo retorno, descreva a ação necessária, como ajustar verba, criativo, público, oferta ou página.",
         },
         {
           role: "user",
@@ -7786,7 +7795,7 @@ Retorne exatamente:
   "reportSummary": ["<insight 1>", "<insight 2>", "<insight 3>", "<insight 4>", "... opcional até 6"]
 }
 
-Os insights precisam falar de campanhas, melhora/piora, produtos, categorias e, quando houver, cores/tamanhos. Não use markdown.`,
+Os insights precisam falar de campanhas, melhora/piora, produtos, categorias e, quando houver, cores/tamanhos. Quando uma campanha piorar ou tiver baixo retorno, fale o que deve ser feito; não use termos como "sem eficiência", "não tem eficiência" ou "ineficiente". Não use markdown.`,
         },
       ],
     });
@@ -7810,8 +7819,8 @@ Os insights precisam falar de campanhas, melhora/piora, produtos, categorias e, 
 
     if (generalAnalysis || bullets.length > 0) {
       return {
-        generalAnalysis: (generalAnalysis || heuristic.generalAnalysis).slice(0, 1200),
-        reportSummary: mergedBullets.slice(0, 6).map((item) => item.slice(0, 300)),
+        generalAnalysis: sanitizeDailyInsightText(generalAnalysis || heuristic.generalAnalysis).slice(0, 1200),
+        reportSummary: mergedBullets.slice(0, 6).map((item) => sanitizeDailyInsightText(item).slice(0, 300)),
         source: "ai",
       };
     }
