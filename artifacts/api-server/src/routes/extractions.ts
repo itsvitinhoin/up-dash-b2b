@@ -4,6 +4,7 @@ import { authenticate, requireAdmin } from "../middlewares/auth";
 import {
   listExtractionJobs,
   runHourlyExtractionBundle,
+  runNuvemshopTransactionalExtraction,
   runUpzeroTransactionalExtraction,
 } from "../services/extraction-runner";
 
@@ -71,12 +72,18 @@ router.get("/cron/extractions/upzero-transactional", async (req, res): Promise<v
   res.json({ ok: true, result });
 });
 
+router.get("/cron/extractions/nuvemshop", async (req, res): Promise<void> => {
+  if (!(await verifyCronRequest(req, res))) return;
+  const result = await runNuvemshopTransactionalExtraction("cron");
+  res.json({ ok: true, result });
+});
+
 router.use("/extractions", authenticate);
 
 const ListExtractionsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
   status: z.enum(["pending", "running", "done", "failed"]).optional(),
-  jobType: z.enum(["upzero_transactional", "upzero_analytics", "meta_ads"]).optional(),
+  jobType: z.enum(["upzero_transactional", "upzero_analytics", "meta_ads", "nuvemshop_transactional"]).optional(),
   trigger: z.enum(["manual", "cron"]).optional(),
   clientId: z.coerce.string().optional(),
 });

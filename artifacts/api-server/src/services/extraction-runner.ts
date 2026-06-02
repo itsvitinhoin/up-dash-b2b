@@ -1,13 +1,15 @@
 import { and, desc, eq, isNotNull, sql, type SQL } from "drizzle-orm";
 import { db, clientsTable, customersTable, syncJobsTable } from "@workspace/db";
 import { fetchMetaMarketingData, upsertMetaCreatives } from "./meta-ads";
+import { syncNuvemshopClient } from "./nuvemshop-sync";
 import { getMetricUser, getUpzeroAnalyticsMetrics, type UpzeroAnalyticsMetric } from "./upzero/analytics-metrics";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 
 export type ExtractionJobType =
   | "upzero_transactional"
   | "upzero_analytics"
-  | "meta_ads";
+  | "meta_ads"
+  | "nuvemshop_transactional";
 
 export type ExtractionTrigger = "manual" | "cron";
 
@@ -17,6 +19,9 @@ type ExtractionClient = {
   upZeroApiKey: string | null;
   metaAdsApiKey: string | null;
   metaAdAccountId: string | null;
+  dashboardType: string | null;
+  nuvemshopStoreId: string | null;
+  nuvemshopAccessToken: string | null;
 };
 
 type ExtractionRunSummary = {
@@ -31,6 +36,8 @@ type ExtractionRunSummary = {
 };
 
 const UPZERO_ANALYTICS_LOOKBACK_HOURS = 24;
+const NUVEMSHOP_LOOKBACK_DAYS = Number.parseInt(process.env.NUVEMSHOP_CRON_LOOKBACK_DAYS ?? "7", 10);
+const NUVEMSHOP_MAX_PAGES = Number.parseInt(process.env.NUVEMSHOP_CRON_MAX_PAGES ?? "5", 10);
 const UPZERO_BASE_URL = process.env.UPZERO_BASE_URL ?? "https://api.upzero.com.br";
 
 function isoDate(date: Date): string {
@@ -99,6 +106,9 @@ async function clientsWith(where: SQL | undefined): Promise<ExtractionClient[]> 
       upZeroApiKey: clientsTable.upZeroApiKey,
       metaAdsApiKey: clientsTable.metaAdsApiKey,
       metaAdAccountId: clientsTable.metaAdAccountId,
+      dashboardType: clientsTable.dashboardType,
+      nuvemshopStoreId: clientsTable.nuvemshopStoreId,
+      nuvemshopAccessToken: clientsTable.nuvemshopAccessToken,
     })
     .from(clientsTable)
     .where(where)
@@ -485,6 +495,62 @@ export async function runMetaAdsExtraction(
     done,
     failed,
     skipped,
+    startedAt: startedAt.toISOString(),
+    finishedAt: new Date().toISOString(),
+  };
+}
+
+export async function runNuvemshopTransactionalExtraction(
+  trigger: ExtractionTrigger,
+): Promise<ExtractionRunSummary> {
+  const startedAt = new Date();
+  const lookbackDays = Number.isFinite(NUVEMSHOP_LOOKBACK_DAYS) && NUVEMSHOP_LOOKBACK_DAYS > 0
+    ? NUVEMSHOP_LOOKBACK_DAYS
+    : 7;
+  const maxPages = Number.isFinite(NUVEMSHOP_MAX_PAGES) && NUVEMSHOP_MAX_PAGES > 0
+    ? NUVEMSHOP_MAX_PAGES
+    : 5;
+  const since = new Date(startedAt.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+  const clients = (await clientsWith(and(
+    eq(clientsTable.dashboardType, "B2C"),
+    isNotNull(clientsTable.nuvemshopStoreId),
+    isNotNull(clientsTable.nuvemshopAccessToken),
+  ))).filter((client) => client.nuvemshopStoreId && client.nuvemshopAccessToken);
+  let done = 0;
+  let failed = 0;
+
+  for (const client of clients) {
+    if (!client.nuvemshopStoreId || !client.nuvemshopAccessToken) continue;
+    const jobId = await createJob(client.id, "nuvemshop_transactional", trigger);
+    try {
+      const result = await syncNuvemshopClient({
+        clientId: client.id,
+        storeId: client.nuvemshopStoreId,
+        accessToken: client.nuvemshopAccessToken,
+        since,
+        maxPages,
+      });
+      await completeJob(jobId, {
+        clientName: client.name,
+        storeId: client.nuvemshopStoreId,
+        since: since.toISOString(),
+        maxPages,
+        ...result,
+      });
+      done += 1;
+    } catch (err) {
+      await failJob(jobId, err);
+      failed += 1;
+    }
+  }
+
+  return {
+    jobType: "nuvemshop_transactional",
+    trigger,
+    clients: clients.length,
+    done,
+    failed,
+    skipped: 0,
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
   };
