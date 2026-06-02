@@ -40,6 +40,7 @@ import {
   FileText,
   PlugZap,
   Send,
+  CalendarDays,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -80,6 +81,7 @@ interface PageMeta {
 const pageMeta: Record<string, PageMeta> = {
   "/": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/dashboard": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true, requiresClient: true },
+  "/daily": { title: "Daily", subtitle: "Relatório diário B2C para PDF", hasDateRange: true, hasFilterBar: false, requiresClient: true },
   "/funnel": { title: "Conversion funnel", subtitle: "Visit through purchase", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/customers": { title: "Customers", subtitle: "RFM segmentation and lifetime value", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/products": { title: "Products", subtitle: "Performance and ranking", hasDateRange: true, hasFilterBar: true, requiresClient: true },
@@ -199,8 +201,10 @@ export function AppLayout({ children }: AppLayoutProps) {
       : meta.subtitle;
 
   const b2bOnlyRoutes = new Set(["/whatsapp", "/utm", "/sellers"]);
+  const b2cOnlyRoutes = new Set(["/daily"]);
   const analyticsNav = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+    { name: "Daily", href: "/daily", icon: CalendarDays },
     { name: "Marketing", href: "/marketing", icon: Megaphone },
     {
       name: "WhatsApp",
@@ -221,7 +225,11 @@ export function AppLayout({ children }: AppLayoutProps) {
     { name: "Products", href: "/products", icon: Package },
     { name: "Sellers", href: "/sellers", icon: ShoppingBag },
     { name: "Stock", href: "/stock", icon: PackageSearch },
-  ].filter((item) => selectedDashboardMode === "B2B" || !b2bOnlyRoutes.has(item.href));
+  ].filter((item) => {
+    if (selectedDashboardMode === "B2C" && b2bOnlyRoutes.has(item.href)) return false;
+    if (selectedDashboardMode === "B2B" && b2cOnlyRoutes.has(item.href)) return false;
+    return true;
+  });
 
   const workspaceNav: { name: string; href: string; icon: typeof Users }[] = [
     { name: "Geography", href: "/geography", icon: MapPin },
@@ -418,6 +426,9 @@ export function AppLayout({ children }: AppLayoutProps) {
                       mode === "B2C" &&
                       (location.startsWith("/whatsapp") || location.startsWith("/sellers") || location === "/utm")
                     ) {
+                      navigate("/dashboard");
+                    }
+                    if (mode === "B2B" && location === "/daily") {
                       navigate("/dashboard");
                     }
                   }}

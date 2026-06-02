@@ -19,6 +19,7 @@ import LoginPage from "@/pages/login";
 import PrivacyPolicyPage from "@/pages/privacy-policy";
 import TermsOfServicePage from "@/pages/terms-of-service";
 import DashboardPage from "@/pages/dashboard";
+import DailyPage from "@/pages/daily";
 import FunnelPage from "@/pages/funnel";
 import CustomersPage from "@/pages/customers";
 import CustomerDetailPage from "@/pages/customer-detail";
@@ -110,6 +111,14 @@ function Router() {
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="funnel"><FunnelPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/daily">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="daily"><DailyPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

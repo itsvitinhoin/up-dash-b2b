@@ -7647,6 +7647,361 @@ function buildAgeBreakdown(): { ageGroup: string; leads: number; attributedReven
   return [];
 }
 
+type DailyReportMetricSet = {
+  approvedRevenue: number;
+  sales: number;
+  avgTicket: number;
+  costPerPurchase: number;
+  mediaSpend: number;
+  roas: number;
+};
+
+function pctChange(current: number, previous: number): number | null {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return ((current - previous) / previous) * 100;
+}
+
+function dailyHeuristic(params: {
+  kpis: DailyReportMetricSet;
+  prevKpis: DailyReportMetricSet;
+  campaigns: Array<{ name: string; spend: number; roas: number; purchases: number }>;
+  products: Array<{ name: string; units: number; revenue: number }>;
+  categories: Array<{ name: string; units: number; revenue: number }>;
+  colors: Array<{ name: string; units: number; revenue: number }>;
+  sizes: Array<{ name: string; units: number; revenue: number }>;
+}): { generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" } {
+  const revenueChange = pctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue);
+  const salesChange = pctChange(params.kpis.sales, params.prevKpis.sales);
+  const roasChange = pctChange(params.kpis.roas, params.prevKpis.roas);
+  const topCampaign = params.campaigns[0];
+  const topProduct = params.products[0];
+  const topCategory = params.categories[0];
+  const revenueTrend =
+    revenueChange == null
+      ? "sem base anterior comparável"
+      : revenueChange >= 0
+        ? `cresceu ${revenueChange.toFixed(1)}%`
+        : `caiu ${Math.abs(revenueChange).toFixed(1)}%`;
+  const roasTrend =
+    roasChange == null
+      ? "sem base anterior"
+      : roasChange >= 0
+        ? `melhorou ${roasChange.toFixed(1)}%`
+        : `piorou ${Math.abs(roasChange).toFixed(1)}%`;
+
+  return {
+    generalAnalysis: `No período, o faturamento aprovado ${revenueTrend}, com ${params.kpis.sales} vendas e ROAS de ${params.kpis.roas.toFixed(2)}x. O investimento em mídia foi de R$${params.kpis.mediaSpend.toFixed(2)} e o custo por compra ficou em R$${params.kpis.costPerPurchase.toFixed(2)}.`,
+    reportSummary: [
+      salesChange == null
+        ? `Foram ${params.kpis.sales} vendas no período, ainda sem uma base anterior sólida para comparação.`
+        : `A quantidade de vendas ${salesChange >= 0 ? "subiu" : "caiu"} ${Math.abs(salesChange).toFixed(1)}% versus o período anterior.`,
+      topCampaign
+        ? `Campanha de maior investimento: ${topCampaign.name}, com R$${topCampaign.spend.toFixed(2)} investidos, ${topCampaign.purchases} compras e ROAS ${topCampaign.roas.toFixed(2)}x.`
+        : "Não houve campanhas de mídia com dados disponíveis para o período.",
+      topProduct
+        ? `Produto mais vendido: ${topProduct.name}, com ${topProduct.units} unidades e R$${topProduct.revenue.toFixed(2)} em receita aprovada.`
+        : "Não houve produtos vendidos no período.",
+      topCategory
+        ? `Categoria líder: ${topCategory.name}, com ${topCategory.units} unidades vendidas e R$${topCategory.revenue.toFixed(2)} em receita.`
+        : "Não houve categoria com venda registrada no período.",
+      params.colors[0]
+        ? `Cor destaque: ${params.colors[0].name}, com ${params.colors[0].units} unidades vendidas.`
+        : params.sizes[0]
+          ? `Tamanho destaque: ${params.sizes[0].name}, com ${params.sizes[0].units} unidades vendidas.`
+          : `ROAS ${roasTrend}; acompanhe campanhas com gasto alto e baixa compra para realocar verba.`,
+    ],
+    source: "heuristic",
+  };
+}
+
+async function generateDailyReportText(params: {
+  brand: string;
+  dateFrom: string;
+  dateTo: string;
+  kpis: DailyReportMetricSet;
+  prevKpis: DailyReportMetricSet;
+  campaigns: Array<{ name: string; spend: number; purchases: number; revenue: number; roas: number; cpa: number }>;
+  products: Array<{ name: string; category: string | null; units: number; revenue: number }>;
+  categories: Array<{ name: string; units: number; revenue: number }>;
+  colors: Array<{ name: string; units: number; revenue: number }>;
+  sizes: Array<{ name: string; units: number; revenue: number }>;
+}): Promise<{ generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" }> {
+  const heuristic = dailyHeuristic(params);
+  const ai = getOpenAIClient();
+  if (!ai || !isAIConfigured()) return heuristic;
+
+  try {
+    const completion = await ai.chat.completions.create({
+      model: "gpt-5-nano",
+      max_completion_tokens: 1200,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "Você é um analista sênior de e-commerce B2C e mídia paga. Responda somente JSON válido, em português do Brasil, com análise objetiva para enviar ao cliente.",
+        },
+        {
+          role: "user",
+          content: `Crie um relatório diário para "${params.brand}" no período ${params.dateFrom} até ${params.dateTo}.
+
+Métricas atuais:
+- Faturamento aprovado: R$${params.kpis.approvedRevenue.toFixed(2)}
+- Vendas: ${params.kpis.sales}
+- Ticket médio: R$${params.kpis.avgTicket.toFixed(2)}
+- Custo por compra: R$${params.kpis.costPerPurchase.toFixed(2)}
+- Investimento em mídia: R$${params.kpis.mediaSpend.toFixed(2)}
+- ROAS: ${params.kpis.roas.toFixed(2)}x
+
+Período anterior:
+- Faturamento aprovado: R$${params.prevKpis.approvedRevenue.toFixed(2)}
+- Vendas: ${params.prevKpis.sales}
+- Ticket médio: R$${params.prevKpis.avgTicket.toFixed(2)}
+- Custo por compra: R$${params.prevKpis.costPerPurchase.toFixed(2)}
+- Investimento em mídia: R$${params.prevKpis.mediaSpend.toFixed(2)}
+- ROAS: ${params.prevKpis.roas.toFixed(2)}x
+
+Campanhas principais: ${params.campaigns.slice(0, 8).map((c) => `${c.name}: gasto R$${c.spend.toFixed(2)}, compras ${c.purchases}, receita R$${c.revenue.toFixed(2)}, ROAS ${c.roas.toFixed(2)}x, CPA R$${c.cpa.toFixed(2)}`).join(" | ") || "sem dados"}
+Produtos mais vendidos: ${params.products.slice(0, 8).map((p) => `${p.name}${p.category ? ` (${p.category})` : ""}: ${p.units} un., R$${p.revenue.toFixed(2)}`).join(" | ") || "sem dados"}
+Categorias: ${params.categories.slice(0, 8).map((c) => `${c.name}: ${c.units} un., R$${c.revenue.toFixed(2)}`).join(" | ") || "sem dados"}
+Cores: ${params.colors.slice(0, 8).map((c) => `${c.name}: ${c.units} un., R$${c.revenue.toFixed(2)}`).join(" | ") || "sem dados"}
+Tamanhos: ${params.sizes.slice(0, 8).map((s) => `${s.name}: ${s.units} un., R$${s.revenue.toFixed(2)}`).join(" | ") || "sem dados"}
+
+Retorne exatamente:
+{
+  "generalAnalysis": "<1 parágrafo curto com a leitura geral>",
+  "reportSummary": ["<insight 1>", "<insight 2>", "<insight 3>", "<insight 4>", "... opcional até 6"]
+}
+
+Os insights precisam falar de campanhas, melhora/piora, produtos, categorias e, quando houver, cores/tamanhos. Não use markdown.`,
+        },
+      ],
+    });
+    const text = completion.choices[0]?.message?.content;
+    if (!text) return heuristic;
+    const parsed = JSON.parse(text) as { generalAnalysis?: string; reportSummary?: unknown };
+    const bullets = Array.isArray(parsed.reportSummary)
+      ? parsed.reportSummary.map((item) => String(item).trim()).filter(Boolean)
+      : [];
+    if (typeof parsed.generalAnalysis === "string" && bullets.length >= 4) {
+      return {
+        generalAnalysis: parsed.generalAnalysis.slice(0, 1200),
+        reportSummary: bullets.slice(0, 6).map((item) => item.slice(0, 300)),
+        source: "ai",
+      };
+    }
+  } catch (err) {
+    console.warn("[daily-report] AI generation failed, using heuristic:", err instanceof Error ? err.message : err);
+  }
+  return heuristic;
+}
+
+router.get("/analytics/daily-report", async (req, res): Promise<void> => {
+  const parsed = z.object({
+    clientId: z.string().optional(),
+    dateFrom: z.date().optional(),
+    dateTo: z.date().optional(),
+  }).safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const rawQuery = req.query as Record<string, unknown>;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
+  const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
+  const span = to.getTime() - from.getTime();
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - span);
+  const prevDateFromOnly = saoPauloDateOnly(prevFrom);
+  const prevDateToOnly = saoPauloDateOnly(prevTo);
+
+  const [clientConfig] = await db
+    .select({
+      name: clientsTable.name,
+      dashboardType: clientsTable.dashboardType,
+      metaAdsApiKey: clientsTable.metaAdsApiKey,
+      metaAdAccountId: clientsTable.metaAdAccountId,
+    })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  if (!clientConfig) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (clientConfig.dashboardType !== "B2C") {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "Daily report is only available for B2C clients", status: 400 });
+    return;
+  }
+
+  const paidStatus = sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`;
+  const metricForWindow = async (winFrom: Date, winTo: Date, mediaSpend: number): Promise<DailyReportMetricSet> => {
+    const [row] = await db
+      .select({
+        approvedRevenue: sql<number>`COALESCE(SUM(${ordersTable.fulfilledAmount}), 0)::float`,
+        sales: sql<number>`COUNT(*)::int`,
+      })
+      .from(ordersTable)
+      .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, winFrom), lte(ordersTable.createdAt, winTo), paidStatus));
+    const approvedRevenue = Number(row?.approvedRevenue) || 0;
+    const sales = Number(row?.sales) || 0;
+    return {
+      approvedRevenue,
+      sales,
+      avgTicket: sales > 0 ? approvedRevenue / sales : 0,
+      costPerPurchase: sales > 0 ? mediaSpend / sales : 0,
+      mediaSpend,
+      roas: mediaSpend > 0 ? approvedRevenue / mediaSpend : 0,
+    };
+  };
+
+  const metaAccessToken = getGlobalMetaAccessToken(clientConfig.metaAdsApiKey);
+  const [metaCurrent, metaPrev] = await Promise.all([
+    metaAccessToken && clientConfig.metaAdAccountId
+      ? fetchMetaMarketingData({
+          accessToken: metaAccessToken,
+          adAccountId: clientConfig.metaAdAccountId,
+          since: dateFromOnly,
+          until: dateToOnly,
+        }).catch((err) => {
+          console.warn("[daily-report] Meta current fetch failed:", err);
+          return null;
+        })
+      : Promise.resolve(null),
+    metaAccessToken && clientConfig.metaAdAccountId
+      ? fetchMetaMarketingData({
+          accessToken: metaAccessToken,
+          adAccountId: clientConfig.metaAdAccountId,
+          since: prevDateFromOnly,
+          until: prevDateToOnly,
+        }).catch((err) => {
+          console.warn("[daily-report] Meta previous fetch failed:", err);
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
+  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
+
+  const [kpis, prevKpis, productRows, categoryRows, colorRows, sizeRows] = await Promise.all([
+    metricForWindow(from, to, metaCurrent?.summary.spend ?? 0),
+    metricForWindow(prevFrom, prevTo, metaPrev?.summary.spend ?? 0),
+    db
+      .select({
+        name: productsTable.name,
+        category: productsTable.category,
+        units: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity}), 0)::int`,
+        revenue: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity} * ${orderItemsTable.priceAtSale}), 0)::float`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+      .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to), paidStatus))
+      .groupBy(productsTable.id, productsTable.name, productsTable.category)
+      .orderBy(sql`SUM(${orderItemsTable.fulfilledQuantity}) DESC`)
+      .limit(10),
+    db
+      .select({
+        name: sql<string>`COALESCE(${productsTable.category}, 'Sem categoria')`,
+        units: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity}), 0)::int`,
+        revenue: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity} * ${orderItemsTable.priceAtSale}), 0)::float`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+      .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to), paidStatus))
+      .groupBy(productsTable.category)
+      .orderBy(sql`SUM(${orderItemsTable.fulfilledQuantity} * ${orderItemsTable.priceAtSale}) DESC`)
+      .limit(8),
+    db
+      .select({
+        name: orderItemsTable.color,
+        units: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity}), 0)::int`,
+        revenue: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity} * ${orderItemsTable.priceAtSale}), 0)::float`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to), paidStatus, sql`${orderItemsTable.color} IS NOT NULL`, sql`${orderItemsTable.color} <> ''`))
+      .groupBy(orderItemsTable.color)
+      .orderBy(sql`SUM(${orderItemsTable.fulfilledQuantity}) DESC`)
+      .limit(8),
+    db
+      .select({
+        name: orderItemsTable.size,
+        units: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity}), 0)::int`,
+        revenue: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity} * ${orderItemsTable.priceAtSale}), 0)::float`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to), paidStatus, sql`${orderItemsTable.size} IS NOT NULL`, sql`${orderItemsTable.size} <> ''`))
+      .groupBy(orderItemsTable.size)
+      .orderBy(sql`SUM(${orderItemsTable.fulfilledQuantity}) DESC`)
+      .limit(8),
+  ]);
+
+  const campaigns = (metaCurrent?.campaigns ?? [])
+    .map((campaign) => ({
+      id: campaign.id,
+      name: campaign.name,
+      spend: campaign.spend,
+      purchases: campaign.purchases,
+      revenue: campaign.revenue,
+      roas: campaign.roas ?? (campaign.spend > 0 ? campaign.revenue / campaign.spend : 0),
+      cpa: campaign.cpa ?? (campaign.purchases > 0 ? campaign.spend / campaign.purchases : 0),
+      clicks: campaign.clicks,
+      impressions: campaign.impressions,
+    }))
+    .sort((a, b) => b.spend - a.spend)
+    .slice(0, 10);
+  const products = productRows.map((row) => ({
+    name: row.name,
+    category: row.category,
+    units: Number(row.units) || 0,
+    revenue: Number(row.revenue) || 0,
+  }));
+  const categories = categoryRows.map((row) => ({ name: row.name, units: Number(row.units) || 0, revenue: Number(row.revenue) || 0 }));
+  const colors = colorRows.map((row) => ({ name: row.name ?? "Sem cor", units: Number(row.units) || 0, revenue: Number(row.revenue) || 0 }));
+  const sizes = sizeRows.map((row) => ({ name: row.name ?? "Sem tamanho", units: Number(row.units) || 0, revenue: Number(row.revenue) || 0 }));
+
+  const analysis = await generateDailyReportText({
+    brand: clientConfig.name,
+    dateFrom: dateFromOnly,
+    dateTo: dateToOnly,
+    kpis,
+    prevKpis,
+    campaigns,
+    products,
+    categories,
+    colors,
+    sizes,
+  });
+
+  res.json({
+    client: { id: clientId, name: clientConfig.name },
+    period: { from: dateFromOnly, to: dateToOnly },
+    previousPeriod: { from: prevDateFromOnly, to: prevDateToOnly },
+    kpis,
+    prevKpis,
+    changes: {
+      approvedRevenue: pctChange(kpis.approvedRevenue, prevKpis.approvedRevenue),
+      sales: pctChange(kpis.sales, prevKpis.sales),
+      avgTicket: pctChange(kpis.avgTicket, prevKpis.avgTicket),
+      costPerPurchase: pctChange(kpis.costPerPurchase, prevKpis.costPerPurchase),
+      mediaSpend: pctChange(kpis.mediaSpend, prevKpis.mediaSpend),
+      roas: pctChange(kpis.roas, prevKpis.roas),
+    },
+    campaigns,
+    products,
+    categories,
+    colors,
+    sizes,
+    analysis,
+    generatedAt: new Date().toISOString(),
+  });
+});
+
 router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const parsed = GetMarketingQueryParams.safeParse(
     coerceDateQuery(req.query as Record<string, unknown>),

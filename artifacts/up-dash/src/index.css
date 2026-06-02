@@ -219,6 +219,20 @@
     background: white !important;
     color: black !important;
   }
+  body.print-dashboard .daily-printable {
+    font-size: 12px !important;
+  }
+  body.print-dashboard .daily-printable [class*="bg-card"],
+  body.print-dashboard .daily-printable [class*="bg-background"],
+  body.print-dashboard .daily-printable [class*="bg-muted"] {
+    background: white !important;
+  }
+  body.print-dashboard .daily-printable [class*="text-muted-foreground"] {
+    color: #4b5563 !important;
+  }
+  body.print-dashboard .daily-printable [class*="border"] {
+    border-color: #d1d5db !important;
+  }
   body.print-dashboard {
     background: white !important;
     color: black !important;
