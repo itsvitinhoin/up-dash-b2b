@@ -7730,6 +7730,20 @@ async function generateDailyReportText(params: {
   const ai = getOpenAIClient();
   if (!ai || !isAIConfigured()) return heuristic;
 
+  const parseReportJson = (text: string): { generalAnalysis?: string; reportSummary?: unknown } | null => {
+    try {
+      return JSON.parse(text) as { generalAnalysis?: string; reportSummary?: unknown };
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      try {
+        return JSON.parse(jsonMatch[0]) as { generalAnalysis?: string; reportSummary?: unknown };
+      } catch {
+        return null;
+      }
+    }
+  };
+
   try {
     const completion = await ai.chat.completions.create({
       model: "gpt-5-nano",
@@ -7778,14 +7792,26 @@ Os insights precisam falar de campanhas, melhora/piora, produtos, categorias e, 
     });
     const text = completion.choices[0]?.message?.content;
     if (!text) return heuristic;
-    const parsed = JSON.parse(text) as { generalAnalysis?: string; reportSummary?: unknown };
+    const parsed = parseReportJson(text);
+    if (!parsed) return heuristic;
     const bullets = Array.isArray(parsed.reportSummary)
       ? parsed.reportSummary.map((item) => String(item).trim()).filter(Boolean)
       : [];
-    if (typeof parsed.generalAnalysis === "string" && bullets.length >= 4) {
+
+    const generalAnalysis = typeof parsed.generalAnalysis === "string" ? parsed.generalAnalysis.trim() : "";
+    const mergedBullets = [...bullets, ...heuristic.reportSummary].reduce<string[]>((acc, item) => {
+      const clean = item.trim();
+      if (!clean) return acc;
+      if (!acc.some((existing) => existing.toLocaleLowerCase("pt-BR") === clean.toLocaleLowerCase("pt-BR"))) {
+        acc.push(clean);
+      }
+      return acc;
+    }, []);
+
+    if (generalAnalysis || bullets.length > 0) {
       return {
-        generalAnalysis: parsed.generalAnalysis.slice(0, 1200),
-        reportSummary: bullets.slice(0, 6).map((item) => item.slice(0, 300)),
+        generalAnalysis: (generalAnalysis || heuristic.generalAnalysis).slice(0, 1200),
+        reportSummary: mergedBullets.slice(0, 6).map((item) => item.slice(0, 300)),
         source: "ai",
       };
     }
