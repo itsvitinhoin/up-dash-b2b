@@ -23,6 +23,7 @@ import DailyPage from "@/pages/daily";
 import FunnelPage from "@/pages/funnel";
 import CustomersPage from "@/pages/customers";
 import CustomerDetailPage from "@/pages/customer-detail";
+import OrdersPage from "@/pages/orders";
 import ProductsPage from "@/pages/products";
 import ProductDetailPage from "@/pages/product-detail";
 import SellersPage from "@/pages/sellers";
@@ -135,6 +136,14 @@ function Router() {
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="customers"><CustomersPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/orders">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="orders"><OrdersPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

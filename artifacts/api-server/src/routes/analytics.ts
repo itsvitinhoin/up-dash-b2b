@@ -4905,6 +4905,15 @@ const GetB2cOrdersQueryParams = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(10),
 });
 
+const GetOrdersPageQueryParams = z.object({
+  clientId: z.coerce.string().optional(),
+  dateFrom: z.date().optional(),
+  dateTo: z.date().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  search: z.coerce.string().trim().optional(),
+});
+
 router.get("/analytics/b2c/orders", async (req, res): Promise<void> => {
   const parsed = GetB2cOrdersQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
   if (!parsed.success) {
@@ -5045,6 +5054,319 @@ router.get("/analytics/b2c/orders/:orderId", async (req, res): Promise<void> => 
       phone: order.customerPhone,
       state: order.customerState,
       city: order.customerCity,
+      firstPurchaseAt: order.firstPurchaseAt,
+      lastPurchaseAt: order.lastPurchaseAt,
+      totalOrders: order.totalOrders,
+      totalSpent: order.totalSpent,
+    },
+    items,
+  });
+});
+
+type OrderOrigin = {
+  source: string;
+  medium: string;
+  campaign: string;
+  label: string;
+  attribution: "tracking" | "customer_utm" | "direct";
+};
+
+function storedOrderUtmDimension(customer: {
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+}): UtmDimension {
+  return {
+    source: customer.utmSource?.toLowerCase() || "direct",
+    medium: customer.utmMedium?.toLowerCase() || "none",
+    campaign: customer.utmCampaign || "sem campanha",
+  };
+}
+
+function orderOriginFromDimension(dimension: UtmDimension | null, attribution: OrderOrigin["attribution"]): OrderOrigin {
+  const source = dimension?.source || "direct";
+  const medium = dimension?.medium || "none";
+  const campaign = dimension?.campaign || "sem campanha";
+  const isDirect = source === "direct" && medium === "none" && campaign === "sem campanha";
+  return {
+    source: isDirect ? "Direto / Não identificado" : source,
+    medium: isDirect ? "Não identificado" : medium,
+    campaign: isDirect ? "Sem campanha" : campaign,
+    label: isDirect ? "Direto / Não identificado" : [source, medium, campaign].filter(Boolean).join(" / "),
+    attribution: isDirect ? "direct" : attribution,
+  };
+}
+
+router.get("/analytics/orders-page", async (req, res): Promise<void> => {
+  const parsed = GetOrdersPageQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const page = parsed.data.page;
+  const limit = parsed.data.limit;
+  const offset = (page - 1) * limit;
+  const search = parsed.data.search?.trim();
+  const baseWhere = and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to));
+  const listWhere = search
+    ? and(
+        baseWhere,
+        or(
+          ilike(ordersTable.externalId, `%${search}%`),
+          ilike(customersTable.name, `%${search}%`),
+          ilike(customersTable.email, `%${search}%`),
+          ilike(customersTable.phone, `%${search}%`),
+          ilike(customersTable.documentLast4, `%${search}%`),
+        ),
+      )
+    : baseWhere;
+
+  const [clientConfig] = await db
+    .select({ upZeroApiKey: clientsTable.upZeroApiKey })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  const [metricOrders, orderRows, [countRow], [approvedLeadsRow]] = await Promise.all([
+    db
+      .select({
+        id: ordersTable.id,
+        customerId: ordersTable.customerId,
+        amount: ordersTable.amount,
+        fulfilledAmount: ordersTable.fulfilledAmount,
+        status: ordersTable.status,
+        createdAt: ordersTable.createdAt,
+      })
+      .from(ordersTable)
+      .where(baseWhere),
+    db
+      .select({
+        id: ordersTable.id,
+        externalId: ordersTable.externalId,
+        status: ordersTable.status,
+        amount: ordersTable.amount,
+        fulfilledAmount: ordersTable.fulfilledAmount,
+        grossAmount: ordersTable.grossAmount,
+        discountAmount: ordersTable.discountAmount,
+        shippingAmount: ordersTable.shippingAmount,
+        requestedQuantity: ordersTable.requestedQuantity,
+        fulfilledQuantity: ordersTable.fulfilledQuantity,
+        approvalDate: ordersTable.approvalDate,
+        createdAt: ordersTable.createdAt,
+        customerId: ordersTable.customerId,
+        customerExternalId: customersTable.externalId,
+        customerName: customersTable.name,
+        customerEmail: customersTable.email,
+        customerPhone: customersTable.phone,
+        documentType: customersTable.documentType,
+        documentLast4: customersTable.documentLast4,
+        customerUtmSource: customersTable.utmSource,
+        customerUtmMedium: customersTable.utmMedium,
+        customerUtmCampaign: customersTable.utmCampaign,
+        state: ordersTable.state,
+        city: ordersTable.city,
+      })
+      .from(ordersTable)
+      .leftJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+      .where(listWhere)
+      .orderBy(desc(ordersTable.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(ordersTable)
+      .leftJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+      .where(listWhere),
+    db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(customersTable)
+      .where(and(eq(customersTable.clientId, clientId), gte(customersTable.createdAt, from), lte(customersTable.createdAt, to), eq(customersTable.registrationStatus, "APPROVED"))),
+  ]);
+
+  const customerIds = Array.from(new Set(metricOrders.map((order) => order.customerId).filter(Boolean)));
+  const customerOrderHistory = customerIds.length > 0
+    ? await db
+        .select({
+          customerId: ordersTable.customerId,
+          firstOrderAt: sql<Date>`MIN(${ordersTable.createdAt})`,
+          totalOrders: sql<number>`COUNT(*)::int`,
+        })
+        .from(ordersTable)
+        .where(and(eq(ordersTable.clientId, clientId), inArray(ordersTable.customerId, customerIds)))
+        .groupBy(ordersTable.customerId)
+    : [];
+  const firstOrderByCustomer = new Map(customerOrderHistory.map((row) => [row.customerId, row.firstOrderAt]));
+  const uniqueCustomers = new Set(metricOrders.map((order) => order.customerId));
+  const newCustomers = new Set<string>();
+  const returningCustomers = new Set<string>();
+  for (const order of metricOrders) {
+    const firstOrderAt = firstOrderByCustomer.get(order.customerId);
+    const isFirstInPeriod = firstOrderAt ? new Date(firstOrderAt).getTime() >= from.getTime() && new Date(firstOrderAt).getTime() <= to.getTime() : false;
+    if (isFirstInPeriod) newCustomers.add(order.customerId);
+    else returningCustomers.add(order.customerId);
+  }
+
+  const upzeroRange = upzeroAttributionHistoryRange(req.query as Record<string, unknown>, from, to);
+  const touchesByUser = new Map<number, Array<{ occurredAt: string; dimension: UtmDimension }>>();
+  if (clientConfig?.upZeroApiKey) {
+    try {
+      const tracking = await getUpzeroTrackingRowsChunked({
+        ...upzeroRange,
+        apiKey: clientConfig.upZeroApiKey,
+        context: "orders-page",
+      });
+      for (const row of tracking.rows) {
+        const user = getMetricUser(row);
+        if (!user) continue;
+        if (!isPaidCampaignSignal(row) && !row.utm_source && !row.utm_medium && !row.utm_campaign && !row.fbc && !row.fbclid && !row.gclid) continue;
+        const list = touchesByUser.get(user.id) ?? [];
+        list.push({ occurredAt: row.period_start, dimension: derivedUtmDimension(row) });
+        touchesByUser.set(user.id, list);
+      }
+      for (const list of touchesByUser.values()) {
+        list.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
+      }
+    } catch (err) {
+      console.warn("[orders-page] UP Zero attribution fetch failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  const rows = orderRows.map((order) => {
+    const userId = Number.parseInt(order.customerExternalId ?? "", 10);
+    const touch = Number.isFinite(userId) ? latestTouchBefore(touchesByUser.get(userId) ?? [], order.createdAt) : null;
+    const stored = storedOrderUtmDimension({
+      utmSource: order.customerUtmSource,
+      utmMedium: order.customerUtmMedium,
+      utmCampaign: order.customerUtmCampaign,
+    });
+    const hasStoredUtm = stored.source !== "direct" || stored.medium !== "none" || stored.campaign !== "sem campanha";
+    const origin = touch
+      ? orderOriginFromDimension(touch, "tracking")
+      : orderOriginFromDimension(hasStoredUtm ? stored : null, hasStoredUtm ? "customer_utm" : "direct");
+    return {
+      ...order,
+      document: maskDocumentLast4(order.documentLast4, order.documentType),
+      origin,
+    };
+  });
+
+  const paidOrders = metricOrders.filter((order) => order.status !== "REJECTED");
+  const requestedRevenue = paidOrders.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
+  const fulfilledRevenue = paidOrders.reduce((sum, order) => sum + Number(order.fulfilledAmount ?? 0), 0);
+  const fulfilledPct = requestedRevenue > 0 ? (fulfilledRevenue / requestedRevenue) * 100 : 0;
+  const approvedLeads = Number(approvedLeadsRow?.count ?? 0);
+  const ordersCount = metricOrders.length;
+  const customerCount = uniqueCustomers.size;
+
+  res.json({
+    period: { from: from.toISOString(), to: to.toISOString() },
+    kpis: {
+      requestedRevenue,
+      fulfilledRevenue,
+      fulfilledPct,
+      orders: ordersCount,
+      newCustomers: newCustomers.size,
+      returningCustomers: returningCustomers.size,
+      retentionPct: customerCount > 0 ? (returningCustomers.size / customerCount) * 100 : 0,
+      conversionPct: approvedLeads > 0 ? (ordersCount / approvedLeads) * 100 : 0,
+      approvedLeads,
+    },
+    rows,
+    page,
+    limit,
+    total: Number(countRow?.count ?? 0),
+  });
+});
+
+router.get("/analytics/orders-page/:orderId", async (req, res): Promise<void> => {
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const orderId = z.string().safeParse(req.params.orderId);
+  if (!orderId.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: orderId.error.message, status: 400 });
+    return;
+  }
+
+  const [order] = await db
+    .select({
+      id: ordersTable.id,
+      externalId: ordersTable.externalId,
+      status: ordersTable.status,
+      amount: ordersTable.amount,
+      fulfilledAmount: ordersTable.fulfilledAmount,
+      grossAmount: ordersTable.grossAmount,
+      discountAmount: ordersTable.discountAmount,
+      shippingAmount: ordersTable.shippingAmount,
+      refundedAmount: ordersTable.refundedAmount,
+      cancelledAmount: ordersTable.cancelledAmount,
+      requestedQuantity: ordersTable.requestedQuantity,
+      fulfilledQuantity: ordersTable.fulfilledQuantity,
+      approvalDate: ordersTable.approvalDate,
+      createdAt: ordersTable.createdAt,
+      state: ordersTable.state,
+      city: ordersTable.city,
+      customerId: customersTable.id,
+      customerExternalId: customersTable.externalId,
+      customerName: customersTable.name,
+      customerEmail: customersTable.email,
+      customerPhone: customersTable.phone,
+      customerState: customersTable.state,
+      customerCity: customersTable.city,
+      documentType: customersTable.documentType,
+      documentLast4: customersTable.documentLast4,
+      firstPurchaseAt: customersTable.firstPurchaseAt,
+      lastPurchaseAt: customersTable.lastPurchaseAt,
+      totalOrders: customersTable.totalOrders,
+      totalSpent: customersTable.totalSpent,
+    })
+    .from(ordersTable)
+    .leftJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
+    .where(and(eq(ordersTable.id, orderId.data), eq(ordersTable.clientId, clientId)));
+
+  if (!order) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Order not found", status: 404 });
+    return;
+  }
+
+  const items = await db
+    .select({
+      id: orderItemsTable.id,
+      quantity: orderItemsTable.quantity,
+      fulfilledQuantity: orderItemsTable.fulfilledQuantity,
+      priceAtSale: orderItemsTable.priceAtSale,
+      grossPriceAtSale: orderItemsTable.grossPriceAtSale,
+      discountAmount: orderItemsTable.discountAmount,
+      size: orderItemsTable.size,
+      color: orderItemsTable.color,
+      productId: productsTable.id,
+      sku: productsTable.sku,
+      name: productsTable.name,
+      category: productsTable.category,
+      imageUrl: productsTable.imageUrl,
+    })
+    .from(orderItemsTable)
+    .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+    .where(eq(orderItemsTable.orderId, order.id))
+    .orderBy(asc(productsTable.name));
+
+  res.json({
+    order: {
+      ...order,
+      document: maskDocumentLast4(order.documentLast4, order.documentType),
+    },
+    customer: {
+      id: order.customerId,
+      externalId: order.customerExternalId,
+      name: order.customerName,
+      email: order.customerEmail,
+      phone: order.customerPhone,
+      state: order.customerState,
+      city: order.customerCity,
+      documentType: order.documentType,
+      document: maskDocumentLast4(order.documentLast4, order.documentType),
       firstPurchaseAt: order.firstPurchaseAt,
       lastPurchaseAt: order.lastPurchaseAt,
       totalOrders: order.totalOrders,

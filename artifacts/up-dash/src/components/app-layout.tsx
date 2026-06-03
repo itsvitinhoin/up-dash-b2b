@@ -41,6 +41,7 @@ import {
   PlugZap,
   Send,
   CalendarDays,
+  ReceiptText,
 } from "lucide-react";
 import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -84,6 +85,7 @@ const pageMeta: Record<string, PageMeta> = {
   "/daily": { title: "Daily", subtitle: "Relatório diário B2C para PDF", hasDateRange: true, hasFilterBar: false, requiresClient: true },
   "/funnel": { title: "Conversion funnel", subtitle: "Visit through purchase", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/customers": { title: "Customers", subtitle: "RFM segmentation and lifetime value", hasDateRange: true, hasFilterBar: true, requiresClient: true },
+  "/orders": { title: "Orders", subtitle: "Pedidos, atendimento e origem", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/products": { title: "Products", subtitle: "Performance and ranking", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/sellers": { title: "Sellers", subtitle: "Top performers across the catalog", hasDateRange: false, hasFilterBar: true, requiresClient: true },
   "/geography": { title: "Geography", subtitle: "Sales distribution by region", hasDateRange: true, hasFilterBar: true, requiresClient: true },
@@ -222,6 +224,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     { name: "RFM", href: "/rfm", icon: BarChart3 },
     { name: "UTM", href: "/utm", icon: Link2 },
     { name: "Customers", href: "/customers", icon: Users },
+    { name: "Orders", href: "/orders", icon: ReceiptText },
     { name: "Products", href: "/products", icon: Package },
     { name: "Sellers", href: "/sellers", icon: ShoppingBag },
     { name: "Stock", href: "/stock", icon: PackageSearch },
