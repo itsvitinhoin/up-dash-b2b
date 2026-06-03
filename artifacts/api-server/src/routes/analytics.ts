@@ -5407,6 +5407,7 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
 
   const upzeroRange = upzeroAttributionHistoryRange(req.query as Record<string, unknown>, from, to);
   const touchesByUser = new Map<number, Array<{ occurredAt: string; dimension: UtmDimension }>>();
+  const trackingRowsByUser = new Map<number, UpzeroAnalyticsMetric[]>();
   if (clientConfig?.upZeroApiKey) {
     try {
       const tracking = await getUpzeroTrackingRowsChunked({
@@ -5421,18 +5422,65 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
         const list = touchesByUser.get(user.id) ?? [];
         list.push({ occurredAt: row.period_start, dimension: derivedUtmDimension(row) });
         touchesByUser.set(user.id, list);
+        const rawList = trackingRowsByUser.get(user.id) ?? [];
+        rawList.push(row);
+        trackingRowsByUser.set(user.id, rawList);
       }
       for (const list of touchesByUser.values()) {
         list.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
+      }
+      for (const list of trackingRowsByUser.values()) {
+        list.sort((a, b) => new Date(a.period_start).getTime() - new Date(b.period_start).getTime());
       }
     } catch (err) {
       console.warn("[orders-page] UP Zero attribution fetch failed:", err instanceof Error ? err.message : err);
     }
   }
 
+  const customerForStampByUser = new Map<number, CampaignLocalCustomer>();
+  const localOrdersForStamp = new Map<string, CampaignLocalOrderSummary>();
+  const evidenceRowsToStamp: UpzeroAnalyticsMetric[] = [];
   const rows = orderRows.map((order) => {
     const userId = Number.parseInt(order.customerExternalId ?? "", 10);
     const touch = Number.isFinite(userId) ? latestTouchBefore(touchesByUser.get(userId) ?? [], order.createdAt) : null;
+    const evidence = Number.isFinite(userId)
+      ? latestCampaignEvidenceBefore(trackingRowsByUser.get(userId) ?? [], order.createdAt)
+      : null;
+    if (evidence && order.customerId) {
+      customerForStampByUser.set(userId, {
+        id: order.customerId,
+        externalId: order.customerExternalId,
+        name: order.customerName,
+        email: order.customerEmail ?? "",
+        phone: order.customerPhone,
+        documentType: order.documentType,
+        documentLast4: order.documentLast4,
+        registrationStatus: "APPROVED",
+        createdAt: order.createdAt,
+        totalOrders: 0,
+        utmSource: order.customerUtmSource,
+        utmMedium: order.customerUtmMedium,
+        utmCampaign: order.customerUtmCampaign,
+        utmContent: null,
+        utmTerm: null,
+      });
+      const current = localOrdersForStamp.get(order.customerId) ?? {
+        purchaseCount: 0,
+        orderIds: [],
+        totalPurchaseValue: 0,
+        lastOrderAt: null,
+      };
+      current.purchaseCount += 1;
+      current.totalPurchaseValue += order.amount ?? 0;
+      const numericExternalId = Number.parseInt(order.externalId ?? "", 10);
+      if (Number.isFinite(numericExternalId)) current.orderIds.push(numericExternalId);
+      const orderAt = order.createdAt.toISOString();
+      if (!current.lastOrderAt || new Date(orderAt).getTime() > new Date(current.lastOrderAt).getTime()) {
+        current.lastOrderAt = orderAt;
+      }
+      localOrdersForStamp.set(order.customerId, current);
+      evidenceRowsToStamp.push(evidence);
+    }
     const stored = storedOrderUtmDimension({
       utmSource: order.customerUtmSource,
       utmMedium: order.customerUtmMedium,
@@ -5447,6 +5495,13 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
       document: maskDocumentLast4(order.documentLast4, order.documentType),
       origin,
     };
+  });
+
+  await stampCampaignAttributions({
+    clientId,
+    customers: [...customerForStampByUser.values()],
+    rows: evidenceRowsToStamp,
+    localOrders: localOrdersForStamp,
   });
 
   const paidOrders = metricOrders.filter((order) => order.status !== "REJECTED");
@@ -7450,6 +7505,23 @@ function latestTouchBefore(
     const occurredAt = new Date(touch.occurredAt).getTime();
     if (!Number.isFinite(occurredAt) || occurredAt > limit || occurredAt < selectedAt) continue;
     selected = touch.dimension;
+    selectedAt = occurredAt;
+  }
+  return selected;
+}
+
+function latestCampaignEvidenceBefore(
+  rows: UpzeroAnalyticsMetric[],
+  date: Date,
+): UpzeroAnalyticsMetric | null {
+  const limit = date.getTime();
+  let selected: UpzeroAnalyticsMetric | null = null;
+  let selectedAt = -Infinity;
+  for (const row of rows) {
+    if (!isPaidCampaignSignal(row)) continue;
+    const occurredAt = new Date(row.period_start).getTime();
+    if (!Number.isFinite(occurredAt) || occurredAt > limit || occurredAt < selectedAt) continue;
+    selected = row;
     selectedAt = occurredAt;
   }
   return selected;
