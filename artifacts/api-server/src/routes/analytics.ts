@@ -13,6 +13,7 @@ import {
   clientsTable,
   creativesTable,
   siteVisitsTable,
+  campaignAttributionStampsTable,
 } from "@workspace/db";
 import {
   GetDashboardQueryParams,
@@ -1703,6 +1704,28 @@ type CampaignLocalOrderSummary = {
   lastOrderAt: string | null;
 };
 
+type CampaignAttributionStampRow = {
+  id: string;
+  clientId: string;
+  customerId: string;
+  userId: number | null;
+  source: string | null;
+  medium: string | null;
+  campaign: string | null;
+  label: string | null;
+  evidenceType: string;
+  evidenceEventName: string | null;
+  evidenceEventId: string | null;
+  evidenceAt: Date | null;
+  firstSeenAt: Date | null;
+  lastSeenAt: Date | null;
+  totalPurchaseValueAtStamp: number;
+  purchaseCountAtStamp: number;
+  rawEvidence: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 function localCustomerToCampaignMetric(customer: CampaignLocalCustomer, index: number): UpzeroAnalyticsMetric | null {
   const userId = Number.parseInt(customer.externalId ?? "", 10);
   if (!Number.isFinite(userId) || userId <= 0) return null;
@@ -1754,6 +1777,148 @@ function localCustomerToCampaignMetric(customer: CampaignLocalCustomer, index: n
     utm_content: customer.utmContent,
     utm_term: customer.utmTerm,
   };
+}
+
+function attributionStampToCampaignMetric(
+  stamp: CampaignAttributionStampRow,
+  customer: CampaignLocalCustomer,
+  index: number,
+): UpzeroAnalyticsMetric | null {
+  const userId = stamp.userId ?? Number.parseInt(customer.externalId ?? "", 10);
+  if (!Number.isFinite(userId) || userId <= 0) return null;
+  const occurredAt = stamp.evidenceAt ?? stamp.createdAt ?? customer.createdAt;
+
+  return {
+    id: -2_000_000 - index,
+    period_start: occurredAt.toISOString(),
+    period_type: "attribution_stamp",
+    event_name: stamp.evidenceEventName ?? "campaign_attribution_stamped",
+    product: null,
+    product_image_url: null,
+    product_variant: null,
+    category: null,
+    user: {
+      id: userId,
+      type: null,
+      name: customer.name,
+      cpf: null,
+      cnpj: null,
+      company_name: null,
+    },
+    user_id: userId,
+    order_id: null,
+    utm_source: stamp.source,
+    utm_medium: stamp.medium,
+    utm_campaign: stamp.campaign,
+    source: "attribution_stamp",
+    channel: "paid",
+    device_type: null,
+    total_events: 1,
+    unique_users: 1,
+    unique_sessions: 0,
+    total_quantity: 0,
+    total_value: 0,
+    updated_at: stamp.updatedAt.toISOString(),
+    event_id: `campaign_attribution_stamp_${stamp.id}`,
+    anonymous_id: null,
+    session_id: null,
+    visitor_id: null,
+    fbclid: null,
+    fbc: stamp.source?.toLowerCase() === "meta" || stamp.medium?.toLowerCase().includes("meta") ? "stamped" : null,
+    fbp: null,
+    gclid: stamp.source?.toLowerCase() === "google" ? "stamped" : null,
+    landing_url: null,
+    landing_host: null,
+    landing_path: null,
+    referrer: null,
+    referrer_host: null,
+    utm_content: null,
+    utm_term: null,
+  };
+}
+
+function firstCampaignEvidenceRow(rows: UpzeroAnalyticsMetric[]): UpzeroAnalyticsMetric | null {
+  return rows
+    .filter(isPaidCampaignSignal)
+    .sort((a, b) => new Date(a.period_start).getTime() - new Date(b.period_start).getTime())[0] ?? null;
+}
+
+async function stampCampaignAttributions(params: {
+  clientId: string;
+  customers: CampaignLocalCustomer[];
+  rows: UpzeroAnalyticsMetric[];
+  localOrders: Map<string, CampaignLocalOrderSummary>;
+}): Promise<void> {
+  const localCustomerByUser = new Map<number, CampaignLocalCustomer>();
+  for (const customer of params.customers) {
+    const userId = Number.parseInt(customer.externalId ?? "", 10);
+    if (Number.isFinite(userId)) localCustomerByUser.set(userId, customer);
+  }
+
+  const rowsByUser = new Map<number, UpzeroAnalyticsMetric[]>();
+  for (const row of params.rows) {
+    const user = getMetricUser(row);
+    if (!user || !isPaidCampaignSignal(row)) continue;
+    const current = rowsByUser.get(user.id) ?? [];
+    current.push(row);
+    rowsByUser.set(user.id, current);
+  }
+
+  const values: Array<typeof campaignAttributionStampsTable.$inferInsert> = [];
+  for (const [userId, userRows] of rowsByUser.entries()) {
+    const customer = localCustomerByUser.get(userId);
+    if (!customer) continue;
+    const evidence = firstCampaignEvidenceRow(userRows);
+    if (!evidence) continue;
+    const touch = touchFromMetric(evidence);
+    const localOrder = params.localOrders.get(customer.id);
+    values.push({
+      id: nanoid(),
+      clientId: params.clientId,
+      customerId: customer.id,
+      userId,
+      source: touch.source,
+      medium: touch.medium,
+      campaign: touch.campaign,
+      label: [touch.source, touch.medium, touch.campaign].filter(Boolean).join(" / "),
+      evidenceType: "tracking",
+      evidenceEventName: evidence.event_name,
+      evidenceEventId: evidence.event_id ?? String(evidence.id),
+      evidenceAt: new Date(evidence.period_start),
+      firstSeenAt: new Date(userRows[0]?.period_start ?? evidence.period_start),
+      lastSeenAt: new Date(userRows[userRows.length - 1]?.period_start ?? evidence.period_start),
+      totalPurchaseValueAtStamp: localOrder?.totalPurchaseValue ?? 0,
+      purchaseCountAtStamp: localOrder?.purchaseCount ?? 0,
+      rawEvidence: {
+        eventName: evidence.event_name,
+        eventId: evidence.event_id,
+        metricId: evidence.id,
+        userId,
+        utmSource: evidence.utm_source,
+        utmMedium: evidence.utm_medium,
+        utmCampaign: evidence.utm_campaign,
+        fbc: Boolean(evidence.fbc),
+        fbclid: Boolean(evidence.fbclid),
+        gclid: Boolean(evidence.gclid),
+        occurredAt: evidence.period_start,
+      },
+    });
+  }
+
+  if (values.length === 0) return;
+  await db
+    .insert(campaignAttributionStampsTable)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [campaignAttributionStampsTable.clientId, campaignAttributionStampsTable.customerId],
+      set: {
+        userId: sql`COALESCE(${campaignAttributionStampsTable.userId}, EXCLUDED.user_id)`,
+        lastSeenAt: sql`GREATEST(COALESCE(${campaignAttributionStampsTable.lastSeenAt}, EXCLUDED.last_seen_at), EXCLUDED.last_seen_at)`,
+        totalPurchaseValueAtStamp: sql`GREATEST(${campaignAttributionStampsTable.totalPurchaseValueAtStamp}, EXCLUDED.total_purchase_value_at_stamp)`,
+        purchaseCountAtStamp: sql`GREATEST(${campaignAttributionStampsTable.purchaseCountAtStamp}, EXCLUDED.purchase_count_at_stamp)`,
+        updatedAt: new Date(),
+      },
+    });
 }
 
 function buildAttributedCampaignCustomers(
@@ -1934,12 +2099,21 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
     const trackingRows = tracking.rows;
     const trackingUserIds = [...new Set(trackingRows.map((row) => getMetricUser(row)?.id).filter((id): id is number => typeof id === "number"))];
     const numericTrackingExternalIds = trackingUserIds.map(String);
+    const periodOrderCustomerRows = await db
+      .select({ customerId: ordersTable.customerId })
+      .from(ordersTable)
+      .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to)));
+    const periodOrderCustomerIds = [...new Set(periodOrderCustomerRows.map((row) => row.customerId))];
+    const customerScopeParts: SQL[] = [lte(customersTable.createdAt, to)];
+    if (numericTrackingExternalIds.length > 0) {
+      customerScopeParts.push(inArray(customersTable.externalId, numericTrackingExternalIds));
+    }
+    if (periodOrderCustomerIds.length > 0) {
+      customerScopeParts.push(inArray(customersTable.id, periodOrderCustomerIds));
+    }
     const customerScope = trackingUserIds.length > 0
-      ? or(
-          lte(customersTable.createdAt, to),
-          inArray(customersTable.externalId, numericTrackingExternalIds),
-        )
-      : lte(customersTable.createdAt, to);
+      ? or(...customerScopeParts)
+      : or(...customerScopeParts);
 
     const selectCampaignCustomers = () =>
       db
@@ -1991,7 +2165,7 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
         const user = getMetricUser(row);
         return Boolean(user && !existingCampaignUsers.has(user.id) && isPaidCampaignSignal(row));
       });
-    const rows = [...trackingRows, ...localCampaignRows];
+    let rows = [...trackingRows, ...localCampaignRows];
     const userIds = [...new Set(rows.map((row) => getMetricUser(row)?.id).filter((id): id is number => typeof id === "number"))];
     const paidUserIds = new Set(
       rows
@@ -2096,6 +2270,28 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       }
       localOrderMap.set(order.customerId, current);
     }
+
+    await stampCampaignAttributions({
+      clientId,
+      customers,
+      rows,
+      localOrders: localOrderMap,
+    });
+
+    const stampRows = customerIds.length > 0
+      ? await db
+          .select()
+          .from(campaignAttributionStampsTable)
+          .where(and(eq(campaignAttributionStampsTable.clientId, clientId), inArray(campaignAttributionStampsTable.customerId, customerIds)))
+      : [];
+    const localCustomerById = new Map(customers.map((customer) => [customer.id, customer]));
+    const stampCampaignRows = stampRows
+      .map((stamp, index) => {
+        const customer = localCustomerById.get(stamp.customerId);
+        return customer ? attributionStampToCampaignMetric(stamp, customer, index) : null;
+      })
+      .filter((row): row is UpzeroAnalyticsMetric => row !== null);
+    rows = [...rows, ...stampCampaignRows];
 
     const allRows = buildAttributedCampaignCustomers(rows, localCustomerMap, priorMap, localOrderMap);
     const periodFromMs = new Date(upzeroRange.from).getTime();
