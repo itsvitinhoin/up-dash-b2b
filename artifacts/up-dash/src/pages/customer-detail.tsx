@@ -363,6 +363,9 @@ function timelineEventMeta(eventName: string): {
   if (["register_submitted", "register_start"].includes(eventName)) {
     return { icon: UserPlus, bg: "bg-lime-500/10", border: "border-lime-500/30", color: "text-lime-400" };
   }
+  if (eventName === "registration_approved") {
+    return { icon: CheckCircle, bg: "bg-emerald-500/10", border: "border-emerald-500/30", color: "text-emerald-400" };
+  }
   if (eventName === "form_start") {
     return { icon: ClipboardList, bg: "bg-orange-500/10", border: "border-orange-500/30", color: "text-orange-400" };
   }

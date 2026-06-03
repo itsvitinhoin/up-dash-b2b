@@ -3108,6 +3108,26 @@ function summarizeLocalTimeline(timeline: LocalCustomerTimelineEvent[]) {
   };
 }
 
+function minDateValue(values: Array<Date | null | undefined>): Date | null {
+  const times = values
+    .map((value) => value?.getTime())
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (times.length === 0) return null;
+  return new Date(Math.min(...times));
+}
+
+function localTimelinePriority(eventName: string): number {
+  if (eventName === "register_submitted") return 10;
+  if (eventName === "registration_approved") return 20;
+  if (eventName === "page_view") return 30;
+  if (eventName === "product_view") return 40;
+  if (eventName === "add_to_cart") return 50;
+  if (["initiate_checkout", "checkout_start"].includes(eventName)) return 60;
+  if (eventName === "order_created") return 70;
+  if (["purchase", "order_paid", "payment_approved"].includes(eventName)) return 80;
+  return 999;
+}
+
 async function buildLocalCustomerTimelineResponse(params: {
   clientId: string;
   customerId: string;
@@ -3153,11 +3173,26 @@ async function buildLocalCustomerTimelineResponse(params: {
       .limit(100),
   ]);
 
+  const firstOrderAt = orders[0]?.createdAt ?? null;
+  const registrationEventAt = minDateValue(events.filter((event) => event.eventType === "REGISTRATION").map((event) => event.createdAt));
+  const approvedEventAt = minDateValue(events.filter((event) => event.eventType === "APPROVED_REGISTRATION").map((event) => event.createdAt));
+  const customerCreatedLooksImported = Boolean(firstOrderAt && customer.createdAt.getTime() > firstOrderAt.getTime());
+  let registrationAt = customerCreatedLooksImported
+    ? firstOrderAt
+    : registrationEventAt ?? customer.createdAt;
+  let approvalAt = customer.approvalDate ?? approvedEventAt;
+  if (approvalAt && firstOrderAt && approvalAt.getTime() > firstOrderAt.getTime()) {
+    approvalAt = firstOrderAt;
+  }
+  if (approvalAt && approvalAt.getTime() < registrationAt.getTime()) {
+    registrationAt = approvalAt;
+  }
+
   const timeline: LocalCustomerTimelineEvent[] = [
     localTimelineEventBase({
       id: `local_customer_registered_${customer.id}`,
       userId: params.userId,
-      occurredAt: customer.createdAt,
+      occurredAt: registrationAt,
       eventName: "register_submitted",
       eventLabel: "Cadastro enviado",
       utmSource: customer.utmSource,
@@ -3168,12 +3203,12 @@ async function buildLocalCustomerTimelineResponse(params: {
     }),
   ];
 
-  if (customer.approvalDate) {
+  if (approvalAt) {
     timeline.push(localTimelineEventBase({
       id: `local_customer_approved_${customer.id}`,
       userId: params.userId,
-      occurredAt: customer.approvalDate,
-      eventName: "payment_approved",
+      occurredAt: approvalAt,
+      eventName: "registration_approved",
       eventLabel: "Cadastro aprovado",
       utmSource: customer.utmSource,
       utmMedium: customer.utmMedium,
@@ -3186,7 +3221,7 @@ async function buildLocalCustomerTimelineResponse(params: {
   const eventNameMap: Record<string, { name: string; label: string }> = {
     VISIT: { name: "page_view", label: "Visitou o site" },
     REGISTRATION: { name: "register_submitted", label: "Cadastro enviado" },
-    APPROVED_REGISTRATION: { name: "payment_approved", label: "Cadastro aprovado" },
+    APPROVED_REGISTRATION: { name: "registration_approved", label: "Cadastro aprovado" },
     PRODUCT_VIEW: { name: "product_view", label: "Visualizou produto" },
     ADD_TO_CART: { name: "add_to_cart", label: "Adicionou ao carrinho" },
     CHECKOUT_STARTED: { name: "checkout_start", label: "Iniciou checkout" },
@@ -3194,6 +3229,8 @@ async function buildLocalCustomerTimelineResponse(params: {
   };
 
   for (const event of events) {
+    if (event.eventType === "REGISTRATION") continue;
+    if (event.eventType === "APPROVED_REGISTRATION" && approvalAt) continue;
     const mapped = eventNameMap[event.eventType] ?? { name: event.eventType.toLowerCase(), label: event.eventType };
     timeline.push(localTimelineEventBase({
       id: `local_event_${event.id}`,
@@ -3244,7 +3281,11 @@ async function buildLocalCustomerTimelineResponse(params: {
     }));
   }
 
-  timeline.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
+  timeline.sort((a, b) => {
+    const timeDiff = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+    if (timeDiff !== 0) return timeDiff;
+    return localTimelinePriority(a.eventName) - localTimelinePriority(b.eventName);
+  });
 
   const firstTouch = timeline.find((event) => event.utmCampaign || event.utmSource || event.utmMedium);
   const touch = firstTouch
