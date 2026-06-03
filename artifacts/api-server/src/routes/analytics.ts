@@ -71,6 +71,7 @@ import {
   type UpzeroAnalyticsMetric,
 } from "../services/upzero/analytics-metrics";
 import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-facts";
+import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 
 const router: IRouter = Router();
 
@@ -1668,6 +1669,14 @@ function maskDocument(value: string | null | undefined, type: "CPF" | "CNPJ"): s
   return digits.length >= 14 ? `**.${digits.slice(2, 5)}.${digits.slice(5, 8)}/****-**` : "***";
 }
 
+function maskDocumentLast4(last4: string | null | undefined, type: "CPF" | "CNPJ" | null): string | null {
+  const digits = last4?.replace(/\D/g, "") ?? "";
+  if (!digits || !type) return null;
+  return type === "CPF"
+    ? `***.***.***-${digits.padStart(2, "*").slice(-2)}`
+    : `**.***.***/****-${digits.padStart(2, "*").slice(-2)}`;
+}
+
 type CampaignLocalCustomer = {
   id: string;
   externalId: string | null;
@@ -1675,6 +1684,8 @@ type CampaignLocalCustomer = {
   email: string;
   phone: string | null;
   documentType: "CPF" | "CNPJ" | null;
+  documentHash?: string | null;
+  documentLast4?: string | null;
   registrationStatus: "PENDING" | "APPROVED" | "REJECTED";
   createdAt: Date;
   totalOrders: number;
@@ -1821,8 +1832,8 @@ function buildAttributedCampaignCustomers(
       email: localCustomer?.email ?? null,
       phone: localCustomer?.phone ?? null,
       type: user?.type ?? null,
-      cpf: maskDocument(user?.cpf, "CPF"),
-      cnpj: maskDocument(user?.cnpj, "CNPJ"),
+      cpf: maskDocument(user?.cpf, "CPF") ?? (documentType === "CPF" ? maskDocumentLast4(localCustomer?.documentLast4, "CPF") : null),
+      cnpj: maskDocument(user?.cnpj, "CNPJ") ?? (documentType === "CNPJ" ? maskDocumentLast4(localCustomer?.documentLast4, "CNPJ") : null),
       companyName: user?.companyName ?? null,
       documentType,
       registrationStatus: localCustomer?.registrationStatus ?? null,
@@ -1907,25 +1918,42 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
         )
       : lte(customersTable.createdAt, to);
 
-    const customers = await db
-      .select({
-        id: customersTable.id,
-        externalId: customersTable.externalId,
-        name: customersTable.name,
-        email: customersTable.email,
-        phone: customersTable.phone,
-        documentType: customersTable.documentType,
-        registrationStatus: customersTable.registrationStatus,
-        createdAt: customersTable.createdAt,
-        totalOrders: customersTable.totalOrders,
-        utmSource: customersTable.utmSource,
-        utmMedium: customersTable.utmMedium,
-        utmCampaign: customersTable.utmCampaign,
-        utmContent: customersTable.utmContent,
-        utmTerm: customersTable.utmTerm,
-      })
-      .from(customersTable)
-      .where(and(eq(customersTable.clientId, clientId), customerScope));
+    const selectCampaignCustomers = () =>
+      db
+        .select({
+          id: customersTable.id,
+          externalId: customersTable.externalId,
+          name: customersTable.name,
+          email: customersTable.email,
+          phone: customersTable.phone,
+          documentType: customersTable.documentType,
+          documentHash: customersTable.documentHash,
+          documentLast4: customersTable.documentLast4,
+          registrationStatus: customersTable.registrationStatus,
+          createdAt: customersTable.createdAt,
+          totalOrders: customersTable.totalOrders,
+          utmSource: customersTable.utmSource,
+          utmMedium: customersTable.utmMedium,
+          utmCampaign: customersTable.utmCampaign,
+          utmContent: customersTable.utmContent,
+          utmTerm: customersTable.utmTerm,
+        })
+        .from(customersTable)
+        .where(and(eq(customersTable.clientId, clientId), customerScope));
+
+    let customers = await selectCampaignCustomers();
+    const localExternalIds = new Set(customers.map((customer) => customer.externalId).filter(Boolean));
+    const missingTrackingUserIds = trackingUserIds.filter((id) => !localExternalIds.has(String(id)));
+    if (missingTrackingUserIds.length > 0) {
+      const hydrated = await ensureUpzeroCustomersByIds({
+        clientId,
+        apiKey: client?.upZeroApiKey,
+        userIds: missingTrackingUserIds,
+      });
+      if (hydrated.length > 0) {
+        customers = await selectCampaignCustomers();
+      }
+    }
 
     const existingCampaignUsers = new Set(
       trackingRows

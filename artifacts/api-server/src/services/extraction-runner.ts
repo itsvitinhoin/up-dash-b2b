@@ -3,6 +3,7 @@ import { db, clientsTable, customersTable, syncJobsTable } from "@workspace/db";
 import { fetchMetaMarketingData, upsertMetaCreatives } from "./meta-ads";
 import { syncNuvemshopClient } from "./nuvemshop-sync";
 import { getMetricUser, getUpzeroAnalyticsMetrics, type UpzeroAnalyticsMetric } from "./upzero/analytics-metrics";
+import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 
 export type ExtractionJobType =
@@ -226,6 +227,13 @@ function getDetailDocumentType(
   return null;
 }
 
+function getDetailDocumentValue(
+  user: NonNullable<ReturnType<typeof getMetricUser>>,
+  detail: UpzeroCustomerDetail | null,
+): string | null {
+  return detail?.wholesale_profile?.cnpj ?? user.cnpj ?? detail?.retail_profile?.cpf ?? user.cpf ?? null;
+}
+
 async function fetchUpzeroCustomerDetail(
   apiKey: string,
   id: number,
@@ -304,6 +312,9 @@ async function upsertCustomersFromAnalyticsRegistrations(
     const email = detail?.email ?? `upzero-analytics-${externalId}@noemail.internal`;
     const name = firstString(detail?.name, user.name, user.companyName) ?? buildAnalyticsCustomerName(user);
     const documentType = getDetailDocumentType(user, detail) ?? getAnalyticsDocumentType(user);
+    const documentValue = getDetailDocumentValue(user, detail);
+    const documentHash = hashDocument(documentValue);
+    const documentLast4Value = documentLast4(documentValue);
     const registrationStatus = mapRegistrationStatus(detail) ?? "PENDING";
     const approvalDate =
       firstDate(detail?.approved_at, detail?.approval_date) ??
@@ -321,6 +332,8 @@ async function upsertCustomersFromAnalyticsRegistrations(
         name,
         phone: detail?.phone ?? null,
         documentType,
+        documentHash,
+        documentLast4: documentLast4Value,
         utmSource,
         utmMedium,
         utmCampaign,
@@ -335,6 +348,8 @@ async function upsertCustomersFromAnalyticsRegistrations(
           email: detail?.email ? email : sql`${customersTable.email}`,
           phone: detail?.phone ? detail.phone : sql`${customersTable.phone}`,
           documentType,
+          documentHash: documentHash ? documentHash : sql`${customersTable.documentHash}`,
+          documentLast4: documentLast4Value ? documentLast4Value : sql`${customersTable.documentLast4}`,
           utmSource: sql`COALESCE(${customersTable.utmSource}, EXCLUDED.utm_source)`,
           utmMedium: sql`COALESCE(${customersTable.utmMedium}, EXCLUDED.utm_medium)`,
           utmCampaign: sql`COALESCE(${customersTable.utmCampaign}, EXCLUDED.utm_campaign)`,

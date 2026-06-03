@@ -8,6 +8,7 @@ import {
   productsTable,
   eventsTable,
 } from "@workspace/db";
+import { documentLast4, hashDocument } from "./upzero/customers";
 
 const UPZERO_BASE = "https://api.upzero.com.br";
 const PAGE_LIMIT = 200;
@@ -956,6 +957,10 @@ function getDocumentType(c: UpZeroCustomer): "CPF" | "CNPJ" | null {
   return null;
 }
 
+function getDocumentValue(c: UpZeroCustomer): string | null {
+  return c.wholesale_profile?.cnpj ?? c.retail_profile?.cpf ?? null;
+}
+
 function mapRegistrationStatus(c: UpZeroCustomer): "PENDING" | "APPROVED" | "REJECTED" | null {
   if (boolLike(c.rejected) === true || boolLike(c.is_rejected) === true) return "REJECTED";
   if (boolLike(c.approved) === true || boolLike(c.is_approved) === true) return "APPROVED";
@@ -1541,6 +1546,9 @@ export async function syncUpZeroClient(
         const state = getAddressState(c) ?? stateFromPhoneDdd(c.phone);
         const city = getAddressCity(c);
         const documentType = getDocumentType(c);
+        const documentValue = getDocumentValue(c);
+        const documentHash = hashDocument(documentValue);
+        const documentLast4Value = documentLast4(documentValue);
         const email = c.email ?? `upzero-${c.id}@noemail.internal`;
         const apiRegistrationStatus = mapRegistrationStatus(c);
         const registrationDate = getRegistrationDate(c);
@@ -1559,6 +1567,8 @@ export async function syncUpZeroClient(
               name: buildCustomerName(c.name) ?? undefined,
               phone: c.phone ?? undefined,
               documentType: documentType ?? undefined,
+              documentHash: documentHash ?? undefined,
+              documentLast4: documentLast4Value ?? undefined,
               state: state ?? undefined,
               city: city ?? undefined,
               ...utm,
@@ -1585,6 +1595,8 @@ export async function syncUpZeroClient(
               name: buildCustomerName(c.name) ?? undefined,
               phone: c.phone ?? undefined,
               documentType: documentType ?? undefined,
+              documentHash: documentHash ?? undefined,
+              documentLast4: documentLast4Value ?? undefined,
               state: state ?? undefined,
               city: city ?? undefined,
               ...utm,
@@ -1611,6 +1623,8 @@ export async function syncUpZeroClient(
               name: buildCustomerName(c.name),
               phone: c.phone ?? null,
               documentType,
+              documentHash,
+              documentLast4: documentLast4Value,
               state,
               city,
               ...utm,
@@ -1625,6 +1639,8 @@ export async function syncUpZeroClient(
                 name: buildCustomerName(c.name),
                 phone: c.phone ?? null,
                 documentType,
+                documentHash,
+                documentLast4: documentLast4Value,
                 state,
                 city,
                 ...utm,

@@ -148,6 +148,13 @@
       "when": 1780339506000,
       "tag": "0021_b2c_client_context",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1780483200000,
+      "tag": "0022_customer_document_fingerprint",
+      "breakpoints": true
     }
   ]
 }
