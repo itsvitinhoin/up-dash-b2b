@@ -1696,6 +1696,13 @@ type CampaignLocalCustomer = {
   utmTerm: string | null;
 };
 
+type CampaignLocalOrderSummary = {
+  purchaseCount: number;
+  orderIds: number[];
+  totalPurchaseValue: number;
+  lastOrderAt: string | null;
+};
+
 function localCustomerToCampaignMetric(customer: CampaignLocalCustomer, index: number): UpzeroAnalyticsMetric | null {
   const userId = Number.parseInt(customer.externalId ?? "", 10);
   if (!Number.isFinite(userId) || userId <= 0) return null;
@@ -1753,6 +1760,7 @@ function buildAttributedCampaignCustomers(
   rows: UpzeroAnalyticsMetric[],
   localCustomers: Map<number, CampaignLocalCustomer>,
   priorOrders: Map<string, number>,
+  localOrders: Map<string, CampaignLocalOrderSummary>,
 ): AttributedCampaignCustomer[] {
   const grouped = new Map<number, UpzeroAnalyticsMetric[]>();
 
@@ -1813,6 +1821,21 @@ function buildAttributedCampaignCustomers(
     const firstSeenAt = sortedRows[0]?.period_start ?? null;
     const lastEvent = sortedRows[sortedRows.length - 1];
     const localCustomer = localCustomers.get(userId);
+    const localOrderSummary = localCustomer ? localOrders.get(localCustomer.id) : undefined;
+    const combinedOrderIds = Array.from(new Set([...orderIds, ...(localOrderSummary?.orderIds ?? [])]));
+    const effectivePurchaseCount = Math.max(
+      purchaseCount,
+      localOrderSummary?.purchaseCount ?? 0,
+      combinedOrderIds.length,
+    );
+    const effectivePurchaseValue =
+      localOrderSummary && localOrderSummary.purchaseCount > 0
+        ? localOrderSummary.totalPurchaseValue
+        : totalPurchaseValue;
+    const effectiveLastEventAt =
+      localOrderSummary?.lastOrderAt && (!lastEvent?.period_start || new Date(localOrderSummary.lastOrderAt).getTime() > new Date(lastEvent.period_start).getTime())
+        ? localOrderSummary.lastOrderAt
+        : (lastEvent?.period_start ?? null);
     const documentType =
       localCustomer?.documentType ??
       (user?.cnpj ? "CNPJ" : user?.cpf ? "CPF" : user?.type === "WHOLESALE" ? "CNPJ" : user?.type === "RETAIL" ? "CPF" : null);
@@ -1820,10 +1843,10 @@ function buildAttributedCampaignCustomers(
     const totalHistoricalOrders = Number(localCustomer?.totalOrders ?? 0);
     const knownHistoricalOrders = Math.max(
       totalHistoricalOrders,
-      priorOrderCount + purchaseCount,
-      localCustomer ? 0 : purchaseCount,
+      priorOrderCount + effectivePurchaseCount,
+      localCustomer ? 0 : effectivePurchaseCount,
     );
-    const isRemarketing = knownHistoricalOrders > 1 || (priorOrderCount > 0 && purchaseCount > 0);
+    const isRemarketing = knownHistoricalOrders > 1 || (priorOrderCount > 0 && effectivePurchaseCount > 0);
 
     customers.push({
       customerId: localCustomer?.id ?? null,
@@ -1839,23 +1862,23 @@ function buildAttributedCampaignCustomers(
       registrationStatus: localCustomer?.registrationStatus ?? null,
       registeredAt: localCustomer?.createdAt.toISOString() ?? null,
       firstSeenAt,
-      lastSeenAt: sortedRows[sortedRows.length - 1]?.period_start ?? null,
+      lastSeenAt: effectiveLastEventAt,
       firstTouch: touchFromMetric(firstTouchRow),
       lastTouch: touchFromMetric(lastTouchRow),
       returnTouch: returnTouchRow ? touchFromMetric(returnTouchRow) : null,
       campaigns: buildUniqueCampaigns(campaignRows),
-      hasPurchase: purchaseCount > 0,
-      isRepurchase: purchaseCount >= 2 || priorOrderCount > 0 || totalHistoricalOrders > purchaseCount,
+      hasPurchase: effectivePurchaseCount > 0,
+      isRepurchase: effectivePurchaseCount >= 2 || priorOrderCount > 0 || totalHistoricalOrders > effectivePurchaseCount,
       isRemarketing,
-      purchaseCount,
-      orderIds,
-      totalPurchaseValue,
+      purchaseCount: effectivePurchaseCount,
+      orderIds: combinedOrderIds,
+      totalPurchaseValue: effectivePurchaseValue,
       addToCartCount: addToCartRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
       checkoutCount: checkoutRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
       registerSubmittedCount: registerRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
       productViewCount: productViewRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
       lastEventName: lastEvent?.event_name ?? null,
-      lastEventAt: lastEvent?.period_start ?? null,
+      lastEventAt: effectiveLastEventAt,
     });
   }
 
@@ -2027,6 +2050,24 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
           )
           .groupBy(ordersTable.customerId)
       : [];
+    const localOrderRows = customerIds.length > 0
+      ? await db
+          .select({
+            customerId: ordersTable.customerId,
+            externalId: ordersTable.externalId,
+            amount: ordersTable.amount,
+            createdAt: ordersTable.createdAt,
+          })
+          .from(ordersTable)
+          .where(
+            and(
+              eq(ordersTable.clientId, clientId),
+              inArray(ordersTable.customerId, customerIds),
+              gte(ordersTable.createdAt, from),
+              lte(ordersTable.createdAt, to),
+            ),
+          )
+      : [];
 
     const localCustomerMap = new Map(
       customers
@@ -2037,8 +2078,26 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
         .filter((entry): entry is readonly [number, typeof customers[number]] => entry !== null),
     );
     const priorMap = new Map(priorRows.map((row) => [row.customerId, row.priorOrders]));
+    const localOrderMap = new Map<string, CampaignLocalOrderSummary>();
+    for (const order of localOrderRows) {
+      const current = localOrderMap.get(order.customerId) ?? {
+        purchaseCount: 0,
+        orderIds: [],
+        totalPurchaseValue: 0,
+        lastOrderAt: null,
+      };
+      current.purchaseCount += 1;
+      current.totalPurchaseValue += order.amount ?? 0;
+      const numericExternalId = Number.parseInt(order.externalId ?? "", 10);
+      if (Number.isFinite(numericExternalId)) current.orderIds.push(numericExternalId);
+      const orderAt = order.createdAt.toISOString();
+      if (!current.lastOrderAt || new Date(orderAt).getTime() > new Date(current.lastOrderAt).getTime()) {
+        current.lastOrderAt = orderAt;
+      }
+      localOrderMap.set(order.customerId, current);
+    }
 
-    const allRows = buildAttributedCampaignCustomers(rows, localCustomerMap, priorMap);
+    const allRows = buildAttributedCampaignCustomers(rows, localCustomerMap, priorMap, localOrderMap);
     const periodFromMs = new Date(upzeroRange.from).getTime();
     const periodToMs = new Date(upzeroRange.to).getTime();
     const isInSelectedPeriod = (value: string | null | undefined) => {
@@ -2052,9 +2111,16 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
         .map((row) => getMetricUser(row)?.id)
         .filter((id): id is number => typeof id === "number"),
     );
+    const periodLocalOrderUserIds = new Set(
+      customers
+        .filter((customer) => localOrderMap.has(customer.id))
+        .map((customer) => Number.parseInt(customer.externalId ?? "", 10))
+        .filter((id): id is number => Number.isFinite(id)),
+    );
     const filteredRows = allRows.filter((row) => {
       const belongsToSelectedPeriod =
         periodAttributedUserIds.has(row.userId) ||
+        periodLocalOrderUserIds.has(row.userId) ||
         isInSelectedPeriod(row.registeredAt) ||
         isInSelectedPeriod(row.lastEventAt);
       if (!belongsToSelectedPeriod) return false;
