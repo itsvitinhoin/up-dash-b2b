@@ -2976,6 +2976,298 @@ const CustomerTimelineQueryParams = z.object({
   lookbackDays: z.coerce.number().int().min(1).max(365).default(30),
 });
 
+type LocalCustomerTimelineEvent = {
+  id: string;
+  userId: number;
+  occurredAt: string;
+  periodType: string;
+  eventName: string;
+  eventLabel: string;
+  productId: number | null;
+  productName: string | null;
+  productSku: string | null;
+  productImageUrl: string | null;
+  categoryId: number | null;
+  categoryName: string | null;
+  orderId: number | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  normalizedSource: string;
+  normalizedMedium: string;
+  deviceType: string | null;
+  totalEvents: number;
+  totalQuantity: number;
+  totalValue: number;
+  attributionType: "first_touch" | "last_touch" | "return_touch" | "direct" | null;
+  rawMetricId: number;
+  updatedAt: string;
+  eventId: string | null;
+  anonymousId: string | null;
+  sessionId: string | null;
+  visitorId: string | null;
+  fbclid: string | null;
+  fbc: string | null;
+  fbp: string | null;
+  gclid: string | null;
+  landingUrl: string | null;
+  landingHost: string | null;
+  landingPath: string | null;
+  referrer: string | null;
+  referrerHost: string | null;
+  utmContent: string | null;
+  utmTerm: string | null;
+};
+
+function localTimelineEventBase(params: {
+  id: string;
+  userId: number;
+  occurredAt: Date;
+  eventName: string;
+  eventLabel: string;
+  totalEvents?: number;
+  totalQuantity?: number;
+  totalValue?: number;
+  orderId?: number | null;
+  product?: {
+    id: string | null;
+    externalId: string | null;
+    name: string | null;
+    sku: string | null;
+    category: string | null;
+    imageUrl: string | null;
+  } | null;
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+  utmContent?: string | null;
+  utmTerm?: string | null;
+}): LocalCustomerTimelineEvent {
+  const productExternalId = Number.parseInt(params.product?.externalId ?? params.product?.id ?? "", 10);
+  return {
+    id: params.id,
+    userId: params.userId,
+    occurredAt: params.occurredAt.toISOString(),
+    periodType: "local",
+    eventName: params.eventName,
+    eventLabel: params.eventLabel,
+    productId: Number.isFinite(productExternalId) ? productExternalId : null,
+    productName: params.product?.name ?? null,
+    productSku: params.product?.sku ?? null,
+    productImageUrl: params.product?.imageUrl ?? null,
+    categoryId: null,
+    categoryName: params.product?.category ?? null,
+    orderId: params.orderId ?? null,
+    utmSource: params.utmSource ?? null,
+    utmMedium: params.utmMedium ?? null,
+    utmCampaign: params.utmCampaign ?? null,
+    normalizedSource: params.utmSource ?? "Direto / Não identificado",
+    normalizedMedium: params.utmMedium ?? "Não identificado",
+    deviceType: null,
+    totalEvents: params.totalEvents ?? 1,
+    totalQuantity: params.totalQuantity ?? 0,
+    totalValue: params.totalValue ?? 0,
+    attributionType: params.utmCampaign ? "first_touch" : null,
+    rawMetricId: 0,
+    updatedAt: params.occurredAt.toISOString(),
+    eventId: params.id,
+    anonymousId: null,
+    sessionId: null,
+    visitorId: null,
+    fbclid: null,
+    fbc: null,
+    fbp: null,
+    gclid: null,
+    landingUrl: null,
+    landingHost: null,
+    landingPath: null,
+    referrer: null,
+    referrerHost: null,
+    utmContent: params.utmContent ?? null,
+    utmTerm: params.utmTerm ?? null,
+  };
+}
+
+function summarizeLocalTimeline(timeline: LocalCustomerTimelineEvent[]) {
+  const purchaseEvents = timeline.filter((event) => ["purchase", "order_paid", "payment_approved"].includes(event.eventName));
+  return {
+    totalEvents: timeline.reduce((sum, event) => sum + event.totalEvents, 0),
+    productViews: timeline.filter((event) => event.eventName === "product_view").reduce((sum, event) => sum + event.totalEvents, 0),
+    categoryViews: timeline.filter((event) => event.eventName === "category_view").reduce((sum, event) => sum + event.totalEvents, 0),
+    formStarts: timeline.filter((event) => event.eventName === "form_start").reduce((sum, event) => sum + event.totalEvents, 0),
+    registerStarts: timeline.filter((event) => event.eventName === "register_start").reduce((sum, event) => sum + event.totalEvents, 0),
+    registerSubmitted: timeline.filter((event) => event.eventName === "register_submitted").reduce((sum, event) => sum + event.totalEvents, 0),
+    logins: timeline.filter((event) => event.eventName === "login").reduce((sum, event) => sum + event.totalEvents, 0),
+    addToCartEvents: timeline.filter((event) => event.eventName === "add_to_cart").reduce((sum, event) => sum + event.totalEvents, 0),
+    checkoutStarts: timeline.filter((event) => ["initiate_checkout", "checkout_start"].includes(event.eventName)).reduce((sum, event) => sum + event.totalEvents, 0),
+    purchases: purchaseEvents.reduce((sum, event) => sum + event.totalEvents, 0),
+    totalCartValue: timeline.filter((event) => event.eventName === "add_to_cart").reduce((sum, event) => sum + event.totalValue, 0),
+    totalPurchaseValue: purchaseEvents.reduce((sum, event) => sum + event.totalValue, 0),
+    firstSeenAt: timeline[0]?.occurredAt ?? null,
+    lastSeenAt: timeline[timeline.length - 1]?.occurredAt ?? null,
+  };
+}
+
+async function buildLocalCustomerTimelineResponse(params: {
+  clientId: string;
+  customerId: string;
+  userId: number;
+}) {
+  const [customer] = await db
+    .select()
+    .from(customersTable)
+    .where(and(eq(customersTable.id, params.customerId), eq(customersTable.clientId, params.clientId)));
+  if (!customer) return null;
+
+  const [events, orders] = await Promise.all([
+    db
+      .select({
+        id: eventsTable.id,
+        eventType: eventsTable.eventType,
+        orderId: eventsTable.orderId,
+        createdAt: eventsTable.createdAt,
+        productId: productsTable.id,
+        productExternalId: productsTable.externalId,
+        productName: productsTable.name,
+        productSku: productsTable.sku,
+        productCategory: productsTable.category,
+        productImageUrl: productsTable.imageUrl,
+      })
+      .from(eventsTable)
+      .leftJoin(productsTable, eq(eventsTable.productId, productsTable.id))
+      .where(and(eq(eventsTable.customerId, params.customerId), eq(eventsTable.clientId, params.clientId)))
+      .orderBy(asc(eventsTable.createdAt))
+      .limit(300),
+    db
+      .select({
+        id: ordersTable.id,
+        externalId: ordersTable.externalId,
+        amount: ordersTable.amount,
+        requestedQuantity: ordersTable.requestedQuantity,
+        status: ordersTable.status,
+        createdAt: ordersTable.createdAt,
+      })
+      .from(ordersTable)
+      .where(and(eq(ordersTable.customerId, params.customerId), eq(ordersTable.clientId, params.clientId)))
+      .orderBy(asc(ordersTable.createdAt))
+      .limit(100),
+  ]);
+
+  const timeline: LocalCustomerTimelineEvent[] = [
+    localTimelineEventBase({
+      id: `local_customer_registered_${customer.id}`,
+      userId: params.userId,
+      occurredAt: customer.createdAt,
+      eventName: "register_submitted",
+      eventLabel: "Cadastro enviado",
+      utmSource: customer.utmSource,
+      utmMedium: customer.utmMedium,
+      utmCampaign: customer.utmCampaign,
+      utmContent: customer.utmContent,
+      utmTerm: customer.utmTerm,
+    }),
+  ];
+
+  if (customer.approvalDate) {
+    timeline.push(localTimelineEventBase({
+      id: `local_customer_approved_${customer.id}`,
+      userId: params.userId,
+      occurredAt: customer.approvalDate,
+      eventName: "payment_approved",
+      eventLabel: "Cadastro aprovado",
+      utmSource: customer.utmSource,
+      utmMedium: customer.utmMedium,
+      utmCampaign: customer.utmCampaign,
+      utmContent: customer.utmContent,
+      utmTerm: customer.utmTerm,
+    }));
+  }
+
+  const eventNameMap: Record<string, { name: string; label: string }> = {
+    VISIT: { name: "page_view", label: "Visitou o site" },
+    REGISTRATION: { name: "register_submitted", label: "Cadastro enviado" },
+    APPROVED_REGISTRATION: { name: "payment_approved", label: "Cadastro aprovado" },
+    PRODUCT_VIEW: { name: "product_view", label: "Visualizou produto" },
+    ADD_TO_CART: { name: "add_to_cart", label: "Adicionou ao carrinho" },
+    CHECKOUT_STARTED: { name: "checkout_start", label: "Iniciou checkout" },
+    PURCHASE: { name: "purchase", label: "Realizou compra" },
+  };
+
+  for (const event of events) {
+    const mapped = eventNameMap[event.eventType] ?? { name: event.eventType.toLowerCase(), label: event.eventType };
+    timeline.push(localTimelineEventBase({
+      id: `local_event_${event.id}`,
+      userId: params.userId,
+      occurredAt: event.createdAt,
+      eventName: mapped.name,
+      eventLabel: mapped.label,
+      orderId: event.orderId ? Number.parseInt(event.orderId, 10) || null : null,
+      product: event.productId ? {
+        id: event.productId,
+        externalId: event.productExternalId,
+        name: event.productName,
+        sku: event.productSku,
+        category: event.productCategory,
+        imageUrl: event.productImageUrl,
+      } : null,
+      utmSource: customer.utmSource,
+      utmMedium: customer.utmMedium,
+      utmCampaign: customer.utmCampaign,
+      utmContent: customer.utmContent,
+      utmTerm: customer.utmTerm,
+    }));
+  }
+
+  const purchaseOrderIdsFromEvents = new Set(
+    events
+      .filter((event) => event.eventType === "PURCHASE" && event.orderId)
+      .map((event) => event.orderId),
+  );
+
+  for (const order of orders) {
+    if (purchaseOrderIdsFromEvents.has(order.id)) continue;
+    const numericOrderId = Number.parseInt(order.externalId ?? order.id, 10);
+    timeline.push(localTimelineEventBase({
+      id: `local_order_${order.id}`,
+      userId: params.userId,
+      occurredAt: order.createdAt,
+      eventName: order.status === "APPROVED" || order.status === "SHIPPED" || order.status === "DELIVERED" ? "purchase" : "order_created",
+      eventLabel: order.status === "APPROVED" || order.status === "SHIPPED" || order.status === "DELIVERED" ? "Realizou compra" : "Pedido criado",
+      orderId: Number.isFinite(numericOrderId) ? numericOrderId : null,
+      totalQuantity: order.requestedQuantity,
+      totalValue: order.amount,
+      utmSource: customer.utmSource,
+      utmMedium: customer.utmMedium,
+      utmCampaign: customer.utmCampaign,
+      utmContent: customer.utmContent,
+      utmTerm: customer.utmTerm,
+    }));
+  }
+
+  timeline.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
+
+  const firstTouch = timeline.find((event) => event.utmCampaign || event.utmSource || event.utmMedium);
+  const touch = firstTouch
+    ? {
+        source: firstTouch.utmSource,
+        medium: firstTouch.utmMedium,
+        campaign: firstTouch.utmCampaign,
+        occurredAt: firstTouch.occurredAt,
+      }
+    : { source: null, medium: null, campaign: null, occurredAt: null };
+
+  return {
+    userId: params.userId,
+    attribution: {
+      firstTouch: touch,
+      lastTouch: touch,
+      lastReturn: { source: null, medium: null, campaign: null, occurredAt: null },
+    },
+    summary: summarizeLocalTimeline(timeline),
+    timeline,
+  };
+}
+
 const CampaignCustomerTimelineQueryParams = GetDashboardQueryParams.pick({
   clientId: true,
   dateFrom: true,
@@ -3074,12 +3366,16 @@ router.get("/analytics/customers/:customerId/timeline", async (req, res): Promis
 
   const userId = Number.parseInt(customer[0].externalId ?? "", 10);
   if (!Number.isFinite(userId) || userId <= 0) {
-    res.status(422).json({
-      error: true,
-      code: "UPZERO_USER_ID_MISSING",
-      message: "Customer does not have a numeric UP Zero user_id linked in externalId.",
-      status: 422,
+    const localTimeline = await buildLocalCustomerTimelineResponse({
+      clientId,
+      customerId,
+      userId: 0,
     });
+    if (!localTimeline) {
+      res.status(404).json({ error: true, code: "NOT_FOUND", message: "Customer not found", status: 404 });
+      return;
+    }
+    res.json(localTimeline);
     return;
   }
 
@@ -3091,21 +3387,33 @@ router.get("/analytics/customers/:customerId/timeline", async (req, res): Promis
       context: "customer-timeline",
     });
 
-    res.json(
-      buildCustomerTimelineResponse(
-        userId,
-        await enrichRowsWithProductImages(tracking.rows, clientId),
-        queryParsed.data.lookbackDays,
-      ),
+    const upzeroTimeline = buildCustomerTimelineResponse(
+      userId,
+      await enrichRowsWithProductImages(tracking.rows, clientId),
+      queryParsed.data.lookbackDays,
     );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(502).json({
-      error: true,
-      code: "UPZERO_ANALYTICS_FAILED",
-      message,
-      status: 502,
+    if (upzeroTimeline.timeline.length > 0) {
+      res.json(upzeroTimeline);
+      return;
+    }
+    const localTimeline = await buildLocalCustomerTimelineResponse({
+      clientId,
+      customerId,
+      userId,
     });
+    res.json(localTimeline ?? upzeroTimeline);
+  } catch (err) {
+    const localTimeline = await buildLocalCustomerTimelineResponse({
+      clientId,
+      customerId,
+      userId,
+    });
+    if (localTimeline) {
+      res.json(localTimeline);
+      return;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(502).json({ error: true, code: "UPZERO_ANALYTICS_FAILED", message, status: 502 });
   }
 });
 
