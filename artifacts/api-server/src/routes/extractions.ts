@@ -72,9 +72,25 @@ router.get("/cron/extractions/upzero-transactional", async (req, res): Promise<v
   res.json({ ok: true, result });
 });
 
+const CronNuvemshopQuery = z.object({
+  clientId: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(10).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+
 router.get("/cron/extractions/nuvemshop", async (req, res): Promise<void> => {
   if (!(await verifyCronRequest(req, res))) return;
-  const result = await runNuvemshopTransactionalExtraction("cron");
+  const parsed = CronNuvemshopQuery.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const result = await runNuvemshopTransactionalExtraction("cron", parsed.data);
   res.json({ ok: true, result });
 });
 

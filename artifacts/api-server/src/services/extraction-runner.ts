@@ -29,6 +29,9 @@ type ExtractionRunSummary = {
   jobType: ExtractionJobType | "hourly_bundle";
   trigger: ExtractionTrigger;
   clients: number;
+  totalClients?: number;
+  offset?: number;
+  limit?: number;
   done: number;
   failed: number;
   skipped: number;
@@ -518,6 +521,11 @@ export async function runMetaAdsExtraction(
 
 export async function runNuvemshopTransactionalExtraction(
   trigger: ExtractionTrigger,
+  options: {
+    clientId?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
   const lookbackDays = Number.isFinite(NUVEMSHOP_LOOKBACK_DAYS) && NUVEMSHOP_LOOKBACK_DAYS > 0
@@ -530,11 +538,20 @@ export async function runNuvemshopTransactionalExtraction(
     ? NUVEMSHOP_CATALOG_MAX_PAGES
     : 50;
   const since = new Date(startedAt.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
-  const clients = (await clientsWith(and(
+  const allClients = (await clientsWith(and(
     eq(clientsTable.dashboardType, "B2C"),
     isNotNull(clientsTable.nuvemshopStoreId),
     isNotNull(clientsTable.nuvemshopAccessToken),
   ))).filter((client) => client.nuvemshopStoreId && client.nuvemshopAccessToken);
+  const totalClients = allClients.length;
+  let clients = options.clientId
+    ? allClients.filter((client) => client.id === options.clientId)
+    : allClients;
+  const offset = Math.max(0, options.offset ?? 0);
+  const limit = options.limit && options.limit > 0 ? options.limit : undefined;
+  if (!options.clientId && limit) {
+    clients = clients.slice(offset, offset + limit);
+  }
   let done = 0;
   let failed = 0;
 
@@ -569,6 +586,9 @@ export async function runNuvemshopTransactionalExtraction(
     jobType: "nuvemshop_transactional",
     trigger,
     clients: clients.length,
+    totalClients,
+    offset: limit ? offset : undefined,
+    limit,
     done,
     failed,
     skipped: 0,
