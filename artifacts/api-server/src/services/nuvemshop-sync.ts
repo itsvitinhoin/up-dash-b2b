@@ -42,11 +42,13 @@ type NuvemshopCustomer = {
 type NuvemshopProduct = {
   id?: number | string | null;
   product_id?: number | string | null;
+  variant_id?: number | string | null;
   name?: string | Record<string, string> | null;
   sku?: string | null;
   quantity?: number | string | null;
   price?: number | string | null;
   compare_at_price?: number | string | null;
+  promotional_price?: number | string | null;
   image?: { src?: string | null } | null;
   categories?: NuvemshopCategory[] | null;
   product?: {
@@ -66,6 +68,8 @@ type NuvemshopVariant = {
   price?: number | string | null;
   compare_at_price?: number | string | null;
   image?: { src?: string | null } | null;
+  image_id?: number | string | null;
+  inventory_levels?: Array<{ stock?: number | string | null }> | null;
   values?: Array<{ pt?: string | null; en?: string | null; name?: string | Record<string, string> | null }> | null;
 };
 
@@ -111,7 +115,7 @@ type NuvemshopProductDetails = {
   id?: number | string | null;
   name?: string | Record<string, string> | null;
   categories?: NuvemshopCategory[] | null;
-  images?: Array<{ src?: string | null; position?: number | string | null }> | null;
+  images?: Array<{ id?: number | string | null; src?: string | null; position?: number | string | null }> | null;
   variants?: NuvemshopVariant[] | null;
 };
 
@@ -232,6 +236,11 @@ function skuForVariant(product: NuvemshopProductDetails, variant: NuvemshopVaria
 }
 
 function stockForVariant(variant: NuvemshopVariant): number {
+  const inventoryLevelsStock = (variant.inventory_levels ?? []).reduce(
+    (sum, level) => sum + asNumber(level.stock),
+    0,
+  );
+  if (inventoryLevelsStock > 0) return Math.round(inventoryLevelsStock);
   const stock = asNumber(variant.stock);
   const inventoryQuantity = asNumber(variant.inventory_quantity);
   const quantity = asNumber(variant.quantity);
@@ -242,6 +251,26 @@ function stockForVariant(variant: NuvemshopVariant): number {
   if (variant.inventory_quantity === 0 || variant.inventory_quantity === "0") return 0;
   if (variant.quantity === 0 || variant.quantity === "0") return 0;
   return 0;
+}
+
+function variantLabel(variant: NuvemshopVariant): string {
+  return (variant.values ?? [])
+    .map((value) => localized(value.name ?? value).trim())
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function imageForVariant(
+  product: NuvemshopProductDetails,
+  variant: NuvemshopVariant,
+): string | null {
+  const imageId = variant.image_id ? String(variant.image_id) : null;
+  return (
+    variant.image?.src ??
+    (imageId ? product.images?.find((image) => String(image.position) === imageId || String((image as { id?: unknown }).id ?? "") === imageId)?.src : null) ??
+    product.images?.[0]?.src ??
+    null
+  );
 }
 
 function categoryName(categories?: NuvemshopCategory[] | null): string | null {
@@ -365,37 +394,58 @@ async function syncProductCatalog(params: {
       const variants = product.variants && product.variants.length > 0 ? product.variants : [{ id: productId, sku: productId }] as NuvemshopVariant[];
       const productName = localized(product.name) || `Produto ${productId ?? ""}`.trim();
       const category = categoryName(product.categories);
-      const imageUrl = product.images?.[0]?.src ?? null;
+      const variantsBySku = new Map<string, {
+        externalId: string;
+        name: string;
+        price: number;
+        stock: number;
+        imageUrl: string | null;
+      }>();
 
       for (const variant of variants) {
         const sku = skuForVariant(product, variant);
         const variantId = variant.id ? String(variant.id) : sku;
         const externalId = productId ? `${productId}:${variantId}` : variantId;
+        const label = variantLabel(variant);
         const stock = stockForVariant(variant);
-        const price = asNumber(variant.compare_at_price) || asNumber(variant.price);
+        const existing = variantsBySku.get(sku);
+        if (existing) {
+          existing.stock += stock;
+          existing.externalId = productId ? productId : existing.externalId;
+          continue;
+        }
+        variantsBySku.set(sku, {
+          externalId,
+          name: label ? `${productName} - ${label}` : productName,
+          price: asNumber(variant.promotional_price) || asNumber(variant.compare_at_price) || asNumber(variant.price),
+          stock,
+          imageUrl: imageForVariant(product, variant),
+        });
+      }
 
+      for (const [sku, row] of variantsBySku.entries()) {
         const [upserted] = await db
           .insert(productsTable)
           .values({
             clientId: params.clientId,
-            externalId,
+            externalId: row.externalId,
             sku,
-            name: productName,
+            name: row.name,
             category,
-            price,
-            stock,
-            imageUrl: variant.image?.src ?? imageUrl,
+            price: row.price,
+            stock: row.stock,
+            imageUrl: row.imageUrl,
             status: "ACTIVE",
           })
           .onConflictDoUpdate({
             target: [productsTable.clientId, productsTable.sku],
             set: {
-              externalId,
-              name: productName,
+              externalId: row.externalId,
+              name: row.name,
               category,
-              price,
-              stock,
-              imageUrl: variant.image?.src ?? imageUrl,
+              price: row.price,
+              stock: row.stock,
+              imageUrl: row.imageUrl,
               status: "ACTIVE",
             },
           })
@@ -545,7 +595,7 @@ export async function syncNuvemshopClient(params: {
         const quantity = Math.max(1, Math.round(asNumber(item.quantity) || 1));
         const sku = skuFor(item);
         const productId = item.product_id ? String(item.product_id) : String(item.id ?? sku);
-        const variantId = item.id ? String(item.id) : null;
+        const variantId = item.variant_id ? String(item.variant_id) : null;
         const productExternalId = item.product_id && variantId ? `${productId}:${variantId}` : productId;
         const detailPromise = productDetailsCache.get(productId) ?? fetchProductDetails(params.storeId, params.accessToken, productId).catch(() => null);
         productDetailsCache.set(productId, detailPromise);
