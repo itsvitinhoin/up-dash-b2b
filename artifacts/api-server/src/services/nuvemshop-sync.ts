@@ -57,6 +57,18 @@ type NuvemshopProduct = {
   } | null;
 };
 
+type NuvemshopVariant = {
+  id?: number | string | null;
+  sku?: string | null;
+  stock?: number | string | null;
+  inventory_quantity?: number | string | null;
+  quantity?: number | string | null;
+  price?: number | string | null;
+  compare_at_price?: number | string | null;
+  image?: { src?: string | null } | null;
+  values?: Array<{ pt?: string | null; en?: string | null; name?: string | Record<string, string> | null }> | null;
+};
+
 type NuvemshopOrder = {
   id: number | string;
   number?: number | string | null;
@@ -100,6 +112,7 @@ type NuvemshopProductDetails = {
   name?: string | Record<string, string> | null;
   categories?: NuvemshopCategory[] | null;
   images?: Array<{ src?: string | null; position?: number | string | null }> | null;
+  variants?: NuvemshopVariant[] | null;
 };
 
 const PROVINCE_TO_STATE: Record<string, string> = {
@@ -212,6 +225,25 @@ function skuFor(item: NuvemshopProduct): string {
   return `nuvemshop-${item.product_id ?? item.id ?? "item"}`;
 }
 
+function skuForVariant(product: NuvemshopProductDetails, variant: NuvemshopVariant): string {
+  const sku = (variant.sku ?? "").trim();
+  if (sku) return sku;
+  return `nuvemshop-${product.id ?? "product"}-${variant.id ?? "variant"}`;
+}
+
+function stockForVariant(variant: NuvemshopVariant): number {
+  const stock = asNumber(variant.stock);
+  const inventoryQuantity = asNumber(variant.inventory_quantity);
+  const quantity = asNumber(variant.quantity);
+  if (stock > 0) return Math.round(stock);
+  if (inventoryQuantity > 0) return Math.round(inventoryQuantity);
+  if (quantity > 0) return Math.round(quantity);
+  if (variant.stock === 0 || variant.stock === "0") return 0;
+  if (variant.inventory_quantity === 0 || variant.inventory_quantity === "0") return 0;
+  if (variant.quantity === 0 || variant.quantity === "0") return 0;
+  return 0;
+}
+
 function categoryName(categories?: NuvemshopCategory[] | null): string | null {
   const rows = categories ?? [];
   if (rows.length === 0) return null;
@@ -302,6 +334,81 @@ async function fetchOrders(
   return orders;
 }
 
+async function fetchProducts(
+  storeId: string,
+  accessToken: string,
+  maxPages = 50,
+): Promise<NuvemshopProductDetails[]> {
+  const products: NuvemshopProductDetails[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const rows = await fetchNuvemshopPage<NuvemshopProductDetails>(storeId, accessToken, "/products", {
+      page,
+      per_page: 200,
+    });
+    products.push(...rows);
+    if (rows.length < 200) break;
+  }
+  return products;
+}
+
+async function syncProductCatalog(params: {
+  clientId: string;
+  storeId: string;
+  accessToken: string;
+  maxPages?: number;
+  result: NuvemshopSyncResult;
+}) {
+  const products = await fetchProducts(params.storeId, params.accessToken, params.maxPages);
+  for (const product of products) {
+    try {
+      const productId = product.id ? String(product.id) : null;
+      const variants = product.variants && product.variants.length > 0 ? product.variants : [{ id: productId, sku: productId }] as NuvemshopVariant[];
+      const productName = localized(product.name) || `Produto ${productId ?? ""}`.trim();
+      const category = categoryName(product.categories);
+      const imageUrl = product.images?.[0]?.src ?? null;
+
+      for (const variant of variants) {
+        const sku = skuForVariant(product, variant);
+        const variantId = variant.id ? String(variant.id) : sku;
+        const externalId = productId ? `${productId}:${variantId}` : variantId;
+        const stock = stockForVariant(variant);
+        const price = asNumber(variant.compare_at_price) || asNumber(variant.price);
+
+        const [upserted] = await db
+          .insert(productsTable)
+          .values({
+            clientId: params.clientId,
+            externalId,
+            sku,
+            name: productName,
+            category,
+            price,
+            stock,
+            imageUrl: variant.image?.src ?? imageUrl,
+            status: "ACTIVE",
+          })
+          .onConflictDoUpdate({
+            target: [productsTable.clientId, productsTable.sku],
+            set: {
+              externalId,
+              name: productName,
+              category,
+              price,
+              stock,
+              imageUrl: variant.image?.src ?? imageUrl,
+              status: "ACTIVE",
+            },
+          })
+          .returning({ wasInserted: sql<boolean>`(xmax = 0)` });
+        if (upserted?.wasInserted) params.result.productsCreated++;
+        else params.result.productsUpdated++;
+      }
+    } catch (error) {
+      params.result.errors.push(`Product ${product.id ?? "unknown"}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
 export async function syncNuvemshopClient(params: {
   clientId: string;
   storeId: string;
@@ -310,6 +417,17 @@ export async function syncNuvemshopClient(params: {
   maxPages?: number;
 }): Promise<NuvemshopSyncResult> {
   const result = emptyResult();
+  try {
+    await syncProductCatalog({
+      clientId: params.clientId,
+      storeId: params.storeId,
+      accessToken: params.accessToken,
+      maxPages: params.maxPages,
+      result,
+    });
+  } catch (error) {
+    result.errors.push(`Product catalog: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const orders = await fetchOrders(params.storeId, params.accessToken, params.since, params.maxPages);
   const productDetailsCache = new Map<string, Promise<NuvemshopProductDetails | null>>();
 
@@ -427,6 +545,8 @@ export async function syncNuvemshopClient(params: {
         const quantity = Math.max(1, Math.round(asNumber(item.quantity) || 1));
         const sku = skuFor(item);
         const productId = item.product_id ? String(item.product_id) : String(item.id ?? sku);
+        const variantId = item.id ? String(item.id) : null;
+        const productExternalId = item.product_id && variantId ? `${productId}:${variantId}` : productId;
         const detailPromise = productDetailsCache.get(productId) ?? fetchProductDetails(params.storeId, params.accessToken, productId).catch(() => null);
         productDetailsCache.set(productId, detailPromise);
         const productDetails = await detailPromise;
@@ -441,7 +561,7 @@ export async function syncNuvemshopClient(params: {
           .insert(productsTable)
           .values({
             clientId: params.clientId,
-            externalId: productId,
+            externalId: productExternalId,
             sku,
             name: productName,
             category,
@@ -451,7 +571,7 @@ export async function syncNuvemshopClient(params: {
           .onConflictDoUpdate({
             target: [productsTable.clientId, productsTable.sku],
             set: {
-              externalId: productId,
+              externalId: productExternalId,
               name: productName,
               category,
               price: grossUnitPrice,

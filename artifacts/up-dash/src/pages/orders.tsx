@@ -91,6 +91,7 @@ type OrdersPageResponse = {
     retentionPct: number;
     conversionPct: number;
     approvedLeads: number;
+    sessions: number;
   };
   rows: OrdersPageRow[];
   page: number;
@@ -185,14 +186,15 @@ function originClass(origin: OrderOrigin) {
 
 export default function OrdersPage() {
   const { t } = useI18n();
-  const { selectedClientId, user } = useAuth();
+  const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange } = useDashboardFilters();
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+  const isB2C = selectedDashboardMode === "B2C";
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<OrdersPageRow | null>(null);
-  const limit = 25;
+  const limit = 10;
 
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
@@ -257,20 +259,20 @@ export default function OrdersPage() {
         </Alert>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
         {isLoading ? (
           Array.from({ length: 10 }).map((_, index) => <Skeleton key={index} className="h-[164px] rounded-xl" />)
         ) : (
           <>
             <DashboardKpiCard
-              label={t("orders.kpi.requestedRevenue", "Faturamento solicitado")}
+              label={isB2C ? "Faturamento faturado" : t("orders.kpi.requestedRevenue", "Faturamento solicitado")}
               value={data?.kpis.requestedRevenue ?? 0}
               format={formatCurrencySmart}
               icon={WalletCards}
               iconClass="bg-blue-500/10 text-blue-400"
               change={null}
               changeLabel=""
-              sub={[{ label: "Base", value: "Valor solicitado" }]}
+              sub={[{ label: "Base", value: isB2C ? "Não cancelados" : "Valor solicitado" }]}
               sparkValues={[]}
               sparkColor="#60a5fa"
               isLoading={false}
@@ -278,56 +280,56 @@ export default function OrdersPage() {
               valueAccent
             />
             <DashboardKpiCard
-              label={t("orders.kpi.fulfilledRevenue", "Faturamento atendido")}
+              label={isB2C ? "Faturamento pago" : t("orders.kpi.fulfilledRevenue", "Faturamento atendido")}
               value={data?.kpis.fulfilledRevenue ?? 0}
               format={formatCurrencySmart}
               icon={BadgeCheck}
               iconClass="bg-emerald-500/10 text-emerald-400"
               change={null}
               changeLabel=""
-              sub={[{ label: "Base", value: "Valor atendido" }]}
+              sub={[{ label: "Base", value: isB2C ? "Pedidos pagos" : "Valor atendido" }]}
               sparkValues={[]}
               sparkColor="#34d399"
               isLoading={false}
               testId="orders-kpi-fulfilled-revenue"
             />
             <DashboardKpiCard
-              label={t("orders.kpi.requestedQuantity", "Peças solicitadas")}
+              label={isB2C ? "Peças faturadas" : t("orders.kpi.requestedQuantity", "Peças solicitadas")}
               value={data?.kpis.requestedQuantity ?? 0}
               format={formatNumber}
               icon={Package}
               iconClass="bg-violet-500/10 text-violet-400"
               change={null}
               changeLabel=""
-              sub={[{ label: "Base", value: "Qtd solicitada" }]}
+              sub={[{ label: "Base", value: isB2C ? "Qtd faturada" : "Qtd solicitada" }]}
               sparkValues={[]}
               sparkColor="#a78bfa"
               isLoading={false}
               testId="orders-kpi-requested-quantity"
             />
             <DashboardKpiCard
-              label={t("orders.kpi.fulfilledQuantity", "Peças atendidas")}
+              label={isB2C ? "Peças pagas" : t("orders.kpi.fulfilledQuantity", "Peças atendidas")}
               value={data?.kpis.fulfilledQuantity ?? 0}
               format={formatNumber}
               icon={ShoppingBag}
               iconClass="bg-amber-500/10 text-amber-400"
               change={null}
               changeLabel=""
-              sub={[{ label: "Base", value: "Qtd atendida" }]}
+              sub={[{ label: "Base", value: isB2C ? "Qtd paga" : "Qtd atendida" }]}
               sparkValues={[]}
               sparkColor="#f59e0b"
               isLoading={false}
               testId="orders-kpi-fulfilled-quantity"
             />
             <DashboardKpiCard
-              label={t("orders.kpi.fulfilledPct", "% de atendido")}
+              label={isB2C ? "% Pago" : t("orders.kpi.fulfilledPct", "% de atendido")}
               value={data?.kpis.fulfilledPct ?? 0}
               format={formatPercentage}
               icon={TrendingUp}
               iconClass="bg-cyan-500/10 text-cyan-400"
               change={null}
               changeLabel=""
-              sub={[{ label: "Cálculo", value: "Atendido / solicitado" }]}
+              sub={[{ label: "Cálculo", value: isB2C ? "Pago / faturado" : "Atendido / solicitado" }]}
               sparkValues={[]}
               sparkColor="#22d3ee"
               ringValue={data?.kpis.fulfilledPct ?? 0}
@@ -349,7 +351,7 @@ export default function OrdersPage() {
               testId="orders-kpi-orders"
             />
             <DashboardKpiCard
-              label={t("orders.kpi.newCustomers", "Clientes novos")}
+              label={isB2C ? "Novos compradores" : t("orders.kpi.newCustomers", "Clientes novos")}
               value={data?.kpis.newCustomers ?? 0}
               format={formatNumber}
               icon={UserRoundCheck}
@@ -363,7 +365,7 @@ export default function OrdersPage() {
               testId="orders-kpi-new-customers"
             />
             <DashboardKpiCard
-              label={t("orders.kpi.returningCustomers", "Clientes recorrentes")}
+              label={isB2C ? "Recompradores" : t("orders.kpi.returningCustomers", "Clientes recorrentes")}
               value={data?.kpis.returningCustomers ?? 0}
               format={formatNumber}
               icon={Users}
@@ -399,7 +401,7 @@ export default function OrdersPage() {
               iconClass="bg-orange-500/10 text-orange-400"
               change={null}
               changeLabel=""
-              sub={[{ label: "Base", value: `${formatNumber(data?.kpis.approvedLeads ?? 0)} aprovados` }]}
+              sub={[{ label: "Base", value: isB2C ? `${formatNumber(data?.kpis.sessions ?? 0)} sessões` : `${formatNumber(data?.kpis.approvedLeads ?? 0)} aprovados` }]}
               sparkValues={[]}
               sparkColor="#fb923c"
               ringValue={data?.kpis.conversionPct ?? 0}
@@ -455,10 +457,10 @@ export default function OrdersPage() {
                       <TableHead className="min-w-[170px]">{t("orders.table.order", "Pedido")}</TableHead>
                       <TableHead className="min-w-[230px]">{t("orders.table.customer", "Cliente")}</TableHead>
                       <TableHead>{t("orders.table.document", "Documento")}</TableHead>
-                      <TableHead className="text-right">{t("orders.table.requestedQty", "Qtd solicitada")}</TableHead>
-                      <TableHead className="text-right">{t("orders.table.fulfilledQty", "Qtd atendida")}</TableHead>
-                      <TableHead className="text-right">{t("orders.table.requestedValue", "Valor solicitado")}</TableHead>
-                      <TableHead className="text-right">{t("orders.table.fulfilledValue", "Valor atendido")}</TableHead>
+                      <TableHead className="text-right">{isB2C ? "Qtd faturada" : t("orders.table.requestedQty", "Qtd solicitada")}</TableHead>
+                      <TableHead className="text-right">{isB2C ? "Qtd paga" : t("orders.table.fulfilledQty", "Qtd atendida")}</TableHead>
+                      <TableHead className="text-right">{isB2C ? "Valor faturado" : t("orders.table.requestedValue", "Valor solicitado")}</TableHead>
+                      <TableHead className="text-right">{isB2C ? "Valor pago" : t("orders.table.fulfilledValue", "Valor atendido")}</TableHead>
                       <TableHead className="min-w-[220px]">{t("orders.table.origin", "Origem")}</TableHead>
                       <TableHead>{t("orders.table.status", "Status")}</TableHead>
                       <TableHead className="text-right">{t("orders.table.details", "Detalhes")}</TableHead>
@@ -556,19 +558,19 @@ export default function OrdersPage() {
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor solicitado</p>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Valor faturado" : "Valor solicitado"}</p>
                   <p className="text-lg font-semibold">{formatCurrency(details.order.amount)}</p>
                 </div>
                 <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor atendido</p>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Valor pago" : "Valor atendido"}</p>
                   <p className="text-lg font-semibold">{formatCurrency(details.order.fulfilledAmount)}</p>
                 </div>
                 <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Peças solicitadas</p>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Peças faturadas" : "Peças solicitadas"}</p>
                   <p className="text-lg font-semibold">{formatNumber(details.order.requestedQuantity)}</p>
                 </div>
                 <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Peças atendidas</p>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Peças pagas" : "Peças atendidas"}</p>
                   <p className="text-lg font-semibold">{formatNumber(details.order.fulfilledQuantity)}</p>
                 </div>
               </div>
@@ -621,11 +623,11 @@ export default function OrdersPage() {
                       </div>
                       <div className="grid grid-cols-3 gap-4 text-right text-sm sm:min-w-[280px]">
                         <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Solicitada</p>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Faturada" : "Solicitada"}</p>
                           <p className="font-semibold tabular-nums">{formatNumber(item.quantity)}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Atendida</p>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Paga" : "Atendida"}</p>
                           <p className="font-semibold tabular-nums">{formatNumber(item.fulfilledQuantity)}</p>
                         </div>
                         <div>

@@ -213,8 +213,13 @@ export function AppLayout({ children }: AppLayoutProps) {
         ? t(`page.${pageTranslationKey}.subtitle`, meta.subtitle)
         : meta.subtitle;
 
-  const b2bOnlyRoutes = new Set(["/whatsapp", "/utm", "/sellers"]);
-  const b2cOnlyRoutes = new Set(["/daily"]);
+  const b2bOnlyRoutes = useMemo(() => new Set(["/whatsapp", "/utm", "/sellers", "/journey"]), []);
+  const b2cOnlyRoutes = useMemo(() => new Set(["/daily"]), []);
+  useEffect(() => {
+    if (selectedDashboardMode === "B2C" && b2bOnlyRoutes.has(location)) {
+      navigate("/dashboard");
+    }
+  }, [b2bOnlyRoutes, location, navigate, selectedDashboardMode]);
   const analyticsNav = [
     { name: t("nav.dashboard", "Dashboard"), href: "/dashboard", icon: LayoutDashboard },
     { name: t("nav.daily", "Daily"), href: "/daily", icon: CalendarDays },

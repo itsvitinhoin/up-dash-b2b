@@ -59,7 +59,7 @@ const STAGE_PALETTE = [
 ];
 
 export default function FunnelPage() {
-  const { selectedClientId, user } = useAuth();
+  const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
   const variants = withReducedMotion(fadeInUp, reduced);
@@ -600,11 +600,13 @@ export default function FunnelPage() {
                         </div>
                       ))}
                     </div>
-                    <Link href="/journey">
-                      <button className="mt-3 text-[11px] text-primary flex items-center gap-1 hover:underline">
-                        Full journey analysis <ChevronRight className="h-3 w-3" />
-                      </button>
-                    </Link>
+                    {selectedDashboardMode !== "B2C" && (
+                      <Link href="/journey">
+                        <button className="mt-3 text-[11px] text-primary flex items-center gap-1 hover:underline">
+                          Full journey analysis <ChevronRight className="h-3 w-3" />
+                        </button>
+                      </Link>
+                    )}
                   </div>
                 </motion.div>
               )}

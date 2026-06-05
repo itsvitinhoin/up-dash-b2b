@@ -1123,11 +1123,95 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     let dailyNewBuyers: { date: string; value: number }[] = [];
     let dailyReturningBuyers: { date: string; value: number }[] = [];
 
-    // Always compute aggregate new/returning buyer counts so that prev-period
-    // retentionPct, newBuyers, and returningBuyers are available for the
-    // period-over-period delta chips in the UI. Daily time-series are only
-    // needed for the current window (sparklines), so skip them in compare mode.
-    {
+    // B2C buyer classification must be derived from paid/approved orders, not
+    // only from customer.firstPurchaseAt, because imported ecommerce customers
+    // can be updated independently from the order sync. B2B keeps the previous
+    // customer-field path to avoid changing its existing behavior.
+    if (isB2CClient) {
+      type BuyerSummaryRow = { new_buyers: string; returning_buyers: string };
+      const buyerSummaryRaw = await db.execute<BuyerSummaryRow>(sql`
+        WITH period_orders AS (
+          SELECT DISTINCT ${ordersTable.customerId} AS customer_id
+          FROM ${ordersTable}
+          WHERE ${baseOrderWhere}
+            AND ${ordersTable.customerId} IS NOT NULL
+            AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+        ),
+        first_orders AS (
+          SELECT
+            ${ordersTable.customerId} AS customer_id,
+            MIN(${ordersTable.createdAt}) AS first_order_at
+          FROM ${ordersTable}
+          WHERE ${ordersTable.clientId} = ${clientId}
+            AND ${ordersTable.customerId} IS NOT NULL
+            AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+          GROUP BY ${ordersTable.customerId}
+        )
+        SELECT
+          COUNT(*) FILTER (WHERE first_orders.first_order_at >= ${winFrom} AND first_orders.first_order_at <= ${winTo})::int AS new_buyers,
+          COUNT(*) FILTER (WHERE first_orders.first_order_at < ${winFrom})::int AS returning_buyers
+        FROM period_orders
+        INNER JOIN first_orders ON first_orders.customer_id = period_orders.customer_id
+      `);
+      const buyerSummaryRows = (buyerSummaryRaw.rows ?? buyerSummaryRaw) as unknown as BuyerSummaryRow[];
+      const buyerSummary = buyerSummaryRows[0];
+      newBuyers = Number(buyerSummary?.new_buyers ?? 0);
+      returningBuyers = Number(buyerSummary?.returning_buyers ?? 0);
+
+      if (full) {
+        const [custRow] = await db
+          .select({
+            total: sql<number>`COUNT(*)::int`,
+            repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
+          })
+          .from(customersTable)
+          .where(eq(customersTable.clientId, clientId));
+        customerAgg = custRow;
+
+        type BuyerDailyRow = { date: string; new_buyers: string; returning_buyers: string };
+        const buyerDailyRaw = await db.execute<BuyerDailyRow>(sql`
+          WITH period_orders AS (
+            SELECT
+              ${ordersTable.customerId} AS customer_id,
+              ${ordersTable.createdAt} AS created_at
+            FROM ${ordersTable}
+            WHERE ${baseOrderWhere}
+              AND ${ordersTable.customerId} IS NOT NULL
+              AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+          ),
+          first_orders AS (
+            SELECT
+              ${ordersTable.customerId} AS customer_id,
+              MIN(${ordersTable.createdAt}) AS first_order_at
+            FROM ${ordersTable}
+            WHERE ${ordersTable.clientId} = ${clientId}
+              AND ${ordersTable.customerId} IS NOT NULL
+              AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+            GROUP BY ${ordersTable.customerId}
+          )
+          SELECT
+            to_char(date_trunc('day', period_orders.created_at), 'YYYY-MM-DD') AS date,
+            COUNT(DISTINCT period_orders.customer_id) FILTER (
+              WHERE first_orders.first_order_at >= date_trunc('day', period_orders.created_at)
+                AND first_orders.first_order_at < date_trunc('day', period_orders.created_at) + interval '1 day'
+            )::int AS new_buyers,
+            COUNT(DISTINCT period_orders.customer_id) FILTER (
+              WHERE first_orders.first_order_at < date_trunc('day', period_orders.created_at)
+            )::int AS returning_buyers
+          FROM period_orders
+          INNER JOIN first_orders ON first_orders.customer_id = period_orders.customer_id
+          GROUP BY date_trunc('day', period_orders.created_at)
+          ORDER BY date_trunc('day', period_orders.created_at)
+        `);
+        const buyerDailyRows = (buyerDailyRaw.rows ?? buyerDailyRaw) as unknown as BuyerDailyRow[];
+        dailyNewBuyers = buyerDailyRows.map((row) => ({ date: row.date, value: Number(row.new_buyers) || 0 }));
+        dailyReturningBuyers = buyerDailyRows.map((row) => ({ date: row.date, value: Number(row.returning_buyers) || 0 }));
+      }
+    } else {
+      // Always compute aggregate new/returning buyer counts so that prev-period
+      // retentionPct, newBuyers, and returningBuyers are available for the
+      // period-over-period delta chips in the UI. Daily time-series are only
+      // needed for the current window (sparklines), so skip them in compare mode.
       const buyerAggPromises = [
         db
           .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
@@ -5303,6 +5387,9 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
   if (!clientId) return;
 
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const rawQuery = req.query as Record<string, unknown>;
+  const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
+  const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
   const page = parsed.data.page;
   const limit = parsed.data.limit;
   const offset = (page - 1) * limit;
@@ -5322,9 +5409,14 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
     : baseWhere;
 
   const [clientConfig] = await db
-    .select({ upZeroApiKey: clientsTable.upZeroApiKey })
+    .select({
+      dashboardType: clientsTable.dashboardType,
+      ga4PropertyId: clientsTable.ga4PropertyId,
+      upZeroApiKey: clientsTable.upZeroApiKey,
+    })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
+  const isB2CClient = clientConfig?.dashboardType === "B2C";
 
   const [metricOrders, orderRows, [countRow], [approvedLeadsRow]] = await Promise.all([
     db
@@ -5384,7 +5476,10 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
       .where(and(eq(customersTable.clientId, clientId), gte(customersTable.createdAt, from), lte(customersTable.createdAt, to), eq(customersTable.registrationStatus, "APPROVED"))),
   ]);
 
-  const customerIds = Array.from(new Set(metricOrders.map((order) => order.customerId).filter(Boolean)));
+  const buyerMetricOrders = isB2CClient
+    ? metricOrders.filter((order) => ["APPROVED", "SHIPPED", "DELIVERED"].includes(order.status))
+    : metricOrders;
+  const customerIds = Array.from(new Set(buyerMetricOrders.map((order) => order.customerId).filter(Boolean)));
   const customerOrderHistory = customerIds.length > 0
     ? await db
         .select({
@@ -5397,10 +5492,10 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
         .groupBy(ordersTable.customerId)
     : [];
   const firstOrderByCustomer = new Map(customerOrderHistory.map((row) => [row.customerId, row.firstOrderAt]));
-  const uniqueCustomers = new Set(metricOrders.map((order) => order.customerId));
+  const uniqueCustomers = new Set(buyerMetricOrders.map((order) => order.customerId));
   const newCustomers = new Set<string>();
   const returningCustomers = new Set<string>();
-  for (const order of metricOrders) {
+  for (const order of buyerMetricOrders) {
     const firstOrderAt = firstOrderByCustomer.get(order.customerId);
     const isFirstInPeriod = firstOrderAt ? new Date(firstOrderAt).getTime() >= from.getTime() && new Date(firstOrderAt).getTime() <= to.getTime() : false;
     if (isFirstInPeriod) newCustomers.add(order.customerId);
@@ -5512,8 +5607,20 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
   const fulfilledQuantity = metricOrders.reduce((sum, order) => sum + Number(order.fulfilledQuantity ?? 0), 0);
   const fulfilledPct = requestedRevenue > 0 ? (fulfilledRevenue / requestedRevenue) * 100 : 0;
   const approvedLeads = Number(approvedLeadsRow?.count ?? 0);
-  const ordersCount = metricOrders.length;
+  const ordersCount = buyerMetricOrders.length;
   const customerCount = uniqueCustomers.size;
+  const ga4 = isB2CClient
+    ? await fetchGa4FunnelMetrics({
+        propertyId: clientConfig?.ga4PropertyId,
+        dateFrom: dateFromOnly,
+        dateTo: dateToOnly,
+      }).catch((err) => {
+        console.warn("[orders-page] GA4 unavailable:", err instanceof Error ? err.message : err);
+        return null;
+      })
+    : null;
+  const sessions = ga4?.sessions ?? 0;
+  const conversionBase = isB2CClient ? sessions : approvedLeads;
 
   res.json({
     period: { from: from.toISOString(), to: to.toISOString() },
@@ -5527,8 +5634,9 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
       newCustomers: newCustomers.size,
       returningCustomers: returningCustomers.size,
       retentionPct: customerCount > 0 ? (returningCustomers.size / customerCount) * 100 : 0,
-      conversionPct: approvedLeads > 0 ? (ordersCount / approvedLeads) * 100 : 0,
+      conversionPct: conversionBase > 0 ? (ordersCount / conversionBase) * 100 : 0,
       approvedLeads,
+      sessions,
     },
     rows,
     page,
@@ -6621,6 +6729,24 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
   const filteredProducts = productIds.length < products.length
     ? products.filter((p) => productIdSet.has(p.id))
     : products;
+  if (filteredProducts.length === 0) {
+    const emptyKpis = { totalUnits: 0, avgCoverageDays: 0, stockoutRiskCount: 0, overstockRiskCount: 0, sellThroughRate: 0 };
+    res.json(GetStockResponse.parse({
+      kpis: emptyKpis,
+      prevKpis: emptyKpis,
+      stockoutRisk: [],
+      overstockRisk: [],
+      highTurnover: [],
+      categoryBreakdown: [],
+      colorBreakdown: [],
+      sizeBreakdown: [],
+      skus: [],
+      total: 0,
+      page,
+      limit,
+    }));
+    return;
+  }
 
   // ── 2. Velocity from order_items joined to orders for date filtering ────
   const fetchVelocity = async (winFrom: Date, winTo: Date) =>
@@ -8641,6 +8767,7 @@ async function computeMarketingKpis(
   from: Date,
   to: Date,
   meta?: MetaMarketingData | null,
+  isB2CClient = false,
 ) {
   const creativeSpend = creatives.reduce((s, c) => s + c.spend * computeSpendOverlapFraction(c, from, to), 0);
   const totalSpend = meta ? meta.summary.spend : creativeSpend;
@@ -8650,7 +8777,9 @@ async function computeMarketingKpis(
   // requestedRevenue KPI and keeps marketing ROA aligned with demand generated.
   const [orderRow] = await db
     .select({
-      revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+      revenue: isB2CClient
+        ? sql<number>`COALESCE(SUM(${ordersTable.fulfilledAmount}), 0)::float`
+        : sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
       orders: sql<number>`COUNT(*)::int`,
     })
     .from(ordersTable)
@@ -8659,6 +8788,7 @@ async function computeMarketingKpis(
         eq(ordersTable.clientId, clientId),
         gte(ordersTable.createdAt, from),
         lte(ordersTable.createdAt, to),
+        ...(isB2CClient ? [sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`] : []),
       ),
     );
   const attributedRevenue = Number(orderRow?.revenue) || 0;
@@ -9208,11 +9338,13 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
 
   const [clientConfig] = await db
     .select({
+      dashboardType: clientsTable.dashboardType,
       metaAdsApiKey: clientsTable.metaAdsApiKey,
       metaAdAccountId: clientsTable.metaAdAccountId,
     })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
+  const isB2CClient = clientConfig?.dashboardType === "B2C";
 
   let metaCurrent: MetaMarketingData | null = null;
   let metaPrev: MetaMarketingData | null = null;
@@ -9270,8 +9402,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const pagedMetaCampaigns = metaCampaigns?.slice(offset, offset + creativesPageSize) ?? null;
 
   const [kpis, prevKpis] = await Promise.all([
-    computeMarketingKpis(clientId, creatives, from, to, metaCurrent),
-    computeMarketingKpis(clientId, allCreatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0), prevFrom, prevTo, metaPrev),
+    computeMarketingKpis(clientId, creatives, from, to, metaCurrent, isB2CClient),
+    computeMarketingKpis(clientId, allCreatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0), prevFrom, prevTo, metaPrev, isB2CClient),
   ]);
 
   const leadsRows = metaCurrent
@@ -9328,13 +9460,24 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     buildStateBreakdown(clientId, from, to, totalProratedSpend),
   ]);
 
+  const topCreatives = metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] };
+  const responseTopCreatives = isB2CClient
+    ? {
+        ...topCreatives,
+        cpl: [...topCreatives.cpl]
+          .filter((creative) => creative.purchases > 0 || creative.cpa > 0)
+          .sort((a, b) => a.cpa - b.cpa),
+        leads: [...topCreatives.leads].sort((a, b) => b.purchases - a.purchases),
+      }
+    : topCreatives;
+
   const payload = GetMarketingResponse.parse({
     kpis,
     prevKpis,
     leadsOverTime: leadsRows,
     revenueOverTime: revenueRows,
     spendOverTime,
-    topCreatives: metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] },
+    topCreatives: responseTopCreatives,
     creatives: pagedMetaCampaigns
       ? buildMetaCampaignMetrics(pagedMetaCampaigns)
       : buildCreativeMetrics(pagedCreatives, attrRevForCreatives, totalProratedSpend, from, to),

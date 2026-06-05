@@ -408,10 +408,12 @@ function TopCreativeCard({
   creative,
   metricLabel,
   metricValue,
+  costLabel = "CPL",
 }: {
   creative: MetaTopCreative;
   metricLabel: string;
   metricValue: string;
+  costLabel?: string;
 }) {
   return (
     <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3 rounded-md border border-border bg-background/40 p-3">
@@ -431,8 +433,8 @@ function TopCreativeCard({
             <p className="font-medium tabular-nums">{formatPercentage(creative.ctr)}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">CPL</p>
-            <p className="font-medium tabular-nums">{formatCurrency(creative.cpl)}</p>
+            <p className="text-muted-foreground">{costLabel}</p>
+            <p className="font-medium tabular-nums">{formatCurrency(costLabel === "Custo/Compra" ? creative.cpa : creative.cpl)}</p>
           </div>
           <div>
             <p className="text-muted-foreground">Leads</p>
@@ -452,17 +454,23 @@ function TopCreativesColumn({
   title,
   items,
   metric,
+  costLabel,
 }: {
   title: string;
   items: MetaTopCreative[];
-  metric: "ctr" | "cpl" | "leads";
+  metric: "ctr" | "cpl" | "cpa" | "leads" | "purchases";
+  costLabel?: string;
 }) {
-  const metricLabel = metric === "ctr" ? "CTR" : metric === "cpl" ? "CPL" : "Leads";
+  const metricLabel = metric === "ctr" ? "CTR" : metric === "cpl" ? "CPL" : metric === "cpa" ? "Custo/Compra" : metric === "purchases" ? "Compras" : "Leads";
   const metricValue = (creative: MetaTopCreative) =>
     metric === "ctr"
       ? formatPercentage(creative.ctr)
       : metric === "cpl"
         ? formatCurrency(creative.cpl)
+        : metric === "cpa"
+          ? formatCurrency(creative.cpa)
+          : metric === "purchases"
+            ? formatNumber(creative.purchases)
         : formatNumber(creative.leads);
 
   return (
@@ -481,6 +489,7 @@ function TopCreativesColumn({
               creative={creative}
               metricLabel={metricLabel}
               metricValue={metricValue(creative)}
+              costLabel={costLabel}
             />
           ))
         )}
@@ -558,13 +567,14 @@ const AXIS_TICK = { fontSize: 10, fill: "hsl(var(--muted-foreground))" };
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function MarketingPage() {
-  const { selectedClientId, user } = useAuth();
+  const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
   const queryClient = useQueryClient();
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+  const isB2C = selectedDashboardMode === "B2C";
 
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -687,7 +697,19 @@ export default function MarketingPage() {
     exportRowsAsCsv(
       `marketing-campaigns-${format(dateRange.from, "yyyyMMdd")}-${format(dateRange.to, "yyyyMMdd")}.csv`,
       sortedCreatives,
-      [
+      isB2C ? [
+        { header: "Name", accessor: (r) => r.name },
+        { header: "Platform", accessor: (r) => r.platform },
+        { header: "Status", accessor: (r) => r.status },
+        { header: "Spend", accessor: (r) => r.spend },
+        { header: "Purchases", accessor: (r) => r.approvedLeads },
+        { header: "Custo por Compra", accessor: (r) => r.cpa.toFixed(2) },
+        { header: "Attributed Revenue", accessor: (r) => r.attributedRevenue.toFixed(2) },
+        { header: "ROAS", accessor: (r) => r.roas.toFixed(2) },
+        { header: "Clicks", accessor: (r) => r.clicks },
+        { header: "Impressions", accessor: (r) => r.impressions },
+        { header: "CTR %", accessor: (r) => r.ctr.toFixed(2) },
+      ] : [
         { header: "Name", accessor: (r) => r.name },
         { header: "Platform", accessor: (r) => r.platform },
         { header: "Status", accessor: (r) => r.status },
@@ -849,7 +871,7 @@ export default function MarketingPage() {
             testId="kpi-approved-leads"
             icon={CheckCircle2}
             iconClass="bg-green-500/15 text-green-400"
-            label="Approved Leads"
+            label={isB2C ? "Compras" : "Approved Leads"}
             value={data?.kpis.approvedLeads ?? 0}
             format={formatNumber}
             change={approvedLeadsChange}
@@ -861,28 +883,30 @@ export default function MarketingPage() {
             testId="kpi-cpl"
             icon={Target}
             iconClass="bg-orange-500/15 text-orange-400"
-            label="CPL"
-            value={data?.kpis.cpl ?? 0}
+            label={isB2C ? "Custo por Compra" : "CPL"}
+            value={isB2C ? data?.kpis.cpa ?? 0 : data?.kpis.cpl ?? 0}
             format={formatCurrency}
-            change={cplChange}
+            change={isB2C ? cpaChange : cplChange}
             sparkValues={sparkSpend}
             sparkColor="#fb923c"
             isLoading={isLoading}
             invertChange
           />
-          <MktKpiCard
-            testId="kpi-cpa"
-            icon={Sparkles}
-            iconClass="bg-amber-500/15 text-amber-400"
-            label="CPA"
-            value={data?.kpis.cpa ?? 0}
-            format={formatCurrency}
-            change={cpaChange}
-            sparkValues={sparkSpend}
-            sparkColor="#fbbf24"
-            isLoading={isLoading}
-            invertChange
-          />
+          {!isB2C && (
+            <MktKpiCard
+              testId="kpi-cpa"
+              icon={Sparkles}
+              iconClass="bg-amber-500/15 text-amber-400"
+              label="CPA"
+              value={data?.kpis.cpa ?? 0}
+              format={formatCurrency}
+              change={cpaChange}
+              sparkValues={sparkSpend}
+              sparkColor="#fbbf24"
+              isLoading={isLoading}
+              invertChange
+            />
+          )}
         </motion.div>
       )}
 
@@ -891,7 +915,7 @@ export default function MarketingPage() {
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-foreground">Top Meta Creatives</h2>
             <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-              CTR · CPL · Leads
+              {isB2C ? "CTR · Custo por Compra · Compras" : "CTR · CPL · Leads"}
             </span>
           </div>
           {isLoading ? (
@@ -905,9 +929,9 @@ export default function MarketingPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-              <TopCreativesColumn title="Best CTR" items={data?.topCreatives?.ctr ?? []} metric="ctr" />
-              <TopCreativesColumn title="Lowest CPL" items={data?.topCreatives?.cpl ?? []} metric="cpl" />
-              <TopCreativesColumn title="Most Leads" items={data?.topCreatives?.leads ?? []} metric="leads" />
+              <TopCreativesColumn title="Best CTR" items={data?.topCreatives?.ctr ?? []} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn title={isB2C ? "Menor custo por compra" : "Lowest CPL"} items={data?.topCreatives?.cpl ?? []} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn title={isB2C ? "Mais compras" : "Most Leads"} items={data?.topCreatives?.leads ?? []} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
             </div>
           )}
         </motion.div>
@@ -1136,9 +1160,13 @@ export default function MarketingPage() {
                         { key: "attributedRevenue" as SortKey, label: "Revenue", align: "right", wide: false },
                         { key: "roas" as SortKey, label: "ROA", align: "right", wide: false },
                         { key: "leads" as SortKey, label: "Leads", align: "right", wide: false },
-                        { key: "approvedLeads" as SortKey, label: "Purchases", align: "right", wide: false },
-                        { key: "cpl" as SortKey, label: "CPL", align: "right", wide: false },
-                        { key: "cpa" as SortKey, label: "CPA", align: "right", wide: false },
+                        { key: "approvedLeads" as SortKey, label: isB2C ? "Compras" : "Purchases", align: "right", wide: false },
+                        ...(isB2C
+                          ? [{ key: "cpa" as SortKey, label: "Custo/Compra", align: "right" as const, wide: false }]
+                          : [
+                              { key: "cpl" as SortKey, label: "CPL", align: "right" as const, wide: false },
+                              { key: "cpa" as SortKey, label: "CPA", align: "right" as const, wide: false },
+                            ]),
                         { key: "clicks" as SortKey, label: "Clicks", align: "right", wide: false },
                         { key: "ctr" as SortKey, label: "CTR %", align: "right", wide: false },
                       ] as { key: SortKey; label: string; align: "left" | "right"; wide: boolean }[]
@@ -1157,14 +1185,14 @@ export default function MarketingPage() {
                     Array.from({ length: 5 }).map((_, i) => (
                       <tr key={i} className="border-b border-border/50">
                         <td className="px-5 py-3"><Skeleton className="h-4 w-40" /></td>
-                        {Array.from({ length: 11 }).map((_, j) => (
+                        {Array.from({ length: isB2C ? 10 : 11 }).map((_, j) => (
                           <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-14 ml-auto" /></td>
                         ))}
                       </tr>
                     ))
                   ) : sortedCreatives.length === 0 ? (
                     <tr>
-                      <td colSpan={12} className="px-5 py-10 text-center text-muted-foreground text-sm">
+                      <td colSpan={isB2C ? 11 : 12} className="px-5 py-10 text-center text-muted-foreground text-sm">
                         No campaigns found for this brand.
                       </td>
                     </tr>
@@ -1188,7 +1216,7 @@ export default function MarketingPage() {
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatNumber(creative.leads)}</td>
                         <td className="px-4 py-3 text-right tabular-nums text-emerald-400">{formatNumber(creative.approvedLeads)}</td>
-                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatCurrency(creative.cpl)}</td>
+                        {!isB2C && <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatCurrency(creative.cpl)}</td>}
                         <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatCurrency(creative.cpa)}</td>
                         <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatNumber(creative.clicks)}</td>
                         <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatPercentage(creative.ctr)}</td>
