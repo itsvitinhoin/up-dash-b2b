@@ -479,7 +479,13 @@ export async function syncNuvemshopClient(params: {
   } catch (error) {
     result.errors.push(`Product catalog: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const orders = await fetchOrders(params.storeId, params.accessToken, params.since, params.maxPages);
+  let orders: NuvemshopOrder[] = [];
+  try {
+    orders = await fetchOrders(params.storeId, params.accessToken, params.since, params.maxPages);
+  } catch (error) {
+    result.errors.push(`Orders: ${error instanceof Error ? error.message : String(error)}`);
+    return result;
+  }
   const productDetailsCache = new Map<string, Promise<NuvemshopProductDetails | null>>();
 
   for (const order of orders) {
