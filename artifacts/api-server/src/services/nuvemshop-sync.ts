@@ -465,6 +465,7 @@ export async function syncNuvemshopClient(params: {
   accessToken: string;
   since?: Date;
   maxPages?: number;
+  catalogMaxPages?: number;
 }): Promise<NuvemshopSyncResult> {
   const result = emptyResult();
   try {
@@ -472,7 +473,7 @@ export async function syncNuvemshopClient(params: {
       clientId: params.clientId,
       storeId: params.storeId,
       accessToken: params.accessToken,
-      maxPages: params.maxPages,
+      maxPages: params.catalogMaxPages ?? 50,
       result,
     });
   } catch (error) {

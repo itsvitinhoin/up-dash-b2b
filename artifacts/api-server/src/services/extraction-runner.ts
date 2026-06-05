@@ -39,6 +39,7 @@ type ExtractionRunSummary = {
 const UPZERO_ANALYTICS_LOOKBACK_HOURS = 24;
 const NUVEMSHOP_LOOKBACK_DAYS = Number.parseInt(process.env.NUVEMSHOP_CRON_LOOKBACK_DAYS ?? "3", 10);
 const NUVEMSHOP_MAX_PAGES = Number.parseInt(process.env.NUVEMSHOP_CRON_MAX_PAGES ?? "3", 10);
+const NUVEMSHOP_CATALOG_MAX_PAGES = Number.parseInt(process.env.NUVEMSHOP_CATALOG_MAX_PAGES ?? "50", 10);
 const UPZERO_BASE_URL = process.env.UPZERO_BASE_URL ?? "https://api.upzero.com.br";
 
 function isoDate(date: Date): string {
@@ -525,6 +526,9 @@ export async function runNuvemshopTransactionalExtraction(
   const maxPages = Number.isFinite(NUVEMSHOP_MAX_PAGES) && NUVEMSHOP_MAX_PAGES > 0
     ? NUVEMSHOP_MAX_PAGES
     : 3;
+  const catalogMaxPages = Number.isFinite(NUVEMSHOP_CATALOG_MAX_PAGES) && NUVEMSHOP_CATALOG_MAX_PAGES > 0
+    ? NUVEMSHOP_CATALOG_MAX_PAGES
+    : 50;
   const since = new Date(startedAt.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
   const clients = (await clientsWith(and(
     eq(clientsTable.dashboardType, "B2C"),
@@ -544,12 +548,14 @@ export async function runNuvemshopTransactionalExtraction(
         accessToken: client.nuvemshopAccessToken,
         since,
         maxPages,
+        catalogMaxPages,
       });
       await completeJob(jobId, {
         clientName: client.name,
         storeId: client.nuvemshopStoreId,
         since: since.toISOString(),
         maxPages,
+        catalogMaxPages,
         ...result,
       });
       done += 1;
