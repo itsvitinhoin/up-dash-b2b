@@ -7182,31 +7182,37 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
   const activeBuyerStats = db
     .select({
       customerId: ordersTable.customerId,
-      frequency: sql<number>`COUNT(*)::int`.as("frequency"),
-      monetary: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`.as("monetary"),
-      firstPurchaseAt: sql<Date>`MIN(${ordersTable.createdAt})`.as("first_purchase_at"),
-      lastPurchaseAt: sql<Date>`MAX(${ordersTable.createdAt})`.as("last_purchase_at"),
+      frequency: sql<number>`COUNT(*)::int`.as("rfm_frequency"),
+      monetary: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`.as("rfm_monetary"),
+      firstPurchaseAt: sql<Date>`MIN(${ordersTable.createdAt})`.as("rfm_first_purchase_at"),
+      lastPurchaseAt: sql<Date>`MAX(${ordersTable.createdAt})`.as("rfm_last_purchase_at"),
     })
     .from(ordersTable)
     .where(and(...scopedOrderConds))
     .groupBy(ordersTable.customerId)
     .as("active_buyer_stats");
 
-  const recencyDaysSql = sql<number>`ROUND(EXTRACT(EPOCH FROM (${to.toISOString()}::timestamptz - ${activeBuyerStats.lastPurchaseAt})) / 86400)::int`;
-  const rfmSegmentSql = sql<string>`CASE
-    WHEN ${recencyDaysSql} <= 30 AND ${activeBuyerStats.frequency} >= 3 AND ${activeBuyerStats.monetary} >= 3000 THEN 'Champions'
-    WHEN ${recencyDaysSql} <= 90 AND ${activeBuyerStats.frequency} >= 2 THEN 'Loyal'
-    WHEN ${recencyDaysSql} <= 60 THEN 'Potential'
-    WHEN ${recencyDaysSql} <= 180 THEN 'At Risk'
-    ELSE 'Lost'
-  END`;
+  const deriveRfmSegment = (recencyDays: number, frequency: number, monetary: number): string => {
+    if (recencyDays <= 30 && frequency >= 3 && monetary >= 3000) return "Champions";
+    if (recencyDays <= 90 && frequency >= 2) return "Loyal";
+    if (recencyDays <= 60) return "Potential";
+    if (recencyDays <= 180) return "At Risk";
+    return "Lost";
+  };
 
-  // 1. Per-segment aggregates — scoped to customers active in the date window
-  const segmentAggs = await db
+  const baseCustomerRows = await db
     .select({
-      segment: rfmSegmentSql,
-      customerCount: sql<number>`COUNT(*)::int`,
-      revenue: sql<number>`COALESCE(SUM(${activeBuyerStats.monetary}), 0)::float`,
+      id: customersTable.id,
+      name: customersTable.name,
+      email: customersTable.email,
+      phone: customersTable.phone,
+      state: customersTable.state,
+      city: customersTable.city,
+      documentType: customersTable.documentType,
+      frequency: activeBuyerStats.frequency,
+      monetary: activeBuyerStats.monetary,
+      firstPurchaseAt: activeBuyerStats.firstPurchaseAt,
+      lastPurchaseAt: activeBuyerStats.lastPurchaseAt,
     })
     .from(customersTable)
     .innerJoin(activeBuyerStats, eq(customersTable.id, activeBuyerStats.customerId))
@@ -7215,8 +7221,38 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
         eq(customersTable.clientId, clientId),
         ...utmCustomerConds,
       ),
-    )
-    .groupBy(rfmSegmentSql);
+    );
+
+  const enrichedCustomerRows = baseCustomerRows.map((row) => {
+    const lastPurchaseAt = row.lastPurchaseAt instanceof Date ? row.lastPurchaseAt : new Date(row.lastPurchaseAt);
+    const recencyDays = Number.isFinite(lastPurchaseAt.getTime())
+      ? Math.max(0, Math.round((to.getTime() - lastPurchaseAt.getTime()) / 86_400_000))
+      : 0;
+    const frequency = Number(row.frequency) || 0;
+    const monetary = Number(row.monetary) || 0;
+    return {
+      ...row,
+      recencyDays,
+      frequency,
+      monetary,
+      segment: deriveRfmSegment(recencyDays, frequency, monetary),
+    };
+  });
+  const toIsoString = (value: Date | string | null | undefined): string | null => {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  };
+
+  // 1. Per-segment aggregates — scoped to customers active in the date window
+  const segmentAggMap = new Map<string, { segment: string; customerCount: number; revenue: number }>();
+  for (const row of enrichedCustomerRows) {
+    const current = segmentAggMap.get(row.segment) ?? { segment: row.segment, customerCount: 0, revenue: 0 };
+    current.customerCount += 1;
+    current.revenue += row.monetary;
+    segmentAggMap.set(row.segment, current);
+  }
+  const segmentAggs = Array.from(segmentAggMap.values());
 
   const totalRevenue = segmentAggs.reduce((s, r) => s + Number(r.revenue), 0);
   const totalCustomers = segmentAggs.reduce((s, r) => s + Number(r.customerCount), 0);
@@ -7236,91 +7272,53 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
   });
 
   // 2. Segment composition over time — grouped by order month within the date window
-  const compositionRows = await db
-    .select({
-      month: sql<string>`TO_CHAR(DATE_TRUNC('month', ${ordersTable.createdAt}), 'YYYY-MM')`,
-      segment: rfmSegmentSql,
-      count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
-    })
-    .from(ordersTable)
-    .innerJoin(customersTable, eq(customersTable.id, ordersTable.customerId))
-    .innerJoin(activeBuyerStats, eq(customersTable.id, activeBuyerStats.customerId))
-    .where(
-      and(
-        eq(ordersTable.clientId, clientId),
-        gte(ordersTable.createdAt, from),
-        lte(ordersTable.createdAt, to),
-        ...orderStatusConds,
-        ...utmCustomerConds,
-      ),
-    )
-    .groupBy(sql`DATE_TRUNC('month', ${ordersTable.createdAt})`, rfmSegmentSql)
-    .orderBy(sql`DATE_TRUNC('month', ${ordersTable.createdAt})`);
+  const segmentByCustomerId = new Map(enrichedCustomerRows.map((row) => [row.id, row.segment]));
+  const compositionSourceRows = enrichedCustomerRows.length > 0
+    ? await db
+        .select({
+          month: sql<string>`TO_CHAR(DATE_TRUNC('month', ${ordersTable.createdAt}), 'YYYY-MM')`,
+          customerId: ordersTable.customerId,
+        })
+        .from(ordersTable)
+        .where(
+          and(
+            eq(ordersTable.clientId, clientId),
+            gte(ordersTable.createdAt, from),
+            lte(ordersTable.createdAt, to),
+            ...orderStatusConds,
+            inArray(ordersTable.customerId, enrichedCustomerRows.map((row) => row.id)),
+          ),
+        )
+        .groupBy(sql`DATE_TRUNC('month', ${ordersTable.createdAt})`, ordersTable.customerId)
+        .orderBy(sql`DATE_TRUNC('month', ${ordersTable.createdAt})`)
+    : [];
 
   // Pivot to monthly composition
   const monthMap = new Map<string, { Champions: number; Loyal: number; Potential: number; AtRisk: number; Lost: number }>();
-  for (const row of compositionRows) {
+  for (const row of compositionSourceRows) {
     if (!row.month) continue;
     const existing = monthMap.get(row.month) ?? { Champions: 0, Loyal: 0, Potential: 0, AtRisk: 0, Lost: 0 };
-    const seg = row.segment;
-    if (seg === "Champions") existing.Champions += Number(row.count);
-    else if (seg === "Loyal") existing.Loyal += Number(row.count);
-    else if (seg === "Potential") existing.Potential += Number(row.count);
-    else if (seg === "At Risk") existing.AtRisk += Number(row.count);
-    else if (seg === "Lost") existing.Lost += Number(row.count);
+    const seg = segmentByCustomerId.get(row.customerId);
+    if (seg === "Champions") existing.Champions += 1;
+    else if (seg === "Loyal") existing.Loyal += 1;
+    else if (seg === "Potential") existing.Potential += 1;
+    else if (seg === "At Risk") existing.AtRisk += 1;
+    else if (seg === "Lost") existing.Lost += 1;
     monthMap.set(row.month, existing);
   }
   const composition = Array.from(monthMap.entries()).map(([month, v]) => ({ month, ...v }));
 
   // 3. Paginated customer table — scoped to buyers active in the period
-  const conditions: SQL[] = [
-    eq(customersTable.clientId, clientId),
-    ...utmCustomerConds,
-  ];
-  if (segment) conditions.push(sql`${rfmSegmentSql} = ${segment}`);
-
-  const toTs = sql`${to.toISOString()}::timestamptz`;
-  const sortColMap: Record<string, SQL> = {
-    name: sql`${customersTable.name}`,
-    segment: rfmSegmentSql,
-    recencyDays: sql`EXTRACT(EPOCH FROM (${toTs} - ${activeBuyerStats.lastPurchaseAt})) / 86400`,
-    frequency: sql`${activeBuyerStats.frequency}`,
-    monetary: sql`${activeBuyerStats.monetary}`,
-  };
-  const sortCol: SQL = sortColMap[sortBy] ?? sql`${activeBuyerStats.monetary}`;
-  const orderDir = sortDir === "asc" ? sql`ASC NULLS LAST` : sql`DESC NULLS LAST`;
-
-  const [customerRows, [countRow]] = await Promise.all([
-    db
-      .select({
-        id: customersTable.id,
-        name: customersTable.name,
-        email: customersTable.email,
-        phone: customersTable.phone,
-        state: customersTable.state,
-        city: customersTable.city,
-        documentType: customersTable.documentType,
-        segment: rfmSegmentSql,
-        recencyDays: recencyDaysSql,
-        frequency: activeBuyerStats.frequency,
-        monetary: activeBuyerStats.monetary,
-        firstPurchaseAt: activeBuyerStats.firstPurchaseAt,
-        lastPurchaseAt: activeBuyerStats.lastPurchaseAt,
-      })
-      .from(customersTable)
-      .innerJoin(activeBuyerStats, eq(customersTable.id, activeBuyerStats.customerId))
-      .where(and(...conditions))
-      .orderBy(sql`${sortCol} ${orderDir}`)
-      .limit(limit)
-      .offset(offset),
-    db
-      .select({ count: sql<number>`COUNT(*)::int` })
-      .from(customersTable)
-      .innerJoin(activeBuyerStats, eq(customersTable.id, activeBuyerStats.customerId))
-      .where(and(...conditions)),
-  ]);
-
-  const total = Number(countRow?.count) || 0;
+  const sortedRows = enrichedCustomerRows
+    .filter((row) => !segment || row.segment === segment)
+    .sort((a, b) => {
+      const dir = sortDir === "asc" ? 1 : -1;
+      if (sortBy === "name") return dir * ((a.name ?? "").localeCompare(b.name ?? "", "pt-BR"));
+      if (sortBy === "segment") return dir * a.segment.localeCompare(b.segment, "pt-BR");
+      return dir * ((Number(a[sortBy]) || 0) - (Number(b[sortBy]) || 0));
+    });
+  const total = sortedRows.length;
+  const customerRows = sortedRows.slice(offset, offset + limit);
   const displayedCustomerIds = customerRows.map((row) => row.id);
   const latestOrdersRows = displayedCustomerIds.length > 0
     ? await db
@@ -7363,8 +7361,8 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
       recencyDays: r.recencyDays != null ? Number(r.recencyDays) : null,
       frequency: Number(r.frequency) || 0,
       monetary: Number(r.monetary) || 0,
-      firstPurchaseAt: r.firstPurchaseAt?.toISOString() ?? null,
-      lastPurchaseAt: r.lastPurchaseAt?.toISOString() ?? null,
+      firstPurchaseAt: toIsoString(r.firstPurchaseAt),
+      lastPurchaseAt: toIsoString(r.lastPurchaseAt),
       latestOrders: (latestOrdersByCustomer.get(r.id) ?? []).map((order) => ({
         id: order.id,
         externalId: order.externalId,
