@@ -3986,6 +3986,45 @@ function computeProductLevel(
   return "Low";
 }
 
+function productGroupId(product: { externalId?: string | null; id: string }): string {
+  const external = product.externalId?.trim();
+  if (!external) return product.id;
+  const [parent] = external.split(":");
+  return parent || external;
+}
+
+function parseVariantName(name: string): { baseName: string; color: string | null; size: string | null } {
+  const trimmed = name.trim();
+  const tuple = trimmed.match(/^(.*?)\s*\(([^(),]+),\s*([^()]+)\)\s*$/);
+  if (tuple) {
+    return {
+      baseName: tuple[1].trim() || trimmed,
+      color: tuple[2].trim() || null,
+      size: tuple[3].trim() || null,
+    };
+  }
+
+  const separatorIndex = trimmed.lastIndexOf(" - ");
+  if (separatorIndex >= 0) {
+    const baseName = trimmed.slice(0, separatorIndex).trim();
+    const label = trimmed.slice(separatorIndex + 3).trim();
+    const parts = label.split("/").map((part) => part.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      return { baseName: baseName || trimmed, color: parts[0], size: parts.slice(1).join(" / ") };
+    }
+    if (parts.length === 1) {
+      return { baseName: baseName || trimmed, color: parts[0], size: null };
+    }
+  }
+
+  return { baseName: trimmed, color: null, size: null };
+}
+
+function gradeStatus(variants: Array<{ stock: number }>): "complete" | "broken" {
+  if (variants.length === 0) return "broken";
+  return variants.every((variant) => variant.stock > 0) ? "complete" : "broken";
+}
+
 router.get("/analytics/products", async (req, res): Promise<void> => {
   const parsed = GetProductsQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
   if (!parsed.success) {
@@ -3996,6 +4035,11 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+  const [client] = await db
+    .select({ dashboardType: clientsTable.dashboardType })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  const isB2C = client?.dashboardType === "B2C";
   const { sort = "revenue", limit = 50, search, sku, category, state, size, color, dateFrom, dateTo } = parsed.data;
   const hasPeriodFilter = Boolean(dateFrom || dateTo);
   const { from, to } = dateRange(dateFrom, dateTo);
@@ -4156,6 +4200,7 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   const rawRows = await db
     .select({
       id: productsTable.id,
+      externalId: productsTable.externalId,
       sku: productsTable.sku,
       name: productsTable.name,
       category: productsTable.category,
@@ -4188,19 +4233,19 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
         }, 0) / catalogSellThroughRows.length
       : 0;
 
-  const sortedRows = hasPeriodFilter
-    ? [...rawRows].sort((a, b) => {
-        if (sort === "created") return b.createdAt.getTime() - a.createdAt.getTime();
-        const aSales = periodSalesMap.get(a.id) ?? { totalSold: 0, totalRevenue: 0 };
-        const bSales = periodSalesMap.get(b.id) ?? { totalSold: 0, totalRevenue: 0 };
-        if (sort === "units") return bSales.totalSold - aSales.totalSold;
-        return bSales.totalRevenue - aSales.totalRevenue;
-      })
-    : rawRows;
-  const rows = sortedRows.slice(0, limit);
+  const metricRows = rawRows.map((r) => {
+    const periodSales = periodSalesMap.get(r.id);
+    return {
+      ...r,
+      metricSold: hasPeriodFilter ? periodSales?.totalSold ?? 0 : r.totalSold,
+      metricRevenue: hasPeriodFilter ? periodSales?.totalRevenue ?? 0 : r.totalRevenue,
+      metricViews: hasPeriodFilter ? periodViewCandidates.get(r.id) ?? 0 : 0,
+    };
+  });
 
-  // 30-day recent velocity per product (batch query for visible page rows only)
-  const productIds = rows.map((r) => r.id);
+  // 30-day recent velocity per product. For B2C this is needed before grouping
+  // so each parent product receives the sum of its variant velocity.
+  const productIds = metricRows.map((r) => r.id);
   const recentSalesRows =
     productIds.length > 0
       ? await db
@@ -4221,28 +4266,109 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
       : [];
   const recentSoldMap = new Map(recentSalesRows.map((r) => [r.productId, r.recentSold]));
 
-  const enriched = rows.map((r) => {
-    const periodSales = periodSalesMap.get(r.id);
-    const totalSold = hasPeriodFilter ? periodSales?.totalSold ?? 0 : r.totalSold;
-    const totalRevenue = hasPeriodFilter ? periodSales?.totalRevenue ?? 0 : r.totalRevenue;
-    const productViews = hasPeriodFilter ? periodViewCandidates.get(r.id) ?? 0 : 0;
-    return {
-      ...r,
-      totalSold,
-      totalRevenue,
-      productViews,
-      productConversionPct: productViews > 0 ? (totalSold / productViews) * 100 : 0,
-      percentSold: (totalSold + r.stock) > 0 ? totalSold / (totalSold + r.stock) : 0,
-      level: computeProductLevel(
-        totalSold,
-        r.stock,
-        r.restockThreshold,
-        hasPeriodFilter ? totalSold : recentSoldMap.get(r.id) ?? 0,
-        catalogAvgSellThrough,
-      ),
-      createdAt: r.createdAt.toISOString(),
-    };
+  const b2bRows = metricRows.map((r) => ({
+    ...r,
+    totalSold: r.metricSold,
+    totalRevenue: r.metricRevenue,
+    productViews: r.metricViews,
+    productConversionPct: r.metricViews > 0 ? (r.metricSold / r.metricViews) * 100 : 0,
+    percentSold: (r.metricSold + r.stock) > 0 ? r.metricSold / (r.metricSold + r.stock) : 0,
+    level: computeProductLevel(
+      r.metricSold,
+      r.stock,
+      r.restockThreshold,
+      hasPeriodFilter ? r.metricSold : recentSoldMap.get(r.id) ?? 0,
+      catalogAvgSellThrough,
+    ),
+    createdAt: r.createdAt.toISOString(),
+  }));
+
+  const sortedB2bRows = [...b2bRows].sort((a, b) => {
+    if (sort === "created") return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    if (sort === "units") return b.totalSold - a.totalSold;
+    return b.totalRevenue - a.totalRevenue;
   });
+
+  const enriched = isB2C
+    ? (() => {
+        type ProductMetricRow = typeof b2bRows[number];
+        const groups = new Map<string, ProductMetricRow[]>();
+        for (const row of b2bRows) {
+          const groupId = productGroupId(row);
+          const rows = groups.get(groupId) ?? [];
+          rows.push(row);
+          groups.set(groupId, rows);
+        }
+
+        const grouped = [...groups.entries()].map(([groupId, variants]) => {
+          const sortedVariants = [...variants].sort((a, b) => {
+            const aParsed = parseVariantName(a.name);
+            const bParsed = parseVariantName(b.name);
+            return (aParsed.color ?? "").localeCompare(bParsed.color ?? "") ||
+              (aParsed.size ?? "").localeCompare(bParsed.size ?? "") ||
+              a.sku.localeCompare(b.sku);
+          });
+          const first = sortedVariants[0];
+          const parsedFirst = parseVariantName(first.name);
+          const totalSold = sortedVariants.reduce((sum, row) => sum + row.totalSold, 0);
+          const totalRevenue = sortedVariants.reduce((sum, row) => sum + row.totalRevenue, 0);
+          const productViews = sortedVariants.reduce((sum, row) => sum + row.productViews, 0);
+          const stock = sortedVariants.reduce((sum, row) => sum + row.stock, 0);
+          const recentSold = sortedVariants.reduce(
+            (sum, row) => sum + (hasPeriodFilter ? row.totalSold : recentSoldMap.get(row.id) ?? 0),
+            0,
+          );
+          const createdAt = sortedVariants.reduce(
+            (latest, row) => row.createdAt > latest ? row.createdAt : latest,
+            first.createdAt,
+          );
+          const restockThreshold = sortedVariants.reduce((sum, row) => sum + row.restockThreshold, 0);
+          const variantsPayload = sortedVariants.map((row) => {
+            const parsed = parseVariantName(row.name);
+            return {
+              productId: row.id,
+              sku: row.sku,
+              name: row.name,
+              color: parsed.color,
+              size: parsed.size,
+              stock: row.stock,
+              price: row.price,
+              totalSold: row.totalSold,
+              totalRevenue: row.totalRevenue,
+              status: row.status,
+              imageUrl: row.imageUrl,
+            };
+          });
+          return {
+            ...first,
+            id: `group:${groupId}`,
+            sku: sortedVariants.length > 1 ? `${sortedVariants.length} SKUs` : first.sku,
+            name: parsedFirst.baseName,
+            price: Math.min(...sortedVariants.map((row) => row.price)),
+            stock,
+            restockThreshold,
+            totalSold,
+            totalRevenue,
+            productViews,
+            productConversionPct: productViews > 0 ? (totalSold / productViews) * 100 : 0,
+            percentSold: (totalSold + stock) > 0 ? totalSold / (totalSold + stock) : 0,
+            level: computeProductLevel(totalSold, stock, restockThreshold, recentSold, catalogAvgSellThrough),
+            createdAt,
+            gradeStatus: gradeStatus(sortedVariants),
+            variantCount: sortedVariants.length,
+            availableVariantCount: sortedVariants.filter((row) => row.stock > 0).length,
+            variants: variantsPayload,
+          };
+        });
+
+        grouped.sort((a, b) => {
+          if (sort === "created") return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          if (sort === "units") return b.totalSold - a.totalSold;
+          return b.totalRevenue - a.totalRevenue;
+        });
+        return grouped.slice(0, limit);
+      })()
+    : sortedB2bRows.slice(0, limit);
 
   res.json(GetProductsResponse.parse(enriched));
 });
@@ -6632,6 +6758,11 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+  const [client] = await db
+    .select({ dashboardType: clientsTable.dashboardType })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  const isB2C = client?.dashboardType === "B2C";
 
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const periodMs = to.getTime() - from.getTime();
@@ -6666,9 +6797,11 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
   const products = await db
     .select({
       id: productsTable.id,
+      externalId: productsTable.externalId,
       sku: productsTable.sku,
       name: productsTable.name,
       category: productsTable.category,
+      imageUrl: productsTable.imageUrl,
       stock: productsTable.stock,
       restockThreshold: productsTable.restockThreshold,
       updatedAt: productsTable.updatedAt,
@@ -6823,6 +6956,224 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
 
   const prevVelMap = new Map<string, number>();
   for (const r of prevVelocity) prevVelMap.set(r.productId, Number(r.unitsSold) || 0);
+
+  if (isB2C) {
+    type B2CVariantRow = typeof filteredProducts[number] & {
+      baseName: string;
+      color: string | null;
+      size: string | null;
+    };
+
+    function classifyB2C(stock: number, restockThreshold: number, velocity: number, pDays: number) {
+      const dailyVelocity = velocity / pDays;
+      const coverageDays = dailyVelocity > 0 ? stock / dailyVelocity : null;
+      let risk: "Stockout" | "Overstock" | "Healthy";
+      if (dailyVelocity > 0 && coverageDays !== null && coverageDays < 7) {
+        risk = "Stockout";
+      } else if (
+        (dailyVelocity === 0 && stock > restockThreshold * 2) ||
+        (coverageDays !== null && coverageDays > 90)
+      ) {
+        risk = "Overstock";
+      } else {
+        risk = "Healthy";
+      }
+      return { dailyVelocity, coverageDays, risk };
+    }
+
+    const variants: B2CVariantRow[] = filteredProducts.map((product) => ({
+      ...product,
+      ...parseVariantName(product.name),
+    }));
+
+    function buildGroupedProducts(velocityMap: Map<string, number>, pDays: number) {
+      const groups = new Map<string, B2CVariantRow[]>();
+      for (const variant of variants) {
+        const groupId = productGroupId(variant);
+        const rows = groups.get(groupId) ?? [];
+        rows.push(variant);
+        groups.set(groupId, rows);
+      }
+
+      return [...groups.entries()].map(([groupId, rows]) => {
+        const sortedVariants = [...rows].sort((a, b) =>
+          (a.color ?? "").localeCompare(b.color ?? "") ||
+          (a.size ?? "").localeCompare(b.size ?? "") ||
+          a.sku.localeCompare(b.sku),
+        );
+        const first = sortedVariants[0];
+        const stock = sortedVariants.reduce((sum, row) => sum + row.stock, 0);
+        const restockThreshold = sortedVariants.reduce((sum, row) => sum + row.restockThreshold, 0);
+        const unitsSold = sortedVariants.reduce((sum, row) => sum + (velocityMap.get(row.id) ?? 0), 0);
+        const { dailyVelocity, coverageDays, risk } = classifyB2C(stock, restockThreshold, unitsSold, pDays);
+        const lastRestockDate = sortedVariants.reduce<Date | null>((latest, row) => {
+          if (!latest || row.updatedAt > latest) return row.updatedAt;
+          return latest;
+        }, null);
+
+        const bySizeMap = new Map<string, { size: string; unitsSold: number; stockUnits: number }>();
+        const byColorMap = new Map<string, { color: string; unitsSold: number; stockUnits: number }>();
+        for (const variant of sortedVariants) {
+          const sold = velocityMap.get(variant.id) ?? 0;
+          if (variant.size) {
+            const row = bySizeMap.get(variant.size) ?? { size: variant.size, unitsSold: 0, stockUnits: 0 };
+            row.unitsSold += sold;
+            row.stockUnits += variant.stock;
+            bySizeMap.set(variant.size, row);
+          }
+          if (variant.color) {
+            const row = byColorMap.get(variant.color) ?? { color: variant.color, unitsSold: 0, stockUnits: 0 };
+            row.unitsSold += sold;
+            row.stockUnits += variant.stock;
+            byColorMap.set(variant.color, row);
+          }
+        }
+
+        return {
+          productId: `group:${groupId}`,
+          sku: sortedVariants.length > 1 ? `${sortedVariants.length} SKUs` : first.sku,
+          name: first.baseName,
+          category: first.category,
+          imageUrl: first.imageUrl,
+          stock,
+          restockThreshold,
+          dailyVelocity,
+          coverageDays,
+          risk,
+          unitsSold,
+          lastRestockDate: lastRestockDate ? lastRestockDate.toISOString() : null,
+          bySize: [...bySizeMap.values()].sort((a, b) => b.stockUnits - a.stockUnits),
+          byColor: [...byColorMap.values()].sort((a, b) => b.stockUnits - a.stockUnits),
+          gradeStatus: gradeStatus(sortedVariants),
+          variantCount: sortedVariants.length,
+          availableVariantCount: sortedVariants.filter((row) => row.stock > 0).length,
+          variants: sortedVariants.map((variant) => ({
+            productId: variant.id,
+            sku: variant.sku,
+            name: variant.name,
+            color: variant.color,
+            size: variant.size,
+            stock: variant.stock,
+            unitsSold: velocityMap.get(variant.id) ?? 0,
+            imageUrl: variant.imageUrl,
+          })),
+        };
+      });
+    }
+
+    const allProducts = buildGroupedProducts(currVelMap, periodDays);
+    const allProductsPrev = buildGroupedProducts(prevVelMap, prevPeriodDays);
+
+    function buildB2CKpis(rows: typeof allProducts) {
+      const totalUnits = rows.reduce((s, r) => s + r.stock, 0);
+      const withVelocity = rows.filter((r) => r.coverageDays !== null);
+      const avgCoverageDays = withVelocity.length > 0
+        ? withVelocity.reduce((s, r) => s + (r.coverageDays ?? 0), 0) / withVelocity.length
+        : 0;
+      const stockoutRiskCount = rows.filter((r) => r.risk === "Stockout").length;
+      const overstockRiskCount = rows.filter((r) => r.risk === "Overstock").length;
+      const totalSold = rows.reduce((s, r) => s + r.unitsSold, 0);
+      const sellThroughRate = totalSold + totalUnits > 0 ? (totalSold / (totalSold + totalUnits)) * 100 : 0;
+      return { totalUnits, avgCoverageDays, stockoutRiskCount, overstockRiskCount, sellThroughRate };
+    }
+
+    const stockoutRisk = [...allProducts]
+      .filter((row) => row.risk === "Stockout")
+      .sort((a, b) => (a.coverageDays ?? 999) - (b.coverageDays ?? 999))
+      .slice(0, 10);
+    const overstockRisk = [...allProducts]
+      .filter((row) => row.risk === "Overstock")
+      .sort((a, b) => (b.coverageDays ?? 0) - (a.coverageDays ?? 0))
+      .slice(0, 10);
+    const highTurnover = [...allProducts]
+      .filter((row) => row.dailyVelocity > 0)
+      .sort((a, b) => b.dailyVelocity - a.dailyVelocity)
+      .slice(0, 10);
+
+    const categoryMap = new Map<string, { stockUnits: number; unitsSold: number }>();
+    const colorMap = new Map<string, { unitsSold: number; stockUnits: number }>();
+    const sizeMap = new Map<string, { unitsSold: number; stockUnits: number }>();
+    for (const row of allProducts) {
+      const cat = row.category ?? "Uncategorized";
+      const catRow = categoryMap.get(cat) ?? { stockUnits: 0, unitsSold: 0 };
+      catRow.stockUnits += row.stock;
+      catRow.unitsSold += row.unitsSold;
+      categoryMap.set(cat, catRow);
+      for (const color of row.byColor) {
+        const colorRow = colorMap.get(color.color) ?? { unitsSold: 0, stockUnits: 0 };
+        colorRow.unitsSold += color.unitsSold;
+        colorRow.stockUnits += color.stockUnits;
+        colorMap.set(color.color, colorRow);
+      }
+      for (const size of row.bySize) {
+        const sizeRow = sizeMap.get(size.size) ?? { unitsSold: 0, stockUnits: 0 };
+        sizeRow.unitsSold += size.unitsSold;
+        sizeRow.stockUnits += size.stockUnits;
+        sizeMap.set(size.size, sizeRow);
+      }
+    }
+
+    const categoryBreakdown = [...categoryMap.entries()]
+      .map(([category, value]) => ({ category, stockUnits: value.stockUnits, unitsSold: value.unitsSold, dailyVelocity: value.unitsSold / periodDays }))
+      .sort((a, b) => b.stockUnits - a.stockUnits);
+    const colorBreakdown = [...colorMap.entries()]
+      .map(([color, value]) => ({ color, ...value }))
+      .sort((a, b) => b.stockUnits - a.stockUnits);
+    const sizeBreakdown = [...sizeMap.entries()]
+      .map(([size, value]) => ({ size, ...value }))
+      .sort((a, b) => b.stockUnits - a.stockUnits);
+
+    let filtered = [...allProducts];
+    if (search) {
+      const q = search.toLowerCase();
+      filtered = filtered.filter((row) =>
+        row.sku.toLowerCase().includes(q) ||
+        row.name.toLowerCase().includes(q) ||
+        row.variants.some((variant) => variant.sku.toLowerCase().includes(q) || variant.name.toLowerCase().includes(q)),
+      );
+    }
+    if (category) filtered = filtered.filter((row) => row.category === category);
+    if (riskFilter) filtered = filtered.filter((row) => row.risk === riskFilter);
+
+    const dir = sortDir === "desc" ? -1 : 1;
+    filtered.sort((a, b) => {
+      switch (sort) {
+        case "sku": return dir * a.sku.localeCompare(b.sku);
+        case "name": return dir * a.name.localeCompare(b.name);
+        case "category": return dir * (a.category ?? "").localeCompare(b.category ?? "");
+        case "stock": return dir * (a.stock - b.stock);
+        case "dailyVelocity": return dir * (a.dailyVelocity - b.dailyVelocity);
+        case "coverageDays": return dir * ((a.coverageDays ?? (dir > 0 ? 99999 : -1)) - (b.coverageDays ?? (dir > 0 ? 99999 : -1)));
+        case "risk": return dir * a.risk.localeCompare(b.risk);
+        case "unitsSold": return dir * (a.unitsSold - b.unitsSold);
+        case "lastRestockDate": {
+          const aDate = a.lastRestockDate ? new Date(a.lastRestockDate).getTime() : 0;
+          const bDate = b.lastRestockDate ? new Date(b.lastRestockDate).getTime() : 0;
+          return dir * (aDate - bDate);
+        }
+        default: return 0;
+      }
+    });
+
+    const total = filtered.length;
+    const pageSkus = filtered.slice((page - 1) * limit, page * limit);
+
+    res.json(GetStockResponse.parse({
+      kpis: buildB2CKpis(allProducts),
+      prevKpis: buildB2CKpis(allProductsPrev),
+      stockoutRisk,
+      overstockRisk,
+      highTurnover,
+      categoryBreakdown,
+      colorBreakdown,
+      sizeBreakdown,
+      skus: pageSkus,
+      total,
+      page,
+      limit,
+    }));
+    return;
+  }
 
   // ── 3b. Proportional stock allocation by color/size ────────────────────
   const productStockLookup = new Map<string, number>(products.map((p) => [p.id, p.stock]));

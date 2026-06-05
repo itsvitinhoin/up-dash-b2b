@@ -12,6 +12,7 @@ import {
   useRegenerateInsight,
   getGetInsightQueryKey,
   GetProductsSort,
+  type ProductMetrics,
 } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -23,6 +24,13 @@ import {
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, PackageOpen, ArrowDownUp, Download, X as XIcon, Search, ChevronRight, Sparkles, RefreshCw } from "lucide-react";
@@ -39,6 +47,11 @@ const LEVEL_STYLES: Record<string, string> = {
   Standard: "bg-blue-500/15 text-blue-400 border-blue-500/30",
   Low: "bg-amber-500/15 text-amber-400 border-amber-500/30",
   "At Risk": "bg-red-500/15 text-red-400 border-red-500/30",
+};
+
+const GRADE_STYLES: Record<string, string> = {
+  complete: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  broken: "bg-red-500/15 text-red-400 border-red-500/30",
 };
 
 function ProductThumbnail({ imageUrl, name }: { imageUrl?: string | null; name: string }) {
@@ -82,6 +95,7 @@ export default function ProductsPage() {
   const cardVariants = withReducedMotion(cardEntry, reduced);
   const queryClient = useQueryClient();
   const [insightDismissed, setInsightDismissed] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<ProductMetrics | null>(null);
   // useSearch reacts to URL query-string changes from in-app navigation
   // (e.g. picking a result from the topbar search palette).
   const locationSearch = useSearch();
@@ -571,6 +585,7 @@ export default function ProductsPage() {
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Product</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Category</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Level</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Grade</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Status</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Price</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Stock</TableHead>
@@ -592,6 +607,7 @@ export default function ProductsPage() {
                       <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+                      <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
@@ -605,7 +621,7 @@ export default function ProductsPage() {
                   ))
                 ) : data?.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={14} className="p-0">
+                    <TableCell colSpan={15} className="p-0">
                       <EmptyState
                         icon={PackageOpen}
                         title="No products to show"
@@ -619,7 +635,7 @@ export default function ProductsPage() {
                     <TableRow
                       key={product.id}
                       className="cursor-pointer hover:bg-accent/30 transition-colors"
-                      onClick={() => setLocation(`/products/${product.id}`)}
+                      onClick={() => product.variants?.length ? setSelectedProduct(product) : setLocation(`/products/${product.id}`)}
                       data-testid={`product-row-${product.id}`}
                     >
                       <TableCell className="pl-3">
@@ -627,13 +643,28 @@ export default function ProductsPage() {
                       </TableCell>
                       <TableCell>
                         <div className="font-medium">{product.name}</div>
-                        <div className="text-xs text-muted-foreground">{product.sku}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {product.sku}
+                          {product.variantCount ? ` · ${product.availableVariantCount ?? 0}/${product.variantCount} em estoque` : ""}
+                        </div>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{product.category || '—'}</TableCell>
                       <TableCell>
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${LEVEL_STYLES[product.level] ?? ""}`}>
                           {product.level}
                         </span>
+                      </TableCell>
+                      <TableCell>
+                        {product.gradeStatus ? (
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] px-1.5 py-0 ${GRADE_STYLES[product.gradeStatus]}`}
+                          >
+                            {product.gradeStatus === "complete" ? "Completa" : "Quebrada"}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge
@@ -679,6 +710,76 @@ export default function ProductsPage() {
         </Card>
         </motion.div>
       )}
+      <Dialog open={!!selectedProduct} onOpenChange={(open) => { if (!open) setSelectedProduct(null); }}>
+        <DialogContent className="max-w-3xl">
+          {selectedProduct && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{selectedProduct.name}</DialogTitle>
+                <DialogDescription>
+                  {selectedProduct.variantCount ?? selectedProduct.variants?.length ?? 0} SKUs · Estoque total {formatNumber(selectedProduct.stock)}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="rounded-md border border-border bg-card p-3">
+                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Vendidos</p>
+                  <p className="text-lg font-semibold tabular-nums">{formatNumber(selectedProduct.totalSold)}</p>
+                </div>
+                <div className="rounded-md border border-border bg-card p-3">
+                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Receita</p>
+                  <p className="text-lg font-semibold tabular-nums">{formatCurrency(selectedProduct.totalRevenue)}</p>
+                </div>
+                <div className="rounded-md border border-border bg-card p-3">
+                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Estoque</p>
+                  <p className="text-lg font-semibold tabular-nums">{formatNumber(selectedProduct.stock)}</p>
+                </div>
+                <div className="rounded-md border border-border bg-card p-3">
+                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Grade</p>
+                  <Badge
+                    variant="outline"
+                    className={`mt-1 text-[10px] px-1.5 py-0 ${GRADE_STYLES[selectedProduct.gradeStatus ?? "broken"]}`}
+                  >
+                    {selectedProduct.gradeStatus === "complete" ? "Completa" : "Quebrada"}
+                  </Badge>
+                </div>
+              </div>
+              <div className="max-h-[52vh] overflow-auto rounded-md border border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px]">SKU</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px]">Cor</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px]">Tamanho</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Estoque</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Vendidos</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Receita</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(selectedProduct.variants ?? []).map((variant) => (
+                      <TableRow key={variant.productId}>
+                        <TableCell>
+                          <div className="font-mono text-xs">{variant.sku}</div>
+                          <div className="text-xs text-muted-foreground max-w-[260px] truncate" title={variant.name}>{variant.name}</div>
+                        </TableCell>
+                        <TableCell className="text-xs">{variant.color ?? "—"}</TableCell>
+                        <TableCell className="text-xs">{variant.size ?? "—"}</TableCell>
+                        <TableCell className="text-right text-xs tabular-nums">
+                          <span className={variant.stock > 0 ? "text-emerald-400" : "text-red-400"}>
+                            {formatNumber(variant.stock)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right text-xs tabular-nums">{formatNumber(variant.totalSold ?? 0)}</TableCell>
+                        <TableCell className="text-right text-xs tabular-nums">{formatCurrency(variant.totalRevenue ?? 0)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }

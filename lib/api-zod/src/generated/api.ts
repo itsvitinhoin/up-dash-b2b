@@ -1251,6 +1251,26 @@ export const GetProductsResponseItem = zod.object({
   level: zod
     .enum(["High Conversion", "Standard", "Low", "At Risk"])
     .describe("Performance tier derived from sell-through and stock health."),
+  gradeStatus: zod.enum(["complete", "broken"]).optional(),
+  variantCount: zod.number().optional(),
+  availableVariantCount: zod.number().optional(),
+  variants: zod
+    .array(
+      zod.object({
+        productId: zod.string(),
+        sku: zod.string(),
+        name: zod.string(),
+        color: zod.string().nullish(),
+        size: zod.string().nullish(),
+        stock: zod.number(),
+        price: zod.number().optional(),
+        totalSold: zod.number().optional(),
+        totalRevenue: zod.number().optional(),
+        status: zod.string().optional(),
+        imageUrl: zod.string().nullish(),
+      }),
+    )
+    .optional(),
   createdAt: zod.coerce.date(),
 });
 export const GetProductsResponse = zod.array(GetProductsResponseItem);
@@ -1687,6 +1707,7 @@ export const GetStockResponse = zod.object({
           zod.object({
             size: zod.string(),
             unitsSold: zod.number(),
+            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
@@ -1697,11 +1718,29 @@ export const GetStockResponse = zod.object({
           zod.object({
             color: zod.string(),
             unitsSold: zod.number(),
+            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
+      gradeStatus: zod.enum(["complete", "broken"]).optional(),
+      variantCount: zod.number().optional(),
+      availableVariantCount: zod.number().optional(),
+      variants: zod
+        .array(
+          zod.object({
+            productId: zod.string(),
+            sku: zod.string(),
+            name: zod.string(),
+            color: zod.string().nullish(),
+            size: zod.string().nullish(),
+            stock: zod.number(),
+            unitsSold: zod.number().optional(),
+            imageUrl: zod.string().nullish(),
+          }),
+        )
+        .optional(),
     }),
   ),
   overstockRisk: zod.array(
@@ -1730,6 +1769,7 @@ export const GetStockResponse = zod.object({
           zod.object({
             size: zod.string(),
             unitsSold: zod.number(),
+            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
@@ -1740,11 +1780,29 @@ export const GetStockResponse = zod.object({
           zod.object({
             color: zod.string(),
             unitsSold: zod.number(),
+            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
+      gradeStatus: zod.enum(["complete", "broken"]).optional(),
+      variantCount: zod.number().optional(),
+      availableVariantCount: zod.number().optional(),
+      variants: zod
+        .array(
+          zod.object({
+            productId: zod.string(),
+            sku: zod.string(),
+            name: zod.string(),
+            color: zod.string().nullish(),
+            size: zod.string().nullish(),
+            stock: zod.number(),
+            unitsSold: zod.number().optional(),
+            imageUrl: zod.string().nullish(),
+          }),
+        )
+        .optional(),
     }),
   ),
   highTurnover: zod.array(
@@ -1773,6 +1831,7 @@ export const GetStockResponse = zod.object({
           zod.object({
             size: zod.string(),
             unitsSold: zod.number(),
+            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
@@ -1783,11 +1842,29 @@ export const GetStockResponse = zod.object({
           zod.object({
             color: zod.string(),
             unitsSold: zod.number(),
+            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
+      gradeStatus: zod.enum(["complete", "broken"]).optional(),
+      variantCount: zod.number().optional(),
+      availableVariantCount: zod.number().optional(),
+      variants: zod
+        .array(
+          zod.object({
+            productId: zod.string(),
+            sku: zod.string(),
+            name: zod.string(),
+            color: zod.string().nullish(),
+            size: zod.string().nullish(),
+            stock: zod.number(),
+            unitsSold: zod.number().optional(),
+            imageUrl: zod.string().nullish(),
+          }),
+        )
+        .optional(),
     }),
   ),
   categoryBreakdown: zod.array(
@@ -1838,6 +1915,7 @@ export const GetStockResponse = zod.object({
           zod.object({
             size: zod.string(),
             unitsSold: zod.number(),
+            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
@@ -1848,11 +1926,29 @@ export const GetStockResponse = zod.object({
           zod.object({
             color: zod.string(),
             unitsSold: zod.number(),
+            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
+      gradeStatus: zod.enum(["complete", "broken"]).optional(),
+      variantCount: zod.number().optional(),
+      availableVariantCount: zod.number().optional(),
+      variants: zod
+        .array(
+          zod.object({
+            productId: zod.string(),
+            sku: zod.string(),
+            name: zod.string(),
+            color: zod.string().nullish(),
+            size: zod.string().nullish(),
+            stock: zod.number(),
+            unitsSold: zod.number().optional(),
+            imageUrl: zod.string().nullish(),
+          }),
+        )
+        .optional(),
     }),
   ),
   total: zod.number(),

@@ -854,6 +854,22 @@ export interface ProductMetrics {
   percentSold: number;
   /** Performance tier derived from sell-through and stock health. */
   level: ProductMetricsLevel;
+  gradeStatus?: "complete" | "broken";
+  variantCount?: number;
+  availableVariantCount?: number;
+  variants?: Array<{
+    productId: string;
+    sku: string;
+    name: string;
+    color?: string | null;
+    size?: string | null;
+    stock: number;
+    price?: number;
+    totalSold?: number;
+    totalRevenue?: number;
+    status?: string;
+    imageUrl?: string | null;
+  }>;
   createdAt: string;
 }
 
@@ -1510,11 +1526,13 @@ export const StockSkuRowRisk = {
 export type StockSkuRowBySizeItem = {
   size: string;
   unitsSold: number;
+  stockUnits?: number;
 };
 
 export type StockSkuRowByColorItem = {
   color: string;
   unitsSold: number;
+  stockUnits?: number;
 };
 
 export interface StockSkuRow {
@@ -1543,6 +1561,19 @@ export interface StockSkuRow {
   bySize: StockSkuRowBySizeItem[];
   /** Per-product units sold breakdown by color in the selected period. */
   byColor: StockSkuRowByColorItem[];
+  gradeStatus?: "complete" | "broken";
+  variantCount?: number;
+  availableVariantCount?: number;
+  variants?: Array<{
+    productId: string;
+    sku: string;
+    name: string;
+    color?: string | null;
+    size?: string | null;
+    stock: number;
+    unitsSold?: number;
+    imageUrl?: string | null;
+  }>;
 }
 
 export interface CategoryStockRow {

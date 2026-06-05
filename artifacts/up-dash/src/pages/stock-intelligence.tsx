@@ -91,6 +91,11 @@ const RISK_STYLES: Record<string, string> = {
   Healthy: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
 };
 
+const GRADE_STYLES: Record<string, string> = {
+  complete: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  broken: "bg-red-500/15 text-red-400 border-red-500/30",
+};
+
 const BAR_PALETTE = [
   "hsl(var(--chart-1))",
   "hsl(var(--primary))",
@@ -828,13 +833,14 @@ export default function StockIntelligencePage() {
                         </span>
                       </TableHead>
                     ))}
+                    <TableHead className="whitespace-nowrap text-xs">Grade</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {isLoading ? (
                     Array.from({ length: 8 }).map((_, i) => (
                       <TableRow key={i}>
-                        {Array.from({ length: 9 }).map((_, j) => (
+                        {Array.from({ length: 10 }).map((_, j) => (
                           <TableCell key={j}>
                             <Skeleton className="h-4 w-full" />
                           </TableCell>
@@ -843,7 +849,7 @@ export default function StockIntelligencePage() {
                     ))
                   ) : data?.skus?.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="h-32 text-center">
+                      <TableCell colSpan={10} className="h-32 text-center">
                         <EmptyState
                           icon={Package}
                           title="No SKUs found"
@@ -893,6 +899,18 @@ export default function StockIntelligencePage() {
                           {row.lastRestockDate
                             ? format(new Date(row.lastRestockDate), "MMM d, yyyy")
                             : "—"}
+                        </TableCell>
+                        <TableCell>
+                          {row.gradeStatus ? (
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] px-1.5 py-0 ${GRADE_STYLES[row.gradeStatus]}`}
+                            >
+                              {row.gradeStatus === "complete" ? "Completa" : "Quebrada"}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))
@@ -950,6 +968,11 @@ export default function StockIntelligencePage() {
                   <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${RISK_STYLES[selectedSku.risk]}`}>
                     {selectedSku.risk}
                   </Badge>
+                  {selectedSku.gradeStatus && (
+                    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${GRADE_STYLES[selectedSku.gradeStatus]}`}>
+                      Grade {selectedSku.gradeStatus === "complete" ? "completa" : "quebrada"}
+                    </Badge>
+                  )}
                 </div>
               </SheetHeader>
 
@@ -974,6 +997,40 @@ export default function StockIntelligencePage() {
                   </p>
                 </div>
               </div>
+
+              {selectedSku.variants && selectedSku.variants.length > 0 && (
+                <div className="mb-6">
+                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-3">
+                    SKUs da Grade
+                  </p>
+                  <div className="rounded-md border border-border overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-[10px]">SKU</TableHead>
+                          <TableHead className="text-[10px]">Cor</TableHead>
+                          <TableHead className="text-[10px]">Tamanho</TableHead>
+                          <TableHead className="text-[10px] text-right">Estoque</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedSku.variants.map((variant) => (
+                          <TableRow key={variant.productId}>
+                            <TableCell className="font-mono text-[11px]">{variant.sku}</TableCell>
+                            <TableCell className="text-[11px]">{variant.color ?? "—"}</TableCell>
+                            <TableCell className="text-[11px]">{variant.size ?? "—"}</TableCell>
+                            <TableCell className="text-right text-[11px] tabular-nums">
+                              <span className={variant.stock > 0 ? "text-emerald-400" : "text-red-400"}>
+                                {formatNumber(variant.stock)}
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
 
               {/* Sales by Size */}
               <div className="mb-6">

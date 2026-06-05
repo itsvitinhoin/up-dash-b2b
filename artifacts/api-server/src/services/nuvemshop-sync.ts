@@ -260,6 +260,21 @@ function variantLabel(variant: NuvemshopVariant): string {
     .join(" / ");
 }
 
+function variantAttributes(label: string): { color: string | null; size: string | null } {
+  const parts = label.split("/").map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2) return { color: parts[0], size: parts.slice(1).join(" / ") };
+  if (parts.length === 1) return { color: parts[0], size: null };
+  return { color: null, size: null };
+}
+
+function variantAttributesFromName(name: string): { color: string | null; size: string | null } {
+  const tuple = name.trim().match(/^(.*?)\s*\(([^(),]+),\s*([^()]+)\)\s*$/);
+  if (tuple) return { color: tuple[2].trim() || null, size: tuple[3].trim() || null };
+  const separatorIndex = name.lastIndexOf(" - ");
+  if (separatorIndex >= 0) return variantAttributes(name.slice(separatorIndex + 3));
+  return { color: null, size: null };
+}
+
 function imageForVariant(
   product: NuvemshopProductDetails,
   variant: NuvemshopVariant,
@@ -607,6 +622,8 @@ export async function syncNuvemshopClient(params: {
         const detailPromise = productDetailsCache.get(productId) ?? fetchProductDetails(params.storeId, params.accessToken, productId).catch(() => null);
         productDetailsCache.set(productId, detailPromise);
         const productDetails = await detailPromise;
+        const variantDetails = productDetails?.variants?.find((variant) => String(variant.id ?? "") === String(variantId ?? ""));
+        const variantAttrs = variantDetails ? variantAttributes(variantLabel(variantDetails)) : variantAttributesFromName(localized(item.name));
         const productName = localized(item.name) || localized(item.product?.name) || localized(productDetails?.name) || sku;
         const category = categoryName(item.categories) ?? categoryName(item.product?.categories) ?? categoryName(productDetails?.categories);
         const grossUnitPrice = asNumber(item.compare_at_price) || asNumber(item.price);
@@ -648,6 +665,8 @@ export async function syncNuvemshopClient(params: {
           priceAtSale: netUnitPrice,
           grossPriceAtSale: grossUnitPrice,
           discountAmount: itemDiscount,
+          color: variantAttrs.color,
+          size: variantAttrs.size,
         });
         result.orderItemsSynced++;
       }
