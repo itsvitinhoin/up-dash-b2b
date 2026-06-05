@@ -7249,10 +7249,16 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
         id: customersTable.id,
         name: customersTable.name,
         email: customersTable.email,
+        phone: customersTable.phone,
+        state: customersTable.state,
+        city: customersTable.city,
+        documentType: customersTable.documentType,
         segment: customersTable.rfmSegment,
         recencyDays: sql<number | null>`CASE WHEN ${customersTable.lastPurchaseAt} IS NOT NULL THEN ROUND(EXTRACT(EPOCH FROM (${toTs} - ${customersTable.lastPurchaseAt})) / 86400)::int ELSE NULL END`,
         frequency: customersTable.totalOrders,
         monetary: customersTable.totalSpent,
+        firstPurchaseAt: customersTable.firstPurchaseAt,
+        lastPurchaseAt: customersTable.lastPurchaseAt,
       })
       .from(customersTable)
       .where(and(...conditions))
@@ -7263,6 +7269,33 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
   ]);
 
   const total = Number(countRow?.count) || 0;
+  const displayedCustomerIds = customerRows.map((row) => row.id);
+  const latestOrdersRows = displayedCustomerIds.length > 0
+    ? await db
+        .select({
+          id: ordersTable.id,
+          externalId: ordersTable.externalId,
+          customerId: ordersTable.customerId,
+          status: ordersTable.status,
+          amount: ordersTable.amount,
+          fulfilledAmount: ordersTable.fulfilledAmount,
+          requestedQuantity: ordersTable.requestedQuantity,
+          fulfilledQuantity: ordersTable.fulfilledQuantity,
+          createdAt: ordersTable.createdAt,
+        })
+        .from(ordersTable)
+        .where(and(eq(ordersTable.clientId, clientId), inArray(ordersTable.customerId, displayedCustomerIds)))
+        .orderBy(desc(ordersTable.createdAt))
+    : [];
+  const latestOrdersByCustomer = new Map<string, typeof latestOrdersRows>();
+  for (const order of latestOrdersRows) {
+    const current = latestOrdersByCustomer.get(order.customerId) ?? [];
+    if (current.length < 3) {
+      current.push(order);
+      latestOrdersByCustomer.set(order.customerId, current);
+    }
+  }
+
   const payload = GetRfmResponse.parse({
     segments,
     composition,
@@ -7270,10 +7303,26 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
       id: r.id,
       name: r.name ?? null,
       email: r.email,
+      phone: r.phone ?? null,
+      state: r.state ?? null,
+      city: r.city ?? null,
+      documentType: r.documentType ?? null,
       segment: r.segment ?? null,
       recencyDays: r.recencyDays != null ? Number(r.recencyDays) : null,
       frequency: Number(r.frequency) || 0,
       monetary: Number(r.monetary) || 0,
+      firstPurchaseAt: r.firstPurchaseAt?.toISOString() ?? null,
+      lastPurchaseAt: r.lastPurchaseAt?.toISOString() ?? null,
+      latestOrders: (latestOrdersByCustomer.get(r.id) ?? []).map((order) => ({
+        id: order.id,
+        externalId: order.externalId,
+        status: order.status,
+        amount: Number(order.amount) || 0,
+        fulfilledAmount: Number(order.fulfilledAmount) || 0,
+        requestedQuantity: Number(order.requestedQuantity) || 0,
+        fulfilledQuantity: Number(order.fulfilledQuantity) || 0,
+        createdAt: order.createdAt.toISOString(),
+      })),
     })),
     total,
     page,

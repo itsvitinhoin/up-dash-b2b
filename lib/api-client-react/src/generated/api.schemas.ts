@@ -644,11 +644,34 @@ export interface RfmCustomerRow {
   name?: string | null;
   email: string;
   /** @nullable */
+  phone?: string | null;
+  /** @nullable */
+  state?: string | null;
+  /** @nullable */
+  city?: string | null;
+  /** @nullable */
+  documentType?: "CPF" | "CNPJ" | null;
+  /** @nullable */
   segment?: string | null;
   /** @nullable */
   recencyDays?: number | null;
   frequency: number;
   monetary: number;
+  /** @nullable */
+  firstPurchaseAt?: string | null;
+  /** @nullable */
+  lastPurchaseAt?: string | null;
+  latestOrders: {
+    id: string;
+    /** @nullable */
+    externalId?: string | null;
+    status: string;
+    amount: number;
+    fulfilledAmount: number;
+    requestedQuantity: number;
+    fulfilledQuantity: number;
+    createdAt: string;
+  }[];
 }
 
 export interface RfmResponse {
