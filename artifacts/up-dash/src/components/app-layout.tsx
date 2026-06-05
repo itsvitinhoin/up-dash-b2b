@@ -11,6 +11,7 @@ import { DateRangePicker } from "@/components/date-range-picker";
 import { NotificationBell } from "@/components/notification-bell";
 import { FilterBar } from "@/components/filter-bar";
 import { useKeyboardShortcuts } from "@/lib/keyboard-shortcuts";
+import { LANGUAGE_OPTIONS, useI18n } from "@/lib/i18n";
 import {
   LayoutDashboard,
   Filter,
@@ -122,6 +123,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     setSelectedDashboardMode,
   } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { language, setLanguage, t } = useI18n();
   const { dateRange, setDateRange } = useDashboardFilters();
   const { setOpen: setShortcutsOpen } = useKeyboardShortcuts();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -197,37 +199,46 @@ export function AppLayout({ children }: AppLayoutProps) {
     (location.startsWith("/customers/") ? { title: "Customer detail", subtitle: "Purchase history and behaviour", hasDateRange: false, hasFilterBar: false, requiresClient: true } : null) ??
     (location.startsWith("/sellers/") ? { title: "Seller detail", subtitle: "Revenue, orders and top customers", hasDateRange: true, hasFilterBar: false, requiresClient: true } : null) ??
     { title: "UP Dash", subtitle: "", hasDateRange: false, hasFilterBar: false };
+  const pageTranslationKey =
+    location === "/" || location === "/dashboard"
+      ? "dashboard"
+      : location === "/orders"
+        ? "orders"
+        : null;
+  const titleText = pageTranslationKey ? t(`page.${pageTranslationKey}.title`, meta.title) : meta.title;
   const subtitleText =
     location === "/" || location === "/dashboard"
-      ? `${format(new Date(), "EEEE, MMM d")} · live data`
-      : meta.subtitle;
+      ? `${format(new Date(), "EEEE, MMM d")} · ${t("page.dashboard.live", "live data")}`
+      : pageTranslationKey
+        ? t(`page.${pageTranslationKey}.subtitle`, meta.subtitle)
+        : meta.subtitle;
 
   const b2bOnlyRoutes = new Set(["/whatsapp", "/utm", "/sellers"]);
   const b2cOnlyRoutes = new Set(["/daily"]);
   const analyticsNav = [
-    { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-    { name: "Daily", href: "/daily", icon: CalendarDays },
-    { name: "Marketing", href: "/marketing", icon: Megaphone },
+    { name: t("nav.dashboard", "Dashboard"), href: "/dashboard", icon: LayoutDashboard },
+    { name: t("nav.daily", "Daily"), href: "/daily", icon: CalendarDays },
+    { name: t("nav.marketing", "Marketing"), href: "/marketing", icon: Megaphone },
     {
-      name: "WhatsApp",
+      name: t("nav.whatsapp", "WhatsApp"),
       href: "/whatsapp",
       icon: MessageCircle,
       children: [
-        { name: "Conversas", href: "/whatsapp/conversas", icon: MessageSquareText },
-        { name: "Conexões", href: "/whatsapp/conexoes", icon: PlugZap },
-        { name: "Envios", href: "/whatsapp/envios", icon: Send },
-        { name: "Templates", href: "/whatsapp/templates", icon: FileText },
+        { name: t("nav.whatsapp.conversations", "Conversas"), href: "/whatsapp/conversas", icon: MessageSquareText },
+        { name: t("nav.whatsapp.connections", "Conexões"), href: "/whatsapp/conexoes", icon: PlugZap },
+        { name: t("nav.whatsapp.sends", "Envios"), href: "/whatsapp/envios", icon: Send },
+        { name: t("nav.whatsapp.templates", "Templates"), href: "/whatsapp/templates", icon: FileText },
       ],
     },
-    { name: "Funnel", href: "/funnel", icon: Filter },
-    { name: "Journey", href: "/journey", icon: Route },
-    { name: "RFM", href: "/rfm", icon: BarChart3 },
-    { name: "UTM", href: "/utm", icon: Link2 },
-    { name: "Customers", href: "/customers", icon: Users },
-    { name: "Orders", href: "/orders", icon: ReceiptText },
-    { name: "Products", href: "/products", icon: Package },
-    { name: "Sellers", href: "/sellers", icon: ShoppingBag },
-    { name: "Stock", href: "/stock", icon: PackageSearch },
+    { name: t("nav.funnel", "Funnel"), href: "/funnel", icon: Filter },
+    { name: t("nav.journey", "Journey"), href: "/journey", icon: Route },
+    { name: t("nav.rfm", "RFM"), href: "/rfm", icon: BarChart3 },
+    { name: t("nav.utm", "UTM"), href: "/utm", icon: Link2 },
+    { name: t("nav.customers", "Customers"), href: "/customers", icon: Users },
+    { name: t("nav.orders", "Orders"), href: "/orders", icon: ReceiptText },
+    { name: t("nav.products", "Products"), href: "/products", icon: Package },
+    { name: t("nav.sellers", "Sellers"), href: "/sellers", icon: ShoppingBag },
+    { name: t("nav.stock", "Stock"), href: "/stock", icon: PackageSearch },
   ].filter((item) => {
     if (selectedDashboardMode === "B2C" && b2bOnlyRoutes.has(item.href)) return false;
     if (selectedDashboardMode === "B2B" && b2cOnlyRoutes.has(item.href)) return false;
@@ -235,16 +246,16 @@ export function AppLayout({ children }: AppLayoutProps) {
   });
 
   const workspaceNav: { name: string; href: string; icon: typeof Users }[] = [
-    { name: "Geography", href: "/geography", icon: MapPin },
-    { name: "Notifications", href: "/notifications", icon: Bell },
+    { name: t("nav.geography", "Geography"), href: "/geography", icon: MapPin },
+    { name: t("nav.notifications", "Notifications"), href: "/notifications", icon: Bell },
   ];
 
   if (user?.role === "ADMIN") {
-    workspaceNav.unshift({ name: "Platform overview", href: "/overview", icon: Globe2 });
-    workspaceNav.push({ name: "Compare brands", href: "/compare", icon: GitCompareArrows });
-    workspaceNav.push({ name: "Clients", href: "/clients", icon: Building2 });
-    workspaceNav.push({ name: "Acessos", href: "/accesses", icon: KeyRound });
-    workspaceNav.push({ name: "Extrações", href: "/extractions", icon: History });
+    workspaceNav.unshift({ name: t("nav.platformOverview", "Platform overview"), href: "/overview", icon: Globe2 });
+    workspaceNav.push({ name: t("nav.compareBrands", "Compare brands"), href: "/compare", icon: GitCompareArrows });
+    workspaceNav.push({ name: t("nav.clients", "Clients"), href: "/clients", icon: Building2 });
+    workspaceNav.push({ name: t("nav.accesses", "Acessos"), href: "/accesses", icon: KeyRound });
+    workspaceNav.push({ name: t("nav.extractions", "Extrações"), href: "/extractions", icon: History });
   }
 
   type NavEntry = {
@@ -263,7 +274,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       <div>
         <Link href={item.href}>
           <span
-            data-testid={`nav-${item.name.toLowerCase().replace(/\s+/g, "-")}`}
+            data-testid={`nav-${item.href.replace(/^\//, "").replace(/\//g, "-") || "dashboard"}`}
             className={`relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${
               isActive
                 ? "bg-primary/10 text-primary font-medium"
@@ -284,7 +295,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               return (
                 <Link key={child.href} href={child.href}>
                   <span
-                    data-testid={`nav-${child.name.toLowerCase().replace(/\s+/g, "-")}`}
+                    data-testid={`nav-${child.href.replace(/^\//, "").replace(/\//g, "-")}`}
                     className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs transition-colors ${
                       childActive
                         ? "bg-primary/10 text-primary font-medium"
@@ -319,7 +330,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       <nav className="flex-1 px-3 py-2 space-y-6 overflow-y-auto">
         <div>
           <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-            Analytics
+            {t("nav.analytics", "Analytics")}
           </p>
           <div className="space-y-0.5">
             {analyticsNav.map((item) => (
@@ -330,7 +341,7 @@ export function AppLayout({ children }: AppLayoutProps) {
 
         <div>
           <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-            Workspace
+            {t("nav.workspace", "Workspace")}
           </p>
           <div className="space-y-0.5">
             {workspaceNav.map((item) => (
@@ -358,7 +369,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           </div>
         </div>
         <div className="mt-2 flex items-center justify-between px-2 text-[11px] text-muted-foreground">
-          <span>System</span>
+          <span>{t("top.system", "System")}</span>
           <span className="flex items-center gap-1.5">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
@@ -394,7 +405,7 @@ export function AppLayout({ children }: AppLayoutProps) {
 
           <div className="min-w-0">
             <h1 className="text-lg sm:text-xl font-semibold leading-tight truncate">
-              {meta.title}
+              {titleText}
             </h1>
             {subtitleText && (
               <p className="text-xs text-muted-foreground truncate">{subtitleText}</p>
@@ -410,7 +421,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               className="relative w-full h-9 bg-card border border-border rounded-md pl-10 pr-12 text-sm text-left text-muted-foreground hover:bg-accent/40 focus:outline-none focus:ring-1 focus:ring-primary"
             >
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <span className="truncate">Search SKUs, categories, customers</span>
+              <span className="truncate">{t("top.search", "Search SKUs, categories, customers")}</span>
               <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono bg-muted border border-border rounded text-muted-foreground">
                 /
               </kbd>
@@ -487,7 +498,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                     data-testid="client-picker"
                     className="h-9 bg-card border-border"
                   >
-                    <SelectValue placeholder="Select a client" />
+                    <SelectValue placeholder={t("top.selectClient", "Select a client")} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem
@@ -496,7 +507,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                     >
                       <span className="flex items-center gap-2">
                         <Globe2 className="h-3.5 w-3.5 text-primary" />
-                        All Clients · Platform
+                        {t("top.allClients", "All Clients · Platform")}
                       </span>
                     </SelectItem>
                     {adminClients.length > 0 && (
@@ -516,12 +527,34 @@ export function AppLayout({ children }: AppLayoutProps) {
               <DateRangePicker value={dateRange} onChange={setDateRange} />
             )}
 
+            <div className="hidden sm:block w-24">
+              <Select value={language} onValueChange={(value) => setLanguage(value as typeof language)}>
+                <SelectTrigger
+                  data-testid="language-picker"
+                  aria-label={t("top.language", "Language")}
+                  className="h-9 bg-card border-border"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      <span className="flex items-center gap-2">
+                        <Globe2 className="h-3.5 w-3.5 text-primary" />
+                        {option.shortLabel}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <Button
               variant="ghost"
               size="icon"
               className="h-9 w-9 hover:bg-accent"
               onClick={() => setShortcutsOpen(true)}
-              aria-label="Keyboard shortcuts"
+              aria-label={t("top.keyboardShortcuts", "Keyboard shortcuts")}
               data-testid="open-shortcuts"
             >
               <HelpCircle className="h-4 w-4" />
@@ -534,7 +567,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               size="icon"
               className="h-9 w-9 hover:bg-accent"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              aria-label="Toggle theme"
+              aria-label={t("top.toggleTheme", "Toggle theme")}
               data-testid="theme-toggle"
             >
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -565,11 +598,11 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => setShortcutsOpen(true)} className="cursor-pointer">
                   <HelpCircle className="mr-2 h-4 w-4" />
-                  <span>Keyboard shortcuts</span>
+                  <span>{t("top.keyboardShortcuts", "Keyboard shortcuts")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={logout} className="text-destructive cursor-pointer">
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>Log out</span>
+                  <span>{t("top.logout", "Log out")}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -585,19 +618,19 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <Building2 className="h-6 w-6 text-muted-foreground" />
               </div>
               <div className="space-y-1">
-                <h2 className="text-lg font-semibold">Select a {selectedDashboardMode} client to continue</h2>
+                <h2 className="text-lg font-semibold">
+                  {t("empty.selectClient.title", "Select a {mode} client to continue").replace("{mode}", selectedDashboardMode)}
+                </h2>
                 <p className="text-sm text-muted-foreground">
-                  This page shows data for one client at a time. Pick a client from the
-                  selector at the top of the page, or open the platform overview to
-                  see how every brand is doing.
+                  {t("empty.selectClient.body", "This page shows data for one client at a time. Pick a client from the top selector or open the platform overview to see every brand.")}
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2">
                 <Button onClick={() => navigate("/overview")} data-testid="link-go-to-overview">
-                  Go to platform overview
+                  {t("empty.selectClient.overview", "Go to platform overview")}
                 </Button>
                 <Button variant="outline" onClick={() => navigate("/clients")} data-testid="link-go-to-clients">
-                  Browse all brands
+                  {t("empty.selectClient.clients", "Browse all brands")}
                 </Button>
               </div>
             </div>

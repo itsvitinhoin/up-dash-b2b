@@ -468,11 +468,20 @@ interface UpZeroOrderItem {
   requested_qty?: number | string | null;
   quantity_requested?: number | string | null;
   requested_quantity?: number | string | null;
+  total_quantity_requested?: number | string | null;
+  requested_items_quantity?: number | string | null;
+  items_requested_quantity?: number | string | null;
+  quantidade_solicitada?: number | string | null;
   qty_requested?: number | string | null;
   qtd_solicitada?: number | string | null;
   fulfilled_qty?: number | string | null;
   quantity_fulfilled?: number | string | null;
   fulfilled_quantity?: number | string | null;
+  total_quantity_fulfilled?: number | string | null;
+  fulfilled_items_quantity?: number | string | null;
+  items_fulfilled_quantity?: number | string | null;
+  quantity_attended?: number | string | null;
+  quantidade_atendida?: number | string | null;
   qty_fulfilled?: number | string | null;
   attended_qty?: number | string | null;
   qtd_atendida?: number | string | null;
@@ -493,23 +502,42 @@ interface UpZeroOrder {
   requested_total?: string | number | null;
   amount_requested?: string | number | null;
   total_requested?: string | number | null;
+  requested_value?: string | number | null;
+  solicited_amount?: string | number | null;
+  order_requested_amount?: string | number | null;
+  valor_total_solicitado?: string | number | null;
   valor_solicitado?: string | number | null;
   fulfilled_amount?: string | number | null;
   fulfilled_total?: string | number | null;
   amount_fulfilled?: string | number | null;
   total_fulfilled?: string | number | null;
   attended_amount?: string | number | null;
+  attended_total?: string | number | null;
+  total_attended?: string | number | null;
+  fulfilled_value?: string | number | null;
+  attended_value?: string | number | null;
+  valor_total_atendido?: string | number | null;
+  valor_faturado?: string | number | null;
   valor_atendido?: string | number | null;
   requested_quantity?: string | number | null;
   requested_items_qty?: string | number | null;
+  total_quantity_requested?: string | number | null;
+  requested_items_quantity?: string | number | null;
+  items_requested_quantity?: string | number | null;
+  quantidade_solicitada?: string | number | null;
   quantity_requested?: string | number | null;
   qty_requested?: string | number | null;
   qtd_solicitada?: string | number | null;
   fulfilled_quantity?: string | number | null;
   total_items_qty?: string | number | null;
+  total_quantity_fulfilled?: string | number | null;
+  fulfilled_items_quantity?: string | number | null;
+  items_fulfilled_quantity?: string | number | null;
   quantity_fulfilled?: string | number | null;
+  quantity_attended?: string | number | null;
   qty_fulfilled?: string | number | null;
   attended_quantity?: string | number | null;
+  quantidade_atendida?: string | number | null;
   qtd_atendida?: string | number | null;
   subtotal?: string;
   created_at: string;
@@ -1037,9 +1065,13 @@ function getEventExternalId(e: UpZeroEvent, mappedType: string, customerExternal
 function getItemRequestedQuantity(item: UpZeroOrderItem): number {
   const value = firstNumber(
     item.requested_quantity,
+    item.total_quantity_requested,
+    item.requested_items_quantity,
+    item.items_requested_quantity,
     item.quantity_requested,
     item.requested_qty,
     item.qty_requested,
+    item.quantidade_solicitada,
     item.qtd_solicitada,
     item.qty,
     item.quantity,
@@ -1050,10 +1082,15 @@ function getItemRequestedQuantity(item: UpZeroOrderItem): number {
 function getItemFulfilledQuantity(item: UpZeroOrderItem, requestedQuantity: number): number {
   const value = firstNumber(
     item.fulfilled_quantity,
+    item.total_quantity_fulfilled,
+    item.fulfilled_items_quantity,
+    item.items_fulfilled_quantity,
     item.quantity_fulfilled,
+    item.quantity_attended,
     item.fulfilled_qty,
     item.qty_fulfilled,
     item.attended_qty,
+    item.quantidade_atendida,
     item.qtd_atendida,
   );
   return Math.max(0, Math.round(value ?? requestedQuantity));
@@ -1065,6 +1102,10 @@ function getOrderRequestedAmount(o: UpZeroOrder): number {
     o.requested_total,
     o.amount_requested,
     o.total_requested,
+    o.requested_value,
+    o.solicited_amount,
+    o.order_requested_amount,
+    o.valor_total_solicitado,
     o.valor_solicitado,
     o.total,
     o.total_amount,
@@ -1080,10 +1121,13 @@ function getOrderFulfilledAmount(o: UpZeroOrder, requestedAmount: number, status
     o.amount_fulfilled,
     o.total_fulfilled,
     o.attended_amount,
+    o.attended_total,
+    o.total_attended,
+    o.fulfilled_value,
+    o.attended_value,
+    o.valor_total_atendido,
+    o.valor_faturado,
     o.valor_atendido,
-    o.total,
-    o.total_amount,
-    o.amount,
   );
   if (explicit !== null) return explicit;
   return status === "APPROVED" || status === "SHIPPED" || status === "DELIVERED" ? requestedAmount : 0;
@@ -1719,14 +1763,36 @@ export async function syncUpZeroClient(
       const requestedQuantity = Math.max(
         0,
         Math.round(
-          firstNumber(o.requested_quantity, o.requested_items_qty, o.quantity_requested, o.qty_requested, o.qtd_solicitada) ??
+          firstNumber(
+            o.requested_quantity,
+            o.requested_items_qty,
+            o.total_items_qty,
+            o.total_quantity_requested,
+            o.requested_items_quantity,
+            o.items_requested_quantity,
+            o.quantity_requested,
+            o.qty_requested,
+            o.quantidade_solicitada,
+            o.qtd_solicitada,
+          ) ??
             itemQuantities.reduce((sum, item) => sum + item.requested, 0),
         ),
       );
       const fulfilledQuantity = Math.max(
         0,
         Math.round(
-          firstNumber(o.fulfilled_quantity, o.total_items_qty, o.quantity_fulfilled, o.qty_fulfilled, o.attended_quantity, o.qtd_atendida) ??
+          firstNumber(
+            o.fulfilled_quantity,
+            o.total_quantity_fulfilled,
+            o.fulfilled_items_quantity,
+            o.items_fulfilled_quantity,
+            o.quantity_fulfilled,
+            o.quantity_attended,
+            o.qty_fulfilled,
+            o.attended_quantity,
+            o.quantidade_atendida,
+            o.qtd_atendida,
+          ) ??
             itemQuantities.reduce((sum, item) => sum + item.fulfilled, 0),
         ),
       );

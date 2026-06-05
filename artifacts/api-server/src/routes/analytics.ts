@@ -5333,6 +5333,8 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
         customerId: ordersTable.customerId,
         amount: ordersTable.amount,
         fulfilledAmount: ordersTable.fulfilledAmount,
+        requestedQuantity: ordersTable.requestedQuantity,
+        fulfilledQuantity: ordersTable.fulfilledQuantity,
         status: ordersTable.status,
         createdAt: ordersTable.createdAt,
       })
@@ -5504,9 +5506,10 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
     localOrders: localOrdersForStamp,
   });
 
-  const paidOrders = metricOrders.filter((order) => order.status !== "REJECTED");
-  const requestedRevenue = paidOrders.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
-  const fulfilledRevenue = paidOrders.reduce((sum, order) => sum + Number(order.fulfilledAmount ?? 0), 0);
+  const requestedRevenue = metricOrders.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
+  const fulfilledRevenue = metricOrders.reduce((sum, order) => sum + Number(order.fulfilledAmount ?? 0), 0);
+  const requestedQuantity = metricOrders.reduce((sum, order) => sum + Number(order.requestedQuantity ?? 0), 0);
+  const fulfilledQuantity = metricOrders.reduce((sum, order) => sum + Number(order.fulfilledQuantity ?? 0), 0);
   const fulfilledPct = requestedRevenue > 0 ? (fulfilledRevenue / requestedRevenue) * 100 : 0;
   const approvedLeads = Number(approvedLeadsRow?.count ?? 0);
   const ordersCount = metricOrders.length;
@@ -5517,6 +5520,8 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
     kpis: {
       requestedRevenue,
       fulfilledRevenue,
+      requestedQuantity,
+      fulfilledQuantity,
       fulfilledPct,
       orders: ordersCount,
       newCustomers: newCustomers.size,

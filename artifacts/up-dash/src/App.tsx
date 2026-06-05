@@ -10,6 +10,7 @@ import { AuthGuard } from "@/components/auth-guard";
 import { handleApiError } from "@/lib/api-error";
 import { DashboardFiltersProvider } from "@/lib/dashboard-filters";
 import { KeyboardShortcutsProvider } from "@/lib/keyboard-shortcuts";
+import { I18nProvider } from "@/lib/i18n";
 import { PageTransition } from "@/components/page-transition";
 import { FloatingAiAssistant } from "@/components/floating-ai-assistant";
 import { useMemo } from "react";
@@ -346,13 +347,15 @@ function App() {
         <AuthProvider>
           <ApiErrorBoundary>
             <DashboardFiltersProvider>
-              <ShortcutsBridge>
-                <TooltipProvider>
-                  <Router />
-                  <FloatingAiAssistant />
-                  <Toaster />
-                </TooltipProvider>
-              </ShortcutsBridge>
+              <I18nProvider>
+                <ShortcutsBridge>
+                  <TooltipProvider>
+                    <Router />
+                    <FloatingAiAssistant />
+                    <Toaster />
+                  </TooltipProvider>
+                </ShortcutsBridge>
+              </I18nProvider>
             </DashboardFiltersProvider>
           </ApiErrorBoundary>
         </AuthProvider>

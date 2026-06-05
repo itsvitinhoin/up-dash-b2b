@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { customFetch } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
+import { useI18n } from "@/lib/i18n";
 import { formatCurrency, formatCurrencySmart, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
 import {
   Table,
   TableBody,
@@ -80,6 +82,8 @@ type OrdersPageResponse = {
   kpis: {
     requestedRevenue: number;
     fulfilledRevenue: number;
+    requestedQuantity: number;
+    fulfilledQuantity: number;
     fulfilledPct: number;
     orders: number;
     newCustomers: number;
@@ -165,35 +169,6 @@ function ProductMiniature({ imageUrl, name }: { imageUrl?: string | null; name: 
   );
 }
 
-function KpiCard({
-  label,
-  value,
-  helper,
-  icon: Icon,
-}: {
-  label: string;
-  value: string;
-  helper?: string;
-  icon: typeof WalletCards;
-}) {
-  return (
-    <Card className="border-border bg-card">
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-            <p className="mt-2 truncate text-2xl font-semibold tabular-nums">{value}</p>
-            {helper && <p className="mt-1 text-xs text-muted-foreground">{helper}</p>}
-          </div>
-          <div className="rounded-lg bg-primary/10 p-2 text-primary">
-            <Icon className="h-4 w-4" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 function statusClass(status: string) {
   if (["APPROVED", "SHIPPED", "DELIVERED"].includes(status)) {
     return "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
@@ -209,6 +184,7 @@ function originClass(origin: OrderOrigin) {
 }
 
 export default function OrdersPage() {
+  const { t } = useI18n();
   const { selectedClientId, user } = useAuth();
   const { dateRange } = useDashboardFilters();
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
@@ -263,9 +239,9 @@ export default function OrdersPage() {
       <Card className="border-border bg-card">
         <CardContent className="flex min-h-[360px] flex-col items-center justify-center p-8 text-center">
           <ShoppingBag className="mb-3 h-10 w-10 text-muted-foreground" />
-          <h2 className="text-lg font-semibold">Selecione uma marca</h2>
+          <h2 className="text-lg font-semibold">{t("orders.selectBrand.title", "Selecione uma marca")}</h2>
           <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            A página de pedidos precisa de uma marca ativa para calcular faturamento, clientes e origem dos pedidos.
+            {t("orders.selectBrand.body", "A página de pedidos precisa de uma marca ativa para calcular faturamento, clientes e origem dos pedidos.")}
           </p>
         </CardContent>
       </Card>
@@ -277,23 +253,159 @@ export default function OrdersPage() {
       {isError && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>Não foi possível carregar os pedidos do período.</AlertDescription>
+          <AlertDescription>{t("orders.loadError", "Não foi possível carregar os pedidos do período.")}</AlertDescription>
         </Alert>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {isLoading ? (
-          Array.from({ length: 8 }).map((_, index) => <Skeleton key={index} className="h-[118px] rounded-xl" />)
+          Array.from({ length: 10 }).map((_, index) => <Skeleton key={index} className="h-[164px] rounded-xl" />)
         ) : (
           <>
-            <KpiCard label="Faturamento solicitado" value={formatCurrencySmart(data?.kpis.requestedRevenue ?? 0)} helper="Soma do valor solicitado" icon={WalletCards} />
-            <KpiCard label="Faturamento atendido" value={formatCurrencySmart(data?.kpis.fulfilledRevenue ?? 0)} helper="Soma do valor atendido" icon={BadgeCheck} />
-            <KpiCard label="% de atendido" value={formatPercentage(data?.kpis.fulfilledPct ?? 0)} helper="Atendido / solicitado" icon={TrendingUp} />
-            <KpiCard label="Qtd de pedidos" value={formatNumber(data?.kpis.orders ?? 0)} helper="Pedidos no período" icon={ReceiptText} />
-            <KpiCard label="Clientes novos" value={formatNumber(data?.kpis.newCustomers ?? 0)} helper="Primeira compra no período" icon={UserRoundCheck} />
-            <KpiCard label="Clientes recorrentes" value={formatNumber(data?.kpis.returningCustomers ?? 0)} helper="Já compraram antes" icon={Users} />
-            <KpiCard label="% de retenção" value={formatPercentage(data?.kpis.retentionPct ?? 0)} helper="Recorrentes / compradores" icon={Users} />
-            <KpiCard label="% de conversão" value={formatPercentage(data?.kpis.conversionPct ?? 0)} helper={`${formatNumber(data?.kpis.approvedLeads ?? 0)} cadastros aprovados`} icon={ShoppingBag} />
+            <DashboardKpiCard
+              label={t("orders.kpi.requestedRevenue", "Faturamento solicitado")}
+              value={data?.kpis.requestedRevenue ?? 0}
+              format={formatCurrencySmart}
+              icon={WalletCards}
+              iconClass="bg-blue-500/10 text-blue-400"
+              change={null}
+              changeLabel=""
+              sub={[{ label: "Base", value: "Valor solicitado" }]}
+              sparkValues={[]}
+              sparkColor="#60a5fa"
+              isLoading={false}
+              testId="orders-kpi-requested-revenue"
+              valueAccent
+            />
+            <DashboardKpiCard
+              label={t("orders.kpi.fulfilledRevenue", "Faturamento atendido")}
+              value={data?.kpis.fulfilledRevenue ?? 0}
+              format={formatCurrencySmart}
+              icon={BadgeCheck}
+              iconClass="bg-emerald-500/10 text-emerald-400"
+              change={null}
+              changeLabel=""
+              sub={[{ label: "Base", value: "Valor atendido" }]}
+              sparkValues={[]}
+              sparkColor="#34d399"
+              isLoading={false}
+              testId="orders-kpi-fulfilled-revenue"
+            />
+            <DashboardKpiCard
+              label={t("orders.kpi.requestedQuantity", "Peças solicitadas")}
+              value={data?.kpis.requestedQuantity ?? 0}
+              format={formatNumber}
+              icon={Package}
+              iconClass="bg-violet-500/10 text-violet-400"
+              change={null}
+              changeLabel=""
+              sub={[{ label: "Base", value: "Qtd solicitada" }]}
+              sparkValues={[]}
+              sparkColor="#a78bfa"
+              isLoading={false}
+              testId="orders-kpi-requested-quantity"
+            />
+            <DashboardKpiCard
+              label={t("orders.kpi.fulfilledQuantity", "Peças atendidas")}
+              value={data?.kpis.fulfilledQuantity ?? 0}
+              format={formatNumber}
+              icon={ShoppingBag}
+              iconClass="bg-amber-500/10 text-amber-400"
+              change={null}
+              changeLabel=""
+              sub={[{ label: "Base", value: "Qtd atendida" }]}
+              sparkValues={[]}
+              sparkColor="#f59e0b"
+              isLoading={false}
+              testId="orders-kpi-fulfilled-quantity"
+            />
+            <DashboardKpiCard
+              label={t("orders.kpi.fulfilledPct", "% de atendido")}
+              value={data?.kpis.fulfilledPct ?? 0}
+              format={formatPercentage}
+              icon={TrendingUp}
+              iconClass="bg-cyan-500/10 text-cyan-400"
+              change={null}
+              changeLabel=""
+              sub={[{ label: "Cálculo", value: "Atendido / solicitado" }]}
+              sparkValues={[]}
+              sparkColor="#22d3ee"
+              ringValue={data?.kpis.fulfilledPct ?? 0}
+              isLoading={false}
+              testId="orders-kpi-fulfilled-pct"
+            />
+            <DashboardKpiCard
+              label={t("orders.kpi.orders", "Qtd de pedidos")}
+              value={data?.kpis.orders ?? 0}
+              format={formatNumber}
+              icon={ReceiptText}
+              iconClass="bg-sky-500/10 text-sky-400"
+              change={null}
+              changeLabel=""
+              sub={[{ label: "Período", value: "Pedidos criados" }]}
+              sparkValues={[]}
+              sparkColor="#38bdf8"
+              isLoading={false}
+              testId="orders-kpi-orders"
+            />
+            <DashboardKpiCard
+              label={t("orders.kpi.newCustomers", "Clientes novos")}
+              value={data?.kpis.newCustomers ?? 0}
+              format={formatNumber}
+              icon={UserRoundCheck}
+              iconClass="bg-lime-500/10 text-lime-400"
+              change={null}
+              changeLabel=""
+              sub={[{ label: "Regra", value: "1ª compra no período" }]}
+              sparkValues={[]}
+              sparkColor="#84cc16"
+              isLoading={false}
+              testId="orders-kpi-new-customers"
+            />
+            <DashboardKpiCard
+              label={t("orders.kpi.returningCustomers", "Clientes recorrentes")}
+              value={data?.kpis.returningCustomers ?? 0}
+              format={formatNumber}
+              icon={Users}
+              iconClass="bg-purple-500/10 text-purple-400"
+              change={null}
+              changeLabel=""
+              sub={[{ label: "Regra", value: "Já compraram antes" }]}
+              sparkValues={[]}
+              sparkColor="#c084fc"
+              isLoading={false}
+              testId="orders-kpi-returning-customers"
+            />
+            <DashboardKpiCard
+              label={t("orders.kpi.retentionPct", "% de retenção")}
+              value={data?.kpis.retentionPct ?? 0}
+              format={formatPercentage}
+              icon={Users}
+              iconClass="bg-rose-500/10 text-rose-400"
+              change={null}
+              changeLabel=""
+              sub={[{ label: "Cálculo", value: "Recorrentes / compradores" }]}
+              sparkValues={[]}
+              sparkColor="#fb7185"
+              ringValue={data?.kpis.retentionPct ?? 0}
+              isLoading={false}
+              testId="orders-kpi-retention-pct"
+            />
+            <DashboardKpiCard
+              label={t("orders.kpi.conversionPct", "% de conversão")}
+              value={data?.kpis.conversionPct ?? 0}
+              format={formatPercentage}
+              icon={ShoppingBag}
+              iconClass="bg-orange-500/10 text-orange-400"
+              change={null}
+              changeLabel=""
+              sub={[{ label: "Base", value: `${formatNumber(data?.kpis.approvedLeads ?? 0)} aprovados` }]}
+              sparkValues={[]}
+              sparkColor="#fb923c"
+              ringValue={data?.kpis.conversionPct ?? 0}
+              isLoading={false}
+              testId="orders-kpi-conversion-pct"
+            />
           </>
         )}
       </div>
@@ -304,10 +416,10 @@ export default function OrdersPage() {
             <div>
               <h2 className="flex items-center gap-2 text-base font-semibold">
                 <ShoppingBag className="h-4 w-4 text-primary" />
-                Lista de pedidos
+                {t("orders.list.title", "Lista de pedidos")}
               </h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Pedidos do período com quantidades, valores, documento e origem de aquisição.
+                {t("orders.list.description", "Pedidos do período com quantidades, valores, documento e origem de aquisição.")}
               </p>
             </div>
             <div className="relative w-full lg:w-80">
@@ -318,7 +430,7 @@ export default function OrdersPage() {
                   setPage(1);
                   setSearch(event.target.value);
                 }}
-                placeholder="Buscar pedido, cliente ou documento"
+                placeholder={t("orders.search.placeholder", "Buscar pedido, cliente ou documento")}
                 className="pl-9"
               />
             </div>
@@ -331,8 +443,8 @@ export default function OrdersPage() {
           ) : !data || data.rows.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <Package className="mb-3 h-10 w-10 text-muted-foreground" />
-              <p className="font-medium">Nenhum pedido encontrado</p>
-              <p className="mt-1 text-sm text-muted-foreground">Ajuste o período ou remova a busca para ver mais pedidos.</p>
+              <p className="font-medium">{t("orders.empty.title", "Nenhum pedido encontrado")}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{t("orders.empty.body", "Ajuste o período ou remova a busca para ver mais pedidos.")}</p>
             </div>
           ) : (
             <>
@@ -340,16 +452,16 @@ export default function OrdersPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="min-w-[170px]">Pedido</TableHead>
-                      <TableHead className="min-w-[230px]">Cliente</TableHead>
-                      <TableHead>Documento</TableHead>
-                      <TableHead className="text-right">Qtd solicitada</TableHead>
-                      <TableHead className="text-right">Qtd atendida</TableHead>
-                      <TableHead className="text-right">Valor solicitado</TableHead>
-                      <TableHead className="text-right">Valor atendido</TableHead>
-                      <TableHead className="min-w-[220px]">Origem</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Detalhes</TableHead>
+                      <TableHead className="min-w-[170px]">{t("orders.table.order", "Pedido")}</TableHead>
+                      <TableHead className="min-w-[230px]">{t("orders.table.customer", "Cliente")}</TableHead>
+                      <TableHead>{t("orders.table.document", "Documento")}</TableHead>
+                      <TableHead className="text-right">{t("orders.table.requestedQty", "Qtd solicitada")}</TableHead>
+                      <TableHead className="text-right">{t("orders.table.fulfilledQty", "Qtd atendida")}</TableHead>
+                      <TableHead className="text-right">{t("orders.table.requestedValue", "Valor solicitado")}</TableHead>
+                      <TableHead className="text-right">{t("orders.table.fulfilledValue", "Valor atendido")}</TableHead>
+                      <TableHead className="min-w-[220px]">{t("orders.table.origin", "Origem")}</TableHead>
+                      <TableHead>{t("orders.table.status", "Status")}</TableHead>
+                      <TableHead className="text-right">{t("orders.table.details", "Detalhes")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -395,7 +507,7 @@ export default function OrdersPage() {
                         <TableCell className="text-right">
                           <Button size="sm" variant="outline" onClick={() => setSelectedOrder(order)}>
                             <Eye className="mr-2 h-4 w-4" />
-                            Ver
+                            {t("orders.details.button", "Ver")}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -411,10 +523,10 @@ export default function OrdersPage() {
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>
                     <ArrowLeft className="mr-2 h-4 w-4" />
-                    Anterior
+                    {t("orders.pagination.previous", "Anterior")}
                   </Button>
                   <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>
-                    Próxima
+                    {t("orders.pagination.next", "Próxima")}
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                 </div>
