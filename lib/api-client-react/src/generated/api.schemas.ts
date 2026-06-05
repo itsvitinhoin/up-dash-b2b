@@ -1901,6 +1901,10 @@ export type GetRfmParams = {
   sortBy?: GetRfmSortBy;
   sortDir?: GetRfmSortDir;
   /**
+   * Restrict RFM buyers by order status scope.
+   */
+  orderStatus?: "all" | "approved" | "pending" | "rejected";
+  /**
    * Restrict RFM analysis to customers from this UTM source.
    */
   utmSource?: string;

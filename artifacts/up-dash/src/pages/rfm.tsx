@@ -184,6 +184,7 @@ export default function RfmPage() {
   const [, navigate] = useLocation();
   const [insightDismissed, setInsightDismissed] = useState(false);
   const [segmentFilter, setSegmentFilter] = useState<string>("");
+  const [orderStatusFilter, setOrderStatusFilter] = useState<"all" | "approved" | "pending" | "rejected">("all");
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<"name" | "segment" | "recencyDays" | "frequency" | "monetary">("monetary");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -203,6 +204,7 @@ export default function RfmPage() {
       limit,
       sortBy,
       sortDir,
+      orderStatus: orderStatusFilter,
       utmSource: filters.utmSource || undefined,
       utmMedium: filters.utmMedium || undefined,
       state: filters.state || undefined,
@@ -490,9 +492,26 @@ export default function RfmPage() {
                     <span className="h-1.5 w-1.5 rounded-full bg-chart-3" />
                     Compradoras RFM
                     <span className="text-muted-foreground font-normal">({formatNumber(total)})</span>
-                    <InfoHint text="A lista mostra clientes que compraram no período filtrado, usando o histórico acumulado para calcular frequência e valor monetário." />
+                    <InfoHint text="A lista mostra clientes que solicitaram pedidos no período filtrado. Por padrão entram todos os pedidos; use o filtro de status para analisar somente aprovados, pendentes ou recusados." />
                   </CardTitle>
                   <div className="flex items-center gap-2">
+                    <Select
+                      value={orderStatusFilter}
+                      onValueChange={(v) => {
+                        setOrderStatusFilter(v as "all" | "approved" | "pending" | "rejected");
+                        setPage(1);
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-xs w-44">
+                        <SelectValue placeholder="Status dos pedidos" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos os pedidos</SelectItem>
+                        <SelectItem value="approved">Aprovados/atendidos</SelectItem>
+                        <SelectItem value="pending">Pendentes</SelectItem>
+                        <SelectItem value="rejected">Recusados</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Select
                       value={segmentFilter || "all"}
                       onValueChange={(v) => { setSegmentFilter(v === "all" ? "" : v); setPage(1); }}

@@ -1971,6 +1971,10 @@ export const GetRfmQueryParams = zod.object({
     .enum(["name", "segment", "recencyDays", "frequency", "monetary"])
     .default(getRfmQuerySortByDefault),
   sortDir: zod.enum(["asc", "desc"]).default(getRfmQuerySortDirDefault),
+  orderStatus: zod
+    .enum(["all", "approved", "pending", "rejected"])
+    .default("all")
+    .describe("Restrict RFM buyers by order status scope."),
   utmSource: zod.coerce
     .string()
     .optional()
