@@ -270,6 +270,10 @@ export default function WhatsappConnectionsPage() {
       saveAttemptedRef.current = false;
       void queryClient.invalidateQueries({ queryKey: connectionsKey });
       void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
+      void queryClient.invalidateQueries({ queryKey: ["whatsapp-dashboard-conversations", clientId] });
+      void queryClient.invalidateQueries({ queryKey: ["whatsapp-dashboard-connections", clientId] });
+      void queryClient.invalidateQueries({ queryKey: ["whatsapp-template-connections", clientId] });
+      void queryClient.invalidateQueries({ queryKey: ["whatsapp-templates", clientId] });
     },
     onError: (error) => {
       setSignupError(error instanceof Error ? error.message : "Não foi possível salvar a conexão do WhatsApp.");

@@ -1080,6 +1080,47 @@ async function syncTemplatesForIntegration(
   return { templates, error: null };
 }
 
+async function subscribeWebhookForIntegration(integration: typeof whatsappIntegrationsTable.$inferSelect) {
+  if (!integration.wabaId || !integration.accessToken) {
+    return {
+      ok: false,
+      error: "Integração sem WABA ID ou token.",
+    };
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/subscribed_apps`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${integration.accessToken}`,
+      },
+      body: JSON.stringify({
+        override_callback_uri: WHATSAPP_CALLBACK_URL,
+        verify_token: process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
+      }),
+    },
+  );
+  const payload = (await response.json()) as {
+    success?: boolean;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.success === false) {
+    return {
+      ok: false,
+      error: payload.error?.message ?? `Erro Meta ${response.status} ao ativar webhook.`,
+    };
+  }
+
+  return {
+    ok: true,
+    error: null,
+  };
+}
+
 router.get("/whatsapp/connections", async (req, res): Promise<void> => {
   const clientId = resolveWritableClientId(req);
   if (!clientId) {
@@ -1374,8 +1415,13 @@ router.post("/whatsapp/connections/sync", async (req, res): Promise<void> => {
     .where(eq(whatsappIntegrationsTable.clientId, clientId));
   const synced: Array<ReturnType<typeof serializePhoneNumber>> = [];
   const errors: string[] = [];
+  let webhookSubscriptions = 0;
 
   for (const integration of integrations) {
+    const subscription = await subscribeWebhookForIntegration(integration);
+    if (subscription.ok) webhookSubscriptions += 1;
+    else if (subscription.error !== "Integração sem WABA ID ou token.") errors.push(subscription.error);
+
     if (integration.phoneNumberId) {
       const fallback = await upsertWhatsappPhoneNumber({
         clientId,
@@ -1436,6 +1482,7 @@ router.post("/whatsapp/connections/sync", async (req, res): Promise<void> => {
   res.json({
     ok: errors.length === 0,
     synced: synced.length,
+    webhookSubscriptions,
     errors,
     phoneNumbers: synced,
   });
@@ -1616,32 +1663,14 @@ router.post("/whatsapp/connections/subscribe-webhook", async (req, res): Promise
     return;
   }
 
-  const response = await fetch(
-    `https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/subscribed_apps`,
-    {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${integration.accessToken}`,
-      },
-      body: JSON.stringify({
-        override_callback_uri: WHATSAPP_CALLBACK_URL,
-        verify_token: process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
-      }),
-    },
-  );
-  const payload = (await response.json()) as {
-    success?: boolean;
-    error?: { message?: string };
-  };
+  const subscription = await subscribeWebhookForIntegration(integration);
 
-  if (!response.ok || payload.success === false) {
-    res.status(response.ok ? 422 : response.status).json({
+  if (!subscription.ok) {
+    res.status(422).json({
       error: true,
       code: "WHATSAPP_WEBHOOK_SUBSCRIBE_FAILED",
-      message: payload.error?.message ?? "A Meta recusou a assinatura do app no WABA.",
-      status: response.ok ? 422 : response.status,
+      message: subscription.error ?? "A Meta recusou a assinatura do app no WABA.",
+      status: 422,
     });
     return;
   }
@@ -2627,14 +2656,27 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
     })
     .returning();
 
+  let phoneNumber: ReturnType<typeof serializePhoneNumber> | null = null;
+  let webhookSubscription: Awaited<ReturnType<typeof subscribeWebhookForIntegration>> | null = null;
+  let templatesSynced = 0;
+  let templateSyncError: string | null = null;
+
   if (integration?.phoneNumberId) {
-    await upsertWhatsappPhoneNumber({
+    const row = await upsertWhatsappPhoneNumber({
       clientId,
       integrationId: integration.id,
       wabaId: integration.wabaId,
       phoneNumberId: integration.phoneNumberId,
       rawPayload: { source: "embedded_signup" },
     });
+    phoneNumber = row ? serializePhoneNumber(row) : null;
+  }
+
+  if (integration) {
+    webhookSubscription = await subscribeWebhookForIntegration(integration);
+    const templateSync = await syncTemplatesForIntegration(clientId, integration);
+    templatesSynced = templateSync.templates.length;
+    templateSyncError = templateSync.error;
   }
 
   // Future server-side completion point:
@@ -2643,6 +2685,10 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
   res.status(201).json({
     ok: true,
     integration: serializeIntegration(integration ?? null),
+    phoneNumber,
+    webhookSubscription,
+    templatesSynced,
+    templateSyncError,
   });
 });
 
