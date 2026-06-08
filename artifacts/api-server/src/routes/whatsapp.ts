@@ -74,20 +74,30 @@ const WhatsappWebhookQuery = z.object({
 });
 
 type WhatsappWebhookPayload = {
+  id?: string;
+  event?: string;
+  data?: WhatsappWebhookChangeValue;
   entry?: Array<{
+    id?: string;
     changes?: Array<{
       field?: string;
-      value?: {
-        messages?: unknown[];
-        statuses?: unknown[];
-        contacts?: unknown[];
-        metadata?: {
-          phone_number_id?: string;
-          display_phone_number?: string;
-        };
-      };
+      value?: WhatsappWebhookChangeValue;
     }>;
   }>;
+};
+
+type WhatsappWebhookChangeValue = {
+  id?: string;
+  messages?: unknown[];
+  message_echoes?: unknown[];
+  statuses?: unknown[];
+  contacts?: unknown[];
+  history?: unknown[];
+  state_sync?: unknown[];
+  metadata?: {
+    phone_number_id?: string;
+    display_phone_number?: string;
+  };
 };
 
 type WhatsappWebhookContact = {
@@ -100,6 +110,7 @@ type WhatsappWebhookContact = {
 type WhatsappWebhookMessage = {
   id?: string;
   from?: string;
+  to?: string;
   timestamp?: string;
   type?: string;
   text?: {
@@ -122,6 +133,55 @@ type WhatsappWebhookMessage = {
     list_reply?: {
       title?: string;
     };
+  };
+  audio?: unknown;
+  video?: {
+    caption?: string;
+  };
+  sticker?: unknown;
+  location?: {
+    latitude?: number;
+    longitude?: number;
+    name?: string;
+    address?: string;
+  };
+  contacts?: unknown[];
+  order?: unknown;
+  errors?: unknown[];
+  history_context?: {
+    status?: string;
+  };
+};
+
+type WhatsappHistoryBlock = {
+  metadata?: {
+    phase?: string | number;
+    chunk_order?: string | number;
+    progress?: string | number;
+  };
+  threads?: Array<{
+    id?: string;
+    messages?: WhatsappWebhookMessage[];
+  }>;
+  errors?: Array<{
+    code?: number;
+    title?: string;
+    message?: string;
+    error_data?: {
+      details?: string;
+    };
+  }>;
+};
+
+type WhatsappStateSyncItem = {
+  type?: string;
+  contact?: {
+    full_name?: string;
+    first_name?: string;
+    phone_number?: string;
+  };
+  metadata?: {
+    timestamp?: string;
   };
 };
 
@@ -394,35 +454,77 @@ function resolveWritableClientId(req: Request, bodyClientId?: string): string | 
   return bodyClientId ?? resolveClientId(req);
 }
 
+function getWhatsappWebhookChanges(payload: WhatsappWebhookPayload) {
+  const changes: Array<{
+    entryId: string | null;
+    field: string | null;
+    value: WhatsappWebhookChangeValue | undefined;
+  }> = [];
+
+  for (const entry of payload.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      changes.push({
+        entryId: entry.id ?? null,
+        field: change.field ?? null,
+        value: change.value,
+      });
+    }
+  }
+
+  if (payload.event && payload.data) {
+    changes.push({
+      entryId: payload.data.id ?? payload.id ?? null,
+      field: payload.event,
+      value: payload.data,
+    });
+  }
+
+  return changes;
+}
+
 function summarizePayload(payload: WhatsappWebhookPayload) {
   let messages = 0;
+  let historyMessages = 0;
+  let messageEchoes = 0;
   let statuses = 0;
   let contacts = 0;
+  let stateSyncContacts = 0;
   let coexistenceEvents = 0;
   const phoneNumberIds = new Set<string>();
   const fields = new Set<string>();
 
-  for (const entry of payload.entry ?? []) {
-    for (const change of entry.changes ?? []) {
-      if (change.field) fields.add(change.field);
-      messages += change.value?.messages?.length ?? 0;
-      statuses += change.value?.statuses?.length ?? 0;
-      contacts += change.value?.contacts?.length ?? 0;
-      if (
-        change.field &&
-        ["history", "smb_app_state_sync", "smb_message_echoes", "message_echoes"].includes(change.field)
-      ) {
-        coexistenceEvents += 1;
-      }
-      const phoneNumberId = change.value?.metadata?.phone_number_id;
-      if (phoneNumberId) phoneNumberIds.add(phoneNumberId);
+  for (const change of getWhatsappWebhookChanges(payload)) {
+    if (change.field) fields.add(change.field);
+    messages += change.value?.messages?.length ?? 0;
+    messageEchoes += change.value?.message_echoes?.length ?? 0;
+    statuses += change.value?.statuses?.length ?? 0;
+    contacts += change.value?.contacts?.length ?? 0;
+    for (const history of (change.value?.history ?? []) as WhatsappHistoryBlock[]) {
+      historyMessages += (history.threads ?? []).reduce(
+        (sum, thread) => sum + (thread.messages?.length ?? 0),
+        0,
+      );
     }
+    stateSyncContacts += (change.value?.state_sync ?? []).filter(
+      (item) => (item as WhatsappStateSyncItem).type === "contact",
+    ).length;
+    if (
+      change.field &&
+      ["history", "smb_app_state_sync", "smb_message_echoes", "message_echoes"].includes(change.field)
+    ) {
+      coexistenceEvents += 1;
+    }
+    const phoneNumberId = change.value?.metadata?.phone_number_id;
+    if (phoneNumberId) phoneNumberIds.add(phoneNumberId);
   }
 
   return {
     messages,
+    historyMessages,
+    messageEchoes,
     statuses,
     contacts,
+    stateSyncContacts,
     coexistenceEvents,
     fields: Array.from(fields),
     phoneNumberIds: Array.from(phoneNumberIds),
@@ -432,11 +534,19 @@ function summarizePayload(payload: WhatsappWebhookPayload) {
 function getWhatsappMessageBody(message: WhatsappWebhookMessage): string | null {
   if (message.text?.body) return message.text.body;
   if (message.image?.caption) return message.image.caption;
+  if (message.video?.caption) return message.video.caption;
   if (message.document?.caption) return message.document.caption;
   if (message.document?.filename) return message.document.filename;
   if (message.button?.text) return message.button.text;
   if (message.interactive?.button_reply?.title) return message.interactive.button_reply.title;
   if (message.interactive?.list_reply?.title) return message.interactive.list_reply.title;
+  if (message.location?.name) return message.location.name;
+  if (message.location?.address) return message.location.address;
+  if (message.type === "audio") return "[Áudio]";
+  if (message.type === "sticker") return "[Figurinha]";
+  if (message.type === "contacts") return "[Contato]";
+  if (message.type === "order") return "[Pedido do WhatsApp]";
+  if (message.type === "media_placeholder") return "[Mídia do histórico]";
   return null;
 }
 
@@ -688,6 +798,8 @@ async function findOrCreateWhatsappConversation(params: {
   phoneNumberId: string | null;
   firstMessageAt: Date;
   rawPayload: unknown;
+  touchStatus?: boolean;
+  updatedAt?: Date;
 }) {
   const [existing] = await db
     .select()
@@ -704,13 +816,27 @@ async function findOrCreateWhatsappConversation(params: {
     .orderBy(desc(whatsappConversationsTable.updatedAt))
     .limit(1);
 
+  const updatedAt = params.updatedAt
+    ? new Date(Math.max(existing?.updatedAt.getTime() ?? 0, params.updatedAt.getTime()))
+    : new Date();
+  const firstMessageAt =
+    existing?.firstMessageAt && existing.firstMessageAt.getTime() < params.firstMessageAt.getTime()
+      ? existing.firstMessageAt
+      : params.firstMessageAt;
+
   if (existing) {
     const [updated] = await db
       .update(whatsappConversationsTable)
       .set({
-        status: existing.status === "closed" || existing.status === "lost" ? "new" : "awaiting_response",
+        firstMessageAt,
+        status:
+          params.touchStatus === false
+            ? existing.status
+            : existing.status === "closed" || existing.status === "lost"
+              ? "new"
+              : "awaiting_response",
         rawPayload: params.rawPayload,
-        updatedAt: new Date(),
+        updatedAt,
       })
       .where(eq(whatsappConversationsTable.id, existing.id))
       .returning();
@@ -727,10 +853,42 @@ async function findOrCreateWhatsappConversation(params: {
       funnelStage: "new_lead",
       firstMessageAt: params.firstMessageAt,
       rawPayload: params.rawPayload,
+      updatedAt: params.updatedAt ?? new Date(),
     })
     .returning();
 
   return created;
+}
+
+async function persistWhatsappMessage(params: {
+  clientId: string;
+  contactId: string;
+  conversationId: string;
+  phoneNumberId: string | null;
+  message: WhatsappWebhookMessage;
+  direction: "inbound" | "outbound";
+  rawPayload?: unknown;
+}) {
+  const [message] = await db
+    .insert(whatsappMessagesTable)
+    .values({
+      clientId: params.clientId,
+      contactId: params.contactId,
+      conversationId: params.conversationId,
+      phoneNumberId: params.phoneNumberId,
+      externalMessageId: params.message.id ?? null,
+      direction: params.direction,
+      messageType: params.message.type ?? "unknown",
+      body: getWhatsappMessageBody(params.message),
+      rawPayload: params.rawPayload ?? params.message,
+      sentAt: getWhatsappMessageDate(params.message.timestamp),
+    })
+    .onConflictDoNothing({
+      target: [whatsappMessagesTable.clientId, whatsappMessagesTable.externalMessageId],
+    })
+    .returning();
+
+  return Boolean(message);
 }
 
 async function persistInboundWhatsappMessage(params: {
@@ -740,23 +898,10 @@ async function persistInboundWhatsappMessage(params: {
   phoneNumberId: string | null;
   message: WhatsappWebhookMessage;
 }) {
-  await db
-    .insert(whatsappMessagesTable)
-    .values({
-      clientId: params.clientId,
-      contactId: params.contactId,
-      conversationId: params.conversationId,
-      phoneNumberId: params.phoneNumberId,
-      externalMessageId: params.message.id ?? null,
-      direction: "inbound",
-      messageType: params.message.type ?? "unknown",
-      body: getWhatsappMessageBody(params.message),
-      rawPayload: params.message,
-      sentAt: getWhatsappMessageDate(params.message.timestamp),
-    })
-    .onConflictDoNothing({
-      target: [whatsappMessagesTable.clientId, whatsappMessagesTable.externalMessageId],
-    });
+  return persistWhatsappMessage({
+    ...params,
+    direction: "inbound",
+  });
 }
 
 async function persistWhatsappStatus(params: {
@@ -782,6 +927,192 @@ async function persistWhatsappWebhookEvent(params: {
     metadata: params.metadata,
     occurredAt: new Date(),
   });
+}
+
+function getHistoryProgress(value?: WhatsappWebhookChangeValue) {
+  let progress: number | null = null;
+  let phase: number | null = null;
+  let chunkOrder: number | null = null;
+  let errorMessage: string | null = null;
+
+  for (const history of (value?.history ?? []) as WhatsappHistoryBlock[]) {
+    const metadata = history.metadata;
+    const parsedProgress = metadata?.progress == null ? NaN : Number(metadata.progress);
+    const parsedPhase = metadata?.phase == null ? NaN : Number(metadata.phase);
+    const parsedChunkOrder = metadata?.chunk_order == null ? NaN : Number(metadata.chunk_order);
+    if (Number.isFinite(parsedProgress)) progress = Math.max(progress ?? 0, parsedProgress);
+    if (Number.isFinite(parsedPhase)) phase = Math.max(phase ?? 0, parsedPhase);
+    if (Number.isFinite(parsedChunkOrder)) chunkOrder = Math.max(chunkOrder ?? 0, parsedChunkOrder);
+    const firstError = history.errors?.[0];
+    if (firstError) {
+      errorMessage =
+        firstError.error_data?.details ??
+        firstError.message ??
+        firstError.title ??
+        "A Meta informou que o histórico não pôde ser sincronizado.";
+    }
+  }
+
+  return { progress, phase, chunkOrder, errorMessage };
+}
+
+function isSameWhatsappNumber(left?: string | null, right?: string | null) {
+  const a = left ? normalizeWhatsappRecipient(left) : "";
+  const b = right ? normalizeWhatsappRecipient(right) : "";
+  return Boolean(a && b && a === b);
+}
+
+function getHistoryMessageDirection(params: {
+  message: WhatsappWebhookMessage;
+  businessPhone: string | null;
+}) {
+  return isSameWhatsappNumber(params.message.from, params.businessPhone) || Boolean(params.message.to)
+    ? "outbound"
+    : "inbound";
+}
+
+async function persistWhatsappHistoryMessage(params: {
+  clientId: string;
+  phoneNumberId: string | null;
+  businessPhone: string | null;
+  threadId: string | null;
+  message: WhatsappWebhookMessage;
+  rawPayload: unknown;
+}) {
+  const direction = getHistoryMessageDirection({
+    message: params.message,
+    businessPhone: params.businessPhone,
+  });
+  const customerWaId =
+    direction === "outbound"
+      ? params.message.to ?? params.threadId
+      : params.message.from ?? params.threadId;
+  const normalizedCustomerWaId = customerWaId ? normalizeWhatsappRecipient(customerWaId) : "";
+  if (!normalizedCustomerWaId) return false;
+
+  const contact = await upsertWhatsappContact({
+    clientId: params.clientId,
+    waId: normalizedCustomerWaId,
+    name: null,
+    rawPayload: {
+      source: "whatsapp_history",
+      threadId: params.threadId,
+    },
+  });
+  if (!contact) return false;
+
+  const sentAt = getWhatsappMessageDate(params.message.timestamp);
+  const conversation = await findOrCreateWhatsappConversation({
+    clientId: params.clientId,
+    contactId: contact.id,
+    phoneNumberId: params.phoneNumberId,
+    firstMessageAt: sentAt,
+    updatedAt: sentAt,
+    touchStatus: false,
+    rawPayload: {
+      source: "whatsapp_history",
+      threadId: params.threadId,
+    },
+  });
+  if (!conversation) return false;
+
+  const inserted = await persistWhatsappMessage({
+    clientId: params.clientId,
+    contactId: contact.id,
+    conversationId: conversation.id,
+    phoneNumberId: params.phoneNumberId,
+    message: params.message,
+    direction,
+    rawPayload: params.rawPayload,
+  });
+
+  if (inserted && direction === "outbound") {
+    await db
+      .update(whatsappConversationsTable)
+      .set({
+        firstResponseAt: sql`coalesce(${whatsappConversationsTable.firstResponseAt}, ${sentAt})`,
+      })
+      .where(eq(whatsappConversationsTable.id, conversation.id));
+  }
+
+  return inserted;
+}
+
+async function persistWhatsappStateSync(params: {
+  clientId: string;
+  value?: WhatsappWebhookChangeValue;
+}) {
+  let persisted = 0;
+  for (const item of (params.value?.state_sync ?? []) as WhatsappStateSyncItem[]) {
+    if (item.type !== "contact") continue;
+    const phone = item.contact?.phone_number ? normalizeWhatsappRecipient(item.contact.phone_number) : "";
+    if (!phone) continue;
+    await upsertWhatsappContact({
+      clientId: params.clientId,
+      waId: phone,
+      name: item.contact?.full_name ?? item.contact?.first_name ?? null,
+      rawPayload: item,
+    });
+    persisted += 1;
+  }
+  return persisted;
+}
+
+async function persistWhatsappHistory(params: {
+  clientId: string;
+  phoneNumberId: string | null;
+  value?: WhatsappWebhookChangeValue;
+}) {
+  let persisted = 0;
+  const businessPhone = params.value?.metadata?.display_phone_number ?? null;
+
+  for (const history of (params.value?.history ?? []) as WhatsappHistoryBlock[]) {
+    for (const thread of history.threads ?? []) {
+      const messages = [...(thread.messages ?? [])].sort(
+        (a, b) => getWhatsappMessageDate(a.timestamp).getTime() - getWhatsappMessageDate(b.timestamp).getTime(),
+      );
+      for (const message of messages) {
+        const inserted = await persistWhatsappHistoryMessage({
+          clientId: params.clientId,
+          phoneNumberId: params.phoneNumberId,
+          businessPhone,
+          threadId: thread.id ?? null,
+          message,
+          rawPayload: {
+            source: "whatsapp_history",
+            historyMetadata: history.metadata ?? null,
+            message,
+          },
+        });
+        if (inserted) persisted += 1;
+      }
+    }
+  }
+
+  return persisted;
+}
+
+async function persistWhatsappMessageEchoes(params: {
+  clientId: string;
+  phoneNumberId: string | null;
+  value?: WhatsappWebhookChangeValue;
+}) {
+  let persisted = 0;
+  for (const message of (params.value?.message_echoes ?? []) as WhatsappWebhookMessage[]) {
+    const inserted = await persistWhatsappHistoryMessage({
+      clientId: params.clientId,
+      phoneNumberId: params.phoneNumberId,
+      businessPhone: params.value?.metadata?.display_phone_number ?? null,
+      threadId: message.to ?? null,
+      message,
+      rawPayload: {
+        source: "whatsapp_message_echo",
+        message,
+      },
+    });
+    if (inserted) persisted += 1;
+  }
+  return persisted;
 }
 
 router.get("/webhooks/whatsapp", (req, res): void => {
@@ -818,99 +1149,134 @@ router.post("/webhooks/whatsapp", async (req, res): Promise<void> => {
   const payload = req.body as WhatsappWebhookPayload;
   const summary = summarizePayload(payload);
   let persistedMessages = 0;
+  let persistedHistoryMessages = 0;
+  let persistedMessageEchoes = 0;
+  let persistedStateSyncContacts = 0;
   let persistedStatuses = 0;
   let persistedCoexistenceEvents = 0;
 
-  for (const entry of payload.entry ?? []) {
-    for (const change of entry.changes ?? []) {
-      const value = change.value;
-      const phoneNumberId = value?.metadata?.phone_number_id;
-      const integration =
-        (await resolveWhatsappClientByPhoneNumber(phoneNumberId)) ??
-        (await resolveWhatsappClientByWabaId(entry.id));
-      if (!integration) {
-        logger.warn(
-          { field: change.field, phoneNumberId, wabaId: entry.id },
-          "whatsapp webhook received for unknown WhatsApp asset",
-        );
-        continue;
-      }
+  for (const change of getWhatsappWebhookChanges(payload)) {
+    const value = change.value;
+    const phoneNumberId = value?.metadata?.phone_number_id;
+    const integration =
+      (await resolveWhatsappClientByPhoneNumber(phoneNumberId)) ??
+      (await resolveWhatsappClientByWabaId(change.entryId ?? value?.id ?? null));
+    if (!integration) {
+      logger.warn(
+        { field: change.field, phoneNumberId, wabaId: change.entryId ?? value?.id ?? null },
+        "whatsapp webhook received for unknown WhatsApp asset",
+      );
+      continue;
+    }
 
-      if (
-        change.field &&
-        ["history", "smb_app_state_sync", "smb_message_echoes", "message_echoes"].includes(change.field)
-      ) {
-        await persistWhatsappWebhookEvent({
-          clientId: integration.clientId,
-          eventType: `whatsapp_${change.field}`,
-          metadata: {
-            entryId: entry.id ?? null,
-            field: change.field,
-            value: value ?? null,
-          },
-        });
-        persistedCoexistenceEvents += 1;
-      }
+    if (
+      change.field &&
+      ["history", "smb_app_state_sync", "smb_message_echoes", "message_echoes"].includes(change.field)
+    ) {
+      await persistWhatsappWebhookEvent({
+        clientId: integration.clientId,
+        eventType: `whatsapp_${change.field}`,
+        metadata: {
+          entryId: change.entryId ?? value?.id ?? null,
+          field: change.field,
+          value: value ?? null,
+          historyProgress: change.field === "history" ? getHistoryProgress(value) : null,
+        },
+      });
+      persistedCoexistenceEvents += 1;
+    }
 
-      if (phoneNumberId) {
-        await upsertWhatsappPhoneNumber({
-          clientId: integration.clientId,
-          integrationId: integration.id,
-          wabaId: integration.wabaId,
-          phoneNumberId,
-          displayPhoneNumber: value?.metadata?.display_phone_number ?? null,
-          rawPayload: value?.metadata ?? null,
-        });
-      }
+    if (change.field === "smb_app_state_sync") {
+      persistedStateSyncContacts += await persistWhatsappStateSync({
+        clientId: integration.clientId,
+        value,
+      });
+    }
 
-      const contactsByWaId = new Map<string, WhatsappWebhookContact>();
-      for (const contact of (value?.contacts ?? []) as WhatsappWebhookContact[]) {
-        if (contact.wa_id) contactsByWaId.set(contact.wa_id, contact);
-      }
+    if (change.field === "history") {
+      persistedHistoryMessages += await persistWhatsappHistory({
+        clientId: integration.clientId,
+        phoneNumberId: phoneNumberId ?? integration.phoneNumberId ?? null,
+        value,
+      });
+    }
 
-      for (const message of (value?.messages ?? []) as WhatsappWebhookMessage[]) {
-        if (!message.from) continue;
-        const contactPayload = contactsByWaId.get(message.from);
-        const contact = await upsertWhatsappContact({
-          clientId: integration.clientId,
-          waId: message.from,
-          name: contactPayload?.profile?.name ?? null,
-          rawPayload: contactPayload ?? null,
-        });
-        if (!contact) continue;
+    if (change.field === "smb_message_echoes" || change.field === "message_echoes") {
+      persistedMessageEchoes += await persistWhatsappMessageEchoes({
+        clientId: integration.clientId,
+        phoneNumberId: phoneNumberId ?? integration.phoneNumberId ?? null,
+        value,
+      });
+    }
 
-        const sentAt = getWhatsappMessageDate(message.timestamp);
-        const conversation = await findOrCreateWhatsappConversation({
-          clientId: integration.clientId,
-          contactId: contact.id,
-          phoneNumberId: phoneNumberId ?? null,
-          firstMessageAt: sentAt,
-          rawPayload: message,
-        });
-        if (!conversation) continue;
+    if (phoneNumberId) {
+      await upsertWhatsappPhoneNumber({
+        clientId: integration.clientId,
+        integrationId: integration.id,
+        wabaId: integration.wabaId,
+        phoneNumberId,
+        displayPhoneNumber: value?.metadata?.display_phone_number ?? null,
+        rawPayload: value?.metadata ?? null,
+      });
+    }
 
-        await persistInboundWhatsappMessage({
-          clientId: integration.clientId,
-          contactId: contact.id,
-          conversationId: conversation.id,
-          phoneNumberId: phoneNumberId ?? null,
-          message,
-        });
-        persistedMessages += 1;
-      }
+    const contactsByWaId = new Map<string, WhatsappWebhookContact>();
+    for (const contact of (value?.contacts ?? []) as WhatsappWebhookContact[]) {
+      if (contact.wa_id) contactsByWaId.set(contact.wa_id, contact);
+    }
 
-      for (const status of (value?.statuses ?? []) as WhatsappWebhookStatus[]) {
-        await persistWhatsappStatus({
-          clientId: integration.clientId,
-          status,
-        });
-        persistedStatuses += 1;
-      }
+    for (const message of (value?.messages ?? []) as WhatsappWebhookMessage[]) {
+      if (!message.from) continue;
+      const contactPayload = contactsByWaId.get(message.from);
+      const contact = await upsertWhatsappContact({
+        clientId: integration.clientId,
+        waId: message.from,
+        name: contactPayload?.profile?.name ?? null,
+        rawPayload: contactPayload ?? null,
+      });
+      if (!contact) continue;
+
+      const sentAt = getWhatsappMessageDate(message.timestamp);
+      const conversation = await findOrCreateWhatsappConversation({
+        clientId: integration.clientId,
+        contactId: contact.id,
+        phoneNumberId: phoneNumberId ?? null,
+        firstMessageAt: sentAt,
+        updatedAt: sentAt,
+        touchStatus: true,
+        rawPayload: message,
+      });
+      if (!conversation) continue;
+
+      await persistInboundWhatsappMessage({
+        clientId: integration.clientId,
+        contactId: contact.id,
+        conversationId: conversation.id,
+        phoneNumberId: phoneNumberId ?? null,
+        message,
+      });
+      persistedMessages += 1;
+    }
+
+    for (const status of (value?.statuses ?? []) as WhatsappWebhookStatus[]) {
+      await persistWhatsappStatus({
+        clientId: integration.clientId,
+        status,
+      });
+      persistedStatuses += 1;
     }
   }
 
   logger.info(
-    { summary, persistedMessages, persistedStatuses, persistedCoexistenceEvents },
+    {
+      summary,
+      persistedMessages,
+      persistedHistoryMessages,
+      persistedMessageEchoes,
+      persistedStateSyncContacts,
+      persistedStatuses,
+      persistedCoexistenceEvents,
+    },
     "whatsapp webhook received",
   );
 
@@ -920,6 +1286,9 @@ router.post("/webhooks/whatsapp", async (req, res): Promise<void> => {
     summary: {
       ...summary,
       persistedMessages,
+      persistedHistoryMessages,
+      persistedMessageEchoes,
+      persistedStateSyncContacts,
       persistedStatuses,
       persistedCoexistenceEvents,
     },
@@ -966,6 +1335,99 @@ function serializeTemplate(row: typeof whatsappMessageTemplatesTable.$inferSelec
     lastSyncedAt: iso(row.lastSyncedAt),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function readWhatsappHistoryProgress(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object") return getHistoryProgress(undefined);
+  const payload = metadata as {
+    historyProgress?: ReturnType<typeof getHistoryProgress> | null;
+    value?: WhatsappWebhookChangeValue | null;
+  };
+  if (payload.historyProgress) return payload.historyProgress;
+  return getHistoryProgress(payload.value ?? undefined);
+}
+
+async function getWhatsappHistorySyncStatus(
+  clientId: string,
+  integrations: Array<typeof whatsappIntegrationsTable.$inferSelect>,
+) {
+  const historyEventTypes = [
+    "whatsapp_history",
+    "whatsapp_smb_app_state_sync",
+    "whatsapp_smb_message_echoes",
+    "whatsapp_message_echoes",
+  ];
+  const events = await db
+    .select()
+    .from(whatsappConversationEventsTable)
+    .where(
+      and(
+        eq(whatsappConversationEventsTable.clientId, clientId),
+        inArray(whatsappConversationEventsTable.eventType, historyEventTypes),
+      ),
+    )
+    .orderBy(desc(whatsappConversationEventsTable.occurredAt))
+    .limit(25);
+
+  const [historyEventCountRow] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(whatsappConversationEventsTable)
+    .where(
+      and(
+        eq(whatsappConversationEventsTable.clientId, clientId),
+        eq(whatsappConversationEventsTable.eventType, "whatsapp_history"),
+      ),
+    );
+
+  const [messageStats] = await db
+    .select({
+      count: sql<number>`count(*)`,
+      latestSentAt: sql<Date | null>`max(${whatsappMessagesTable.sentAt})`,
+    })
+    .from(whatsappMessagesTable)
+    .where(eq(whatsappMessagesTable.clientId, clientId));
+
+  const latestHistoryEvent = events.find((event) => event.eventType === "whatsapp_history") ?? null;
+  const latestCoexistenceEvent = events[0] ?? null;
+  const progress = latestHistoryEvent ? readWhatsappHistoryProgress(latestHistoryEvent.metadata) : null;
+  const connectedAt = integrations
+    .map((integration) => integration.connectedAt)
+    .filter((value): value is Date => Boolean(value))
+    .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+  const waitingForFirstHistory =
+    Boolean(connectedAt) &&
+    !latestHistoryEvent &&
+    Date.now() - connectedAt.getTime() <= 1000 * 60 * 60;
+
+  const messageCount = Number(messageStats?.count ?? 0);
+  const historyEventsCount = Number(historyEventCountRow?.count ?? 0);
+  const state =
+    progress?.errorMessage
+      ? "blocked"
+      : progress?.progress != null && progress.progress >= 100
+        ? "complete"
+        : latestHistoryEvent
+          ? "syncing"
+          : waitingForFirstHistory
+            ? "waiting"
+            : messageCount > 0
+              ? "complete"
+              : "idle";
+
+  return {
+    state,
+    progress: progress?.progress ?? null,
+    phase: progress?.phase ?? null,
+    chunkOrder: progress?.chunkOrder ?? null,
+    errorMessage: progress?.errorMessage ?? null,
+    historyEvents: historyEventsCount,
+    coexistenceEvents: events.length,
+    importedMessages: messageCount,
+    lastHistoryEventAt: iso(latestHistoryEvent?.occurredAt),
+    lastCoexistenceEventAt: iso(latestCoexistenceEvent?.occurredAt),
+    lastMessageAt: iso(messageStats?.latestSentAt ? new Date(messageStats.latestSentAt) : null),
+    connectedAt: iso(connectedAt),
   };
 }
 
@@ -1158,9 +1620,12 @@ router.get("/whatsapp/connections", async (req, res): Promise<void> => {
     if (phoneNumber) phoneNumbers.push(phoneNumber);
   }
 
+  const historySync = await getWhatsappHistorySyncStatus(clientId, integrations);
+
   res.json({
     callbackUrl: WHATSAPP_CALLBACK_URL,
     webhookVerifyTokenConfigured: Boolean(process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN),
+    historySync,
     integrations: integrations.map(serializeIntegration),
     phoneNumbers: phoneNumbers.map(serializePhoneNumber),
   });

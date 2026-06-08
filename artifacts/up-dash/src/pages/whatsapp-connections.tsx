@@ -5,6 +5,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Copy,
+  Loader2,
   MessageCircle,
   MessageSquareText,
   PlayCircle,
@@ -132,6 +133,20 @@ type WhatsappPhoneNumber = {
 type WhatsappConnectionsResponse = {
   callbackUrl: string;
   webhookVerifyTokenConfigured: boolean;
+  historySync: {
+    state: "idle" | "waiting" | "syncing" | "complete" | "blocked";
+    progress: number | null;
+    phase: number | null;
+    chunkOrder: number | null;
+    errorMessage: string | null;
+    historyEvents: number;
+    coexistenceEvents: number;
+    importedMessages: number;
+    lastHistoryEventAt: string | null;
+    lastCoexistenceEventAt: string | null;
+    lastMessageAt: string | null;
+    connectedAt: string | null;
+  };
   integrations: Array<{
     id: string;
     status: string;
@@ -215,6 +230,67 @@ function numberTitle(phone: WhatsappPhoneNumber) {
   return phone.verifiedName ?? phone.displayPhoneNumber ?? "Número WhatsApp";
 }
 
+function historySyncCopy(sync: WhatsappConnectionsResponse["historySync"] | undefined) {
+  if (!sync) {
+    return {
+      title: "Sincronização de conversas",
+      description: "Conecte o WhatsApp para iniciar a importação do histórico.",
+      tone: "muted" as const,
+      isLoading: false,
+    };
+  }
+
+  if (sync.state === "blocked") {
+    return {
+      title: "Histórico não autorizado",
+      description:
+        sync.errorMessage ??
+        "A Meta informou que o cliente não autorizou compartilhar o histórico do WhatsApp Business App.",
+      tone: "danger" as const,
+      isLoading: false,
+    };
+  }
+
+  if (sync.state === "waiting") {
+    return {
+      title: "Aguardando histórico da Meta",
+      description:
+        "A conexão foi salva. A Meta pode levar alguns minutos para enviar os primeiros lotes de conversas pelo webhook.",
+      tone: "info" as const,
+      isLoading: true,
+    };
+  }
+
+  if (sync.state === "syncing") {
+    return {
+      title: "Sincronizando conversas",
+      description:
+        sync.progress == null
+          ? "Recebemos lotes de histórico e estamos importando contatos, conversas e mensagens."
+          : `Progresso informado pela Meta: ${Math.round(sync.progress)}%.`,
+      tone: "info" as const,
+      isLoading: true,
+    };
+  }
+
+  if (sync.importedMessages > 0) {
+    return {
+      title: "Histórico importado",
+      description: `${sync.importedMessages.toLocaleString("pt-BR")} mensagem(ns) disponíveis para análise no dashboard.`,
+      tone: "success" as const,
+      isLoading: false,
+    };
+  }
+
+  return {
+    title: "Pronto para receber conversas",
+    description:
+      "O webhook está configurado. Novas mensagens aparecem em tempo quase real; histórico antigo depende da autorização no onboarding.",
+    tone: "muted" as const,
+    isLoading: false,
+  };
+}
+
 export default function WhatsappConnectionsPage() {
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
@@ -246,6 +322,7 @@ export default function WhatsappConnectionsPage() {
     queryKey: connectionsKey,
     queryFn: () => customFetch<WhatsappConnectionsResponse>(connectionsQuery),
     enabled: Boolean(clientId),
+    refetchInterval: 5000,
   });
 
   const { data: embeddedSignup, isLoading: isLoadingEmbeddedSignup } = useQuery<WhatsappEmbeddedSignupResponse>({
@@ -388,6 +465,8 @@ export default function WhatsappConnectionsPage() {
   const connectedIntegrations = data?.integrations.filter(Boolean) ?? [];
   const integration = embeddedSignup?.integration;
   const isWhatsappConnected = integration?.status === "connected";
+  const syncCopy = historySyncCopy(data?.historySync);
+  const syncProgress = data?.historySync.progress;
   const isSignupBusy =
     isLoadingEmbeddedSignup ||
     saveEmbeddedSignup.isPending ||
@@ -575,7 +654,7 @@ export default function WhatsappConnectionsPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-4">
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <div className="rounded-md bg-primary/10 p-2 text-primary">
@@ -595,6 +674,33 @@ export default function WhatsappConnectionsPage() {
             <div>
               <p className="text-xs text-muted-foreground">Números cadastrados</p>
               <p className="text-2xl font-semibold">{data?.phoneNumbers.length ?? 0}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <div
+              className={cn(
+                "rounded-md p-2",
+                syncCopy.tone === "success" && "bg-emerald-500/10 text-emerald-500",
+                syncCopy.tone === "danger" && "bg-red-500/10 text-red-500",
+                syncCopy.tone === "info" && "bg-sky-500/10 text-sky-500",
+                syncCopy.tone === "muted" && "bg-muted text-muted-foreground",
+              )}
+            >
+              {syncCopy.isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : syncCopy.tone === "success" ? (
+                <CheckCircle2 className="h-4 w-4" />
+              ) : syncCopy.tone === "danger" ? (
+                <AlertCircle className="h-4 w-4" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">Histórico</p>
+              <p className="truncate text-sm font-medium">{syncCopy.title}</p>
             </div>
           </CardContent>
         </Card>
@@ -646,6 +752,79 @@ export default function WhatsappConnectionsPage() {
           </Alert>
         </CardContent>
       </Card>
+
+      {data?.historySync && (
+        <Card className={cn(syncCopy.tone === "danger" && "border-red-500/40")}>
+          <CardContent className="space-y-4 p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div className="flex gap-3">
+                <div
+                  className={cn(
+                    "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
+                    syncCopy.tone === "success" && "bg-emerald-500/10 text-emerald-500",
+                    syncCopy.tone === "danger" && "bg-red-500/10 text-red-500",
+                    syncCopy.tone === "info" && "bg-sky-500/10 text-sky-500",
+                    syncCopy.tone === "muted" && "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {syncCopy.isLoading ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : syncCopy.tone === "success" ? (
+                    <CheckCircle2 className="h-5 w-5" />
+                  ) : syncCopy.tone === "danger" ? (
+                    <AlertCircle className="h-5 w-5" />
+                  ) : (
+                    <MessageSquareText className="h-5 w-5" />
+                  )}
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold">{syncCopy.title}</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">{syncCopy.description}</p>
+                </div>
+              </div>
+              <Button variant="outline" onClick={() => syncNumbers.mutate()} disabled={syncNumbers.isPending || isFetching}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${syncNumbers.isPending || isFetching ? "animate-spin" : ""}`} />
+                Atualizar status
+              </Button>
+            </div>
+
+            {syncProgress != null && (
+              <div className="space-y-2">
+                <div className="h-2 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${Math.min(100, Math.max(0, syncProgress))}%` }}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  <span>Progresso: {Math.round(syncProgress)}%</span>
+                  {data.historySync.phase != null && <span>Fase: {data.historySync.phase}</span>}
+                  {data.historySync.chunkOrder != null && <span>Lote: {data.historySync.chunkOrder}</span>}
+                </div>
+              </div>
+            )}
+
+            <div className="grid gap-2 text-xs sm:grid-cols-4">
+              <div className="rounded-md border border-border bg-muted/20 p-3">
+                <p className="text-muted-foreground">Mensagens importadas</p>
+                <p className="mt-1 text-lg font-semibold">{data.historySync.importedMessages.toLocaleString("pt-BR")}</p>
+              </div>
+              <div className="rounded-md border border-border bg-muted/20 p-3">
+                <p className="text-muted-foreground">Eventos de histórico</p>
+                <p className="mt-1 text-lg font-semibold">{data.historySync.historyEvents.toLocaleString("pt-BR")}</p>
+              </div>
+              <div className="rounded-md border border-border bg-muted/20 p-3">
+                <p className="text-muted-foreground">Último lote</p>
+                <p className="mt-1 font-medium">{dateLabel(data.historySync.lastHistoryEventAt)}</p>
+              </div>
+              <div className="rounded-md border border-border bg-muted/20 p-3">
+                <p className="text-muted-foreground">Última mensagem</p>
+                <p className="mt-1 font-medium">{dateLabel(data.historySync.lastMessageAt)}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="gap-3">
