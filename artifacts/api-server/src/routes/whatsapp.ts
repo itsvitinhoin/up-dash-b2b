@@ -42,6 +42,31 @@ function getMetaAppSecret(): string | null {
   return process.env.META_APP_SECRET ?? process.env.FACEBOOK_APP_SECRET ?? null;
 }
 
+function getWhatsappSystemUserAccessToken(): string | null {
+  return normalizeMetaAccessToken(
+    process.env.WHATSAPP_SYSTEM_USER_ACCESS_TOKEN ??
+      process.env.META_SYSTEM_USER_ACCESS_TOKEN ??
+      process.env.FACEBOOK_SYSTEM_USER_ACCESS_TOKEN ??
+      null,
+  );
+}
+
+function getWhatsappDiscoveryBusinessIds(): string[] {
+  const raw =
+    process.env.WHATSAPP_DISCOVERY_BUSINESS_IDS ??
+    process.env.WHATSAPP_DISCOVERY_BUSINESS_ID ??
+    process.env.WHATSAPP_BUSINESS_MANAGER_IDS ??
+    process.env.WHATSAPP_BUSINESS_MANAGER_ID ??
+    process.env.META_BUSINESS_IDS ??
+    process.env.META_BUSINESS_ID ??
+    "";
+
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 const WhatsappWebhookQuery = z.object({
   "hub.mode": z.string().optional(),
   "hub.verify_token": z.string().optional(),
@@ -181,7 +206,7 @@ const MetaTestCallsBody = z.object({
 
 const DiscoverExistingWhatsappAccountsBody = z.object({
   clientId: z.string().optional(),
-  code: z.string().trim().min(1),
+  code: z.string().trim().min(1).optional().nullable(),
 });
 
 const SendWhatsappMessageBody = z.object({
@@ -1062,11 +1087,26 @@ router.post("/whatsapp/connections/discover-existing", async (req, res): Promise
     return;
   }
 
-  const token = await exchangeEmbeddedSignupCode(
-    parsed.data.code,
-    getWhatsappEmbeddedSignupAppId(),
-    getMetaAppSecret(),
-  );
+  const systemUserAccessToken = getWhatsappSystemUserAccessToken();
+  const token = systemUserAccessToken
+    ? {
+        accessToken: systemUserAccessToken,
+        tokenType: "system_user",
+        tokenExpiresAt: null,
+        error: null,
+      }
+    : parsed.data.code
+      ? await exchangeEmbeddedSignupCode(
+          parsed.data.code,
+          getWhatsappEmbeddedSignupAppId(),
+          getMetaAppSecret(),
+        )
+      : {
+          accessToken: null,
+          tokenType: null,
+          tokenExpiresAt: null,
+          error: "Configure WHATSAPP_SYSTEM_USER_ACCESS_TOKEN ou autentique com a Meta para buscar contas existentes.",
+        };
 
   if (!token.accessToken) {
     res.status(422).json({
@@ -1079,29 +1119,57 @@ router.post("/whatsapp/connections/discover-existing", async (req, res): Promise
   }
 
   const errors: string[] = [];
-  const businessesResponse = await fetchMetaGraph<MetaGraphList<MetaBusinessAccount>>(
-    "/me/businesses",
-    token.accessToken,
-    {
-      fields: "id,name",
-      limit: "100",
-    },
-  );
+  const configuredBusinessIds = getWhatsappDiscoveryBusinessIds();
+  const businesses: MetaBusinessAccount[] = [];
 
-  if (!businessesResponse.ok) {
-    res.status(businessesResponse.status).json({
-      error: true,
-      code: "META_BUSINESSES_DISCOVERY_FAILED",
-      message: getMetaGraphErrorMessage(
-        businessesResponse.payload,
-        "Não foi possível listar os Business Managers com esse login.",
-      ),
-      status: businessesResponse.status,
-    });
-    return;
+  if (configuredBusinessIds.length > 0) {
+    for (const businessId of configuredBusinessIds) {
+      const businessResponse = await fetchMetaGraph<MetaBusinessAccount>(
+        `/${businessId}`,
+        token.accessToken,
+        { fields: "id,name" },
+      );
+      if (businessResponse.ok && businessResponse.payload.id) {
+        businesses.push({
+          id: businessResponse.payload.id,
+          name: businessResponse.payload.name,
+        });
+      } else {
+        errors.push(
+          `${businessId}: ${getMetaGraphErrorMessage(
+            businessResponse.payload,
+            `Erro Meta ${businessResponse.status} ao buscar Business Manager.`,
+          )}`,
+        );
+        businesses.push({ id: businessId });
+      }
+    }
+  } else {
+    const businessesResponse = await fetchMetaGraph<MetaGraphList<MetaBusinessAccount>>(
+      "/me/businesses",
+      token.accessToken,
+      {
+        fields: "id,name",
+        limit: "100",
+      },
+    );
+
+    if (!businessesResponse.ok) {
+      res.status(businessesResponse.status).json({
+        error: true,
+        code: "META_BUSINESSES_DISCOVERY_FAILED",
+        message: getMetaGraphErrorMessage(
+          businessesResponse.payload,
+          "Não foi possível listar os Business Managers. Para System User Token, configure também META_BUSINESS_ID ou WHATSAPP_DISCOVERY_BUSINESS_ID.",
+        ),
+        status: businessesResponse.status,
+      });
+      return;
+    }
+
+    businesses.push(...(businessesResponse.payload.data ?? []));
   }
 
-  const businesses = businessesResponse.payload.data ?? [];
   const wabas: Array<{
     id: string;
     name: string | null;
@@ -1195,8 +1263,9 @@ router.post("/whatsapp/connections/discover-existing", async (req, res): Promise
     clientId,
     token,
     rawPayload: {
-      source: "existing_bm_discovery",
+      source: systemUserAccessToken ? "system_user_existing_bm_discovery" : "existing_bm_discovery",
       discoveredAt: new Date().toISOString(),
+      tokenSource: systemUserAccessToken ? "system_user_env" : "facebook_login_code",
       businesses: businesses.map((business) => ({
         id: business.id,
         name: business.name ?? null,
@@ -2410,6 +2479,8 @@ router.get("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
       configId,
       graphApiVersion: GRAPH_API_VERSION,
       isConfigured: Boolean(appId && configId),
+      hasSystemUserToken: Boolean(getWhatsappSystemUserAccessToken()),
+      hasDiscoveryBusinessId: getWhatsappDiscoveryBusinessIds().length > 0,
     },
     integration: serializeIntegration(integration ?? null),
   });

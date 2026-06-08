@@ -76,6 +76,8 @@ type WhatsappEmbeddedSignupResponse = {
     configId: string | null;
     graphApiVersion: string;
     isConfigured: boolean;
+    hasSystemUserToken: boolean;
+    hasDiscoveryBusinessId: boolean;
   };
   integration: {
     id: string;
@@ -371,12 +373,12 @@ export default function WhatsappConnectionsPage() {
   });
 
   const discoverExistingAccounts = useMutation({
-    mutationFn: (code: string) =>
+    mutationFn: (code?: string | null) =>
       customFetch<DiscoverExistingAccountsResponse>("/api/whatsapp/connections/discover-existing", {
         method: "POST",
         body: JSON.stringify({
           clientId,
-          code,
+          code: code ?? null,
         }),
       }),
     onSuccess: (payload) => {
@@ -548,8 +550,13 @@ export default function WhatsappConnectionsPage() {
     setSignupError(null);
     setImportError(null);
     const facebook = embeddedSignup?.facebook;
+    if (facebook?.hasSystemUserToken) {
+      discoverExistingAccounts.mutate(null);
+      return;
+    }
+
     if (!facebook?.appId) {
-      setSignupError("Configure WHATSAPP_EMBEDDED_SIGNUP_APP_ID na Vercel antes de buscar contas existentes.");
+      setSignupError("Configure WHATSAPP_SYSTEM_USER_ACCESS_TOKEN ou WHATSAPP_EMBEDDED_SIGNUP_APP_ID na Vercel antes de buscar contas existentes.");
       return;
     }
 
@@ -586,7 +593,9 @@ export default function WhatsappConnectionsPage() {
     discoverExistingAccounts.isPending;
   const isMetaTestBusy = runMetaTestCalls.isPending;
   const canLaunchEmbeddedSignup = Boolean(embeddedSignup?.facebook.isConfigured && clientId);
-  const canDiscoverExistingAccounts = Boolean(embeddedSignup?.facebook.appId && clientId);
+  const canDiscoverExistingAccounts = Boolean(
+    clientId && (embeddedSignup?.facebook.hasSystemUserToken || embeddedSignup?.facebook.appId),
+  );
   const metaHostedSignupUrl = buildMetaHostedSignupUrl(
     embeddedSignup?.facebook.appId,
     embeddedSignup?.facebook.configId,
@@ -736,7 +745,7 @@ export default function WhatsappConnectionsPage() {
                   Buscar WABAs e números existentes automaticamente
                 </h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Use quando a conta já existe na BM do cliente. O token fica salvo no backend e os números aparecem para importar com um clique.
+                  Use quando a conta já existe na BM do cliente. Com System User Token configurado, a busca roda direto pelo backend; sem ele, abrimos login Meta como fallback.
                 </p>
               </div>
               <Button
@@ -751,6 +760,19 @@ export default function WhatsappConnectionsPage() {
 
             {discoveryResult && (
               <div className="mt-4 space-y-3">
+                {embeddedSignup?.facebook.hasSystemUserToken && (
+                  <Alert>
+                    <ShieldCheck className="h-4 w-4" />
+                    <AlertTitle>Busca usando System User Token</AlertTitle>
+                    <AlertDescription>
+                      O token fixo está configurado no backend. Nenhum token é exibido no navegador.
+                      {!embeddedSignup.facebook.hasDiscoveryBusinessId
+                        ? " Para System User Token, configure também o Business ID se a Meta não retornar os BMs automaticamente."
+                        : ""}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 <div className="grid gap-2 md:grid-cols-3">
                   <div className="rounded-md border border-border bg-background/70 p-3">
                     <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">BMs encontradas</p>
