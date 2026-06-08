@@ -241,12 +241,27 @@ function parseEmbeddedSignupMessage(value: unknown): WhatsappEmbeddedSignupSessi
   return maybe.type === "WA_EMBEDDED_SIGNUP" ? maybe : null;
 }
 
-function buildMetaHostedSignupUrl(appId?: string | null, configId?: string | null): string | null {
+function buildMetaHostedSignupUrl(
+  appId?: string | null,
+  configId?: string | null,
+  mode: EmbeddedSignupMode = "standard",
+  redirectUri?: string | null,
+): string | null {
   if (!appId || !configId) return null;
   const url = new URL("https://business.facebook.com/messaging/whatsapp/onboard/");
   url.searchParams.set("app_id", appId);
   url.searchParams.set("config_id", configId);
-  url.searchParams.set("extras", JSON.stringify({ sessionInfoVersion: "3", version: "v4" }));
+  url.searchParams.set(
+    "extras",
+    JSON.stringify({
+      version: "v4",
+      sessionInfoVersion: "3",
+      ...(mode === "business_app_onboarding"
+        ? { featureType: "whatsapp_business_app_onboarding" }
+        : {}),
+    }),
+  );
+  if (redirectUri) url.searchParams.set("redirect_uri", redirectUri);
   return url.toString();
 }
 
@@ -590,9 +605,20 @@ export default function WhatsappConnectionsPage() {
   const isMetaTestBusy = runMetaTestCalls.isPending;
   const canLaunchEmbeddedSignup = Boolean(embeddedSignup?.facebook.isConfigured && clientId);
   const canDiscoverExistingAccounts = Boolean(clientId);
+  const hostedRedirectUri = typeof window !== "undefined"
+    ? `${window.location.origin}/whatsapp/conexoes`
+    : "https://www.grupoup-dash.com.br/whatsapp/conexoes";
   const metaHostedSignupUrl = buildMetaHostedSignupUrl(
     embeddedSignup?.facebook.appId,
     embeddedSignup?.facebook.configId,
+    "standard",
+    hostedRedirectUri,
+  );
+  const metaHostedCoexistenceUrl = buildMetaHostedSignupUrl(
+    embeddedSignup?.facebook.appId,
+    embeddedSignup?.facebook.configId,
+    "business_app_onboarding",
+    hostedRedirectUri,
   );
 
   return (
@@ -614,7 +640,15 @@ export default function WhatsappConnectionsPage() {
                 <Button variant="outline" asChild>
                   <a href={metaHostedSignupUrl} target="_blank" rel="noopener noreferrer">
                     <ExternalLink className="mr-2 h-4 w-4" />
-                    Abrir página da Meta
+                    Página Meta padrão
+                  </a>
+                </Button>
+              )}
+              {metaHostedCoexistenceUrl && (
+                <Button variant="outline" asChild>
+                  <a href={metaHostedCoexistenceUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Página Meta número existente
                   </a>
                 </Button>
               )}
@@ -667,6 +701,7 @@ export default function WhatsappConnectionsPage() {
             <AlertDescription>
               Use <span className="font-medium">Conectar com Facebook</span> para onboarding padrão de Cloud API.
               Use <span className="font-medium">Conectar número existente</span> quando o cliente já usa o WhatsApp Business App e precisa autorizar a coexistência.
+              Os botões <span className="font-medium">Página Meta</span> abrem o Zero integration onboarding hospedado pela própria Meta.
               Em ambos os casos, o token salvo é gerado pelo cliente durante o Embed.
             </AlertDescription>
           </Alert>
