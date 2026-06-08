@@ -391,7 +391,18 @@ export default function WhatsappConnectionsPage() {
 
   const syncNumbers = useMutation({
     mutationFn: () =>
-      customFetch<{ ok: boolean; synced: number; errors: string[] }>("/api/whatsapp/connections/sync", {
+      customFetch<{
+        ok: boolean;
+        synced: number;
+        webhookSubscriptions: number;
+        historyReprocess?: {
+          scannedEvents: number;
+          importedHistoryMessages: number;
+          importedMessageEchoes: number;
+          importedContacts: number;
+        };
+        errors: string[];
+      }>("/api/whatsapp/connections/sync", {
         method: "POST",
         body: JSON.stringify({ clientId }),
       }),
@@ -784,7 +795,7 @@ export default function WhatsappConnectionsPage() {
               </div>
               <Button variant="outline" onClick={() => syncNumbers.mutate()} disabled={syncNumbers.isPending || isFetching}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${syncNumbers.isPending || isFetching ? "animate-spin" : ""}`} />
-                Atualizar status
+                Sincronizar agora
               </Button>
             </div>
 

@@ -1583,6 +1583,96 @@ async function subscribeWebhookForIntegration(integration: typeof whatsappIntegr
   };
 }
 
+function getStoredWhatsappWebhookValue(metadata: unknown): {
+  entryId: string | null;
+  field: string | null;
+  value: WhatsappWebhookChangeValue | undefined;
+} {
+  if (!metadata || typeof metadata !== "object") {
+    return { entryId: null, field: null, value: undefined };
+  }
+  const stored = metadata as {
+    entryId?: string | null;
+    field?: string | null;
+    value?: WhatsappWebhookChangeValue | null;
+  };
+  return {
+    entryId: stored.entryId ?? null,
+    field: stored.field ?? null,
+    value: stored.value ?? undefined,
+  };
+}
+
+async function reprocessStoredWhatsappCoexistenceEvents(params: {
+  clientId: string;
+  integrations: Array<typeof whatsappIntegrationsTable.$inferSelect>;
+}) {
+  const events = await db
+    .select()
+    .from(whatsappConversationEventsTable)
+    .where(
+      and(
+        eq(whatsappConversationEventsTable.clientId, params.clientId),
+        inArray(whatsappConversationEventsTable.eventType, [
+          "whatsapp_history",
+          "whatsapp_smb_app_state_sync",
+          "whatsapp_smb_message_echoes",
+          "whatsapp_message_echoes",
+        ]),
+      ),
+    )
+    .orderBy(whatsappConversationEventsTable.occurredAt)
+    .limit(200);
+
+  let importedHistoryMessages = 0;
+  let importedMessageEchoes = 0;
+  let importedContacts = 0;
+
+  for (const event of events) {
+    const stored = getStoredWhatsappWebhookValue(event.metadata);
+    const value = stored.value;
+    const phoneNumberId = value?.metadata?.phone_number_id ?? null;
+    const integration =
+      params.integrations.find((row) => row.phoneNumberId && row.phoneNumberId === phoneNumberId) ??
+      params.integrations.find((row) => row.wabaId && row.wabaId === (stored.entryId ?? value?.id ?? null)) ??
+      params.integrations[0] ??
+      null;
+    if (!integration) continue;
+
+    if (stored.field === "smb_app_state_sync") {
+      importedContacts += await persistWhatsappStateSync({
+        clientId: params.clientId,
+        value,
+      });
+      continue;
+    }
+
+    if (stored.field === "history") {
+      importedHistoryMessages += await persistWhatsappHistory({
+        clientId: params.clientId,
+        phoneNumberId: phoneNumberId ?? integration.phoneNumberId ?? null,
+        value,
+      });
+      continue;
+    }
+
+    if (stored.field === "smb_message_echoes" || stored.field === "message_echoes") {
+      importedMessageEchoes += await persistWhatsappMessageEchoes({
+        clientId: params.clientId,
+        phoneNumberId: phoneNumberId ?? integration.phoneNumberId ?? null,
+        value,
+      });
+    }
+  }
+
+  return {
+    scannedEvents: events.length,
+    importedHistoryMessages,
+    importedMessageEchoes,
+    importedContacts,
+  };
+}
+
 router.get("/whatsapp/connections", async (req, res): Promise<void> => {
   const clientId = resolveWritableClientId(req);
   if (!clientId) {
@@ -1944,10 +2034,16 @@ router.post("/whatsapp/connections/sync", async (req, res): Promise<void> => {
     }
   }
 
+  const historyReprocess = await reprocessStoredWhatsappCoexistenceEvents({
+    clientId,
+    integrations,
+  });
+
   res.json({
     ok: errors.length === 0,
     synced: synced.length,
     webhookSubscriptions,
+    historyReprocess,
     errors,
     phoneNumbers: synced,
   });
