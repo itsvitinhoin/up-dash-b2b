@@ -398,13 +398,22 @@ function summarizePayload(payload: WhatsappWebhookPayload) {
   let messages = 0;
   let statuses = 0;
   let contacts = 0;
+  let coexistenceEvents = 0;
   const phoneNumberIds = new Set<string>();
+  const fields = new Set<string>();
 
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
+      if (change.field) fields.add(change.field);
       messages += change.value?.messages?.length ?? 0;
       statuses += change.value?.statuses?.length ?? 0;
       contacts += change.value?.contacts?.length ?? 0;
+      if (
+        change.field &&
+        ["history", "smb_app_state_sync", "smb_message_echoes", "message_echoes"].includes(change.field)
+      ) {
+        coexistenceEvents += 1;
+      }
       const phoneNumberId = change.value?.metadata?.phone_number_id;
       if (phoneNumberId) phoneNumberIds.add(phoneNumberId);
     }
@@ -414,6 +423,8 @@ function summarizePayload(payload: WhatsappWebhookPayload) {
     messages,
     statuses,
     contacts,
+    coexistenceEvents,
+    fields: Array.from(fields),
     phoneNumberIds: Array.from(phoneNumberIds),
   };
 }
@@ -455,6 +466,16 @@ async function resolveWhatsappClientByPhoneNumber(phoneNumberId?: string | null)
     .select()
     .from(whatsappIntegrationsTable)
     .where(eq(whatsappIntegrationsTable.phoneNumberId, phoneNumberId))
+    .limit(1);
+  return integration ?? null;
+}
+
+async function resolveWhatsappClientByWabaId(wabaId?: string | null) {
+  if (!wabaId) return null;
+  const [integration] = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.wabaId, wabaId))
     .limit(1);
   return integration ?? null;
 }
@@ -750,6 +771,19 @@ async function persistWhatsappStatus(params: {
   });
 }
 
+async function persistWhatsappWebhookEvent(params: {
+  clientId: string;
+  eventType: string;
+  metadata: unknown;
+}) {
+  await db.insert(whatsappConversationEventsTable).values({
+    clientId: params.clientId,
+    eventType: params.eventType,
+    metadata: params.metadata,
+    occurredAt: new Date(),
+  });
+}
+
 router.get("/webhooks/whatsapp", (req, res): void => {
   const parsed = WhatsappWebhookQuery.safeParse(req.query);
   if (!parsed.success) {
@@ -785,16 +819,39 @@ router.post("/webhooks/whatsapp", async (req, res): Promise<void> => {
   const summary = summarizePayload(payload);
   let persistedMessages = 0;
   let persistedStatuses = 0;
+  let persistedCoexistenceEvents = 0;
 
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const value = change.value;
       const phoneNumberId = value?.metadata?.phone_number_id;
-      const integration = await resolveWhatsappClientByPhoneNumber(phoneNumberId);
+      const integration =
+        (await resolveWhatsappClientByPhoneNumber(phoneNumberId)) ??
+        (await resolveWhatsappClientByWabaId(entry.id));
       if (!integration) {
-        logger.warn({ phoneNumberId }, "whatsapp webhook received for unknown phone number");
+        logger.warn(
+          { field: change.field, phoneNumberId, wabaId: entry.id },
+          "whatsapp webhook received for unknown WhatsApp asset",
+        );
         continue;
       }
+
+      if (
+        change.field &&
+        ["history", "smb_app_state_sync", "smb_message_echoes", "message_echoes"].includes(change.field)
+      ) {
+        await persistWhatsappWebhookEvent({
+          clientId: integration.clientId,
+          eventType: `whatsapp_${change.field}`,
+          metadata: {
+            entryId: entry.id ?? null,
+            field: change.field,
+            value: value ?? null,
+          },
+        });
+        persistedCoexistenceEvents += 1;
+      }
+
       if (phoneNumberId) {
         await upsertWhatsappPhoneNumber({
           clientId: integration.clientId,
@@ -852,7 +909,10 @@ router.post("/webhooks/whatsapp", async (req, res): Promise<void> => {
     }
   }
 
-  logger.info({ summary, persistedMessages, persistedStatuses }, "whatsapp webhook received");
+  logger.info(
+    { summary, persistedMessages, persistedStatuses, persistedCoexistenceEvents },
+    "whatsapp webhook received",
+  );
 
   res.status(200).json({
     ok: true,
@@ -861,6 +921,7 @@ router.post("/webhooks/whatsapp", async (req, res): Promise<void> => {
       ...summary,
       persistedMessages,
       persistedStatuses,
+      persistedCoexistenceEvents,
     },
   });
 });
