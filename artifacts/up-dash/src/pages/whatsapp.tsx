@@ -68,6 +68,15 @@ const SLA_MINUTES = 15;
 type WhatsappConversationsResponse = {
   total: number;
   totalUnread: number;
+  analytics?: {
+    messagesReceived: number;
+    messagesSent: number;
+    messagesByDay: Array<{
+      date: string;
+      received: number;
+      sent: number;
+    }>;
+  };
   data: WhatsappConversationMock[];
 };
 
@@ -125,6 +134,13 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function apiRange(dateRange: { from: Date; to: Date }) {
+  return {
+    from: startOfDay(dateRange.from).toISOString(),
+    to: addDays(startOfDay(dateRange.to), 1).toISOString(),
+  };
 }
 
 function inclusiveRange(date: Date) {
@@ -189,13 +205,16 @@ export default function WhatsappPage() {
   const [phoneFilter, setPhoneFilter] = useState(() => new URLSearchParams(window.location.search).get("waPhone") ?? ALL);
   const conversationsQuery = useMemo(() => {
     const params = new URLSearchParams();
+    const range = apiRange(dateRange);
     if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
     if (phoneFilter !== ALL) params.set("phoneNumberId", phoneFilter);
-    params.set("limit", "100");
+    params.set("from", range.from);
+    params.set("to", range.to);
+    params.set("limit", "5000");
     return `/api/whatsapp/conversations?${params.toString()}`;
-  }, [phoneFilter, selectedClientId, user?.role]);
+  }, [dateRange, phoneFilter, selectedClientId, user?.role]);
   const { data: realConversations } = useQuery<WhatsappConversationsResponse>({
-    queryKey: ["whatsapp-dashboard-conversations", whatsappClientId, phoneFilter],
+    queryKey: ["whatsapp-dashboard-conversations", whatsappClientId, phoneFilter, dateRange.from.toISOString(), dateRange.to.toISOString()],
     queryFn: () => customFetch<WhatsappConversationsResponse>(conversationsQuery),
     enabled: Boolean(whatsappClientId),
     refetchInterval: 10000,
@@ -210,7 +229,6 @@ export default function WhatsappPage() {
     const query = params.toString();
     return `/api/whatsapp/connections${query ? `?${query}` : ""}`;
   }, [selectedClientId, user?.role]);
-  const [profileFilter, setProfileFilter] = useState(() => new URLSearchParams(window.location.search).get("waProfile") ?? ALL);
   const [statusFilter, setStatusFilter] = useState(() => new URLSearchParams(window.location.search).get("waStatus") ?? ALL);
   const [stageFilter, setStageFilter] = useState(() => new URLSearchParams(window.location.search).get("waStage") ?? ALL);
 
@@ -232,12 +250,12 @@ export default function WhatsappPage() {
   const filteredConversations = useMemo(() => {
     return conversations.filter((conversation) => {
       if (!isConversationInRange(conversation, dateRange.from, dateRange.to)) return false;
-      if (profileFilter !== ALL && conversation.phoneNumberId !== profileFilter) return false;
       if (statusFilter !== ALL && conversation.status !== statusFilter) return false;
       if (stageFilter !== ALL && conversation.stage !== stageFilter) return false;
       return true;
     });
-  }, [conversations, dateRange.from, dateRange.to, profileFilter, stageFilter, statusFilter]);
+  }, [conversations, dateRange.from, dateRange.to, stageFilter, statusFilter]);
+  const canUseMessageAnalytics = statusFilter === ALL && stageFilter === ALL;
 
   const kpis = useMemo(() => {
     const responded = filteredConversations.filter((row) => row.firstResponseMinutes !== null);
@@ -251,8 +269,8 @@ export default function WhatsappPage() {
       total: filteredConversations.length,
       newLeads: filteredConversations.filter((row) => row.leadType === "new").length,
       returningLeads: filteredConversations.filter((row) => row.leadType === "returning").length,
-      received: filteredConversations.reduce((sum, row) => sum + row.messagesReceived, 0),
-      sent: filteredConversations.reduce((sum, row) => sum + row.messagesSent, 0),
+      received: canUseMessageAnalytics ? (realConversations?.analytics?.messagesReceived ?? 0) : filteredConversations.reduce((sum, row) => sum + row.messagesReceived, 0),
+      sent: canUseMessageAnalytics ? (realConversations?.analytics?.messagesSent ?? 0) : filteredConversations.reduce((sum, row) => sum + row.messagesSent, 0),
       avgFirstResponse,
       sla: responded.length === 0 ? 0 : (slaMet / responded.length) * 100,
       noResponse: filteredConversations.filter((row) => row.firstResponseMinutes === null).length,
@@ -260,23 +278,27 @@ export default function WhatsappPage() {
       closed: filteredConversations.filter((row) => row.status === "closed").length,
       lost: filteredConversations.filter((row) => row.status === "lost").length,
     };
-  }, [filteredConversations]);
+  }, [canUseMessageAnalytics, filteredConversations, realConversations?.analytics?.messagesReceived, realConversations?.analytics?.messagesSent]);
 
   const conversationsByDay = useMemo(() => {
     const days = Math.max(0, differenceInCalendarDays(dateRange.to, dateRange.from));
     return Array.from({ length: days + 1 }, (_, index) => {
       const date = addDays(startOfDay(dateRange.from), index);
+      const dateKey = format(date, "yyyy-MM-dd");
       const rows = filteredConversations.filter((row) =>
-        format(new Date(row.firstMessageAt), "yyyy-MM-dd") === format(date, "yyyy-MM-dd"),
+        format(new Date(row.firstMessageAt), "yyyy-MM-dd") === dateKey,
       );
+      const dayMessages = canUseMessageAnalytics
+        ? realConversations?.analytics?.messagesByDay.find((row) => row.date === dateKey)
+        : null;
       return {
         date: format(date, "dd/MM"),
         conversas: rows.length,
-        recebidas: rows.reduce((sum, row) => sum + row.messagesReceived, 0),
-        enviadas: rows.reduce((sum, row) => sum + row.messagesSent, 0),
+        recebidas: dayMessages?.received ?? rows.reduce((sum, row) => sum + row.messagesReceived, 0),
+        enviadas: dayMessages?.sent ?? rows.reduce((sum, row) => sum + row.messagesSent, 0),
       };
     });
-  }, [dateRange.from, dateRange.to, filteredConversations]);
+  }, [canUseMessageAnalytics, dateRange.from, dateRange.to, filteredConversations, realConversations?.analytics?.messagesByDay]);
 
   const conversationsByHour = useMemo(() => {
     return Array.from({ length: 24 }, (_, hour) => ({
@@ -292,7 +314,11 @@ export default function WhatsappPage() {
 
   const profileProductivity = useMemo(() => {
     const phoneIds = new Set<string>();
-    for (const phone of phoneProfiles) phoneIds.add(phone.phoneNumberId);
+    if (phoneFilter !== ALL) {
+      phoneIds.add(phoneFilter);
+    } else {
+      for (const phone of phoneProfiles) phoneIds.add(phone.phoneNumberId);
+    }
     for (const conversation of filteredConversations) {
       if (conversation.phoneNumberId) phoneIds.add(conversation.phoneNumberId);
     }
@@ -314,13 +340,28 @@ export default function WhatsappPage() {
         followUps: rows.reduce((sum, row) => sum + row.followUpsSent, 0),
       };
     }).sort((a, b) => b.conversations - a.conversations);
-  }, [filteredConversations, phoneProfiles, profileNameByPhoneId]);
+  }, [filteredConversations, phoneFilter, phoneProfiles, profileNameByPhoneId]);
 
   const funnelRows = useMemo(() => {
+    const stageRank = new Map(WHATSAPP_FUNNEL_STAGES.map((stage, index) => [stage, index]));
+    const reachedStage = (conversation: WhatsappConversationMock, stage: WhatsappFunnelStage) => {
+      if (stage === "new_lead") return true;
+      if (stage === "in_service") {
+        return (
+          conversation.messagesSent > 0 ||
+          ["in_progress", "awaiting_response", "closed", "lost"].includes(conversation.status) ||
+          (stageRank.get(conversation.stage) ?? 0) >= (stageRank.get(stage) ?? 0)
+        );
+      }
+      if (stage === "closed") return conversation.status === "closed" || conversation.stage === "closed";
+      if (stage === "lost") return conversation.status === "lost" || conversation.stage === "lost";
+      return (stageRank.get(conversation.stage) ?? 0) >= (stageRank.get(stage) ?? 0);
+    };
+
     return WHATSAPP_FUNNEL_STAGES.map((stage, index) => {
-      const count = filteredConversations.filter((row) => row.stage === stage).length;
+      const count = filteredConversations.filter((row) => reachedStage(row, stage)).length;
       const previousCount =
-        index === 0 ? filteredConversations.length : filteredConversations.filter((row) => row.stage === WHATSAPP_FUNNEL_STAGES[index - 1]).length;
+        index === 0 ? filteredConversations.length : filteredConversations.filter((row) => reachedStage(row, WHATSAPP_FUNNEL_STAGES[index - 1])).length;
       return {
         stage,
         label: WHATSAPP_STAGE_LABEL[stage],
@@ -373,7 +414,7 @@ export default function WhatsappPage() {
               Dados recebidos pela WhatsApp Cloud API via webhook, com atualização automática.
             </p>
           </div>
-          <div className="grid gap-2 lg:grid-cols-[minmax(0,1.4fr)_180px_180px_180px_180px]">
+          <div className="grid gap-2 lg:grid-cols-[minmax(0,1.4fr)_180px_180px_180px]">
             <div className="flex flex-wrap gap-2">
               {[
                 ["today", "Hoje"],
@@ -399,18 +440,6 @@ export default function WhatsappPage() {
                 {(connections?.phoneNumbers ?? []).map((phoneNumber) => (
                   <SelectItem key={phoneNumber.phoneNumberId} value={phoneNumber.phoneNumberId}>
                     {phoneLabel(phoneNumber)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={profileFilter} onValueChange={(value) => setUrlFilter("waProfile", value, setProfileFilter)}>
-              <SelectTrigger><SelectValue placeholder="Perfil" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>Todos os perfis</SelectItem>
-                {phoneProfiles.map((phone) => (
-                  <SelectItem key={phone.phoneNumberId} value={phone.phoneNumberId}>
-                    {phoneLabel(phone)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -520,22 +549,28 @@ export default function WhatsappPage() {
         <Card>
           <CardHeader><CardTitle className="text-base">Funil comercial do WhatsApp</CardTitle></CardHeader>
           <CardContent className="space-y-5">
-            <FunnelChart
-              data={funnelRows.map((row, index) => ({
-                label: row.label,
-                value: Math.max(row.count, 1),
-                displayValue: formatNumber(row.count),
-                color: FUNNEL_COLORS[index],
-              }))}
-              className="min-h-[260px]"
-              color="hsl(var(--primary))"
-              labelLayout="grouped"
-              labelOrientation="vertical"
-              showPercentage
-              showValues
-              showLabels
-              grid={{ bands: true, bandColor: "hsl(var(--muted) / 0.25)", lines: true, lineColor: "hsl(var(--border))" }}
-            />
+            {kpis.total > 0 ? (
+              <FunnelChart
+                data={funnelRows.map((row, index) => ({
+                  label: row.label,
+                  value: row.count,
+                  displayValue: formatNumber(row.count),
+                  color: FUNNEL_COLORS[index],
+                }))}
+                className="min-h-[260px]"
+                color="hsl(var(--primary))"
+                labelLayout="grouped"
+                labelOrientation="vertical"
+                showPercentage
+                showValues
+                showLabels
+                grid={{ bands: true, bandColor: "hsl(var(--muted) / 0.25)", lines: true, lineColor: "hsl(var(--border))" }}
+              />
+            ) : (
+              <div className="flex min-h-[260px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+                Nenhuma conversa encontrada para os filtros selecionados.
+              </div>
+            )}
             <div className="grid gap-2 md:grid-cols-4">
               <Badge variant="outline" className="justify-between py-2">Qualificação <span>{formatPercent(funnelMetrics.qualification)}</span></Badge>
               <Badge variant="outline" className="justify-between py-2">Catálogo <span>{formatPercent(funnelMetrics.catalog)}</span></Badge>

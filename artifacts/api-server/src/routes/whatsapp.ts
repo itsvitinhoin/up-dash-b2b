@@ -1384,6 +1384,21 @@ function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
 }
 
+function parseOptionalDate(value: unknown): Date | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function saoPauloDateKey(value: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(value);
+}
+
 function serializePhoneNumber(row: typeof whatsappPhoneNumbersTable.$inferSelect) {
   return {
     id: row.id,
@@ -2832,10 +2847,14 @@ router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
     return;
   }
 
-  const limit = Math.min(Number(req.query.limit ?? 60) || 60, 100);
+  const limit = Math.min(Number(req.query.limit ?? 60) || 60, 5000);
   const phoneNumberId = typeof req.query.phoneNumberId === "string" ? req.query.phoneNumberId : null;
+  const fromDate = parseOptionalDate(req.query.from);
+  const toDate = parseOptionalDate(req.query.to);
   const conditions = [eq(whatsappConversationsTable.clientId, clientId)];
   if (phoneNumberId) conditions.push(eq(whatsappConversationsTable.phoneNumberId, phoneNumberId));
+  if (fromDate) conditions.push(sql`${whatsappConversationsTable.firstMessageAt} >= ${fromDate}`);
+  if (toDate) conditions.push(sql`${whatsappConversationsTable.firstMessageAt} < ${toDate}`);
   const conversations = await db
     .select()
     .from(whatsappConversationsTable)
@@ -2870,6 +2889,35 @@ router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
     const current = messagesByConversation.get(message.conversationId) ?? [];
     current.push(message);
     messagesByConversation.set(message.conversationId, current);
+  }
+
+  const messageMetricConditions = [eq(whatsappMessagesTable.clientId, clientId)];
+  if (phoneNumberId) messageMetricConditions.push(eq(whatsappMessagesTable.phoneNumberId, phoneNumberId));
+  if (fromDate) messageMetricConditions.push(sql`${whatsappMessagesTable.sentAt} >= ${fromDate}`);
+  if (toDate) messageMetricConditions.push(sql`${whatsappMessagesTable.sentAt} < ${toDate}`);
+
+  const metricMessages = await db
+    .select({
+      direction: whatsappMessagesTable.direction,
+      sentAt: whatsappMessagesTable.sentAt,
+    })
+    .from(whatsappMessagesTable)
+    .where(and(...messageMetricConditions));
+
+  const messagesByDayMap = new Map<string, { date: string; received: number; sent: number }>();
+  let messagesReceived = 0;
+  let messagesSent = 0;
+  for (const message of metricMessages) {
+    const key = saoPauloDateKey(message.sentAt);
+    const current = messagesByDayMap.get(key) ?? { date: key, received: 0, sent: 0 };
+    if (message.direction === "inbound") {
+      current.received += 1;
+      messagesReceived += 1;
+    } else if (message.direction === "outbound") {
+      current.sent += 1;
+      messagesSent += 1;
+    }
+    messagesByDayMap.set(key, current);
   }
 
   const customerMatches = await getWhatsappCustomerMatches(
@@ -2952,6 +3000,11 @@ router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
   res.json({
     total: data.length,
     totalUnread,
+    analytics: {
+      messagesReceived,
+      messagesSent,
+      messagesByDay: Array.from(messagesByDayMap.values()).sort((a, b) => a.date.localeCompare(b.date)),
+    },
     data,
   });
 });
