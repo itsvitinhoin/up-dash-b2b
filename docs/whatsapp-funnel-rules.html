@@ -178,31 +178,36 @@
         </tr>
         <tr>
           <td>Qualificado</td>
-          <td>Etapa existe no dashboard, mas ainda não é aplicada automaticamente.</td>
-          <td>Marcar quando o lead possuir CNPJ/CPF válido, perfil de compra adequado ou confirmação de interesse comercial.</td>
+          <td>Automático quando o contato é cruzado com cliente CNPJ no banco ou quando um CNPJ é digitado na conversa.</td>
+          <td>A definição alinhada é: lead empresa. A validação de “CNPJ de vestuário” exige CNPJ completo e fonte externa de CNAE; hoje o dashboard não possui esse dado completo.</td>
         </tr>
         <tr>
           <td>Catálogo enviado</td>
-          <td>Etapa existe no dashboard, mas ainda não é aplicada automaticamente.</td>
-          <td>Marcar quando for enviado link de catálogo, mídia de catálogo, template de catálogo ou mensagem padrão definida.</td>
+          <td>Automático quando uma mensagem enviada contém um link. Se a variável WHATSAPP_SITE_URL ou WHATSAPP_CATALOG_URL estiver configurada, o sistema exige esse link específico.</td>
+          <td>Falta definir a URL oficial do site/catálogo para reduzir falso positivo.</td>
         </tr>
         <tr>
           <td>Pedido em negociação</td>
-          <td>Etapa existe no dashboard, mas ainda não é aplicada automaticamente.</td>
-          <td>Marcar quando houver intenção de pedido, negociação de peças, tamanhos, frete, preço, prazo ou pedido mínimo.</td>
+          <td>Automático quando o lead escreve termos comerciais como “separa”, “valor”, “frete”, “tamanho”, “cor”, “pedido”, “peça”, “atacado”, “disponível”, “entrega” ou “prazo”.</td>
+          <td>Essa lista deve evoluir com frases reais usadas pelas marcas.</td>
         </tr>
         <tr>
           <td>Encerrado</td>
-          <td>Etapa existe no dashboard, mas ainda não é aplicada automaticamente.</td>
-          <td>Marcar quando o atendimento terminar com resolução, compra concluída, orientação final ou sem pendência.</td>
+          <td>Suportado no banco e no dashboard. A regra de encerramento automático por compra ainda depende de cruzamento mais específico com pedido/conversa.</td>
+          <td>A preferência alinhada é automação por tempo/compra, mantendo possibilidade de alteração manual.</td>
         </tr>
         <tr>
           <td>Perdido</td>
-          <td>Etapa existe no dashboard, mas ainda não é aplicada automaticamente.</td>
-          <td>Marcar quando houver motivo de perda definido ou ausência de resposta após janela acordada.</td>
+          <td>Automático quando a última mensagem foi enviada pelo atendimento e o lead fica 24 horas sem responder.</td>
+          <td>Motivo aplicado: “Sem resposta”.</td>
         </tr>
       </tbody>
     </table>
+
+    <div class="note">
+      <strong>Regra de prioridade atual:</strong> Perdido por 24h tem prioridade máxima; depois Pedido em negociação;
+      depois Catálogo enviado; depois Qualificado. Isso evita que uma conversa em negociação volte para etapa anterior.
+    </div>
 
     <h2 class="page-break">4. Métricas do Dashboard</h2>
     <table>
@@ -219,11 +224,11 @@
         </tr>
         <tr>
           <td>Novos leads</td>
-          <td>Hoje todas as conversas retornam como lead novo. A regra de lead recorrente ainda precisa ser refinada.</td>
+          <td>Conversas sem pedido encontrado para o telefone cruzado no banco de clientes/pedidos.</td>
         </tr>
         <tr>
           <td>Leads recorrentes</td>
-          <td>Estrutura existe, mas a classificação automática ainda não está implementada.</td>
+          <td>Conversas cujo telefone foi cruzado com cliente que já possui pedido no banco.</td>
         </tr>
         <tr>
           <td>Mensagens recebidas</td>
@@ -272,23 +277,23 @@
       <li>Outro</li>
     </ul>
 
-    <h2>6. Pontos que Precisam de Definição</h2>
+    <h2>6. Definições Alinhadas</h2>
     <ol>
-      <li>Quando exatamente um lead deve ser considerado qualificado.</li>
-      <li>Qual mensagem/template caracteriza catálogo enviado.</li>
-      <li>Qual evidência caracteriza pedido em negociação.</li>
-      <li>Após quantas horas/dias sem resposta o lead deve virar perdido.</li>
-      <li>Como separar lead novo de lead recorrente.</li>
-      <li>Se encerrado deve ser manual, automático por tempo ou automático por compra.</li>
-      <li>Se os atendentes poderão alterar etapa/status manualmente pelo chat.</li>
+      <li>Qualificado: empresa/CNPJ. Validar se é vestuário exige CNPJ completo e consulta externa de CNAE.</li>
+      <li>Catálogo enviado: link do site/catálogo. A URL oficial ainda precisa ser definida.</li>
+      <li>Pedido em negociação: termos comerciais como separa, valor, frete, tamanho, cor e similares.</li>
+      <li>Perdido: 24 horas sem resposta do lead após mensagem enviada pelo atendimento.</li>
+      <li>Lead recorrente: cruzamento com clientes/pedidos do dashboard.</li>
+      <li>Encerramento: preferência por automação por tempo/compra.</li>
+      <li>Alteração manual: permitida, mas a operação ideal é automática.</li>
     </ol>
 
     <h2>7. Recomendação de Próxima Implementação</h2>
     <p>
-      Para o funil ficar confiável, a recomendação é implementar ações manuais rápidas no chat:
-      <strong>Qualificar</strong>, <strong>Catálogo enviado</strong>, <strong>Negociação</strong>,
-      <strong>Encerrar</strong> e <strong>Marcar perdido</strong>. Depois disso, podem ser adicionadas automações por
-      template, palavras-chave e tempo sem resposta.
+      A próxima melhoria recomendada é cadastrar a URL oficial do site/catálogo em variável de ambiente ou por cliente,
+      e adicionar botões manuais no chat para corrigir exceções: <strong>Qualificar</strong>,
+      <strong>Catálogo enviado</strong>, <strong>Negociação</strong>, <strong>Encerrar</strong> e
+      <strong>Marcar perdido</strong>.
     </p>
   </body>
 </html>

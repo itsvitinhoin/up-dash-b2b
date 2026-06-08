@@ -5,7 +5,9 @@ import { logger } from "../lib/logger";
 import { authenticate, resolveClientId } from "../middlewares/auth";
 import {
   clientsTable,
+  customersTable,
   db,
+  ordersTable,
   whatsappContactsTable,
   whatsappConversationEventsTable,
   whatsappConversationsTable,
@@ -19,6 +21,37 @@ const router: IRouter = Router();
 
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? "v23.0";
 const WHATSAPP_CALLBACK_URL = "https://www.grupoup-dash.com.br/api/webhooks/whatsapp";
+const WHATSAPP_SILENCE_LOSS_HOURS = 24;
+const WHATSAPP_SILENCE_LOSS_MS = WHATSAPP_SILENCE_LOSS_HOURS * 60 * 60 * 1000;
+const NEGOTIATION_TERMS = [
+  "separa",
+  "separe",
+  "separar",
+  "guarda",
+  "guardar",
+  "valor",
+  "preco",
+  "preço",
+  "frete",
+  "tamanho",
+  "tam",
+  "cor",
+  "cores",
+  "pedido",
+  "comprar",
+  "compras",
+  "peca",
+  "peça",
+  "pecas",
+  "peças",
+  "atacado",
+  "catalogo",
+  "catálogo",
+  "disponivel",
+  "disponível",
+  "entrega",
+  "prazo",
+];
 
 function getWhatsappEmbeddedSignupAppId(): string | null {
   return (
@@ -592,6 +625,40 @@ async function resolveWhatsappClientByWabaId(wabaId?: string | null) {
 
 function normalizeWhatsappRecipient(value: string): string {
   return value.replace(/\D/g, "");
+}
+
+function normalizeRuleText(value?: string | null): string {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function getWhatsappSiteUrl(): string | null {
+  return (
+    process.env.WHATSAPP_SITE_URL ??
+    process.env.WHATSAPP_CATALOG_URL ??
+    process.env.NEXT_PUBLIC_WHATSAPP_SITE_URL ??
+    null
+  )?.trim() || null;
+}
+
+function hasCnpjInText(value?: string | null): boolean {
+  return /(?:^|\D)\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}(?:\D|$)/.test(value ?? "");
+}
+
+function hasNegotiationSignal(value?: string | null): boolean {
+  const text = normalizeRuleText(value);
+  return NEGOTIATION_TERMS.some((term) => text.includes(normalizeRuleText(term)));
+}
+
+function hasCatalogLinkSignal(value?: string | null): boolean {
+  const text = value ?? "";
+  const siteUrl = getWhatsappSiteUrl();
+  if (siteUrl) {
+    return normalizeRuleText(text).includes(normalizeRuleText(siteUrl));
+  }
+  return /https?:\/\/\S+/i.test(text);
 }
 
 function normalizeMetaAccessToken(value?: string | null): string | null {
@@ -1445,6 +1512,117 @@ async function getWhatsappHistorySyncStatus(
     lastMessageAt: iso(messageStats?.latestSentAt ? new Date(messageStats.latestSentAt) : null),
     connectedAt: iso(connectedAt),
   };
+}
+
+type WhatsappCustomerMatch = {
+  customer: typeof customersTable.$inferSelect | null;
+  orderCount: number;
+};
+
+async function getWhatsappCustomerMatches(clientId: string, phones: string[]) {
+  const uniquePhones = Array.from(new Set(phones.map(normalizeWhatsappRecipient).filter(Boolean)));
+  const result = new Map<string, WhatsappCustomerMatch>();
+
+  for (const phone of uniquePhones) {
+    const phoneLast11 = phone.slice(-11);
+    const [customer] = await db
+      .select()
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId),
+          sql`(
+            regexp_replace(coalesce(${customersTable.phone}, ''), '[^0-9]', '', 'g') = ${phone}
+            OR right(regexp_replace(coalesce(${customersTable.phone}, ''), '[^0-9]', '', 'g'), 11) = ${phoneLast11}
+          )`,
+        ),
+      )
+      .limit(1);
+
+    if (!customer) {
+      result.set(phone, { customer: null, orderCount: 0 });
+      continue;
+    }
+
+    const [orderStats] = await db
+      .select({ orderCount: sql<number>`count(*)` })
+      .from(ordersTable)
+      .where(and(eq(ordersTable.clientId, clientId), eq(ordersTable.customerId, customer.id)));
+
+    result.set(phone, {
+      customer,
+      orderCount: Number(orderStats?.orderCount ?? 0),
+    });
+  }
+
+  return result;
+}
+
+async function applyWhatsappConversationAutomation(params: {
+  conversation: typeof whatsappConversationsTable.$inferSelect;
+  rows: Array<typeof whatsappMessagesTable.$inferSelect>;
+  customerMatch: WhatsappCustomerMatch | null;
+}) {
+  const sortedRows = [...params.rows].sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime());
+  const latestMessage = sortedRows[sortedRows.length - 1] ?? null;
+  const latestInbound = [...sortedRows].reverse().find((message) => message.direction === "inbound") ?? null;
+  const latestOutbound = [...sortedRows].reverse().find((message) => message.direction === "outbound") ?? null;
+
+  const hasKnownCnpj = params.customerMatch?.customer?.documentType === "CNPJ";
+  const hasTypedCnpj = sortedRows.some((message) => hasCnpjInText(message.body));
+  const qualified = hasKnownCnpj || hasTypedCnpj;
+  const catalogSent = sortedRows.some(
+    (message) => message.direction === "outbound" && hasCatalogLinkSignal(message.body),
+  );
+  const negotiation = sortedRows.some(
+    (message) => message.direction === "inbound" && hasNegotiationSignal(message.body),
+  );
+  const lostBySilence =
+    latestMessage?.direction === "outbound" &&
+    latestOutbound &&
+    (!latestInbound || latestInbound.sentAt.getTime() < latestOutbound.sentAt.getTime()) &&
+    Date.now() - latestOutbound.sentAt.getTime() >= WHATSAPP_SILENCE_LOSS_MS;
+
+  let nextStatus = params.conversation.status;
+  let nextStage = params.conversation.funnelStage;
+  let nextLostReason = params.conversation.lostReason;
+  let nextClosedAt = params.conversation.closedAt;
+
+  if (lostBySilence && params.conversation.status !== "closed") {
+    nextStatus = "lost";
+    nextStage = "lost";
+    nextLostReason = params.conversation.lostReason ?? "Sem resposta";
+    nextClosedAt = params.conversation.closedAt ?? new Date();
+  } else if (negotiation && !["closed", "lost"].includes(params.conversation.status)) {
+    nextStage = "negotiation";
+  } else if (catalogSent && !["negotiation", "closed", "lost"].includes(nextStage)) {
+    nextStage = "catalog_sent";
+  } else if (qualified && !["catalog_sent", "negotiation", "closed", "lost"].includes(nextStage)) {
+    nextStage = "qualified";
+  }
+
+  if (
+    nextStatus === params.conversation.status &&
+    nextStage === params.conversation.funnelStage &&
+    nextLostReason === params.conversation.lostReason &&
+    nextClosedAt === params.conversation.closedAt
+  ) {
+    return params.conversation;
+  }
+
+  const [updated] = await db
+    .update(whatsappConversationsTable)
+    .set({
+      status: nextStatus,
+      funnelStage: nextStage,
+      lostReason: nextLostReason,
+      closedAt: nextClosedAt,
+      updatedAt: new Date(),
+    })
+    .where(eq(whatsappConversationsTable.id, params.conversation.id))
+    .returning();
+
+  return updated ?? params.conversation;
 }
 
 async function upsertWhatsappTemplate(params: {
@@ -2694,9 +2872,29 @@ router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
     messagesByConversation.set(message.conversationId, current);
   }
 
-  const data = conversations.map((conversation) => {
+  const customerMatches = await getWhatsappCustomerMatches(
+    clientId,
+    contacts.map((contact) => contact.phone ?? contact.waId).filter(Boolean),
+  );
+  const automatedConversations: typeof conversations = [];
+
+  for (const conversation of conversations) {
+    const contact = conversation.contactId ? contactMap.get(conversation.contactId) : null;
+    const normalizedPhone = normalizeWhatsappRecipient(contact?.phone ?? contact?.waId ?? "");
+    const rows = messagesByConversation.get(conversation.id) ?? [];
+    const updatedConversation = await applyWhatsappConversationAutomation({
+      conversation,
+      rows,
+      customerMatch: normalizedPhone ? customerMatches.get(normalizedPhone) ?? null : null,
+    });
+    automatedConversations.push(updatedConversation);
+  }
+
+  const data = automatedConversations.map((conversation) => {
     const contact = conversation.contactId ? contactMap.get(conversation.contactId) : null;
     const rows = messagesByConversation.get(conversation.id) ?? [];
+    const normalizedPhone = normalizeWhatsappRecipient(contact?.phone ?? contact?.waId ?? "");
+    const customerMatch = normalizedPhone ? customerMatches.get(normalizedPhone) ?? null : null;
     const lastOutboundAt = rows
       .filter((message) => message.direction === "outbound")
       .map((message) => message.sentAt.getTime())
@@ -2725,7 +2923,7 @@ router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
       phoneNumberId: conversation.phoneNumberId,
       status: conversation.status,
       stage: conversation.funnelStage,
-      leadType: "new",
+      leadType: customerMatch?.orderCount ? "returning" : "new",
       agentId: conversation.agentId ?? "unassigned",
       firstMessageAt: iso(conversation.firstMessageAt ?? conversation.createdAt),
       firstResponseAt: iso(conversation.firstResponseAt),
