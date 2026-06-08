@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   AlertCircle,
   CheckCircle2,
   Copy,
-  ExternalLink,
   MessageCircle,
   MessageSquareText,
   PlayCircle,
@@ -26,6 +25,41 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+
+declare global {
+  interface Window {
+    FB?: {
+      init: (options: {
+        appId: string;
+        cookie?: boolean;
+        xfbml?: boolean;
+        version: string;
+      }) => void;
+      login: (
+        callback: (response: FacebookLoginResponse) => void,
+        options: Record<string, unknown>,
+      ) => void;
+    };
+    fbAsyncInit?: () => void;
+  }
+}
+
+type FacebookLoginResponse = {
+  authResponse?: {
+    code?: string;
+  };
+  status?: string;
+};
+
+type WhatsappEmbeddedSignupSession = {
+  type?: string;
+  event?: string;
+  data?: {
+    business_id?: string;
+    waba_id?: string;
+    phone_number_id?: string;
+  };
+};
 
 type WhatsappEmbeddedSignupResponse = {
   client: {
@@ -113,54 +147,60 @@ function dateLabel(value: string | null) {
   return value ? format(new Date(value), "dd/MM/yyyy HH:mm") : "-";
 }
 
-function buildMetaHostedSignupUrl(
-  appId?: string | null,
-  configId?: string | null,
-  redirectUri?: string | null,
-): string | null {
-  if (!appId || !configId) return null;
-  const url = new URL("https://business.facebook.com/messaging/whatsapp/onboard/");
-  url.searchParams.set("app_id", appId);
-  url.searchParams.set("config_id", configId);
-  url.searchParams.set(
-    "extras",
-    JSON.stringify({
-      version: "v4",
-      sessionInfoVersion: "3",
-      featureType: "whatsapp_business_app_onboarding",
-    }),
-  );
-  if (redirectUri) url.searchParams.set("redirect_uri", redirectUri);
-  return url.toString();
+function loadFacebookSdk(appId: string, version: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.FB) {
+      window.FB.init({ appId, cookie: true, xfbml: true, version });
+      resolve();
+      return;
+    }
+
+    window.fbAsyncInit = () => {
+      window.FB?.init({ appId, cookie: true, xfbml: true, version });
+      resolve();
+    };
+
+    const existingScript = document.getElementById("facebook-jssdk");
+    if (existingScript) {
+      let attempts = 0;
+      const timer = window.setInterval(() => {
+        attempts += 1;
+        if (window.FB) {
+          window.clearInterval(timer);
+          window.FB.init({ appId, cookie: true, xfbml: true, version });
+          resolve();
+        }
+        if (attempts >= 80) {
+          window.clearInterval(timer);
+          reject(new Error("Facebook SDK carregou, mas não ficou disponível para iniciar o Embed."));
+        }
+      }, 100);
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.id = "facebook-jssdk";
+    script.async = true;
+    script.defer = true;
+    script.crossOrigin = "anonymous";
+    script.src = "https://connect.facebook.net/pt_BR/sdk.js";
+    script.onerror = () => reject(new Error("Não foi possível carregar o Facebook SDK."));
+    document.body.appendChild(script);
+  });
 }
 
-function readMetaHostedReturnParams() {
-  if (typeof window === "undefined") return null;
-  const searchParams = new URLSearchParams(window.location.search);
-  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  const value = (key: string) => searchParams.get(key) ?? hashParams.get(key);
-  const code = value("code");
-  const businessId = value("business_id");
-  const wabaId = value("waba_id");
-  const phoneNumberId = value("phone_number_id");
-  const event = value("event");
-  const error = value("error") ?? value("error_message") ?? value("error_description");
+function parseEmbeddedSignupMessage(value: unknown): WhatsappEmbeddedSignupSession | null {
+  const data = typeof value === "string" ? (() => {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
+  })() : value;
 
-  if (!code && !businessId && !wabaId && !phoneNumberId && !event && !error) return null;
-
-  return {
-    code,
-    businessId,
-    wabaId,
-    phoneNumberId,
-    event,
-    error,
-    rawPayload: {
-      source: "meta_hosted_whatsapp_onboarding",
-      search: Object.fromEntries(searchParams.entries()),
-      hash: Object.fromEntries(hashParams.entries()),
-    },
-  };
+  if (!data || typeof data !== "object") return null;
+  const maybe = data as WhatsappEmbeddedSignupSession;
+  return maybe.type === "WA_EMBEDDED_SIGNUP" ? maybe : null;
 }
 
 function qualityLabel(value: string | null) {
@@ -181,7 +221,9 @@ export default function WhatsappConnectionsPage() {
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
   const [signupError, setSignupError] = useState<string | null>(null);
   const [metaTestResult, setMetaTestResult] = useState<MetaPermissionTestResponse | null>(null);
-  const processedHostedReturnRef = useRef(false);
+  const sessionInfoRef = useRef<WhatsappEmbeddedSignupSession | null>(null);
+  const signupCodeRef = useRef<string | null>(null);
+  const saveAttemptedRef = useRef(false);
 
   const connectionsQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -223,6 +265,9 @@ export default function WhatsappConnectionsPage() {
       ),
     onSuccess: () => {
       setSignupError(null);
+      sessionInfoRef.current = null;
+      signupCodeRef.current = null;
+      saveAttemptedRef.current = false;
       void queryClient.invalidateQueries({ queryKey: connectionsKey });
       void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
     },
@@ -315,6 +360,27 @@ export default function WhatsappConnectionsPage() {
     await navigator.clipboard.writeText(data.callbackUrl);
   };
 
+  const persistEmbeddedSignupIfReady = useCallback(() => {
+    const session = sessionInfoRef.current;
+    const code = signupCodeRef.current;
+    const sessionData = session?.data;
+    const hasSessionIdentity = session?.event === "FINISH" || sessionData?.waba_id || sessionData?.phone_number_id;
+
+    if (!clientId || !code || !hasSessionIdentity || saveAttemptedRef.current) return;
+
+    saveAttemptedRef.current = true;
+    saveEmbeddedSignup.mutate({
+      clientId,
+      code,
+      redirectUri: null,
+      businessId: sessionData?.business_id ?? null,
+      wabaId: sessionData?.waba_id ?? null,
+      phoneNumberId: sessionData?.phone_number_id ?? null,
+      event: session?.event ?? null,
+      rawPayload: session ?? null,
+    });
+  }, [clientId, saveEmbeddedSignup]);
+
   const connectedIntegrations = data?.integrations.filter(Boolean) ?? [];
   const integration = embeddedSignup?.integration;
   const isWhatsappConnected = integration?.status === "connected";
@@ -323,40 +389,72 @@ export default function WhatsappConnectionsPage() {
     saveEmbeddedSignup.isPending ||
     resetEmbeddedSignup.isPending;
   const isMetaTestBusy = runMetaTestCalls.isPending;
-  const hostedRedirectUri = typeof window !== "undefined"
-    ? `${window.location.origin}${window.location.pathname}`
-    : "https://www.grupoup-dash.com.br/whatsapp/conexoes";
-  const metaHostedConnectionUrl = buildMetaHostedSignupUrl(
-    embeddedSignup?.facebook.appId,
-    embeddedSignup?.facebook.configId,
-    hostedRedirectUri,
-  );
-
   useEffect(() => {
-    if (!clientId || processedHostedReturnRef.current) return;
-    const params = readMetaHostedReturnParams();
-    if (!params) return;
+    const handleMessage = (event: MessageEvent) => {
+      if (!["https://www.facebook.com", "https://web.facebook.com"].includes(event.origin)) return;
+      const session = parseEmbeddedSignupMessage(event.data);
+      if (!session) return;
 
-    processedHostedReturnRef.current = true;
+      sessionInfoRef.current = session;
+      persistEmbeddedSignupIfReady();
+    };
 
-    if (params.error) {
-      setSignupError(params.error);
-      window.history.replaceState({}, "", hostedRedirectUri);
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [persistEmbeddedSignupIfReady]);
+
+  const launchEmbeddedSignup = async () => {
+    setSignupError(null);
+    sessionInfoRef.current = null;
+    signupCodeRef.current = null;
+    saveAttemptedRef.current = false;
+
+    const facebook = embeddedSignup?.facebook;
+    if (!facebook?.appId || !facebook.configId) {
+      setSignupError("Configure WHATSAPP_EMBEDDED_SIGNUP_APP_ID e WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID na Vercel antes de iniciar o fluxo.");
       return;
     }
 
-    saveEmbeddedSignup.mutate({
-      clientId,
-      code: params.code,
-      redirectUri: hostedRedirectUri,
-      businessId: params.businessId,
-      wabaId: params.wabaId,
-      phoneNumberId: params.phoneNumberId,
-      event: params.event ?? "META_HOSTED_REDIRECT",
-      rawPayload: params.rawPayload,
-    });
-    window.history.replaceState({}, "", hostedRedirectUri);
-  }, [clientId, hostedRedirectUri, saveEmbeddedSignup]);
+    try {
+      await loadFacebookSdk(facebook.appId, facebook.graphApiVersion);
+
+      window.FB?.login(
+        (response) => {
+          const code = response.authResponse?.code ?? null;
+          if (!code) {
+            setSignupError("A Meta não retornou o code de autenticação. Refaça a conexão pelo botão Conectar com Meta.");
+            return;
+          }
+
+          signupCodeRef.current = code;
+          persistEmbeddedSignupIfReady();
+
+          window.setTimeout(() => {
+            if (!saveAttemptedRef.current && !sessionInfoRef.current) {
+              setSignupError(
+                "A Meta retornou o code, mas não enviou a sessão com WABA/Phone Number ID. Reabra pelo botão Conectar com Meta e conclua até a tela final.",
+              );
+            }
+          }, 5000);
+        },
+        {
+          config_id: facebook.configId,
+          scope: "public_profile,business_management,whatsapp_business_management,whatsapp_business_messaging",
+          return_scopes: true,
+          response_type: "code",
+          override_default_response_type: true,
+          extras: {
+            feature: "whatsapp_embedded_signup",
+            version: "v4",
+            sessionInfoVersion: "3",
+            featureType: "whatsapp_business_app_onboarding",
+          },
+        },
+      );
+    } catch (error) {
+      setSignupError(error instanceof Error ? error.message : "Não foi possível abrir o Embedded Signup da Meta.");
+    }
+  };
 
   return (
     <div className="space-y-4" data-testid="page-whatsapp-connections">
@@ -373,19 +471,10 @@ export default function WhatsappConnectionsPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {metaHostedConnectionUrl ? (
-                <Button asChild disabled={isSignupBusy}>
-                  <a href={metaHostedConnectionUrl}>
-                    <ExternalLink className="mr-2 h-4 w-4" />
-                    Conectar com Meta
-                  </a>
-                </Button>
-              ) : (
-                <Button disabled>
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Conectar com Meta
-                </Button>
-              )}
+              <Button onClick={launchEmbeddedSignup} disabled={!embeddedSignup?.facebook.isConfigured || isSignupBusy}>
+                <MessageCircle className="mr-2 h-4 w-4" />
+                Conectar com Meta
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => runMetaTestCalls.mutate()}
@@ -583,19 +672,10 @@ export default function WhatsappConnectionsPage() {
                 <Webhook className="mr-2 h-4 w-4" />
                 Ativar webhook no WABA
               </Button>
-              {metaHostedConnectionUrl ? (
-                <Button asChild disabled={isSignupBusy}>
-                  <a href={metaHostedConnectionUrl}>
-                    <ExternalLink className="mr-2 h-4 w-4" />
-                    Conectar com Meta
-                  </a>
-                </Button>
-              ) : (
-                <Button disabled>
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Conectar com Meta
-                </Button>
-              )}
+              <Button onClick={launchEmbeddedSignup} disabled={!embeddedSignup?.facebook.isConfigured || isSignupBusy}>
+                <MessageCircle className="mr-2 h-4 w-4" />
+                Conectar com Meta
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -610,19 +690,10 @@ export default function WhatsappConnectionsPage() {
                 Conecte o WhatsApp pelo Embedded Signup e sincronize os telefones do WABA.
               </p>
               <div className="mt-4 flex justify-center gap-2">
-                {metaHostedConnectionUrl ? (
-                  <Button asChild disabled={isSignupBusy}>
-                    <a href={metaHostedConnectionUrl}>
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      Conectar com Meta
-                    </a>
-                  </Button>
-                ) : (
-                  <Button disabled>
-                    <ExternalLink className="mr-2 h-4 w-4" />
-                    Conectar com Meta
-                  </Button>
-                )}
+                <Button onClick={launchEmbeddedSignup} disabled={!embeddedSignup?.facebook.isConfigured || isSignupBusy}>
+                  <MessageCircle className="mr-2 h-4 w-4" />
+                  Conectar com Meta
+                </Button>
                 <Button variant="outline" onClick={() => syncNumbers.mutate()} disabled={syncNumbers.isPending || isFetching}>
                   <RefreshCw className={`mr-2 h-4 w-4 ${syncNumbers.isPending ? "animate-spin" : ""}`} />
                   Sincronizar
