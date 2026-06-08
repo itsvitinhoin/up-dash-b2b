@@ -14,6 +14,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock3,
+  Info,
   MessageCircle,
   MessageSquareReply,
   Send,
@@ -48,6 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { customFetch } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
@@ -110,6 +112,30 @@ const FUNNEL_COLORS = [
   "#ef4444",
 ];
 
+const KPI_INFO: Record<string, string> = {
+  "Total de conversas": "Quantidade de conversas iniciadas no período e número selecionados.",
+  "Novos leads": "Conversas de contatos que ainda não possuem pedido vinculado no dashboard.",
+  "Leads recorrentes": "Conversas de contatos cujo telefone cruza com clientes que já têm pedido no dashboard.",
+  "Mensagens recebidas": "Total de mensagens inbound recebidas no período e número selecionados.",
+  "Mensagens enviadas": "Total de mensagens outbound enviadas pelo número conectado no período.",
+  "Tempo 1ª resposta": "Média entre a primeira mensagem recebida e a primeira resposta enviada.",
+  "SLA cumprido": `Percentual de conversas respondidas em até ${SLA_MINUTES} minutos.`,
+  "Leads sem resposta": "Conversas sem primeira resposta enviada pelo atendimento.",
+  "Aguardando resposta": "Conversas cujo status atual indica que o cliente está aguardando retorno.",
+  Encerradas: "Conversas finalizadas no período filtrado.",
+  Perdidas: "Conversas marcadas como perdidas, incluindo perda automática após 24h sem resposta do lead.",
+};
+
+const FUNNEL_STAGE_INFO: Record<WhatsappFunnelStage, string> = {
+  new_lead: "Todo contato que iniciou uma conversa no período entra como novo lead.",
+  in_service: "Lead que recebeu resposta, está em atendimento ou avançou para qualquer etapa posterior.",
+  qualified: "Lead qualificado quando cruza com cliente CNPJ no dashboard ou quando envia CNPJ na conversa.",
+  catalog_sent: "Lead para quem o atendimento enviou um link de site/catálogo pela conversa.",
+  negotiation: "Lead com intenção comercial detectada por termos como valor, frete, tamanho, cor, separar ou pedido.",
+  closed: "Conversa encerrada pelo fluxo ou pelo atendimento.",
+  lost: "Conversa perdida, incluindo casos em que o atendimento respondeu e o lead ficou 24h sem retornar.",
+};
+
 function formatNumber(value: number) {
   return value.toLocaleString("pt-BR");
 }
@@ -165,11 +191,13 @@ function KpiCard({
   label,
   value,
   icon: Icon,
+  info,
   tone = "primary",
 }: {
   label: string;
   value: string;
   icon: React.ComponentType<{ className?: string }>;
+  info?: string;
   tone?: "primary" | "green" | "amber" | "red" | "blue";
 }) {
   const toneClass = {
@@ -184,9 +212,27 @@ function KpiCard({
     <Card className="bg-card border-border">
       <CardContent className="p-4">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-            {label}
-          </p>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="truncate text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+              {label}
+            </p>
+            {info && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={`Explicação: ${label}`}
+                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs bg-popover text-popover-foreground">
+                  {info}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
           <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", toneClass)}>
             <Icon className="h-4 w-4" />
           </span>
@@ -402,6 +448,7 @@ export default function WhatsappPage() {
     if (id === "month") setDateRange({ from: startOfMonth(today), to: endOfMonth(today) });
   };
   return (
+    <TooltipProvider delayDuration={150}>
     <div className="space-y-6" data-testid="page-whatsapp">
       <Card>
         <CardHeader className="gap-3">
@@ -469,17 +516,17 @@ export default function WhatsappPage() {
       </Card>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-        <KpiCard label="Total de conversas" value={formatNumber(kpis.total)} icon={MessageCircle} />
-        <KpiCard label="Novos leads" value={formatNumber(kpis.newLeads)} icon={Users} tone="blue" />
-        <KpiCard label="Leads recorrentes" value={formatNumber(kpis.returningLeads)} icon={UserCheck} tone="green" />
-        <KpiCard label="Mensagens recebidas" value={formatNumber(kpis.received)} icon={MessageSquareReply} />
-        <KpiCard label="Mensagens enviadas" value={formatNumber(kpis.sent)} icon={Send} />
-        <KpiCard label="Tempo 1ª resposta" value={formatMinutes(kpis.avgFirstResponse)} icon={Timer} tone="amber" />
-        <KpiCard label="SLA cumprido" value={formatPercent(kpis.sla)} icon={CheckCircle2} tone="green" />
-        <KpiCard label="Leads sem resposta" value={formatNumber(kpis.noResponse)} icon={AlertCircle} tone="red" />
-        <KpiCard label="Aguardando resposta" value={formatNumber(kpis.awaiting)} icon={Clock3} tone="amber" />
-        <KpiCard label="Encerradas" value={formatNumber(kpis.closed)} icon={CheckCircle2} tone="green" />
-        <KpiCard label="Perdidas" value={formatNumber(kpis.lost)} icon={XCircle} tone="red" />
+        <KpiCard label="Total de conversas" value={formatNumber(kpis.total)} icon={MessageCircle} info={KPI_INFO["Total de conversas"]} />
+        <KpiCard label="Novos leads" value={formatNumber(kpis.newLeads)} icon={Users} tone="blue" info={KPI_INFO["Novos leads"]} />
+        <KpiCard label="Leads recorrentes" value={formatNumber(kpis.returningLeads)} icon={UserCheck} tone="green" info={KPI_INFO["Leads recorrentes"]} />
+        <KpiCard label="Mensagens recebidas" value={formatNumber(kpis.received)} icon={MessageSquareReply} info={KPI_INFO["Mensagens recebidas"]} />
+        <KpiCard label="Mensagens enviadas" value={formatNumber(kpis.sent)} icon={Send} info={KPI_INFO["Mensagens enviadas"]} />
+        <KpiCard label="Tempo 1ª resposta" value={formatMinutes(kpis.avgFirstResponse)} icon={Timer} tone="amber" info={KPI_INFO["Tempo 1ª resposta"]} />
+        <KpiCard label="SLA cumprido" value={formatPercent(kpis.sla)} icon={CheckCircle2} tone="green" info={KPI_INFO["SLA cumprido"]} />
+        <KpiCard label="Leads sem resposta" value={formatNumber(kpis.noResponse)} icon={AlertCircle} tone="red" info={KPI_INFO["Leads sem resposta"]} />
+        <KpiCard label="Aguardando resposta" value={formatNumber(kpis.awaiting)} icon={Clock3} tone="amber" info={KPI_INFO["Aguardando resposta"]} />
+        <KpiCard label="Encerradas" value={formatNumber(kpis.closed)} icon={CheckCircle2} tone="green" info={KPI_INFO.Encerradas} />
+        <KpiCard label="Perdidas" value={formatNumber(kpis.lost)} icon={XCircle} tone="red" info={KPI_INFO.Perdidas} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -586,7 +633,23 @@ export default function WhatsappPage() {
             {funnelRows.map((row) => (
               <div key={row.stage} className="space-y-1.5">
                 <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="text-muted-foreground">{row.label}</span>
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    {row.label}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label={`Explicação: ${row.label}`}
+                          className="inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:text-foreground"
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs bg-popover text-popover-foreground">
+                        {FUNNEL_STAGE_INFO[row.stage]}
+                      </TooltipContent>
+                    </Tooltip>
+                  </span>
                   <span className="font-mono tabular-nums">{formatNumber(row.count)} · {formatPercent(row.advanceRate)}</span>
                 </div>
                 <div className="h-2 rounded-full bg-muted">
@@ -699,5 +762,6 @@ export default function WhatsappPage() {
         </CardContent>
       </Card>
     </div>
+    </TooltipProvider>
   );
 }
