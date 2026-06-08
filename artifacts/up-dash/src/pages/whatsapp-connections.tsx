@@ -555,32 +555,9 @@ export default function WhatsappConnectionsPage() {
       return;
     }
 
-    if (!facebook?.appId) {
-      setSignupError("Configure WHATSAPP_SYSTEM_USER_ACCESS_TOKEN ou WHATSAPP_EMBEDDED_SIGNUP_APP_ID na Vercel antes de buscar contas existentes.");
-      return;
-    }
-
-    try {
-      await loadFacebookSdk(facebook.appId, facebook.graphApiVersion);
-      window.FB?.login(
-        (response) => {
-          const code = response.authResponse?.code ?? null;
-          if (!code) {
-            setSignupError("A Meta não retornou um code para buscar as contas existentes. Tente autenticar novamente.");
-            return;
-          }
-          discoverExistingAccounts.mutate(code);
-        },
-        {
-          scope: "public_profile,business_management,whatsapp_business_management,whatsapp_business_messaging",
-          return_scopes: true,
-          response_type: "code",
-          override_default_response_type: true,
-        },
-      );
-    } catch (error) {
-      setSignupError(error instanceof Error ? error.message : "Não foi possível abrir o login da Meta.");
-    }
+    setSignupError(
+      "Para buscar contas WhatsApp existentes da BM, configure WHATSAPP_SYSTEM_USER_ACCESS_TOKEN no Vercel. Esse fluxo não usa login com code.",
+    );
   };
 
   const connectedIntegrations = data?.integrations.filter(Boolean) ?? [];
@@ -593,9 +570,7 @@ export default function WhatsappConnectionsPage() {
     discoverExistingAccounts.isPending;
   const isMetaTestBusy = runMetaTestCalls.isPending;
   const canLaunchEmbeddedSignup = Boolean(embeddedSignup?.facebook.isConfigured && clientId);
-  const canDiscoverExistingAccounts = Boolean(
-    clientId && (embeddedSignup?.facebook.hasSystemUserToken || embeddedSignup?.facebook.appId),
-  );
+  const canDiscoverExistingAccounts = Boolean(clientId);
   const metaHostedSignupUrl = buildMetaHostedSignupUrl(
     embeddedSignup?.facebook.appId,
     embeddedSignup?.facebook.configId,

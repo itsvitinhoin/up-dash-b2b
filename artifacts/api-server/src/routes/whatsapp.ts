@@ -1088,35 +1088,23 @@ router.post("/whatsapp/connections/discover-existing", async (req, res): Promise
   }
 
   const systemUserAccessToken = getWhatsappSystemUserAccessToken();
-  const token = systemUserAccessToken
-    ? {
-        accessToken: systemUserAccessToken,
-        tokenType: "system_user",
-        tokenExpiresAt: null,
-        error: null,
-      }
-    : parsed.data.code
-      ? await exchangeEmbeddedSignupCode(
-          parsed.data.code,
-          getWhatsappEmbeddedSignupAppId(),
-          getMetaAppSecret(),
-        )
-      : {
-          accessToken: null,
-          tokenType: null,
-          tokenExpiresAt: null,
-          error: "Configure WHATSAPP_SYSTEM_USER_ACCESS_TOKEN ou autentique com a Meta para buscar contas existentes.",
-        };
-
-  if (!token.accessToken) {
-    res.status(422).json({
+  if (!systemUserAccessToken) {
+    res.status(409).json({
       error: true,
-      code: "META_CODE_EXCHANGE_FAILED",
-      message: token.error ?? "A Meta não retornou um token para descobrir contas existentes.",
-      status: 422,
+      code: "WHATSAPP_SYSTEM_USER_TOKEN_REQUIRED",
+      message:
+        "Para buscar contas WhatsApp existentes da BM, configure WHATSAPP_SYSTEM_USER_ACCESS_TOKEN no Vercel. Esse fluxo não usa code do Facebook Login.",
+      status: 409,
     });
     return;
   }
+
+  const token: TokenExchangeResult = {
+    accessToken: systemUserAccessToken,
+    tokenType: "system_user",
+    tokenExpiresAt: null,
+    error: null,
+  };
 
   const errors: string[] = [];
   const configuredBusinessIds = getWhatsappDiscoveryBusinessIds();
