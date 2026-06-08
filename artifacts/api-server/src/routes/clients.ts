@@ -26,6 +26,7 @@ import { authenticate, requireAdmin } from "../middlewares/auth";
 import { syncUpZeroClient } from "../services/upzero-sync";
 import { syncNuvemshopClient } from "../services/nuvemshop-sync";
 import { fetchMetaAdAccounts, normalizeMetaAdAccountId } from "../services/meta-ads";
+import { fetchGa4FunnelMetrics } from "../services/ga4";
 import { hashPassword } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -76,6 +77,10 @@ function coerceClientsQuery(query: Record<string, unknown>): Record<string, unkn
     }
   }
   return out;
+}
+
+function toGa4Date(value: Date): string {
+  return value.toISOString().slice(0, 10);
 }
 
 router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
@@ -267,11 +272,35 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
       });
     }
 
+    const ga4SessionsByClientId = new Map<string, number>();
+    const ga4Clients = rows.filter((r) => r.dashboardType === "B2C" && r.ga4PropertyId);
+    if (ga4Clients.length > 0) {
+      const ga4Results = await Promise.allSettled(
+        ga4Clients.map(async (client) => {
+          const metrics = await fetchGa4FunnelMetrics({
+            propertyId: client.ga4PropertyId,
+            dateFrom: toGa4Date(dateFrom),
+            dateTo: toGa4Date(dateTo),
+          });
+          return [client.id, metrics?.sessions ?? 0] as const;
+        }),
+      );
+      for (const result of ga4Results) {
+        if (result.status === "fulfilled") {
+          ga4SessionsByClientId.set(result.value[0], result.value[1]);
+        } else {
+          console.warn("[clients] Failed to load GA4 sessions for B2C client", result.reason);
+        }
+      }
+    }
+
     enriched = rows.map((r) => {
       const c = curr.get(r.id) ?? { revenue: 0, orders: 0 };
       const p = prev.get(r.id) ?? { revenue: 0, orders: 0 };
       const regs = registrations.get(r.id) ?? { totalLeads: 0, approvedLeads: 0 };
       const m = mkt.get(r.id) ?? null;
+      const isB2C = r.dashboardType === "B2C";
+      const ga4Sessions = ga4SessionsByClientId.get(r.id) ?? null;
       let growthPct: number | null;
       if (p.revenue > 0) {
         growthPct = ((c.revenue - p.revenue) / p.revenue) * 100;
@@ -285,11 +314,21 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
         revenueYtd: c.revenue,
         ordersYtd: c.orders,
         avgOrderValue: c.orders > 0 ? c.revenue / c.orders : 0,
-        conversionRate: regs.approvedLeads > 0 ? (c.orders / regs.approvedLeads) * 100 : 0,
+        conversionRate: isB2C
+          ? ga4Sessions && ga4Sessions > 0
+            ? (c.orders / ga4Sessions) * 100
+            : 0
+          : regs.approvedLeads > 0
+            ? (c.orders / regs.approvedLeads) * 100
+            : 0,
         periodGrowthPct: growthPct,
         periodRoas: m && m.adSpend > 0 ? c.revenue / m.adSpend : null,
-        periodLeads: regs.totalLeads,
-        periodApprovalRate: regs.totalLeads > 0 ? (regs.approvedLeads / regs.totalLeads) * 100 : null,
+        periodLeads: isB2C ? c.orders : regs.totalLeads,
+        periodApprovalRate: isB2C
+          ? ga4Sessions
+          : regs.totalLeads > 0
+            ? (regs.approvedLeads / regs.totalLeads) * 100
+            : null,
       };
     });
   }

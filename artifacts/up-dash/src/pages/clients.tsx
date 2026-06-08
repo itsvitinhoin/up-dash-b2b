@@ -1769,8 +1769,12 @@ export default function ClientsPage() {
                   <TableHead className="text-right">Conv. %</TableHead>
                   <TableHead className="text-right">Growth</TableHead>
                   <TableHead className="text-right">ROAS</TableHead>
-                  <TableHead className="text-right">Leads</TableHead>
-                  <TableHead className="text-right">Approval</TableHead>
+                  <TableHead className="text-right">
+                    {selectedDashboardMode === "B2C" ? "Qtd de Compras" : "Leads"}
+                  </TableHead>
+                  <TableHead className="text-right">
+                    {selectedDashboardMode === "B2C" ? "Sessões (GA4)" : "Approval"}
+                  </TableHead>
                   <TableHead className="text-right">Created</TableHead>
                   <TableHead />
                 </TableRow>
@@ -1881,7 +1885,9 @@ export default function ClientsPage() {
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {client.periodApprovalRate !== undefined && client.periodApprovalRate !== null
-                          ? formatPercentage(client.periodApprovalRate)
+                          ? client.dashboardType === "B2C"
+                            ? formatNumber(client.periodApprovalRate)
+                            : formatPercentage(client.periodApprovalRate)
                           : "—"}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground tabular-nums">
