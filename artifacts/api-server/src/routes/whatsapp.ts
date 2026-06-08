@@ -2565,6 +2565,7 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
         parsed.data.code,
         appId,
         getMetaAppSecret(),
+        parsed.data.redirectUri,
       )
     : {
         accessToken: null,

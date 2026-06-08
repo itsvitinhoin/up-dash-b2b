@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   AlertCircle,
-  Building2,
   CheckCircle2,
   Copy,
   ExternalLink,
@@ -12,7 +11,6 @@ import {
   PlayCircle,
   PlugZap,
   RefreshCw,
-  Search,
   Send,
   Settings,
   ShieldCheck,
@@ -27,44 +25,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-
-declare global {
-  interface Window {
-    FB?: {
-      init: (options: {
-        appId: string;
-        cookie?: boolean;
-        xfbml?: boolean;
-        version: string;
-      }) => void;
-      login: (
-        callback: (response: FacebookLoginResponse) => void,
-        options: Record<string, unknown>,
-      ) => void;
-    };
-    fbAsyncInit?: () => void;
-  }
-}
-
-type FacebookLoginResponse = {
-  authResponse?: {
-    code?: string;
-  };
-  status?: string;
-};
-
-type WhatsappEmbeddedSignupSession = {
-  type?: string;
-  event?: string;
-  data?: {
-    business_id?: string;
-    waba_id?: string;
-    phone_number_id?: string;
-  };
-};
 
 type WhatsappEmbeddedSignupResponse = {
   client: {
@@ -148,103 +109,13 @@ type WhatsappConnectionsResponse = {
   phoneNumbers: WhatsappPhoneNumber[];
 };
 
-type ImportExistingNumberResponse = {
-  ok: boolean;
-  phoneNumber: WhatsappPhoneNumber | null;
-};
-
-type ImportExistingNumberPayload = {
-  wabaId: string;
-  phoneNumberId: string;
-  displayPhoneNumber?: string | null;
-  verifiedName?: string | null;
-  accessToken?: string | null;
-};
-
-type ExistingWhatsappBusiness = {
-  id: string;
-  name: string | null;
-};
-
-type ExistingWhatsappPhoneNumber = {
-  id: string;
-  displayPhoneNumber: string | null;
-  verifiedName: string | null;
-  qualityRating: string | null;
-  platformType: string | null;
-  codeVerificationStatus: string | null;
-};
-
-type ExistingWhatsappWaba = {
-  id: string;
-  name: string | null;
-  businessId: string;
-  businessName: string | null;
-  ownership: "owned" | "client";
-  currency: string | null;
-  timezoneId: string | null;
-  phoneNumbers: ExistingWhatsappPhoneNumber[];
-  phoneNumbersError: string | null;
-};
-
-type DiscoverExistingAccountsResponse = {
-  ok: boolean;
-  integration: WhatsappEmbeddedSignupResponse["integration"];
-  businesses: ExistingWhatsappBusiness[];
-  wabas: ExistingWhatsappWaba[];
-  errors: string[];
-};
-
-type EmbeddedSignupMode = "standard" | "business_app_onboarding";
-
 function dateLabel(value: string | null) {
   return value ? format(new Date(value), "dd/MM/yyyy HH:mm") : "-";
-}
-
-function loadFacebookSdk(appId: string, version: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.FB) {
-      window.FB.init({ appId, cookie: true, xfbml: true, version });
-      resolve();
-      return;
-    }
-
-    window.fbAsyncInit = () => {
-      window.FB?.init({ appId, cookie: true, xfbml: true, version });
-      resolve();
-    };
-
-    if (document.getElementById("facebook-jssdk")) return;
-
-    const script = document.createElement("script");
-    script.id = "facebook-jssdk";
-    script.async = true;
-    script.defer = true;
-    script.crossOrigin = "anonymous";
-    script.src = "https://connect.facebook.net/pt_BR/sdk.js";
-    script.onerror = () => reject(new Error("Não foi possível carregar o Facebook SDK."));
-    document.body.appendChild(script);
-  });
-}
-
-function parseEmbeddedSignupMessage(value: unknown): WhatsappEmbeddedSignupSession | null {
-  const data = typeof value === "string" ? (() => {
-    try {
-      return JSON.parse(value) as unknown;
-    } catch {
-      return null;
-    }
-  })() : value;
-
-  if (!data || typeof data !== "object") return null;
-  const maybe = data as WhatsappEmbeddedSignupSession;
-  return maybe.type === "WA_EMBEDDED_SIGNUP" ? maybe : null;
 }
 
 function buildMetaHostedSignupUrl(
   appId?: string | null,
   configId?: string | null,
-  mode: EmbeddedSignupMode = "standard",
   redirectUri?: string | null,
 ): string | null {
   if (!appId || !configId) return null;
@@ -256,13 +127,40 @@ function buildMetaHostedSignupUrl(
     JSON.stringify({
       version: "v4",
       sessionInfoVersion: "3",
-      ...(mode === "business_app_onboarding"
-        ? { featureType: "whatsapp_business_app_onboarding" }
-        : {}),
+      featureType: "whatsapp_business_app_onboarding",
     }),
   );
   if (redirectUri) url.searchParams.set("redirect_uri", redirectUri);
   return url.toString();
+}
+
+function readMetaHostedReturnParams() {
+  if (typeof window === "undefined") return null;
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const value = (key: string) => searchParams.get(key) ?? hashParams.get(key);
+  const code = value("code");
+  const businessId = value("business_id");
+  const wabaId = value("waba_id");
+  const phoneNumberId = value("phone_number_id");
+  const event = value("event");
+  const error = value("error") ?? value("error_message") ?? value("error_description");
+
+  if (!code && !businessId && !wabaId && !phoneNumberId && !event && !error) return null;
+
+  return {
+    code,
+    businessId,
+    wabaId,
+    phoneNumberId,
+    event,
+    error,
+    rawPayload: {
+      source: "meta_hosted_whatsapp_onboarding",
+      search: Object.fromEntries(searchParams.entries()),
+      hash: Object.fromEntries(hashParams.entries()),
+    },
+  };
 }
 
 function qualityLabel(value: string | null) {
@@ -282,19 +180,8 @@ export default function WhatsappConnectionsPage() {
   const queryClient = useQueryClient();
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
   const [signupError, setSignupError] = useState<string | null>(null);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importResult, setImportResult] = useState<ImportExistingNumberResponse | null>(null);
-  const [discoveryResult, setDiscoveryResult] = useState<DiscoverExistingAccountsResponse | null>(null);
-  const [importForm, setImportForm] = useState({
-    wabaId: "",
-    phoneNumberId: "",
-    displayPhoneNumber: "",
-    verifiedName: "",
-    accessToken: "",
-  });
   const [metaTestResult, setMetaTestResult] = useState<MetaPermissionTestResponse | null>(null);
-  const sessionInfoRef = useRef<WhatsappEmbeddedSignupSession | null>(null);
-  const signupCodeRef = useRef<string | null>(null);
+  const processedHostedReturnRef = useRef(false);
 
   const connectionsQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -352,8 +239,6 @@ export default function WhatsappConnectionsPage() {
       }),
     onSuccess: () => {
       setSignupError(null);
-      sessionInfoRef.current = null;
-      signupCodeRef.current = null;
       void queryClient.invalidateQueries({ queryKey: connectionsKey });
       void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
     },
@@ -386,69 +271,6 @@ export default function WhatsappConnectionsPage() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: connectionsKey });
-    },
-  });
-
-  const discoverExistingAccounts = useMutation({
-    mutationFn: (code?: string | null) =>
-      customFetch<DiscoverExistingAccountsResponse>("/api/whatsapp/connections/discover-existing", {
-        method: "POST",
-        body: JSON.stringify({
-          clientId,
-          code: code ?? null,
-        }),
-      }),
-    onSuccess: (payload) => {
-      setSignupError(null);
-      setImportError(null);
-      setDiscoveryResult(payload);
-      void queryClient.invalidateQueries({ queryKey: connectionsKey });
-      void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
-    },
-    onError: (error) => {
-      setDiscoveryResult(null);
-      setSignupError(error instanceof Error ? error.message : "Não foi possível buscar contas existentes na Meta.");
-    },
-  });
-
-  const importExistingNumber = useMutation({
-    mutationFn: (payload?: Partial<ImportExistingNumberPayload>) => {
-      const source = {
-        wabaId: importForm.wabaId,
-        phoneNumberId: importForm.phoneNumberId,
-        displayPhoneNumber: importForm.displayPhoneNumber,
-        verifiedName: importForm.verifiedName,
-        accessToken: importForm.accessToken,
-        ...payload,
-      };
-
-      return customFetch<ImportExistingNumberResponse>("/api/whatsapp/connections/import-existing", {
-        method: "POST",
-        body: JSON.stringify({
-          clientId,
-          wabaId: source.wabaId,
-          phoneNumberId: source.phoneNumberId,
-          displayPhoneNumber: source.displayPhoneNumber || null,
-          verifiedName: source.verifiedName || null,
-          accessToken: source.accessToken || null,
-        }),
-      });
-    },
-    onSuccess: (payload) => {
-      setImportError(null);
-      setImportResult(payload);
-      setImportForm((current) => ({
-        ...current,
-        phoneNumberId: "",
-        displayPhoneNumber: "",
-        verifiedName: "",
-      }));
-      void queryClient.invalidateQueries({ queryKey: connectionsKey });
-      void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
-    },
-    onError: (error) => {
-      setImportResult(null);
-      setImportError(error instanceof Error ? error.message : "Não foi possível importar o número existente.");
     },
   });
 
@@ -488,110 +310,9 @@ export default function WhatsappConnectionsPage() {
     },
   });
 
-  const persistEmbeddedSignup = useCallback((code?: string | null, session?: WhatsappEmbeddedSignupSession | null) => {
-    const sessionData = session?.data;
-    saveEmbeddedSignup.mutate({
-      clientId,
-      code: code ?? signupCodeRef.current,
-      redirectUri: null,
-      businessId: sessionData?.business_id ?? null,
-      wabaId: sessionData?.waba_id ?? null,
-      phoneNumberId: sessionData?.phone_number_id ?? null,
-      event: session?.event ?? null,
-      rawPayload: session ?? null,
-    });
-  }, [clientId, saveEmbeddedSignup]);
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (!["https://www.facebook.com", "https://web.facebook.com"].includes(event.origin)) return;
-      const session = parseEmbeddedSignupMessage(event.data);
-      if (!session) return;
-      sessionInfoRef.current = session;
-      if (signupCodeRef.current || session.event === "FINISH") {
-        persistEmbeddedSignup(signupCodeRef.current, session);
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [persistEmbeddedSignup]);
-
   const copyCallback = async () => {
     if (!data?.callbackUrl) return;
     await navigator.clipboard.writeText(data.callbackUrl);
-  };
-
-  const launchEmbeddedSignup = async (mode: EmbeddedSignupMode = "standard") => {
-    setSignupError(null);
-    sessionInfoRef.current = null;
-    signupCodeRef.current = null;
-    const facebook = embeddedSignup?.facebook;
-    if (!facebook?.appId || !facebook.configId) {
-      setSignupError("Configure WHATSAPP_EMBEDDED_SIGNUP_APP_ID e WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID na Vercel antes de iniciar o fluxo.");
-      return;
-    }
-
-    try {
-      await loadFacebookSdk(facebook.appId, facebook.graphApiVersion);
-      const businessName = embeddedSignup?.client.name ?? "Cliente UP Dash";
-      const extras: Record<string, unknown> =
-        mode === "business_app_onboarding"
-          ? {
-              feature: "whatsapp_embedded_signup",
-              version: "v4",
-              sessionInfoVersion: "3",
-              featureType: "whatsapp_business_app_onboarding",
-            }
-          : {
-              feature: "whatsapp_embedded_signup",
-              version: "v4",
-              sessionInfoVersion: "3",
-              setup: {
-                business: {
-                  name: businessName,
-                },
-              },
-            };
-
-      const loginOptions: Record<string, unknown> = {
-        config_id: facebook.configId,
-        scope: "public_profile,business_management,whatsapp_business_management,whatsapp_business_messaging",
-        return_scopes: true,
-        response_type: "code",
-        override_default_response_type: true,
-        extras,
-      };
-
-      if (mode === "business_app_onboarding") {
-        loginOptions.auth_type = "rerequest";
-      }
-
-      window.FB?.login(
-        (response) => {
-          const code = response.authResponse?.code ?? null;
-          signupCodeRef.current = code;
-          persistEmbeddedSignup(code, sessionInfoRef.current);
-        },
-        loginOptions,
-      );
-    } catch (error) {
-      setSignupError(error instanceof Error ? error.message : "Não foi possível abrir o Embedded Signup da Meta.");
-    }
-  };
-
-  const launchExistingAccountDiscovery = async () => {
-    setSignupError(null);
-    setImportError(null);
-    const facebook = embeddedSignup?.facebook;
-    if (facebook?.hasSystemUserToken) {
-      discoverExistingAccounts.mutate(null);
-      return;
-    }
-
-    setSignupError(
-      "Para buscar contas WhatsApp existentes da BM, configure WHATSAPP_SYSTEM_USER_ACCESS_TOKEN no Vercel. Esse fluxo não usa login com code.",
-    );
   };
 
   const connectedIntegrations = data?.integrations.filter(Boolean) ?? [];
@@ -600,26 +321,42 @@ export default function WhatsappConnectionsPage() {
   const isSignupBusy =
     isLoadingEmbeddedSignup ||
     saveEmbeddedSignup.isPending ||
-    resetEmbeddedSignup.isPending ||
-    discoverExistingAccounts.isPending;
+    resetEmbeddedSignup.isPending;
   const isMetaTestBusy = runMetaTestCalls.isPending;
-  const canLaunchEmbeddedSignup = Boolean(embeddedSignup?.facebook.isConfigured && clientId);
-  const canDiscoverExistingAccounts = Boolean(clientId);
   const hostedRedirectUri = typeof window !== "undefined"
-    ? `${window.location.origin}/whatsapp/conexoes`
+    ? `${window.location.origin}${window.location.pathname}`
     : "https://www.grupoup-dash.com.br/whatsapp/conexoes";
-  const metaHostedSignupUrl = buildMetaHostedSignupUrl(
+  const metaHostedConnectionUrl = buildMetaHostedSignupUrl(
     embeddedSignup?.facebook.appId,
     embeddedSignup?.facebook.configId,
-    "standard",
     hostedRedirectUri,
   );
-  const metaHostedCoexistenceUrl = buildMetaHostedSignupUrl(
-    embeddedSignup?.facebook.appId,
-    embeddedSignup?.facebook.configId,
-    "business_app_onboarding",
-    hostedRedirectUri,
-  );
+
+  useEffect(() => {
+    if (!clientId || processedHostedReturnRef.current) return;
+    const params = readMetaHostedReturnParams();
+    if (!params) return;
+
+    processedHostedReturnRef.current = true;
+
+    if (params.error) {
+      setSignupError(params.error);
+      window.history.replaceState({}, "", hostedRedirectUri);
+      return;
+    }
+
+    saveEmbeddedSignup.mutate({
+      clientId,
+      code: params.code,
+      redirectUri: hostedRedirectUri,
+      businessId: params.businessId,
+      wabaId: params.wabaId,
+      phoneNumberId: params.phoneNumberId,
+      event: params.event ?? "META_HOSTED_REDIRECT",
+      rawPayload: params.rawPayload,
+    });
+    window.history.replaceState({}, "", hostedRedirectUri);
+  }, [clientId, hostedRedirectUri, saveEmbeddedSignup]);
 
   return (
     <div className="space-y-4" data-testid="page-whatsapp-connections">
@@ -636,45 +373,19 @@ export default function WhatsappConnectionsPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {metaHostedSignupUrl && (
-                <Button variant="outline" asChild>
-                  <a href={metaHostedSignupUrl} target="_blank" rel="noopener noreferrer">
+              {metaHostedConnectionUrl ? (
+                <Button asChild disabled={isSignupBusy}>
+                  <a href={metaHostedConnectionUrl}>
                     <ExternalLink className="mr-2 h-4 w-4" />
-                    Página Meta padrão
+                    Conectar com Meta
                   </a>
                 </Button>
-              )}
-              {metaHostedCoexistenceUrl && (
-                <Button variant="outline" asChild>
-                  <a href={metaHostedCoexistenceUrl} target="_blank" rel="noopener noreferrer">
-                    <ExternalLink className="mr-2 h-4 w-4" />
-                    Página Meta número existente
-                  </a>
+              ) : (
+                <Button disabled>
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Conectar com Meta
                 </Button>
               )}
-              <Button
-                onClick={() => launchEmbeddedSignup("standard")}
-                disabled={!canLaunchEmbeddedSignup || isSignupBusy}
-              >
-                <MessageCircle className="mr-2 h-4 w-4" />
-                {isWhatsappConnected ? "Adicionar/atualizar número" : "Conectar com Facebook"}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => launchEmbeddedSignup("business_app_onboarding")}
-                disabled={!canLaunchEmbeddedSignup || isSignupBusy}
-              >
-                <MessageCircle className="mr-2 h-4 w-4" />
-                Conectar número existente
-              </Button>
-              <Button
-                variant="outline"
-                onClick={launchExistingAccountDiscovery}
-                disabled={!canDiscoverExistingAccounts || isSignupBusy}
-              >
-                <Search className={`mr-2 h-4 w-4 ${discoverExistingAccounts.isPending ? "animate-spin" : ""}`} />
-                {discoverExistingAccounts.isPending ? "Buscando..." : "Busca técnica por API"}
-              </Button>
               <Button
                 variant="outline"
                 onClick={() => runMetaTestCalls.mutate()}
@@ -699,10 +410,8 @@ export default function WhatsappConnectionsPage() {
             <MessageCircle className="h-4 w-4" />
             <AlertTitle>Token do cliente via Embedded Signup</AlertTitle>
             <AlertDescription>
-              Use <span className="font-medium">Conectar com Facebook</span> para onboarding padrão de Cloud API.
-              Use <span className="font-medium">Conectar número existente</span> quando o cliente já usa o WhatsApp Business App e precisa autorizar a coexistência.
-              Os botões <span className="font-medium">Página Meta</span> abrem o Zero integration onboarding hospedado pela própria Meta.
-              Em ambos os casos, o token salvo é gerado pelo cliente durante o Embed.
+              Use apenas <span className="font-medium">Conectar com Meta</span>. Esse botão abre o onboarding oficial hospedado pela Meta com a opção de compartilhar
+              uma conta do WhatsApp Business já existente na BM do cliente. O token salvo é sempre gerado pelo próprio cliente durante o fluxo.
             </AlertDescription>
           </Alert>
 
@@ -770,249 +479,6 @@ export default function WhatsappConnectionsPage() {
               </p>
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Smartphone className="h-4 w-4 text-primary" />
-            Importar número existente da BM
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">
-            O caminho recomendado para cliente é o Embedded Signup acima. Use este bloco apenas para validação técnica ou importação assistida por ID/token.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-md border border-primary/20 bg-primary/5 p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h3 className="flex items-center gap-2 text-sm font-semibold">
-                  <Search className="h-4 w-4 text-primary" />
-                  Busca técnica por Graph API
-                </h3>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Para clientes, o token correto vem do Embed concluído por eles. Esta busca usa System User Token somente quando houver acesso técnico explícito no backend.
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                onClick={launchExistingAccountDiscovery}
-                disabled={!canDiscoverExistingAccounts || isSignupBusy}
-              >
-                <Search className={`mr-2 h-4 w-4 ${discoverExistingAccounts.isPending ? "animate-spin" : ""}`} />
-                {discoverExistingAccounts.isPending ? "Buscando na Meta..." : "Buscar contas da BM"}
-              </Button>
-            </div>
-
-            {discoveryResult && (
-              <div className="mt-4 space-y-3">
-                {embeddedSignup?.facebook.hasSystemUserToken && (
-                  <Alert>
-                    <ShieldCheck className="h-4 w-4" />
-                    <AlertTitle>Busca usando System User Token</AlertTitle>
-                    <AlertDescription>
-                      O token fixo está configurado no backend. Nenhum token é exibido no navegador.
-                      {!embeddedSignup.facebook.hasDiscoveryBusinessId
-                        ? " Para System User Token, configure também o Business ID se a Meta não retornar os BMs automaticamente."
-                        : ""}
-                    </AlertDescription>
-                  </Alert>
-                )}
-
-                <div className="grid gap-2 md:grid-cols-3">
-                  <div className="rounded-md border border-border bg-background/70 p-3">
-                    <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">BMs encontradas</p>
-                    <p className="mt-1 text-2xl font-semibold">{discoveryResult.businesses.length}</p>
-                  </div>
-                  <div className="rounded-md border border-border bg-background/70 p-3">
-                    <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">WABAs encontradas</p>
-                    <p className="mt-1 text-2xl font-semibold">{discoveryResult.wabas.length}</p>
-                  </div>
-                  <div className="rounded-md border border-border bg-background/70 p-3">
-                    <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Telefones acessíveis</p>
-                    <p className="mt-1 text-2xl font-semibold">
-                      {discoveryResult.wabas.reduce((sum, waba) => sum + waba.phoneNumbers.length, 0)}
-                    </p>
-                  </div>
-                </div>
-
-                {discoveryResult.errors.length > 0 && (
-                  <Alert>
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertTitle>Alguns ativos não puderam ser lidos</AlertTitle>
-                    <AlertDescription>
-                      <ul className="mt-2 space-y-1">
-                        {discoveryResult.errors.slice(0, 4).map((message) => (
-                          <li key={message} className="text-xs">{message}</li>
-                        ))}
-                      </ul>
-                    </AlertDescription>
-                  </Alert>
-                )}
-
-                {discoveryResult.wabas.length === 0 ? (
-                  <Alert>
-                    <Building2 className="h-4 w-4" />
-                    <AlertTitle>Nenhuma conta de WhatsApp retornada pela Meta</AlertTitle>
-                    <AlertDescription>
-                      A autenticação funcionou, mas o usuário logado não retornou WABAs acessíveis para este app. Confirme se ele tem acesso à BM/WABA e aceitou as permissões de WhatsApp.
-                    </AlertDescription>
-                  </Alert>
-                ) : (
-                  <div className="space-y-3">
-                    {discoveryResult.wabas.map((waba) => (
-                      <div key={`${waba.businessId}-${waba.ownership}-${waba.id}`} className="rounded-md border border-border bg-background/70 p-4">
-                        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h4 className="text-sm font-semibold">{waba.name ?? "WhatsApp Business Account"}</h4>
-                              <Badge variant="outline">{waba.ownership === "owned" ? "Própria" : "Compartilhada"}</Badge>
-                            </div>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              BM: {waba.businessName ?? waba.businessId}
-                            </p>
-                            <p className="mt-1 font-mono text-[11px] text-muted-foreground">WABA ID: {waba.id}</p>
-                          </div>
-                          <Badge variant={waba.phoneNumbers.length > 0 ? "secondary" : "outline"}>
-                            {waba.phoneNumbers.length} número(s)
-                          </Badge>
-                        </div>
-
-                        {waba.phoneNumbersError && (
-                          <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-500">
-                            {waba.phoneNumbersError}
-                          </p>
-                        )}
-
-                        {waba.phoneNumbers.length === 0 ? (
-                          <p className="mt-3 text-xs text-muted-foreground">
-                            Nenhum telefone retornado para esta WABA.
-                          </p>
-                        ) : (
-                          <div className="mt-3 grid gap-2">
-                            {waba.phoneNumbers.map((phoneNumber) => (
-                              <div
-                                key={phoneNumber.id}
-                                className="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3 md:flex-row md:items-center md:justify-between"
-                              >
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-medium">
-                                    {phoneNumber.verifiedName ?? phoneNumber.displayPhoneNumber ?? "Número WhatsApp"}
-                                  </p>
-                                  <p className="mt-1 font-mono text-xs text-muted-foreground">
-                                    {phoneNumber.displayPhoneNumber ?? "-"} · {phoneNumber.id}
-                                  </p>
-                                  <div className="mt-2 flex flex-wrap gap-1">
-                                    <Badge variant="outline">{qualityLabel(phoneNumber.qualityRating)}</Badge>
-                                    {phoneNumber.platformType && <Badge variant="outline">{phoneNumber.platformType}</Badge>}
-                                    {phoneNumber.codeVerificationStatus && (
-                                      <Badge variant="outline">{phoneNumber.codeVerificationStatus}</Badge>
-                                    )}
-                                  </div>
-                                </div>
-                                <Button
-                                  onClick={() => importExistingNumber.mutate({
-                                    wabaId: waba.id,
-                                    phoneNumberId: phoneNumber.id,
-                                    displayPhoneNumber: phoneNumber.displayPhoneNumber,
-                                    verifiedName: phoneNumber.verifiedName,
-                                  })}
-                                  disabled={importExistingNumber.isPending}
-                                >
-                                  <Smartphone className="mr-2 h-4 w-4" />
-                                  Importar este número
-                                </Button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            <div className="space-y-2">
-              <Label>WABA ID</Label>
-              <Input
-                value={importForm.wabaId}
-                onChange={(event) => setImportForm((current) => ({ ...current, wabaId: event.target.value }))}
-                placeholder="Ex: 1681537933040235"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Phone Number ID</Label>
-              <Input
-                value={importForm.phoneNumberId}
-                onChange={(event) => setImportForm((current) => ({ ...current, phoneNumberId: event.target.value }))}
-                placeholder="Ex: 1178128622046297"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Número exibido</Label>
-              <Input
-                value={importForm.displayPhoneNumber}
-                onChange={(event) => setImportForm((current) => ({ ...current, displayPhoneNumber: event.target.value }))}
-                placeholder="Ex: 5511999999999"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Nome verificado</Label>
-              <Input
-                value={importForm.verifiedName}
-                onChange={(event) => setImportForm((current) => ({ ...current, verifiedName: event.target.value }))}
-                placeholder="Ex: CELEB"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Token Meta</Label>
-              <Input
-                value={importForm.accessToken}
-                onChange={(event) => setImportForm((current) => ({ ...current, accessToken: event.target.value }))}
-                placeholder="Opcional se já salvo"
-                type="password"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              onClick={() => importExistingNumber.mutate(undefined)}
-              disabled={
-                importExistingNumber.isPending ||
-                !importForm.wabaId.trim() ||
-                !importForm.phoneNumberId.trim()
-              }
-            >
-              <Smartphone className="mr-2 h-4 w-4" />
-              {importExistingNumber.isPending ? "Importando..." : "Importar número"}
-            </Button>
-            <p className="text-xs text-muted-foreground">
-              O sistema valida o Phone Number ID na Meta antes de salvar.
-            </p>
-          </div>
-
-          {importResult?.phoneNumber && (
-            <Alert>
-              <CheckCircle2 className="h-4 w-4" />
-              <AlertTitle>Número importado</AlertTitle>
-              <AlertDescription>
-                {importResult.phoneNumber.displayPhoneNumber ?? importResult.phoneNumber.phoneNumberId} já está disponível nos filtros e envios.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {importError && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Não foi possível importar</AlertTitle>
-              <AlertDescription>{importError}</AlertDescription>
-            </Alert>
-          )}
         </CardContent>
       </Card>
 
@@ -1117,10 +583,19 @@ export default function WhatsappConnectionsPage() {
                 <Webhook className="mr-2 h-4 w-4" />
                 Ativar webhook no WABA
               </Button>
-              <Button onClick={() => launchEmbeddedSignup("standard")} disabled={!canLaunchEmbeddedSignup || isSignupBusy}>
-                <MessageCircle className="mr-2 h-4 w-4" />
-                Adicionar número
-              </Button>
+              {metaHostedConnectionUrl ? (
+                <Button asChild disabled={isSignupBusy}>
+                  <a href={metaHostedConnectionUrl}>
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Conectar com Meta
+                  </a>
+                </Button>
+              ) : (
+                <Button disabled>
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Conectar com Meta
+                </Button>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -1135,10 +610,19 @@ export default function WhatsappConnectionsPage() {
                 Conecte o WhatsApp pelo Embedded Signup e sincronize os telefones do WABA.
               </p>
               <div className="mt-4 flex justify-center gap-2">
-                <Button onClick={() => launchEmbeddedSignup("standard")} disabled={!canLaunchEmbeddedSignup || isSignupBusy}>
-                  <MessageCircle className="mr-2 h-4 w-4" />
-                  Adicionar número
-                </Button>
+                {metaHostedConnectionUrl ? (
+                  <Button asChild disabled={isSignupBusy}>
+                    <a href={metaHostedConnectionUrl}>
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      Conectar com Meta
+                    </a>
+                  </Button>
+                ) : (
+                  <Button disabled>
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Conectar com Meta
+                  </Button>
+                )}
                 <Button variant="outline" onClick={() => syncNumbers.mutate()} disabled={syncNumbers.isPending || isFetching}>
                   <RefreshCw className={`mr-2 h-4 w-4 ${syncNumbers.isPending ? "animate-spin" : ""}`} />
                   Sincronizar
