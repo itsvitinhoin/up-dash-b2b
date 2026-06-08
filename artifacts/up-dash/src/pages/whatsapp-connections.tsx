@@ -195,6 +195,8 @@ type DiscoverExistingAccountsResponse = {
   errors: string[];
 };
 
+type EmbeddedSignupMode = "standard" | "business_app_onboarding";
+
 function dateLabel(value: string | null) {
   return value ? format(new Date(value), "dd/MM/yyyy HH:mm") : "-";
 }
@@ -505,7 +507,7 @@ export default function WhatsappConnectionsPage() {
     await navigator.clipboard.writeText(data.callbackUrl);
   };
 
-  const launchEmbeddedSignup = async () => {
+  const launchEmbeddedSignup = async (mode: EmbeddedSignupMode = "standard") => {
     setSignupError(null);
     sessionInfoRef.current = null;
     signupCodeRef.current = null;
@@ -518,6 +520,21 @@ export default function WhatsappConnectionsPage() {
     try {
       await loadFacebookSdk(facebook.appId, facebook.graphApiVersion);
       const businessName = embeddedSignup?.client.name ?? "Cliente UP Dash";
+      const extras: Record<string, unknown> = {
+        feature: "whatsapp_embedded_signup",
+        version: "v4",
+        sessionInfoVersion: "3",
+        setup: {
+          business: {
+            name: businessName,
+          },
+        },
+      };
+
+      if (mode === "business_app_onboarding") {
+        extras.featureType = "whatsapp_business_app_onboarding";
+      }
+
       window.FB?.login(
         (response) => {
           const code = response.authResponse?.code ?? null;
@@ -530,15 +547,7 @@ export default function WhatsappConnectionsPage() {
           return_scopes: true,
           response_type: "code",
           override_default_response_type: true,
-          extras: {
-            version: "v4",
-            sessionInfoVersion: "3",
-            setup: {
-              business: {
-                name: businessName,
-              },
-            },
-          },
+          extras,
         },
       );
     } catch (error) {
@@ -600,7 +609,7 @@ export default function WhatsappConnectionsPage() {
                 </Button>
               )}
               <Button
-                onClick={launchEmbeddedSignup}
+                onClick={() => launchEmbeddedSignup("standard")}
                 disabled={!canLaunchEmbeddedSignup || isSignupBusy}
               >
                 <MessageCircle className="mr-2 h-4 w-4" />
@@ -608,11 +617,19 @@ export default function WhatsappConnectionsPage() {
               </Button>
               <Button
                 variant="outline"
+                onClick={() => launchEmbeddedSignup("business_app_onboarding")}
+                disabled={!canLaunchEmbeddedSignup || isSignupBusy}
+              >
+                <MessageCircle className="mr-2 h-4 w-4" />
+                Conectar número existente
+              </Button>
+              <Button
+                variant="outline"
                 onClick={launchExistingAccountDiscovery}
                 disabled={!canDiscoverExistingAccounts || isSignupBusy}
               >
                 <Search className={`mr-2 h-4 w-4 ${discoverExistingAccounts.isPending ? "animate-spin" : ""}`} />
-                {discoverExistingAccounts.isPending ? "Buscando..." : "Buscar contas existentes"}
+                {discoverExistingAccounts.isPending ? "Buscando..." : "Busca técnica por API"}
               </Button>
               <Button
                 variant="outline"
@@ -633,6 +650,16 @@ export default function WhatsappConnectionsPage() {
               )}
             </div>
           </div>
+
+          <Alert>
+            <MessageCircle className="h-4 w-4" />
+            <AlertTitle>Token do cliente via Embedded Signup</AlertTitle>
+            <AlertDescription>
+              Use <span className="font-medium">Conectar com Facebook</span> para onboarding padrão de Cloud API.
+              Use <span className="font-medium">Conectar número existente</span> quando o cliente já usa o WhatsApp Business App e precisa autorizar a coexistência.
+              Em ambos os casos, o token salvo é gerado pelo cliente durante o Embed.
+            </AlertDescription>
+          </Alert>
 
           {metaTestResult && (
             <div className="grid gap-2 md:grid-cols-2">
@@ -708,7 +735,7 @@ export default function WhatsappConnectionsPage() {
             Importar número existente da BM
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            Use este bloco quando o telefone já está conectado no WhatsApp Manager e você só precisa trazê-lo para o UP Dash.
+            O caminho recomendado para cliente é o Embedded Signup acima. Use este bloco apenas para validação técnica ou importação assistida por ID/token.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -717,10 +744,10 @@ export default function WhatsappConnectionsPage() {
               <div>
                 <h3 className="flex items-center gap-2 text-sm font-semibold">
                   <Search className="h-4 w-4 text-primary" />
-                  Buscar WABAs e números existentes automaticamente
+                  Busca técnica por Graph API
                 </h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Use quando a conta já existe na BM do cliente. Com System User Token configurado, a busca roda direto pelo backend; sem ele, abrimos login Meta como fallback.
+                  Para clientes, o token correto vem do Embed concluído por eles. Esta busca usa System User Token somente quando houver acesso técnico explícito no backend.
                 </p>
               </div>
               <Button
@@ -1045,7 +1072,7 @@ export default function WhatsappConnectionsPage() {
                 <Webhook className="mr-2 h-4 w-4" />
                 Ativar webhook no WABA
               </Button>
-              <Button onClick={launchEmbeddedSignup} disabled={!canLaunchEmbeddedSignup || isSignupBusy}>
+              <Button onClick={() => launchEmbeddedSignup("standard")} disabled={!canLaunchEmbeddedSignup || isSignupBusy}>
                 <MessageCircle className="mr-2 h-4 w-4" />
                 Adicionar número
               </Button>
@@ -1063,7 +1090,7 @@ export default function WhatsappConnectionsPage() {
                 Conecte o WhatsApp pelo Embedded Signup e sincronize os telefones do WABA.
               </p>
               <div className="mt-4 flex justify-center gap-2">
-                <Button onClick={launchEmbeddedSignup} disabled={!canLaunchEmbeddedSignup || isSignupBusy}>
+                <Button onClick={() => launchEmbeddedSignup("standard")} disabled={!canLaunchEmbeddedSignup || isSignupBusy}>
                   <MessageCircle className="mr-2 h-4 w-4" />
                   Adicionar número
                 </Button>
