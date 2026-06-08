@@ -87,7 +87,7 @@ function readQueryParam(search: string, key: string): string | undefined {
 const LOW_STOCK_THRESHOLD = 10;
 
 export default function ProductsPage() {
-  const { selectedClientId, user } = useAuth();
+  const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const [, setLocation] = useLocation();
   const reduced = useReducedMotion();
@@ -100,7 +100,15 @@ export default function ProductsPage() {
   // (e.g. picking a result from the topbar search palette).
   const locationSearch = useSearch();
   const [sort, setSort] = useState<GetProductsSort>(GetProductsSort.revenue);
-  const [limit, setLimit] = useState(25);
+  const [limit, setLimit] = useState(selectedDashboardMode === "B2C" ? 1000 : 25);
+  const previousDashboardMode = useRef(selectedDashboardMode);
+
+  useEffect(() => {
+    if (previousDashboardMode.current !== selectedDashboardMode && selectedDashboardMode === "B2C") {
+      setLimit(1000);
+    }
+    previousDashboardMode.current = selectedDashboardMode;
+  }, [selectedDashboardMode]);
 
   // The URL is the source of truth for the active filters. Any other surface
   // (search palette, dashboard alerts, back button) only needs to push to
@@ -223,7 +231,7 @@ export default function ProductsPage() {
   // A second, unfiltered fetch powers the category dropdown so the available
   // options don't shrink as the user narrows the table.
   const { data: catalog } = useGetProducts(
-    { clientId, limit: 100 },
+    { clientId, limit: selectedDashboardMode === "B2C" ? 1000 : 100 },
     {
       query: queryOpts({
         enabled: queryEnabled,
@@ -558,6 +566,7 @@ export default function ProductsPage() {
                   <SelectItem value="10">10</SelectItem>
                   <SelectItem value="25">25</SelectItem>
                   <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="1000">Todos</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -625,7 +634,7 @@ export default function ProductsPage() {
                       <EmptyState
                         icon={PackageOpen}
                         title="No products to show"
-                        description="There are no products with sales in the selected date range. Try expanding the range or clearing filters."
+                        description="There are no products in the catalog for the current filters. Try clearing filters or syncing the store catalog."
                         className="m-4 border-0 bg-transparent"
                       />
                     </TableCell>

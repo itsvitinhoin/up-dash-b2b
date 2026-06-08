@@ -26,6 +26,13 @@ export interface Ga4DailyMetrics {
   purchases: number;
 }
 
+export interface Ga4ProductViewMetric {
+  itemId: string | null;
+  itemName: string | null;
+  itemVariant: string | null;
+  views: number;
+}
+
 type ServiceAccount = {
   client_email: string;
   private_key: string;
@@ -257,4 +264,43 @@ export async function fetchGa4DailyMetrics(params: {
   }
 
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function fetchGa4ProductViewMetrics(params: {
+  propertyId?: string | null;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<Ga4ProductViewMetric[] | null> {
+  if (!params.propertyId) return null;
+  const token = await getAccessToken();
+  if (!token) return null;
+
+  const report = await runReport(params.propertyId, {
+    dateRanges: [{ startDate: params.dateFrom, endDate: params.dateTo }],
+    dimensions: [
+      { name: "itemId" },
+      { name: "itemName" },
+      { name: "itemVariant" },
+    ],
+    metrics: [{ name: "eventCount" }],
+    dimensionFilter: {
+      filter: {
+        fieldName: "eventName",
+        stringFilter: {
+          matchType: "EXACT",
+          value: "view_item",
+        },
+      },
+    },
+    limit: 10000,
+  });
+
+  return (report.rows ?? [])
+    .map((row) => ({
+      itemId: row.dimensionValues?.[0]?.value?.trim() || null,
+      itemName: row.dimensionValues?.[1]?.value?.trim() || null,
+      itemVariant: row.dimensionValues?.[2]?.value?.trim() || null,
+      views: metricValue(row, 0),
+    }))
+    .filter((row) => row.views > 0);
 }

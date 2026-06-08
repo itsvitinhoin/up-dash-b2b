@@ -64,7 +64,7 @@ import {
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
-import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
+import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
 import {
   buildCustomerTimelineResponse,
   getMetricUser,
@@ -4020,6 +4020,11 @@ function parseVariantName(name: string): { baseName: string; color: string | nul
   return { baseName: trimmed, color: null, size: null };
 }
 
+function normalizeProductLookup(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && normalized !== "(not set)" ? normalized : null;
+}
+
 function gradeStatus(variants: Array<{ stock: number }>): "complete" | "broken" {
   if (variants.length === 0) return "broken";
   return variants.every((variant) => variant.stock > 0) ? "complete" : "broken";
@@ -4036,7 +4041,7 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const [client] = await db
-    .select({ dashboardType: clientsTable.dashboardType })
+    .select({ dashboardType: clientsTable.dashboardType, ga4PropertyId: clientsTable.ga4PropertyId })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
   const isB2C = client?.dashboardType === "B2C";
@@ -4137,6 +4142,7 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   );
 
   const periodViewCandidates = new Map<string, number>();
+  const periodGroupViewCandidates = new Map<string, number>();
   if (hasPeriodFilter) {
     try {
       const [client] = await db
@@ -4192,7 +4198,7 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
     }
   }
 
-  if (hasPeriodFilter) {
+  if (hasPeriodFilter && !isB2C) {
     const ids = Array.from(new Set([...periodSalesMap.keys(), ...periodViewCandidates.keys()]));
     conditions.push(ids.length > 0 ? inArray(productsTable.id, ids) : sql`FALSE`);
   }
@@ -4217,6 +4223,89 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
     .from(productsTable)
     .where(and(...conditions))
     .orderBy(orderBy);
+
+  if (hasPeriodFilter && rawRows.length > 0) {
+    const localViewRows = await db
+      .select({
+        productId: eventsTable.productId,
+        views: sql<number>`COUNT(*)::int`,
+      })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.clientId, clientId),
+          eq(eventsTable.eventType, "PRODUCT_VIEW"),
+          gte(eventsTable.createdAt, from),
+          lte(eventsTable.createdAt, to),
+        ),
+      )
+      .groupBy(eventsTable.productId);
+    for (const row of localViewRows) {
+      if (!row.productId) continue;
+      periodViewCandidates.set(
+        row.productId,
+        (periodViewCandidates.get(row.productId) ?? 0) + (Number(row.views) || 0),
+      );
+    }
+  }
+
+  if (isB2C && hasPeriodFilter && rawRows.length > 0 && client?.ga4PropertyId) {
+    try {
+      const ga4Rows = await fetchGa4ProductViewMetrics({
+        propertyId: client.ga4PropertyId,
+        dateFrom: from.toISOString().slice(0, 10),
+        dateTo: to.toISOString().slice(0, 10),
+      });
+
+      const variantByExternal = new Map<string, string>();
+      const variantBySku = new Map<string, string>();
+      const variantByName = new Map<string, string>();
+      const groupByExternalParent = new Map<string, string>();
+      const groupByName = new Map<string, string>();
+
+      for (const product of rawRows) {
+        const groupId = productGroupId(product);
+        const parsed = parseVariantName(product.name);
+        const external = normalizeProductLookup(product.externalId);
+        const parentExternal = normalizeProductLookup(product.externalId?.split(":")[0]);
+        const skuKey = normalizeProductLookup(product.sku);
+        const nameKey = normalizeProductLookup(product.name);
+        const baseNameKey = normalizeProductLookup(parsed.baseName);
+        if (external) variantByExternal.set(external, product.id);
+        if (skuKey) variantBySku.set(skuKey, product.id);
+        if (nameKey) variantByName.set(nameKey, product.id);
+        if (parentExternal) groupByExternalParent.set(parentExternal, groupId);
+        if (baseNameKey) groupByName.set(baseNameKey, groupId);
+      }
+
+      for (const row of ga4Rows ?? []) {
+        const views = Number(row.views) || 0;
+        if (views <= 0) continue;
+
+        const itemId = normalizeProductLookup(row.itemId);
+        const itemName = normalizeProductLookup(row.itemName);
+        const itemVariant = normalizeProductLookup(row.itemVariant);
+        const variantId =
+          (itemId ? variantByExternal.get(itemId) ?? variantBySku.get(itemId) : null) ??
+          (itemVariant ? variantBySku.get(itemVariant) : null) ??
+          (itemName ? variantByName.get(itemName) : null);
+
+        if (variantId) {
+          periodViewCandidates.set(variantId, (periodViewCandidates.get(variantId) ?? 0) + views);
+          continue;
+        }
+
+        const groupId =
+          (itemId ? groupByExternalParent.get(itemId) : null) ??
+          (itemName ? groupByName.get(itemName) : null);
+        if (groupId) {
+          periodGroupViewCandidates.set(groupId, (periodGroupViewCandidates.get(groupId) ?? 0) + views);
+        }
+      }
+    } catch (err) {
+      console.warn("[products] GA4 product views unavailable:", err instanceof Error ? err.message : err);
+    }
+  }
 
   // Catalog avg sell-through — computed from ALL products in client catalog
   // (must NOT use filtered `rows` to avoid skew from search/category/limit)
@@ -4312,7 +4401,9 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
           const parsedFirst = parseVariantName(first.name);
           const totalSold = sortedVariants.reduce((sum, row) => sum + row.totalSold, 0);
           const totalRevenue = sortedVariants.reduce((sum, row) => sum + row.totalRevenue, 0);
-          const productViews = sortedVariants.reduce((sum, row) => sum + row.productViews, 0);
+          const productViews =
+            sortedVariants.reduce((sum, row) => sum + row.productViews, 0) +
+            (periodGroupViewCandidates.get(groupId) ?? 0);
           const stock = sortedVariants.reduce((sum, row) => sum + row.stock, 0);
           const recentSold = sortedVariants.reduce(
             (sum, row) => sum + (hasPeriodFilter ? row.totalSold : recentSoldMap.get(row.id) ?? 0),
