@@ -377,7 +377,6 @@ export default function WhatsappConnectionsPage() {
         body: JSON.stringify({
           clientId,
           code,
-          redirectUri: window.location.href.split("#")[0],
         }),
       }),
     onSuccess: (payload) => {
@@ -556,7 +555,6 @@ export default function WhatsappConnectionsPage() {
 
     try {
       await loadFacebookSdk(facebook.appId, facebook.graphApiVersion);
-      const redirectUri = window.location.href.split("#")[0];
       window.FB?.login(
         (response) => {
           const code = response.authResponse?.code ?? null;
@@ -571,7 +569,6 @@ export default function WhatsappConnectionsPage() {
           return_scopes: true,
           response_type: "code",
           override_default_response_type: true,
-          redirect_uri: redirectUri,
         },
       );
     } catch (error) {

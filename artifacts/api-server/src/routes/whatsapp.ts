@@ -182,7 +182,6 @@ const MetaTestCallsBody = z.object({
 const DiscoverExistingWhatsappAccountsBody = z.object({
   clientId: z.string().optional(),
   code: z.string().trim().min(1),
-  redirectUri: z.string().url().optional().nullable(),
 });
 
 const SendWhatsappMessageBody = z.object({
@@ -1067,7 +1066,6 @@ router.post("/whatsapp/connections/discover-existing", async (req, res): Promise
     parsed.data.code,
     getWhatsappEmbeddedSignupAppId(),
     getMetaAppSecret(),
-    parsed.data.redirectUri ?? null,
   );
 
   if (!token.accessToken) {
