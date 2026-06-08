@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>UP Dash - Regras Atuais das Etapas do WhatsApp</title>
+    <style>
+      @page {
+        margin: 22mm 18mm;
+      }
+      body {
+        color: #111827;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      h1 {
+        color: #0f172a;
+        font-size: 24px;
+        margin: 0 0 8px;
+      }
+      h2 {
+        border-bottom: 1px solid #dbe3ef;
+        color: #0f172a;
+        font-size: 16px;
+        margin: 22px 0 8px;
+        padding-bottom: 4px;
+      }
+      h3 {
+        color: #1f2937;
+        font-size: 13px;
+        margin: 14px 0 4px;
+      }
+      p {
+        margin: 0 0 8px;
+      }
+      ul {
+        margin: 6px 0 10px 20px;
+        padding: 0;
+      }
+      li {
+        margin: 3px 0;
+      }
+      table {
+        border-collapse: collapse;
+        margin: 8px 0 14px;
+        width: 100%;
+      }
+      th,
+      td {
+        border: 1px solid #dbe3ef;
+        padding: 7px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: #f1f5f9;
+        color: #0f172a;
+        font-weight: 700;
+      }
+      .cover {
+        border: 1px solid #dbe3ef;
+        border-radius: 10px;
+        margin-bottom: 18px;
+        padding: 18px;
+      }
+      .muted {
+        color: #64748b;
+      }
+      .pill {
+        background: #eef4ff;
+        border: 1px solid #c7d7fe;
+        border-radius: 999px;
+        color: #1d4ed8;
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        margin-bottom: 8px;
+        padding: 3px 8px;
+        text-transform: uppercase;
+      }
+      .note {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-radius: 8px;
+        margin: 10px 0;
+        padding: 10px;
+      }
+      .ok {
+        background: #ecfdf5;
+        border-color: #a7f3d0;
+      }
+      .page-break {
+        break-before: page;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="cover">
+      <span class="pill">UP Dash WhatsApp</span>
+      <h1>Regras Atuais das Etapas do Dashboard</h1>
+      <p class="muted">Documento gerado para alinhar como o UP Dash classifica, mede e exibe conversas do WhatsApp.</p>
+      <p><strong>Data:</strong> 08/06/2026</p>
+    </section>
+
+    <h2>1. Visão Geral</h2>
+    <p>
+      O dashboard de WhatsApp trabalha com duas classificações principais por conversa:
+      <strong>Status operacional</strong> e <strong>Etapa do funil comercial</strong>.
+    </p>
+    <ul>
+      <li><strong>Status operacional:</strong> controla o estado de atendimento da conversa.</li>
+      <li><strong>Etapa do funil:</strong> controla a posição comercial do lead dentro do fluxo de venda pelo WhatsApp.</li>
+      <li><strong>Mensagens:</strong> são importadas em tempo real pelo webhook e, quando a Meta envia, também pelo histórico de coexistência.</li>
+    </ul>
+
+    <div class="note ok">
+      <strong>Importante:</strong> a automação atual é conservadora. Ela não tenta adivinhar qual etapa comercial o lead está sem evidência clara.
+    </div>
+
+    <h2>2. Status Operacional Atual</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Quando entra hoje</th>
+          <th>Observação</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Novo lead</td>
+          <td>Quando uma conversa nova é criada a partir de uma mensagem ou histórico importado.</td>
+          <td>É o estado inicial padrão.</td>
+        </tr>
+        <tr>
+          <td>Em atendimento</td>
+          <td>Quando uma mensagem é enviada pelo UP Dash em uma conversa.</td>
+          <td>Também registra a primeira resposta quando ainda não existia.</td>
+        </tr>
+        <tr>
+          <td>Aguardando resposta</td>
+          <td>Quando chega nova mensagem inbound em uma conversa existente e aberta.</td>
+          <td>Eventos de histórico antigo não reabrem conversa automaticamente.</td>
+        </tr>
+        <tr>
+          <td>Encerrado</td>
+          <td>Suportado no banco e no dashboard, mas sem regra automática aplicada hoje.</td>
+          <td>Precisa virar ação manual ou regra definida.</td>
+        </tr>
+        <tr>
+          <td>Perdido</td>
+          <td>Suportado no banco e no dashboard, mas sem regra automática aplicada hoje.</td>
+          <td>Motivos de perda já existem para relatório.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>3. Etapas do Funil Comercial Atual</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Etapa</th>
+          <th>Regra atual no sistema</th>
+          <th>Regra sugerida para alinhar</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Novo lead</td>
+          <td>Etapa inicial de toda conversa criada.</td>
+          <td>Entrar quando o contato envia a primeira mensagem ou quando o histórico importa uma conversa sem etapa anterior.</td>
+        </tr>
+        <tr>
+          <td>Em atendimento</td>
+          <td>Aplicada automaticamente quando o atendente responde pelo UP Dash e a conversa ainda estava em Novo lead.</td>
+          <td>Também pode entrar quando o atendente assumir manualmente uma conversa.</td>
+        </tr>
+        <tr>
+          <td>Qualificado</td>
+          <td>Etapa existe no dashboard, mas ainda não é aplicada automaticamente.</td>
+          <td>Marcar quando o lead possuir CNPJ/CPF válido, perfil de compra adequado ou confirmação de interesse comercial.</td>
+        </tr>
+        <tr>
+          <td>Catálogo enviado</td>
+          <td>Etapa existe no dashboard, mas ainda não é aplicada automaticamente.</td>
+          <td>Marcar quando for enviado link de catálogo, mídia de catálogo, template de catálogo ou mensagem padrão definida.</td>
+        </tr>
+        <tr>
+          <td>Pedido em negociação</td>
+          <td>Etapa existe no dashboard, mas ainda não é aplicada automaticamente.</td>
+          <td>Marcar quando houver intenção de pedido, negociação de peças, tamanhos, frete, preço, prazo ou pedido mínimo.</td>
+        </tr>
+        <tr>
+          <td>Encerrado</td>
+          <td>Etapa existe no dashboard, mas ainda não é aplicada automaticamente.</td>
+          <td>Marcar quando o atendimento terminar com resolução, compra concluída, orientação final ou sem pendência.</td>
+        </tr>
+        <tr>
+          <td>Perdido</td>
+          <td>Etapa existe no dashboard, mas ainda não é aplicada automaticamente.</td>
+          <td>Marcar quando houver motivo de perda definido ou ausência de resposta após janela acordada.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 class="page-break">4. Métricas do Dashboard</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Métrica</th>
+          <th>Como é calculada hoje</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Total de conversas</td>
+          <td>Quantidade de conversas no período filtrado.</td>
+        </tr>
+        <tr>
+          <td>Novos leads</td>
+          <td>Hoje todas as conversas retornam como lead novo. A regra de lead recorrente ainda precisa ser refinada.</td>
+        </tr>
+        <tr>
+          <td>Leads recorrentes</td>
+          <td>Estrutura existe, mas a classificação automática ainda não está implementada.</td>
+        </tr>
+        <tr>
+          <td>Mensagens recebidas</td>
+          <td>Soma de mensagens inbound das conversas filtradas.</td>
+        </tr>
+        <tr>
+          <td>Mensagens enviadas</td>
+          <td>Soma de mensagens outbound das conversas filtradas.</td>
+        </tr>
+        <tr>
+          <td>Tempo médio da primeira resposta</td>
+          <td>Média entre primeira mensagem recebida e primeira mensagem enviada registrada na conversa.</td>
+        </tr>
+        <tr>
+          <td>SLA cumprido</td>
+          <td>Percentual de conversas respondidas em até 15 minutos.</td>
+        </tr>
+        <tr>
+          <td>Leads sem resposta</td>
+          <td>Conversas que ainda não possuem primeira resposta registrada.</td>
+        </tr>
+        <tr>
+          <td>Conversas aguardando resposta</td>
+          <td>Conversas com status Aguardando resposta.</td>
+        </tr>
+        <tr>
+          <td>Conversas encerradas</td>
+          <td>Conversas com status Encerrado.</td>
+        </tr>
+        <tr>
+          <td>Conversas perdidas</td>
+          <td>Conversas com status Perdido.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>5. Motivos de Perda Disponíveis</h2>
+    <ul>
+      <li>Sem CNPJ</li>
+      <li>Preço</li>
+      <li>Pedido mínimo</li>
+      <li>Frete</li>
+      <li>Prazo</li>
+      <li>Sem resposta</li>
+      <li>Sem estoque</li>
+      <li>Outro</li>
+    </ul>
+
+    <h2>6. Pontos que Precisam de Definição</h2>
+    <ol>
+      <li>Quando exatamente um lead deve ser considerado qualificado.</li>
+      <li>Qual mensagem/template caracteriza catálogo enviado.</li>
+      <li>Qual evidência caracteriza pedido em negociação.</li>
+      <li>Após quantas horas/dias sem resposta o lead deve virar perdido.</li>
+      <li>Como separar lead novo de lead recorrente.</li>
+      <li>Se encerrado deve ser manual, automático por tempo ou automático por compra.</li>
+      <li>Se os atendentes poderão alterar etapa/status manualmente pelo chat.</li>
+    </ol>
+
+    <h2>7. Recomendação de Próxima Implementação</h2>
+    <p>
+      Para o funil ficar confiável, a recomendação é implementar ações manuais rápidas no chat:
+      <strong>Qualificar</strong>, <strong>Catálogo enviado</strong>, <strong>Negociação</strong>,
+      <strong>Encerrar</strong> e <strong>Marcar perdido</strong>. Depois disso, podem ser adicionadas automações por
+      template, palavras-chave e tempo sem resposta.
+    </p>
+  </body>
+</html>

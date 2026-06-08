@@ -694,8 +694,24 @@ async function upsertWhatsappPhoneNumber(params: {
   platformType?: string | null;
   codeVerificationStatus?: string | null;
   rawPayload?: unknown;
+  reactivateArchived?: boolean;
 }) {
   const now = new Date();
+  const [existing] = await db
+    .select()
+    .from(whatsappPhoneNumbersTable)
+    .where(
+      and(
+        eq(whatsappPhoneNumbersTable.clientId, params.clientId),
+        eq(whatsappPhoneNumbersTable.phoneNumberId, params.phoneNumberId),
+      ),
+    )
+    .limit(1);
+
+  if (existing?.status === "archived" && !params.reactivateArchived) {
+    return null;
+  }
+
   const [phoneNumber] = await db
     .insert(whatsappPhoneNumbersTable)
     .values({
@@ -708,7 +724,7 @@ async function upsertWhatsappPhoneNumber(params: {
       qualityRating: params.qualityRating ?? null,
       platformType: params.platformType ?? null,
       codeVerificationStatus: params.codeVerificationStatus ?? null,
-      status: "active",
+      status: params.reactivateArchived ? "active" : (existing?.status ?? "active"),
       rawPayload: params.rawPayload ?? null,
       lastSyncedAt: now,
     })
@@ -722,7 +738,7 @@ async function upsertWhatsappPhoneNumber(params: {
         qualityRating: params.qualityRating ?? null,
         platformType: params.platformType ?? null,
         codeVerificationStatus: params.codeVerificationStatus ?? null,
-        status: "active",
+        status: params.reactivateArchived ? "active" : (existing?.status ?? "active"),
         rawPayload: params.rawPayload ?? null,
         lastSyncedAt: now,
         updatedAt: now,
@@ -1693,7 +1709,12 @@ router.get("/whatsapp/connections", async (req, res): Promise<void> => {
   const phoneNumbers = await db
     .select()
     .from(whatsappPhoneNumbersTable)
-    .where(eq(whatsappPhoneNumbersTable.clientId, clientId))
+    .where(
+      and(
+        eq(whatsappPhoneNumbersTable.clientId, clientId),
+        sql`${whatsappPhoneNumbersTable.status} <> 'archived'`,
+      ),
+    )
     .orderBy(desc(whatsappPhoneNumbersTable.updatedAt));
 
   for (const integration of integrations) {
@@ -2172,6 +2193,7 @@ router.post("/whatsapp/connections/import-existing", async (req, res): Promise<v
     qualityRating: payload.quality_rating ?? null,
     platformType: payload.platform_type ?? null,
     codeVerificationStatus: payload.code_verification_status ?? null,
+    reactivateArchived: true,
     rawPayload: {
       source: "manual_existing_bm_import",
       meta: payload,
@@ -2268,7 +2290,11 @@ router.delete("/whatsapp/connections/phone-numbers/:phoneNumberId", async (req, 
   }
 
   const [removed] = await db
-    .delete(whatsappPhoneNumbersTable)
+    .update(whatsappPhoneNumbersTable)
+    .set({
+      status: "archived",
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(whatsappPhoneNumbersTable.clientId, clientId),
@@ -2819,7 +2845,7 @@ router.post("/whatsapp/conversations/:conversationId/messages", async (req, res)
     return;
   }
 
-  const clientId = resolveWritableClientId(req);
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
   if (!clientId) {
     res.status(400).json({
       error: true,
@@ -3228,6 +3254,7 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
       integrationId: integration.id,
       wabaId: integration.wabaId,
       phoneNumberId: integration.phoneNumberId,
+      reactivateArchived: true,
       rawPayload: { source: "embedded_signup" },
     });
     phoneNumber = row ? serializePhoneNumber(row) : null;
