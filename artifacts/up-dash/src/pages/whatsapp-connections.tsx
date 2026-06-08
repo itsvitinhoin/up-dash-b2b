@@ -520,19 +520,36 @@ export default function WhatsappConnectionsPage() {
     try {
       await loadFacebookSdk(facebook.appId, facebook.graphApiVersion);
       const businessName = embeddedSignup?.client.name ?? "Cliente UP Dash";
-      const extras: Record<string, unknown> = {
-        feature: "whatsapp_embedded_signup",
-        version: "v4",
-        sessionInfoVersion: "3",
-        setup: {
-          business: {
-            name: businessName,
-          },
-        },
+      const extras: Record<string, unknown> =
+        mode === "business_app_onboarding"
+          ? {
+              feature: "whatsapp_embedded_signup",
+              version: "v4",
+              sessionInfoVersion: "3",
+              featureType: "whatsapp_business_app_onboarding",
+            }
+          : {
+              feature: "whatsapp_embedded_signup",
+              version: "v4",
+              sessionInfoVersion: "3",
+              setup: {
+                business: {
+                  name: businessName,
+                },
+              },
+            };
+
+      const loginOptions: Record<string, unknown> = {
+        config_id: facebook.configId,
+        scope: "public_profile,business_management,whatsapp_business_management,whatsapp_business_messaging",
+        return_scopes: true,
+        response_type: "code",
+        override_default_response_type: true,
+        extras,
       };
 
       if (mode === "business_app_onboarding") {
-        extras.featureType = "whatsapp_business_app_onboarding";
+        loginOptions.auth_type = "rerequest";
       }
 
       window.FB?.login(
@@ -541,14 +558,7 @@ export default function WhatsappConnectionsPage() {
           signupCodeRef.current = code;
           persistEmbeddedSignup(code, sessionInfoRef.current);
         },
-        {
-          config_id: facebook.configId,
-          scope: "public_profile,business_management,whatsapp_business_management,whatsapp_business_messaging",
-          return_scopes: true,
-          response_type: "code",
-          override_default_response_type: true,
-          extras,
-        },
+        loginOptions,
       );
     } catch (error) {
       setSignupError(error instanceof Error ? error.message : "Não foi possível abrir o Embedded Signup da Meta.");
