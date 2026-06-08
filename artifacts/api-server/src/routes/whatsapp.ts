@@ -125,6 +125,41 @@ type MetaGraphTestResult = {
   message: string | null;
 };
 
+type MetaGraphError = {
+  message?: string;
+  type?: string;
+  code?: number;
+};
+
+type MetaGraphResponse<T> = T & {
+  error?: MetaGraphError;
+};
+
+type MetaGraphList<T> = {
+  data?: T[];
+};
+
+type MetaBusinessAccount = {
+  id: string;
+  name?: string;
+};
+
+type MetaWhatsappBusinessAccount = {
+  id: string;
+  name?: string;
+  currency?: string;
+  timezone_id?: string | number | null;
+};
+
+type MetaWhatsappPhoneNumber = {
+  id: string;
+  display_phone_number?: string;
+  verified_name?: string;
+  quality_rating?: string;
+  platform_type?: string;
+  code_verification_status?: string;
+};
+
 const SaveEmbeddedSignupBody = z.object({
   clientId: z.string().optional(),
   code: z.string().optional().nullable(),
@@ -142,6 +177,12 @@ const ResetEmbeddedSignupBody = z.object({
 
 const MetaTestCallsBody = z.object({
   clientId: z.string().optional(),
+});
+
+const DiscoverExistingWhatsappAccountsBody = z.object({
+  clientId: z.string().optional(),
+  code: z.string().trim().min(1),
+  redirectUri: z.string().url().optional().nullable(),
 });
 
 const SendWhatsappMessageBody = z.object({
@@ -224,6 +265,7 @@ async function exchangeEmbeddedSignupCode(
   code: string,
   appId: string | null,
   appSecret: string | null,
+  redirectUri?: string | null,
 ): Promise<TokenExchangeResult> {
   if (!appId || !appSecret) {
     return {
@@ -238,6 +280,7 @@ async function exchangeEmbeddedSignupCode(
   url.searchParams.set("client_id", appId);
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("code", code);
+  if (redirectUri) url.searchParams.set("redirect_uri", redirectUri);
 
   try {
     const response = await fetch(url.toString(), {
@@ -400,6 +443,89 @@ function normalizeMetaAccessToken(value?: string | null): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
   return trimmed.replace(/^Bearer\s+/i, "").trim();
+}
+
+function getMetaGraphErrorMessage(payload: { error?: MetaGraphError }, fallback: string): string {
+  return payload.error?.message ?? fallback;
+}
+
+async function fetchMetaGraph<T>(
+  endpoint: string,
+  accessToken: string,
+  params: Record<string, string> = {},
+) {
+  const url = new URL(`https://graph.facebook.com/${GRAPH_API_VERSION}${endpoint}`);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  const payload = (await response.json()) as MetaGraphResponse<T>;
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    payload,
+  };
+}
+
+async function persistWhatsappDiscoveryToken(params: {
+  clientId: string;
+  token: TokenExchangeResult;
+  rawPayload: unknown;
+}) {
+  const [currentIntegration] = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.clientId, params.clientId))
+    .limit(1);
+
+  const now = new Date();
+  const appId = getWhatsappEmbeddedSignupAppId();
+  const configId = getWhatsappEmbeddedSignupConfigId();
+
+  if (currentIntegration) {
+    const [updated] = await db
+      .update(whatsappIntegrationsTable)
+      .set({
+        appId,
+        configId,
+        accessToken: params.token.accessToken,
+        tokenType: params.token.tokenType,
+        tokenExpiresAt: params.token.tokenExpiresAt,
+        tokenError: null,
+        status: currentIntegration.status === "connected" ? "connected" : "pending",
+        rawPayload: params.rawPayload,
+        updatedAt: now,
+      })
+      .where(eq(whatsappIntegrationsTable.id, currentIntegration.id))
+      .returning();
+
+    return updated ?? currentIntegration;
+  }
+
+  const [created] = await db
+    .insert(whatsappIntegrationsTable)
+    .values({
+      clientId: params.clientId,
+      appId,
+      configId,
+      accessToken: params.token.accessToken,
+      tokenType: params.token.tokenType,
+      tokenExpiresAt: params.token.tokenExpiresAt,
+      tokenError: null,
+      status: "pending",
+      rawPayload: params.rawPayload,
+    })
+    .returning();
+
+  return created ?? null;
 }
 
 async function upsertWhatsappPhoneNumber(params: {
@@ -911,6 +1037,195 @@ router.get("/whatsapp/connections", async (req, res): Promise<void> => {
     webhookVerifyTokenConfigured: Boolean(process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN),
     integrations: integrations.map(serializeIntegration),
     phoneNumbers: phoneNumbers.map(serializePhoneNumber),
+  });
+});
+
+router.post("/whatsapp/connections/discover-existing", async (req, res): Promise<void> => {
+  const parsed = DiscoverExistingWhatsappAccountsBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before discovering WhatsApp accounts.",
+      status: 400,
+    });
+    return;
+  }
+
+  const token = await exchangeEmbeddedSignupCode(
+    parsed.data.code,
+    getWhatsappEmbeddedSignupAppId(),
+    getMetaAppSecret(),
+    parsed.data.redirectUri ?? null,
+  );
+
+  if (!token.accessToken) {
+    res.status(422).json({
+      error: true,
+      code: "META_CODE_EXCHANGE_FAILED",
+      message: token.error ?? "A Meta não retornou um token para descobrir contas existentes.",
+      status: 422,
+    });
+    return;
+  }
+
+  const errors: string[] = [];
+  const businessesResponse = await fetchMetaGraph<MetaGraphList<MetaBusinessAccount>>(
+    "/me/businesses",
+    token.accessToken,
+    {
+      fields: "id,name",
+      limit: "100",
+    },
+  );
+
+  if (!businessesResponse.ok) {
+    res.status(businessesResponse.status).json({
+      error: true,
+      code: "META_BUSINESSES_DISCOVERY_FAILED",
+      message: getMetaGraphErrorMessage(
+        businessesResponse.payload,
+        "Não foi possível listar os Business Managers com esse login.",
+      ),
+      status: businessesResponse.status,
+    });
+    return;
+  }
+
+  const businesses = businessesResponse.payload.data ?? [];
+  const wabas: Array<{
+    id: string;
+    name: string | null;
+    businessId: string;
+    businessName: string | null;
+    ownership: "owned" | "client";
+    currency: string | null;
+    timezoneId: string | null;
+    phoneNumbers: Array<{
+      id: string;
+      displayPhoneNumber: string | null;
+      verifiedName: string | null;
+      qualityRating: string | null;
+      platformType: string | null;
+      codeVerificationStatus: string | null;
+    }>;
+    phoneNumbersError: string | null;
+  }> = [];
+
+  for (const business of businesses) {
+    const edges = [
+      { ownership: "owned" as const, edge: "owned_whatsapp_business_accounts" },
+      { ownership: "client" as const, edge: "client_whatsapp_business_accounts" },
+    ];
+
+    for (const edge of edges) {
+      const wabaResponse = await fetchMetaGraph<MetaGraphList<MetaWhatsappBusinessAccount>>(
+        `/${business.id}/${edge.edge}`,
+        token.accessToken,
+        {
+          fields: "id,name,currency,timezone_id",
+          limit: "100",
+        },
+      );
+
+      if (!wabaResponse.ok) {
+        errors.push(
+          `${business.name ?? business.id} (${edge.edge}): ${getMetaGraphErrorMessage(
+            wabaResponse.payload,
+            `Erro Meta ${wabaResponse.status}`,
+          )}`,
+        );
+        continue;
+      }
+
+      for (const waba of wabaResponse.payload.data ?? []) {
+        const phoneResponse = await fetchMetaGraph<MetaGraphList<MetaWhatsappPhoneNumber>>(
+          `/${waba.id}/phone_numbers`,
+          token.accessToken,
+          {
+            fields:
+              "id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status",
+            limit: "100",
+          },
+        );
+
+        const phoneNumbersError = phoneResponse.ok
+          ? null
+          : getMetaGraphErrorMessage(
+              phoneResponse.payload,
+              `Erro Meta ${phoneResponse.status} ao listar telefones.`,
+            );
+
+        if (phoneNumbersError) {
+          errors.push(`${waba.name ?? waba.id} / phone_numbers: ${phoneNumbersError}`);
+        }
+
+        wabas.push({
+          id: waba.id,
+          name: waba.name ?? null,
+          businessId: business.id,
+          businessName: business.name ?? null,
+          ownership: edge.ownership,
+          currency: waba.currency ?? null,
+          timezoneId: waba.timezone_id == null ? null : String(waba.timezone_id),
+          phoneNumbers: (phoneResponse.payload.data ?? []).map((phoneNumber) => ({
+            id: phoneNumber.id,
+            displayPhoneNumber: phoneNumber.display_phone_number ?? null,
+            verifiedName: phoneNumber.verified_name ?? null,
+            qualityRating: phoneNumber.quality_rating ?? null,
+            platformType: phoneNumber.platform_type ?? null,
+            codeVerificationStatus: phoneNumber.code_verification_status ?? null,
+          })),
+          phoneNumbersError,
+        });
+      }
+    }
+  }
+
+  const integration = await persistWhatsappDiscoveryToken({
+    clientId,
+    token,
+    rawPayload: {
+      source: "existing_bm_discovery",
+      discoveredAt: new Date().toISOString(),
+      businesses: businesses.map((business) => ({
+        id: business.id,
+        name: business.name ?? null,
+      })),
+      wabas: wabas.map((waba) => ({
+        id: waba.id,
+        name: waba.name,
+        businessId: waba.businessId,
+        ownership: waba.ownership,
+        phoneNumbers: waba.phoneNumbers.map((phoneNumber) => ({
+          id: phoneNumber.id,
+          displayPhoneNumber: phoneNumber.displayPhoneNumber,
+        })),
+      })),
+      errors,
+    },
+  });
+
+  res.json({
+    ok: true,
+    integration: serializeIntegration(integration),
+    businesses: businesses.map((business) => ({
+      id: business.id,
+      name: business.name ?? null,
+    })),
+    wabas,
+    errors,
   });
 });
 

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   AlertCircle,
+  Building2,
   CheckCircle2,
   Copy,
   ExternalLink,
@@ -11,6 +12,7 @@ import {
   PlayCircle,
   PlugZap,
   RefreshCw,
+  Search,
   Send,
   Settings,
   ShieldCheck,
@@ -149,6 +151,48 @@ type ImportExistingNumberResponse = {
   phoneNumber: WhatsappPhoneNumber | null;
 };
 
+type ImportExistingNumberPayload = {
+  wabaId: string;
+  phoneNumberId: string;
+  displayPhoneNumber?: string | null;
+  verifiedName?: string | null;
+  accessToken?: string | null;
+};
+
+type ExistingWhatsappBusiness = {
+  id: string;
+  name: string | null;
+};
+
+type ExistingWhatsappPhoneNumber = {
+  id: string;
+  displayPhoneNumber: string | null;
+  verifiedName: string | null;
+  qualityRating: string | null;
+  platformType: string | null;
+  codeVerificationStatus: string | null;
+};
+
+type ExistingWhatsappWaba = {
+  id: string;
+  name: string | null;
+  businessId: string;
+  businessName: string | null;
+  ownership: "owned" | "client";
+  currency: string | null;
+  timezoneId: string | null;
+  phoneNumbers: ExistingWhatsappPhoneNumber[];
+  phoneNumbersError: string | null;
+};
+
+type DiscoverExistingAccountsResponse = {
+  ok: boolean;
+  integration: WhatsappEmbeddedSignupResponse["integration"];
+  businesses: ExistingWhatsappBusiness[];
+  wabas: ExistingWhatsappWaba[];
+  errors: string[];
+};
+
 function dateLabel(value: string | null) {
   return value ? format(new Date(value), "dd/MM/yyyy HH:mm") : "-";
 }
@@ -221,6 +265,7 @@ export default function WhatsappConnectionsPage() {
   const [signupError, setSignupError] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ImportExistingNumberResponse | null>(null);
+  const [discoveryResult, setDiscoveryResult] = useState<DiscoverExistingAccountsResponse | null>(null);
   const [importForm, setImportForm] = useState({
     wabaId: "",
     phoneNumberId: "",
@@ -325,19 +370,52 @@ export default function WhatsappConnectionsPage() {
     },
   });
 
-  const importExistingNumber = useMutation({
-    mutationFn: () =>
-      customFetch<ImportExistingNumberResponse>("/api/whatsapp/connections/import-existing", {
+  const discoverExistingAccounts = useMutation({
+    mutationFn: (code: string) =>
+      customFetch<DiscoverExistingAccountsResponse>("/api/whatsapp/connections/discover-existing", {
         method: "POST",
         body: JSON.stringify({
           clientId,
-          wabaId: importForm.wabaId,
-          phoneNumberId: importForm.phoneNumberId,
-          displayPhoneNumber: importForm.displayPhoneNumber || null,
-          verifiedName: importForm.verifiedName || null,
-          accessToken: importForm.accessToken || null,
+          code,
+          redirectUri: window.location.href.split("#")[0],
         }),
       }),
+    onSuccess: (payload) => {
+      setSignupError(null);
+      setImportError(null);
+      setDiscoveryResult(payload);
+      void queryClient.invalidateQueries({ queryKey: connectionsKey });
+      void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
+    },
+    onError: (error) => {
+      setDiscoveryResult(null);
+      setSignupError(error instanceof Error ? error.message : "Não foi possível buscar contas existentes na Meta.");
+    },
+  });
+
+  const importExistingNumber = useMutation({
+    mutationFn: (payload?: Partial<ImportExistingNumberPayload>) => {
+      const source = {
+        wabaId: importForm.wabaId,
+        phoneNumberId: importForm.phoneNumberId,
+        displayPhoneNumber: importForm.displayPhoneNumber,
+        verifiedName: importForm.verifiedName,
+        accessToken: importForm.accessToken,
+        ...payload,
+      };
+
+      return customFetch<ImportExistingNumberResponse>("/api/whatsapp/connections/import-existing", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId,
+          wabaId: source.wabaId,
+          phoneNumberId: source.phoneNumberId,
+          displayPhoneNumber: source.displayPhoneNumber || null,
+          verifiedName: source.verifiedName || null,
+          accessToken: source.accessToken || null,
+        }),
+      });
+    },
     onSuccess: (payload) => {
       setImportError(null);
       setImportResult(payload);
@@ -467,12 +545,51 @@ export default function WhatsappConnectionsPage() {
     }
   };
 
+  const launchExistingAccountDiscovery = async () => {
+    setSignupError(null);
+    setImportError(null);
+    const facebook = embeddedSignup?.facebook;
+    if (!facebook?.appId) {
+      setSignupError("Configure WHATSAPP_EMBEDDED_SIGNUP_APP_ID na Vercel antes de buscar contas existentes.");
+      return;
+    }
+
+    try {
+      await loadFacebookSdk(facebook.appId, facebook.graphApiVersion);
+      const redirectUri = window.location.href.split("#")[0];
+      window.FB?.login(
+        (response) => {
+          const code = response.authResponse?.code ?? null;
+          if (!code) {
+            setSignupError("A Meta não retornou um code para buscar as contas existentes. Tente autenticar novamente.");
+            return;
+          }
+          discoverExistingAccounts.mutate(code);
+        },
+        {
+          scope: "public_profile,business_management,whatsapp_business_management,whatsapp_business_messaging",
+          return_scopes: true,
+          response_type: "code",
+          override_default_response_type: true,
+          redirect_uri: redirectUri,
+        },
+      );
+    } catch (error) {
+      setSignupError(error instanceof Error ? error.message : "Não foi possível abrir o login da Meta.");
+    }
+  };
+
   const connectedIntegrations = data?.integrations.filter(Boolean) ?? [];
   const integration = embeddedSignup?.integration;
   const isWhatsappConnected = integration?.status === "connected";
-  const isSignupBusy = isLoadingEmbeddedSignup || saveEmbeddedSignup.isPending || resetEmbeddedSignup.isPending;
+  const isSignupBusy =
+    isLoadingEmbeddedSignup ||
+    saveEmbeddedSignup.isPending ||
+    resetEmbeddedSignup.isPending ||
+    discoverExistingAccounts.isPending;
   const isMetaTestBusy = runMetaTestCalls.isPending;
   const canLaunchEmbeddedSignup = Boolean(embeddedSignup?.facebook.isConfigured && clientId);
+  const canDiscoverExistingAccounts = Boolean(embeddedSignup?.facebook.appId && clientId);
   const metaHostedSignupUrl = buildMetaHostedSignupUrl(
     embeddedSignup?.facebook.appId,
     embeddedSignup?.facebook.configId,
@@ -507,6 +624,14 @@ export default function WhatsappConnectionsPage() {
               >
                 <MessageCircle className="mr-2 h-4 w-4" />
                 {isWhatsappConnected ? "Adicionar/atualizar número" : "Conectar com Facebook"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={launchExistingAccountDiscovery}
+                disabled={!canDiscoverExistingAccounts || isSignupBusy}
+              >
+                <Search className={`mr-2 h-4 w-4 ${discoverExistingAccounts.isPending ? "animate-spin" : ""}`} />
+                {discoverExistingAccounts.isPending ? "Buscando..." : "Buscar contas existentes"}
               </Button>
               <Button
                 variant="outline"
@@ -606,6 +731,144 @@ export default function WhatsappConnectionsPage() {
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="rounded-md border border-primary/20 bg-primary/5 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-semibold">
+                  <Search className="h-4 w-4 text-primary" />
+                  Buscar WABAs e números existentes automaticamente
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Use quando a conta já existe na BM do cliente. O token fica salvo no backend e os números aparecem para importar com um clique.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={launchExistingAccountDiscovery}
+                disabled={!canDiscoverExistingAccounts || isSignupBusy}
+              >
+                <Search className={`mr-2 h-4 w-4 ${discoverExistingAccounts.isPending ? "animate-spin" : ""}`} />
+                {discoverExistingAccounts.isPending ? "Buscando na Meta..." : "Buscar contas da BM"}
+              </Button>
+            </div>
+
+            {discoveryResult && (
+              <div className="mt-4 space-y-3">
+                <div className="grid gap-2 md:grid-cols-3">
+                  <div className="rounded-md border border-border bg-background/70 p-3">
+                    <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">BMs encontradas</p>
+                    <p className="mt-1 text-2xl font-semibold">{discoveryResult.businesses.length}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-background/70 p-3">
+                    <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">WABAs encontradas</p>
+                    <p className="mt-1 text-2xl font-semibold">{discoveryResult.wabas.length}</p>
+                  </div>
+                  <div className="rounded-md border border-border bg-background/70 p-3">
+                    <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Telefones acessíveis</p>
+                    <p className="mt-1 text-2xl font-semibold">
+                      {discoveryResult.wabas.reduce((sum, waba) => sum + waba.phoneNumbers.length, 0)}
+                    </p>
+                  </div>
+                </div>
+
+                {discoveryResult.errors.length > 0 && (
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Alguns ativos não puderam ser lidos</AlertTitle>
+                    <AlertDescription>
+                      <ul className="mt-2 space-y-1">
+                        {discoveryResult.errors.slice(0, 4).map((message) => (
+                          <li key={message} className="text-xs">{message}</li>
+                        ))}
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {discoveryResult.wabas.length === 0 ? (
+                  <Alert>
+                    <Building2 className="h-4 w-4" />
+                    <AlertTitle>Nenhuma conta de WhatsApp retornada pela Meta</AlertTitle>
+                    <AlertDescription>
+                      A autenticação funcionou, mas o usuário logado não retornou WABAs acessíveis para este app. Confirme se ele tem acesso à BM/WABA e aceitou as permissões de WhatsApp.
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <div className="space-y-3">
+                    {discoveryResult.wabas.map((waba) => (
+                      <div key={`${waba.businessId}-${waba.ownership}-${waba.id}`} className="rounded-md border border-border bg-background/70 p-4">
+                        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-sm font-semibold">{waba.name ?? "WhatsApp Business Account"}</h4>
+                              <Badge variant="outline">{waba.ownership === "owned" ? "Própria" : "Compartilhada"}</Badge>
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              BM: {waba.businessName ?? waba.businessId}
+                            </p>
+                            <p className="mt-1 font-mono text-[11px] text-muted-foreground">WABA ID: {waba.id}</p>
+                          </div>
+                          <Badge variant={waba.phoneNumbers.length > 0 ? "secondary" : "outline"}>
+                            {waba.phoneNumbers.length} número(s)
+                          </Badge>
+                        </div>
+
+                        {waba.phoneNumbersError && (
+                          <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-500">
+                            {waba.phoneNumbersError}
+                          </p>
+                        )}
+
+                        {waba.phoneNumbers.length === 0 ? (
+                          <p className="mt-3 text-xs text-muted-foreground">
+                            Nenhum telefone retornado para esta WABA.
+                          </p>
+                        ) : (
+                          <div className="mt-3 grid gap-2">
+                            {waba.phoneNumbers.map((phoneNumber) => (
+                              <div
+                                key={phoneNumber.id}
+                                className="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3 md:flex-row md:items-center md:justify-between"
+                              >
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-medium">
+                                    {phoneNumber.verifiedName ?? phoneNumber.displayPhoneNumber ?? "Número WhatsApp"}
+                                  </p>
+                                  <p className="mt-1 font-mono text-xs text-muted-foreground">
+                                    {phoneNumber.displayPhoneNumber ?? "-"} · {phoneNumber.id}
+                                  </p>
+                                  <div className="mt-2 flex flex-wrap gap-1">
+                                    <Badge variant="outline">{qualityLabel(phoneNumber.qualityRating)}</Badge>
+                                    {phoneNumber.platformType && <Badge variant="outline">{phoneNumber.platformType}</Badge>}
+                                    {phoneNumber.codeVerificationStatus && (
+                                      <Badge variant="outline">{phoneNumber.codeVerificationStatus}</Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <Button
+                                  onClick={() => importExistingNumber.mutate({
+                                    wabaId: waba.id,
+                                    phoneNumberId: phoneNumber.id,
+                                    displayPhoneNumber: phoneNumber.displayPhoneNumber,
+                                    verifiedName: phoneNumber.verifiedName,
+                                  })}
+                                  disabled={importExistingNumber.isPending}
+                                >
+                                  <Smartphone className="mr-2 h-4 w-4" />
+                                  Importar este número
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <div className="space-y-2">
               <Label>WABA ID</Label>
@@ -652,7 +915,7 @@ export default function WhatsappConnectionsPage() {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              onClick={() => importExistingNumber.mutate()}
+              onClick={() => importExistingNumber.mutate(undefined)}
               disabled={
                 importExistingNumber.isPending ||
                 !importForm.wabaId.trim() ||
