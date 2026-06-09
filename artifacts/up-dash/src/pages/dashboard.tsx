@@ -534,6 +534,8 @@ function CampaignCustomersPanel({
   const [sortKey, setSortKey] = useState<CampaignCustomerSortKey>("lastEventAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [timelineRow, setTimelineRow] = useState<CampaignCustomerRow | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const {
     data: timelineData,
@@ -621,6 +623,30 @@ function CampaignCustomersPanel({
     sortKey,
     sourceFilter,
   ]);
+
+  const totalPages = Math.max(1, Math.ceil(visibleRows.length / pageSize));
+  const paginatedRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return visibleRows.slice(start, start + pageSize);
+  }, [page, visibleRows]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [
+    campaignFilter,
+    customerTypeFilter,
+    documentFilter,
+    purchaseFilter,
+    remarketingFilter,
+    search,
+    sortDir,
+    sortKey,
+    sourceFilter,
+  ]);
+
+  useEffect(() => {
+    setPage((currentPage) => Math.min(currentPage, totalPages));
+  }, [totalPages]);
 
   const setSort = (key: CampaignCustomerSortKey) => {
     if (sortKey === key) {
@@ -810,6 +836,7 @@ function CampaignCustomersPanel({
           </p>
         </div>
       ) : (
+        <>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -828,7 +855,7 @@ function CampaignCustomersPanel({
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((row) => (
+              {paginatedRows.map((row) => (
                 <tr key={`${row.userId}-${row.customerId ?? "upzero"}`} className="border-b border-border/60 last:border-0 hover-elevate">
                   <td className="py-3 pr-4 min-w-[220px]">
                     <div className="flex items-start gap-2">
@@ -948,6 +975,30 @@ function CampaignCustomersPanel({
             </tbody>
           </table>
         </div>
+        <div className="mt-4 flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Página {formatNumber(page)} de {formatNumber(totalPages)} · {formatNumber(visibleRows.length)} cliente(s) · 10 por página
+          </span>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1}
+              onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+            >
+              Anterior
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= totalPages}
+              onClick={() => setPage((currentPage) => Math.min(totalPages, currentPage + 1))}
+            >
+              Próxima
+            </Button>
+          </div>
+        </div>
+        </>
       )}
 
       <Dialog open={!!timelineRow} onOpenChange={(open) => !open && setTimelineRow(null)}>
