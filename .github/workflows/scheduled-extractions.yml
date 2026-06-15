@@ -16,11 +16,13 @@ jobs:
     steps:
       - name: Run hourly extraction
         run: |
-          curl --fail-with-body --show-error --silent \
+          response=$(curl --fail-with-body --show-error --silent \
             -H "Authorization: Bearer ${{ github.token }}" \
             -H "X-GitHub-Repository: ${{ github.repository }}" \
             -H "X-GitHub-Run-Id: ${{ github.run_id }}" \
-            "https://www.grupoup-dash.com.br/api/cron/extractions/hourly"
+            "https://www.grupoup-dash.com.br/api/cron/extractions/hourly")
+          echo "$response"
+          node -e "const payload = JSON.parse(process.argv[1]); const hasFailed = (value) => value && typeof value === 'object' && ((typeof value.failed === 'number' && value.failed > 0) || Object.values(value).some(hasFailed)); if (!payload.ok || hasFailed(payload.result)) { console.error('Extraction returned failed clients'); process.exit(1); }" "$response"
 
   upzero-transactional:
     name: Twice daily UP Zero transactional extraction
@@ -31,11 +33,13 @@ jobs:
     steps:
       - name: Run UP Zero transactional extraction
         run: |
-          curl --fail-with-body --show-error --silent \
+          response=$(curl --fail-with-body --show-error --silent \
             -H "Authorization: Bearer ${{ github.token }}" \
             -H "X-GitHub-Repository: ${{ github.repository }}" \
             -H "X-GitHub-Run-Id: ${{ github.run_id }}" \
-            "https://www.grupoup-dash.com.br/api/cron/extractions/upzero-transactional"
+            "https://www.grupoup-dash.com.br/api/cron/extractions/upzero-transactional")
+          echo "$response"
+          node -e "const payload = JSON.parse(process.argv[1]); const failed = Number(payload.result?.failed ?? 0); if (!payload.ok || failed > 0) { console.error('UP Zero extraction returned failed clients'); process.exit(1); }" "$response"
 
   nuvemshop-transactional:
     name: Twice daily Nuvemshop transactional extraction
@@ -47,17 +51,34 @@ jobs:
       - name: Run Nuvemshop transactional extraction
         run: |
           offset=0
+          total_failed=0
           while true; do
-            response=$(curl --fail-with-body --show-error --silent \
+            response_file="$(mktemp)"
+            status_code=$(curl --show-error --silent --output "$response_file" --write-out "%{http_code}" \
               -H "Authorization: Bearer ${{ github.token }}" \
               -H "X-GitHub-Repository: ${{ github.repository }}" \
               -H "X-GitHub-Run-Id: ${{ github.run_id }}" \
               "https://www.grupoup-dash.com.br/api/cron/extractions/nuvemshop?limit=1&offset=${offset}")
+            response="$(cat "$response_file")"
+            rm -f "$response_file"
             echo "$response"
 
-            processed=$(node -e "const payload = JSON.parse(process.argv[1]); console.log(payload.result?.clients ?? 0)" "$response")
+            processed=$(node -e "try { const payload = JSON.parse(process.argv[1]); console.log(payload.result?.clients ?? 0); } catch { console.log(1); }" "$response")
+            failed=$(node -e "try { const payload = JSON.parse(process.argv[1]); console.log(Number(payload.result?.failed ?? 0)); } catch { console.log(1); }" "$response")
+            if [ "$status_code" -ge 400 ] || [ "$failed" -gt 0 ]; then
+              echo "Nuvemshop extraction offset ${offset} returned status ${status_code} with ${failed} failed client(s)."
+              if [ "$failed" -gt 0 ]; then
+                total_failed=$((total_failed + failed))
+              else
+                total_failed=$((total_failed + 1))
+              fi
+            fi
             if [ "$processed" = "0" ]; then
               break
             fi
             offset=$((offset + 1))
           done
+          if [ "$total_failed" -gt 0 ]; then
+            echo "Nuvemshop extraction completed with ${total_failed} failed client(s)."
+            exit 1
+          fi
