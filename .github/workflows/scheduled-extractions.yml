@@ -58,7 +58,7 @@ jobs:
               -H "Authorization: Bearer ${{ github.token }}" \
               -H "X-GitHub-Repository: ${{ github.repository }}" \
               -H "X-GitHub-Run-Id: ${{ github.run_id }}" \
-              "https://www.grupoup-dash.com.br/api/cron/extractions/nuvemshop?limit=1&offset=${offset}&lookbackDays=7")
+              "https://www.grupoup-dash.com.br/api/cron/extractions/nuvemshop?limit=1&offset=${offset}&lookbackDays=7&skipCatalog=true&allowPartial=true")
             response="$(cat "$response_file")"
             rm -f "$response_file"
             echo "$response"
