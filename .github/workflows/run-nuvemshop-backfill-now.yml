@@ -1,5 +1,6 @@
 name: Run Nuvemshop backfill now
 
+# Keep this workflow for manual B2C Nuvemshop backfills.
 on:
   workflow_dispatch:
   push:
