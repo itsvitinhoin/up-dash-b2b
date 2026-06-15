@@ -1,0 +1,51 @@
+name: Run Nuvemshop backfill now
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/run-nuvemshop-backfill-now.yml"
+
+jobs:
+  nuvemshop-backfill:
+    name: Run Nuvemshop 7-day backfill
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Run Nuvemshop extraction for all stores
+        run: |
+          offset=0
+          total_failed=0
+          while true; do
+            response_file="$(mktemp)"
+            status_code=$(curl --show-error --silent --output "$response_file" --write-out "%{http_code}" \
+              -H "Authorization: Bearer ${{ github.token }}" \
+              -H "X-GitHub-Repository: ${{ github.repository }}" \
+              -H "X-GitHub-Run-Id: ${{ github.run_id }}" \
+              "https://www.grupoup-dash.com.br/api/cron/extractions/nuvemshop?limit=1&offset=${offset}&lookbackDays=7")
+            response="$(cat "$response_file")"
+            rm -f "$response_file"
+            echo "$response"
+
+            processed=$(node -e "try { const payload = JSON.parse(process.argv[1]); console.log(payload.result?.clients ?? 0); } catch { console.log(1); }" "$response")
+            failed=$(node -e "try { const payload = JSON.parse(process.argv[1]); console.log(Number(payload.result?.failed ?? 0)); } catch { console.log(1); }" "$response")
+            if [ "$status_code" -ge 400 ] || [ "$failed" -gt 0 ]; then
+              echo "Nuvemshop extraction offset ${offset} returned status ${status_code} with ${failed} failed client(s)."
+              if [ "$failed" -gt 0 ]; then
+                total_failed=$((total_failed + failed))
+              else
+                total_failed=$((total_failed + 1))
+              fi
+            fi
+            if [ "$processed" = "0" ]; then
+              break
+            fi
+            offset=$((offset + 1))
+          done
+          if [ "$total_failed" -gt 0 ]; then
+            echo "Nuvemshop extraction completed with ${total_failed} failed client(s)."
+            exit 1
+          fi
