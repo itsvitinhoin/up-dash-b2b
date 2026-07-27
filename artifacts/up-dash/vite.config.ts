@@ -64,25 +64,17 @@ export default defineConfig({
     strictPort: true,
     host: "0.0.0.0",
     allowedHosts: true,
-    proxy: process.env.API_PROXY_TARGET
-      ? {
-          "/api": {
-            target: process.env.API_PROXY_TARGET,
-            changeOrigin: true,
-            headers: {
-              Origin: process.env.API_PROXY_TARGET,
-            },
-          },
-        }
-      : undefined,
-    fs: {
-      strict: true,
-    },
     proxy: {
       "/api": {
         target: process.env.API_PROXY_TARGET ?? "http://localhost:3001",
         changeOrigin: true,
+        ...(process.env.API_PROXY_TARGET
+          ? { headers: { Origin: process.env.API_PROXY_TARGET } }
+          : {}),
       },
+    },
+    fs: {
+      strict: true,
     },
   },
   preview: {
