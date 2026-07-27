@@ -5,12 +5,14 @@ import { syncNuvemshopClient } from "./nuvemshop-sync";
 import { getMetricUser, getUpzeroAnalyticsMetrics, type UpzeroAnalyticsMetric } from "./upzero/analytics-metrics";
 import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
+import { refreshDailyClientMetrics } from "./daily-client-metrics";
 
 export type ExtractionJobType =
   | "upzero_transactional"
   | "upzero_analytics"
   | "meta_ads"
-  | "nuvemshop_transactional";
+  | "nuvemshop_transactional"
+  | "daily_metrics";
 
 export type ExtractionTrigger = "manual" | "cron";
 
@@ -32,6 +34,17 @@ type ExtractionRunSummary = {
   totalClients?: number;
   offset?: number;
   limit?: number;
+  lookbackDays?: number;
+  skipCatalog?: boolean;
+  allowPartial?: boolean;
+  clientResults?: Array<{
+    clientId: string;
+    clientName: string;
+    storeId?: string | null;
+    status: "done" | "failed";
+    error?: string;
+    result?: unknown;
+  }>;
   done: number;
   failed: number;
   skipped: number;
@@ -40,13 +53,23 @@ type ExtractionRunSummary = {
 };
 
 const UPZERO_ANALYTICS_LOOKBACK_HOURS = 24;
+const UPZERO_TRANSACTIONAL_CLIENT_TIMEOUT_MS = Number.parseInt(process.env.UPZERO_TRANSACTIONAL_CLIENT_TIMEOUT_MS ?? "45000", 10);
+const DAILY_METRICS_REFRESH_LOOKBACK_DAYS = Number.parseInt(process.env.DAILY_METRICS_REFRESH_LOOKBACK_DAYS ?? "7", 10);
 const NUVEMSHOP_LOOKBACK_DAYS = Number.parseInt(process.env.NUVEMSHOP_CRON_LOOKBACK_DAYS ?? "3", 10);
-const NUVEMSHOP_MAX_PAGES = Number.parseInt(process.env.NUVEMSHOP_CRON_MAX_PAGES ?? "3", 10);
-const NUVEMSHOP_CATALOG_MAX_PAGES = Number.parseInt(process.env.NUVEMSHOP_CATALOG_MAX_PAGES ?? "50", 10);
+const NUVEMSHOP_MAX_PAGES = Number.parseInt(process.env.NUVEMSHOP_CRON_MAX_PAGES ?? "0", 10);
+const NUVEMSHOP_CATALOG_MAX_PAGES = Number.parseInt(process.env.NUVEMSHOP_CATALOG_MAX_PAGES ?? "0", 10);
 const UPZERO_BASE_URL = process.env.UPZERO_BASE_URL ?? "https://api.upzero.com.br";
 
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+async function refreshRecentDailyMetrics(clientId: string, to = new Date()) {
+  const lookbackDays = Number.isFinite(DAILY_METRICS_REFRESH_LOOKBACK_DAYS) && DAILY_METRICS_REFRESH_LOOKBACK_DAYS > 0
+    ? DAILY_METRICS_REFRESH_LOOKBACK_DAYS
+    : 7;
+  const from = new Date(to.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+  return refreshDailyClientMetrics({ clientId, from, to });
 }
 
 function resolveMetaAccessToken(fallback?: string | null): string | null {
@@ -58,6 +81,32 @@ function resolveMetaAccessToken(fallback?: string | null): string | null {
     fallback ??
     null
   );
+}
+
+function optionalPositiveInteger(value: number): number | undefined {
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function assertNoSyncErrors(source: string, result: { errors?: string[] }) {
+  const errors = result.errors ?? [];
+  if (errors.length === 0) return;
+  const preview = errors.slice(0, 5).join(" | ");
+  throw new Error(`${source} returned ${errors.length} internal sync error(s): ${preview}`);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 async function createJob(
@@ -370,35 +419,64 @@ async function upsertCustomersFromAnalyticsRegistrations(
 
 export async function runUpzeroTransactionalExtraction(
   trigger: ExtractionTrigger,
+  options: {
+    clientId?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
-  const clients = await clientsWith(isNotNull(clientsTable.upZeroApiKey));
-  let done = 0;
-  let failed = 0;
-
-  for (const client of clients) {
-    if (!client.upZeroApiKey) continue;
+  const allClients = await clientsWith(isNotNull(clientsTable.upZeroApiKey));
+  const filteredClients = options.clientId
+    ? allClients.filter((client) => client.id === options.clientId)
+    : allClients;
+  const offset = Math.max(options.offset ?? 0, 0);
+  const limit = optionalPositiveInteger(options.limit ?? 0);
+  const clients = limit ? filteredClients.slice(offset, offset + limit) : filteredClients.slice(offset);
+  const runClient = async (client: ExtractionClient): Promise<"done" | "failed" | "skipped"> => {
+    if (!client.upZeroApiKey) return "skipped";
     const jobId = await createJob(client.id, "upzero_transactional", trigger);
     try {
-      const result: SyncResult = await syncUpZeroClient(client.id, client.upZeroApiKey);
+      const result: SyncResult = await withTimeout(
+        syncUpZeroClient(client.id, client.upZeroApiKey),
+        UPZERO_TRANSACTIONAL_CLIENT_TIMEOUT_MS,
+        `UP Zero transactional sync timed out after ${UPZERO_TRANSACTIONAL_CLIENT_TIMEOUT_MS}ms.`,
+      );
+      const dailyMetrics = await refreshRecentDailyMetrics(client.id);
       await completeJob(jobId, {
         clientName: client.name,
+        dailyMetrics,
         ...result,
       });
-      done += 1;
+      return "done";
     } catch (err) {
+      console.error("[upzero-transactional-extraction] client failed", {
+        clientId: client.id,
+        clientName: client.name,
+        error: err instanceof Error ? err.message : String(err),
+      });
       await failJob(jobId, err);
-      failed += 1;
+      return "failed";
     }
-  }
+  };
+
+  const clientStatuses = limit || options.clientId
+    ? await Promise.all(clients.map(runClient))
+    : await Promise.all(clients.map(runClient));
+  const done = clientStatuses.filter((status) => status === "done").length;
+  const failed = clientStatuses.filter((status) => status === "failed").length;
+  const skipped = clientStatuses.filter((status) => status === "skipped").length;
 
   return {
     jobType: "upzero_transactional",
     trigger,
     clients: clients.length,
+    totalClients: filteredClients.length,
+    offset,
+    limit,
     done,
     failed,
-    skipped: 0,
+    skipped,
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
   };
@@ -428,12 +506,14 @@ export async function runUpzeroAnalyticsExtraction(
         client.upZeroApiKey,
         metrics.data,
       );
+      const dailyMetrics = await refreshDailyClientMetrics({ clientId: client.id, from, to });
       await completeJob(jobId, {
         clientName: client.name,
         from: from.toISOString(),
         to: to.toISOString(),
         apiTotal: metrics.total,
         customersMaterialized,
+        dailyMetrics,
         ...summarizeUpzeroAnalytics(metrics.data),
       });
       done += 1;
@@ -525,18 +605,22 @@ export async function runNuvemshopTransactionalExtraction(
     clientId?: string;
     limit?: number;
     offset?: number;
+    lookbackDays?: number;
+    skipCatalog?: boolean;
+    allowPartial?: boolean;
   } = {},
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
-  const lookbackDays = Number.isFinite(NUVEMSHOP_LOOKBACK_DAYS) && NUVEMSHOP_LOOKBACK_DAYS > 0
-    ? NUVEMSHOP_LOOKBACK_DAYS
+  const requestedLookbackDays = options.lookbackDays ?? NUVEMSHOP_LOOKBACK_DAYS;
+  const lookbackDays = Number.isFinite(requestedLookbackDays) && requestedLookbackDays > 0
+    ? Math.min(30, Math.max(1, requestedLookbackDays))
     : 3;
   const maxPages = Number.isFinite(NUVEMSHOP_MAX_PAGES) && NUVEMSHOP_MAX_PAGES > 0
     ? NUVEMSHOP_MAX_PAGES
-    : 3;
+    : undefined;
   const catalogMaxPages = Number.isFinite(NUVEMSHOP_CATALOG_MAX_PAGES) && NUVEMSHOP_CATALOG_MAX_PAGES > 0
     ? NUVEMSHOP_CATALOG_MAX_PAGES
-    : 50;
+    : undefined;
   const since = new Date(startedAt.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
   const allClients = (await clientsWith(and(
     eq(clientsTable.dashboardType, "B2C"),
@@ -554,6 +638,7 @@ export async function runNuvemshopTransactionalExtraction(
   }
   let done = 0;
   let failed = 0;
+  const clientResults: NonNullable<ExtractionRunSummary["clientResults"]> = [];
 
   for (const client of clients) {
     if (!client.nuvemshopStoreId || !client.nuvemshopAccessToken) continue;
@@ -564,19 +649,46 @@ export async function runNuvemshopTransactionalExtraction(
         storeId: client.nuvemshopStoreId,
         accessToken: client.nuvemshopAccessToken,
         since,
-        maxPages,
-        catalogMaxPages,
+        maxPages: optionalPositiveInteger(NUVEMSHOP_MAX_PAGES),
+        catalogMaxPages: optionalPositiveInteger(NUVEMSHOP_CATALOG_MAX_PAGES),
+        skipCatalog: options.skipCatalog,
       });
+      const dailyMetrics = await refreshDailyClientMetrics({ clientId: client.id, from: since, to: new Date() });
+      if (!options.allowPartial) assertNoSyncErrors(`Nuvemshop ${client.name}`, result);
       await completeJob(jobId, {
         clientName: client.name,
         storeId: client.nuvemshopStoreId,
         since: since.toISOString(),
-        maxPages,
-        catalogMaxPages,
+        maxPages: maxPages ?? "all",
+        catalogMaxPages: catalogMaxPages ?? "all",
+        skipCatalog: Boolean(options.skipCatalog),
+        allowPartial: Boolean(options.allowPartial),
+        dailyMetrics,
         ...result,
+      });
+      clientResults.push({
+        clientId: client.id,
+        clientName: client.name,
+        storeId: client.nuvemshopStoreId,
+        status: "done",
+        result,
       });
       done += 1;
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[nuvemshop-extraction] client failed", {
+        clientId: client.id,
+        clientName: client.name,
+        storeId: client.nuvemshopStoreId,
+        error: message,
+      });
+      clientResults.push({
+        clientId: client.id,
+        clientName: client.name,
+        storeId: client.nuvemshopStoreId,
+        status: "failed",
+        error: message,
+      });
       await failJob(jobId, err);
       failed += 1;
     }
@@ -589,6 +701,60 @@ export async function runNuvemshopTransactionalExtraction(
     totalClients,
     offset: limit ? offset : undefined,
     limit,
+    lookbackDays,
+    skipCatalog: Boolean(options.skipCatalog),
+    allowPartial: Boolean(options.allowPartial),
+    clientResults,
+    done,
+    failed,
+    skipped: 0,
+    startedAt: startedAt.toISOString(),
+    finishedAt: new Date().toISOString(),
+  };
+}
+
+export async function runDailyMetricsBackfill(
+  trigger: ExtractionTrigger,
+  options: {
+    clientId?: string;
+    dateFrom: string;
+    dateTo: string;
+  },
+): Promise<ExtractionRunSummary> {
+  const startedAt = new Date();
+  const from = new Date(`${options.dateFrom}T03:00:00.000Z`);
+  const toDateCursor = new Date(`${options.dateTo}T00:00:00.000Z`);
+  toDateCursor.setUTCDate(toDateCursor.getUTCDate() + 1);
+  const to = new Date(`${isoDate(toDateCursor)}T02:59:59.999Z`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
+    throw new Error("Invalid daily metrics backfill date range.");
+  }
+
+  const allClients = await clientsWith(options.clientId ? eq(clientsTable.id, options.clientId) : undefined);
+  let done = 0;
+  let failed = 0;
+
+  for (const client of allClients) {
+    const jobId = await createJob(client.id, "daily_metrics", trigger);
+    try {
+      const dailyMetrics = await refreshDailyClientMetrics({ clientId: client.id, from, to });
+      await completeJob(jobId, {
+        clientName: client.name,
+        dateFrom: options.dateFrom,
+        dateTo: options.dateTo,
+        dailyMetrics,
+      });
+      done += 1;
+    } catch (err) {
+      await failJob(jobId, err);
+      failed += 1;
+    }
+  }
+
+  return {
+    jobType: "daily_metrics",
+    trigger,
+    clients: allClients.length,
     done,
     failed,
     skipped: 0,

@@ -5,8 +5,12 @@ import { logger } from "../lib/logger";
 import { authenticate, resolveClientId } from "../middlewares/auth";
 import {
   clientsTable,
+  commercialAutomationJobsTable,
+  commercialAutomationLogsTable,
+  commercialAutomationRulesTable,
   customersTable,
   db,
+  ecommerceWebhookEventsTable,
   ordersTable,
   whatsappContactsTable,
   whatsappConversationEventsTable,
@@ -226,6 +230,14 @@ type WhatsappWebhookStatus = {
   conversation?: {
     id?: string;
   };
+  errors?: Array<{
+    code?: number;
+    title?: string;
+    message?: string;
+    error_data?: {
+      details?: string;
+    };
+  }>;
 };
 
 type TokenExchangeResult = {
@@ -332,6 +344,7 @@ const SyncWhatsappTemplatesBody = z.object({
 const CreateWhatsappTemplateBody = z.object({
   clientId: z.string().optional(),
   phoneNumberId: z.string().optional().nullable(),
+  scope: z.enum(["transactional", "agency_report"]).optional().default("transactional"),
   name: z
     .string()
     .trim()
@@ -342,6 +355,38 @@ const CreateWhatsappTemplateBody = z.object({
   category: z.enum(["MARKETING", "UTILITY", "AUTHENTICATION"]).default("UTILITY"),
   bodyText: z.string().trim().min(1).max(1024),
   footerText: z.string().trim().max(60).optional().nullable(),
+  buttons: z
+    .array(
+      z.object({
+        type: z.enum(["QUICK_REPLY", "URL", "PHONE_NUMBER"]),
+        text: z.string().trim().min(1).max(25),
+        value: z.string().trim().max(2048).optional().nullable(),
+      }),
+    )
+    .optional()
+    .default([]),
+  bodyExamples: z.array(z.string().trim().min(1).max(512)).optional().default([]),
+  variableMapping: z
+    .array(
+      z.object({
+        placeholder: z.string().trim().regex(/^\d+$/),
+        variableKey: z.string().trim().min(1).nullable().optional(),
+        example: z.string().trim().min(1).max(512).nullable().optional(),
+      }),
+    )
+    .optional()
+    .default([]),
+});
+
+const UpdateWhatsappTemplateMappingBody = z.object({
+  clientId: z.string().optional(),
+  variableMapping: z.array(
+    z.object({
+      placeholder: z.string().trim().regex(/^\d+$/),
+      variableKey: z.string().trim().min(1).nullable().optional(),
+      example: z.string().trim().min(1).max(120).nullable().optional(),
+    }),
+  ),
 });
 
 const SendWhatsappTemplateBody = z.object({
@@ -376,6 +421,47 @@ function serializeIntegration(row: typeof whatsappIntegrationsTable.$inferSelect
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function extractTemplateBodyPlaceholders(bodyText: string): string[] {
+  const placeholders = new Set<string>();
+  for (const match of bodyText.matchAll(/\{\{(\d+)\}\}/g)) {
+    if (match[1]) placeholders.add(match[1]);
+  }
+  return Array.from(placeholders);
+}
+
+function hasNamedTemplatePlaceholder(bodyText: string): boolean {
+  return /\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}/.test(bodyText);
+}
+
+function hasSequentialTemplatePlaceholders(placeholders: string[]): boolean {
+  return placeholders.every((placeholder, index) => Number(placeholder) === index + 1);
+}
+
+function buildWhatsappTemplateButtonComponents(buttons: z.infer<typeof CreateWhatsappTemplateBody>["buttons"]) {
+  return buttons.map((button) => {
+    if (button.type === "QUICK_REPLY") {
+      return {
+        type: "QUICK_REPLY",
+        text: button.text,
+      };
+    }
+
+    if (button.type === "URL") {
+      return {
+        type: "URL",
+        text: button.text,
+        url: button.value,
+      };
+    }
+
+    return {
+      type: "PHONE_NUMBER",
+      text: button.text,
+      phone_number: button.value,
+    };
+  });
 }
 
 async function exchangeEmbeddedSignupCode(
@@ -779,6 +865,19 @@ async function upsertWhatsappPhoneNumber(params: {
     return null;
   }
 
+  const [currentDefault] = await db
+    .select({ id: whatsappPhoneNumbersTable.id })
+    .from(whatsappPhoneNumbersTable)
+    .where(
+      and(
+        eq(whatsappPhoneNumbersTable.clientId, params.clientId),
+        eq(whatsappPhoneNumbersTable.isDefault, true),
+        eq(whatsappPhoneNumbersTable.status, "active"),
+      ),
+    )
+    .limit(1);
+  const shouldBeDefault = existing?.isDefault ?? !currentDefault;
+
   const [phoneNumber] = await db
     .insert(whatsappPhoneNumbersTable)
     .values({
@@ -792,6 +891,7 @@ async function upsertWhatsappPhoneNumber(params: {
       platformType: params.platformType ?? existing?.platformType ?? null,
       codeVerificationStatus: params.codeVerificationStatus ?? existing?.codeVerificationStatus ?? null,
       status: params.reactivateArchived ? "active" : (existing?.status ?? "active"),
+      isDefault: shouldBeDefault,
       rawPayload: params.rawPayload ?? existing?.rawPayload ?? null,
       lastSyncedAt: now,
     })
@@ -806,6 +906,7 @@ async function upsertWhatsappPhoneNumber(params: {
         platformType: params.platformType ?? existing?.platformType ?? null,
         codeVerificationStatus: params.codeVerificationStatus ?? existing?.codeVerificationStatus ?? null,
         status: params.reactivateArchived ? "active" : (existing?.status ?? "active"),
+        isDefault: shouldBeDefault,
         rawPayload: params.rawPayload ?? existing?.rawPayload ?? null,
         lastSyncedAt: now,
         updatedAt: now,
@@ -996,6 +1097,94 @@ async function persistWhatsappStatus(params: {
     eventType: `message_${params.status.status ?? "status"}`,
     metadata: params.status,
     occurredAt: getWhatsappMessageDate(params.status.timestamp),
+  });
+
+  const messageId = params.status.id;
+  const deliveryStatus = params.status.status?.toLowerCase();
+  if (!messageId || !deliveryStatus) return;
+
+  const [job] = await db
+    .select({
+      id: commercialAutomationJobsTable.id,
+      ruleId: commercialAutomationJobsTable.ruleId,
+      eventType: commercialAutomationRulesTable.eventType,
+      ruleName: commercialAutomationRulesTable.name,
+    })
+    .from(commercialAutomationJobsTable)
+    .leftJoin(
+      commercialAutomationRulesTable,
+      eq(commercialAutomationJobsTable.ruleId, commercialAutomationRulesTable.id),
+    )
+    .where(
+      and(
+        eq(commercialAutomationJobsTable.clientId, params.clientId),
+        sql`${commercialAutomationJobsTable.whatsappMessageIds} @> ${JSON.stringify([messageId])}::jsonb`,
+      ),
+    )
+    .limit(1);
+
+  if (!job) return;
+
+  const error = params.status.errors?.[0];
+  const errorMessage =
+    error?.error_data?.details ??
+    error?.message ??
+    error?.title ??
+    (error?.code ? `Falha de entrega informada pela Meta (${error.code}).` : "Falha de entrega informada pela Meta.");
+
+  if (deliveryStatus === "failed") {
+    await db
+      .update(commercialAutomationJobsTable)
+      .set({
+        status: "failed",
+        errorMessage,
+        updatedAt: new Date(),
+      })
+      .where(eq(commercialAutomationJobsTable.id, job.id));
+  }
+
+  const action = deliveryStatus === "failed"
+    ? "automation_delivery_failed"
+    : `automation_message_${deliveryStatus}`;
+  const [existingLog] = await db
+    .select({ id: commercialAutomationLogsTable.id })
+    .from(commercialAutomationLogsTable)
+    .where(
+      and(
+        eq(commercialAutomationLogsTable.jobId, job.id),
+        eq(commercialAutomationLogsTable.action, action),
+        sql`${commercialAutomationLogsTable.metadata}->>'messageId' = ${messageId}`,
+      ),
+    )
+    .limit(1);
+
+  if (existingLog) return;
+
+  const statusLabel = deliveryStatus === "sent"
+    ? "enviada pela Meta"
+    : deliveryStatus === "delivered"
+      ? "entregue ao destinatário"
+      : deliveryStatus === "read"
+        ? "lida pelo destinatário"
+        : deliveryStatus;
+  await db.insert(commercialAutomationLogsTable).values({
+    clientId: params.clientId,
+    ruleId: job.ruleId,
+    jobId: job.id,
+    eventType: job.eventType ?? "automation",
+    action,
+    status: deliveryStatus === "failed" ? "blocked" : "ok",
+    message: deliveryStatus === "failed"
+      ? `Falha na entrega da automação ${job.ruleName ?? job.id}: ${errorMessage}`
+      : `Mensagem da automação ${job.ruleName ?? job.id} ${statusLabel}.`,
+    metadata: {
+      messageId,
+      deliveryStatus,
+      recipientId: params.status.recipient_id ?? null,
+      metaErrorCode: error?.code ?? null,
+      metaErrorTitle: error?.title ?? null,
+      metaErrorDetails: error?.error_data?.details ?? null,
+    },
   });
 }
 
@@ -1204,7 +1393,7 @@ router.get("/webhooks/whatsapp", (req, res): void => {
     res.status(400).json({
       error: true,
       code: "VALIDATION_ERROR",
-      message: parsed.error.message,
+      message: parsed.error.issues[0]?.message ?? parsed.error.message,
       status: 400,
     });
     return;
@@ -1412,6 +1601,7 @@ function serializePhoneNumber(row: typeof whatsappPhoneNumbersTable.$inferSelect
     platformType: row.platformType,
     codeVerificationStatus: row.codeVerificationStatus,
     status: row.status,
+    isDefault: row.isDefault,
     lastSyncedAt: iso(row.lastSyncedAt),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -1419,6 +1609,8 @@ function serializePhoneNumber(row: typeof whatsappPhoneNumbersTable.$inferSelect
 }
 
 function serializeTemplate(row: typeof whatsappMessageTemplatesTable.$inferSelect) {
+  const rawPayload = row.rawPayload && typeof row.rawPayload === "object" ? row.rawPayload as Record<string, unknown> : {};
+  const scope = typeof rawPayload.upDashTemplateScope === "string" ? rawPayload.upDashTemplateScope : "transactional";
   return {
     id: row.id,
     clientId: row.clientId,
@@ -1430,9 +1622,85 @@ function serializeTemplate(row: typeof whatsappMessageTemplatesTable.$inferSelec
     status: row.status,
     category: row.category,
     components: row.components,
+    scope,
+    variableMapping: Array.isArray(rawPayload.upDashVariableMapping) ? rawPayload.upDashVariableMapping : [],
     lastSyncedAt: iso(row.lastSyncedAt),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function collectPayloadVariablePaths(value: unknown, prefix = "", paths = new Set<string>()) {
+  if (value == null) return paths;
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 3)) {
+      collectPayloadVariablePaths(item, prefix, paths);
+    }
+    return paths;
+  }
+  if (typeof value !== "object") {
+    if (prefix) paths.add(prefix);
+    return paths;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (!key || key.toLowerCase().includes("password")) continue;
+    const nextPrefix = prefix ? `${prefix}.${key}` : key;
+    if (child == null || typeof child !== "object") {
+      paths.add(nextPrefix);
+    } else {
+      collectPayloadVariablePaths(child, nextPrefix, paths);
+    }
+  }
+  return paths;
+}
+
+function readPayloadPath(source: unknown, path: string): unknown {
+  return path.split(".").reduce<unknown>((current, part) => {
+    if (current == null) return null;
+    if (Array.isArray(current)) return current[0] ? readPayloadPath(current[0], part) : null;
+    if (typeof current !== "object") return null;
+    return (current as Record<string, unknown>)[part];
+  }, source);
+}
+
+function variableSample(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return variableSample(value[0]);
+  return null;
+}
+
+async function buildWebhookVariableOptions(clientId: string) {
+  const rows = await db
+    .select({
+      eventType: ecommerceWebhookEventsTable.eventType,
+      payload: ecommerceWebhookEventsTable.payload,
+    })
+    .from(ecommerceWebhookEventsTable)
+    .where(eq(ecommerceWebhookEventsTable.clientId, clientId))
+    .orderBy(desc(ecommerceWebhookEventsTable.createdAt))
+    .limit(50);
+
+  const rawOptions = new Map<string, { key: string; sample: string | null; eventTypes: Set<string> }>();
+  for (const row of rows) {
+    const paths = collectPayloadVariablePaths(row.payload);
+    for (const key of paths) {
+      const current = rawOptions.get(key) ?? { key, sample: null, eventTypes: new Set<string>() };
+      current.eventTypes.add(row.eventType);
+      current.sample ??= variableSample(readPayloadPath(row.payload, key));
+      rawOptions.set(key, current);
+    }
+  }
+
+  return {
+    raw: Array.from(rawOptions.values())
+      .sort((a, b) => a.key.localeCompare(b.key))
+      .map((option) => ({
+        key: option.key,
+        sample: option.sample,
+        eventTypes: Array.from(option.eventTypes).sort(),
+      })),
   };
 }
 
@@ -1702,50 +1970,86 @@ async function syncTemplatesForIntegration(
     };
   }
 
-  const url = new URL(`https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/message_templates`);
-  url.searchParams.set("fields", "id,name,language,status,category,components");
-  url.searchParams.set("limit", "100");
-  const response = await fetch(url.toString(), {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${integration.accessToken}`,
-    },
-  });
-  const payload = (await response.json()) as {
-    data?: Array<{
-      id?: string;
-      name?: string;
-      language?: string;
-      status?: string;
-      category?: string;
-      components?: unknown;
-    }>;
-    error?: { message?: string };
-  };
-
-  if (!response.ok) {
-    return {
-      templates: [] as Array<ReturnType<typeof serializeTemplate>>,
-      error: payload.error?.message ?? `Erro Meta ${response.status} ao sincronizar templates.`,
-    };
-  }
-
   const templates: Array<ReturnType<typeof serializeTemplate>> = [];
-  for (const row of payload.data ?? []) {
-    if (!row.name || !row.language || !row.status) continue;
-    const template = await upsertWhatsappTemplate({
-      clientId,
-      integrationId: integration.id,
-      wabaId: integration.wabaId,
-      templateId: row.id ?? null,
-      name: row.name,
-      language: row.language,
-      status: row.status,
-      category: row.category ?? null,
-      components: row.components ?? null,
-      rawPayload: row,
+  let nextUrl: string | null = `https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/message_templates`;
+  let page = 0;
+
+  while (nextUrl && page < 50) {
+    const url = new URL(nextUrl);
+    if (page === 0) {
+      url.searchParams.set("fields", "id,name,language,status,category,components");
+      url.searchParams.set("limit", "100");
+    }
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${integration.accessToken}`,
+      },
     });
-    if (template) templates.push(serializeTemplate(template));
+    const payload = (await response.json()) as {
+      data?: Array<{
+        id?: string;
+        name?: string;
+        language?: string;
+        status?: string;
+        category?: string;
+        components?: unknown;
+      }>;
+      paging?: {
+        next?: string;
+      };
+      error?: { message?: string };
+    };
+
+    if (!response.ok) {
+      return {
+        templates,
+        error: payload.error?.message ?? `Erro Meta ${response.status} ao sincronizar templates.`,
+      };
+    }
+
+    for (const row of payload.data ?? []) {
+      if (!row.name || !row.language || !row.status) continue;
+      const [existingTemplate] = await db
+        .select({
+          rawPayload: whatsappMessageTemplatesTable.rawPayload,
+        })
+        .from(whatsappMessageTemplatesTable)
+        .where(
+          and(
+            eq(whatsappMessageTemplatesTable.clientId, clientId),
+            eq(whatsappMessageTemplatesTable.wabaId, integration.wabaId),
+            eq(whatsappMessageTemplatesTable.name, row.name),
+            eq(whatsappMessageTemplatesTable.language, row.language),
+          ),
+        )
+        .limit(1);
+      const existingRawPayload = typeof existingTemplate?.rawPayload === "object" && existingTemplate.rawPayload !== null
+        ? existingTemplate.rawPayload as Record<string, unknown>
+        : {};
+      const template = await upsertWhatsappTemplate({
+        clientId,
+        integrationId: integration.id,
+        wabaId: integration.wabaId,
+        templateId: row.id ?? null,
+        name: row.name,
+        language: row.language,
+        status: row.status,
+        category: row.category ?? null,
+        components: row.components ?? null,
+        rawPayload: {
+          ...row,
+          ...(existingRawPayload.upDashVariableMapping ? { upDashVariableMapping: existingRawPayload.upDashVariableMapping } : {}),
+          ...(existingRawPayload.upDashButtons ? { upDashButtons: existingRawPayload.upDashButtons } : {}),
+          ...(existingRawPayload.upDashTemplateScope ? { upDashTemplateScope: existingRawPayload.upDashTemplateScope } : {}),
+        },
+      });
+      if (template) templates.push(serializeTemplate(template));
+    }
+
+    nextUrl = payload.paging?.next ?? null;
+    page += 1;
   }
 
   return { templates, error: null };
@@ -1941,7 +2245,7 @@ router.post("/whatsapp/connections/discover-existing", async (req, res): Promise
     res.status(400).json({
       error: true,
       code: "VALIDATION_ERROR",
-      message: parsed.error.message,
+      message: parsed.error.issues[0]?.message ?? parsed.error.message,
       status: 400,
     });
     return;
@@ -1985,7 +2289,7 @@ router.post("/whatsapp/connections/discover-existing", async (req, res): Promise
     for (const businessId of configuredBusinessIds) {
       const businessResponse = await fetchMetaGraph<MetaBusinessAccount>(
         `/${businessId}`,
-        token.accessToken,
+        systemUserAccessToken,
         { fields: "id,name" },
       );
       if (businessResponse.ok && businessResponse.payload.id) {
@@ -2006,7 +2310,7 @@ router.post("/whatsapp/connections/discover-existing", async (req, res): Promise
   } else {
     const businessesResponse = await fetchMetaGraph<MetaGraphList<MetaBusinessAccount>>(
       "/me/businesses",
-      token.accessToken,
+      systemUserAccessToken,
       {
         fields: "id,name",
         limit: "100",
@@ -2057,7 +2361,7 @@ router.post("/whatsapp/connections/discover-existing", async (req, res): Promise
     for (const edge of edges) {
       const wabaResponse = await fetchMetaGraph<MetaGraphList<MetaWhatsappBusinessAccount>>(
         `/${business.id}/${edge.edge}`,
-        token.accessToken,
+        systemUserAccessToken,
         {
           fields: "id,name,currency,timezone_id",
           limit: "100",
@@ -2077,7 +2381,7 @@ router.post("/whatsapp/connections/discover-existing", async (req, res): Promise
       for (const waba of wabaResponse.payload.data ?? []) {
         const phoneResponse = await fetchMetaGraph<MetaGraphList<MetaWhatsappPhoneNumber>>(
           `/${waba.id}/phone_numbers`,
-          token.accessToken,
+          systemUserAccessToken,
           {
             fields:
               "id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status",
@@ -2161,7 +2465,7 @@ router.post("/whatsapp/connections/sync", async (req, res): Promise<void> => {
     res.status(400).json({
       error: true,
       code: "VALIDATION_ERROR",
-      message: parsed.error.message,
+      message: parsed.error.issues[0]?.message ?? parsed.error.message,
       status: 400,
     });
     return;
@@ -2189,7 +2493,7 @@ router.post("/whatsapp/connections/sync", async (req, res): Promise<void> => {
   for (const integration of integrations) {
     const subscription = await subscribeWebhookForIntegration(integration);
     if (subscription.ok) webhookSubscriptions += 1;
-    else if (subscription.error !== "Integração sem WABA ID ou token.") errors.push(subscription.error);
+    else if (subscription.error && subscription.error !== "Integração sem WABA ID ou token.") errors.push(subscription.error);
 
     if (integration.phoneNumberId) {
       const fallback = await upsertWhatsappPhoneNumber({
@@ -2457,6 +2761,73 @@ router.post("/whatsapp/connections/subscribe-webhook", async (req, res): Promise
   });
 });
 
+router.put("/whatsapp/connections/phone-numbers/:phoneNumberId/default", async (req, res): Promise<void> => {
+  const phoneNumberId = req.params.phoneNumberId?.trim();
+  const clientIdFromQuery = typeof req.query.clientId === "string" ? req.query.clientId : undefined;
+  const clientId = resolveWritableClientId(req, clientIdFromQuery);
+
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client before defining the default WhatsApp number.",
+      status: 400,
+    });
+    return;
+  }
+
+  if (!phoneNumberId) {
+    res.status(400).json({
+      error: true,
+      code: "PHONE_NUMBER_REQUIRED",
+      message: "Phone Number ID is required.",
+      status: 400,
+    });
+    return;
+  }
+
+  const phoneNumber = await db.transaction(async (tx) => {
+    const [selected] = await tx
+      .select({ id: whatsappPhoneNumbersTable.id })
+      .from(whatsappPhoneNumbersTable)
+      .where(
+        and(
+          eq(whatsappPhoneNumbersTable.clientId, clientId),
+          eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId),
+          eq(whatsappPhoneNumbersTable.status, "active"),
+        ),
+      )
+      .limit(1);
+
+    if (!selected) return null;
+
+    await tx
+      .update(whatsappPhoneNumbersTable)
+      .set({ isDefault: false, updatedAt: new Date() })
+      .where(eq(whatsappPhoneNumbersTable.clientId, clientId));
+
+    const [updated] = await tx
+      .update(whatsappPhoneNumbersTable)
+      .set({ isDefault: true, updatedAt: new Date() })
+      .where(eq(whatsappPhoneNumbersTable.id, selected.id))
+      .returning();
+
+    return updated ?? null;
+  });
+
+  if (!phoneNumber) {
+    res.status(404).json({
+      error: true,
+      code: "WHATSAPP_PHONE_NUMBER_NOT_FOUND",
+      message: "Active WhatsApp number not found for this client.",
+      status: 404,
+    });
+    return;
+  }
+
+  res.json({ ok: true, phoneNumber: serializePhoneNumber(phoneNumber) });
+});
+
 router.delete("/whatsapp/connections/phone-numbers/:phoneNumberId", async (req, res): Promise<void> => {
   const phoneNumberId = req.params.phoneNumberId?.trim();
   const clientIdFromQuery = typeof req.query.clientId === "string" ? req.query.clientId : undefined;
@@ -2482,19 +2853,56 @@ router.delete("/whatsapp/connections/phone-numbers/:phoneNumberId", async (req, 
     return;
   }
 
-  const [removed] = await db
-    .update(whatsappPhoneNumbersTable)
-    .set({
-      status: "archived",
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(whatsappPhoneNumbersTable.clientId, clientId),
-        eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId),
-      ),
-    )
-    .returning();
+  const removed = await db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ isDefault: whatsappPhoneNumbersTable.isDefault })
+      .from(whatsappPhoneNumbersTable)
+      .where(
+        and(
+          eq(whatsappPhoneNumbersTable.clientId, clientId),
+          eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId),
+        ),
+      )
+      .limit(1);
+
+    const [archived] = await tx
+      .update(whatsappPhoneNumbersTable)
+      .set({
+        status: "archived",
+        isDefault: false,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(whatsappPhoneNumbersTable.clientId, clientId),
+          eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId),
+        ),
+      )
+      .returning();
+
+    if (!existing?.isDefault) return archived ?? null;
+
+    const [replacement] = await tx
+      .select({ id: whatsappPhoneNumbersTable.id })
+      .from(whatsappPhoneNumbersTable)
+      .where(
+        and(
+          eq(whatsappPhoneNumbersTable.clientId, clientId),
+          eq(whatsappPhoneNumbersTable.status, "active"),
+        ),
+      )
+      .orderBy(desc(whatsappPhoneNumbersTable.updatedAt))
+      .limit(1);
+
+    if (replacement) {
+      await tx
+        .update(whatsappPhoneNumbersTable)
+        .set({ isDefault: true, updatedAt: new Date() })
+        .where(eq(whatsappPhoneNumbersTable.id, replacement.id));
+    }
+
+    return archived;
+  });
 
   await db
     .update(whatsappIntegrationsTable)
@@ -2528,6 +2936,7 @@ router.get("/whatsapp/templates", async (req, res): Promise<void> => {
   }
 
   const phoneNumberId = typeof req.query.phoneNumberId === "string" ? req.query.phoneNumberId : null;
+  const requestedScope = typeof req.query.scope === "string" ? req.query.scope : null;
   const integration = await getWhatsappIntegrationForPhone(clientId, phoneNumberId);
   const conditions = [eq(whatsappMessageTemplatesTable.clientId, clientId)];
   if (integration?.wabaId) conditions.push(eq(whatsappMessageTemplatesTable.wabaId, integration.wabaId));
@@ -2537,10 +2946,18 @@ router.get("/whatsapp/templates", async (req, res): Promise<void> => {
     .from(whatsappMessageTemplatesTable)
     .where(and(...conditions))
     .orderBy(whatsappMessageTemplatesTable.name);
+  const scopedTemplates = templates.filter((template) => {
+    const rawPayload = template.rawPayload && typeof template.rawPayload === "object" ? template.rawPayload as Record<string, unknown> : {};
+    const scope = typeof rawPayload.upDashTemplateScope === "string" ? rawPayload.upDashTemplateScope : "transactional";
+    if (requestedScope) return scope === requestedScope;
+    return scope !== "agency_report";
+  });
+  const variableOptions = await buildWebhookVariableOptions(clientId);
 
   res.json({
-    total: templates.length,
-    data: templates.map(serializeTemplate),
+    total: scopedTemplates.length,
+    data: scopedTemplates.map(serializeTemplate),
+    variableOptions,
   });
 });
 
@@ -2550,7 +2967,7 @@ router.post("/whatsapp/templates", async (req, res): Promise<void> => {
     res.status(400).json({
       error: true,
       code: "VALIDATION_ERROR",
-      message: parsed.error.message,
+      message: parsed.error.issues[0]?.message ?? parsed.error.message,
       status: 400,
     });
     return;
@@ -2578,16 +2995,95 @@ router.post("/whatsapp/templates", async (req, res): Promise<void> => {
     return;
   }
 
-  const components: Array<Record<string, string>> = [
-    {
-      type: "BODY",
-      text: parsed.data.bodyText,
-    },
-  ];
+  if (hasNamedTemplatePlaceholder(parsed.data.bodyText)) {
+    res.status(400).json({
+      error: true,
+      code: "INVALID_TEMPLATE_PLACEHOLDER",
+      message: "Use placeholders numericos no corpo do template, como {{1}} e {{2}}. Variaveis nomeadas devem ficar apenas no mapeamento.",
+      status: 400,
+    });
+    return;
+  }
+
+  const placeholders = extractTemplateBodyPlaceholders(parsed.data.bodyText);
+  if (!hasSequentialTemplatePlaceholders(placeholders)) {
+    res.status(400).json({
+      error: true,
+      code: "INVALID_TEMPLATE_PLACEHOLDER_SEQUENCE",
+      message: "Use placeholders em sequencia no corpo do template: {{1}}, {{2}}, {{3}}...",
+      status: 400,
+    });
+    return;
+  }
+
+  const templateButtons = parsed.data.buttons;
+  const urlButtons = templateButtons.filter((button) => button.type === "URL");
+  const phoneButtons = templateButtons.filter((button) => button.type === "PHONE_NUMBER");
+  if (templateButtons.length > 10 || urlButtons.length > 2 || phoneButtons.length > 1) {
+    res.status(400).json({
+      error: true,
+      code: "INVALID_TEMPLATE_BUTTON_LIMITS",
+      message: "A Meta permite até 10 botões no total, até 2 links e até 1 telefone por template.",
+      status: 400,
+    });
+    return;
+  }
+
+  const invalidUrlButton = urlButtons.find((button) => {
+    if (!button.value) return true;
+    try {
+      const url = new URL(button.value);
+      return !["http:", "https:"].includes(url.protocol);
+    } catch {
+      return true;
+    }
+  });
+  if (invalidUrlButton) {
+    res.status(400).json({
+      error: true,
+      code: "INVALID_TEMPLATE_URL_BUTTON",
+      message: "Botões de link precisam ter uma URL válida começando com http:// ou https://.",
+      status: 400,
+    });
+    return;
+  }
+
+  if (phoneButtons.some((button) => !button.value?.trim())) {
+    res.status(400).json({
+      error: true,
+      code: "INVALID_TEMPLATE_PHONE_BUTTON",
+      message: "Botões de telefone precisam ter um número preenchido.",
+      status: 400,
+    });
+    return;
+  }
+
+  const bodyComponent: Record<string, unknown> = {
+    type: "BODY",
+    text: parsed.data.bodyText,
+  };
+  if (placeholders.length > 0) {
+    bodyComponent.example = {
+      body_text: [
+        placeholders.map((placeholder, index) => {
+          const mappedExample = parsed.data.variableMapping.find((item) => item.placeholder === placeholder)?.example;
+          return mappedExample?.trim() || parsed.data.bodyExamples[index]?.trim() || "Exemplo";
+        }),
+      ],
+    };
+  }
+
+  const components: Array<Record<string, unknown>> = [bodyComponent];
   if (parsed.data.footerText) {
     components.push({
       type: "FOOTER",
       text: parsed.data.footerText,
+    });
+  }
+  if (templateButtons.length > 0) {
+    components.push({
+      type: "BUTTONS",
+      buttons: buildWhatsappTemplateButtonComponents(templateButtons),
     });
   }
 
@@ -2612,14 +3108,30 @@ router.post("/whatsapp/templates", async (req, res): Promise<void> => {
     id?: string;
     status?: string;
     category?: string;
-    error?: { message?: string };
+    error?: {
+      message?: string;
+      type?: string;
+      code?: number;
+      error_subcode?: number;
+      error_user_title?: string;
+      error_user_msg?: string;
+      error_data?: { details?: string };
+    };
   };
 
   if (!response.ok) {
+    const metaErrorParts = [
+      payload.error?.error_user_title,
+      payload.error?.error_user_msg,
+      payload.error?.error_data?.details,
+      payload.error?.message,
+    ].filter((part, index, parts): part is string => Boolean(part?.trim()) && parts.indexOf(part) === index);
     res.status(response.status).json({
       error: true,
       code: "META_WHATSAPP_TEMPLATE_CREATE_FAILED",
-      message: payload.error?.message ?? "A Meta recusou a criação do template.",
+      message: metaErrorParts.join(" — ") || "A Meta recusou a criação do template.",
+      metaCode: payload.error?.code ?? null,
+      metaSubcode: payload.error?.error_subcode ?? null,
       status: response.status,
     });
     return;
@@ -2635,12 +3147,75 @@ router.post("/whatsapp/templates", async (req, res): Promise<void> => {
     status: payload.status ?? "PENDING",
     category: payload.category ?? parsed.data.category,
     components,
-    rawPayload: payload,
+    rawPayload: {
+      ...payload,
+      upDashTemplateScope: parsed.data.scope,
+      upDashVariableMapping: parsed.data.variableMapping,
+      upDashButtons: templateButtons,
+    },
   });
 
   res.status(201).json({
     ok: true,
     template: template ? serializeTemplate(template) : null,
+  });
+});
+
+router.patch("/whatsapp/templates/:templateId/mapping", async (req, res): Promise<void> => {
+  const parsed = UpdateWhatsappTemplateMappingBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "INVALID_TEMPLATE_MAPPING",
+      message: parsed.error.issues[0]?.message ?? "Mapeamento inválido.",
+      status: 400,
+    });
+    return;
+  }
+
+  const clientId = resolveWritableClientId(req, parsed.data.clientId);
+  if (!clientId) {
+    res.status(400).json({
+      error: true,
+      code: "CLIENT_REQUIRED",
+      message: "Select a client to update WhatsApp templates.",
+      status: 400,
+    });
+    return;
+  }
+
+  const [template] = await db
+    .select()
+    .from(whatsappMessageTemplatesTable)
+    .where(and(eq(whatsappMessageTemplatesTable.id, req.params.templateId), eq(whatsappMessageTemplatesTable.clientId, clientId)))
+    .limit(1);
+
+  if (!template) {
+    res.status(404).json({
+      error: true,
+      code: "TEMPLATE_NOT_FOUND",
+      message: "Template não encontrado para este cliente.",
+      status: 404,
+    });
+    return;
+  }
+
+  const rawPayload = template.rawPayload && typeof template.rawPayload === "object" ? template.rawPayload as Record<string, unknown> : {};
+  const [updated] = await db
+    .update(whatsappMessageTemplatesTable)
+    .set({
+      rawPayload: {
+        ...rawPayload,
+        upDashVariableMapping: parsed.data.variableMapping,
+      },
+      updatedAt: new Date(),
+    })
+    .where(and(eq(whatsappMessageTemplatesTable.id, template.id), eq(whatsappMessageTemplatesTable.clientId, clientId)))
+    .returning();
+
+  res.json({
+    ok: true,
+    template: updated ? serializeTemplate(updated) : null,
   });
 });
 

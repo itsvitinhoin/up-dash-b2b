@@ -183,8 +183,8 @@ async function main() {
     .values({
       email: "admin@updash.com",
       passwordHash: adminPasswordHash,
-      firstName: "Ada",
-      lastName: "Lovelace",
+      firstName: "Grupo",
+      lastName: "UP",
       role: "ADMIN",
     })
     .returning();

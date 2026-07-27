@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
 import {
   listExtractionJobs,
+  runDailyMetricsBackfill,
   runHourlyExtractionBundle,
   runNuvemshopTransactionalExtraction,
   runUpzeroTransactionalExtraction,
@@ -13,6 +14,21 @@ const DEFAULT_CRON_GITHUB_REPOSITORY = "itsvitinhoin/up-dash-b2b";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function hasFailedClients(value: unknown): boolean {
+  const record = asRecord(value);
+  if (!record) return false;
+  if (typeof record.failed === "number" && record.failed > 0) return true;
+  return Object.values(record).some((nested) => hasFailedClients(nested));
+}
+
+function sendCronResult(res: Response, result: unknown): void {
+  const failed = hasFailedClients(result);
+  res.status(failed ? 500 : 200).json({
+    ok: !failed,
+    result,
+  });
 }
 
 async function verifyGitHubActionsRequest(req: Request): Promise<boolean> {
@@ -63,19 +79,44 @@ async function verifyCronRequest(req: Request, res: Response): Promise<boolean> 
 router.get("/cron/extractions/hourly", async (req, res): Promise<void> => {
   if (!(await verifyCronRequest(req, res))) return;
   const result = await runHourlyExtractionBundle("cron");
-  res.json({ ok: true, result });
+  sendCronResult(res, result);
+});
+
+const CronUpzeroTransactionalQuery = z.object({
+  clientId: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(10).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 router.get("/cron/extractions/upzero-transactional", async (req, res): Promise<void> => {
   if (!(await verifyCronRequest(req, res))) return;
-  const result = await runUpzeroTransactionalExtraction("cron");
-  res.json({ ok: true, result });
+  const parsed = CronUpzeroTransactionalQuery.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const result = await runUpzeroTransactionalExtraction("cron", parsed.data);
+  sendCronResult(res, result);
 });
 
 const CronNuvemshopQuery = z.object({
   clientId: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(10).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+  lookbackDays: z.coerce.number().int().min(1).max(30).optional(),
+  skipCatalog: z.coerce.boolean().optional(),
+  allowPartial: z.coerce.boolean().optional(),
+});
+
+const DailyMetricsBackfillQuery = z.object({
+  clientId: z.string().min(1).optional(),
+  dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
 router.get("/cron/extractions/nuvemshop", async (req, res): Promise<void> => {
@@ -91,7 +132,23 @@ router.get("/cron/extractions/nuvemshop", async (req, res): Promise<void> => {
     return;
   }
   const result = await runNuvemshopTransactionalExtraction("cron", parsed.data);
-  res.json({ ok: true, result });
+  sendCronResult(res, result);
+});
+
+router.get("/cron/extractions/daily-metrics", async (req, res): Promise<void> => {
+  if (!(await verifyCronRequest(req, res))) return;
+  const parsed = DailyMetricsBackfillQuery.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const result = await runDailyMetricsBackfill("cron", parsed.data);
+  sendCronResult(res, result);
 });
 
 router.use("/extractions", authenticate);
@@ -99,7 +156,7 @@ router.use("/extractions", authenticate);
 const ListExtractionsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
   status: z.enum(["pending", "running", "done", "failed"]).optional(),
-  jobType: z.enum(["upzero_transactional", "upzero_analytics", "meta_ads", "nuvemshop_transactional"]).optional(),
+  jobType: z.enum(["upzero_transactional", "upzero_analytics", "meta_ads", "nuvemshop_transactional", "daily_metrics"]).optional(),
   trigger: z.enum(["manual", "cron"]).optional(),
   clientId: z.coerce.string().optional(),
 });
@@ -144,6 +201,21 @@ router.get("/extractions", requireAdmin, async (req, res): Promise<void> => {
       failed: data.filter((row) => row.status === "failed").length,
     },
   });
+});
+
+router.post("/extractions/daily-metrics", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = DailyMetricsBackfillQuery.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: true,
+      code: "VALIDATION_ERROR",
+      message: parsed.error.message,
+      status: 400,
+    });
+    return;
+  }
+  const result = await runDailyMetricsBackfill("manual", parsed.data);
+  res.json({ ok: true, result });
 });
 
 export default router;

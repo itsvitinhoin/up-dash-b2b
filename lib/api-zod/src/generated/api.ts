@@ -716,6 +716,39 @@ export const GetDashboardResponse = zod.object({
       orders: zod.number(),
     }),
   ),
+  salesByCategory: zod
+    .array(
+      zod.object({
+        name: zod.string(),
+        revenue: zod.number(),
+        units: zod.number(),
+        orders: zod.number(),
+      }),
+    )
+    .optional()
+    .describe("B2C paid sales grouped by Nuvemshop product category."),
+  salesByColor: zod
+    .array(
+      zod.object({
+        name: zod.string(),
+        revenue: zod.number(),
+        units: zod.number(),
+        orders: zod.number(),
+      }),
+    )
+    .optional()
+    .describe("B2C paid sales grouped by Nuvemshop order item color."),
+  salesBySize: zod
+    .array(
+      zod.object({
+        name: zod.string(),
+        revenue: zod.number(),
+        units: zod.number(),
+        orders: zod.number(),
+      }),
+    )
+    .optional()
+    .describe("B2C paid sales grouped by Nuvemshop order item size."),
   prevKpis: zod
     .object({
       revenue: zod.number(),
@@ -869,6 +902,53 @@ export const GetFunnelResponse = zod.object({
     .describe(
       'True when at least one site_visits row exists for this client (regardless of the current date range). Drives the \"About this data\" notice — notice hides once data is flowing even if the selected range shows zero visits.',
     ),
+  activation: zod
+    .object({
+      approvedCustomers: zod.number(),
+      windows: zod.array(
+        zod.object({
+          key: zod.string(),
+          label: zod.string(),
+          days: zod.number(),
+          activatedCustomers: zod.number(),
+          activationRate: zod.number(),
+        }),
+      ),
+      sameDayActivationRate: zod.number(),
+      thirtyDayActivationRate: zod.number(),
+      avgDaysToFirstPurchase: zod.number().nullable(),
+      firstPurchaseAov: zod.number(),
+      repeatAfterFirstPurchaseCustomers: zod.number(),
+      repeatAfterFirstPurchaseRate: zod.number(),
+      postApproval: zod.object({
+        login: zod.number().nullable(),
+        priceView: zod.number().nullable(),
+        addToCart: zod.number(),
+        orderSubmitted: zod.number(),
+        paymentConfirmed: zod.number(),
+        loginRate: zod.number().nullable(),
+        priceViewRate: zod.number().nullable(),
+        addToCartRate: zod.number(),
+        orderSubmittedRate: zod.number(),
+        paymentConfirmedRate: zod.number(),
+      }),
+      performance: zod.object({
+        label: zod.string(),
+        tone: zod.string(),
+        benchmark: zod.string(),
+      }),
+      diagnostics: zod.array(zod.string()),
+      recommendation: zod.string(),
+      operationTypes: zod.array(
+        zod.object({
+          title: zod.string(),
+          description: zod.string(),
+          steps: zod.array(zod.string()),
+        }),
+      ),
+    })
+    .nullable()
+    .optional(),
 });
 
 /**

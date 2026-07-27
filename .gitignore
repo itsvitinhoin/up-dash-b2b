@@ -10,6 +10,8 @@ out-tsc
 
 # dependencies
 node_modules
+__pycache__/
+*.py[cod]
 
 # IDEs and editors
 /.idea
@@ -48,3 +50,4 @@ Thumbs.db
 .cache/
 .local/
 .vercel
+.env*.local

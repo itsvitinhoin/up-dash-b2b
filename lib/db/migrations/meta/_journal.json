@@ -155,6 +155,20 @@
       "when": 1780483200000,
       "tag": "0022_customer_document_fingerprint",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1784620800000,
+      "tag": "0029_whatsapp_default_phone",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1784707200000,
+      "tag": "0030_commercial_automation_repeated_events",
+      "breakpoints": true
     }
   ]
 }

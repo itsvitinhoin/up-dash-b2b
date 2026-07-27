@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
+import { buildProductsPeriodParams } from "@/lib/products-period";
 import {
   useGetProducts,
   useGetProductsSummary,
@@ -40,7 +41,7 @@ import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { CountUp } from "@/components/count-up";
 import { cardEntry, staggerContainer, useReducedMotion, withReducedMotion } from "@/lib/motion";
-import { format, formatDistanceToNow, subDays } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 
 const LEVEL_STYLES: Record<string, string> = {
   "High Conversion": "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -146,9 +147,12 @@ export default function ProductsPage() {
 
   const writeFilters = useCallback(
     (search: string, category: string) => {
-      const params = new URLSearchParams();
+      const params = new URLSearchParams(window.location.search);
+      params.delete("sku");
       if (search) params.set("search", search);
+      else params.delete("search");
       if (category) params.set("category", category);
+      else params.delete("category");
       const next = params.toString();
       setLocation(next ? `/products?${next}` : "/products", { replace: true });
     },
@@ -170,7 +174,8 @@ export default function ProductsPage() {
     const sku = readQueryParam(locationSearch, "sku");
     const search = readQueryParam(locationSearch, "search");
     if (!sku || search) return;
-    const params = new URLSearchParams();
+    const params = new URLSearchParams(window.location.search);
+    params.delete("sku");
     params.set("search", sku);
     const cat = readQueryParam(locationSearch, "category");
     if (cat) params.set("category", cat);
@@ -183,20 +188,19 @@ export default function ProductsPage() {
   const queryEnabled =
     user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
 
-  const selectedDateFrom = format(dateRange.from, "yyyy-MM-dd");
-  const selectedDateTo = format(dateRange.to, "yyyy-MM-dd");
-  const fixedSummaryTo = useMemo(() => new Date(), []);
-  const summaryDateFrom = format(subDays(fixedSummaryTo, 30), "yyyy-MM-dd");
-  const summaryDateTo = format(fixedSummaryTo, "yyyy-MM-dd");
-  const summaryParams = { clientId, dateFrom: summaryDateFrom, dateTo: summaryDateTo };
-  const { data: summary, isLoading: summaryLoading } = useGetProductsSummary(
-    summaryParams,
+  const periodParams = buildProductsPeriodParams({
+    clientId,
+    from: dateRange.from,
+    to: dateRange.to,
+  });
+  const { data: summary, isLoading: summaryLoading, isFetching: summaryFetching } = useGetProductsSummary(
+    periodParams,
     { query: queryOpts({ enabled: queryEnabled }) },
   );
 
   // AI Insight
-  const insightParams = { clientId, dateFrom: summaryDateFrom, dateTo: summaryDateTo, screen: "products" as const };
-  const { data: insight, isLoading: insightLoading } = useGetInsight(
+  const insightParams = { ...periodParams, screen: "products" as const };
+  const { data: insight, isLoading: insightLoading, isFetching: insightFetching } = useGetInsight(
     insightParams,
     { query: queryOpts({ enabled: queryEnabled }) },
   );
@@ -210,8 +214,8 @@ export default function ProductsPage() {
   const { data, isLoading, isError, refetch } = useGetProducts(
     {
       clientId,
-      dateFrom: selectedDateFrom,
-      dateTo: selectedDateTo,
+      dateFrom: periodParams.dateFrom,
+      dateTo: periodParams.dateTo,
       sort,
       limit,
       search: urlSearch || undefined,
@@ -223,7 +227,6 @@ export default function ProductsPage() {
     {
       query: queryOpts({
         enabled: queryEnabled,
-        placeholderData: (prev) => prev,
       }),
     }
   );
@@ -255,7 +258,12 @@ export default function ProductsPage() {
   const clearFilters = () => {
     cancelPendingWrite();
     setSearchInput("");
-    setLocation("/products", { replace: true });
+    const params = new URLSearchParams(window.location.search);
+    params.delete("search");
+    params.delete("sku");
+    params.delete("category");
+    const next = params.toString();
+    setLocation(next ? `/products?${next}` : "/products", { replace: true });
   };
 
   const visibleCount = data?.length ?? 0;
@@ -388,7 +396,7 @@ export default function ProductsPage() {
       {/* Sales Power KPI strip */}
       <motion.div variants={cardVariants}>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {summaryLoading ? (
+          {summaryLoading || summaryFetching ? (
             Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="p-4 rounded-lg border border-border bg-card">
                 <Skeleton className="h-3 w-20 mb-2" />
@@ -450,7 +458,7 @@ export default function ProductsPage() {
                   <XIcon className="h-3.5 w-3.5" />
                 </button>
               </div>
-              {insightLoading || !insight ? (
+              {insightLoading || insightFetching || !insight ? (
                 <>
                   <Skeleton className="h-5 w-3/4 mb-2" />
                   <Skeleton className="h-4 w-full mb-1" />

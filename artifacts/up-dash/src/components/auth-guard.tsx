@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { Redirect } from "wouter";
 import { useAuth } from "@/lib/auth";
-import { Loader2 } from "lucide-react";
+import { DashLoader } from "@/components/ui/dash-loader";
 
 interface AuthGuardProps {
   children: ReactNode;
@@ -14,7 +14,7 @@ export function AuthGuard({ children, adminOnly }: AuthGuardProps) {
   if (isLoading) {
     return (
       <div className="flex h-screen w-full items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <DashLoader label="Carregando UP Dash" description="Preparando seu acesso e preferências." />
       </div>
     );
   }

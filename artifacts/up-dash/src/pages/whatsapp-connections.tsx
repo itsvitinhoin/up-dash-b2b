@@ -127,6 +127,7 @@ type WhatsappPhoneNumber = {
   platformType: string | null;
   codeVerificationStatus: string | null;
   status: string;
+  isDefault: boolean;
   lastSyncedAt: string | null;
 };
 
@@ -296,6 +297,7 @@ export default function WhatsappConnectionsPage() {
   const queryClient = useQueryClient();
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
   const [signupError, setSignupError] = useState<string | null>(null);
+  const [connectionNotice, setConnectionNotice] = useState<string | null>(null);
   const [metaTestResult, setMetaTestResult] = useState<MetaPermissionTestResponse | null>(null);
   const sessionInfoRef = useRef<WhatsappEmbeddedSignupSession | null>(null);
   const signupCodeRef = useRef<string | null>(null);
@@ -439,11 +441,33 @@ export default function WhatsappConnectionsPage() {
       );
     },
     onSuccess: () => {
+      setConnectionNotice("Número removido. Se ele era o padrão, outro número ativo foi definido automaticamente.");
       void queryClient.invalidateQueries({ queryKey: connectionsKey });
       void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
     },
     onError: (error) => {
       setSignupError(error instanceof Error ? error.message : "Não foi possível excluir o número conectado.");
+    },
+  });
+
+  const setDefaultPhoneNumber = useMutation({
+    mutationFn: (phoneNumberId: string) => {
+      const params = new URLSearchParams();
+      if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+      const query = params.toString();
+      return customFetch<{ ok: boolean; phoneNumber: WhatsappPhoneNumber }>(
+        `/api/whatsapp/connections/phone-numbers/${encodeURIComponent(phoneNumberId)}/default${query ? `?${query}` : ""}`,
+        { method: "PUT" },
+      );
+    },
+    onSuccess: (result) => {
+      setSignupError(null);
+      setConnectionNotice(`${numberTitle(result.phoneNumber)} foi definido como o número padrão da marca.`);
+      void queryClient.invalidateQueries({ queryKey: connectionsKey });
+    },
+    onError: (error) => {
+      setConnectionNotice(null);
+      setSignupError(error instanceof Error ? error.message : "Não foi possível definir o número padrão.");
     },
   });
 
@@ -630,8 +654,16 @@ export default function WhatsappConnectionsPage() {
           {signupError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Não foi possível iniciar a conexão</AlertTitle>
+              <AlertTitle>Não foi possível concluir a ação</AlertTitle>
               <AlertDescription>{signupError}</AlertDescription>
+            </Alert>
+          )}
+
+          {connectionNotice && (
+            <Alert className="border-emerald-500/30 bg-emerald-500/5">
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <AlertTitle>Configuração atualizada</AlertTitle>
+              <AlertDescription>{connectionNotice}</AlertDescription>
             </Alert>
           )}
         </CardHeader>
@@ -846,7 +878,8 @@ export default function WhatsappConnectionsPage() {
                 Telefones de campanha
               </CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">
-                Cada número conectado aparece em um card para facilitar filtro, conversa e envio de teste.
+                O número padrão envia automações quando o webhook não informa uma vendedora. Quando informa, o telefone
+                precisa corresponder a uma conexão ativa.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -897,7 +930,10 @@ export default function WhatsappConnectionsPage() {
           ) : (
             <div className="grid gap-4">
               {data?.phoneNumbers.map((phone) => (
-                <Card key={phone.id} className="border-border bg-card">
+                <Card
+                  key={phone.id}
+                  className={cn("border-border bg-card", phone.isDefault && "border-emerald-500/40")}
+                >
                   <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.8fr)_260px]">
                     <div className="space-y-3">
                       <div className="flex items-start gap-3">
@@ -910,6 +946,12 @@ export default function WhatsappConnectionsPage() {
                             <Badge variant={phone.status === "active" ? "secondary" : "outline"}>
                               {phone.status === "active" ? "Disponível" : phone.status}
                             </Badge>
+                            {phone.isDefault && (
+                              <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/10">
+                                <CheckCircle2 className="mr-1 h-3 w-3" />
+                                Padrão
+                              </Badge>
+                            )}
                           </div>
                           <p className="mt-1 font-mono text-sm text-muted-foreground">{phone.displayPhoneNumber ?? phone.phoneNumberId}</p>
                           <p className="mt-1 text-xs text-muted-foreground">
@@ -960,6 +1002,18 @@ export default function WhatsappConnectionsPage() {
                     </div>
 
                     <div className="flex flex-col gap-2">
+                      <Button
+                        variant={phone.isDefault ? "secondary" : "outline"}
+                        onClick={() => setDefaultPhoneNumber.mutate(phone.phoneNumberId)}
+                        disabled={phone.isDefault || setDefaultPhoneNumber.isPending}
+                      >
+                        {setDefaultPhoneNumber.isPending ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                        )}
+                        {phone.isDefault ? "Número padrão" : "Definir como padrão"}
+                      </Button>
                       <Button asChild>
                         <Link href={`/whatsapp/conversas?waPhone=${encodeURIComponent(phone.phoneNumberId)}`}>
                           <MessageCircle className="mr-2 h-4 w-4" />

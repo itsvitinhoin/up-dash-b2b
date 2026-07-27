@@ -21,7 +21,7 @@ export const syncJobsTable = pgTable(
       .notNull()
       .default("pending"),
     jobType: text("job_type", {
-      enum: ["upzero_transactional", "upzero_analytics", "meta_ads", "nuvemshop_transactional"],
+      enum: ["upzero_transactional", "upzero_analytics", "meta_ads", "nuvemshop_transactional", "daily_metrics"],
     })
       .notNull()
       .default("upzero_transactional"),

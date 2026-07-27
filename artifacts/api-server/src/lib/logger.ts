@@ -7,6 +7,8 @@ export const logger = pino({
   redact: {
     paths: [
       "req.headers.authorization",
+      "req.headers.x-updash-reports-token",
+      "req.headers['x-updash-reports-token']",
       "req.headers.cookie",
       "res.headers['set-cookie']",
       // Redact any auth-related body the http logger might serialize.

@@ -70,6 +70,30 @@ export const customersTable = pgTable(
       table.clientId,
       table.createdAt,
     ),
+    clientCreatedStatusIdx: index("customers_client_created_status_idx").on(
+      table.clientId,
+      table.createdAt,
+      table.registrationStatus,
+    ),
+    clientDocumentTypeIdx: index("customers_client_document_type_idx").on(
+      table.clientId,
+      table.documentType,
+    ),
+    clientStateCreatedIdx: index("customers_client_state_created_idx").on(
+      table.clientId,
+      table.state,
+      table.createdAt,
+    ),
+    clientUtmIdx: index("customers_client_utm_idx").on(
+      table.clientId,
+      table.utmSource,
+      table.utmMedium,
+      table.utmCampaign,
+    ),
+    clientTotalOrdersIdx: index("customers_client_total_orders_idx").on(
+      table.clientId,
+      table.totalOrders,
+    ),
   }),
 );
 

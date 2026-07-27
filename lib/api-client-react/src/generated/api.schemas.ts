@@ -412,6 +412,13 @@ export interface CategoryShare {
   orders: number;
 }
 
+export interface DashboardSalesBreakdown {
+  name: string;
+  revenue: number;
+  units: number;
+  orders: number;
+}
+
 /** Traffic denominator used for B2C conversion rate. */
 export interface DashboardTraffic {
   sessions: number;
@@ -434,6 +441,12 @@ export interface DashboardResponse {
   ordersOverTime: TimeSeriesPoint[];
   leadsOverTime: TimeSeriesPoint[];
   revenueByCategory: CategoryShare[];
+  /** B2C paid sales grouped by Nuvemshop product category. */
+  salesByCategory?: DashboardSalesBreakdown[];
+  /** B2C paid sales grouped by Nuvemshop order item color. */
+  salesByColor?: DashboardSalesBreakdown[];
+  /** B2C paid sales grouped by Nuvemshop order item size. */
+  salesBySize?: DashboardSalesBreakdown[];
   /** Equivalent KPI totals for the immediately preceding period of
 the same length. Only present when the request was made with
 `compare=true`.
@@ -563,6 +576,49 @@ export interface FunnelPath {
   conversionRate: number;
 }
 
+export interface FunnelActivationWindow {
+  key: string;
+  label: string;
+  days: number;
+  activatedCustomers: number;
+  activationRate: number;
+}
+
+export interface FunnelActivationAnalysis {
+  approvedCustomers: number;
+  windows: FunnelActivationWindow[];
+  sameDayActivationRate: number;
+  thirtyDayActivationRate: number;
+  avgDaysToFirstPurchase: number | null;
+  firstPurchaseAov: number;
+  repeatAfterFirstPurchaseCustomers: number;
+  repeatAfterFirstPurchaseRate: number;
+  postApproval: {
+    login: number | null;
+    priceView: number | null;
+    addToCart: number;
+    orderSubmitted: number;
+    paymentConfirmed: number;
+    loginRate: number | null;
+    priceViewRate: number | null;
+    addToCartRate: number;
+    orderSubmittedRate: number;
+    paymentConfirmedRate: number;
+  };
+  performance: {
+    label: string;
+    tone: string;
+    benchmark: string;
+  };
+  diagnostics: string[];
+  recommendation: string;
+  operationTypes: Array<{
+    title: string;
+    description: string;
+    steps: string[];
+  }>;
+}
+
 export interface FunnelResponse {
   steps: FunnelStep[];
   overallConversion: number;
@@ -572,6 +628,7 @@ export interface FunnelResponse {
   suggestedActions: string[];
   /** True when at least one site_visits row exists for this client (regardless of the current date range). Drives the "About this data" notice — notice hides once data is flowing even if the selected range shows zero visits. */
   hasSiteVisitData: boolean;
+  activation?: FunnelActivationAnalysis | null;
 }
 
 export interface JourneyKpis {

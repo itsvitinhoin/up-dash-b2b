@@ -53,6 +53,19 @@ export const productsTable = pgTable(
       table.clientId,
       table.createdAt,
     ),
+    clientCategoryStatusIdx: index("products_client_category_status_idx").on(
+      table.clientId,
+      table.category,
+      table.status,
+    ),
+    clientStockIdx: index("products_client_stock_idx").on(
+      table.clientId,
+      table.stock,
+    ),
+    clientTotalSoldIdx: index("products_client_total_sold_idx").on(
+      table.clientId,
+      table.totalSold,
+    ),
   }),
 );
 

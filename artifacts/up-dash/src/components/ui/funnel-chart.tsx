@@ -516,7 +516,7 @@ export function FunnelChart({
 
   const max = first.value;
   const n = data.length;
-  const norms = data.map((d) => d.value / max);
+  const norms = data.map((d) => Math.min(1, Math.max(0, d.value / max)));
   const horiz = orientation === "horizontal";
   const { w: W, h: H } = sz;
   const totalGap = gap * (n - 1);
@@ -532,7 +532,7 @@ export function FunnelChart({
   const gridLineWidth = gridCfg.lineWidth ?? 1;
 
   return (
-    <div className={cn("relative w-full select-none overflow-visible", className)} ref={ref} style={{ aspectRatio: horiz ? "2.2 / 1" : "1 / 1.8", ...style }}>
+    <div className={cn("relative w-full select-none overflow-hidden", className)} ref={ref} style={{ aspectRatio: horiz ? "2.2 / 1" : "1 / 1.8", ...style }}>
       {W > 0 && H > 0 && (
         <>
           {gridEnabled && (
@@ -550,7 +550,7 @@ export function FunnelChart({
             </svg>
           )}
 
-          <div className={cn("absolute inset-0 flex overflow-visible", horiz ? "flex-row" : "flex-col")} style={{ gap }}>
+          <div className={cn("absolute inset-0 flex overflow-hidden", horiz ? "flex-row" : "flex-col")} style={{ gap }}>
             {data.map((stage, i) => {
               const normStart = norms[i] ?? 0;
               const normEnd = norms[Math.min(i + 1, n - 1)] ?? 0;

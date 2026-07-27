@@ -45,6 +45,21 @@ export const eventsTable = pgTable(
       table.clientId,
       table.createdAt,
     ),
+    clientCreatedTypeIdx: index("events_client_created_type_idx").on(
+      table.clientId,
+      table.createdAt,
+      table.eventType,
+    ),
+    clientCustomerCreatedIdx: index("events_client_customer_created_idx").on(
+      table.clientId,
+      table.customerId,
+      table.createdAt,
+    ),
+    clientProductCreatedIdx: index("events_client_product_created_idx").on(
+      table.clientId,
+      table.productId,
+      table.createdAt,
+    ),
     externalSourceUniq: uniqueIndex("events_external_source_uniq")
       .on(table.clientId, table.eventType, table.externalSourceId)
       .where(sql`external_source_id IS NOT NULL`),

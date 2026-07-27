@@ -7,6 +7,7 @@ import {
   logout as apiLogout,
 } from "@workspace/api-client-react";
 import { AuthContext, type AuthContextType, type DashboardMode } from "./auth-context";
+import { mergeDashboardUrlContext, parseDashboardUrlContext } from "./dashboard-context-url";
 
 export type { AuthContextType, DashboardMode };
 
@@ -15,6 +16,8 @@ const REFRESH_KEY = "updash.refresh";
 const USER_KEY = "updash.user";
 const CLIENT_KEY = "updash.clientId";
 const DASHBOARD_MODE_KEY = "updash.dashboardMode";
+const LOCAL_UI_PREVIEW =
+  import.meta.env.DEV && import.meta.env.VITE_UI_PREVIEW === "1";
 
 async function performRefresh(refresh: string): Promise<{
   accessToken: string;
@@ -75,24 +78,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [selectedDashboardMode, setSelectedDashboardModeState] = useState<DashboardMode>("B2B");
 
   useEffect(() => {
+    if (LOCAL_UI_PREVIEW) {
+      setToken("local-ui-preview");
+      setUser({
+        id: "local-preview-admin",
+        email: "admin@updash.com",
+        firstName: "Grupo",
+        lastName: "UP",
+        role: "ADMIN",
+        clientId: null,
+      });
+      setSelectedClientId("preview-celeb");
+      setSelectedDashboardModeState("B2B");
+      setIsLoading(false);
+      return;
+    }
+
     const storedToken = localStorage.getItem(TOKEN_KEY);
     const storedUser = localStorage.getItem(USER_KEY);
     const storedClientId = localStorage.getItem(CLIENT_KEY);
     const storedDashboardMode = localStorage.getItem(DASHBOARD_MODE_KEY);
+    const urlContext = parseDashboardUrlContext(window.location.search);
 
     if (storedToken && storedUser) {
       try {
         const parsedUser = JSON.parse(storedUser);
         setToken(storedToken);
         setUser(parsedUser);
-        if (storedDashboardMode === "B2B" || storedDashboardMode === "B2C") {
-          setSelectedDashboardModeState(storedDashboardMode);
+        const initialMode = urlContext.dashboardMode ?? storedDashboardMode;
+        if (initialMode === "B2B" || initialMode === "B2C") {
+          setSelectedDashboardModeState(initialMode);
+          localStorage.setItem(DASHBOARD_MODE_KEY, initialMode);
         }
 
-        if (storedClientId) {
-          setSelectedClientId(storedClientId);
-        } else if (parsedUser.role === 'CLIENT' && parsedUser.clientId) {
+        if (parsedUser.role === 'CLIENT' && parsedUser.clientId) {
           setSelectedClientId(parsedUser.clientId);
+          localStorage.setItem(CLIENT_KEY, parsedUser.clientId);
+        } else if (urlContext.clientId ?? storedClientId) {
+          const initialClientId = urlContext.clientId ?? storedClientId;
+          setSelectedClientId(initialClientId);
+          if (initialClientId) localStorage.setItem(CLIENT_KEY, initialClientId);
         }
       } catch (e) {
         localStorage.removeItem(TOKEN_KEY);
@@ -102,6 +127,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setIsLoading(false);
   }, []);
+
+  useEffect(() => {
+    const syncFromUrl = () => {
+      const context = parseDashboardUrlContext(window.location.search);
+      if (context.dashboardMode) {
+        setSelectedDashboardModeState(context.dashboardMode);
+        localStorage.setItem(DASHBOARD_MODE_KEY, context.dashboardMode);
+      }
+      if (user?.role === "CLIENT" && user.clientId) {
+        setSelectedClientId(user.clientId);
+        return;
+      }
+      setSelectedClientId(context.clientId);
+      if (context.clientId) localStorage.setItem(CLIENT_KEY, context.clientId);
+      else localStorage.removeItem(CLIENT_KEY);
+    };
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
+  }, [user]);
 
   const login = (newToken: string, newRefresh: string, newUser: AuthUser) => {
     localStorage.setItem(TOKEN_KEY, newToken);
@@ -145,6 +189,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       localStorage.removeItem(CLIENT_KEY);
     }
+    const params = mergeDashboardUrlContext(window.location.search, { clientId: id });
+    const query = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
   };
 
   const handleSetSelectedDashboardMode = (mode: DashboardMode) => {
@@ -152,6 +203,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSelectedClientId(null);
     localStorage.setItem(DASHBOARD_MODE_KEY, mode);
     localStorage.removeItem(CLIENT_KEY);
+    const params = mergeDashboardUrlContext(window.location.search, {
+      dashboardMode: mode,
+      clientId: null,
+    });
+    const query = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
   };
 
   return (

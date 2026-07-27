@@ -73,10 +73,119 @@ import {
 } from "../services/upzero/analytics-metrics";
 import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-facts";
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
+import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
+import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
 
 const router: IRouter = Router();
 
 router.use("/analytics", authenticate);
+
+const ANALYTICS_RESPONSE_CACHE_TTL_MS = Number.parseInt(
+  process.env.ANALYTICS_RESPONSE_CACHE_TTL_MS ?? "300000",
+  10,
+);
+const ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES = Number.parseInt(
+  process.env.ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES ?? "250",
+  10,
+);
+
+type AnalyticsCacheEntry = {
+  expiresAt: number;
+  payload: unknown;
+  statusCode: number;
+};
+
+const analyticsResponseCache = new Map<string, AnalyticsCacheEntry>();
+
+function stableQueryString(query: Record<string, unknown>): string {
+  return Object.keys(query)
+    .sort()
+    .map((key) => {
+      const value = query[key];
+      const encodedKey = encodeURIComponent(key);
+      if (Array.isArray(value)) {
+        return value
+          .map((entry) => `${encodedKey}=${encodeURIComponent(String(entry))}`)
+          .join("&");
+      }
+      return `${encodedKey}=${encodeURIComponent(String(value ?? ""))}`;
+    })
+    .filter(Boolean)
+    .join("&");
+}
+
+function analyticsCacheClientScope(req: import("express").Request): string {
+  if (req.user?.role === "ADMIN") {
+    const clientId = typeof req.query.clientId === "string" ? req.query.clientId : "platform";
+    return `admin:${req.user.sub}:${clientId}`;
+  }
+  return `client:${req.user?.clientId ?? "unknown"}`;
+}
+
+function analyticsCacheKey(req: import("express").Request): string {
+  return [
+    req.path,
+    analyticsCacheClientScope(req),
+    stableQueryString(req.query as Record<string, unknown>),
+  ].join("::");
+}
+
+function shouldCacheAnalyticsRequest(req: import("express").Request): boolean {
+  if (req.method !== "GET") return false;
+  if (ANALYTICS_RESPONSE_CACHE_TTL_MS <= 0) return false;
+  if (!req.path.startsWith("/analytics/")) return false;
+  if (req.path === "/analytics/insight") return false;
+  if (req.path.includes("/debug")) return false;
+  return true;
+}
+
+function pruneAnalyticsResponseCache(): void {
+  if (analyticsResponseCache.size <= ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES) return;
+  const now = Date.now();
+  for (const [key, entry] of analyticsResponseCache) {
+    if (entry.expiresAt <= now) analyticsResponseCache.delete(key);
+  }
+  while (analyticsResponseCache.size > ANALYTICS_RESPONSE_CACHE_MAX_ENTRIES) {
+    const oldestKey = analyticsResponseCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    analyticsResponseCache.delete(oldestKey);
+  }
+}
+
+router.use((req, res, next) => {
+  if (!shouldCacheAnalyticsRequest(req)) {
+    next();
+    return;
+  }
+
+  const key = analyticsCacheKey(req);
+  const now = Date.now();
+  const cached = analyticsResponseCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    res.setHeader("X-UPDash-Cache", "HIT");
+    res.setHeader("Cache-Control", "private, max-age=60, stale-while-revalidate=300");
+    res.status(cached.statusCode).json(cached.payload);
+    return;
+  }
+  if (cached) analyticsResponseCache.delete(key);
+
+  const originalJson = res.json.bind(res);
+  res.json = ((payload: unknown) => {
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      pruneAnalyticsResponseCache();
+      analyticsResponseCache.set(key, {
+        expiresAt: Date.now() + ANALYTICS_RESPONSE_CACHE_TTL_MS,
+        payload,
+        statusCode: res.statusCode,
+      });
+      res.setHeader("X-UPDash-Cache", "MISS");
+      res.setHeader("Cache-Control", "private, max-age=60, stale-while-revalidate=300");
+    }
+    return originalJson(payload);
+  }) as typeof res.json;
+
+  next();
+});
 
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -470,6 +579,33 @@ function requireClient(
   return clientId;
 }
 
+const SIZE_VALUE_RE = /^(PP|P|M|G|GG|XG|XGG|EXG|EG|XP|XS|S|L|XL|XXL|XXXL|U|UNICO|ONE SIZE|[0-9]{1,3})$/i;
+
+function normalizeVariantValue(value: string | null | undefined): string {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function looksLikeSizeValue(value: string | null | undefined): boolean {
+  const normalized = normalizeVariantValue(value);
+  return normalized.length > 0 && SIZE_VALUE_RE.test(normalized);
+}
+
+function normalizedVariantAttrs(row: { color: string | null; size: string | null }): { color: string | null; size: string | null } {
+  const color = row.color?.trim() || null;
+  const size = row.size?.trim() || null;
+  const colorIsSize = looksLikeSizeValue(color);
+  const sizeIsSize = looksLikeSizeValue(size);
+
+  return {
+    color: colorIsSize && size && !sizeIsSize ? size : color,
+    size: size && !sizeIsSize && color && colorIsSize ? color : size,
+  };
+}
+
 type DashboardKpis = {
   revenue: number;
   orders: number;
@@ -500,12 +636,77 @@ type DashboardDailyPerformance = {
   conversionRate: number;
 };
 
+type DashboardSalesBreakdown = {
+  name: string;
+  revenue: number;
+  units: number;
+  orders: number;
+};
+
+type VariantSalesRow = {
+  orderId: string;
+  color: string | null;
+  size: string | null;
+  revenue: number;
+  units: number;
+};
+
+function buildVariantSalesBreakdown(rows: VariantSalesRow[], key: "color" | "size", fallbackName: string): DashboardSalesBreakdown[] {
+  const grouped = new Map<string, { revenue: number; units: number; orderIds: Set<string> }>();
+
+  for (const row of rows) {
+    const attrs = normalizedVariantAttrs(row);
+    const name = attrs[key]?.trim() || fallbackName;
+    const current = grouped.get(name) ?? { revenue: 0, units: 0, orderIds: new Set<string>() };
+    current.revenue += Number(row.revenue) || 0;
+    current.units += Number(row.units) || 0;
+    current.orderIds.add(row.orderId);
+    grouped.set(name, current);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([name, value]) => ({
+      name,
+      revenue: value.revenue,
+      units: value.units,
+      orders: value.orderIds.size,
+    }))
+    .sort((a, b) => b.revenue - a.revenue);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(label)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 type DashboardSignal = {
   type: "high_traffic_low_sales" | "high_performing_regions";
   severity: "info" | "warning" | "critical";
   title: string;
   body: string;
   meta?: Record<string, unknown>;
+};
+
+type ScaleBreakdownRow = {
+  name: string;
+  revenue: number;
+  units: number;
+  orders?: number;
+  stockUnits?: number;
+  salesPower?: number;
+};
+
+type ScaleInsightPayload = {
+  headline: string;
+  summary: string;
+  actions: string[];
+  risks: string[];
+  source: "ai" | "heuristic";
 };
 
 const ZERO_KPIS: DashboardKpis = {
@@ -998,8 +1199,12 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     dailyNewBuyers: { date: string; value: number }[];
     dailyReturningBuyers: { date: string; value: number }[];
     revenueByCategory: { category: string; revenue: number; orders: number }[];
+    salesByCategory: DashboardSalesBreakdown[];
+    salesByColor: DashboardSalesBreakdown[];
+    salesBySize: DashboardSalesBreakdown[];
     traffic: DashboardTraffic;
     dailyPerformance: DashboardDailyPerformance[];
+    metricRows?: DailyMetricRow[];
   };
 
   // The prior window only needs the data the client renders for comparison
@@ -1045,6 +1250,9 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       dailyNewBuyers: [],
       dailyReturningBuyers: [],
       revenueByCategory: [],
+      salesByCategory: [],
+      salesByColor: [],
+      salesBySize: [],
       traffic: { sessions: 0, orders: 0, source: "none" },
       dailyPerformance: [],
     };
@@ -1068,7 +1276,21 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     }
     const baseOrderWhere = and(...orderConds);
 
-    const [ga4Funnel, ga4Daily, [orderAgg], [requestedRow], [eventAgg]] = await Promise.all([
+    const customerRegistrationConds: SQL[] = [
+      eq(customersTable.clientId, clientId),
+      gte(customersTable.createdAt, winFrom),
+      lte(customersTable.createdAt, winTo),
+    ];
+    if (scopedCustomerIds !== null) {
+      customerRegistrationConds.push(
+        sql`${customersTable.id} IN (${sql.join(
+          scopedCustomerIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+      );
+    }
+
+    const [ga4Funnel, ga4Daily, [orderAgg], [requestedRow], [eventAgg], [customerRegistrationAgg]] = await Promise.all([
       isB2CClient
         ? fetchGa4FunnelMetrics({
             propertyId: clientConfig?.ga4PropertyId,
@@ -1115,6 +1337,13 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
             lte(eventsTable.createdAt, winTo),
           ),
         ),
+      db
+        .select({
+          registrations: sql<number>`COUNT(*)::int`,
+          approvals: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
+        })
+        .from(customersTable)
+        .where(and(...customerRegistrationConds)),
     ]);
 
     let customerAgg: { total: number; repeat: number } = { total: 0, repeat: 0 };
@@ -1123,179 +1352,85 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     let dailyNewBuyers: { date: string; value: number }[] = [];
     let dailyReturningBuyers: { date: string; value: number }[] = [];
 
-    // B2C buyer classification must be derived from paid/approved orders, not
-    // only from customer.firstPurchaseAt, because imported ecommerce customers
-    // can be updated independently from the order sync. B2B keeps the previous
-    // customer-field path to avoid changing its existing behavior.
-    if (isB2CClient) {
-      type BuyerSummaryRow = { new_buyers: string; returning_buyers: string };
-      const buyerSummaryRaw = await db.execute<BuyerSummaryRow>(sql`
+    // New/Returning is based on the customer's full ecommerce order history,
+    // independent of the selected period: 1 historical order = New; 2+ = Returning.
+    // For B2C/Nuvemshop, keep the existing approved/shipped/delivered guard.
+    const paidStatusClause = isB2CClient
+      ? sql`AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`
+      : sql``;
+    type BuyerSummaryRow = { new_buyers: string; returning_buyers: string };
+    const buyerSummaryRaw = await db.execute<BuyerSummaryRow>(sql`
+      WITH period_buyers AS (
+        SELECT DISTINCT ${ordersTable.customerId} AS customer_id
+        FROM ${ordersTable}
+        WHERE ${baseOrderWhere}
+          AND ${ordersTable.customerId} IS NOT NULL
+          ${paidStatusClause}
+      ),
+      order_history AS (
+        SELECT
+          ${ordersTable.customerId} AS customer_id,
+          COUNT(DISTINCT ${ordersTable.id})::int AS total_orders
+        FROM ${ordersTable}
+        WHERE ${ordersTable.clientId} = ${clientId}
+          AND ${ordersTable.customerId} IS NOT NULL
+          ${paidStatusClause}
+        GROUP BY ${ordersTable.customerId}
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE COALESCE(order_history.total_orders, 0) <= 1)::int AS new_buyers,
+        COUNT(*) FILTER (WHERE COALESCE(order_history.total_orders, 0) > 1)::int AS returning_buyers
+      FROM period_buyers
+      INNER JOIN order_history ON order_history.customer_id = period_buyers.customer_id
+    `);
+    const buyerSummaryRows = (buyerSummaryRaw.rows ?? buyerSummaryRaw) as unknown as BuyerSummaryRow[];
+    const buyerSummary = buyerSummaryRows[0];
+    newBuyers = Number(buyerSummary?.new_buyers ?? 0);
+    returningBuyers = Number(buyerSummary?.returning_buyers ?? 0);
+
+    if (full) {
+      const [custRow] = await db
+        .select({
+          total: sql<number>`COUNT(*)::int`,
+          repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
+        })
+        .from(customersTable)
+        .where(eq(customersTable.clientId, clientId));
+      customerAgg = custRow;
+
+      type BuyerDailyRow = { date: string; new_buyers: string; returning_buyers: string };
+      const buyerDailyRaw = await db.execute<BuyerDailyRow>(sql`
         WITH period_orders AS (
-          SELECT DISTINCT ${ordersTable.customerId} AS customer_id
+          SELECT
+            ${ordersTable.customerId} AS customer_id,
+            ${ordersTable.createdAt} AS created_at
           FROM ${ordersTable}
           WHERE ${baseOrderWhere}
             AND ${ordersTable.customerId} IS NOT NULL
-            AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+            ${paidStatusClause}
         ),
-        first_orders AS (
+        order_history AS (
           SELECT
             ${ordersTable.customerId} AS customer_id,
-            MIN(${ordersTable.createdAt}) AS first_order_at
+            COUNT(DISTINCT ${ordersTable.id})::int AS total_orders
           FROM ${ordersTable}
           WHERE ${ordersTable.clientId} = ${clientId}
             AND ${ordersTable.customerId} IS NOT NULL
-            AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+            ${paidStatusClause}
           GROUP BY ${ordersTable.customerId}
         )
         SELECT
-          COUNT(*) FILTER (WHERE first_orders.first_order_at >= ${winFrom} AND first_orders.first_order_at <= ${winTo})::int AS new_buyers,
-          COUNT(*) FILTER (WHERE first_orders.first_order_at < ${winFrom})::int AS returning_buyers
+          to_char(date_trunc('day', period_orders.created_at), 'YYYY-MM-DD') AS date,
+          COUNT(DISTINCT period_orders.customer_id) FILTER (WHERE COALESCE(order_history.total_orders, 0) <= 1)::int AS new_buyers,
+          COUNT(DISTINCT period_orders.customer_id) FILTER (WHERE COALESCE(order_history.total_orders, 0) > 1)::int AS returning_buyers
         FROM period_orders
-        INNER JOIN first_orders ON first_orders.customer_id = period_orders.customer_id
+        INNER JOIN order_history ON order_history.customer_id = period_orders.customer_id
+        GROUP BY date_trunc('day', period_orders.created_at)
+        ORDER BY date_trunc('day', period_orders.created_at)
       `);
-      const buyerSummaryRows = (buyerSummaryRaw.rows ?? buyerSummaryRaw) as unknown as BuyerSummaryRow[];
-      const buyerSummary = buyerSummaryRows[0];
-      newBuyers = Number(buyerSummary?.new_buyers ?? 0);
-      returningBuyers = Number(buyerSummary?.returning_buyers ?? 0);
-
-      if (full) {
-        const [custRow] = await db
-          .select({
-            total: sql<number>`COUNT(*)::int`,
-            repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
-          })
-          .from(customersTable)
-          .where(eq(customersTable.clientId, clientId));
-        customerAgg = custRow;
-
-        type BuyerDailyRow = { date: string; new_buyers: string; returning_buyers: string };
-        const buyerDailyRaw = await db.execute<BuyerDailyRow>(sql`
-          WITH period_orders AS (
-            SELECT
-              ${ordersTable.customerId} AS customer_id,
-              ${ordersTable.createdAt} AS created_at
-            FROM ${ordersTable}
-            WHERE ${baseOrderWhere}
-              AND ${ordersTable.customerId} IS NOT NULL
-              AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')
-          ),
-          first_orders AS (
-            SELECT
-              ${ordersTable.customerId} AS customer_id,
-              MIN(${ordersTable.createdAt}) AS first_order_at
-            FROM ${ordersTable}
-            WHERE ${ordersTable.clientId} = ${clientId}
-              AND ${ordersTable.customerId} IS NOT NULL
-              AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')
-            GROUP BY ${ordersTable.customerId}
-          )
-          SELECT
-            to_char(date_trunc('day', period_orders.created_at), 'YYYY-MM-DD') AS date,
-            COUNT(DISTINCT period_orders.customer_id) FILTER (
-              WHERE first_orders.first_order_at >= date_trunc('day', period_orders.created_at)
-                AND first_orders.first_order_at < date_trunc('day', period_orders.created_at) + interval '1 day'
-            )::int AS new_buyers,
-            COUNT(DISTINCT period_orders.customer_id) FILTER (
-              WHERE first_orders.first_order_at < date_trunc('day', period_orders.created_at)
-            )::int AS returning_buyers
-          FROM period_orders
-          INNER JOIN first_orders ON first_orders.customer_id = period_orders.customer_id
-          GROUP BY date_trunc('day', period_orders.created_at)
-          ORDER BY date_trunc('day', period_orders.created_at)
-        `);
-        const buyerDailyRows = (buyerDailyRaw.rows ?? buyerDailyRaw) as unknown as BuyerDailyRow[];
-        dailyNewBuyers = buyerDailyRows.map((row) => ({ date: row.date, value: Number(row.new_buyers) || 0 }));
-        dailyReturningBuyers = buyerDailyRows.map((row) => ({ date: row.date, value: Number(row.returning_buyers) || 0 }));
-      }
-    } else {
-      // Always compute aggregate new/returning buyer counts so that prev-period
-      // retentionPct, newBuyers, and returningBuyers are available for the
-      // period-over-period delta chips in the UI. Daily time-series are only
-      // needed for the current window (sparklines), so skip them in compare mode.
-      const buyerAggPromises = [
-        db
-          .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
-          .from(ordersTable)
-          .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
-          .where(
-            and(
-              baseOrderWhere,
-              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-              gte(customersTable.firstPurchaseAt, winFrom),
-              lte(customersTable.firstPurchaseAt, winTo),
-            ),
-          ),
-        db
-          .select({ count: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
-          .from(ordersTable)
-          .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
-          .where(
-            and(
-              baseOrderWhere,
-              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-              sql`${customersTable.firstPurchaseAt} < ${winFrom}`,
-            ),
-          ),
-      ] as const;
-
-      if (full) {
-        // Current window: also fetch customer totals + daily buyer series.
-        const [custRow] = await db
-          .select({
-            total: sql<number>`COUNT(*)::int`,
-            repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
-          })
-          .from(customersTable)
-          .where(eq(customersTable.clientId, clientId));
-        customerAgg = custRow;
-
-        const [[newRow], [retRow], newDaily, retDaily] = await Promise.all([
-          ...buyerAggPromises,
-          db
-            .select({
-              date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
-              value: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
-            })
-            .from(ordersTable)
-            .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
-            .where(
-              and(
-                baseOrderWhere,
-                sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-                gte(customersTable.firstPurchaseAt, winFrom),
-                lte(customersTable.firstPurchaseAt, winTo),
-              ),
-            )
-            .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
-            .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`),
-          db
-            .select({
-              date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
-              value: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int`,
-            })
-            .from(ordersTable)
-            .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
-            .where(
-              and(
-                baseOrderWhere,
-                sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-                sql`${customersTable.firstPurchaseAt} < ${winFrom}`,
-              ),
-            )
-            .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
-            .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`),
-        ] as const);
-        newBuyers = Number(newRow?.count) || 0;
-        returningBuyers = Number(retRow?.count) || 0;
-        dailyNewBuyers = newDaily;
-        dailyReturningBuyers = retDaily;
-      } else {
-        // Prev window: only aggregate counts are needed (no daily series, no
-        // overall customer totals) — keeps the compare path lean.
-        const [[newRow], [retRow]] = await Promise.all(buyerAggPromises);
-        newBuyers = Number(newRow?.count) || 0;
-        returningBuyers = Number(retRow?.count) || 0;
-      }
+      const buyerDailyRows = (buyerDailyRaw.rows ?? buyerDailyRaw) as unknown as BuyerDailyRow[];
+      dailyNewBuyers = buyerDailyRows.map((row) => ({ date: row.date, value: Number(row.new_buyers) || 0 }));
+      dailyReturningBuyers = buyerDailyRows.map((row) => ({ date: row.date, value: Number(row.returning_buyers) || 0 }));
     }
 
     const revenue = Number(orderAgg.revenue) || 0;
@@ -1304,8 +1439,12 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     const ga4Sessions = ga4Funnel?.sessions ?? 0;
     const visits = isB2CClient && ga4Sessions > 0 ? ga4Sessions : localVisits;
     const trafficSource: Ga4Source = isB2CClient && ga4Sessions > 0 ? "ga4" : localVisits > 0 ? "events" : "none";
-    const registrations = Number(eventAgg.registrations) || 0;
-    const approvals = Number(eventAgg.approvals) || 0;
+    const registrations = isB2CClient
+      ? Number(eventAgg.registrations) || 0
+      : Number(customerRegistrationAgg?.registrations) || 0;
+    const approvals = isB2CClient
+      ? Number(eventAgg.approvals) || 0
+      : Number(customerRegistrationAgg?.approvals) || 0;
 
     const clamp = (n: number): number => Math.min(100, Math.max(0, n));
     const totalBuyers = newBuyers + returningBuyers;
@@ -1313,7 +1452,12 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       revenue,
       orders,
       avgTicket: orders > 0 ? revenue / orders : 0,
-      conversionRate: visits > 0 ? clamp((orders / visits) * 100) : 0,
+      conversionRate: calculateDashboardConversionRate({
+        isB2C: isB2CClient,
+        orders,
+        visits,
+        approvedLeads: approvals,
+      }),
       approvalRate: registrations > 0 ? clamp((approvals / registrations) * 100) : 0,
       leads: registrations,
       approvedLeads: approvals,
@@ -1393,6 +1537,53 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
           .groupBy(productsTable.category)
       : [];
 
+    const mapSalesBreakdown = (rows: DashboardSalesBreakdown[]): DashboardSalesBreakdown[] =>
+      rows
+        .map((row) => ({
+          name: row.name,
+          revenue: Number(row.revenue) || 0,
+          units: Number(row.units) || 0,
+          orders: Number(row.orders) || 0,
+        }))
+        .sort((a, b) => b.revenue - a.revenue);
+
+    const [salesByCategory, salesByColor, salesBySize] = full && isB2CClient
+      ? await Promise.all([
+          db
+            .select({
+              name: sql<string>`COALESCE(NULLIF(${productsTable.category}, ''), 'Sem categoria')`,
+              revenue: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity} * ${orderItemsTable.priceAtSale}), 0)::float`,
+              units: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity}), 0)::int`,
+              orders: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+            })
+            .from(orderItemsTable)
+            .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+            .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+            .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`))
+            .groupBy(sql`COALESCE(NULLIF(${productsTable.category}, ''), 'Sem categoria')`),
+          db
+            .select({
+              orderId: ordersTable.id,
+              color: orderItemsTable.color,
+              size: orderItemsTable.size,
+              revenue: sql<number>`COALESCE(${orderItemsTable.fulfilledQuantity} * ${orderItemsTable.priceAtSale}, 0)::float`,
+              units: sql<number>`COALESCE(${orderItemsTable.fulfilledQuantity}, 0)::int`,
+            })
+            .from(orderItemsTable)
+            .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+            .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`)),
+        ])
+          .then(([categoryRows, variantRows]) => [
+            mapSalesBreakdown(categoryRows),
+            buildVariantSalesBreakdown(variantRows, "color", "Sem cor"),
+            buildVariantSalesBreakdown(variantRows, "size", "Sem tamanho"),
+          ] as [DashboardSalesBreakdown[], DashboardSalesBreakdown[], DashboardSalesBreakdown[]])
+          .catch((err) => {
+            console.warn("[dashboard] B2C sales breakdown unavailable:", err instanceof Error ? err.message : err);
+            return [[], [], []] as [DashboardSalesBreakdown[], DashboardSalesBreakdown[], DashboardSalesBreakdown[]];
+          })
+      : [[], [], []];
+
     return {
       kpis,
       dailyRevenue,
@@ -1401,10 +1592,203 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       dailyNewBuyers,
       dailyReturningBuyers,
       revenueByCategory,
+      salesByCategory,
+      salesByColor,
+      salesBySize,
       traffic: { sessions: visits, orders, source: trafficSource },
       dailyPerformance,
     };
   };
+
+  const aggregateWindow = async (
+    winFrom: Date,
+    winTo: Date,
+    full: boolean,
+  ): Promise<WindowAggregates> => {
+    let metrics = await readDailyClientMetrics({ clientId, from: winFrom, to: winTo });
+    if (!metrics.complete) {
+      await refreshDailyClientMetrics({ clientId, from: winFrom, to: winTo });
+      metrics = await readDailyClientMetrics({ clientId, from: winFrom, to: winTo });
+    }
+
+    const rows = metrics.rows;
+    const revenue = rows.reduce((sum, row) => sum + row.approvedRevenue, 0);
+    const orders = rows.reduce((sum, row) => sum + row.approvedOrders, 0);
+    const requestedRevenue = rows.reduce((sum, row) => sum + row.requestedRevenue, 0);
+    const visits = rows.reduce((sum, row) => sum + row.visits, 0);
+    const [customerRegistrationAgg] = await db
+      .select({
+        registrations: sql<number>`COUNT(*)::int`,
+        approvals: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
+      })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId),
+          gte(customersTable.createdAt, winFrom),
+          lte(customersTable.createdAt, winTo),
+        ),
+      );
+    const registrations = Number(customerRegistrationAgg?.registrations) || 0;
+    const approvals = Number(customerRegistrationAgg?.approvals) || 0;
+    const newBuyers = rows.reduce((sum, row) => sum + row.newBuyers, 0);
+    const returningBuyers = rows.reduce((sum, row) => sum + row.returningBuyers, 0);
+    const totalBuyers = newBuyers + returningBuyers;
+
+    let customerAgg: { total: number; repeat: number } = { total: 0, repeat: 0 };
+    if (full) {
+      const [custRow] = await db
+        .select({
+          total: sql<number>`COUNT(*)::int`,
+          repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
+        })
+        .from(customersTable)
+        .where(eq(customersTable.clientId, clientId));
+      customerAgg = custRow;
+    }
+
+    const revenueByCategory = full
+      ? await db
+          .select({
+            category: sql<string>`COALESCE(${productsTable.category}, 'Uncategorized')`,
+            revenue: sql<number>`COALESCE(SUM(${orderItemsTable.priceAtSale} * ${orderItemsTable.quantity}), 0)::float`,
+            orders: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+          })
+          .from(orderItemsTable)
+          .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+          .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+          .where(
+            and(
+              eq(ordersTable.clientId, clientId),
+              gte(ordersTable.createdAt, winFrom),
+              lte(ordersTable.createdAt, winTo),
+              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+            ),
+          )
+          .groupBy(productsTable.category)
+      : [];
+
+    const kpis: DashboardKpis = {
+      revenue,
+      orders,
+      avgTicket: orders > 0 ? revenue / orders : 0,
+      conversionRate: calculateDashboardConversionRate({
+        isB2C: false,
+        orders,
+        visits,
+        approvedLeads: approvals,
+      }),
+      approvalRate: registrations > 0 ? Math.min(100, Math.max(0, (approvals / registrations) * 100)) : 0,
+      leads: registrations,
+      approvedLeads: approvals,
+      customers: Number(customerAgg.total) || 0,
+      repeatCustomers: Number(customerAgg.repeat) || 0,
+      requestedRevenue,
+      newBuyers,
+      returningBuyers,
+      retentionPct: totalBuyers > 0 ? (returningBuyers / totalBuyers) * 100 : 0,
+    };
+
+    return {
+      kpis,
+      dailyRevenue: rows.map((row) => ({ date: row.date, value: row.approvedRevenue })),
+      dailyOrders: rows.map((row) => ({ date: row.date, value: row.approvedOrders })),
+      dailyLeads: full ? rows.map((row) => ({ date: row.date, value: row.registrations })) : [],
+      dailyNewBuyers: full ? rows.map((row) => ({ date: row.date, value: row.newBuyers })) : [],
+      dailyReturningBuyers: full ? rows.map((row) => ({ date: row.date, value: row.returningBuyers })) : [],
+      revenueByCategory,
+      salesByCategory: [],
+      salesByColor: [],
+      salesBySize: [],
+      traffic: { sessions: visits, orders, source: visits > 0 ? "events" : "none" },
+      dailyPerformance: full
+        ? rows.map((row) => ({
+            date: row.date,
+            revenue: row.approvedRevenue,
+            orders: row.approvedOrders,
+            sessions: row.visits,
+            conversionRate: row.visits > 0 ? (row.approvedOrders / row.visits) * 100 : 0,
+          }))
+        : [],
+      metricRows: rows,
+    };
+  };
+
+  const aggregateSignals = (rows: DailyMetricRow[]): DashboardSignal[] => {
+    const totalVisits = rows.reduce((sum, row) => sum + row.visits, 0);
+    const ratesByDay = rows
+      .filter((row) => row.visits >= 5)
+      .map((row) => row.purchases / row.visits)
+      .sort((a, b) => a - b);
+    if (totalVisits < 50 || ratesByDay.length < 3) return [];
+    const p20idx = Math.max(0, Math.floor(ratesByDay.length * 0.2) - 1);
+    const p20rate = ratesByDay[p20idx]!;
+    const medianRate = ratesByDay[Math.floor(ratesByDay.length / 2)]!;
+    if (p20rate >= 0.02) return [];
+    return [{
+      type: "high_traffic_low_sales",
+      severity: p20rate < 0.005 ? "critical" : "warning",
+      title: "High traffic, low conversion",
+      body: `The bottom 20% of trading days convert at just ${(p20rate * 100).toFixed(1)}% visits→purchases (period median: ${(medianRate * 100).toFixed(1)}%). Review checkout flow, pricing, or catalog relevance.`,
+      meta: {
+        p20ConversionPct: +(p20rate * 100).toFixed(2),
+        medianConversionPct: +(medianRate * 100).toFixed(2),
+        totalVisits,
+      },
+    }];
+  };
+
+  const canUseDailyAggregates =
+    !isB2CClient &&
+    !category &&
+    !sellerId &&
+    !channel &&
+    !segment &&
+    !utmSourceFilter &&
+    !utmMediumFilter &&
+    !utmCampaignFilter;
+
+  if (canUseDailyAggregates) {
+    try {
+      const current = await aggregateWindow(from, to, true);
+      let prev: WindowAggregates | null = null;
+      if (compare) {
+        const lengthMs = to.getTime() - from.getTime();
+        const prevTo = new Date(from.getTime() - 1);
+        const prevFrom = new Date(prevTo.getTime() - lengthMs);
+        prev = await aggregateWindow(prevFrom, prevTo, false);
+      }
+
+      res.setHeader("X-UPDash-Aggregates", "daily_client_metrics");
+      res.json(
+        GetDashboardResponse.parse({
+          kpis: current.kpis,
+          revenueOverTime: current.dailyRevenue,
+          ordersOverTime: current.dailyOrders,
+          leadsOverTime: current.dailyLeads,
+          revenueByCategory: current.revenueByCategory,
+          salesByCategory: current.salesByCategory,
+          salesByColor: current.salesByColor,
+          salesBySize: current.salesBySize,
+          newBuyersOverTime: current.dailyNewBuyers,
+          returningBuyersOverTime: current.dailyReturningBuyers,
+          traffic: current.traffic,
+          dailyPerformance: current.dailyPerformance,
+          signals: aggregateSignals(current.metricRows ?? []),
+          ...(prev
+            ? {
+                prevKpis: prev.kpis,
+                prevRevenueOverTime: prev.dailyRevenue,
+                prevOrdersOverTime: prev.dailyOrders,
+              }
+            : {}),
+        }),
+      );
+      return;
+    } catch (err) {
+      console.warn("[dashboard] daily aggregates unavailable; falling back:", err instanceof Error ? err.message : err);
+    }
+  }
 
   const current = await computeWindow(from, to, true, dateFromOnly, dateToOnly);
 
@@ -1535,6 +1919,9 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       ordersOverTime: current.dailyOrders,
       leadsOverTime: current.dailyLeads,
       revenueByCategory: current.revenueByCategory,
+      salesByCategory: current.salesByCategory,
+      salesByColor: current.salesByColor,
+      salesBySize: current.salesBySize,
       newBuyersOverTime: current.dailyNewBuyers,
       returningBuyersOverTime: current.dailyReturningBuyers,
       traffic: current.traffic,
@@ -1696,6 +2083,7 @@ type AttributedCampaignCustomer = {
   purchaseCount: number;
   orderIds: number[];
   totalPurchaseValue: number;
+  totalFulfilledPurchaseValue: number;
   addToCartCount: number;
   checkoutCount: number;
   registerSubmittedCount: number;
@@ -1785,8 +2173,56 @@ type CampaignLocalOrderSummary = {
   purchaseCount: number;
   orderIds: number[];
   totalPurchaseValue: number;
+  totalFulfilledPurchaseValue: number;
   lastOrderAt: string | null;
 };
+
+type CampaignPurchaseSummary = {
+  purchaseCount: number;
+  orderIds: number[];
+  totalPurchaseValue: number;
+};
+
+const CAMPAIGN_PURCHASE_EVENT_NAMES = new Set(["purchase", "order_paid", "payment_approved"]);
+
+function summarizeTrackingPurchases(rows: UpzeroAnalyticsMetric[]): CampaignPurchaseSummary {
+  const orderValueById = new Map<number, number>();
+  const anonymousPurchaseGroups = new Map<string, { events: number; value: number }>();
+
+  for (const row of rows) {
+    if (typeof row.order_id === "number") {
+      orderValueById.set(row.order_id, Math.max(orderValueById.get(row.order_id) ?? 0, row.total_value ?? 0));
+      continue;
+    }
+
+    const groupKey = [
+      row.period_start,
+      row.total_value ?? 0,
+      row.total_quantity ?? 0,
+    ].join("|");
+    const current = anonymousPurchaseGroups.get(groupKey) ?? { events: 0, value: 0 };
+    anonymousPurchaseGroups.set(groupKey, {
+      events: Math.max(current.events, row.total_events ?? 0),
+      value: Math.max(current.value, row.total_value ?? 0),
+    });
+  }
+
+  const orderIds = Array.from(orderValueById.keys());
+  const identifiedPurchaseCount = orderIds.length;
+  const anonymousPurchaseCount = Array.from(anonymousPurchaseGroups.values()).reduce(
+    (sum, group) => sum + Math.max(group.events, 1),
+    0,
+  );
+  const totalPurchaseValue =
+    Array.from(orderValueById.values()).reduce((sum, value) => sum + value, 0) +
+    Array.from(anonymousPurchaseGroups.values()).reduce((sum, group) => sum + group.value, 0);
+
+  return {
+    purchaseCount: identifiedPurchaseCount + anonymousPurchaseCount,
+    orderIds,
+    totalPurchaseValue,
+  };
+}
 
 type CampaignAttributionStampRow = {
   id: string;
@@ -2010,6 +2446,7 @@ function buildAttributedCampaignCustomers(
   localCustomers: Map<number, CampaignLocalCustomer>,
   priorOrders: Map<string, number>,
   localOrders: Map<string, CampaignLocalOrderSummary>,
+  historicalOrders: Map<string, number>,
 ): AttributedCampaignCustomer[] {
   const grouped = new Map<number, UpzeroAnalyticsMetric[]>();
 
@@ -2031,37 +2468,14 @@ function buildAttributedCampaignCustomers(
     if (campaignRows.length === 0) continue;
 
     const user = sortedRows.map(getMetricUser).find((candidate) => candidate?.id === userId) ?? null;
-    const purchaseRows = sortedRows.filter((row) =>
-      ["purchase", "order_paid", "payment_approved"].includes(row.event_name),
-    );
+    const purchaseRows = sortedRows.filter((row) => CAMPAIGN_PURCHASE_EVENT_NAMES.has(row.event_name));
     const checkoutRows = sortedRows.filter((row) =>
       ["initiate_checkout", "checkout_start"].includes(row.event_name),
     );
     const addToCartRows = sortedRows.filter((row) => row.event_name === "add_to_cart");
     const registerRows = sortedRows.filter((row) => row.event_name === "register_submitted");
     const productViewRows = sortedRows.filter((row) => PRODUCT_VIEW_EVENT_NAMES.has(row.event_name));
-    const orderIds = Array.from(
-      new Set(
-        purchaseRows
-          .map((row) => row.order_id)
-          .filter((orderId): orderId is number => typeof orderId === "number"),
-      ),
-    );
-    const purchaseCount =
-      orderIds.length > 0
-        ? orderIds.length
-        : purchaseRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0);
-    const purchaseValueByOrder = new Map<number, number>();
-    let purchaseValueWithoutOrder = 0;
-    for (const row of purchaseRows) {
-      if (row.order_id !== null) {
-        purchaseValueByOrder.set(row.order_id, Math.max(purchaseValueByOrder.get(row.order_id) ?? 0, row.total_value ?? 0));
-      } else {
-        purchaseValueWithoutOrder += row.total_value ?? 0;
-      }
-    }
-    const totalPurchaseValue =
-      [...purchaseValueByOrder.values()].reduce((sum, value) => sum + value, 0) + purchaseValueWithoutOrder;
+    const trackingPurchaseSummary = summarizeTrackingPurchases(purchaseRows);
     const firstTouchRow = campaignRows[0];
     const lastTouchRow = campaignRows[campaignRows.length - 1];
     const firstCampaign = firstTouchRow.utm_campaign ?? "";
@@ -2071,16 +2485,25 @@ function buildAttributedCampaignCustomers(
     const lastEvent = sortedRows[sortedRows.length - 1];
     const localCustomer = localCustomers.get(userId);
     const localOrderSummary = localCustomer ? localOrders.get(localCustomer.id) : undefined;
-    const combinedOrderIds = Array.from(new Set([...orderIds, ...(localOrderSummary?.orderIds ?? [])]));
-    const effectivePurchaseCount = Math.max(
-      purchaseCount,
-      localOrderSummary?.purchaseCount ?? 0,
-      combinedOrderIds.length,
-    );
-    const effectivePurchaseValue =
-      localOrderSummary && localOrderSummary.purchaseCount > 0
-        ? localOrderSummary.totalPurchaseValue
-        : totalPurchaseValue;
+    const hasLocalOrderTruth = Boolean(localCustomer);
+    const combinedOrderIds = hasLocalOrderTruth
+      ? Array.from(new Set(localOrderSummary?.orderIds ?? []))
+      : Array.from(new Set([...trackingPurchaseSummary.orderIds, ...(localOrderSummary?.orderIds ?? [])]));
+    const effectivePurchaseCount = hasLocalOrderTruth
+      ? localOrderSummary?.purchaseCount ?? 0
+      : Math.max(
+          trackingPurchaseSummary.purchaseCount,
+          localOrderSummary?.purchaseCount ?? 0,
+          combinedOrderIds.length,
+        );
+    const effectivePurchaseValue = hasLocalOrderTruth
+      ? localOrderSummary?.totalPurchaseValue ?? 0
+      : (localOrderSummary && localOrderSummary.purchaseCount > 0
+          ? localOrderSummary.totalPurchaseValue
+          : trackingPurchaseSummary.totalPurchaseValue);
+    const effectiveFulfilledPurchaseValue = hasLocalOrderTruth
+      ? localOrderSummary?.totalFulfilledPurchaseValue ?? 0
+      : 0;
     const effectiveLastEventAt =
       localOrderSummary?.lastOrderAt && (!lastEvent?.period_start || new Date(localOrderSummary.lastOrderAt).getTime() > new Date(lastEvent.period_start).getTime())
         ? localOrderSummary.lastOrderAt
@@ -2089,13 +2512,15 @@ function buildAttributedCampaignCustomers(
       localCustomer?.documentType ??
       (user?.cnpj ? "CNPJ" : user?.cpf ? "CPF" : user?.type === "WHOLESALE" ? "CNPJ" : user?.type === "RETAIL" ? "CPF" : null);
     const priorOrderCount = localCustomer ? Number(priorOrders.get(localCustomer.id) ?? 0) : 0;
-    const totalHistoricalOrders = Number(localCustomer?.totalOrders ?? 0);
+    const totalHistoricalOrders = localCustomer
+      ? Number(historicalOrders.get(localCustomer.id) ?? 0)
+      : effectivePurchaseCount;
     const knownHistoricalOrders = Math.max(
       totalHistoricalOrders,
       priorOrderCount + effectivePurchaseCount,
-      localCustomer ? 0 : effectivePurchaseCount,
+      localCustomer ? totalHistoricalOrders : effectivePurchaseCount,
     );
-    const isRemarketing = knownHistoricalOrders > 1 || (priorOrderCount > 0 && effectivePurchaseCount > 0);
+    const isRemarketing = knownHistoricalOrders > 1;
 
     customers.push({
       customerId: localCustomer?.id ?? null,
@@ -2122,6 +2547,7 @@ function buildAttributedCampaignCustomers(
       purchaseCount: effectivePurchaseCount,
       orderIds: combinedOrderIds,
       totalPurchaseValue: effectivePurchaseValue,
+      totalFulfilledPurchaseValue: effectiveFulfilledPurchaseValue,
       addToCartCount: addToCartRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
       checkoutCount: checkoutRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
       registerSubmittedCount: registerRows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
@@ -2170,7 +2596,11 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
   const upzeroRange = upzeroIsoRange(req.query as Record<string, unknown>, from, to);
   const attributionHistoryRange = upzeroAttributionHistoryRange(req.query as Record<string, unknown>, from, to);
   const [client] = await db
-    .select({ upZeroApiKey: clientsTable.upZeroApiKey })
+    .select({
+      upZeroApiKey: clientsTable.upZeroApiKey,
+      metaAdsApiKey: clientsTable.metaAdsApiKey,
+      metaAdAccountId: clientsTable.metaAdAccountId,
+    })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
 
@@ -2296,24 +2726,36 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       ? await db
           .select({
             customerId: ordersTable.customerId,
-            priorOrders: sql<number>`COUNT(*)::int`,
+            priorOrders: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
           })
           .from(ordersTable)
           .where(
             and(
               eq(ordersTable.clientId, clientId),
               inArray(ordersTable.customerId, customerIds),
-              lte(ordersTable.createdAt, from),
+              sql`${ordersTable.createdAt} < ${from}`,
             ),
           )
+          .groupBy(ordersTable.customerId)
+      : [];
+    const historicalRows = customerIds.length > 0
+      ? await db
+          .select({
+            customerId: ordersTable.customerId,
+            historicalOrders: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+          })
+          .from(ordersTable)
+          .where(and(eq(ordersTable.clientId, clientId), inArray(ordersTable.customerId, customerIds)))
           .groupBy(ordersTable.customerId)
       : [];
     const localOrderRows = customerIds.length > 0
       ? await db
           .select({
+            id: ordersTable.id,
             customerId: ordersTable.customerId,
             externalId: ordersTable.externalId,
             amount: ordersTable.amount,
+            fulfilledAmount: ordersTable.fulfilledAmount,
             createdAt: ordersTable.createdAt,
           })
           .from(ordersTable)
@@ -2336,23 +2778,51 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
         .filter((entry): entry is readonly [number, typeof customers[number]] => entry !== null),
     );
     const priorMap = new Map(priorRows.map((row) => [row.customerId, row.priorOrders]));
+    const historicalMap = new Map(historicalRows.map((row) => [row.customerId, row.historicalOrders]));
     const localOrderMap = new Map<string, CampaignLocalOrderSummary>();
+    const localOrderAccumulator = new Map<string, {
+      orderKeys: Set<string>;
+      orderIds: number[];
+      totalPurchaseValue: number;
+      totalFulfilledPurchaseValue: number;
+      lastOrderAt: string | null;
+    }>();
     for (const order of localOrderRows) {
-      const current = localOrderMap.get(order.customerId) ?? {
-        purchaseCount: 0,
+      const orderKey = order.externalId?.trim() || order.id;
+      const current = localOrderAccumulator.get(order.customerId) ?? {
+        orderKeys: new Set<string>(),
         orderIds: [],
         totalPurchaseValue: 0,
+        totalFulfilledPurchaseValue: 0,
         lastOrderAt: null,
       };
-      current.purchaseCount += 1;
+      if (current.orderKeys.has(orderKey)) {
+        const orderAt = order.createdAt.toISOString();
+        if (!current.lastOrderAt || new Date(orderAt).getTime() > new Date(current.lastOrderAt).getTime()) {
+          current.lastOrderAt = orderAt;
+        }
+        localOrderAccumulator.set(order.customerId, current);
+        continue;
+      }
+      current.orderKeys.add(orderKey);
       current.totalPurchaseValue += order.amount ?? 0;
+      current.totalFulfilledPurchaseValue += order.fulfilledAmount ?? 0;
       const numericExternalId = Number.parseInt(order.externalId ?? "", 10);
       if (Number.isFinite(numericExternalId)) current.orderIds.push(numericExternalId);
       const orderAt = order.createdAt.toISOString();
       if (!current.lastOrderAt || new Date(orderAt).getTime() > new Date(current.lastOrderAt).getTime()) {
         current.lastOrderAt = orderAt;
       }
-      localOrderMap.set(order.customerId, current);
+      localOrderAccumulator.set(order.customerId, current);
+    }
+    for (const [customerId, value] of localOrderAccumulator.entries()) {
+      localOrderMap.set(customerId, {
+        purchaseCount: value.orderKeys.size,
+        orderIds: value.orderIds,
+        totalPurchaseValue: value.totalPurchaseValue,
+        totalFulfilledPurchaseValue: value.totalFulfilledPurchaseValue,
+        lastOrderAt: value.lastOrderAt,
+      });
     }
 
     await stampCampaignAttributions({
@@ -2377,7 +2847,7 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       .filter((row): row is UpzeroAnalyticsMetric => row !== null);
     rows = [...rows, ...stampCampaignRows];
 
-    const allRows = buildAttributedCampaignCustomers(rows, localCustomerMap, priorMap, localOrderMap);
+    const allRows = buildAttributedCampaignCustomers(rows, localCustomerMap, priorMap, localOrderMap, historicalMap);
     const periodFromMs = new Date(upzeroRange.from).getTime();
     const periodToMs = new Date(upzeroRange.to).getTime();
     const isInSelectedPeriod = (value: string | null | undefined) => {
@@ -2440,6 +2910,32 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       new Set(allRows.flatMap((row) => row.campaigns.map((campaign) => campaign.campaign)).filter((value): value is string => !!value)),
     ).sort();
     const customerTypes = Array.from(new Set(allRows.map((row) => row.type).filter((value): value is string => !!value))).sort();
+    const creativeRows = await db
+      .select()
+      .from(creativesTable)
+      .where(eq(creativesTable.clientId, clientId));
+    const cachedInvestment = creativeRows.reduce(
+      (sum, creative) => sum + creative.spend * computeSpendOverlapFraction(creative, from, to),
+      0,
+    );
+    const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
+    let investment = cachedInvestment;
+    if (metaAccessToken && client?.metaAdAccountId) {
+      try {
+        const metaCurrent = await fetchMetaMarketingData({
+          accessToken: metaAccessToken,
+          adAccountId: client.metaAdAccountId,
+          since: from.toISOString().slice(0, 10),
+          until: to.toISOString().slice(0, 10),
+        });
+        investment = metaCurrent.summary.spend;
+        await upsertMetaCreatives(clientId, metaCurrent.ads);
+      } catch (err) {
+        console.warn("[campaign-customers] Meta spend fetch failed:", err instanceof Error ? err.message : err);
+      }
+    }
+    const requestedValue = filteredRows.reduce((sum, row) => sum + row.totalPurchaseValue, 0);
+    const fulfilledValue = filteredRows.reduce((sum, row) => sum + row.totalFulfilledPurchaseValue, 0);
 
     res.json({
       rows: visibleRows,
@@ -2452,7 +2948,11 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       },
       summary: {
         impactedCustomers: filteredRows.length,
-        attributedRevenue: filteredRows.reduce((sum, row) => sum + row.totalPurchaseValue, 0),
+        attributedRevenue: requestedValue,
+        requestedValue,
+        fulfilledValue,
+        investment,
+        roas: investment > 0 ? fulfilledValue / investment : 0,
         orders: filteredRows.reduce((sum, row) => sum + row.purchaseCount, 0),
         itemQuantity: 0,
         registrations: filteredRows.reduce((sum, row) => sum + row.registerSubmittedCount, 0),
@@ -2468,6 +2968,313 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
     });
   }
 });
+
+type ActivationMetricRow = {
+  approved_customers: number | string | null;
+  same_day: number | string | null;
+  within_3d: number | string | null;
+  within_7d: number | string | null;
+  within_15d: number | string | null;
+  within_30d: number | string | null;
+  avg_days_to_first_purchase: number | string | null;
+  first_purchase_aov: number | string | null;
+  repeat_after_first_purchase: number | string | null;
+  add_to_cart_customers: number | string | null;
+  order_submitted_customers: number | string | null;
+  payment_confirmed_customers: number | string | null;
+};
+
+type ActivationApprovedCustomer = {
+  id: string;
+  externalId: string | null;
+  approvalAt: Date;
+};
+
+function numberFromDb(value: number | string | null | undefined): number {
+  if (value == null) return 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function rate(numerator: number, denominator: number): number {
+  return denominator > 0 ? (numerator / denominator) * 100 : 0;
+}
+
+function activationPerformance(thirtyDayRate: number) {
+  if (thirtyDayRate < 5) {
+    return {
+      label: "Muito fraco",
+      tone: "danger",
+      benchmark: "0% a 5%: a aprovação está gerando curiosos, não compradores.",
+    };
+  }
+  if (thirtyDayRate < 10) {
+    return {
+      label: "Fraco",
+      tone: "warning",
+      benchmark: "5% a 10%: operação pouco otimizada ou tráfego pouco qualificado.",
+    };
+  }
+  if (thirtyDayRate < 20) {
+    return {
+      label: "Saudável",
+      tone: "success",
+      benchmark: "10% a 20%: faixa saudável para atacado online.",
+    };
+  }
+  if (thirtyDayRate < 30) {
+    return {
+      label: "Muito bom",
+      tone: "strong",
+      benchmark: "20% a 30%: boa qualificação, ativação e processo comercial.",
+    };
+  }
+  return {
+    label: "Excelente",
+    tone: "excellent",
+    benchmark: "Acima de 30%: tráfego qualificado e régua pós-aprovação forte.",
+  };
+}
+
+function buildActivationDiagnostics(params: {
+  thirtyDayRate: number;
+  loginRate: number | null;
+  priceViewRate: number | null;
+  addToCartRate: number;
+  orderSubmittedRate: number;
+  paymentConfirmedRate: number;
+}) {
+  const diagnostics: string[] = [];
+  if (params.thirtyDayRate < 10) {
+    diagnostics.push("Taxa abaixo de 10%: investigar qualidade dos leads aprovados, velocidade de aprovação e régua pós-aprovação.");
+  }
+  if (params.loginRate != null && params.loginRate < 35) {
+    diagnostics.push("Poucos aprovados fazem login: provável falha de ativação pós-aprovação ou comunicação insuficiente.");
+  }
+  if (params.priceViewRate != null && params.priceViewRate < 35) {
+    diagnostics.push("Poucos aprovados veem preço/produto: revisar retorno ao site, clareza do acesso liberado e experiência pós-login.");
+  }
+  if (params.priceViewRate != null && params.priceViewRate >= 35 && params.addToCartRate < 15) {
+    diagnostics.push("Clientes veem produtos/preços, mas não adicionam ao carrinho: revisar preço, mix, pedido mínimo, frete e percepção de oportunidade.");
+  }
+  if (params.addToCartRate >= 15 && params.orderSubmittedRate < params.addToCartRate * 0.6) {
+    diagnostics.push("Há carrinho, mas pouca evolução para pedido: revisar pedido mínimo, condição comercial, frete e clareza do processo.");
+  }
+  if (params.orderSubmittedRate >= 10 && params.paymentConfirmedRate < params.orderSubmittedRate * 0.6) {
+    diagnostics.push("Pedidos enviados não viram pagamento na mesma proporção: revisar atendimento, negociação, prazo de resposta e link de pagamento.");
+  }
+  if (diagnostics.length === 0) {
+    diagnostics.push("A ativação está dentro de uma faixa saudável. Continue acompanhando por fonte, campanha e régua de atendimento.");
+  }
+  return diagnostics;
+}
+
+async function buildApprovedCustomerActivationAnalysis(params: {
+  clientId: string;
+  from: Date;
+  to: Date;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  trackingRows?: UpzeroAnalyticsMetric[];
+}) {
+  const { clientId, from, to, utmSource, utmMedium, utmCampaign, trackingRows = [] } = params;
+  const utmConditions: SQL[] = [];
+  if (utmSource) utmConditions.push(sql`lower(c.utm_source) = lower(${utmSource})`);
+  if (utmMedium) utmConditions.push(sql`lower(c.utm_medium) = lower(${utmMedium})`);
+  if (utmCampaign) utmConditions.push(sql`lower(c.utm_campaign) = lower(${utmCampaign})`);
+  const utmSql = utmConditions.length > 0 ? sql`AND ${sql.join(utmConditions, sql` AND `)}` : sql``;
+
+  const rawRows = await db.execute<ActivationMetricRow>(sql`
+    WITH approved AS (
+      SELECT
+        c.id,
+        c.external_id,
+        COALESCE(c.approval_date, c.created_at) AS approval_at
+      FROM customers c
+      WHERE c.client_id = ${clientId}
+        AND c.registration_status = 'APPROVED'
+        AND COALESCE(c.approval_date, c.created_at) >= ${from}
+        AND COALESCE(c.approval_date, c.created_at) <= ${to}
+        ${utmSql}
+    ),
+    first_order AS (
+      SELECT DISTINCT ON (a.id)
+        a.id AS customer_id,
+        a.approval_at,
+        o.id AS order_id,
+        o.created_at AS first_order_at,
+        o.amount AS first_order_amount
+      FROM approved a
+      LEFT JOIN orders o
+        ON o.client_id = ${clientId}
+       AND o.customer_id = a.id
+       AND o.status <> 'REJECTED'
+       AND o.created_at >= a.approval_at
+       AND o.created_at <= a.approval_at + interval '30 days'
+      ORDER BY a.id, o.created_at ASC
+    ),
+    repeat_orders AS (
+      SELECT
+        fo.customer_id,
+        COUNT(o.id) FILTER (WHERE o.created_at > fo.first_order_at AND o.status <> 'REJECTED')::int AS repeat_count
+      FROM first_order fo
+      LEFT JOIN orders o
+        ON o.client_id = ${clientId}
+       AND o.customer_id = fo.customer_id
+       AND fo.order_id IS NOT NULL
+      GROUP BY fo.customer_id
+    ),
+    event_flags AS (
+      SELECT
+        a.id AS customer_id,
+        BOOL_OR(e.event_type = 'ADD_TO_CART') AS has_add_to_cart,
+        BOOL_OR(e.event_type = 'PURCHASE') AS has_payment_confirmed
+      FROM approved a
+      LEFT JOIN events e
+        ON e.client_id = ${clientId}
+       AND e.customer_id = a.id
+       AND e.created_at >= a.approval_at
+       AND e.created_at <= a.approval_at + interval '30 days'
+      GROUP BY a.id
+    )
+    SELECT
+      COUNT(*)::int AS approved_customers,
+      COUNT(*) FILTER (
+        WHERE fo.first_order_at IS NOT NULL
+          AND date(timezone('America/Sao_Paulo', fo.first_order_at)) = date(timezone('America/Sao_Paulo', fo.approval_at))
+      )::int AS same_day,
+      COUNT(*) FILTER (WHERE fo.first_order_at IS NOT NULL AND fo.first_order_at <= fo.approval_at + interval '3 days')::int AS within_3d,
+      COUNT(*) FILTER (WHERE fo.first_order_at IS NOT NULL AND fo.first_order_at <= fo.approval_at + interval '7 days')::int AS within_7d,
+      COUNT(*) FILTER (WHERE fo.first_order_at IS NOT NULL AND fo.first_order_at <= fo.approval_at + interval '15 days')::int AS within_15d,
+      COUNT(*) FILTER (WHERE fo.first_order_at IS NOT NULL AND fo.first_order_at <= fo.approval_at + interval '30 days')::int AS within_30d,
+      AVG(EXTRACT(EPOCH FROM (fo.first_order_at - fo.approval_at)) / 86400) FILTER (WHERE fo.first_order_at IS NOT NULL)::float AS avg_days_to_first_purchase,
+      AVG(fo.first_order_amount) FILTER (WHERE fo.first_order_at IS NOT NULL)::float AS first_purchase_aov,
+      COUNT(*) FILTER (WHERE ro.repeat_count > 0)::int AS repeat_after_first_purchase,
+      COUNT(*) FILTER (WHERE ef.has_add_to_cart)::int AS add_to_cart_customers,
+      COUNT(*) FILTER (WHERE fo.first_order_at IS NOT NULL)::int AS order_submitted_customers,
+      COUNT(*) FILTER (WHERE ef.has_payment_confirmed)::int AS payment_confirmed_customers
+    FROM approved a
+    LEFT JOIN first_order fo ON fo.customer_id = a.id
+    LEFT JOIN repeat_orders ro ON ro.customer_id = a.id
+    LEFT JOIN event_flags ef ON ef.customer_id = a.id
+  `);
+  const [row] = (rawRows.rows ?? rawRows) as unknown as ActivationMetricRow[];
+
+  const approvedCustomersRows = await db
+    .select({
+      id: customersTable.id,
+      externalId: customersTable.externalId,
+      approvalAt: sql<Date>`COALESCE(${customersTable.approvalDate}, ${customersTable.createdAt})`,
+    })
+    .from(customersTable)
+    .where(
+      and(
+        eq(customersTable.clientId, clientId),
+        eq(customersTable.registrationStatus, "APPROVED"),
+        gte(sql`COALESCE(${customersTable.approvalDate}, ${customersTable.createdAt})`, from),
+        lte(sql`COALESCE(${customersTable.approvalDate}, ${customersTable.createdAt})`, to),
+        utmSource ? sql`lower(${customersTable.utmSource}) = lower(${utmSource})` : undefined,
+        utmMedium ? sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})` : undefined,
+        utmCampaign ? sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})` : undefined,
+      ),
+    ) as ActivationApprovedCustomer[];
+
+  const approvedByUserId = new Map<number, ActivationApprovedCustomer>();
+  for (const customer of approvedCustomersRows) {
+    const userId = Number.parseInt(customer.externalId ?? "", 10);
+    if (Number.isFinite(userId)) approvedByUserId.set(userId, customer);
+  }
+
+  const seenLogin = new Set<number>();
+  const seenPriceView = new Set<number>();
+  const seenAddToCart = new Set<number>();
+  for (const metric of trackingRows) {
+    const user = getMetricUser(metric);
+    if (!user) continue;
+    const approved = approvedByUserId.get(user.id);
+    if (!approved) continue;
+    const occurredAt = new Date(metric.period_start);
+    const approvalAt = new Date(approved.approvalAt);
+    const upperBound = new Date(approvalAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+    if (occurredAt < approvalAt || occurredAt > upperBound) continue;
+    if (metric.event_name === "login") seenLogin.add(user.id);
+    if (["product_view", "product_item_impression", "product_item_click", "category_view"].includes(metric.event_name)) {
+      seenPriceView.add(user.id);
+    }
+    if (metric.event_name === "add_to_cart") seenAddToCart.add(user.id);
+  }
+
+  const approvedCustomers = numberFromDb(row?.approved_customers);
+  const sameDay = numberFromDb(row?.same_day);
+  const within3 = numberFromDb(row?.within_3d);
+  const within7 = numberFromDb(row?.within_7d);
+  const within15 = numberFromDb(row?.within_15d);
+  const within30 = numberFromDb(row?.within_30d);
+  const addToCartCustomers = Math.max(numberFromDb(row?.add_to_cart_customers), seenAddToCart.size);
+  const loginCustomers = trackingRows.length > 0 ? seenLogin.size : null;
+  const priceViewCustomers = trackingRows.length > 0 ? seenPriceView.size : null;
+  const paymentConfirmedCustomers = numberFromDb(row?.payment_confirmed_customers);
+  const orderSubmittedCustomers = numberFromDb(row?.order_submitted_customers);
+  const thirtyDayActivationRate = rate(within30, approvedCustomers);
+  const loginRate = loginCustomers == null ? null : rate(loginCustomers, approvedCustomers);
+  const priceViewRate = priceViewCustomers == null ? null : rate(priceViewCustomers, approvedCustomers);
+  const addToCartRate = rate(addToCartCustomers, approvedCustomers);
+  const orderSubmittedRate = rate(orderSubmittedCustomers, approvedCustomers);
+  const paymentConfirmedRate = rate(paymentConfirmedCustomers, approvedCustomers);
+
+  return {
+    approvedCustomers,
+    windows: [
+      { key: "same_day", label: "Mesmo dia", days: 0, activatedCustomers: sameDay, activationRate: rate(sameDay, approvedCustomers) },
+      { key: "within_3d", label: "Até 3 dias", days: 3, activatedCustomers: within3, activationRate: rate(within3, approvedCustomers) },
+      { key: "within_7d", label: "Até 7 dias", days: 7, activatedCustomers: within7, activationRate: rate(within7, approvedCustomers) },
+      { key: "within_15d", label: "Até 15 dias", days: 15, activatedCustomers: within15, activationRate: rate(within15, approvedCustomers) },
+      { key: "within_30d", label: "Até 30 dias", days: 30, activatedCustomers: within30, activationRate: thirtyDayActivationRate },
+    ],
+    sameDayActivationRate: rate(sameDay, approvedCustomers),
+    thirtyDayActivationRate,
+    avgDaysToFirstPurchase: row?.avg_days_to_first_purchase == null ? null : numberFromDb(row.avg_days_to_first_purchase),
+    firstPurchaseAov: numberFromDb(row?.first_purchase_aov),
+    repeatAfterFirstPurchaseCustomers: numberFromDb(row?.repeat_after_first_purchase),
+    repeatAfterFirstPurchaseRate: rate(numberFromDb(row?.repeat_after_first_purchase), within30),
+    postApproval: {
+      login: loginCustomers,
+      priceView: priceViewCustomers,
+      addToCart: addToCartCustomers,
+      orderSubmitted: orderSubmittedCustomers,
+      paymentConfirmed: paymentConfirmedCustomers,
+      loginRate,
+      priceViewRate,
+      addToCartRate,
+      orderSubmittedRate,
+      paymentConfirmedRate,
+    },
+    performance: activationPerformance(thirtyDayActivationRate),
+    diagnostics: buildActivationDiagnostics({
+      thirtyDayRate: thirtyDayActivationRate,
+      loginRate,
+      priceViewRate,
+      addToCartRate,
+      orderSubmittedRate,
+      paymentConfirmedRate,
+    }),
+    recommendation:
+      "Para atacado online, analise em quatro blocos: cadastro, ativação, pedido e pagamento. A métrica cadastro aprovado → primeira compra indica a qualidade comercial dos leads aprovados.",
+    operationTypes: [
+      {
+        title: "Com checkout integrado",
+        description: "Priorize a quebra entre carrinho, início de checkout e compra.",
+        steps: ["Cadastro aprovado", "Login", "Visualização de preço", "Add to cart", "Begin checkout", "Purchase"],
+      },
+      {
+        title: "Sem checkout integrado",
+        description: "Após o carrinho, pedido enviado e atendimento iniciado podem ser mais importantes que checkout.",
+        steps: ["Cadastro aprovado", "Login", "Visualização de preço", "Add to cart", "Pedido enviado", "Atendimento", "Pagamento confirmado"],
+      },
+    ],
+  };
+}
 
 router.get("/analytics/funnel", async (req, res): Promise<void> => {
   const parsed = GetFunnelQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
@@ -2740,6 +3547,17 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       }
       return perBuyer.length > 0 ? perBuyer.reduce((sum, value) => sum + value, 0) / perBuyer.length : 0;
     })();
+    const activation = funnelClient?.dashboardType === "B2B"
+      ? await buildApprovedCustomerActivationAnalysis({
+          clientId,
+          from,
+          to,
+          utmSource,
+          utmMedium,
+          utmCampaign,
+          trackingRows: scopedMetrics,
+        })
+      : null;
 
     res.json(GetFunnelResponse.parse({
       steps,
@@ -2749,6 +3567,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       topPaths: [],
       suggestedActions: buildFunnelSuggestedActions(worst, steps),
       hasSiteVisitData: counts.VISIT > 0,
+      activation,
     }));
     return;
   } catch (err) {
@@ -2788,6 +3607,16 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
         topPaths: [],
         suggestedActions: [],
         hasSiteVisitData: hasSiteVisitDataEarly,
+        activation: funnelClient?.dashboardType === "B2B"
+          ? await buildApprovedCustomerActivationAnalysis({
+              clientId,
+              from,
+              to,
+              utmSource,
+              utmMedium,
+              utmCampaign,
+            })
+          : null,
       }));
       return;
     }
@@ -2959,8 +3788,18 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     .from(siteVisitsTable)
     .where(eq(siteVisitsTable.clientId, clientId));
   const hasSiteVisitData = Number(hasSiteVisitDataRows[0]?.count ?? 0) > 0;
+  const activation = funnelClient?.dashboardType === "B2B"
+    ? await buildApprovedCustomerActivationAnalysis({
+        clientId,
+        from,
+        to,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+      })
+    : null;
 
-  res.json(GetFunnelResponse.parse({ steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions, hasSiteVisitData }));
+  res.json(GetFunnelResponse.parse({ steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions, hasSiteVisitData, activation }));
 });
 
 // ─── Site Visits: GET ────────────────────────────────────────────────────────
@@ -5696,27 +6535,16 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
   const buyerMetricOrders = isB2CClient
     ? metricOrders.filter((order) => ["APPROVED", "SHIPPED", "DELIVERED"].includes(order.status))
     : metricOrders;
-  const customerIds = Array.from(new Set(buyerMetricOrders.map((order) => order.customerId).filter(Boolean)));
-  const customerOrderHistory = customerIds.length > 0
-    ? await db
-        .select({
-          customerId: ordersTable.customerId,
-          firstOrderAt: sql<Date>`MIN(${ordersTable.createdAt})`,
-          totalOrders: sql<number>`COUNT(*)::int`,
-        })
-        .from(ordersTable)
-        .where(and(eq(ordersTable.clientId, clientId), inArray(ordersTable.customerId, customerIds)))
-        .groupBy(ordersTable.customerId)
-    : [];
-  const firstOrderByCustomer = new Map(customerOrderHistory.map((row) => [row.customerId, row.firstOrderAt]));
-  const uniqueCustomers = new Set(buyerMetricOrders.map((order) => order.customerId));
+  const ordersInPeriodByCustomer = new Map<string, number>();
+  for (const order of buyerMetricOrders) {
+    ordersInPeriodByCustomer.set(order.customerId, (ordersInPeriodByCustomer.get(order.customerId) ?? 0) + 1);
+  }
+  const uniqueCustomers = new Set(ordersInPeriodByCustomer.keys());
   const newCustomers = new Set<string>();
   const returningCustomers = new Set<string>();
-  for (const order of buyerMetricOrders) {
-    const firstOrderAt = firstOrderByCustomer.get(order.customerId);
-    const isFirstInPeriod = firstOrderAt ? new Date(firstOrderAt).getTime() >= from.getTime() && new Date(firstOrderAt).getTime() <= to.getTime() : false;
-    if (isFirstInPeriod) newCustomers.add(order.customerId);
-    else returningCustomers.add(order.customerId);
+  for (const [customerId, ordersInPeriod] of ordersInPeriodByCustomer) {
+    if (ordersInPeriod > 1) returningCustomers.add(customerId);
+    else newCustomers.add(customerId);
   }
 
   const upzeroRange = upzeroAttributionHistoryRange(req.query as Record<string, unknown>, from, to);
@@ -5782,10 +6610,12 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
         purchaseCount: 0,
         orderIds: [],
         totalPurchaseValue: 0,
+        totalFulfilledPurchaseValue: 0,
         lastOrderAt: null,
       };
       current.purchaseCount += 1;
       current.totalPurchaseValue += order.amount ?? 0;
+      current.totalFulfilledPurchaseValue += order.fulfilledAmount ?? 0;
       const numericExternalId = Number.parseInt(order.externalId ?? "", 10);
       if (Number.isFinite(numericExternalId)) current.orderIds.push(numericExternalId);
       const orderAt = order.createdAt.toISOString();
@@ -9742,6 +10572,523 @@ router.get("/analytics/daily-report", async (req, res): Promise<void> => {
     colors,
     sizes,
     analysis,
+    generatedAt: new Date().toISOString(),
+  });
+});
+
+const GetScaleQueryParams = z.object({
+  clientId: z.string().optional(),
+  dateFrom: z.date().optional(),
+  dateTo: z.date().optional(),
+  simulatedSalesPower: z.coerce.number().positive().optional(),
+  targetRevenue: z.coerce.number().positive().optional(),
+});
+
+function scaleStatus(params: {
+  brokenGradePct: number;
+  conversionRate: number;
+  roas: number;
+  salesPowerGap: number;
+}): "ready" | "caution" | "blocked" {
+  if (params.salesPowerGap > 0 && params.brokenGradePct > 35) return "blocked";
+  if (params.brokenGradePct <= 20 && params.conversionRate >= 1.2 && params.roas >= 3 && params.salesPowerGap <= 0) return "ready";
+  return "caution";
+}
+
+function buildHeuristicScaleInsights(params: {
+  brand: string;
+  currentSalesPower: number;
+  simulatedSalesPower: number;
+  monthlyTurnoverPct: number;
+  monthlyRevenue: number;
+  projectedRevenue: number;
+  monthlyMediaSpend: number;
+  projectedMediaSpend: number;
+  roas: number;
+  cpa: number;
+  projectedCpa: number;
+  conversionRate: number;
+  brokenGradePct: number;
+  topCategories: ScaleBreakdownRow[];
+  topColors: ScaleBreakdownRow[];
+  topSizes: ScaleBreakdownRow[];
+  status: "ready" | "caution" | "blocked";
+}): ScaleInsightPayload {
+  const topCategory = params.topCategories[0]?.name ?? "categoria líder";
+  const topSize = params.topSizes[0]?.name ?? "tamanho líder";
+  const topColor = params.topColors[0]?.name ?? "cor líder";
+  const incrementalRevenue = Math.max(0, params.projectedRevenue - params.monthlyRevenue);
+  const incrementalMedia = Math.max(0, params.projectedMediaSpend - params.monthlyMediaSpend);
+  const headline =
+    params.status === "ready"
+      ? "Projeto com bom espaço para escalar em ondas controladas"
+      : params.status === "blocked"
+        ? "Escala depende primeiro de profundidade e recomposição de grade"
+        : "Escala possível, mas com trava operacional para acompanhar";
+  return {
+    headline,
+    summary: `Com R$${params.simulatedSalesPower.toFixed(0)} de poder de venda e giro mensal médio de ${params.monthlyTurnoverPct.toFixed(1)}%, ${params.brand} pode mirar cerca de R$${params.projectedRevenue.toFixed(0)} por mês. Isso adiciona aproximadamente R$${incrementalRevenue.toFixed(0)} sobre a média atual e exigiria cerca de R$${params.projectedMediaSpend.toFixed(0)} em mídia mantendo ROAS ${params.roas.toFixed(2)}x.`,
+    actions: [
+      `Subir investimento em mídia em ondas de R$${Math.max(0, incrementalMedia / 3).toFixed(0)} a R$${Math.max(0, incrementalMedia / 2).toFixed(0)}, validando ROAS marginal e CPA semanalmente.`,
+      `Priorizar profundidade em ${topCategory}, com produção proporcional para ${topSize} e reforço de cores como ${topColor}.`,
+      "Usar o poder de venda simulado como teto operacional para evitar acelerar mídia em estoque que não sustenta a receita projetada.",
+      params.conversionRate > 0
+        ? `Monitorar conversão em ${params.conversionRate.toFixed(2)}%; se cair, revisar oferta, páginas e sortimento antes de aumentar nova verba.`
+        : "Configurar ou validar GA4 para acompanhar conversão por sessão durante a escala.",
+    ],
+    risks: [
+      `${params.brokenGradePct.toFixed(1)}% das grades estão quebradas; isso reduz eficiência de mídia nos produtos com maior demanda.`,
+      params.projectedCpa > params.cpa * 1.25 && params.cpa > 0
+        ? `CPA projetado sobe para R$${params.projectedCpa.toFixed(2)}; escalar deve depender de ROAS marginal, não só ROAS médio.`
+        : "CPA projetado ainda está coerente com a média, desde que a conversão não piore.",
+      `Se ${topSize} continuar liderando vendas, a próxima compra precisa preservar proporção de grade em vez de distribuir estoque igualmente.`,
+    ],
+    source: "heuristic",
+  };
+}
+
+async function generateScaleInsights(params: Parameters<typeof buildHeuristicScaleInsights>[0]): Promise<ScaleInsightPayload> {
+  const heuristic = buildHeuristicScaleInsights(params);
+  const ai = getOpenAIClient();
+  if (!ai || !isAIConfigured()) return heuristic;
+
+  try {
+    const prompt = `Você é um estrategista senior de e-commerce B2C da UP Dash. Analise escala cruzando estoque, venda, mídia e projeção.
+
+Marca: ${params.brand}
+Poder de venda atual: R$${params.currentSalesPower.toFixed(2)}
+Poder de venda simulado: R$${params.simulatedSalesPower.toFixed(2)}
+Faturamento médio mensal aprovado: R$${params.monthlyRevenue.toFixed(2)}
+Faturamento projetado mensal: R$${params.projectedRevenue.toFixed(2)}
+Giro mensal médio: ${params.monthlyTurnoverPct.toFixed(2)}%
+Investimento médio mensal: R$${params.monthlyMediaSpend.toFixed(2)}
+Investimento projetado: R$${params.projectedMediaSpend.toFixed(2)}
+ROAS médio: ${params.roas.toFixed(2)}x
+CPA atual: R$${params.cpa.toFixed(2)}
+CPA projetado: R$${params.projectedCpa.toFixed(2)}
+Conversão: ${params.conversionRate.toFixed(2)}%
+Grades quebradas: ${params.brokenGradePct.toFixed(2)}%
+Categorias: ${params.topCategories.slice(0, 5).map((row) => `${row.name}: R$${row.revenue.toFixed(2)}, ${row.units} un.`).join(" | ") || "sem dados"}
+Cores: ${params.topColors.slice(0, 5).map((row) => `${row.name}: R$${row.revenue.toFixed(2)}, ${row.units} un.`).join(" | ") || "sem dados"}
+Tamanhos: ${params.topSizes.slice(0, 5).map((row) => `${row.name}: R$${row.revenue.toFixed(2)}, ${row.units} un.`).join(" | ") || "sem dados"}
+
+Nunca diga que campanha não tem eficiência. Diga o que precisa ser feito. Retorne JSON estrito:
+{
+  "headline": "frase curta",
+  "summary": "parágrafo com análise profunda de estoque, venda e mídia",
+  "actions": ["4 ações práticas"],
+  "risks": ["3 riscos ou travas para escala"]
+}`;
+    const completion = await withTimeout(
+      ai.chat.completions.create({
+        model: "gpt-5-nano",
+        max_completion_tokens: 600,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "Você escreve análises executivas de escala para e-commerce B2C. Responda apenas JSON válido." },
+          { role: "user", content: prompt },
+        ],
+      }),
+      3500,
+      "Scale AI generation timed out",
+    );
+    const text = completion.choices[0]?.message?.content;
+    if (!text) return heuristic;
+    const parsed = JSON.parse(text) as Partial<ScaleInsightPayload>;
+    if (typeof parsed.headline !== "string" || typeof parsed.summary !== "string") return heuristic;
+    return {
+      headline: parsed.headline.slice(0, 140),
+      summary: parsed.summary.slice(0, 900),
+      actions: Array.isArray(parsed.actions) ? parsed.actions.slice(0, 4).map((item) => String(item).slice(0, 220)) : heuristic.actions,
+      risks: Array.isArray(parsed.risks) ? parsed.risks.slice(0, 3).map((item) => String(item).slice(0, 220)) : heuristic.risks,
+      source: "ai",
+    };
+  } catch (err) {
+    console.warn("[scale] AI generation failed, using heuristic:", err instanceof Error ? err.message : err);
+    return heuristic;
+  }
+}
+
+router.get("/analytics/scale", async (req, res): Promise<void> => {
+  const parsed = GetScaleQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const rawQuery = req.query as Record<string, unknown>;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
+  const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
+  const days = Math.max(1, Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000)));
+  const months = Math.max(1 / 30, days / 30);
+  const rollingDateToOnly = dateToOnly;
+  const rollingDateFromOnly = addDaysToDateOnly(rollingDateToOnly, -89);
+  const rollingFrom = saoPauloDateOnlyStart(rollingDateFromOnly);
+  const rollingTo = saoPauloDateOnlyEnd(rollingDateToOnly);
+  const rollingMonths = 3;
+
+  const [clientConfig] = await db
+    .select({
+      name: clientsTable.name,
+      dashboardType: clientsTable.dashboardType,
+      ga4PropertyId: clientsTable.ga4PropertyId,
+      metaAdsApiKey: clientsTable.metaAdsApiKey,
+      metaAdAccountId: clientsTable.metaAdAccountId,
+    })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (!clientConfig) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (clientConfig.dashboardType !== "B2C") {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "Escala is only available for B2C clients", status: 400 });
+    return;
+  }
+
+  const paidStatus = sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`;
+  const productRows = await db
+    .select({
+      id: productsTable.id,
+      externalId: productsTable.externalId,
+      name: productsTable.name,
+      category: productsTable.category,
+      price: productsTable.price,
+      stock: productsTable.stock,
+      status: productsTable.status,
+    })
+    .from(productsTable)
+    .where(eq(productsTable.clientId, clientId));
+  const activeProducts = productRows.filter((product) => product.status === "ACTIVE");
+  const latestSalePriceRows = await db.execute<{ product_id: string; price_at_sale: string | number | null }>(sql`
+    SELECT DISTINCT ON (oi.product_id)
+      oi.product_id,
+      oi.price_at_sale
+    FROM order_items oi
+    INNER JOIN orders o ON o.id = oi.order_id
+    WHERE o.client_id = ${clientId}
+      AND o.status IN ('APPROVED', 'SHIPPED', 'DELIVERED')
+      AND oi.price_at_sale > 0
+    ORDER BY oi.product_id, o.created_at DESC
+  `);
+  const latestSalePriceByProduct = new Map(
+    (((latestSalePriceRows.rows ?? latestSalePriceRows) as unknown as Array<{ product_id: string; price_at_sale: string | number | null }>))
+      .map((row) => [row.product_id, Number(row.price_at_sale) || 0] as const)
+      .filter(([, price]) => price > 0),
+  );
+  const effectivePriceForProduct = (product: { id: string; price: number }): number => {
+    const storedPrice = Number(product.price) || 0;
+    const latestSalePrice = latestSalePriceByProduct.get(product.id) ?? 0;
+    if (storedPrice > 0 && latestSalePrice > 0) return Math.min(storedPrice, latestSalePrice);
+    return storedPrice || latestSalePrice;
+  };
+  const availableProducts = activeProducts.filter((product) => Number(product.stock) > 0);
+  const currentSalesPower = availableProducts.reduce((sum, product) => sum + (Number(product.stock) || 0) * effectivePriceForProduct(product), 0);
+  const availableStockUnits = availableProducts.reduce((sum, product) => sum + Number(product.stock || 0), 0);
+
+  const groups = new Map<string, typeof activeProducts>();
+  for (const product of activeProducts) {
+    const groupId = productGroupId(product);
+    const current = groups.get(groupId) ?? [];
+    current.push(product);
+    groups.set(groupId, current);
+  }
+  const groupedProducts = Array.from(groups.values());
+  const brokenGroups = groupedProducts.filter((variants) => gradeStatus(variants) === "broken").length;
+  const brokenGradePct = groupedProducts.length > 0 ? (brokenGroups / groupedProducts.length) * 100 : 0;
+
+  const [orderAgg, rollingOrderAgg, localVisitsRow, rollingLocalVisitsRow, categoryRows, variantRows] = await Promise.all([
+    db
+      .select({
+        revenue: sql<number>`COALESCE(SUM(${ordersTable.fulfilledAmount}), 0)::float`,
+        orders: sql<number>`COUNT(*)::int`,
+      })
+      .from(ordersTable)
+      .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to), paidStatus)),
+    db
+      .select({
+        revenue: sql<number>`COALESCE(SUM(${ordersTable.fulfilledAmount}), 0)::float`,
+        orders: sql<number>`COUNT(*)::int`,
+      })
+      .from(ordersTable)
+      .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, rollingFrom), lte(ordersTable.createdAt, rollingTo), paidStatus)),
+    db
+      .select({ visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int` })
+      .from(eventsTable)
+      .where(and(eq(eventsTable.clientId, clientId), gte(eventsTable.createdAt, from), lte(eventsTable.createdAt, to))),
+    db
+      .select({ visits: sql<number>`COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int` })
+      .from(eventsTable)
+      .where(and(eq(eventsTable.clientId, clientId), gte(eventsTable.createdAt, rollingFrom), lte(eventsTable.createdAt, rollingTo))),
+    db
+      .select({
+        name: sql<string>`COALESCE(NULLIF(${productsTable.category}, ''), 'Sem categoria')`,
+        revenue: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity} * ${orderItemsTable.priceAtSale}), 0)::float`,
+        units: sql<number>`COALESCE(SUM(${orderItemsTable.fulfilledQuantity}), 0)::int`,
+        orders: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+      .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to), paidStatus))
+      .groupBy(sql`COALESCE(NULLIF(${productsTable.category}, ''), 'Sem categoria')`),
+    db
+      .select({
+        orderId: ordersTable.id,
+        color: orderItemsTable.color,
+        size: orderItemsTable.size,
+        revenue: sql<number>`COALESCE(${orderItemsTable.fulfilledQuantity} * ${orderItemsTable.priceAtSale}, 0)::float`,
+        units: sql<number>`COALESCE(${orderItemsTable.fulfilledQuantity}, 0)::int`,
+      })
+      .from(orderItemsTable)
+      .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+      .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to), paidStatus)),
+  ]);
+
+  const mapBreakdown = (rows: ScaleBreakdownRow[]): ScaleBreakdownRow[] =>
+    rows
+      .map((row) => ({
+        name: row.name,
+        revenue: Number(row.revenue) || 0,
+        units: Number(row.units) || 0,
+        orders: Number(row.orders) || 0,
+        stockUnits: row.stockUnits === undefined ? undefined : Number(row.stockUnits) || 0,
+        salesPower: row.salesPower === undefined ? undefined : Number(row.salesPower) || 0,
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+  const revenue = Number(orderAgg[0]?.revenue) || 0;
+  const orders = Number(orderAgg[0]?.orders) || 0;
+  const rollingRevenue = Number(rollingOrderAgg[0]?.revenue) || 0;
+  const rollingOrders = Number(rollingOrderAgg[0]?.orders) || 0;
+  const avgTicket = orders > 0 ? revenue / orders : 0;
+  const monthlyRevenue = revenue / months;
+  const monthlyOrders = orders / months;
+  const monthlyTurnoverPct = currentSalesPower > 0 ? (monthlyRevenue / currentSalesPower) * 100 : 0;
+  const periodTurnoverPct = currentSalesPower > 0 ? (revenue / currentSalesPower) * 100 : 0;
+  const rollingMonthlyRevenue = rollingRevenue / rollingMonths;
+  const rollingMonthlyOrders = rollingOrders / rollingMonths;
+  const rollingAvgTicket = rollingOrders > 0 ? rollingRevenue / rollingOrders : 0;
+  const rollingMonthlyTurnoverPct = currentSalesPower > 0 ? (rollingMonthlyRevenue / currentSalesPower) * 100 : 0;
+
+  const metaAccessToken = getGlobalMetaAccessToken(clientConfig.metaAdsApiKey);
+  const [metaCurrent, metaRolling] = metaAccessToken && clientConfig.metaAdAccountId
+    ? await Promise.all([
+        withTimeout(
+          fetchMetaMarketingData({
+            accessToken: metaAccessToken,
+            adAccountId: clientConfig.metaAdAccountId,
+            since: dateFromOnly,
+            until: dateToOnly,
+          }),
+          3500,
+          "Scale Meta fetch timed out",
+        ).catch((err) => {
+          console.warn("[scale] Meta fetch failed:", err instanceof Error ? err.message : err);
+          return null;
+        }),
+        withTimeout(
+          fetchMetaMarketingData({
+            accessToken: metaAccessToken,
+            adAccountId: clientConfig.metaAdAccountId,
+            since: rollingDateFromOnly,
+            until: rollingDateToOnly,
+          }),
+          3500,
+          "Scale rolling Meta fetch timed out",
+        ).catch((err) => {
+          console.warn("[scale] rolling Meta fetch failed:", err instanceof Error ? err.message : err);
+          return null;
+        }),
+      ])
+    : [null, null];
+  if (metaCurrent) {
+    await withTimeout(upsertMetaCreatives(clientId, metaCurrent.ads), 1500, "Scale Meta creative cache timed out").catch((err) => {
+      console.warn("[scale] Meta creative cache skipped:", err instanceof Error ? err.message : err);
+    });
+  }
+
+  const rawCreatives = metaCurrent && metaRolling
+    ? []
+    : await db.select().from(creativesTable).where(eq(creativesTable.clientId, clientId));
+  const fallbackSpend = rawCreatives.reduce((sum, creative) => sum + creative.spend * computeSpendOverlapFraction(creative, from, to), 0);
+  const fallbackRollingSpend = rawCreatives.reduce((sum, creative) => sum + creative.spend * computeSpendOverlapFraction(creative, rollingFrom, rollingTo), 0);
+  const mediaSpend = metaCurrent?.summary.spend ?? fallbackSpend;
+  const rollingMediaSpend = metaRolling?.summary.spend ?? fallbackRollingSpend;
+  const monthlyMediaSpend = mediaSpend / months;
+  const rollingMonthlyMediaSpend = rollingMediaSpend / rollingMonths;
+  const roas = mediaSpend > 0 ? revenue / mediaSpend : 0;
+  const cpa = orders > 0 ? mediaSpend / orders : 0;
+  const rollingRoas = rollingMediaSpend > 0 ? rollingRevenue / rollingMediaSpend : 0;
+  const rollingCpa = rollingOrders > 0 ? rollingMediaSpend / rollingOrders : 0;
+
+  const [ga4Funnel, ga4RollingFunnel] = clientConfig.ga4PropertyId
+    ? await Promise.all([
+        withTimeout(
+          fetchGa4FunnelMetrics({
+            propertyId: clientConfig.ga4PropertyId,
+            dateFrom: dateFromOnly,
+            dateTo: dateToOnly,
+          }),
+          2500,
+          "Scale GA4 funnel timed out",
+        ).catch((err) => {
+          console.warn("[scale] GA4 funnel unavailable:", err instanceof Error ? err.message : err);
+          return null;
+        }),
+        withTimeout(
+          fetchGa4FunnelMetrics({
+            propertyId: clientConfig.ga4PropertyId,
+            dateFrom: rollingDateFromOnly,
+            dateTo: rollingDateToOnly,
+          }),
+          2500,
+          "Scale rolling GA4 funnel timed out",
+        ).catch((err) => {
+          console.warn("[scale] rolling GA4 funnel unavailable:", err instanceof Error ? err.message : err);
+          return null;
+        }),
+      ])
+    : [null, null];
+  const sessions = ga4Funnel?.sessions ?? Number(localVisitsRow[0]?.visits) ?? 0;
+  const rollingSessions = ga4RollingFunnel?.sessions ?? Number(rollingLocalVisitsRow[0]?.visits) ?? 0;
+  const conversionRate = sessions > 0 ? (orders / sessions) * 100 : 0;
+  const rollingConversionRate = rollingSessions > 0 ? (rollingOrders / rollingSessions) * 100 : 0;
+
+  const baselineTurnoverPct = rollingMonthlyTurnoverPct || monthlyTurnoverPct;
+  const baselineRoas = rollingRoas || roas;
+  const baselineAvgTicket = rollingAvgTicket || avgTicket;
+  const baselineCpa = rollingCpa || cpa;
+  const targetRevenue = parsed.data.targetRevenue ?? Math.max(rollingMonthlyRevenue || monthlyRevenue, 0) * 1.5;
+  const requiredSalesPower = baselineTurnoverPct > 0 ? targetRevenue / (baselineTurnoverPct / 100) : 0;
+  const simulatedSalesPower = parsed.data.simulatedSalesPower ?? requiredSalesPower;
+  const projectedRevenue = targetRevenue;
+  const projectedMediaSpend = baselineRoas > 0 ? targetRevenue / baselineRoas : 0;
+  const projectedOrders = baselineAvgTicket > 0 ? targetRevenue / baselineAvgTicket : 0;
+  const projectedCpa = projectedOrders > 0 ? projectedMediaSpend / projectedOrders : 0;
+  const salesPowerGap = Math.max(0, requiredSalesPower - currentSalesPower);
+  const revenueIncrement = Math.max(0, projectedRevenue - rollingMonthlyRevenue);
+  const mediaSpendIncrement = Math.max(0, projectedMediaSpend - rollingMonthlyMediaSpend);
+  const status = scaleStatus({ brokenGradePct, conversionRate, roas: baselineRoas, salesPowerGap });
+
+  const topCategories = mapBreakdown(categoryRows).slice(0, 8);
+  const topColors = buildVariantSalesBreakdown(variantRows, "color", "Sem cor").slice(0, 8);
+  const topSizes = buildVariantSalesBreakdown(variantRows, "size", "Sem tamanho").slice(0, 8);
+  const stockCategoryMap = new Map<string, { stockUnits: number; salesPower: number }>();
+  for (const product of availableProducts) {
+    const name = product.category?.trim() || "Sem categoria";
+    const row = stockCategoryMap.get(name) ?? { stockUnits: 0, salesPower: 0 };
+    const stock = Number(product.stock) || 0;
+    row.stockUnits += stock;
+    row.salesPower += stock * effectivePriceForProduct(product);
+    stockCategoryMap.set(name, row);
+  }
+  const stockByCategory = [...stockCategoryMap.entries()]
+    .map(([name, row]) => ({
+      name,
+      revenue: 0,
+      units: 0,
+      stockUnits: row.stockUnits,
+      salesPower: row.salesPower,
+    }))
+    .sort((a, b) => (b.salesPower ?? 0) - (a.salesPower ?? 0))
+    .slice(0, 8);
+
+  const insights = await generateScaleInsights({
+    brand: clientConfig.name,
+    currentSalesPower,
+    simulatedSalesPower: requiredSalesPower,
+    monthlyTurnoverPct: baselineTurnoverPct,
+    monthlyRevenue: rollingMonthlyRevenue || monthlyRevenue,
+    projectedRevenue,
+    monthlyMediaSpend: rollingMonthlyMediaSpend || monthlyMediaSpend,
+    projectedMediaSpend,
+    roas: baselineRoas,
+    cpa: baselineCpa,
+    projectedCpa,
+    conversionRate: rollingConversionRate || conversionRate,
+    brokenGradePct,
+    topCategories,
+    topColors,
+    topSizes,
+    status,
+  });
+
+  res.json({
+    client: { id: clientId, name: clientConfig.name },
+    period: { from: dateFromOnly, to: dateToOnly, days },
+    kpis: {
+      currentSalesPower,
+      revenue,
+      orders,
+      availableStockUnits,
+      activeProducts: activeProducts.length,
+      availableProducts: availableProducts.length,
+      periodTurnoverPct,
+      monthlyRevenue,
+      monthlyOrders,
+      avgTicket,
+      monthlyTurnoverPct,
+      mediaSpend,
+      monthlyMediaSpend,
+      roas,
+      cpa,
+      sessions,
+      conversionRate,
+      brokenGradePct,
+      brokenGradeCount: brokenGroups,
+      productGroupCount: groupedProducts.length,
+    },
+    benchmarks: {
+      windowDays: 90,
+      from: rollingDateFromOnly,
+      to: rollingDateToOnly,
+      monthlyRevenue: rollingMonthlyRevenue,
+      monthlyOrders: rollingMonthlyOrders,
+      avgTicket: rollingAvgTicket,
+      monthlyTurnoverPct: rollingMonthlyTurnoverPct,
+      mediaSpend: rollingMediaSpend,
+      monthlyMediaSpend: rollingMonthlyMediaSpend,
+      roas: rollingRoas,
+      cpa: rollingCpa,
+      sessions: rollingSessions,
+      conversionRate: rollingConversionRate,
+    },
+    projection: {
+      targetRevenue,
+      simulatedSalesPower,
+      requiredSalesPower,
+      projectedRevenue,
+      projectedMediaSpend,
+      projectedOrders,
+      projectedCpa,
+      revenueIncrement,
+      mediaSpendIncrement,
+      salesPowerGap,
+      status,
+      scenarios: [0.8, 1, 1.25].map((factor) => {
+        const scenarioRevenue = targetRevenue * factor;
+        const power = baselineTurnoverPct > 0 ? scenarioRevenue / (baselineTurnoverPct / 100) : 0;
+        const scenarioMedia = baselineRoas > 0 ? scenarioRevenue / baselineRoas : 0;
+        return {
+          name: factor < 1 ? "Conservador" : factor === 1 ? "Base" : "Agressivo",
+          salesPower: power,
+          revenue: scenarioRevenue,
+          mediaSpend: scenarioMedia,
+          orders: baselineAvgTicket > 0 ? scenarioRevenue / baselineAvgTicket : 0,
+        };
+      }),
+    },
+    breakdowns: {
+      categories: topCategories,
+      colors: topColors,
+      sizes: topSizes,
+      stockByCategory,
+    },
+    insights,
     generatedAt: new Date().toISOString(),
   });
 });

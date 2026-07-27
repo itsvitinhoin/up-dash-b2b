@@ -1,5 +1,6 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
+import { useIsFetching } from "@tanstack/react-query";
 import { Globe2 } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "@/lib/auth";
@@ -42,9 +43,22 @@ import {
   PlugZap,
   Send,
   CalendarDays,
+  FileClock,
   ReceiptText,
+  Bot,
+  Workflow,
+  PlayCircle,
+  Settings2,
+  Sparkles,
+  Scale,
+  Gauge,
 } from "lucide-react";
-import { useListClients, useGetClient, useHealthCheck } from "@workspace/api-client-react";
+import {
+  useListClients,
+  useGetClient,
+  useHealthCheck,
+  type Client,
+} from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
@@ -64,6 +78,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { SearchPalette } from "@/components/search-palette";
+import { DashLoader } from "@/components/ui/dash-loader";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -84,6 +99,7 @@ const pageMeta: Record<string, PageMeta> = {
   "/": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/dashboard": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/daily": { title: "Daily", subtitle: "Relatório diário B2C para PDF", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/scale": { title: "Escala", subtitle: "Poder de venda, mídia e projeção de crescimento B2C", hasDateRange: true, hasFilterBar: false, requiresClient: true },
   "/funnel": { title: "Conversion funnel", subtitle: "Visit through purchase", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/customers": { title: "Customers", subtitle: "RFM segmentation and lifetime value", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/orders": { title: "Orders", subtitle: "Pedidos, atendimento e origem", hasDateRange: true, hasFilterBar: true, requiresClient: true },
@@ -93,10 +109,16 @@ const pageMeta: Record<string, PageMeta> = {
   "/clients": { title: "Clients", subtitle: "Brand accounts on the platform", hasDateRange: true, hasFilterBar: false },
   "/accesses": { title: "Acessos", subtitle: "Client logins filtered by brand", hasDateRange: false, hasFilterBar: false },
   "/extractions": { title: "Extrações", subtitle: "Histórico dos agendamentos de dados", hasDateRange: false, hasFilterBar: false },
+  "/relatorios-automaticos": { title: "Relatórios automáticos", subtitle: "Envio interno de relatórios por WhatsApp Oficial da UP", hasDateRange: false, hasFilterBar: false },
   "/notifications": { title: "Notifications", subtitle: "Anomalies, top movers, and rollups", hasDateRange: false, hasFilterBar: false, requiresClient: true },
   "/compare": { title: "Compare brands", subtitle: "Benchmark up to four clients side-by-side", hasDateRange: true, hasFilterBar: false },
   "/overview": { title: "Platform overview", subtitle: "Every brand on UP Dash, at a glance", hasDateRange: true, hasFilterBar: false },
   "/marketing": { title: "Marketing", subtitle: "Ad spend, ROAS, CPL, and creative performance", hasDateRange: true, hasFilterBar: true, requiresClient: true },
+  "/erp": { title: "ERP", subtitle: "Visão operacional do Miré", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/erp/pedidos": { title: "Pedidos ERP", subtitle: "Faturamento, atendimento e situação comercial", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/erp/clientes": { title: "Clientes ERP", subtitle: "Base histórica de compradores e relacionamento", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/erp/produtos": { title: "Produtos ERP", subtitle: "Venda, grade, estoque e cobertura", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/performance": { title: "Performance", subtitle: "Mídia, ERP e e-commerce em uma visão consolidada", hasDateRange: true, hasFilterBar: false, requiresClient: true },
   "/whatsapp": { title: "WhatsApp", subtitle: "Atendimento, velocidade e produtividade", hasDateRange: false, hasFilterBar: false, requiresClient: true },
   "/whatsapp/conversas": { title: "Conversas WhatsApp", subtitle: "Inbox em tempo real por cliente", hasDateRange: false, hasFilterBar: false, requiresClient: true },
   "/whatsapp/conexoes": { title: "Conexões WhatsApp", subtitle: "Números, webhooks e integrações por cliente", hasDateRange: false, hasFilterBar: false, requiresClient: true },
@@ -106,11 +128,62 @@ const pageMeta: Record<string, PageMeta> = {
   "/journey": { title: "Journey Analytics", subtitle: "Event flow, top paths, and buyer behaviour", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/rfm": { title: "RFM Segmentation", subtitle: "Recency, frequency, and monetary analysis", hasDateRange: true, hasFilterBar: true, requiresClient: true },
   "/utm": { title: "UTM / Source Analysis", subtitle: "Attribution by source, medium, and campaign", hasDateRange: true, hasFilterBar: true, requiresClient: true },
+  "/orquestrador": { title: "IA Comercial", subtitle: "Orquestrador comercial B2B com WhatsApp e UP Zero", hasDateRange: true, hasFilterBar: false },
+  "/orquestrador/crm": { title: "CRM Comercial", subtitle: "Pipeline de atendimento e oportunidades B2B", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/orquestrador/cadastros": { title: "Cadastros IA", subtitle: "Clientes captados e cadastros acompanhados pelo agente", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/orquestrador/automacoes": { title: "Automações Comerciais", subtitle: "Regras seguras por evento de e-commerce", hasDateRange: false, hasFilterBar: false },
+  "/orquestrador/configuracoes": { title: "Configurações IA", subtitle: "Limites, handoffs e operação assistida", hasDateRange: false, hasFilterBar: false },
+  "/orquestrador/simulador": { title: "Simulador IA", subtitle: "Teste de respostas antes de conectar backend real", hasDateRange: false, hasFilterBar: false },
+  "/orquestrador/logs": { title: "Logs IA", subtitle: "Auditoria visual dos eventos do orquestrador", hasDateRange: true, hasFilterBar: false },
+  "/agente-vendas": { title: "Agente de Vendas", subtitle: "IA comercial assistida para atendimento B2B", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/agente-vendas/crm": { title: "CRM do Agente", subtitle: "Pipeline comercial assistido para leads e oportunidades", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/agente-vendas/simulacao": { title: "Simulação do Agente", subtitle: "Teste respostas antes de usar em atendimento real", hasDateRange: true, hasFilterBar: false, requiresClient: true },
+  "/agente-vendas/configuracoes": { title: "Configurações do Agente", subtitle: "Regras, limites e ações permitidas", hasDateRange: false, hasFilterBar: false, requiresClient: true },
 };
 
 // Sentinel value for the topbar picker when an admin selects the
 // platform-wide entry. Real client IDs are CUIDs, so this can never collide.
 const PLATFORM_PICK = "__platform__";
+const ADMIN_DISPLAY_EMAIL = "admin@updash.com";
+const GLOBAL_SWITCH_MIN_MS = 650;
+const GLOBAL_SWITCH_MAX_MS = 12000;
+const LOCAL_UI_PREVIEW =
+  import.meta.env.DEV && import.meta.env.VITE_UI_PREVIEW === "1";
+const LOCAL_PREVIEW_CLIENT: Client = {
+  id: "preview-celeb",
+  name: "CELEB · Prévia ERP",
+  email: "preview@updash.local",
+  apiKey: "",
+  revenueYtd: 0,
+  ordersYtd: 0,
+  leadsYtd: 0,
+  approvedLeads: 0,
+  isActive: true,
+  dashboardType: "B2B",
+  commercePlatform: "MANUAL",
+  hasNuvemshopIntegration: false,
+  hasGa4Integration: false,
+  currency: "BRL",
+  locale: "pt-BR",
+  createdAt: "2026-07-01T00:00:00.000Z",
+  updatedAt: "2026-07-23T00:00:00.000Z",
+};
+
+function isBackgroundQueryKey(queryKey: readonly unknown[]): boolean {
+  const first = String(queryKey[0] ?? "");
+  return first.includes("/api/healthz") || first.includes("/api/notifications");
+}
+
+function getUserDisplayName(user: ReturnType<typeof useAuth>["user"]) {
+  if (!user) return "";
+  if (user.email === ADMIN_DISPLAY_EMAIL) return "Grupo UP";
+  return [user.firstName, user.lastName].filter(Boolean).join(" ");
+}
+
+function getUserInitials(displayName: string) {
+  const parts = displayName.trim().split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+}
 
 export function AppLayout({ children }: AppLayoutProps) {
   const [location, navigate] = useLocation();
@@ -127,6 +200,8 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { dateRange, setDateRange } = useDashboardFilters();
   const { setOpen: setShortcutsOpen } = useKeyboardShortcuts();
   const [searchOpen, setSearchOpen] = useState(false);
+  const userDisplayName = getUserDisplayName(user);
+  const userInitials = getUserInitials(userDisplayName);
 
   // Bridge the "/" shortcut to the command palette. The topbar search is now
   // a button that opens a palette (not an <input>), so "focusing search"
@@ -154,10 +229,15 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   const { data: clientsData } = useListClients(
     { limit: 100, dashboardType: selectedDashboardMode },
-    { query: queryOpts({ enabled: user?.role === "ADMIN" }) },
+    { query: queryOpts({ enabled: user?.role === "ADMIN" && !LOCAL_UI_PREVIEW }) },
   );
   const adminClients = useMemo(
-    () => (Array.isArray(clientsData?.data) ? clientsData.data : []),
+    () =>
+      LOCAL_UI_PREVIEW
+        ? [LOCAL_PREVIEW_CLIENT]
+        : Array.isArray(clientsData?.data)
+          ? clientsData.data
+          : [],
     [clientsData?.data],
   );
 
@@ -183,6 +263,10 @@ export function AppLayout({ children }: AppLayoutProps) {
     user?.role === "CLIENT"
       ? clientData
       : adminClients.find((c) => c.id === selectedClientId);
+  const effectiveDashboardMode =
+    user?.role === "CLIENT"
+      ? (clientData?.dashboardType ?? null)
+      : selectedDashboardMode;
   useEffect(() => {
     if (activeClient?.currency && activeClient?.locale) {
       setActiveCurrency(activeClient.currency, activeClient.locale);
@@ -190,14 +274,87 @@ export function AppLayout({ children }: AppLayoutProps) {
   }, [activeClient?.currency, activeClient?.locale]);
 
   const { data: health } = useHealthCheck({
-    query: queryOpts({ refetchInterval: 60000 }),
+    query: queryOpts({ enabled: !LOCAL_UI_PREVIEW, refetchInterval: 60000 }),
   });
+  const activeDataLoads = useIsFetching({
+    predicate: (query) => query.state.fetchStatus === "fetching" && !isBackgroundQueryKey(query.queryKey),
+  });
+
+  const [isGlobalSwitchLoading, setIsGlobalSwitchLoading] = useState(false);
+  const [globalSwitchReason, setGlobalSwitchReason] = useState<"client" | "period" | "context">("context");
+  const previousGlobalContext = useRef<{
+    clientId: string;
+    dateFrom: string;
+    dateTo: string;
+    mode: string;
+  } | null>(null);
+  const globalSwitchStartedAt = useRef(0);
+
+  const globalContext = useMemo(
+    () => ({
+      clientId:
+        user?.role === "CLIENT"
+          ? user.clientId ?? ""
+          : location === "/overview"
+            ? PLATFORM_PICK
+            : selectedClientId ?? "",
+      dateFrom: dateRange.from.toISOString(),
+      dateTo: dateRange.to.toISOString(),
+      mode: user?.role === "CLIENT" ? "CLIENT" : selectedDashboardMode,
+    }),
+    [
+      dateRange.from,
+      dateRange.to,
+      location,
+      selectedClientId,
+      selectedDashboardMode,
+      user?.clientId,
+      user?.role,
+    ],
+  );
+
+  useEffect(() => {
+    const previous = previousGlobalContext.current;
+    previousGlobalContext.current = globalContext;
+    if (!previous) return;
+
+    const clientChanged = previous.clientId !== globalContext.clientId || previous.mode !== globalContext.mode;
+    const periodChanged = previous.dateFrom !== globalContext.dateFrom || previous.dateTo !== globalContext.dateTo;
+    if (!clientChanged && !periodChanged) return;
+
+    globalSwitchStartedAt.current = Date.now();
+    setGlobalSwitchReason(clientChanged ? "client" : "period");
+    setIsGlobalSwitchLoading(true);
+  }, [globalContext]);
+
+  useEffect(() => {
+    if (!isGlobalSwitchLoading) return;
+
+    const maxTimer = window.setTimeout(() => {
+      setIsGlobalSwitchLoading(false);
+    }, GLOBAL_SWITCH_MAX_MS);
+
+    return () => window.clearTimeout(maxTimer);
+  }, [isGlobalSwitchLoading, globalContext]);
+
+  useEffect(() => {
+    if (!isGlobalSwitchLoading || activeDataLoads > 0) return;
+
+    const elapsed = Date.now() - globalSwitchStartedAt.current;
+    const remaining = Math.max(180, GLOBAL_SWITCH_MIN_MS - elapsed);
+    const settleTimer = window.setTimeout(() => {
+      setIsGlobalSwitchLoading(false);
+    }, remaining);
+
+    return () => window.clearTimeout(settleTimer);
+  }, [activeDataLoads, isGlobalSwitchLoading, globalContext]);
 
   const meta =
     pageMeta[location] ??
     (location.startsWith("/products/") ? { title: "Product detail", subtitle: "Performance profile", hasDateRange: false, hasFilterBar: false, requiresClient: true } : null) ??
     (location.startsWith("/customers/") ? { title: "Customer detail", subtitle: "Purchase history and behaviour", hasDateRange: false, hasFilterBar: false, requiresClient: true } : null) ??
     (location.startsWith("/sellers/") ? { title: "Seller detail", subtitle: "Revenue, orders and top customers", hasDateRange: true, hasFilterBar: false, requiresClient: true } : null) ??
+    (location.startsWith("/orquestrador/clientes/") ? { title: "Operação IA Comercial", subtitle: "Configuração e qualidade por cliente B2B", hasDateRange: true, hasFilterBar: false, requiresClient: true } : null) ??
     { title: "UP Dash", subtitle: "", hasDateRange: false, hasFilterBar: false };
   const pageTranslationKey =
     location === "/" || location === "/dashboard"
@@ -212,17 +369,54 @@ export function AppLayout({ children }: AppLayoutProps) {
       : pageTranslationKey
         ? t(`page.${pageTranslationKey}.subtitle`, meta.subtitle)
         : meta.subtitle;
+  const globalLoadingClientName =
+    location === "/overview"
+      ? "visão da plataforma"
+      : activeClient?.name ?? (user?.role === "CLIENT" ? "sua marca" : "cliente selecionado");
+  const globalLoadingDescription =
+    globalSwitchReason === "period"
+      ? `Atualizando ${globalLoadingClientName} para ${format(dateRange.from, "dd/MM/yyyy")} a ${format(dateRange.to, "dd/MM/yyyy")}.`
+      : `Carregando dados de ${globalLoadingClientName}.`;
 
-  const b2bOnlyRoutes = useMemo(() => new Set(["/whatsapp", "/utm", "/sellers", "/journey"]), []);
-  const b2cOnlyRoutes = useMemo(() => new Set(["/daily"]), []);
+  const b2bOnlyRoutes = useMemo(() => new Set(["/whatsapp", "/utm", "/sellers", "/journey", "/orquestrador", "/agente-vendas", "/erp", "/performance"]), []);
+  const b2cOnlyRoutes = useMemo(() => new Set(["/daily", "/scale"]), []);
+  const isB2BOnlyRoute = useCallback(
+    (href: string) =>
+      b2bOnlyRoutes.has(href) ||
+      href.startsWith("/whatsapp/") ||
+      href.startsWith("/erp/") ||
+      href.startsWith("/orquestrador/") ||
+      href.startsWith("/agente-vendas/"),
+    [b2bOnlyRoutes],
+  );
   useEffect(() => {
-    if (selectedDashboardMode === "B2C" && b2bOnlyRoutes.has(location)) {
+    if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(location)) {
       navigate("/dashboard");
     }
-  }, [b2bOnlyRoutes, location, navigate, selectedDashboardMode]);
+  }, [effectiveDashboardMode, isB2BOnlyRoute, location, navigate]);
+  type NavEntry = {
+    name: string;
+    href: string;
+    icon: typeof Users;
+    children?: Array<{ name: string; href: string; icon: typeof Users }>;
+  };
+
   const analyticsNav = [
     { name: t("nav.dashboard", "Dashboard"), href: "/dashboard", icon: LayoutDashboard },
     { name: t("nav.daily", "Daily"), href: "/daily", icon: CalendarDays },
+    { name: t("nav.scale", "Escala"), href: "/scale", icon: Scale },
+    {
+      name: t("nav.erp", "ERP"),
+      href: "/erp",
+      icon: Store,
+      children: [
+        { name: t("nav.erp.overview", "Visão Geral"), href: "/erp", icon: LayoutDashboard },
+        { name: t("nav.erp.orders", "Pedidos"), href: "/erp/pedidos", icon: ReceiptText },
+        { name: t("nav.erp.customers", "Clientes"), href: "/erp/clientes", icon: Users },
+        { name: t("nav.erp.products", "Produtos"), href: "/erp/produtos", icon: Package },
+      ],
+    },
+    { name: t("nav.performance", "Performance"), href: "/performance", icon: Gauge },
     { name: t("nav.marketing", "Marketing"), href: "/marketing", icon: Megaphone },
     {
       name: t("nav.whatsapp", "WhatsApp"),
@@ -245,12 +439,12 @@ export function AppLayout({ children }: AppLayoutProps) {
     { name: t("nav.sellers", "Sellers"), href: "/sellers", icon: ShoppingBag },
     { name: t("nav.stock", "Stock"), href: "/stock", icon: PackageSearch },
   ].filter((item) => {
-    if (selectedDashboardMode === "B2C" && b2bOnlyRoutes.has(item.href)) return false;
-    if (selectedDashboardMode === "B2B" && b2cOnlyRoutes.has(item.href)) return false;
+    if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(item.href)) return false;
+    if (effectiveDashboardMode === "B2B" && b2cOnlyRoutes.has(item.href)) return false;
     return true;
   });
 
-  const workspaceNav: { name: string; href: string; icon: typeof Users }[] = [
+  const workspaceNav: NavEntry[] = [
     { name: t("nav.geography", "Geography"), href: "/geography", icon: MapPin },
     { name: t("nav.notifications", "Notifications"), href: "/notifications", icon: Bell },
   ];
@@ -261,20 +455,43 @@ export function AppLayout({ children }: AppLayoutProps) {
     workspaceNav.push({ name: t("nav.clients", "Clients"), href: "/clients", icon: Building2 });
     workspaceNav.push({ name: t("nav.accesses", "Acessos"), href: "/accesses", icon: KeyRound });
     workspaceNav.push({ name: t("nav.extractions", "Extrações"), href: "/extractions", icon: History });
+    workspaceNav.push({ name: t("nav.automaticReports", "Relatórios automáticos"), href: "/relatorios-automaticos", icon: FileClock });
+    if (selectedDashboardMode === "B2B") {
+      workspaceNav.push({
+        name: t("nav.orchestrator", "IA Comercial"),
+        href: "/orquestrador",
+        icon: Bot,
+        children: [
+          { name: t("nav.orchestrator.overview", "Visão Geral"), href: "/orquestrador", icon: Sparkles },
+          { name: t("nav.orchestrator.crm", "CRM"), href: "/orquestrador/crm", icon: Workflow },
+          { name: t("nav.orchestrator.registrations", "Cadastros"), href: "/orquestrador/cadastros", icon: Users },
+          { name: t("nav.orchestrator.automations", "Automações"), href: "/orquestrador/automacoes", icon: Bot },
+          { name: t("nav.orchestrator.settings", "Configurações"), href: "/orquestrador/configuracoes", icon: Settings2 },
+          { name: t("nav.orchestrator.simulator", "Simulador"), href: "/orquestrador/simulador", icon: PlayCircle },
+          { name: t("nav.orchestrator.logs", "Logs"), href: "/orquestrador/logs", icon: FileText },
+        ],
+      });
+    }
+  } else if (effectiveDashboardMode === "B2B") {
+    workspaceNav.push({
+      name: t("nav.salesAgent", "Agente de Vendas"),
+      href: "/agente-vendas",
+      icon: Bot,
+      children: [
+        { name: t("nav.salesAgent.crm", "CRM"), href: "/agente-vendas/crm", icon: Workflow },
+        { name: t("nav.salesAgent.simulation", "Simulação"), href: "/agente-vendas/simulacao", icon: PlayCircle },
+        { name: t("nav.salesAgent.settings", "Configurações"), href: "/agente-vendas/configuracoes", icon: Settings2 },
+      ],
+    });
   }
-
-  type NavEntry = {
-    name: string;
-    href: string;
-    icon: typeof Users;
-    children?: Array<{ name: string; href: string; icon: typeof Users }>;
-  };
 
   const NavItem = ({ item }: { item: NavEntry }) => {
     const isActive =
       location === item.href ||
       (item.href === "/dashboard" && location === "/") ||
-      Boolean(item.children?.some((child) => child.href === location));
+      Boolean(item.children?.some((child) => child.href === location)) ||
+      (item.href === "/orquestrador" && location.startsWith("/orquestrador/clientes/")) ||
+      (item.href === "/agente-vendas" && location.startsWith("/agente-vendas/"));
     return (
       <div>
         <Link href={item.href}>
@@ -360,13 +577,12 @@ export function AppLayout({ children }: AppLayoutProps) {
         <div className="flex items-center gap-3 px-2 py-1.5">
           <Avatar className="h-9 w-9 bg-primary/15">
             <AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">
-              {user?.firstName?.[0]}
-              {user?.lastName?.[0]}
+              {userInitials}
             </AvatarFallback>
           </Avatar>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate text-foreground">
-              {user?.firstName} {user?.lastName?.[0]}.
+              {userDisplayName}
             </p>
             <p className="text-xs text-muted-foreground truncate">
               {user?.role === "CLIENT" && clientData ? clientData.name : "UP Dash team"}
@@ -447,7 +663,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                     ) {
                       navigate("/dashboard");
                     }
-                    if (mode === "B2B" && location === "/daily") {
+                    if (mode === "B2B" && (location === "/daily" || location === "/scale")) {
                       navigate("/dashboard");
                     }
                   }}
@@ -565,7 +781,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               <HelpCircle className="h-4 w-4" />
             </Button>
 
-            <NotificationBell />
+            {!LOCAL_UI_PREVIEW && <NotificationBell />}
 
             <Button
               variant="ghost"
@@ -583,8 +799,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <Button variant="ghost" className="relative h-9 w-9 rounded-full p-0">
                   <Avatar className="h-9 w-9 bg-primary/15">
                     <AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">
-                      {user?.firstName?.[0]}
-                      {user?.lastName?.[0]}
+                      {userInitials}
                     </AvatarFallback>
                   </Avatar>
                 </Button>
@@ -593,7 +808,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <DropdownMenuLabel className="font-normal">
                   <div className="flex flex-col space-y-1">
                     <p className="text-sm font-medium leading-none">
-                      {user?.firstName} {user?.lastName}
+                      {userDisplayName}
                     </p>
                     <p className="text-xs leading-none text-muted-foreground">
                       {user?.email}
@@ -644,6 +859,28 @@ export function AppLayout({ children }: AppLayoutProps) {
           )}
         </main>
       </div>
+
+      {isGlobalSwitchLoading && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-background/85 px-4 backdrop-blur-sm no-print"
+          role="status"
+          aria-live="polite"
+          aria-label="Carregando dados atualizados"
+        >
+          <div className="w-full max-w-md rounded-lg border border-border bg-card shadow-2xl">
+            <DashLoader
+              label="Carregando dados atualizados"
+              description={globalLoadingDescription}
+            />
+          </div>
+        </div>
+      )}
+
+      {!isGlobalSwitchLoading && activeDataLoads > 0 && (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-50 hidden rounded-lg border border-border bg-card/95 px-4 py-3 shadow-lg backdrop-blur sm:block no-print">
+          <DashLoader compact label="Carregando informações" />
+        </div>
+      )}
 
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
     </div>

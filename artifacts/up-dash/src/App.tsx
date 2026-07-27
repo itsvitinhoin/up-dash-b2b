@@ -21,6 +21,7 @@ import PrivacyPolicyPage from "@/pages/privacy-policy";
 import TermsOfServicePage from "@/pages/terms-of-service";
 import DashboardPage from "@/pages/dashboard";
 import DailyPage from "@/pages/daily";
+import ScalePage from "@/pages/scale";
 import FunnelPage from "@/pages/funnel";
 import CustomersPage from "@/pages/customers";
 import CustomerDetailPage from "@/pages/customer-detail";
@@ -46,13 +47,26 @@ import RfmPage from "@/pages/rfm";
 import UtmPage from "@/pages/utm";
 import AccessesPage from "@/pages/accesses";
 import ExtractionsPage from "@/pages/extractions";
+import AutomaticReportsPage from "@/pages/automatic-reports";
 import WorkspaceSelectPage from "@/pages/workspace-select";
+import OrchestratorPage from "@/pages/orchestrator";
+import SalesAgentPage from "@/pages/sales-agent";
+import ErpPage from "@/pages/erp";
+import PerformancePage from "@/pages/performance";
 
 function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
   const { logout } = useAuth();
 
   const queryClient = useMemo(() => {
     return new QueryClient({
+      defaultOptions: {
+        queries: {
+          staleTime: 2 * 60 * 1000,
+          gcTime: 15 * 60 * 1000,
+          refetchOnWindowFocus: false,
+          retry: 1,
+        },
+      },
       queryCache: new QueryCache({
         onError: (error) => handleApiError(error, logout),
       }),
@@ -121,6 +135,14 @@ function Router() {
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="daily"><DailyPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/scale">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="scale"><ScalePage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -237,10 +259,58 @@ function Router() {
           </AuthGuard>
         </Route>
 
+        <Route path="/relatorios-automaticos">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="automatic-reports"><AutomaticReportsPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
         <Route path="/marketing">
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="marketing"><MarketingPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/erp/pedidos">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="erp-orders"><ErpPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/erp/clientes">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="erp-customers"><ErpPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/erp/produtos">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="erp-products"><ErpPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/erp">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="erp-overview"><ErpPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/performance">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="performance"><PerformancePage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -313,6 +383,110 @@ function Router() {
           <AuthGuard>
             <AppLayout>
               <PageTransition routeKey="utm"><UtmPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/orquestrador">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="orchestrator"><OrchestratorPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/orquestrador/crm">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="orchestrator-crm"><OrchestratorPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/orquestrador/cadastros">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="orchestrator-registrations"><OrchestratorPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/orquestrador/automacoes">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="orchestrator-automations"><OrchestratorPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/orquestrador/configuracoes">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="orchestrator-settings"><OrchestratorPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/orquestrador/simulador">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="orchestrator-simulator"><OrchestratorPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/orquestrador/logs">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="orchestrator-logs"><OrchestratorPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/orquestrador/clientes/:clientId">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="orchestrator-client-summary"><OrchestratorPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/orquestrador/clientes/:clientId/:section">
+          <AuthGuard adminOnly>
+            <AppLayout>
+              <PageTransition routeKey="orchestrator-client"><OrchestratorPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/agente-vendas">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="sales-agent"><SalesAgentPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/agente-vendas/crm">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="sales-agent-crm"><SalesAgentPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/agente-vendas/simulacao">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="sales-agent-simulation"><SalesAgentPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/agente-vendas/configuracoes">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="sales-agent-settings"><SalesAgentPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
