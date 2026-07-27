@@ -32,7 +32,7 @@ import {
   Line,
   LineChart,
   ResponsiveContainer,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -538,7 +538,7 @@ export default function WhatsappPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+                <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} />
                 <Area dataKey="conversas" stroke="hsl(var(--primary))" fill="hsl(var(--primary) / 0.18)" />
               </AreaChart>
             </ResponsiveContainer>
@@ -553,7 +553,7 @@ export default function WhatsappPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="hour" tick={{ fontSize: 11 }} interval={1} />
                 <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+                <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} />
                 <Bar dataKey="conversas" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
               </RechartsBarChart>
             </ResponsiveContainer>
@@ -568,7 +568,7 @@ export default function WhatsappPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+                <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} />
                 <Line type="monotone" dataKey="recebidas" stroke="#2563eb" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="enviadas" stroke="#10b981" strokeWidth={2} dot={false} />
               </LineChart>
@@ -584,7 +584,7 @@ export default function WhatsappPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis type="number" tick={{ fontSize: 12 }} />
                 <YAxis type="category" dataKey="profile" tick={{ fontSize: 12 }} width={95} />
-                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+                <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} />
                 <Bar dataKey="conversations" fill="#0ea5e9" radius={[0, 4, 4, 0]} />
               </RechartsBarChart>
             </ResponsiveContainer>
@@ -669,7 +669,7 @@ export default function WhatsappPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis dataKey="profile" tick={{ fontSize: 12 }} />
               <YAxis tickFormatter={(value) => `${value}m`} tick={{ fontSize: 12 }} />
-              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatMinutes(Number(value))} />
+              <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatMinutes(Number(value))} />
               <Bar dataKey="avgResponse" fill="#f59e0b" radius={[4, 4, 0, 0]} />
             </RechartsBarChart>
           </ResponsiveContainer>

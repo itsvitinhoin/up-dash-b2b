@@ -11,12 +11,14 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@google-cloud/bigquery": "^8.3.1",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
     "bcryptjs": "^3.0.3",
     "compression": "^1.7.5",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
+    "dotenv": "^17.4.2",
     "drizzle-orm": "catalog:",
     "express": "^5",
     "express-rate-limit": "^7.4.1",

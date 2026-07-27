@@ -5,6 +5,8 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { ClientCommercePlatform } from "./clientCommercePlatform";
+import type { ClientDashboardType } from "./clientDashboardType";
 
 export interface Client {
   id: string;
@@ -17,9 +19,14 @@ export interface Client {
   approvedLeads: number;
   isActive: boolean;
   /** Dashboard family for this client. */
-  dashboardType: "B2B" | "B2C";
+  dashboardType: ClientDashboardType;
   /** Primary commerce data source for this client. */
-  commercePlatform: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  commercePlatform: ClientCommercePlatform;
+  /**
+   * BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.
+   * @nullable
+   */
+  bigqueryDataset?: string | null;
   /**
    * Nuvemshop store id for B2C data ingestion.
    * @nullable
@@ -39,9 +46,19 @@ export interface Client {
   hasNuvemshopIntegration: boolean;
   /** True when both GA4 measurement id and API secret are configured. */
   hasGa4Integration: boolean;
+  /** True when this client has at least one CLIENT-role login. */
   hasClientLogin?: boolean;
+  /**
+   * Email of the client login, when there's exactly one. Only present on enriched /clients responses.
+   * @nullable
+   */
   clientLoginEmail?: string | null;
+  /**
+   * Full name of the client login, when there's exactly one. Only present on enriched /clients responses.
+   * @nullable
+   */
   clientLoginName?: string | null;
+  /** Number of CLIENT-role logins with access to this client. */
   clientLoginCount?: number;
   /**
    * Meta Ads API key for pulling ad spend and lead data from Meta.

@@ -33,11 +33,15 @@ export const clientsTable = pgTable(
     metaAdAccountId: text("meta_ad_account_id"),
     upZeroApiKey: text("up_zero_api_key"),
     dashboardType: text("dashboard_type", { enum: ["B2B", "B2C"] }).notNull().default("B2B"),
-    commercePlatform: text("commerce_platform", { enum: ["UPZERO", "NUVEMSHOP", "MANUAL"] })
+    commercePlatform: text("commerce_platform", { enum: ["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"] })
       .notNull()
       .default("UPZERO"),
     nuvemshopStoreId: text("nuvemshop_store_id"),
     nuvemshopAccessToken: text("nuvemshop_access_token"),
+    // Dataset do BigQuery (projeto up-vesti-report) que este client Vesti lê.
+    // Calculado a partir do nome da loja pelo script-vesti-nuvem — nunca
+    // digitado à mão (ver NOTAS-DEV.md sobre o bug histórico disso lá).
+    bigqueryDataset: text("bigquery_dataset"),
     ga4MeasurementId: text("ga4_measurement_id"),
     ga4PropertyId: text("ga4_property_id"),
     ga4ApiSecret: text("ga4_api_secret"),

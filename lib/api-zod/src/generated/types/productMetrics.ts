@@ -21,9 +21,7 @@ export interface ProductMetrics {
   totalSold: number;
   totalRevenue: number;
   productViews: number;
-  /**
-   * totalSold / productViews as a percentage for the selected period.
-   */
+  /** totalSold / productViews as a percentage for the selected period. */
   productConversionPct: number;
   status: string;
   /** @nullable */

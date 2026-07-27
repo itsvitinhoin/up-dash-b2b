@@ -6,8 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CategoryShare } from "./categoryShare";
+import type { DashboardDailyPerformance } from "./dashboardDailyPerformance";
 import type { DashboardKpis } from "./dashboardKpis";
 import type { DashboardSignal } from "./dashboardSignal";
+import type { DashboardTraffic } from "./dashboardTraffic";
 import type { TimeSeriesPoint } from "./timeSeriesPoint";
 
 export interface DashboardResponse {
@@ -33,6 +35,10 @@ Only present when the request was made with `compare=true`.
   newBuyersOverTime: TimeSeriesPoint[];
   /** Daily returning-buyer count (prior purchases before window). */
   returningBuyersOverTime: TimeSeriesPoint[];
+  /** Traffic denominator used for B2C conversion rate. */
+  traffic?: DashboardTraffic;
+  /** Daily revenue, orders, sessions and conversion rate. */
+  dailyPerformance?: DashboardDailyPerformance[];
   /** Computed business signals for the current period. */
   signals: DashboardSignal[];
 }

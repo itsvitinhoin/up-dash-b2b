@@ -2,6 +2,7 @@
 // ledger only when every CREATE TABLE / CREATE INDEX target it declares is
 // already present in the live DB. Lets `drizzle-kit migrate` safely cover
 // fresh, partial-upgrade, and fully-upgraded databases.
+import "dotenv/config";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";

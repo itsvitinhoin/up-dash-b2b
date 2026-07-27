@@ -1796,8 +1796,11 @@ components:
           description: Dashboard family for this client.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
           description: Primary commerce data source for this client.
+        bigqueryDataset:
+          type: ["string", "null"]
+          description: BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.
         nuvemshopStoreId:
           type: ["string", "null"]
           description: Nuvemshop store id for B2C data ingestion.
@@ -1813,9 +1816,24 @@ components:
         hasGa4Integration:
           type: boolean
           description: True when both GA4 measurement id and API secret are configured.
+        hasClientLogin:
+          type: boolean
+          description: True when this client has at least one CLIENT-role login.
+        clientLoginEmail:
+          type: ["string", "null"]
+          description: Email of the client login, when there's exactly one. Only present on enriched /clients responses.
+        clientLoginName:
+          type: ["string", "null"]
+          description: Full name of the client login, when there's exactly one. Only present on enriched /clients responses.
+        clientLoginCount:
+          type: integer
+          description: Number of CLIENT-role logins with access to this client.
         metaAdsApiKey:
           type: ["string", "null"]
           description: Meta Ads API key for pulling ad spend and lead data from Meta.
+        metaAdAccountId:
+          type: ["string", "null"]
+          description: Meta ad account id used for Marketing API pulls.
         upZeroApiKey:
           type: ["string", "null"]
           description: UP Zero API key for syncing live orders and customers.
@@ -1912,6 +1930,9 @@ components:
         metaAdsApiKey:
           type: string
           description: Optional Meta Ads API key for this client.
+        metaAdAccountId:
+          type: string
+          description: Optional Meta ad account id for this client.
         upZeroApiKey:
           type: string
           description: Optional UP Zero API key for syncing live orders and customers.
@@ -1921,8 +1942,11 @@ components:
           description: Dashboard family for this client. Defaults to B2B.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
           description: Primary commerce data source. Defaults from dashboardType.
+        bigqueryDataset:
+          type: string
+          description: BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI.
         nuvemshopStoreId:
           type: string
           description: Optional Nuvemshop store id for B2C clients.
@@ -1953,6 +1977,9 @@ components:
         metaAdsApiKey:
           type: ["string", "null"]
           description: Meta Ads API key. Pass null to clear it.
+        metaAdAccountId:
+          type: ["string", "null"]
+          description: Meta ad account id. Pass null to clear it.
         upZeroApiKey:
           type: ["string", "null"]
           description: UP Zero API key. Pass null to clear it.
@@ -1962,8 +1989,11 @@ components:
           description: Dashboard family for this client.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
           description: Primary commerce data source.
+        bigqueryDataset:
+          type: ["string", "null"]
+          description: BigQuery dataset (project up-vesti-report) this client reads analytics from. Pass null to clear it.
         nuvemshopStoreId:
           type: ["string", "null"]
           description: Nuvemshop store id. Pass null to clear it.
@@ -2048,7 +2078,7 @@ components:
           description: Dashboard family for this client. Defaults to B2B.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
           description: Primary commerce data source. Defaults from dashboardType.
         currency:
           type: string

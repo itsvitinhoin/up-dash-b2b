@@ -5,13 +5,16 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { ListClientsDashboardType } from "./listClientsDashboardType";
 
 export type ListClientsParams = {
   search?: string;
   page?: number;
   limit?: number;
-  /** Filter clients by the dashboard family selected by the admin. */
-  dashboardType?: "B2B" | "B2C";
+  /**
+   * Filter clients by the dashboard family selected by the admin.
+   */
+  dashboardType?: ListClientsDashboardType;
   /**
  * When both dateFrom and dateTo are provided, each client row in the
 response is enriched with `avgOrderValue`, `conversionRate`, and

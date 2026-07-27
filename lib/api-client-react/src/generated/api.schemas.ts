@@ -88,6 +88,30 @@ export interface ClientLookupResult {
   locale: string;
 }
 
+/**
+ * Dashboard family for this client.
+ */
+export type ClientDashboardType =
+  (typeof ClientDashboardType)[keyof typeof ClientDashboardType];
+
+export const ClientDashboardType = {
+  B2B: "B2B",
+  B2C: "B2C",
+} as const;
+
+/**
+ * Primary commerce data source for this client.
+ */
+export type ClientCommercePlatform =
+  (typeof ClientCommercePlatform)[keyof typeof ClientCommercePlatform];
+
+export const ClientCommercePlatform = {
+  UPZERO: "UPZERO",
+  NUVEMSHOP: "NUVEMSHOP",
+  MANUAL: "MANUAL",
+  VESTI: "VESTI",
+} as const;
+
 export interface Client {
   id: string;
   name: string;
@@ -99,9 +123,14 @@ export interface Client {
   approvedLeads: number;
   isActive: boolean;
   /** Dashboard family for this client. */
-  dashboardType: "B2B" | "B2C";
+  dashboardType: ClientDashboardType;
   /** Primary commerce data source for this client. */
-  commercePlatform: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  commercePlatform: ClientCommercePlatform;
+  /**
+   * BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.
+   * @nullable
+   */
+  bigqueryDataset?: string | null;
   /**
    * Nuvemshop store id for B2C data ingestion.
    * @nullable
@@ -121,9 +150,19 @@ export interface Client {
   hasNuvemshopIntegration: boolean;
   /** True when both GA4 measurement id and API secret are configured. */
   hasGa4Integration: boolean;
+  /** True when this client has at least one CLIENT-role login. */
   hasClientLogin?: boolean;
+  /**
+   * Email of the client login, when there's exactly one. Only present on enriched /clients responses.
+   * @nullable
+   */
   clientLoginEmail?: string | null;
+  /**
+   * Full name of the client login, when there's exactly one. Only present on enriched /clients responses.
+   * @nullable
+   */
   clientLoginName?: string | null;
+  /** Number of CLIENT-role logins with access to this client. */
   clientLoginCount?: number;
   /**
    * Meta Ads API key for pulling ad spend and lead data from Meta.
@@ -195,6 +234,30 @@ export interface PaginatedClients {
   pages: number;
 }
 
+/**
+ * Dashboard family for this client. Defaults to B2B.
+ */
+export type CreateClientRequestDashboardType =
+  (typeof CreateClientRequestDashboardType)[keyof typeof CreateClientRequestDashboardType];
+
+export const CreateClientRequestDashboardType = {
+  B2B: "B2B",
+  B2C: "B2C",
+} as const;
+
+/**
+ * Primary commerce data source. Defaults from dashboardType.
+ */
+export type CreateClientRequestCommercePlatform =
+  (typeof CreateClientRequestCommercePlatform)[keyof typeof CreateClientRequestCommercePlatform];
+
+export const CreateClientRequestCommercePlatform = {
+  UPZERO: "UPZERO",
+  NUVEMSHOP: "NUVEMSHOP",
+  MANUAL: "MANUAL",
+  VESTI: "VESTI",
+} as const;
+
 export interface CreateClientRequest {
   name: string;
   email: string;
@@ -206,9 +269,11 @@ export interface CreateClientRequest {
   /** Optional UP Zero API key for syncing live orders and customers. */
   upZeroApiKey?: string;
   /** Dashboard family for this client. Defaults to B2B. */
-  dashboardType?: "B2B" | "B2C";
+  dashboardType?: CreateClientRequestDashboardType;
   /** Primary commerce data source. Defaults from dashboardType. */
-  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  commercePlatform?: CreateClientRequestCommercePlatform;
+  /** BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI. */
+  bigqueryDataset?: string;
   /** Optional Nuvemshop store id for B2C clients. */
   nuvemshopStoreId?: string;
   /** Optional Nuvemshop access token for B2C clients. Stored server-side and never returned. */
@@ -224,6 +289,30 @@ export interface CreateClientRequest {
   /** BCP 47 locale (default pt-BR) */
   locale?: string;
 }
+
+/**
+ * Dashboard family for this client.
+ */
+export type UpdateClientRequestDashboardType =
+  (typeof UpdateClientRequestDashboardType)[keyof typeof UpdateClientRequestDashboardType];
+
+export const UpdateClientRequestDashboardType = {
+  B2B: "B2B",
+  B2C: "B2C",
+} as const;
+
+/**
+ * Primary commerce data source.
+ */
+export type UpdateClientRequestCommercePlatform =
+  (typeof UpdateClientRequestCommercePlatform)[keyof typeof UpdateClientRequestCommercePlatform];
+
+export const UpdateClientRequestCommercePlatform = {
+  UPZERO: "UPZERO",
+  NUVEMSHOP: "NUVEMSHOP",
+  MANUAL: "MANUAL",
+  VESTI: "VESTI",
+} as const;
 
 /**
  * Fields that can be updated on an existing client. All fields are optional.
@@ -242,16 +331,21 @@ export interface UpdateClientRequest {
   /**
    * UP Zero API key. Pass null to clear it.
    * @nullable
-  */
+   */
   upZeroApiKey?: string | null;
   /** Dashboard family for this client. */
-  dashboardType?: "B2B" | "B2C";
+  dashboardType?: UpdateClientRequestDashboardType;
   /** Primary commerce data source. */
-  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  commercePlatform?: UpdateClientRequestCommercePlatform;
+  /**
+   * BigQuery dataset (project up-vesti-report) this client reads analytics from. Pass null to clear it.
+   * @nullable
+   */
+  bigqueryDataset?: string | null;
   /**
    * Nuvemshop store id. Pass null to clear it.
    * @nullable
-  */
+   */
   nuvemshopStoreId?: string | null;
   /**
    * Nuvemshop access token. Pass null to clear it.
@@ -311,6 +405,30 @@ export interface SyncJobStatus {
 }
 
 /**
+ * Dashboard family for this client. Defaults to B2B.
+ */
+export type ClientImportRowDashboardType =
+  (typeof ClientImportRowDashboardType)[keyof typeof ClientImportRowDashboardType];
+
+export const ClientImportRowDashboardType = {
+  B2B: "B2B",
+  B2C: "B2C",
+} as const;
+
+/**
+ * Primary commerce data source. Defaults from dashboardType.
+ */
+export type ClientImportRowCommercePlatform =
+  (typeof ClientImportRowCommercePlatform)[keyof typeof ClientImportRowCommercePlatform];
+
+export const ClientImportRowCommercePlatform = {
+  UPZERO: "UPZERO",
+  NUVEMSHOP: "NUVEMSHOP",
+  MANUAL: "MANUAL",
+  VESTI: "VESTI",
+} as const;
+
+/**
  * A single row in a bulk client import payload.
  */
 export interface ClientImportRow {
@@ -318,9 +436,9 @@ export interface ClientImportRow {
   email: string;
   apiKey: string;
   /** Dashboard family for this client. Defaults to B2B. */
-  dashboardType?: "B2B" | "B2C";
+  dashboardType?: ClientImportRowDashboardType;
   /** Primary commerce data source. Defaults from dashboardType. */
-  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  commercePlatform?: ClientImportRowCommercePlatform;
   /** ISO 4217 currency code (default BRL) */
   currency?: string;
   /** BCP 47 locale (default pt-BR) */
@@ -412,14 +530,21 @@ export interface CategoryShare {
   orders: number;
 }
 
-/** Traffic denominator used for B2C conversion rate. */
+export type DashboardTrafficSource =
+  (typeof DashboardTrafficSource)[keyof typeof DashboardTrafficSource];
+
+export const DashboardTrafficSource = {
+  ga4: "ga4",
+  events: "events",
+  none: "none",
+} as const;
+
 export interface DashboardTraffic {
   sessions: number;
   orders: number;
-  source: "ga4" | "events" | "none";
+  source: DashboardTrafficSource;
 }
 
-/** Daily revenue, orders, sessions and conversion rate. */
 export interface DashboardDailyPerformance {
   date: string;
   revenue: number;
@@ -644,34 +769,11 @@ export interface RfmCustomerRow {
   name?: string | null;
   email: string;
   /** @nullable */
-  phone?: string | null;
-  /** @nullable */
-  state?: string | null;
-  /** @nullable */
-  city?: string | null;
-  /** @nullable */
-  documentType?: "CPF" | "CNPJ" | null;
-  /** @nullable */
   segment?: string | null;
   /** @nullable */
   recencyDays?: number | null;
   frequency: number;
   monetary: number;
-  /** @nullable */
-  firstPurchaseAt?: string | null;
-  /** @nullable */
-  lastPurchaseAt?: string | null;
-  latestOrders: {
-    id: string;
-    /** @nullable */
-    externalId?: string | null;
-    status: string;
-    amount: number;
-    fulfilledAmount: number;
-    requestedQuantity: number;
-    fulfilledQuantity: number;
-    createdAt: string;
-  }[];
 }
 
 export interface RfmResponse {
@@ -854,22 +956,6 @@ export interface ProductMetrics {
   percentSold: number;
   /** Performance tier derived from sell-through and stock health. */
   level: ProductMetricsLevel;
-  gradeStatus?: "complete" | "broken";
-  variantCount?: number;
-  availableVariantCount?: number;
-  variants?: Array<{
-    productId: string;
-    sku: string;
-    name: string;
-    color?: string | null;
-    size?: string | null;
-    stock: number;
-    price?: number;
-    totalSold?: number;
-    totalRevenue?: number;
-    status?: string;
-    imageUrl?: string | null;
-  }>;
   createdAt: string;
 }
 
@@ -1240,35 +1326,6 @@ export interface CreativeMetrics {
   cpa: number;
 }
 
-export interface MetaTopCreative {
-  id: string;
-  name: string;
-  status: string;
-  spend: number;
-  impressions: number;
-  clicks: number;
-  ctr: number;
-  leads: number;
-  purchases: number;
-  cpl: number;
-  cpa: number;
-  /** @nullable */
-  previewUrl?: string | null;
-  /** @nullable */
-  thumbnailUrl?: string | null;
-  /** @nullable */
-  imageUrl?: string | null;
-  /** @nullable */
-  videoUrl?: string | null;
-  mediaType: "video" | "image" | "unknown";
-}
-
-export interface MarketingTopCreatives {
-  ctr: MetaTopCreative[];
-  cpl: MetaTopCreative[];
-  leads: MetaTopCreative[];
-}
-
 export interface MarketingPlatformRow {
   platform: string;
   spend: number;
@@ -1300,7 +1357,6 @@ export interface MarketingResponse {
   leadsOverTime: TimeSeriesPoint[];
   revenueOverTime: TimeSeriesPoint[];
   spendOverTime: TimeSeriesPoint[];
-  topCreatives: MarketingTopCreatives;
   creatives: CreativeMetrics[];
   platformBreakdown: MarketingPlatformRow[];
   stateBreakdown: MarketingStateRow[];
@@ -1312,8 +1368,6 @@ export interface MarketingResponse {
 export interface CustomerSummaryKpis {
   totalRegistrations: number;
   approvedRegistrations: number;
-  pendingRegistrations: number;
-  rejectedRegistrations: number;
   approvalRatePct: number;
   customersWithoutPurchase: number;
   totalBuyers: number;
@@ -1526,13 +1580,11 @@ export const StockSkuRowRisk = {
 export type StockSkuRowBySizeItem = {
   size: string;
   unitsSold: number;
-  stockUnits?: number;
 };
 
 export type StockSkuRowByColorItem = {
   color: string;
   unitsSold: number;
-  stockUnits?: number;
 };
 
 export interface StockSkuRow {
@@ -1561,19 +1613,6 @@ export interface StockSkuRow {
   bySize: StockSkuRowBySizeItem[];
   /** Per-product units sold breakdown by color in the selected period. */
   byColor: StockSkuRowByColorItem[];
-  gradeStatus?: "complete" | "broken";
-  variantCount?: number;
-  availableVariantCount?: number;
-  variants?: Array<{
-    productId: string;
-    sku: string;
-    name: string;
-    color?: string | null;
-    size?: string | null;
-    stock: number;
-    unitsSold?: number;
-    imageUrl?: string | null;
-  }>;
 }
 
 export interface CategoryStockRow {
@@ -1614,8 +1653,10 @@ export type ListClientsParams = {
   search?: string;
   page?: number;
   limit?: number;
-  /** Filter clients by the dashboard family selected by the admin. */
-  dashboardType?: "B2B" | "B2C";
+  /**
+   * Filter clients by the dashboard family selected by the admin.
+   */
+  dashboardType?: ListClientsDashboardType;
   /**
  * When both dateFrom and dateTo are provided, each client row in the
 response is enriched with `avgOrderValue`, `conversionRate`, and
@@ -1626,6 +1667,14 @@ window of equal length for growth).
   dateFrom?: string;
   dateTo?: string;
 };
+
+export type ListClientsDashboardType =
+  (typeof ListClientsDashboardType)[keyof typeof ListClientsDashboardType];
+
+export const ListClientsDashboardType = {
+  B2B: "B2B",
+  B2C: "B2C",
+} as const;
 
 export type LookupClientByApiKeyParams = {
   /**
@@ -1697,8 +1746,6 @@ export type GetSiteVisitsParams = {
 
 export type GetCustomersParams = {
   clientId?: string;
-  dateFrom?: string;
-  dateTo?: string;
   rfmSegment?: string;
   state?: string;
   /**
@@ -1709,17 +1756,6 @@ export type GetCustomersParams = {
    * Filter customers by UTM medium.
    */
   utmMedium?: string;
-  documentType?: "CPF" | "CNPJ";
-  registrationStatus?: "PENDING" | "APPROVED" | "REJECTED";
-  purchaseStatus?: "buyers" | "non_buyers";
-  sortBy?:
-    | "totalSpent"
-    | "totalOrders"
-    | "createdAt"
-    | "firstPurchaseAt"
-    | "lastPurchaseAt"
-    | "name";
-  sortDir?: "asc" | "desc";
   search?: string;
   page?: number;
   limit?: number;
@@ -1743,8 +1779,6 @@ export type GetCustomerDetailParams = {
 
 export type GetProductsParams = {
   clientId?: string;
-  dateFrom?: string;
-  dateTo?: string;
   sort?: GetProductsSort;
   limit?: number;
   /**
@@ -1932,10 +1966,6 @@ export type GetRfmParams = {
   sortBy?: GetRfmSortBy;
   sortDir?: GetRfmSortDir;
   /**
-   * Restrict RFM buyers by order status scope.
-   */
-  orderStatus?: "all" | "approved" | "pending" | "rejected";
-  /**
    * Restrict RFM analysis to customers from this UTM source.
    */
   utmSource?: string;
@@ -2083,7 +2113,6 @@ export type GetAlertsParams = {
 export type GetAdminOverviewParams = {
   dateFrom?: string;
   dateTo?: string;
-  clientIds?: string;
 };
 
 export type GetMarketingParams = {

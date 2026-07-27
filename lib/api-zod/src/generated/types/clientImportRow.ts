@@ -5,6 +5,8 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { ClientImportRowCommercePlatform } from "./clientImportRowCommercePlatform";
+import type { ClientImportRowDashboardType } from "./clientImportRowDashboardType";
 
 /**
  * A single row in a bulk client import payload.
@@ -14,9 +16,9 @@ export interface ClientImportRow {
   email: string;
   apiKey: string;
   /** Dashboard family for this client. Defaults to B2B. */
-  dashboardType?: "B2B" | "B2C";
+  dashboardType?: ClientImportRowDashboardType;
   /** Primary commerce data source. Defaults from dashboardType. */
-  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  commercePlatform?: ClientImportRowCommercePlatform;
   /** ISO 4217 currency code (default BRL) */
   currency?: string;
   /** BCP 47 locale (default pt-BR) */

@@ -5,6 +5,7 @@ import {
   setAuthTokenGetter,
   setUnauthorizedHandler,
   logout as apiLogout,
+  customFetch,
 } from "@workspace/api-client-react";
 import { AuthContext, type AuthContextType, type DashboardMode } from "./auth-context";
 
@@ -113,6 +114,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (newUser.role === 'CLIENT' && newUser.clientId) {
       setSelectedClientId(newUser.clientId);
       localStorage.setItem(CLIENT_KEY, newUser.clientId);
+      customFetch<{ dashboardType: DashboardMode }>(`/api/clients/${newUser.clientId}`)
+        .then((client) => {
+          if (client.dashboardType === "B2B" || client.dashboardType === "B2C") {
+            setSelectedDashboardModeState(client.dashboardType);
+            localStorage.setItem(DASHBOARD_MODE_KEY, client.dashboardType);
+          }
+        })
+        .catch(() => undefined);
     } else {
       setSelectedClientId(null);
       localStorage.removeItem(CLIENT_KEY);

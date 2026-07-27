@@ -84,9 +84,10 @@ export const ListClientsQueryParams = zod.object({
   search: zod.coerce.string().optional(),
   page: zod.coerce.number().default(listClientsQueryPageDefault),
   limit: zod.coerce.number().default(listClientsQueryLimitDefault),
-  dashboardType: zod.enum(["B2B", "B2C"]).optional().describe(
-    "Filter clients by the dashboard family selected by the admin.",
-  ),
+  dashboardType: zod
+    .enum(["B2B", "B2C"])
+    .optional()
+    .describe("Filter clients by the dashboard family selected by the admin."),
   dateFrom: zod
     .date()
     .optional()
@@ -108,12 +109,18 @@ export const ListClientsResponse = zod.object({
       leadsYtd: zod.number(),
       approvedLeads: zod.number(),
       isActive: zod.boolean(),
-      dashboardType: zod.enum(["B2B", "B2C"]).describe(
-        "Dashboard family for this client.",
-      ),
-      commercePlatform: zod.enum(["UPZERO", "NUVEMSHOP", "MANUAL"]).describe(
-        "Primary commerce data source for this client.",
-      ),
+      dashboardType: zod
+        .enum(["B2B", "B2C"])
+        .describe("Dashboard family for this client."),
+      commercePlatform: zod
+        .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+        .describe("Primary commerce data source for this client."),
+      bigqueryDataset: zod
+        .string()
+        .nullish()
+        .describe(
+          "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
+        ),
       nuvemshopStoreId: zod
         .string()
         .nullish()
@@ -121,21 +128,43 @@ export const ListClientsResponse = zod.object({
       ga4MeasurementId: zod
         .string()
         .nullish()
-        .describe("GA4 measurement id for B2C event and attribution integration."),
+        .describe(
+          "GA4 measurement id for B2C event and attribution integration.",
+        ),
       ga4PropertyId: zod
         .string()
         .nullish()
         .describe("GA4 property id for report reads."),
-      hasNuvemshopIntegration: zod.boolean().describe(
-        "True when both Nuvemshop store id and access token are configured.",
-      ),
-      hasGa4Integration: zod.boolean().describe(
-        "True when both GA4 measurement id and API secret are configured.",
-      ),
-      hasClientLogin: zod.boolean().optional(),
-      clientLoginEmail: zod.string().nullish(),
-      clientLoginName: zod.string().nullish(),
-      clientLoginCount: zod.number().optional(),
+      hasNuvemshopIntegration: zod
+        .boolean()
+        .describe(
+          "True when both Nuvemshop store id and access token are configured.",
+        ),
+      hasGa4Integration: zod
+        .boolean()
+        .describe(
+          "True when both GA4 measurement id and API secret are configured.",
+        ),
+      hasClientLogin: zod
+        .boolean()
+        .optional()
+        .describe("True when this client has at least one CLIENT-role login."),
+      clientLoginEmail: zod
+        .string()
+        .nullish()
+        .describe(
+          "Email of the client login, when there's exactly one. Only present on enriched \/clients responses.",
+        ),
+      clientLoginName: zod
+        .string()
+        .nullish()
+        .describe(
+          "Full name of the client login, when there's exactly one. Only present on enriched \/clients responses.",
+        ),
+      clientLoginCount: zod
+        .number()
+        .optional()
+        .describe("Number of CLIENT-role logins with access to this client."),
       metaAdsApiKey: zod
         .string()
         .nullish()
@@ -223,9 +252,15 @@ export const CreateClientBody = zod.object({
     .optional()
     .describe("Dashboard family for this client. Defaults to B2B."),
   commercePlatform: zod
-    .enum(["UPZERO", "NUVEMSHOP", "MANUAL"])
+    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
     .optional()
     .describe("Primary commerce data source. Defaults from dashboardType."),
+  bigqueryDataset: zod
+    .string()
+    .optional()
+    .describe(
+      "BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI.",
+    ),
   nuvemshopStoreId: zod
     .string()
     .optional()
@@ -233,7 +268,9 @@ export const CreateClientBody = zod.object({
   nuvemshopAccessToken: zod
     .string()
     .optional()
-    .describe("Optional Nuvemshop access token for B2C clients. Stored server-side and never returned."),
+    .describe(
+      "Optional Nuvemshop access token for B2C clients. Stored server-side and never returned.",
+    ),
   ga4MeasurementId: zod
     .string()
     .optional()
@@ -245,7 +282,9 @@ export const CreateClientBody = zod.object({
   ga4ApiSecret: zod
     .string()
     .optional()
-    .describe("Optional GA4 API secret for B2C clients. Stored server-side and never returned."),
+    .describe(
+      "Optional GA4 API secret for B2C clients. Stored server-side and never returned.",
+    ),
   currency: zod
     .string()
     .optional()
@@ -283,7 +322,7 @@ export const ImportClientsBodyItem = zod
       .optional()
       .describe("Dashboard family for this client. Defaults to B2B."),
     commercePlatform: zod
-      .enum(["UPZERO", "NUVEMSHOP", "MANUAL"])
+      .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
       .optional()
       .describe("Primary commerce data source. Defaults from dashboardType."),
     currency: zod
@@ -337,12 +376,18 @@ export const GetClientResponse = zod.object({
   leadsYtd: zod.number(),
   approvedLeads: zod.number(),
   isActive: zod.boolean(),
-  dashboardType: zod.enum(["B2B", "B2C"]).describe(
-    "Dashboard family for this client.",
-  ),
-  commercePlatform: zod.enum(["UPZERO", "NUVEMSHOP", "MANUAL"]).describe(
-    "Primary commerce data source for this client.",
-  ),
+  dashboardType: zod
+    .enum(["B2B", "B2C"])
+    .describe("Dashboard family for this client."),
+  commercePlatform: zod
+    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+    .describe("Primary commerce data source for this client."),
+  bigqueryDataset: zod
+    .string()
+    .nullish()
+    .describe(
+      "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
+    ),
   nuvemshopStoreId: zod
     .string()
     .nullish()
@@ -355,12 +400,36 @@ export const GetClientResponse = zod.object({
     .string()
     .nullish()
     .describe("GA4 property id for report reads."),
-  hasNuvemshopIntegration: zod.boolean().describe(
-    "True when both Nuvemshop store id and access token are configured.",
-  ),
-  hasGa4Integration: zod.boolean().describe(
-    "True when both GA4 measurement id and API secret are configured.",
-  ),
+  hasNuvemshopIntegration: zod
+    .boolean()
+    .describe(
+      "True when both Nuvemshop store id and access token are configured.",
+    ),
+  hasGa4Integration: zod
+    .boolean()
+    .describe(
+      "True when both GA4 measurement id and API secret are configured.",
+    ),
+  hasClientLogin: zod
+    .boolean()
+    .optional()
+    .describe("True when this client has at least one CLIENT-role login."),
+  clientLoginEmail: zod
+    .string()
+    .nullish()
+    .describe(
+      "Email of the client login, when there's exactly one. Only present on enriched \/clients responses.",
+    ),
+  clientLoginName: zod
+    .string()
+    .nullish()
+    .describe(
+      "Full name of the client login, when there's exactly one. Only present on enriched \/clients responses.",
+    ),
+  clientLoginCount: zod
+    .number()
+    .optional()
+    .describe("Number of CLIENT-role logins with access to this client."),
   metaAdsApiKey: zod
     .string()
     .nullish()
@@ -441,9 +510,15 @@ export const UpdateClientBody = zod
       .optional()
       .describe("Dashboard family for this client."),
     commercePlatform: zod
-      .enum(["UPZERO", "NUVEMSHOP", "MANUAL"])
+      .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
       .optional()
       .describe("Primary commerce data source."),
+    bigqueryDataset: zod
+      .string()
+      .nullish()
+      .describe(
+        "BigQuery dataset (project up-vesti-report) this client reads analytics from. Pass null to clear it.",
+      ),
     nuvemshopStoreId: zod
       .string()
       .nullish()
@@ -479,12 +554,18 @@ export const UpdateClientResponse = zod.object({
   leadsYtd: zod.number(),
   approvedLeads: zod.number(),
   isActive: zod.boolean(),
-  dashboardType: zod.enum(["B2B", "B2C"]).describe(
-    "Dashboard family for this client.",
-  ),
-  commercePlatform: zod.enum(["UPZERO", "NUVEMSHOP", "MANUAL"]).describe(
-    "Primary commerce data source for this client.",
-  ),
+  dashboardType: zod
+    .enum(["B2B", "B2C"])
+    .describe("Dashboard family for this client."),
+  commercePlatform: zod
+    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+    .describe("Primary commerce data source for this client."),
+  bigqueryDataset: zod
+    .string()
+    .nullish()
+    .describe(
+      "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
+    ),
   nuvemshopStoreId: zod
     .string()
     .nullish()
@@ -497,12 +578,36 @@ export const UpdateClientResponse = zod.object({
     .string()
     .nullish()
     .describe("GA4 property id for report reads."),
-  hasNuvemshopIntegration: zod.boolean().describe(
-    "True when both Nuvemshop store id and access token are configured.",
-  ),
-  hasGa4Integration: zod.boolean().describe(
-    "True when both GA4 measurement id and API secret are configured.",
-  ),
+  hasNuvemshopIntegration: zod
+    .boolean()
+    .describe(
+      "True when both Nuvemshop store id and access token are configured.",
+    ),
+  hasGa4Integration: zod
+    .boolean()
+    .describe(
+      "True when both GA4 measurement id and API secret are configured.",
+    ),
+  hasClientLogin: zod
+    .boolean()
+    .optional()
+    .describe("True when this client has at least one CLIENT-role login."),
+  clientLoginEmail: zod
+    .string()
+    .nullish()
+    .describe(
+      "Email of the client login, when there's exactly one. Only present on enriched \/clients responses.",
+    ),
+  clientLoginName: zod
+    .string()
+    .nullish()
+    .describe(
+      "Full name of the client login, when there's exactly one. Only present on enriched \/clients responses.",
+    ),
+  clientLoginCount: zod
+    .number()
+    .optional()
+    .describe("Number of CLIENT-role logins with access to this client."),
   metaAdsApiKey: zod
     .string()
     .nullish()
@@ -952,8 +1057,6 @@ export const getCustomersQueryLimitDefault = 20;
 
 export const GetCustomersQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
-  dateFrom: zod.date().optional(),
-  dateTo: zod.date().optional(),
   rfmSegment: zod.coerce.string().optional(),
   state: zod.coerce.string().optional(),
   utmSource: zod.coerce
@@ -964,13 +1067,6 @@ export const GetCustomersQueryParams = zod.object({
     .string()
     .optional()
     .describe("Filter customers by UTM medium."),
-  documentType: zod.enum(["CPF", "CNPJ"]).optional(),
-  registrationStatus: zod.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
-  purchaseStatus: zod.enum(["buyers", "non_buyers"]).optional(),
-  sortBy: zod
-    .enum(["totalSpent", "totalOrders", "createdAt", "firstPurchaseAt", "lastPurchaseAt", "name"])
-    .optional(),
-  sortDir: zod.enum(["asc", "desc"]).optional(),
   search: zod.coerce.string().optional(),
   page: zod.coerce.number().default(getCustomersQueryPageDefault),
   limit: zod.coerce.number().default(getCustomersQueryLimitDefault),
@@ -1042,8 +1138,6 @@ export const GetCustomerSummaryResponse = zod.object({
   kpis: zod.object({
     totalRegistrations: zod.number(),
     approvedRegistrations: zod.number(),
-    pendingRegistrations: zod.number(),
-    rejectedRegistrations: zod.number(),
     approvalRatePct: zod.number(),
     customersWithoutPurchase: zod.number(),
     totalBuyers: zod.number(),
@@ -1054,8 +1148,6 @@ export const GetCustomerSummaryResponse = zod.object({
     .object({
       totalRegistrations: zod.number(),
       approvedRegistrations: zod.number(),
-      pendingRegistrations: zod.number(),
-      rejectedRegistrations: zod.number(),
       approvalRatePct: zod.number(),
       customersWithoutPurchase: zod.number(),
       totalBuyers: zod.number(),
@@ -1192,8 +1284,6 @@ export const getProductsQueryLimitDefault = 50;
 
 export const GetProductsQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
-  dateFrom: zod.date().optional(),
-  dateTo: zod.date().optional(),
   sort: zod
     .enum(["revenue", "units", "created"])
     .default(getProductsQuerySortDefault),
@@ -1242,7 +1332,9 @@ export const GetProductsResponseItem = zod.object({
   productViews: zod.number(),
   productConversionPct: zod
     .number()
-    .describe("totalSold / productViews as a percentage for the selected period."),
+    .describe(
+      "totalSold \/ productViews as a percentage for the selected period.",
+    ),
   status: zod.string(),
   imageUrl: zod.string().nullish(),
   percentSold: zod
@@ -1251,26 +1343,6 @@ export const GetProductsResponseItem = zod.object({
   level: zod
     .enum(["High Conversion", "Standard", "Low", "At Risk"])
     .describe("Performance tier derived from sell-through and stock health."),
-  gradeStatus: zod.enum(["complete", "broken"]).optional(),
-  variantCount: zod.number().optional(),
-  availableVariantCount: zod.number().optional(),
-  variants: zod
-    .array(
-      zod.object({
-        productId: zod.string(),
-        sku: zod.string(),
-        name: zod.string(),
-        color: zod.string().nullish(),
-        size: zod.string().nullish(),
-        stock: zod.number(),
-        price: zod.number().optional(),
-        totalSold: zod.number().optional(),
-        totalRevenue: zod.number().optional(),
-        status: zod.string().optional(),
-        imageUrl: zod.string().nullish(),
-      }),
-    )
-    .optional(),
   createdAt: zod.coerce.date(),
 });
 export const GetProductsResponse = zod.array(GetProductsResponseItem);
@@ -1686,7 +1758,6 @@ export const GetStockResponse = zod.object({
       sku: zod.string(),
       name: zod.string(),
       category: zod.string().nullish(),
-      imageUrl: zod.string().nullish(),
       stock: zod.number(),
       restockThreshold: zod.number(),
       dailyVelocity: zod
@@ -1707,7 +1778,6 @@ export const GetStockResponse = zod.object({
           zod.object({
             size: zod.string(),
             unitsSold: zod.number(),
-            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
@@ -1718,29 +1788,11 @@ export const GetStockResponse = zod.object({
           zod.object({
             color: zod.string(),
             unitsSold: zod.number(),
-            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
-      gradeStatus: zod.enum(["complete", "broken"]).optional(),
-      variantCount: zod.number().optional(),
-      availableVariantCount: zod.number().optional(),
-      variants: zod
-        .array(
-          zod.object({
-            productId: zod.string(),
-            sku: zod.string(),
-            name: zod.string(),
-            color: zod.string().nullish(),
-            size: zod.string().nullish(),
-            stock: zod.number(),
-            unitsSold: zod.number().optional(),
-            imageUrl: zod.string().nullish(),
-          }),
-        )
-        .optional(),
     }),
   ),
   overstockRisk: zod.array(
@@ -1769,7 +1821,6 @@ export const GetStockResponse = zod.object({
           zod.object({
             size: zod.string(),
             unitsSold: zod.number(),
-            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
@@ -1780,29 +1831,11 @@ export const GetStockResponse = zod.object({
           zod.object({
             color: zod.string(),
             unitsSold: zod.number(),
-            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
-      gradeStatus: zod.enum(["complete", "broken"]).optional(),
-      variantCount: zod.number().optional(),
-      availableVariantCount: zod.number().optional(),
-      variants: zod
-        .array(
-          zod.object({
-            productId: zod.string(),
-            sku: zod.string(),
-            name: zod.string(),
-            color: zod.string().nullish(),
-            size: zod.string().nullish(),
-            stock: zod.number(),
-            unitsSold: zod.number().optional(),
-            imageUrl: zod.string().nullish(),
-          }),
-        )
-        .optional(),
     }),
   ),
   highTurnover: zod.array(
@@ -1831,7 +1864,6 @@ export const GetStockResponse = zod.object({
           zod.object({
             size: zod.string(),
             unitsSold: zod.number(),
-            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
@@ -1842,29 +1874,11 @@ export const GetStockResponse = zod.object({
           zod.object({
             color: zod.string(),
             unitsSold: zod.number(),
-            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
-      gradeStatus: zod.enum(["complete", "broken"]).optional(),
-      variantCount: zod.number().optional(),
-      availableVariantCount: zod.number().optional(),
-      variants: zod
-        .array(
-          zod.object({
-            productId: zod.string(),
-            sku: zod.string(),
-            name: zod.string(),
-            color: zod.string().nullish(),
-            size: zod.string().nullish(),
-            stock: zod.number(),
-            unitsSold: zod.number().optional(),
-            imageUrl: zod.string().nullish(),
-          }),
-        )
-        .optional(),
     }),
   ),
   categoryBreakdown: zod.array(
@@ -1915,7 +1929,6 @@ export const GetStockResponse = zod.object({
           zod.object({
             size: zod.string(),
             unitsSold: zod.number(),
-            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
@@ -1926,29 +1939,11 @@ export const GetStockResponse = zod.object({
           zod.object({
             color: zod.string(),
             unitsSold: zod.number(),
-            stockUnits: zod.number().optional(),
           }),
         )
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
-      gradeStatus: zod.enum(["complete", "broken"]).optional(),
-      variantCount: zod.number().optional(),
-      availableVariantCount: zod.number().optional(),
-      variants: zod
-        .array(
-          zod.object({
-            productId: zod.string(),
-            sku: zod.string(),
-            name: zod.string(),
-            color: zod.string().nullish(),
-            size: zod.string().nullish(),
-            stock: zod.number(),
-            unitsSold: zod.number().optional(),
-            imageUrl: zod.string().nullish(),
-          }),
-        )
-        .optional(),
     }),
   ),
   total: zod.number(),
@@ -2067,10 +2062,6 @@ export const GetRfmQueryParams = zod.object({
     .enum(["name", "segment", "recencyDays", "frequency", "monetary"])
     .default(getRfmQuerySortByDefault),
   sortDir: zod.enum(["asc", "desc"]).default(getRfmQuerySortDirDefault),
-  orderStatus: zod
-    .enum(["all", "approved", "pending", "rejected"])
-    .default("all")
-    .describe("Restrict RFM buyers by order status scope."),
   utmSource: zod.coerce
     .string()
     .optional()
@@ -2117,28 +2108,10 @@ export const GetRfmResponse = zod.object({
       id: zod.string(),
       name: zod.string().nullish(),
       email: zod.string(),
-      phone: zod.string().nullish(),
-      state: zod.string().nullish(),
-      city: zod.string().nullish(),
-      documentType: zod.enum(["CPF", "CNPJ"]).nullish(),
       segment: zod.string().nullish(),
       recencyDays: zod.number().nullish(),
       frequency: zod.number(),
       monetary: zod.number(),
-      firstPurchaseAt: zod.string().nullish(),
-      lastPurchaseAt: zod.string().nullish(),
-      latestOrders: zod.array(
-        zod.object({
-          id: zod.string(),
-          externalId: zod.string().nullish(),
-          status: zod.string(),
-          amount: zod.number(),
-          fulfilledAmount: zod.number(),
-          requestedQuantity: zod.number(),
-          fulfilledQuantity: zod.number(),
-          createdAt: zod.string(),
-        }),
-      ),
     }),
   ),
   total: zod.number(),
@@ -2219,7 +2192,9 @@ export const GetUtmQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
-  groupBy: zod.enum(["source", "campaign", "sourceMediumCampaign"]).default(getUtmQueryGroupByDefault),
+  groupBy: zod
+    .enum(["source", "campaign", "sourceMediumCampaign"])
+    .default(getUtmQueryGroupByDefault),
   utmSource: zod.coerce
     .string()
     .optional()
@@ -2396,6 +2371,7 @@ export const GetAlertsResponse = zod.object({
       sku: zod.string(),
       name: zod.string(),
       category: zod.string().nullish(),
+      imageUrl: zod.string().nullish(),
       stock: zod.number(),
       restockThreshold: zod.number(),
       averageDailySales: zod
@@ -2434,7 +2410,6 @@ bottom growth). Restricted to ADMIN users.
 export const GetAdminOverviewQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
-  clientIds: zod.string().optional(),
 });
 
 export const GetAdminOverviewResponse = zod.object({
@@ -2692,68 +2667,6 @@ export const GetMarketingResponse = zod.object({
       value: zod.number(),
     }),
   ),
-  topCreatives: zod.object({
-    ctr: zod.array(
-      zod.object({
-        id: zod.string(),
-        name: zod.string(),
-        status: zod.string(),
-        spend: zod.number(),
-        impressions: zod.number(),
-        clicks: zod.number(),
-        ctr: zod.number(),
-        leads: zod.number(),
-        purchases: zod.number(),
-        cpl: zod.number(),
-        cpa: zod.number(),
-        previewUrl: zod.string().nullish(),
-        thumbnailUrl: zod.string().nullish(),
-        imageUrl: zod.string().nullish(),
-        videoUrl: zod.string().nullish(),
-        mediaType: zod.enum(["video", "image", "unknown"]),
-      }),
-    ),
-    cpl: zod.array(
-      zod.object({
-        id: zod.string(),
-        name: zod.string(),
-        status: zod.string(),
-        spend: zod.number(),
-        impressions: zod.number(),
-        clicks: zod.number(),
-        ctr: zod.number(),
-        leads: zod.number(),
-        purchases: zod.number(),
-        cpl: zod.number(),
-        cpa: zod.number(),
-        previewUrl: zod.string().nullish(),
-        thumbnailUrl: zod.string().nullish(),
-        imageUrl: zod.string().nullish(),
-        videoUrl: zod.string().nullish(),
-        mediaType: zod.enum(["video", "image", "unknown"]),
-      }),
-    ),
-    leads: zod.array(
-      zod.object({
-        id: zod.string(),
-        name: zod.string(),
-        status: zod.string(),
-        spend: zod.number(),
-        impressions: zod.number(),
-        clicks: zod.number(),
-        ctr: zod.number(),
-        leads: zod.number(),
-        purchases: zod.number(),
-        cpl: zod.number(),
-        cpa: zod.number(),
-        previewUrl: zod.string().nullish(),
-        thumbnailUrl: zod.string().nullish(),
-        imageUrl: zod.string().nullish(),
-        videoUrl: zod.string().nullish(),
-        mediaType: zod.enum(["video", "image", "unknown"]),
-      }),
-    ),
-  }),
   creatives: zod.array(
     zod.object({
       id: zod.string(),

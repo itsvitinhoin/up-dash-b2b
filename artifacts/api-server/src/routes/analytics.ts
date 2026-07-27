@@ -65,6 +65,8 @@ import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
 import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
+import { computeVestiWindow, computeVestiStateRevenue, fetchVestiAttributedCustomers, type VestiFilters } from "../services/vestiAnalytics";
+import { cached } from "../lib/queryCache";
 import {
   buildCustomerTimelineResponse,
   getMetricUser,
@@ -965,10 +967,124 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     .select({
       dashboardType: clientsTable.dashboardType,
       ga4PropertyId: clientsTable.ga4PropertyId,
+      commercePlatform: clientsTable.commercePlatform,
+      bigqueryDataset: clientsTable.bigqueryDataset,
     })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
   const isB2CClient = clientConfig?.dashboardType === "B2C";
+
+  // Client Vesti: dado analítico vem do BigQuery (dataset por loja), não do
+  // Postgres local — sai cedo do resto da rota, que é toda montada em cima
+  // das tabelas orders/customers/events daqui. Ver NOTAS-DEV.md.
+  if (clientConfig?.commercePlatform === "VESTI") {
+    if (!clientConfig.bigqueryDataset) {
+      res.status(400).json({
+        error: true,
+        code: "MISSING_BIGQUERY_DATASET",
+        message: "Client Vesti sem bigqueryDataset configurado.",
+        status: 400,
+      });
+      return;
+    }
+    const dataset = clientConfig.bigqueryDataset;
+    const vestiFilters: VestiFilters = {
+      category: category || undefined,
+      sellerId: sellerId || undefined,
+      channel: channel || undefined,
+    };
+    const filterKey = JSON.stringify(vestiFilters);
+    const VESTI_CACHE_TTL_MS = 5 * 60 * 1000;
+
+    const vestiCurrent = await cached(
+      `vesti:window:${dataset}:${dateFromOnly}:${dateToOnly}:${filterKey}`,
+      VESTI_CACHE_TTL_MS,
+      () => computeVestiWindow(dataset, dateFromOnly, dateToOnly, vestiFilters, true),
+    );
+
+    let vestiPrev: Awaited<ReturnType<typeof computeVestiWindow>> | null = null;
+    if (compare) {
+      const lengthMs = to.getTime() - from.getTime();
+      const prevTo = new Date(from.getTime() - 1);
+      const prevFrom = new Date(prevTo.getTime() - lengthMs);
+      const prevFromOnly = saoPauloDateOnly(prevFrom);
+      const prevToOnly = saoPauloDateOnly(prevTo);
+      vestiPrev = await cached(
+        `vesti:window:${dataset}:${prevFromOnly}:${prevToOnly}:${filterKey}`,
+        VESTI_CACHE_TTL_MS,
+        () => computeVestiWindow(dataset, prevFromOnly, prevToOnly, vestiFilters, false),
+      );
+    }
+
+    // Signal: regiões em alta (mesma lógica do caminho Postgres, usando
+    // estado em vez de customersTable.state). Não computamos o signal de
+    // "alta demanda, baixa conversão" pro Vesti — não existe conceito de
+    // sessão/visita nesse lado (venda por atacado via vendedora).
+    const wkEnd = to;
+    const wkStart = new Date(wkEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const pwkEnd = new Date(wkStart.getTime() - 1);
+    const pwkStart = new Date(pwkEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const [currStates, prevStates] = await Promise.all([
+      cached(`vesti:states:${dataset}:${saoPauloDateOnly(wkStart)}:${saoPauloDateOnly(wkEnd)}`, VESTI_CACHE_TTL_MS, () =>
+        computeVestiStateRevenue(dataset, saoPauloDateOnly(wkStart), saoPauloDateOnly(wkEnd)),
+      ),
+      cached(`vesti:states:${dataset}:${saoPauloDateOnly(pwkStart)}:${saoPauloDateOnly(pwkEnd)}`, VESTI_CACHE_TTL_MS, () =>
+        computeVestiStateRevenue(dataset, saoPauloDateOnly(pwkStart), saoPauloDateOnly(pwkEnd)),
+      ),
+    ]);
+    const prevStateMap = new Map(prevStates.map((r) => [r.state, r.revenue]));
+    const risingStates = currStates
+      .filter((r) => r.state && r.revenue > 0)
+      .map((r) => {
+        const prior = prevStateMap.get(r.state) ?? 0;
+        const growthPct = prior > 0 ? ((r.revenue - prior) / prior) * 100 : null;
+        return { state: r.state, revenue: r.revenue, growthPct };
+      })
+      .filter((r) => r.growthPct !== null && r.growthPct > 10)
+      .sort((a, b) => (b.growthPct ?? 0) - (a.growthPct ?? 0))
+      .slice(0, 3);
+    const vestiSignals: DashboardSignal[] =
+      risingStates.length > 0
+        ? [
+            {
+              type: "high_performing_regions",
+              severity: "info",
+              title: "High-performing regions this week",
+              body: `${risingStates.map((s) => `${s.state} (+${s.growthPct!.toFixed(0)}%)`).join(", ")} ${risingStates.length === 1 ? "is surging" : "are surging"} week-over-week. Consider shifting inventory or ad budget to these regions.`,
+              meta: { regions: risingStates.map((s) => ({ state: s.state, growthPct: +(s.growthPct!.toFixed(1)) })) },
+            },
+          ]
+        : [];
+
+    res.json(
+      GetDashboardResponse.parse({
+        kpis: vestiCurrent.kpis,
+        revenueOverTime: vestiCurrent.dailyRevenue,
+        ordersOverTime: vestiCurrent.dailyOrders,
+        leadsOverTime: vestiCurrent.dailyLeads,
+        revenueByCategory: vestiCurrent.revenueByCategory,
+        newBuyersOverTime: vestiCurrent.dailyNewBuyers,
+        returningBuyersOverTime: vestiCurrent.dailyReturningBuyers,
+        traffic: { sessions: 0, orders: vestiCurrent.kpis.orders, source: "none" },
+        dailyPerformance: vestiCurrent.dailyRevenue.map((r, i) => ({
+          date: r.date,
+          revenue: r.value,
+          orders: vestiCurrent.dailyOrders[i]?.value ?? 0,
+          sessions: 0,
+          conversionRate: 0,
+        })),
+        signals: vestiSignals,
+        ...(vestiPrev
+          ? {
+              prevKpis: vestiPrev.kpis,
+              prevRevenueOverTime: vestiPrev.dailyRevenue,
+              prevOrdersOverTime: vestiPrev.dailyOrders,
+            }
+          : {}),
+      }),
+    );
+    return;
+  }
 
   // Pre-resolve filter scopes once. Channel/segment scope (customers) is
   // window-agnostic and can be reused across the current and prior windows.
@@ -2170,9 +2286,131 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
   const upzeroRange = upzeroIsoRange(req.query as Record<string, unknown>, from, to);
   const attributionHistoryRange = upzeroAttributionHistoryRange(req.query as Record<string, unknown>, from, to);
   const [client] = await db
-    .select({ upZeroApiKey: clientsTable.upZeroApiKey })
+    .select({
+      upZeroApiKey: clientsTable.upZeroApiKey,
+      commercePlatform: clientsTable.commercePlatform,
+      bigqueryDataset: clientsTable.bigqueryDataset,
+    })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
+
+  // Client Vesti: atribuição vem de tabelas pré-consolidadas no BigQuery
+  // (clientes/pedidos_atribuidos_consolidados), não da API da UP Zero.
+  // Ver vestiAnalytics.ts pra lógica completa.
+  if (client?.commercePlatform === "VESTI") {
+    if (!client.bigqueryDataset) {
+      res.json({
+        rows: [],
+        data: [],
+        total: 0,
+        filters: { sources: [], campaigns: [], customerTypes: [] },
+        summary: { impactedCustomers: 0, attributedRevenue: 0, orders: 0, itemQuantity: 0, registrations: 0 },
+      });
+      return;
+    }
+    const dateFromOnly = saoPauloDateOnly(from);
+    const dateToOnly = saoPauloDateOnly(to);
+    const attributed = await cached(
+      `vesti:attributed:${client.bigqueryDataset}:${dateFromOnly}:${dateToOnly}`,
+      5 * 60 * 1000,
+      () => fetchVestiAttributedCustomers(client.bigqueryDataset!, dateFromOnly, dateToOnly),
+    );
+
+    let rows = attributed.map((c, index) => {
+      const touch = {
+        source: "UP Agency",
+        medium: null,
+        campaign: null,
+        occurredAt: c.firstTouchAt,
+      };
+      return {
+        customerId: null,
+        userId: index,
+        name: c.name,
+        email: c.email,
+        phone: null,
+        type: c.attributionType,
+        cpf: null,
+        cnpj: c.cnpj,
+        companyName: null,
+        documentType: c.cnpj ? "CNPJ" : null,
+        registrationStatus: null,
+        registeredAt: c.registeredAt,
+        firstSeenAt: c.firstTouchAt,
+        lastSeenAt: c.lastPurchaseAt ?? c.firstTouchAt,
+        firstTouch: touch,
+        lastTouch: touch,
+        returnTouch: null,
+        campaigns: c.firstTouchAt
+          ? [{ source: "UP Agency", medium: null, campaign: null, firstSeenAt: c.firstTouchAt, lastSeenAt: c.firstTouchAt, eventsCount: 1 }]
+          : [],
+        hasPurchase: c.purchaseCount > 0,
+        isRemarketing: c.attributionType === "Re-impacto",
+        purchaseCount: c.purchaseCount,
+        orderIds: [] as number[],
+        totalPurchaseValue: c.totalPurchaseValue,
+        addToCartCount: 0,
+        checkoutCount: 0,
+        registerSubmittedCount: 1,
+        productViewCount: 0,
+        lastEventName: null,
+        lastEventAt: c.lastPurchaseAt ?? c.firstTouchAt,
+      };
+    });
+
+    if (parsed.data.customerType) rows = rows.filter((r) => r.type === parsed.data.customerType);
+    if (parsed.data.purchase === "yes") rows = rows.filter((r) => r.hasPurchase);
+    if (parsed.data.purchase === "no") rows = rows.filter((r) => !r.hasPurchase);
+    if (parsed.data.remarketing === "yes") rows = rows.filter((r) => r.isRemarketing);
+    if (parsed.data.remarketing === "no") rows = rows.filter((r) => !r.isRemarketing);
+    if (parsed.data.document === "CNPJ") rows = rows.filter((r) => r.documentType === "CNPJ");
+    if (parsed.data.document === "none") rows = rows.filter((r) => r.documentType === null);
+    if (parsed.data.search) {
+      const search = parsed.data.search.toLowerCase();
+      rows = rows.filter(
+        (r) => r.name?.toLowerCase().includes(search) || r.email?.toLowerCase().includes(search) || r.cnpj?.includes(search),
+      );
+    }
+
+    const registeredInWindow = attributed.filter(
+      (c) => c.registeredAt && c.registeredAt >= dateFromOnly && c.registeredAt <= dateToOnly,
+    ).length;
+
+    res.json({
+      rows,
+      data: rows,
+      total: rows.length,
+      filters: {
+        sources: ["UP Agency"],
+        campaigns: [],
+        customerTypes: [...new Set(attributed.map((c) => c.attributionType).filter((v): v is string => !!v))],
+      },
+      summary: {
+        impactedCustomers: attributed.length,
+        attributedRevenue: attributed.reduce((sum, c) => sum + c.totalPurchaseValue, 0),
+        orders: attributed.reduce((sum, c) => sum + c.purchaseCount, 0),
+        itemQuantity: 0,
+        registrations: registeredInWindow,
+      },
+    });
+    return;
+  }
+
+  // Essa lista vem de eventos de tracking da UP Zero — não faz sentido
+  // chamar a API deles (e não tem porquê exigir UPZERO_API_TOKEN) pra
+  // clients que não usam essa plataforma. Antes disso não era checado, e
+  // qualquer client não-UpZero (Nuvemshop, Manual) recebia um 502 aqui em
+  // vez do estado vazio normal.
+  if (client?.commercePlatform !== "UPZERO") {
+    res.json({
+      rows: [],
+      data: [],
+      total: 0,
+      filters: { sources: [], campaigns: [], customerTypes: [] },
+      summary: { impactedCustomers: 0, attributedRevenue: 0, orders: 0, itemQuantity: 0, registrations: 0 },
+    });
+    return;
+  }
 
   try {
     const tracking = await getUpzeroTrackingRowsChunked({

@@ -9,8 +9,6 @@ import type { GetProductsSort } from "./getProductsSort";
 
 export type GetProductsParams = {
   clientId?: string;
-  dateFrom?: string;
-  dateTo?: string;
   sort?: GetProductsSort;
   limit?: number;
   /**

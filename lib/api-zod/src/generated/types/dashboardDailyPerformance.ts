@@ -6,7 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type GetAdminOverviewParams = {
-  dateFrom?: Date;
-  dateTo?: Date;
-};
+export interface DashboardDailyPerformance {
+  date: string;
+  revenue: number;
+  orders: number;
+  sessions: number;
+  conversionRate: number;
+}

@@ -5,6 +5,8 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { UpdateClientRequestCommercePlatform } from "./updateClientRequestCommercePlatform";
+import type { UpdateClientRequestDashboardType } from "./updateClientRequestDashboardType";
 
 /**
  * Fields that can be updated on an existing client. All fields are optional.
@@ -23,12 +25,17 @@ export interface UpdateClientRequest {
   /**
    * UP Zero API key. Pass null to clear it.
    * @nullable
-  */
+   */
   upZeroApiKey?: string | null;
   /** Dashboard family for this client. */
-  dashboardType?: "B2B" | "B2C";
+  dashboardType?: UpdateClientRequestDashboardType;
   /** Primary commerce data source. */
-  commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+  commercePlatform?: UpdateClientRequestCommercePlatform;
+  /**
+   * BigQuery dataset (project up-vesti-report) this client reads analytics from. Pass null to clear it.
+   * @nullable
+   */
+  bigqueryDataset?: string | null;
   /**
    * Nuvemshop store id. Pass null to clear it.
    * @nullable

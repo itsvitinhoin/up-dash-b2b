@@ -76,6 +76,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "papaparse": "^5.5.3"
   }
 }
