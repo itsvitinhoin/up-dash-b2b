@@ -9,6 +9,14 @@ import {
   useState,
 } from "react";
 import { startOfDay, subDays } from "date-fns";
+import { useLocation } from "wouter";
+import { useAuth } from "./auth";
+import {
+  dateOnlyToLocalDate,
+  localDateToDateOnly,
+  mergeDashboardUrlContext,
+  parseDashboardUrlContext,
+} from "./dashboard-context-url";
 
 export interface DateRange {
   from: Date;
@@ -71,6 +79,9 @@ interface DashboardFiltersContextValue {
 }
 
 const DashboardFiltersContext = createContext<DashboardFiltersContextValue | null>(null);
+const DATE_FROM_KEY = "updash.dateFrom";
+const DATE_TO_KEY = "updash.dateTo";
+const FILTERS_KEY = "updash.dashboardFilters";
 
 function parseFiltersFromUrl(): Partial<DashboardFilters> {
   const params = new URLSearchParams(window.location.search);
@@ -80,6 +91,23 @@ function parseFiltersFromUrl(): Partial<DashboardFilters> {
     if (val) (out as Record<string, string>)[key] = val;
   }
   return out;
+}
+
+function parseStoredFilters(): Partial<DashboardFilters> {
+  try {
+    const raw = localStorage.getItem(FILTERS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Partial<DashboardFilters> = {};
+    for (const key of FILTER_KEYS) {
+      if (typeof parsed[key] === "string" && parsed[key]) {
+        (out as Record<string, string>)[key] = parsed[key] as string;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 function filtersToUrlParams(filters: DashboardFilters): URLSearchParams {
@@ -92,7 +120,32 @@ function filtersToUrlParams(filters: DashboardFilters): URLSearchParams {
 }
 
 export function DashboardFiltersProvider({ children }: { children: ReactNode }) {
+  const [location] = useLocation();
+  const {
+    user,
+    isLoading: authLoading,
+    selectedClientId,
+    selectedDashboardMode,
+  } = useAuth();
   const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const urlContext = parseDashboardUrlContext(window.location.search);
+    if (urlContext.dateFrom && urlContext.dateTo) {
+      return {
+        from: dateOnlyToLocalDate(urlContext.dateFrom),
+        to: dateOnlyToLocalDate(urlContext.dateTo),
+      };
+    }
+    const storedFrom = localStorage.getItem(DATE_FROM_KEY);
+    const storedTo = localStorage.getItem(DATE_TO_KEY);
+    const storedContext = parseDashboardUrlContext(
+      `?dateFrom=${encodeURIComponent(storedFrom ?? "")}&dateTo=${encodeURIComponent(storedTo ?? "")}`,
+    );
+    if (storedContext.dateFrom && storedContext.dateTo) {
+      return {
+        from: dateOnlyToLocalDate(storedContext.dateFrom),
+        to: dateOnlyToLocalDate(storedContext.dateTo),
+      };
+    }
     const to = startOfDay(new Date());
     return {
       from: subDays(to, 29),
@@ -102,6 +155,7 @@ export function DashboardFiltersProvider({ children }: { children: ReactNode }) 
 
   const [filters, setFilters] = useState<DashboardFilters>(() => ({
     ...EMPTY_FILTERS,
+    ...parseStoredFilters(),
     ...parseFiltersFromUrl(),
   }));
 
@@ -111,14 +165,49 @@ export function DashboardFiltersProvider({ children }: { children: ReactNode }) 
   }, []);
 
   useEffect(() => {
-    if (isMounting.current) return;
-    const params = filtersToUrlParams(filters);
+    if (isMounting.current || authLoading) return;
+    const params = mergeDashboardUrlContext(window.location.search, {
+      clientId: user?.role === "CLIENT" ? user.clientId ?? null : selectedClientId,
+      dashboardMode: user?.role === "CLIENT" ? null : selectedDashboardMode,
+      dateFrom: localDateToDateOnly(dateRange.from),
+      dateTo: localDateToDateOnly(dateRange.to),
+    });
+    for (const key of FILTER_KEYS) params.delete(key);
+    const activeFilterParams = filtersToUrlParams(filters);
+    activeFilterParams.forEach((value, key) => params.set(key, value));
     const qs = params.toString();
     const newUrl = qs
       ? `${window.location.pathname}?${qs}${window.location.hash}`
       : `${window.location.pathname}${window.location.hash}`;
-    window.history.replaceState({}, "", newUrl);
-  }, [filters]);
+    window.history.replaceState(window.history.state, "", newUrl);
+    localStorage.setItem(DATE_FROM_KEY, localDateToDateOnly(dateRange.from));
+    localStorage.setItem(DATE_TO_KEY, localDateToDateOnly(dateRange.to));
+    localStorage.setItem(FILTERS_KEY, JSON.stringify(filters));
+  }, [
+    authLoading,
+    dateRange,
+    filters,
+    location,
+    selectedClientId,
+    selectedDashboardMode,
+    user?.clientId,
+    user?.role,
+  ]);
+
+  useEffect(() => {
+    const syncFromUrl = () => {
+      const context = parseDashboardUrlContext(window.location.search);
+      if (context.dateFrom && context.dateTo) {
+        setDateRange({
+          from: dateOnlyToLocalDate(context.dateFrom),
+          to: dateOnlyToLocalDate(context.dateTo),
+        });
+      }
+      setFilters({ ...EMPTY_FILTERS, ...parseFiltersFromUrl() });
+    };
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
+  }, []);
 
   const setFilter = useCallback(
     <K extends keyof DashboardFilters>(key: K, value: DashboardFilters[K]) => {

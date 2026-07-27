@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { customFetch } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
+import { queryOpts } from "@/lib/query-opts";
 import { useI18n } from "@/lib/i18n";
 import { formatCurrency, formatCurrencySmart, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Card, CardContent } from "@/components/ui/card";
@@ -212,9 +213,12 @@ export default function OrdersPage() {
   }, [clientId, dateFrom, dateTo, page, search]);
 
   const { data, isLoading, isError } = useQuery<OrdersPageResponse>({
+    ...queryOpts<OrdersPageResponse>({
+      enabled,
+      placeholderData: (prev) => prev,
+    }),
     queryKey: ["orders-page", queryString],
     queryFn: () => customFetch<OrdersPageResponse>(`/api/analytics/orders-page?${queryString}`),
-    enabled,
   });
 
   const detailsParams = useMemo(() => {
@@ -224,6 +228,10 @@ export default function OrdersPage() {
   }, [clientId]);
 
   const { data: details, isLoading: detailsLoading, isError: detailsError } = useQuery<OrderDetailsResponse>({
+    ...queryOpts<OrderDetailsResponse>({
+      enabled: enabled && !!selectedOrder,
+      staleTime: 5 * 60 * 1000,
+    }),
     queryKey: ["orders-page-details", clientId, selectedOrder?.id],
     queryFn: () => {
       if (!selectedOrder) throw new Error("Pedido não selecionado.");
@@ -231,7 +239,6 @@ export default function OrdersPage() {
         `/api/analytics/orders-page/${selectedOrder.id}${detailsParams ? `?${detailsParams}` : ""}`,
       );
     },
-    enabled: enabled && !!selectedOrder,
   });
 
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / limit));
@@ -358,7 +365,7 @@ export default function OrdersPage() {
               iconClass="bg-lime-500/10 text-lime-400"
               change={null}
               changeLabel=""
-              sub={[{ label: "Regra", value: "1ª compra no período" }]}
+              sub={[{ label: "Regra", value: "1 pedido no período" }]}
               sparkValues={[]}
               sparkColor="#84cc16"
               isLoading={false}
@@ -372,7 +379,7 @@ export default function OrdersPage() {
               iconClass="bg-purple-500/10 text-purple-400"
               change={null}
               changeLabel=""
-              sub={[{ label: "Regra", value: "Já compraram antes" }]}
+              sub={[{ label: "Regra", value: "2+ pedidos no período" }]}
               sparkValues={[]}
               sparkColor="#c084fc"
               isLoading={false}

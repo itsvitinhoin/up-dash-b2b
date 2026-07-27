@@ -214,7 +214,7 @@ export default function CustomersPage() {
   };
   const { data: summary, isLoading: summaryLoading } = useGetCustomerSummary(
     summaryParams,
-    { query: queryOpts({ enabled }) },
+    { query: queryOpts({ enabled, placeholderData: (prev) => prev }) },
   );
 
   const insightParams = {
@@ -225,7 +225,7 @@ export default function CustomersPage() {
   };
   const { data: insight, isLoading: insightLoading } = useGetInsight(
     insightParams,
-    { query: queryOpts({ enabled }) },
+    { query: queryOpts({ enabled, placeholderData: (prev) => prev }) },
   );
   const regenerate = useRegenerateInsight({
     mutation: {

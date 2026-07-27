@@ -13,3 +13,5 @@ export * from "./syncJobs";
 export * from "./siteVisits";
 export * from "./whatsapp";
 export * from "./campaignAttributionStamps";
+export * from "./commercialAi";
+export * from "./dailyAnalytics";

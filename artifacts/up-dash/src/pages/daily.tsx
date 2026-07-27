@@ -6,7 +6,6 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   FileText,
-  Loader2,
   Megaphone,
   MoreHorizontal,
   Package,
@@ -24,6 +23,7 @@ import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DashLoadingCard } from "@/components/ui/dash-loader";
 import { CountUp } from "@/components/count-up";
 import { Sparkline } from "@/components/sparkline";
 import {
@@ -196,24 +196,10 @@ function DailyLoadingState() {
       className="space-y-6"
       data-testid="daily-loading"
     >
-      <Card className="relative overflow-hidden border-border bg-card p-6">
-        <div className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-primary via-chart-3 to-chart-1 opacity-80" />
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-3">
-            <div className="inline-flex items-center gap-2 rounded-md bg-primary/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Carregando Daily
-            </div>
-            <Skeleton className="h-7 w-64" />
-            <Skeleton className="h-4 w-80 max-w-full" />
-          </div>
-          <div className="grid w-full gap-2 sm:w-64">
-            <Skeleton className="h-3 w-full" />
-            <Skeleton className="h-3 w-5/6" />
-            <Skeleton className="h-3 w-2/3" />
-          </div>
-        </div>
-      </Card>
+      <DashLoadingCard
+        label="Carregando Daily"
+        description="Buscando vendas, mídia, produtos e insights do período selecionado."
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {Array.from({ length: 6 }).map((_, index) => (

@@ -169,6 +169,55 @@
       "when": 1780656000000,
       "tag": "0024_vesti_platform",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1780742400000,
+      "tag": "0024_daily_client_metrics",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1780828800000,
+      "tag": "0025_analytics_performance_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1780915200000,
+      "tag": "0026_commercial_ai_stage1",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1781001600000,
+      "tag": "0027_commercial_ai_setup",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1781088000000,
+      "tag": "0028_commercial_automation_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1784620800000,
+      "tag": "0029_whatsapp_default_phone",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1784707200000,
+      "tag": "0030_commercial_automation_repeated_events",
+      "breakpoints": true
     }
   ]
 }

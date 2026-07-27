@@ -1,4 +1,4 @@
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 import { clientsTable } from "./clients";
 
@@ -73,6 +73,7 @@ export const whatsappPhoneNumbersTable = pgTable(
     platformType: text("platform_type"),
     codeVerificationStatus: text("code_verification_status"),
     status: text("status").notNull().default("active"),
+    isDefault: boolean("is_default").notNull().default(false),
     rawPayload: jsonb("raw_payload"),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

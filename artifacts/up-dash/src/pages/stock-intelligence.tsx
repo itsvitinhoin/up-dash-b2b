@@ -257,12 +257,12 @@ export default function StockIntelligencePage() {
   };
 
   const { data, isLoading, isError } = useGetStock(stockParams, {
-    query: queryOpts({ enabled }),
+    query: queryOpts({ enabled, placeholderData: (prev) => prev }),
   });
 
   const insightParams = { clientId, dateFrom, dateTo, screen: "stock" as const };
   const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
-    query: queryOpts({ enabled, staleTime: 3_600_000 }),
+    query: queryOpts({ enabled, staleTime: 3_600_000, placeholderData: (prev) => prev }),
   });
   const regenerate = useRegenerateInsight({
     mutation: {

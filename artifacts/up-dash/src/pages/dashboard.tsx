@@ -17,6 +17,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DashLoadingCard } from "@/components/ui/dash-loader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertCircle,
@@ -115,6 +116,86 @@ function ProductMiniature({ imageUrl, name }: { imageUrl?: string | null; name: 
   );
 }
 
+type SalesBreakdownRow = {
+  name: string;
+  revenue: number;
+  units: number;
+  orders: number;
+};
+
+function B2CSalesBreakdownCard({
+  title,
+  subtitle,
+  rows,
+  icon: Icon,
+  isLoading,
+  emptyText,
+  testId,
+}: {
+  title: string;
+  subtitle: string;
+  rows: SalesBreakdownRow[];
+  icon: typeof Package;
+  isLoading: boolean;
+  emptyText: string;
+  testId: string;
+}) {
+  const topRows = rows.slice(0, 6);
+  const maxRevenue = Math.max(...topRows.map((row) => row.revenue), 0);
+
+  return (
+    <Card className="p-5 bg-card border-border" data-testid={testId}>
+      <div className="flex items-start gap-3 mb-4">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold leading-tight">{title}</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-3">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
+        </div>
+      ) : topRows.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-8 text-center">{emptyText}</p>
+      ) : (
+        <div className="space-y-4">
+          {topRows.map((row) => {
+            const share = maxRevenue > 0 ? (row.revenue / maxRevenue) * 100 : 0;
+            return (
+              <div key={row.name} className="space-y-1.5" data-testid={`${testId}-${row.name}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium leading-tight">{row.name}</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      {formatNumber(row.units)} un. · {formatNumber(row.orders)} pedidos
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums">
+                    {formatCurrencySmart(row.revenue)}
+                  </span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary"
+                    style={{ width: `${Math.max(share, 4)}%` }}
+                    aria-hidden
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 const CHART_METRICS = [
   { id: "revenue", label: "Revenue", formatter: (v: number) => formatCurrency(v) },
   { id: "orders", label: "Orders", formatter: (v: number) => formatNumber(v) },
@@ -205,6 +286,10 @@ type CampaignCustomersResponse = {
   summary: {
     impactedCustomers: number;
     attributedRevenue: number;
+    requestedValue: number;
+    fulfilledValue: number;
+    investment: number;
+    roas: number;
     orders: number;
     itemQuantity: number;
     registrations: number;
@@ -699,8 +784,8 @@ function CampaignCustomersPanel({
               <p className="text-sm font-semibold tabular-nums">{formatNumber(data.summary.impactedCustomers)}</p>
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Receita</p>
-              <p className="text-sm font-semibold tabular-nums">{formatCurrency(data.summary.attributedRevenue)}</p>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Solicitado</p>
+              <p className="text-sm font-semibold tabular-nums">{formatCurrency(data.summary.requestedValue ?? data.summary.attributedRevenue)}</p>
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pedidos</p>
@@ -713,6 +798,68 @@ function CampaignCustomersPanel({
           </div>
         )}
       </div>
+
+      {data && (
+        <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <DashboardKpiCard
+            label="Valor solicitado"
+            value={data.summary.requestedValue ?? data.summary.attributedRevenue}
+            format={formatCurrencySmart}
+            icon={Wallet}
+            iconClass="bg-blue-500/10 text-blue-400"
+            change={null}
+            changeLabel=""
+            sub={[{ label: "Base", value: "Pedidos atribuídos" }]}
+            sparkValues={[]}
+            sparkColor="#60a5fa"
+            isLoading={false}
+            testId="campaign-customers-kpi-requested-value"
+            valueAccent
+          />
+          <DashboardKpiCard
+            label="Valor atendido"
+            value={data.summary.fulfilledValue ?? 0}
+            format={formatCurrencySmart}
+            icon={CreditCard}
+            iconClass="bg-emerald-500/10 text-emerald-400"
+            change={null}
+            changeLabel=""
+            sub={[{ label: "Base", value: "Atendido atribuído" }]}
+            sparkValues={[]}
+            sparkColor="#34d399"
+            isLoading={false}
+            testId="campaign-customers-kpi-fulfilled-value"
+          />
+          <DashboardKpiCard
+            label="Investimento"
+            value={data.summary.investment ?? 0}
+            format={formatCurrencySmart}
+            icon={DollarSign}
+            iconClass="bg-violet-500/10 text-violet-400"
+            change={null}
+            changeLabel=""
+            sub={[{ label: "Fonte", value: "Meta Ads" }]}
+            sparkValues={[]}
+            sparkColor="#a78bfa"
+            isLoading={false}
+            testId="campaign-customers-kpi-investment"
+          />
+          <DashboardKpiCard
+            label="ROAS"
+            value={data.summary.roas ?? 0}
+            format={(value) => `${value.toFixed(2)}x`}
+            icon={Target}
+            iconClass="bg-amber-500/10 text-amber-400"
+            change={null}
+            changeLabel=""
+            sub={[{ label: "Cálculo", value: "Atendido / investimento" }]}
+            sparkValues={[]}
+            sparkColor="#f59e0b"
+            isLoading={false}
+            testId="campaign-customers-kpi-roas"
+          />
+        </div>
+      )}
 
       {data && data.rows.length > 0 && (
         <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
@@ -1467,7 +1614,7 @@ export default function DashboardPage() {
       utmCampaign: filters.utmCampaign || undefined,
       compare: true,
     },
-    { query: queryOpts({ enabled }) },
+    { query: queryOpts({ enabled, placeholderData: (previous) => previous }) },
   );
 
   const inclusiveDays = Math.max(1, differenceInDays(dateRange.to, dateRange.from) + 1);
@@ -1533,6 +1680,10 @@ export default function DashboardPage() {
       );
     },
     enabled: enabled && !isB2C,
+    staleTime: 2 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    placeholderData: (previous) => previous,
   });
 
   // Compute changes from API-provided prior-period KPIs
@@ -1630,6 +1781,19 @@ export default function DashboardPage() {
 
   const totalCategoryRevenue = (data?.revenueByCategory ?? []).reduce((sum, c) => sum + c.revenue, 0);
 
+  const b2cSalesByCategory = useMemo(
+    () => [...(data?.salesByCategory ?? [])].sort((a, b) => b.revenue - a.revenue),
+    [data?.salesByCategory],
+  );
+  const b2cSalesByColor = useMemo(
+    () => [...(data?.salesByColor ?? [])].sort((a, b) => b.revenue - a.revenue),
+    [data?.salesByColor],
+  );
+  const b2cSalesBySize = useMemo(
+    () => [...(data?.salesBySize ?? [])].sort((a, b) => b.revenue - a.revenue),
+    [data?.salesBySize],
+  );
+
   const handlePrint = () => {
     document.body.classList.add("print-dashboard");
     window.setTimeout(() => {
@@ -1667,6 +1831,16 @@ export default function DashboardPage() {
     }
   }, [chartMetric, isB2C]);
 
+  if (isLoading && !data) {
+    return (
+      <DashLoadingCard
+        className="min-h-[520px]"
+        label="Carregando Dashboard"
+        description="Consolidando pedidos, sessões, mídia, produtos e indicadores do período."
+      />
+    );
+  }
+
   if (isError) {
     return (
       <Alert variant="destructive" data-testid="page-dashboard">
@@ -1687,10 +1861,7 @@ export default function DashboardPage() {
   const sparkLeads = data?.leadsOverTime.map((p) => p.value) ?? [];
   const sparkConv = isB2C
     ? data?.dailyPerformance?.map((p) => p.conversionRate) ?? []
-    : (data?.leadsOverTime ?? []).map((leadPoint, i) => {
-        const orderVal = data?.ordersOverTime[i]?.value ?? 0;
-        return leadPoint.value > 0 ? (orderVal / leadPoint.value) * 100 : 0;
-      });
+    : [];
   const sparkNewBuyers = data?.newBuyersOverTime?.map((p) => p.value) ?? [];
   const sparkReturning = data?.returningBuyersOverTime?.map((p) => p.value) ?? [];
   const containerVariants = withReducedMotion(staggerContainer, reduced);
@@ -1804,7 +1975,7 @@ export default function DashboardPage() {
           sparkValues={sparkConv}
           sparkColor="#38bdf8"
           sub={[
-            { label: isB2C ? "Sessões" : "Leads", value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
+            { label: isB2C ? "Sessões" : "Approved leads", value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
             { label: isB2C ? "Pedidos" : "Orders", value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
           ]}
           isLoading={isLoading}
@@ -2206,6 +2377,44 @@ export default function DashboardPage() {
         )}
       </motion.div>
 
+      {isB2C && (
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={fadeVariants}
+          className="grid grid-cols-1 lg:grid-cols-3 gap-4"
+          data-testid="b2c-sales-breakdowns"
+        >
+          <B2CSalesBreakdownCard
+            title="Vendas por categoria"
+            subtitle="Faturamento aprovado da Nuvemshop"
+            rows={b2cSalesByCategory}
+            icon={Package}
+            isLoading={isLoading}
+            emptyText="Nenhuma venda por categoria neste período."
+            testId="b2c-sales-by-category"
+          />
+          <B2CSalesBreakdownCard
+            title="Vendas por cor"
+            subtitle="Cores mais vendidas no período"
+            rows={b2cSalesByColor}
+            icon={Tag}
+            isLoading={isLoading}
+            emptyText="Nenhuma venda com cor neste período."
+            testId="b2c-sales-by-color"
+          />
+          <B2CSalesBreakdownCard
+            title="Vendas por tamanho"
+            subtitle="Tamanhos mais vendidos no período"
+            rows={b2cSalesBySize}
+            icon={BarChart3}
+            isLoading={isLoading}
+            emptyText="Nenhuma venda com tamanho neste período."
+            testId="b2c-sales-by-size"
+          />
+        </motion.div>
+      )}
+
       {/* Business signals */}
       {(data?.signals?.length ?? 0) > 0 && (
         <motion.div
@@ -2402,72 +2611,74 @@ export default function DashboardPage() {
       </Card>
 
       {/* Top categories */}
-      <Card className="p-5 bg-card border-border">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h2 className="text-base font-semibold leading-tight">Top categories</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Share of revenue across the catalog
-            </p>
+      {!isB2C && (
+        <Card className="p-5 bg-card border-border">
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h2 className="text-base font-semibold leading-tight">Top categories</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Share of revenue across the catalog
+              </p>
+            </div>
+            <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+              See all <ChevronRight className="h-3 w-3" />
+            </button>
           </div>
-          <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-            See all <ChevronRight className="h-3 w-3" />
-          </button>
-        </div>
 
-        {isLoading ? (
-          <div className="space-y-3">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-10 w-full" />
-            ))}
-          </div>
-        ) : topCategories.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-8 text-center">
-            No category data for this period.
-          </p>
-        ) : (
-          <div>
-            <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
-              <div className="col-span-5">Category</div>
-              <div className="col-span-3 text-right">Revenue</div>
-              <div className="col-span-2 text-right">Orders</div>
-              <div className="col-span-2 text-right">Share</div>
+          {isLoading ? (
+            <div className="space-y-3">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
             </div>
-            <div className="divide-y divide-border">
-              {topCategories.map((cat) => {
-                const share =
-                  totalCategoryRevenue > 0 ? (cat.revenue / totalCategoryRevenue) * 100 : 0;
-                return (
-                  <div
-                    key={cat.category}
-                    className="grid grid-cols-12 gap-4 items-center px-2 py-3"
-                    data-testid={`category-row-${cat.category}`}
-                  >
-                    <div className="col-span-5 flex items-center gap-3">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/15 text-primary">
-                        <Package className="h-4 w-4" />
+          ) : topCategories.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No category data for this period.
+            </p>
+          ) : (
+            <div>
+              <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
+                <div className="col-span-5">Category</div>
+                <div className="col-span-3 text-right">Revenue</div>
+                <div className="col-span-2 text-right">Orders</div>
+                <div className="col-span-2 text-right">Share</div>
+              </div>
+              <div className="divide-y divide-border">
+                {topCategories.map((cat) => {
+                  const share =
+                    totalCategoryRevenue > 0 ? (cat.revenue / totalCategoryRevenue) * 100 : 0;
+                  return (
+                    <div
+                      key={cat.category}
+                      className="grid grid-cols-12 gap-4 items-center px-2 py-3"
+                      data-testid={`category-row-${cat.category}`}
+                    >
+                      <div className="col-span-5 flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/15 text-primary">
+                          <Package className="h-4 w-4" />
+                        </div>
+                        <span className="font-medium text-sm">{cat.category}</span>
                       </div>
-                      <span className="font-medium text-sm">{cat.category}</span>
+                      <div className="col-span-3 text-right tabular-nums text-sm">
+                        {formatCurrency(cat.revenue)}
+                      </div>
+                      <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                        {formatNumber(cat.orders)}
+                      </div>
+                      <div className="col-span-2 text-right">
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
+                          <TrendingUp className="h-3 w-3" />
+                          {share.toFixed(1)}%
+                        </span>
+                      </div>
                     </div>
-                    <div className="col-span-3 text-right tabular-nums text-sm">
-                      {formatCurrency(cat.revenue)}
-                    </div>
-                    <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
-                      {formatNumber(cat.orders)}
-                    </div>
-                    <div className="col-span-2 text-right">
-                      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
-                        <TrendingUp className="h-3 w-3" />
-                        {share.toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
-      </Card>
+          )}
+        </Card>
+      )}
 
       {/* Top sellers mini-leaderboard */}
       {!isB2C && (topSellersLoading || (topSellersData && topSellersData.length > 0)) && (

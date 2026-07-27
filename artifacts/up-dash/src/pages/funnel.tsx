@@ -50,6 +50,51 @@ interface FunnelStep {
   dropOffRate: number;
 }
 
+interface FunnelActivationAnalysis {
+  approvedCustomers: number;
+  windows: Array<{
+    key: string;
+    label: string;
+    days: number;
+    activatedCustomers: number;
+    activationRate: number;
+  }>;
+  sameDayActivationRate: number;
+  thirtyDayActivationRate: number;
+  avgDaysToFirstPurchase: number | null;
+  firstPurchaseAov: number;
+  repeatAfterFirstPurchaseCustomers: number;
+  repeatAfterFirstPurchaseRate: number;
+  postApproval: {
+    login: number | null;
+    priceView: number | null;
+    addToCart: number;
+    orderSubmitted: number;
+    paymentConfirmed: number;
+    loginRate: number | null;
+    priceViewRate: number | null;
+    addToCartRate: number;
+    orderSubmittedRate: number;
+    paymentConfirmedRate: number;
+  };
+  performance: {
+    label: string;
+    tone: string;
+    benchmark: string;
+  };
+  diagnostics: string[];
+  recommendation: string;
+  operationTypes: Array<{
+    title: string;
+    description: string;
+    steps: string[];
+  }>;
+}
+
+type FunnelDataWithActivation = NonNullable<ReturnType<typeof useGetFunnel>["data"]> & {
+  activation?: FunnelActivationAnalysis | null;
+};
+
 const STAGE_PALETTE = [
   "hsl(var(--chart-1))",
   "hsl(var(--chart-2))",
@@ -57,6 +102,15 @@ const STAGE_PALETTE = [
   "hsl(var(--chart-4))",
   "hsl(var(--chart-5))",
 ];
+
+const currencyFormatter = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+});
+
+function formatCurrency(value: number) {
+  return currencyFormatter.format(value || 0);
+}
 
 export default function FunnelPage() {
   const { selectedClientId, selectedDashboardMode, user } = useAuth();
@@ -78,7 +132,7 @@ export default function FunnelPage() {
       utmCampaign: filters.utmCampaign || undefined,
     },
     {
-      query: queryOpts({ enabled: queryEnabled }),
+      query: queryOpts({ enabled: queryEnabled, placeholderData: (prev) => prev }),
     }
   );
 
@@ -89,9 +143,10 @@ export default function FunnelPage() {
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
     },
     {
-      query: queryOpts({ enabled: queryEnabled }),
+      query: queryOpts({ enabled: queryEnabled, placeholderData: (prev) => prev }),
     }
   );
+  const activation = (data as FunnelDataWithActivation | undefined)?.activation ?? null;
 
   // Hide the VISIT step from the visual funnel when its count is zero.
   // The "About this data" notice is driven separately by hasSiteVisitData:
@@ -284,6 +339,12 @@ export default function FunnelPage() {
               </CardContent>
             </Card>
           </motion.div>
+
+          {selectedDashboardMode === "B2B" && activation && (
+            <motion.div initial="hidden" animate="visible" variants={variants}>
+              <ActivationAnalysisCard activation={activation} />
+            </motion.div>
+          )}
 
           {/* ── Daily site visits trend chart ─────────────────────────────────── */}
           {visitsData && visitsData.rows.length > 0 && (
@@ -673,6 +734,215 @@ export default function FunnelPage() {
           </div>
         </>
       ) : null}
+    </div>
+  );
+}
+
+function formatNullablePercent(value: number | null) {
+  return value == null ? "Sem dados" : formatPercentage(value);
+}
+
+function toneClasses(tone: string) {
+  if (tone === "danger") return "border-red-500/40 bg-red-500/10 text-red-500";
+  if (tone === "warning") return "border-amber-500/40 bg-amber-500/10 text-amber-500";
+  if (tone === "success") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-500";
+  if (tone === "strong") return "border-sky-500/40 bg-sky-500/10 text-sky-500";
+  return "border-primary/40 bg-primary/10 text-primary";
+}
+
+function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAnalysis }) {
+  const thirtyDay = activation.windows.find((window) => window.key === "within_30d");
+  const primaryWindow = thirtyDay ?? activation.windows[activation.windows.length - 1];
+  const postApprovalSteps = [
+    {
+      label: "Aprovado → login",
+      count: activation.postApproval.login,
+      rate: activation.postApproval.loginRate,
+      muted: activation.postApproval.login == null,
+    },
+    {
+      label: "Aprovado → preço/produto",
+      count: activation.postApproval.priceView,
+      rate: activation.postApproval.priceViewRate,
+      muted: activation.postApproval.priceView == null,
+    },
+    {
+      label: "Aprovado → carrinho",
+      count: activation.postApproval.addToCart,
+      rate: activation.postApproval.addToCartRate,
+      muted: false,
+    },
+    {
+      label: "Carrinho/pós-aprovação → pedido",
+      count: activation.postApproval.orderSubmitted,
+      rate: activation.postApproval.orderSubmittedRate,
+      muted: false,
+    },
+    {
+      label: "Pedido → pagamento confirmado",
+      count: activation.postApproval.paymentConfirmed,
+      rate: activation.postApproval.paymentConfirmedRate,
+      muted: false,
+    },
+  ];
+
+  return (
+    <Card className="overflow-hidden border-border/60" data-testid="approved-customer-activation">
+      <CardContent className="space-y-5 p-4 sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/30 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                <Zap className="h-3 w-3 text-primary" />
+                Ativação B2B
+              </span>
+              <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${toneClasses(activation.performance.tone)}`}>
+                {activation.performance.label}
+              </span>
+            </div>
+            <h3 className="mt-2 text-xl font-semibold tracking-tight">
+              Cadastro aprovado → primeira compra
+            </h3>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Mede se os clientes aprovados no período realmente viraram compradores. No B2B, primeira compra considera o primeiro pedido solicitado não recusado.
+            </p>
+          </div>
+
+          <div className="grid min-w-full gap-3 sm:grid-cols-3 lg:min-w-[460px]">
+            <ActivationMetric label="Aprovados" value={formatNumber(activation.approvedCustomers)} />
+            <ActivationMetric
+              label="Ativação em 30 dias"
+              value={formatPercentage(activation.thirtyDayActivationRate)}
+              accent
+            />
+            <ActivationMetric
+              label="Ticket 1ª compra"
+              value={formatCurrency(activation.firstPurchaseAov)}
+            />
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-5">
+          {activation.windows.map((window) => (
+            <div
+              key={window.key}
+              className={`rounded-lg border p-3 ${
+                window.key === "within_30d"
+                  ? "border-primary/40 bg-primary/5"
+                  : "border-border/60 bg-muted/20"
+              }`}
+            >
+              <p className="text-xs text-muted-foreground">{window.label}</p>
+              <div className="mt-2 flex items-end justify-between gap-3">
+                <p className="text-lg font-semibold tabular-nums">{formatPercentage(window.activationRate)}</p>
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatNumber(window.activatedCustomers)}/{formatNumber(activation.approvedCustomers)}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold">Quebras pós-aprovação</p>
+              <span className="text-xs text-muted-foreground">
+                Base: {formatNumber(activation.approvedCustomers)} aprovados
+              </span>
+            </div>
+            <div className="space-y-3">
+              {postApprovalSteps.map((step) => (
+                <div key={step.label}>
+                  <div className="mb-1 flex items-center justify-between gap-3 text-xs">
+                    <span className={step.muted ? "text-muted-foreground" : "text-foreground/90"}>{step.label}</span>
+                    <span className="font-mono text-muted-foreground">
+                      {step.count == null ? "Sem dados" : `${formatNumber(step.count)} · ${formatNullablePercent(step.rate)}`}
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className={`h-full rounded-full ${step.muted ? "bg-muted-foreground/30" : "bg-primary"}`}
+                      style={{ width: `${Math.min(100, Math.max(0, step.rate ?? 0))}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+              <p className="text-sm font-semibold">Leitura comercial</p>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                {activation.performance.benchmark}
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-md bg-card/60 p-2">
+                  <p className="text-muted-foreground">Tempo médio até 1ª compra</p>
+                  <p className="mt-1 font-semibold">
+                    {activation.avgDaysToFirstPurchase == null
+                      ? "Sem dados"
+                      : `${activation.avgDaysToFirstPurchase.toFixed(1)} dias`}
+                  </p>
+                </div>
+                <div className="rounded-md bg-card/60 p-2">
+                  <p className="text-muted-foreground">Recompra após 1ª compra</p>
+                  <p className="mt-1 font-semibold">
+                    {formatPercentage(activation.repeatAfterFirstPurchaseRate)}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+              <p className="text-sm font-semibold">Diagnóstico</p>
+              <ul className="mt-2 space-y-2">
+                {activation.diagnostics.map((item) => (
+                  <li key={item} className="flex gap-2 text-sm leading-relaxed text-muted-foreground">
+                    <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          {activation.operationTypes.map((operation) => (
+            <div key={operation.title} className="rounded-lg border border-dashed border-border/70 bg-card/50 p-4">
+              <p className="text-sm font-semibold">{operation.title}</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{operation.description}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                {operation.steps.map((step, index) => (
+                  <span key={`${operation.title}-${step}`} className="inline-flex items-center gap-1">
+                    <span className="rounded-full bg-muted px-2 py-1 text-[11px] text-muted-foreground">{step}</span>
+                    {index < operation.steps.length - 1 && <ArrowRight className="h-3 w-3 text-muted-foreground" />}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs leading-relaxed text-muted-foreground">
+          <span className="font-semibold text-foreground/80">Recomendação padrão: </span>
+          {activation.recommendation}
+          {primaryWindow && activation.thirtyDayActivationRate < 10 ? (
+            <span> Priorize uma régua ativa no WhatsApp para clientes recém-aprovados.</span>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ActivationMetric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className={`rounded-lg border p-3 ${accent ? "border-primary/40 bg-primary/5" : "border-border/60 bg-muted/20"}`}>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
     </div>
   );
 }

@@ -91,7 +91,7 @@ export default function JourneyPage() {
       product: filters.product || undefined,
     },
     {
-      query: queryOpts({ enabled }),
+      query: queryOpts({ enabled, placeholderData: (prev) => prev }),
     }
   );
 
@@ -103,7 +103,7 @@ export default function JourneyPage() {
   };
   const { data: insight, isLoading: insightLoading } = useGetInsight(
     insightParams,
-    { query: queryOpts({ enabled }) }
+    { query: queryOpts({ enabled, placeholderData: (prev) => prev }) }
   );
   const regenerate = useRegenerateInsight({
     mutation: {

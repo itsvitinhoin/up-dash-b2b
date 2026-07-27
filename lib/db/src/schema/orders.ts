@@ -59,6 +59,21 @@ export const ordersTable = pgTable(
       table.clientId,
       table.createdAt,
     ),
+    clientCreatedStatusIdx: index("orders_client_created_status_idx").on(
+      table.clientId,
+      table.createdAt,
+      table.status,
+    ),
+    clientCustomerCreatedIdx: index("orders_client_customer_created_idx").on(
+      table.clientId,
+      table.customerId,
+      table.createdAt,
+    ),
+    clientStateCreatedIdx: index("orders_client_state_created_idx").on(
+      table.clientId,
+      table.state,
+      table.createdAt,
+    ),
     externalIdIdx: uniqueIndex("orders_client_external_id_uq").on(
       table.clientId,
       table.externalId,
@@ -90,6 +105,10 @@ export const orderItemsTable = pgTable(
   (table) => ({
     orderIdx: index("order_items_order_idx").on(table.orderId),
     productIdx: index("order_items_product_idx").on(table.productId),
+    productOrderIdx: index("order_items_product_order_idx").on(
+      table.productId,
+      table.orderId,
+    ),
   }),
 );
 

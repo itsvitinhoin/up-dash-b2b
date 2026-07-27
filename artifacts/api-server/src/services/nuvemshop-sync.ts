@@ -18,6 +18,12 @@ export interface NuvemshopSyncResult {
   ordersUpdated: number;
   productsCreated: number;
   productsUpdated: number;
+  productsFetched: number;
+  productPagesFetched: number;
+  productPaginationComplete: boolean;
+  ordersFetched: number;
+  orderPagesFetched: number;
+  orderPaginationComplete: boolean;
   orderItemsSynced: number;
   eventsSynced: number;
   cancelledOrders: number;
@@ -47,8 +53,8 @@ type NuvemshopProduct = {
   sku?: string | null;
   quantity?: number | string | null;
   price?: number | string | null;
-  compare_at_price?: number | string | null;
   promotional_price?: number | string | null;
+  compare_at_price?: number | string | null;
   image?: { src?: string | null } | null;
   categories?: NuvemshopCategory[] | null;
   product?: {
@@ -66,6 +72,7 @@ type NuvemshopVariant = {
   inventory_quantity?: number | string | null;
   quantity?: number | string | null;
   price?: number | string | null;
+  promotional_price?: number | string | null;
   compare_at_price?: number | string | null;
   image?: { src?: string | null } | null;
   image_id?: number | string | null;
@@ -168,6 +175,12 @@ function emptyResult(): NuvemshopSyncResult {
     ordersUpdated: 0,
     productsCreated: 0,
     productsUpdated: 0,
+    productsFetched: 0,
+    productPagesFetched: 0,
+    productPaginationComplete: true,
+    ordersFetched: 0,
+    orderPagesFetched: 0,
+    orderPaginationComplete: true,
     orderItemsSynced: 0,
     eventsSynced: 0,
     cancelledOrders: 0,
@@ -260,16 +273,31 @@ function variantLabel(variant: NuvemshopVariant): string {
     .join(" / ");
 }
 
+function looksLikeSize(value: string | null | undefined): boolean {
+  const normalized = (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+  return /^(PP|P|M|G|GG|XG|XGG|EXG|EG|XP|XS|S|L|XL|XXL|XXXL|U|UNICO|ONE SIZE|\d{1,3})$/.test(normalized);
+}
+
 function variantAttributes(label: string): { color: string | null; size: string | null } {
   const parts = label.split("/").map((part) => part.trim()).filter(Boolean);
-  if (parts.length >= 2) return { color: parts[0], size: parts.slice(1).join(" / ") };
-  if (parts.length === 1) return { color: parts[0], size: null };
+  if (parts.length >= 2) {
+    const first = parts[0];
+    const rest = parts.slice(1).join(" / ");
+    if (looksLikeSize(first) && !looksLikeSize(rest)) return { color: rest, size: first };
+    if (!looksLikeSize(first) && looksLikeSize(rest)) return { color: first, size: rest };
+    return { color: first, size: rest };
+  }
+  if (parts.length === 1) return looksLikeSize(parts[0]) ? { color: null, size: parts[0] } : { color: parts[0], size: null };
   return { color: null, size: null };
 }
 
 function variantAttributesFromName(name: string): { color: string | null; size: string | null } {
   const tuple = name.trim().match(/^(.*?)\s*\(([^(),]+),\s*([^()]+)\)\s*$/);
-  if (tuple) return { color: tuple[2].trim() || null, size: tuple[3].trim() || null };
+  if (tuple) return variantAttributes(`${tuple[2].trim()} / ${tuple[3].trim()}`);
   const separatorIndex = name.lastIndexOf(" - ");
   if (separatorIndex >= 0) return variantAttributes(name.slice(separatorIndex + 3));
   return { color: null, size: null };
@@ -363,36 +391,56 @@ async function fetchOrders(
   storeId: string,
   accessToken: string,
   since?: Date,
-  maxPages = 50,
-): Promise<NuvemshopOrder[]> {
+  maxPages?: number,
+): Promise<{
+  rows: NuvemshopOrder[];
+  pagesFetched: number;
+  complete: boolean;
+}> {
   const orders: NuvemshopOrder[] = [];
-  for (let page = 1; page <= maxPages; page++) {
+  let pagesFetched = 0;
+  let complete = false;
+  for (let page = 1; !maxPages || page <= maxPages; page++) {
     const rows = await fetchNuvemshopPage<NuvemshopOrder>(storeId, accessToken, "/orders", {
       page,
       per_page: 200,
       ...(since ? { created_at_min: since.toISOString() } : {}),
     });
+    pagesFetched++;
     orders.push(...rows);
-    if (rows.length < 200) break;
+    if (rows.length < 200) {
+      complete = true;
+      break;
+    }
   }
-  return orders;
+  return { rows: orders, pagesFetched, complete };
 }
 
 async function fetchProducts(
   storeId: string,
   accessToken: string,
-  maxPages = 50,
-): Promise<NuvemshopProductDetails[]> {
+  maxPages?: number,
+): Promise<{
+  rows: NuvemshopProductDetails[];
+  pagesFetched: number;
+  complete: boolean;
+}> {
   const products: NuvemshopProductDetails[] = [];
-  for (let page = 1; page <= maxPages; page++) {
+  let pagesFetched = 0;
+  let complete = false;
+  for (let page = 1; !maxPages || page <= maxPages; page++) {
     const rows = await fetchNuvemshopPage<NuvemshopProductDetails>(storeId, accessToken, "/products", {
       page,
       per_page: 200,
     });
+    pagesFetched++;
     products.push(...rows);
-    if (rows.length < 200) break;
+    if (rows.length < 200) {
+      complete = true;
+      break;
+    }
   }
-  return products;
+  return { rows: products, pagesFetched, complete };
 }
 
 async function syncProductCatalog(params: {
@@ -402,7 +450,17 @@ async function syncProductCatalog(params: {
   maxPages?: number;
   result: NuvemshopSyncResult;
 }) {
-  const products = await fetchProducts(params.storeId, params.accessToken, params.maxPages);
+  const productPage = await fetchProducts(params.storeId, params.accessToken, params.maxPages);
+  const products = productPage.rows;
+  params.result.productsFetched = products.length;
+  params.result.productPagesFetched = productPage.pagesFetched;
+  params.result.productPaginationComplete = productPage.complete;
+  if (!productPage.complete) {
+    params.result.errors.push(
+      `Product catalog pagination stopped after ${productPage.pagesFetched} page(s) before reaching the end. Increase NUVEMSHOP_CATALOG_MAX_PAGES or remove the cap.`,
+    );
+  }
+
   for (const product of products) {
     try {
       const productId = product.id ? String(product.id) : null;
@@ -432,7 +490,7 @@ async function syncProductCatalog(params: {
         variantsBySku.set(sku, {
           externalId,
           name: label ? `${productName} - ${label}` : productName,
-          price: asNumber(variant.promotional_price) || asNumber(variant.compare_at_price) || asNumber(variant.price),
+          price: asNumber(variant.promotional_price) || asNumber(variant.price) || asNumber(variant.compare_at_price),
           stock,
           imageUrl: imageForVariant(product, variant),
         });
@@ -481,22 +539,34 @@ export async function syncNuvemshopClient(params: {
   since?: Date;
   maxPages?: number;
   catalogMaxPages?: number;
+  skipCatalog?: boolean;
 }): Promise<NuvemshopSyncResult> {
   const result = emptyResult();
-  try {
-    await syncProductCatalog({
-      clientId: params.clientId,
-      storeId: params.storeId,
-      accessToken: params.accessToken,
-      maxPages: params.catalogMaxPages ?? 50,
-      result,
-    });
-  } catch (error) {
-    result.errors.push(`Product catalog: ${error instanceof Error ? error.message : String(error)}`);
+  if (!params.skipCatalog) {
+    try {
+      await syncProductCatalog({
+        clientId: params.clientId,
+        storeId: params.storeId,
+        accessToken: params.accessToken,
+        maxPages: params.catalogMaxPages,
+        result,
+      });
+    } catch (error) {
+      result.errors.push(`Product catalog: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   let orders: NuvemshopOrder[] = [];
   try {
-    orders = await fetchOrders(params.storeId, params.accessToken, params.since, params.maxPages);
+    const orderPage = await fetchOrders(params.storeId, params.accessToken, params.since, params.maxPages);
+    orders = orderPage.rows;
+    result.ordersFetched = orders.length;
+    result.orderPagesFetched = orderPage.pagesFetched;
+    result.orderPaginationComplete = orderPage.complete;
+    if (!orderPage.complete) {
+      result.errors.push(
+        `Orders pagination stopped after ${orderPage.pagesFetched} page(s) before reaching the end. Increase NUVEMSHOP_CRON_MAX_PAGES or remove the cap.`,
+      );
+    }
   } catch (error) {
     result.errors.push(`Orders: ${error instanceof Error ? error.message : String(error)}`);
     return result;
@@ -626,6 +696,7 @@ export async function syncNuvemshopClient(params: {
         const variantAttrs = variantDetails ? variantAttributes(variantLabel(variantDetails)) : variantAttributesFromName(localized(item.name));
         const productName = localized(item.name) || localized(item.product?.name) || localized(productDetails?.name) || sku;
         const category = categoryName(item.categories) ?? categoryName(item.product?.categories) ?? categoryName(productDetails?.categories);
+        const productPrice = asNumber(item.promotional_price) || asNumber(item.price) || asNumber(item.compare_at_price);
         const grossUnitPrice = asNumber(item.compare_at_price) || asNumber(item.price);
         const itemGross = asNumber(item.price) * quantity;
         const itemDiscount = itemGrossTotal > 0 ? discount * (itemGross / itemGrossTotal) : 0;
@@ -639,7 +710,7 @@ export async function syncNuvemshopClient(params: {
             sku,
             name: productName,
             category,
-            price: grossUnitPrice,
+            price: productPrice,
             imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
           })
           .onConflictDoUpdate({
@@ -648,7 +719,7 @@ export async function syncNuvemshopClient(params: {
               externalId: productExternalId,
               name: productName,
               category,
-              price: grossUnitPrice,
+              price: productPrice,
               imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
             },
           })

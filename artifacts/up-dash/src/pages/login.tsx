@@ -40,6 +40,22 @@ const loginSchema = z.object({
 
 type LoginFormValues = z.infer<typeof loginSchema>;
 
+function getLoginErrorMessage(error: unknown) {
+  const maybeStatus = typeof error === "object" && error !== null && "status" in error
+    ? Number((error as { status?: unknown }).status)
+    : null;
+  const maybeStatusText = typeof error === "object" && error !== null && "statusText" in error
+    ? String((error as { statusText?: unknown }).statusText ?? "")
+    : "";
+
+  if (maybeStatus === 401) return "Invalid credentials. Please try again.";
+  if (maybeStatus) {
+    return `Login failed (${maybeStatus}${maybeStatusText ? ` ${maybeStatusText}` : ""}). Please try again.`;
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return "An error occurred during login.";
+}
+
 const SEED_SERIES = [
   18, 22, 19, 28, 31, 27, 35, 41, 38, 46, 52, 49, 58, 65, 61, 72, 79, 75, 86,
 ];
@@ -338,9 +354,7 @@ export default function LoginPage() {
                     >
                       <AlertCircle className="h-4 w-4" />
                       <AlertDescription>
-                        {loginMutation.error?.status === 401
-                          ? "Invalid credentials. Please try again."
-                          : "An error occurred during login."}
+                        {getLoginErrorMessage(loginMutation.error)}
                       </AlertDescription>
                     </Alert>
                   )}
