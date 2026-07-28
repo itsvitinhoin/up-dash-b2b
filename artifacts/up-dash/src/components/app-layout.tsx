@@ -227,18 +227,36 @@ export function AppLayout({ children }: AppLayoutProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const { data: clientsData } = useListClients(
-    { limit: 100, dashboardType: selectedDashboardMode },
-    { query: queryOpts({ enabled: user?.role === "ADMIN" && !LOCAL_UI_PREVIEW }) },
+  const {
+    data: clientsData,
+    isLoading: isLoadingClients,
+    isError: isClientsError,
+  } = useListClients(
+    { page: 1, limit: 1000 },
+    {
+      query: queryOpts({
+        enabled: user?.role === "ADMIN" && !LOCAL_UI_PREVIEW,
+        placeholderData: (previous) => previous,
+      }),
+    },
   );
   const adminClients = useMemo(
-    () =>
-      LOCAL_UI_PREVIEW
+    () => {
+      const clients = LOCAL_UI_PREVIEW
         ? [LOCAL_PREVIEW_CLIENT]
         : Array.isArray(clientsData?.data)
           ? clientsData.data
-          : [],
-    [clientsData?.data],
+          : [];
+
+      return clients
+        .filter((client) => {
+          if (client.dashboardType === selectedDashboardMode) return true;
+          // Clients created before dashboard_type existed belong to B2B.
+          return selectedDashboardMode === "B2B" && !client.dashboardType;
+        })
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    },
+    [clientsData?.data, selectedDashboardMode],
   );
 
   // We deliberately do NOT auto-pick a client for admins here. UP Dash is an
@@ -739,6 +757,24 @@ export function AppLayout({ children }: AppLayoutProps) {
                         {client.name}
                       </SelectItem>
                     ))}
+                    {!LOCAL_UI_PREVIEW && isLoadingClients && (
+                      <div className="px-2 py-2 text-xs text-muted-foreground">
+                        {t("top.loadingClients", "Carregando clientes...")}
+                      </div>
+                    )}
+                    {!LOCAL_UI_PREVIEW && !isLoadingClients && isClientsError && (
+                      <div className="px-2 py-2 text-xs text-destructive">
+                        {t("top.clientsError", "Não foi possível carregar os clientes.")}
+                      </div>
+                    )}
+                    {!LOCAL_UI_PREVIEW &&
+                      !isLoadingClients &&
+                      !isClientsError &&
+                      adminClients.length === 0 && (
+                        <div className="px-2 py-2 text-xs text-muted-foreground">
+                          {t("top.noClientsForMode", "Nenhum cliente disponível neste modo.")}
+                        </div>
+                      )}
                   </SelectContent>
                 </Select>
               </div>
