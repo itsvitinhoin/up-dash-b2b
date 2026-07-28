@@ -1,4 +1,21 @@
+import { eq } from "drizzle-orm";
+import { db, clientsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
+import { stateFromPhoneDdd } from "../lib/phoneState";
+
+/**
+ * Se o client for Vesti e tiver dataset configurado, devolve o dataset.
+ * Senão, `null` — usado pelas rotas em analytics.ts pra decidir se
+ * delegam pro controller Vesti ou seguem o caminho Postgres normal.
+ */
+export async function resolveVestiDataset(clientId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform, bigqueryDataset: clientsTable.bigqueryDataset })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (row?.commercePlatform !== "VESTI") return null;
+  return row.bigqueryDataset ?? null;
+}
 
 // Fonte: `dashboard_vendas_view` (BigQuery, projeto up-vesti-report) — a
 // mesma view que o backend-dash já usa em produção (não a tabela
@@ -425,4 +442,1135 @@ export async function fetchVestiAttributedCustomers(
       ? String((r.last_purchase_at as { value?: string })?.value ?? r.last_purchase_at)
       : null,
   }));
+}
+
+// ───────── Página de pedidos ─────────
+//
+// `dashboard_vendas_view` já tem pedido + item juntos, então a lista de
+// pedidos vem de um GROUP BY pedido_id, e o detalhe vem das linhas cruas
+// daquele pedido_id (cada linha é um item). `origin` aqui é o campo real
+// da Vesti (ex: "Link", "Site") — conceito diferente de UTM/tracking, mas
+// mapeado pro mesmo formato que a tela já espera.
+
+function maskCnpj(cnpj: string | null): string | null {
+  if (!cnpj) return null;
+  const digits = cnpj.replace(/\D/g, "");
+  if (digits.length < 2) return null;
+  return `**.***.***/****-${digits.slice(-2)}`;
+}
+
+export type VestiOrderRow = {
+  id: string;
+  externalId: string | null;
+  status: string | null;
+  amount: number;
+  fulfilledAmount: number;
+  requestedQuantity: number;
+  fulfilledQuantity: number;
+  createdAt: string;
+  customerId: string | null;
+  customerName: string | null;
+  customerEmail: string | null;
+  document: string | null;
+  state: string | null;
+  city: string | null;
+  originLabel: string | null;
+  isAttributed: boolean;
+};
+
+export type VestiOrdersPage = {
+  kpis: {
+    requestedRevenue: number;
+    fulfilledRevenue: number;
+    requestedQuantity: number;
+    fulfilledQuantity: number;
+    fulfilledPct: number;
+    orders: number;
+    newCustomers: number;
+    returningCustomers: number;
+    retentionPct: number;
+    approvedLeads: number;
+  };
+  rows: VestiOrderRow[];
+  total: number;
+};
+
+export async function fetchVestiOrdersPage(
+  dataset: string,
+  dateFrom: string,
+  dateTo: string,
+  page: number,
+  limit: number,
+  search: string | undefined,
+): Promise<VestiOrdersPage> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
+  const offset = (page - 1) * limit;
+
+  const kpiQuery = `
+    WITH pedidos AS (
+      SELECT
+        pedido_id,
+        ANY_VALUE(cliente_id) AS cliente_id,
+        COALESCE(SUM(valor_solicitado), 0) AS amount,
+        COALESCE(SUM(valor_reservado), 0) AS fulfilled_amount,
+        COALESCE(SUM(produto_quantidade_solicitada), 0) AS requested_quantity,
+        COALESCE(SUM(produto_quantidade_reservada), 0) AS fulfilled_quantity,
+        LOGICAL_OR(pago) AS pago
+      FROM ${view}
+      WHERE data_ref BETWEEN @dateFrom AND @dateTo
+      GROUP BY pedido_id
+    ),
+    orders_per_customer AS (
+      SELECT cliente_id, COUNT(*) AS n
+      FROM pedidos
+      WHERE cliente_id IS NOT NULL
+      GROUP BY cliente_id
+    )
+    SELECT
+      COALESCE(SUM(p.amount), 0) AS requested_revenue,
+      COALESCE(SUM(p.fulfilled_amount), 0) AS fulfilled_revenue,
+      COALESCE(SUM(p.requested_quantity), 0) AS requested_quantity,
+      COALESCE(SUM(p.fulfilled_quantity), 0) AS fulfilled_quantity,
+      COUNT(DISTINCT p.pedido_id) AS orders,
+      COUNT(DISTINCT IF(opc.n = 1, p.cliente_id, NULL)) AS new_customers,
+      COUNT(DISTINCT IF(opc.n > 1, p.cliente_id, NULL)) AS returning_customers,
+      COUNT(DISTINCT IF(p.pago, p.cliente_id, NULL)) AS approved_leads
+    FROM pedidos p
+    LEFT JOIN orders_per_customer opc ON opc.cliente_id = p.cliente_id
+  `;
+
+  const searchClause = search ? `AND (
+    LOWER(cliente_nome) LIKE @search OR LOWER(cliente_email) LIKE @search
+    OR documento_cliente LIKE @search OR CAST(pedido_code AS STRING) LIKE @search
+  )` : "";
+  const listQuery = `
+    WITH pedidos AS (
+      SELECT
+        pedido_id,
+        ANY_VALUE(pedido_code) AS pedido_code,
+        ANY_VALUE(status_pedido) AS status_pedido,
+        COALESCE(SUM(valor_solicitado), 0) AS amount,
+        COALESCE(SUM(valor_reservado), 0) AS fulfilled_amount,
+        COALESCE(SUM(produto_quantidade_solicitada), 0) AS requested_quantity,
+        COALESCE(SUM(produto_quantidade_reservada), 0) AS fulfilled_quantity,
+        ANY_VALUE(data_ref) AS created_at,
+        ANY_VALUE(cliente_id) AS customer_id,
+        ANY_VALUE(cliente_nome) AS customer_name,
+        ANY_VALUE(cliente_email) AS customer_email,
+        ANY_VALUE(documento_cliente) AS document,
+        ANY_VALUE(estado) AS state,
+        ANY_VALUE(cidade) AS city,
+        ANY_VALUE(origin) AS origin_label
+      FROM ${view}
+      WHERE data_ref BETWEEN @dateFrom AND @dateTo ${searchClause}
+      GROUP BY pedido_id
+    )
+    SELECT p.*, ca.email IS NOT NULL AS is_attributed
+    FROM pedidos p
+    LEFT JOIN ${clientesAtribuidos} ca ON LOWER(ca.email) = LOWER(p.customer_email)
+    ORDER BY created_at DESC
+    LIMIT @limit OFFSET @offset
+  `;
+
+  const countQuery = `
+    SELECT COUNT(DISTINCT pedido_id) AS total
+    FROM ${view}
+    WHERE data_ref BETWEEN @dateFrom AND @dateTo ${searchClause}
+  `;
+
+  const searchParam = search ? `%${search.toLowerCase()}%` : undefined;
+  const [[kpiRows], [listRows], [countRows]] = await Promise.all([
+    bigquery.query({ query: kpiQuery, params: { dateFrom, dateTo } }),
+    bigquery.query({
+      query: listQuery,
+      params: { dateFrom, dateTo, limit, offset, ...(searchParam ? { search: searchParam } : {}) },
+    }),
+    bigquery.query({ query: countQuery, params: { dateFrom, dateTo, ...(searchParam ? { search: searchParam } : {}) } }),
+  ]);
+
+  const k = kpiRows[0] as Record<string, number> | undefined;
+  const requestedRevenue = Number(k?.requested_revenue) || 0;
+  const fulfilledRevenue = Number(k?.fulfilled_revenue) || 0;
+  const newCustomers = Number(k?.new_customers) || 0;
+  const returningCustomers = Number(k?.returning_customers) || 0;
+  const customerCount = newCustomers + returningCustomers;
+
+  const rows: VestiOrderRow[] = (listRows as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.pedido_id),
+    externalId: r.pedido_code != null ? String(r.pedido_code) : null,
+    status: (r.status_pedido as string) ?? null,
+    amount: Number(r.amount) || 0,
+    fulfilledAmount: Number(r.fulfilled_amount) || 0,
+    requestedQuantity: Number(r.requested_quantity) || 0,
+    fulfilledQuantity: Number(r.fulfilled_quantity) || 0,
+    createdAt: toDateOnly(r.created_at),
+    customerId: (r.customer_id as string) ?? null,
+    customerName: (r.customer_name as string) ?? null,
+    customerEmail: (r.customer_email as string) ?? null,
+    document: maskCnpj((r.document as string) ?? null),
+    state: (r.state as string) || null,
+    city: (r.city as string) || null,
+    originLabel: (r.origin_label as string) || null,
+    isAttributed: Boolean(r.is_attributed),
+  }));
+
+  return {
+    kpis: {
+      requestedRevenue,
+      fulfilledRevenue,
+      requestedQuantity: Number(k?.requested_quantity) || 0,
+      fulfilledQuantity: Number(k?.fulfilled_quantity) || 0,
+      fulfilledPct: requestedRevenue > 0 ? (fulfilledRevenue / requestedRevenue) * 100 : 0,
+      orders: Number(k?.orders) || 0,
+      newCustomers,
+      returningCustomers,
+      retentionPct: customerCount > 0 ? (returningCustomers / customerCount) * 100 : 0,
+      approvedLeads: Number(k?.approved_leads) || 0,
+    },
+    rows,
+    total: Number(countRows[0]?.total) || 0,
+  };
+}
+
+export type VestiOrderDetail = {
+  order: VestiOrderRow & { requestedItems: number; fulfilledItems: number };
+  customer: {
+    id: string | null;
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    state: string | null;
+    city: string | null;
+    document: string | null;
+    totalOrders: number | null;
+    totalSpent: number | null;
+  };
+  items: Array<{
+    id: string;
+    quantity: number;
+    fulfilledQuantity: number;
+    priceAtSale: number;
+    size: string | null;
+    color: string | null;
+    productId: string | null;
+    sku: string | null;
+    name: string | null;
+    category: string | null;
+  }>;
+};
+
+export async function fetchVestiOrderDetail(dataset: string, pedidoId: string): Promise<VestiOrderDetail | null> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const clientes = vestiTable(dataset, "clientes_vesti");
+
+  const query = `
+    SELECT *
+    FROM ${view}
+    WHERE pedido_id = @pedidoId
+  `;
+  const [rows] = await bigquery.query({ query, params: { pedidoId } });
+  if (rows.length === 0) return null;
+  const items = rows as Array<Record<string, unknown>>;
+  const first = items[0] as Record<string, unknown>;
+
+  const document = (first.documento_cliente as string) ?? null;
+  const custQuery = document
+    ? `SELECT phone, active FROM ${clientes} WHERE document = @document LIMIT 1`
+    : null;
+  const custRows = custQuery
+    ? (await bigquery.query({ query: custQuery, params: { document } }))[0]
+    : [];
+  const custRow = (custRows as Array<Record<string, unknown>>)[0];
+
+  const amount = items.reduce((sum, r) => sum + (Number(r.valor_solicitado) || 0), 0);
+  const fulfilledAmount = items.reduce((sum, r) => sum + (Number(r.valor_reservado) || 0), 0);
+  const requestedQuantity = items.reduce((sum, r) => sum + (Number(r.produto_quantidade_solicitada) || 0), 0);
+  const fulfilledQuantity = items.reduce((sum, r) => sum + (Number(r.produto_quantidade_reservada) || 0), 0);
+
+  return {
+    order: {
+      id: pedidoId,
+      externalId: first.pedido_code != null ? String(first.pedido_code) : null,
+      status: (first.status_pedido as string) ?? null,
+      amount,
+      fulfilledAmount,
+      requestedQuantity,
+      fulfilledQuantity,
+      createdAt: toDateOnly(first.data_ref),
+      customerId: (first.cliente_id as string) ?? null,
+      customerName: (first.cliente_nome as string) ?? null,
+      customerEmail: (first.cliente_email as string) ?? null,
+      document: maskCnpj(document),
+      state: (first.estado as string) || null,
+      city: (first.cidade as string) || null,
+      originLabel: (first.origin as string) || null,
+      isAttributed: false,
+      requestedItems: items.length,
+      fulfilledItems: items.filter((r) => (Number(r.produto_quantidade_reservada) || 0) > 0).length,
+    },
+    customer: {
+      id: (first.cliente_id as string) ?? null,
+      name: (first.cliente_nome as string) ?? null,
+      email: (first.cliente_email as string) ?? null,
+      phone: (custRow?.phone as string) ?? null,
+      state: (first.estado as string) || null,
+      city: (first.cidade as string) || null,
+      document: maskCnpj(document),
+      totalOrders: null,
+      totalSpent: null,
+    },
+    items: items.map((r, i) => ({
+      id: `${pedidoId}-${i}`,
+      quantity: Number(r.produto_quantidade_solicitada) || 0,
+      fulfilledQuantity: Number(r.produto_quantidade_reservada) || 0,
+      priceAtSale: Number(r.produto_preco_unitario) || 0,
+      size: (r.produto_tamanho as string) || null,
+      color: (r.produto_cor as string) || null,
+      productId: (r.produto_id as string) ?? null,
+      sku: (r.produto_sku as string) ?? null,
+      name: (r.produto_nome as string) ?? null,
+      category: null,
+    })),
+  };
+}
+
+// ───────── Clientes ─────────
+//
+// Fonte: `clientes_vesti` (cadastro) + agregação de `dashboard_vendas_view`
+// por cliente_id (pedidos/receita). Não existe RFM pronto e consistente
+// entre datasets (`rfm_clientes_final` só existe nalguns, ex: le_ricard,
+// não no namine) — por isso `rfmSegment`/scores ficam null, e o filtro/
+// contagem por segmento usa `registrationStatus` como proxy (é o dado
+// real disponível: perfil "Liberado"/"VIP" = aprovado).
+
+function inferRegistrationStatus(active: boolean | null, profileName: string | null): "APPROVED" | "PENDING" | "REJECTED" {
+  if (active === false) return "REJECTED";
+  if (profileName === "Liberado" || profileName === "VIP") return "APPROVED";
+  return "PENDING";
+}
+
+export type VestiCustomerRow = {
+  id: string;
+  name: string | null;
+  email: string;
+  phone: string | null;
+  document: string | null;
+  documentType: "CPF" | "CNPJ" | null;
+  state: string | null;
+  city: string | null;
+  registrationStatus: "APPROVED" | "PENDING" | "REJECTED";
+  totalOrders: number;
+  totalSpent: number;
+  firstPurchaseAt: string | null;
+  lastPurchaseAt: string | null;
+  createdAt: string;
+};
+
+export type VestiCustomersPage = {
+  rows: VestiCustomerRow[];
+  total: number;
+  segmentCounts: { segment: string; count: number }[];
+};
+
+type VestiCustomersFilters = {
+  search?: string;
+  purchaseStatus?: "buyers" | "non_buyers";
+  registrationStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  documentType?: "CPF" | "CNPJ";
+};
+
+const CUSTOMER_SORT_COLUMNS: Record<string, string> = {
+  totalSpent: "total_spent",
+  totalOrders: "total_orders",
+  createdAt: "created_at",
+  firstPurchaseAt: "first_purchase_at",
+  lastPurchaseAt: "last_purchase_at",
+  name: "name",
+};
+
+export async function fetchVestiCustomersPage(
+  dataset: string,
+  page: number,
+  limit: number,
+  sortBy: string,
+  sortDir: "asc" | "desc",
+  filters: VestiCustomersFilters,
+): Promise<VestiCustomersPage> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const clientes = vestiTable(dataset, "clientes_vesti");
+  const offset = (page - 1) * limit;
+
+  // As condições abaixo rodam contra `base` (`SELECT * FROM base WHERE ...`),
+  // não contra os aliases `c`/`oa` usados só dentro da definição do CTE — por
+  // isso as colunas aqui não levam prefixo (bug corrigido: antes usava
+  // `c.name`/`oa.total_orders`, que não existem nesse escopo e quebravam com
+  // "Unrecognized name" no BigQuery).
+  const conditions: string[] = [];
+  const params: Record<string, unknown> = { limit, offset };
+  if (filters.search) {
+    conditions.push("(LOWER(name) LIKE @search OR LOWER(email) LIKE @search)");
+    params.search = `%${filters.search.toLowerCase()}%`;
+  }
+  if (filters.purchaseStatus === "buyers") conditions.push("COALESCE(total_orders, 0) > 0");
+  if (filters.purchaseStatus === "non_buyers") conditions.push("COALESCE(total_orders, 0) = 0");
+  if (filters.documentType === "CPF") conditions.push("LENGTH(REGEXP_REPLACE(document, r'[^0-9]', '')) = 11");
+  if (filters.documentType === "CNPJ") conditions.push("document IS NOT NULL AND LENGTH(REGEXP_REPLACE(document, r'[^0-9]', '')) != 11");
+  if (filters.registrationStatus === "REJECTED") conditions.push("active = false");
+  if (filters.registrationStatus === "APPROVED") {
+    conditions.push("COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP')");
+  }
+  if (filters.registrationStatus === "PENDING") {
+    conditions.push("COALESCE(active, true) != false AND COALESCE(profile_name, '') NOT IN ('Liberado', 'VIP')");
+  }
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const sortColumn = CUSTOMER_SORT_COLUMNS[sortBy] ?? "total_spent";
+
+  const baseQuery = `
+    WITH orders_agg AS (
+      SELECT
+        cliente_id,
+        COUNT(DISTINCT pedido_id) AS total_orders,
+        COALESCE(SUM(valor_reservado), 0) AS total_spent,
+        MIN(data_ref) AS first_purchase_at,
+        MAX(data_ref) AS last_purchase_at,
+        ARRAY_AGG(estado IGNORE NULLS ORDER BY data_ref DESC LIMIT 1)[SAFE_OFFSET(0)] AS state,
+        ARRAY_AGG(cidade IGNORE NULLS ORDER BY data_ref DESC LIMIT 1)[SAFE_OFFSET(0)] AS city
+      FROM ${view}
+      WHERE cliente_id IS NOT NULL
+      GROUP BY cliente_id
+    ),
+    base AS (
+      SELECT
+        c.id, c.name, c.document, c.email, c.phone, c.active,
+        c.profile.name AS profile_name, c.created_at,
+        COALESCE(oa.total_orders, 0) AS total_orders,
+        COALESCE(oa.total_spent, 0) AS total_spent,
+        oa.first_purchase_at, oa.last_purchase_at, oa.state, oa.city
+      FROM ${clientes} c
+      LEFT JOIN orders_agg oa ON oa.cliente_id = c.id
+    )
+  `;
+
+  const listQuery = `
+    ${baseQuery}
+    SELECT * FROM base
+    ${whereClause}
+    ORDER BY ${sortColumn} ${sortDir === "asc" ? "ASC" : "DESC"}
+    LIMIT @limit OFFSET @offset
+  `;
+  const countQuery = `${baseQuery} SELECT COUNT(*) AS total FROM base ${whereClause}`;
+  const segmentQuery = `
+    ${baseQuery}
+    SELECT
+      CASE WHEN active = false THEN 'Bloqueado' WHEN profile_name IN ('Liberado', 'VIP') THEN 'Liberado' ELSE 'Pendente' END AS segment,
+      COUNT(*) AS count
+    FROM base
+    ${whereClause}
+    GROUP BY segment
+  `;
+
+  const [[listRows], [countRows], [segmentRows]] = await Promise.all([
+    bigquery.query({ query: listQuery, params }),
+    bigquery.query({ query: countQuery, params }),
+    bigquery.query({ query: segmentQuery, params }),
+  ]);
+
+  const rows: VestiCustomerRow[] = (listRows as Array<Record<string, unknown>>).map((r) => {
+    const document = (r.document as string) ?? null;
+    return {
+      id: String(r.id),
+      name: (r.name as string) || null,
+      email: String(r.email ?? ""),
+      phone: (r.phone as string) || null,
+      document: maskCnpj(document),
+      documentType: document ? (document.replace(/\D/g, "").length === 11 ? "CPF" : "CNPJ") : null,
+      state: (r.state as string) || stateFromPhoneDdd(r.phone as string) || null,
+      city: (r.city as string) || null,
+      registrationStatus: inferRegistrationStatus(r.active as boolean | null, (r.profile_name as string) ?? null),
+      totalOrders: Number(r.total_orders) || 0,
+      totalSpent: Number(r.total_spent) || 0,
+      firstPurchaseAt: r.first_purchase_at ? toDateOnly(r.first_purchase_at) : null,
+      lastPurchaseAt: r.last_purchase_at ? toDateOnly(r.last_purchase_at) : null,
+      createdAt: toDateOnly(r.created_at),
+    };
+  });
+
+  return {
+    rows,
+    total: Number((countRows as Array<Record<string, unknown>>)[0]?.total) || 0,
+    segmentCounts: (segmentRows as Array<Record<string, unknown>>).map((r) => ({
+      segment: String(r.segment),
+      count: Number(r.count) || 0,
+    })),
+  };
+}
+
+export type VestiCustomerDetail = {
+  customer: VestiCustomerRow;
+  orders: Array<{ id: string; amount: number; status: string | null; state: string | null; city: string | null; itemCount: number; createdAt: string }>;
+  productsPurchased: Array<{ productId: string; name: string; sku: string; quantity: number; totalSpent: number; firstOrderDate: string | null }>;
+  journey: { visits: number; registered: boolean; approved: boolean; productViews: number; addedToCart: number; purchased: number };
+};
+
+export async function fetchVestiCustomerDetail(dataset: string, customerId: string): Promise<VestiCustomerDetail | null> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const clientes = vestiTable(dataset, "clientes_vesti");
+
+  const [custRows] = await bigquery.query({
+    query: `SELECT id, name, document, email, phone, active, profile.name AS profile_name, created_at FROM ${clientes} WHERE id = @customerId LIMIT 1`,
+    params: { customerId },
+  });
+  const cust = (custRows as Array<Record<string, unknown>>)[0];
+  if (!cust) return null;
+
+  const [orderRows] = await bigquery.query({
+    query: `
+      SELECT
+        pedido_id,
+        ANY_VALUE(status_pedido) AS status,
+        ANY_VALUE(estado) AS state,
+        ANY_VALUE(cidade) AS city,
+        ANY_VALUE(data_ref) AS created_at,
+        COALESCE(SUM(valor_reservado), 0) AS amount,
+        COUNT(*) AS item_count
+      FROM ${view}
+      WHERE cliente_id = @customerId
+      GROUP BY pedido_id
+      ORDER BY created_at DESC
+      LIMIT 50
+    `,
+    params: { customerId },
+  });
+
+  const [productRows] = await bigquery.query({
+    query: `
+      SELECT
+        produto_id, ANY_VALUE(produto_nome) AS name, ANY_VALUE(produto_sku) AS sku,
+        SUM(produto_quantidade_reservada) AS quantity,
+        SUM(produto_preco_unitario * produto_quantidade_reservada) AS total_spent,
+        MIN(data_ref) AS first_order_date
+      FROM ${view}
+      WHERE cliente_id = @customerId AND produto_id IS NOT NULL
+      GROUP BY produto_id
+      ORDER BY total_spent DESC
+      LIMIT 20
+    `,
+    params: { customerId },
+  });
+
+  // Totais reais (não limitados aos 50 pedidos exibidos acima).
+  const [totalsRows] = await bigquery.query({
+    query: `
+      SELECT
+        COUNT(DISTINCT pedido_id) AS total_orders,
+        COALESCE(SUM(valor_reservado), 0) AS total_spent,
+        MIN(data_ref) AS first_purchase_at,
+        MAX(data_ref) AS last_purchase_at,
+        ARRAY_AGG(NULLIF(estado, '') IGNORE NULLS ORDER BY data_ref DESC LIMIT 1)[SAFE_OFFSET(0)] AS state,
+        ARRAY_AGG(NULLIF(cidade, '') IGNORE NULLS ORDER BY data_ref DESC LIMIT 1)[SAFE_OFFSET(0)] AS city
+      FROM ${view}
+      WHERE cliente_id = @customerId
+    `,
+    params: { customerId },
+  });
+  const t = (totalsRows as Array<Record<string, unknown>>)[0];
+
+  const document = (cust.document as string) ?? null;
+  const totals = {
+    totalOrders: Number(t?.total_orders) || 0,
+    totalSpent: Number(t?.total_spent) || 0,
+  };
+  const registrationStatus = inferRegistrationStatus(cust.active as boolean | null, (cust.profile_name as string) ?? null);
+  const paidOrders = (orderRows as Array<Record<string, unknown>>).filter((r) => r.status === "PAID").length;
+  const eventCounts = cust.email
+    ? await fetchVestiEventCounts(dataset, String(cust.email)).catch(() => ({ visits: 0, productViews: 0, addedToCart: 0 }))
+    : { visits: 0, productViews: 0, addedToCart: 0 };
+
+  return {
+    customer: {
+      id: String(cust.id),
+      name: (cust.name as string) || null,
+      email: String(cust.email ?? ""),
+      phone: (cust.phone as string) || null,
+      document: maskCnpj(document),
+      documentType: document ? (document.replace(/\D/g, "").length === 11 ? "CPF" : "CNPJ") : null,
+      state: (t?.state as string) || null,
+      city: (t?.city as string) || null,
+      registrationStatus,
+      totalOrders: totals.totalOrders,
+      totalSpent: totals.totalSpent,
+      firstPurchaseAt: t?.first_purchase_at ? toDateOnly(t.first_purchase_at) : null,
+      lastPurchaseAt: t?.last_purchase_at ? toDateOnly(t.last_purchase_at) : null,
+      createdAt: toDateOnly(cust.created_at),
+    },
+    orders: (orderRows as Array<Record<string, unknown>>).map((r) => ({
+      id: String(r.pedido_id),
+      amount: Number(r.amount) || 0,
+      status: (r.status as string) ?? null,
+      state: (r.state as string) || null,
+      city: (r.city as string) || null,
+      itemCount: Number(r.item_count) || 0,
+      createdAt: toDateOnly(r.created_at),
+    })),
+    productsPurchased: (productRows as Array<Record<string, unknown>>).map((r) => ({
+      productId: String(r.produto_id),
+      name: (r.name as string) ?? "",
+      sku: (r.sku as string) ?? "",
+      quantity: Number(r.quantity) || 0,
+      totalSpent: Number(r.total_spent) || 0,
+      firstOrderDate: r.first_order_date ? toDateOnly(r.first_order_date) : null,
+    })),
+    journey: {
+      visits: eventCounts.visits,
+      registered: true,
+      approved: registrationStatus === "APPROVED",
+      productViews: eventCounts.productViews,
+      addedToCart: eventCounts.addedToCart,
+      purchased: paidOrders,
+    },
+  };
+}
+
+// ───────── Timeline de eventos (comportamento) ─────────
+//
+// Não existe integração UpZero pro lado Vesti (o customerId nem existe na
+// tabela Postgres que a rota /customers/:id/timeline usa hoje). Mas existe
+// dado de evento real vindo do server-side tagging: BigQuery
+// `up-vesti-report.stape_logs.EventsLogsTratado`, filtrado por
+// `client = <dataset>` e casado por e-mail. Confirmado com dado real
+// (28/07/2026): AddToCart, PageView, ViewContent, Purchase,
+// InitiateCheckout, Lead, Contact, GetUpagency.
+//
+// Matching hoje é só por e-mail. Existe uma coluna `ga4Tid` na tabela
+// `User` do Postgres `vesti-database` que poderia dar um match mais
+// preciso, mas isso está fora de alcance daqui (banco diferente, sem
+// credencial configurada neste projeto) e a decisão da empresa é não
+// generalizar filtro por TID pras outras marcas — só Namine tem sinal
+// verde. Não implementado ainda; e-mail já é suficiente pra validar.
+
+const VESTI_EVENT_LABELS: Record<string, { eventName: string; eventLabel: string }> = {
+  ViewContent: { eventName: "product_view", eventLabel: "Visualizou produto" },
+  AddToCart: { eventName: "add_to_cart", eventLabel: "Adicionou ao carrinho" },
+  InitiateCheckout: { eventName: "checkout_start", eventLabel: "Iniciou checkout" },
+  Purchase: { eventName: "purchase", eventLabel: "Comprou" },
+  PageView: { eventName: "page_view", eventLabel: "Visitou o site" },
+  Lead: { eventName: "register_submitted", eventLabel: "Enviou cadastro" },
+  GetUpagency: { eventName: "referral", eventLabel: "Indicação/agência" },
+  Contact: { eventName: "contact", eventLabel: "Contato" },
+};
+
+export type VestiTimelineEvent = {
+  id: string;
+  occurredAt: string;
+  eventName: string;
+  eventLabel: string;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+};
+
+export type VestiTouch = {
+  source: string | null;
+  medium: string | null;
+  campaign: string | null;
+  occurredAt: string | null;
+};
+
+export type VestiCustomerTimeline = {
+  summary: {
+    totalEvents: number;
+    productViews: number;
+    addToCartEvents: number;
+    checkoutStarts: number;
+    purchases: number;
+    registerSubmitted: number;
+    firstSeenAt: string | null;
+    lastSeenAt: string | null;
+  };
+  firstTouch: VestiTouch;
+  lastTouch: VestiTouch;
+  timeline: VestiTimelineEvent[];
+};
+
+// O hit de tracking (`request_url`) carrega a página visitada dentro do
+// parâmetro `dl` (document location), URL-encoded — e é essa URL de página
+// que tem os utm_* de verdade (o request em si não tem colunas utm_* soltas).
+// Ex.: .../g/collect?...&dl=https%3A%2F%2Fsite%2F%3Futm_source%3Dup_agency...
+function extractUtmFromRequestUrl(requestUrl: string | null | undefined): {
+  source: string | null;
+  medium: string | null;
+  campaign: string | null;
+} {
+  const empty = { source: null, medium: null, campaign: null };
+  if (!requestUrl) return empty;
+  try {
+    const query = requestUrl.includes("?") ? requestUrl.slice(requestUrl.indexOf("?") + 1) : requestUrl;
+    const params = new URLSearchParams(query);
+    const dl = params.get("dl") ?? params.get("dr");
+    if (!dl) return empty;
+    const pageUrl = new URL(dl);
+    return {
+      source: pageUrl.searchParams.get("utm_source"),
+      medium: pageUrl.searchParams.get("utm_medium"),
+      campaign: pageUrl.searchParams.get("utm_campaign"),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+export async function fetchVestiCustomerEmail(dataset: string, customerId: string): Promise<string | null> {
+  const clientes = vestiTable(dataset, "clientes_vesti");
+  const [rows] = await bigquery.query({
+    query: `SELECT email FROM ${clientes} WHERE id = @customerId LIMIT 1`,
+    params: { customerId },
+  });
+  const email = (rows as Array<Record<string, unknown>>)[0]?.email;
+  return email ? String(email) : null;
+}
+
+async function fetchVestiEventCounts(
+  storeSlug: string,
+  email: string,
+): Promise<{ visits: number; productViews: number; addedToCart: number }> {
+  const [rows] = await bigquery.query({
+    query: `
+      SELECT event_name, COUNT(*) AS c
+      FROM \`up-vesti-report.stape_logs.EventsLogsTratado\`
+      WHERE client = @storeSlug AND LOWER(email) = LOWER(@email)
+      GROUP BY event_name
+    `,
+    params: { storeSlug, email },
+  });
+  const counts = new Map((rows as Array<Record<string, unknown>>).map((r) => [String(r.event_name), Number(r.c) || 0]));
+  return {
+    visits: counts.get("PageView") ?? 0,
+    productViews: counts.get("ViewContent") ?? 0,
+    addedToCart: counts.get("AddToCart") ?? 0,
+  };
+}
+
+export async function fetchVestiCustomerTimeline(
+  storeSlug: string,
+  email: string,
+): Promise<VestiCustomerTimeline> {
+  const [rows] = await bigquery.query({
+    query: `
+      SELECT event_ts, event_name, request_url
+      FROM \`up-vesti-report.stape_logs.EventsLogsTratado\`
+      WHERE client = @storeSlug AND LOWER(email) = LOWER(@email)
+      ORDER BY event_ts ASC
+      LIMIT 200
+    `,
+    params: { storeSlug, email },
+  });
+
+  const raw = rows as Array<Record<string, unknown>>;
+  const withUtm = raw.map((r) => ({
+    row: r,
+    occurredAt: toDateOnly(r.event_ts),
+    utm: extractUtmFromRequestUrl(r.request_url as string | null),
+  }));
+
+  const timeline: VestiTimelineEvent[] = withUtm
+    .map(({ row: r, occurredAt, utm }, i) => {
+      const rawName = String(r.event_name ?? "");
+      const mapped = VESTI_EVENT_LABELS[rawName] ?? { eventName: rawName.toLowerCase() || "event", eventLabel: rawName || "Evento" };
+      return {
+        id: `${storeSlug}_${i}`,
+        occurredAt,
+        eventName: mapped.eventName,
+        eventLabel: mapped.eventLabel,
+        utmSource: utm.source,
+        utmMedium: utm.medium,
+        utmCampaign: utm.campaign,
+      };
+    })
+    .reverse(); // volta pra mais recente primeiro (a query buscou ASC pra achar first/last touch fácil)
+
+  const countRaw = (name: string) => raw.filter((r) => r.event_name === name).length;
+  const timestamps = withUtm.map((e) => e.occurredAt).filter(Boolean);
+  const touchesWithUtm = withUtm.filter((e) => e.utm.source || e.utm.campaign);
+  const firstTouchRaw = touchesWithUtm[0];
+  const lastTouchRaw = touchesWithUtm[touchesWithUtm.length - 1];
+  const toTouch = (t: typeof firstTouchRaw): VestiTouch =>
+    t ? { source: t.utm.source, medium: t.utm.medium, campaign: t.utm.campaign, occurredAt: t.occurredAt } : { source: null, medium: null, campaign: null, occurredAt: null };
+
+  return {
+    summary: {
+      totalEvents: raw.length,
+      productViews: countRaw("ViewContent"),
+      addToCartEvents: countRaw("AddToCart"),
+      checkoutStarts: countRaw("InitiateCheckout"),
+      purchases: countRaw("Purchase"),
+      registerSubmitted: countRaw("Lead"),
+      firstSeenAt: timestamps[0] ?? null,
+      lastSeenAt: timestamps[timestamps.length - 1] ?? null,
+    },
+    firstTouch: toTouch(firstTouchRaw),
+    lastTouch: toTouch(lastTouchRaw),
+    timeline,
+  };
+}
+
+// ───────── Resumo de clientes (KPIs de cadastro) ─────────
+
+export type VestiCustomerSummary = {
+  kpis: {
+    totalRegistrations: number;
+    approvedRegistrations: number;
+    pendingRegistrations: number;
+    rejectedRegistrations: number;
+    approvalRatePct: number;
+    customersWithoutPurchase: number;
+    totalBuyers: number;
+  };
+  registrationsOverTime: { date: string; registrations: number; approved: number }[];
+  registrationsByState: { state: string; count: number }[];
+  registrationsBySource: { source: string; count: number }[];
+};
+
+export async function fetchVestiCustomerSummary(
+  dataset: string,
+  dateFrom: string | null,
+  dateTo: string | null,
+): Promise<VestiCustomerSummary> {
+  const clientes = vestiTable(dataset, "clientes_vesti");
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const dateFilter = dateFrom && dateTo ? "AND DATE(created_at) BETWEEN @dateFrom AND @dateTo" : "";
+  const params: Record<string, unknown> = dateFrom && dateTo ? { dateFrom, dateTo } : {};
+
+  const kpiQuery = `
+    WITH regs AS (
+      SELECT id, active, profile.name AS profile_name, created_at
+      FROM ${clientes}
+      WHERE 1=1 ${dateFilter}
+    ),
+    buyers AS (
+      SELECT DISTINCT cliente_id FROM ${view} WHERE cliente_id IS NOT NULL
+    )
+    SELECT
+      COUNT(*) AS total_registrations,
+      COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP')) AS approved_registrations,
+      COUNTIF(COALESCE(active, true) != false AND COALESCE(profile_name, '') NOT IN ('Liberado', 'VIP')) AS pending_registrations,
+      COUNTIF(active = false) AS rejected_registrations,
+      COUNTIF(b.cliente_id IS NOT NULL) AS total_buyers,
+      COUNTIF(b.cliente_id IS NULL) AS customers_without_purchase
+    FROM regs r
+    LEFT JOIN buyers b ON b.cliente_id = r.id
+  `;
+
+  const dailyQuery = `
+    SELECT
+      DATE(created_at) AS date,
+      COUNT(*) AS registrations,
+      COUNTIF(active != false AND profile.name IN ('Liberado', 'VIP')) AS approved
+    FROM ${clientes}
+    WHERE 1=1 ${dateFilter}
+    GROUP BY date
+    ORDER BY date
+  `;
+
+  const sourceQuery = `
+    SELECT COALESCE(NULLIF(origin, ''), 'Direto') AS source, COUNT(*) AS count
+    FROM ${clientes}
+    WHERE 1=1 ${dateFilter}
+    GROUP BY source
+    ORDER BY count DESC
+    LIMIT 20
+  `;
+
+  // Pega o estado real (via pedidos) quando existir; onde não existe, o
+  // fallback por DDD do telefone é aplicado em JS logo abaixo (mesma lógica
+  // já usada pro heat map de clients UpZero, ver lib/phoneState.ts).
+  const stateQuery = `
+    WITH regs AS (
+      SELECT id, phone FROM ${clientes} WHERE 1=1 ${dateFilter}
+    ),
+    customer_state AS (
+      SELECT cliente_id, ARRAY_AGG(NULLIF(estado, '') IGNORE NULLS ORDER BY data_ref DESC LIMIT 1)[SAFE_OFFSET(0)] AS state
+      FROM ${view}
+      WHERE cliente_id IS NOT NULL
+      GROUP BY cliente_id
+    )
+    SELECT r.phone AS phone, cs.state AS state
+    FROM regs r
+    LEFT JOIN customer_state cs ON cs.cliente_id = r.id
+  `;
+
+  const [[kpiRows], [dailyRows], [sourceRows], [stateRows]] = await Promise.all([
+    bigquery.query({ query: kpiQuery, params }),
+    bigquery.query({ query: dailyQuery, params }),
+    bigquery.query({ query: sourceQuery, params }),
+    bigquery.query({ query: stateQuery, params }),
+  ]);
+
+  const k = (kpiRows as Array<Record<string, unknown>>)[0];
+  const totalRegistrations = Number(k?.total_registrations) || 0;
+  const approvedRegistrations = Number(k?.approved_registrations) || 0;
+
+  const stateCounts = new Map<string, number>();
+  for (const row of stateRows as Array<Record<string, unknown>>) {
+    const state = (row.state as string) || stateFromPhoneDdd(row.phone as string);
+    if (!state) continue;
+    stateCounts.set(state, (stateCounts.get(state) ?? 0) + 1);
+  }
+  const registrationsByState = Array.from(stateCounts.entries())
+    .map(([state, count]) => ({ state, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 30);
+
+  return {
+    kpis: {
+      totalRegistrations,
+      approvedRegistrations,
+      pendingRegistrations: Number(k?.pending_registrations) || 0,
+      rejectedRegistrations: Number(k?.rejected_registrations) || 0,
+      approvalRatePct: totalRegistrations > 0 ? (approvedRegistrations / totalRegistrations) * 100 : 0,
+      customersWithoutPurchase: Number(k?.customers_without_purchase) || 0,
+      totalBuyers: Number(k?.total_buyers) || 0,
+    },
+    registrationsOverTime: (dailyRows as Array<Record<string, unknown>>).map((r) => ({
+      date: toDateOnly(r.date),
+      registrations: Number(r.registrations) || 0,
+      approved: Number(r.approved) || 0,
+    })),
+    registrationsByState,
+    registrationsBySource: (sourceRows as Array<Record<string, unknown>>).map((r) => ({
+      source: String(r.source),
+      count: Number(r.count) || 0,
+    })),
+  };
+}
+
+// ───────── Produtos ─────────
+//
+// Catálogo vem de `produtos_vesti` (sem `cost`/`restockThreshold` — a
+// Vesti não tem esses conceitos; `cost` fica null, `restockThreshold` usa
+// um valor fixo razoável). Estoque vem de `estoques_vesti` (somado por
+// produto). Vendas (totalSold/totalRevenue) vêm de `dashboard_vendas_view`
+// agregada por `produto_id`.
+
+const VESTI_DEFAULT_RESTOCK_THRESHOLD = 10;
+
+function computeVestiProductLevel(
+  totalSold: number,
+  stock: number,
+  recent30dSold: number,
+  catalogAvgSellThrough: number,
+): "High Conversion" | "Standard" | "Low" | "At Risk" {
+  if (totalSold === 0) return "At Risk";
+  const total = totalSold + stock;
+  const sellThrough = total > 0 ? totalSold / total : 0;
+  if (recent30dSold === 0 && sellThrough < catalogAvgSellThrough * 0.4) return "At Risk";
+  if (sellThrough < 0.15 && stock > VESTI_DEFAULT_RESTOCK_THRESHOLD * 3) return "At Risk";
+  if (sellThrough >= 0.65 || (sellThrough >= 0.5 && sellThrough > catalogAvgSellThrough * 1.3)) return "High Conversion";
+  if (sellThrough >= 0.35 || (sellThrough >= 0.25 && sellThrough >= catalogAvgSellThrough * 0.7)) return "Standard";
+  return "Low";
+}
+
+export type VestiProductRow = {
+  id: string;
+  sku: string;
+  name: string;
+  category: string | null;
+  price: number;
+  stock: number;
+  totalSold: number;
+  totalRevenue: number;
+  createdAt: string;
+};
+
+export async function fetchVestiProductsPage(
+  dataset: string,
+  filters: { search?: string; category?: string; sort: "revenue" | "units" | "created"; limit: number },
+): Promise<VestiProductRow[]> {
+  const produtos = vestiTable(dataset, "produtos_vesti");
+  const estoques = vestiTable(dataset, "estoques_vesti");
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+
+  const conditions: string[] = [];
+  const params: Record<string, unknown> = { limit: filters.limit };
+  if (filters.search) {
+    conditions.push("(LOWER(p.name) LIKE @search OR LOWER(p.code) LIKE @search)");
+    params.search = `%${filters.search.toLowerCase()}%`;
+  }
+  if (filters.category) {
+    conditions.push("p.categories[SAFE_OFFSET(0)].name = @category");
+    params.category = filters.category;
+  }
+  const whereClause = conditions.length ? `AND ${conditions.join(" AND ")}` : "";
+  const orderBy = filters.sort === "units" ? "total_sold DESC" : filters.sort === "created" ? "created_at DESC" : "total_revenue DESC";
+
+  const query = `
+    WITH stock_agg AS (
+      SELECT product_id, COALESCE(SUM(quantity), 0) AS stock
+      FROM ${estoques}
+      GROUP BY product_id
+    ),
+    sales_agg AS (
+      SELECT
+        produto_id,
+        COALESCE(SUM(produto_quantidade_reservada), 0) AS total_sold,
+        COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS total_revenue
+      FROM ${view}
+      WHERE produto_id IS NOT NULL
+      GROUP BY produto_id
+    )
+    SELECT
+      p.id, p.code, p.name, p.price, p.created_at,
+      p.categories[SAFE_OFFSET(0)].name AS category,
+      COALESCE(sa.total_sold, 0) AS total_sold,
+      COALESCE(sa.total_revenue, 0) AS total_revenue,
+      COALESCE(st.stock, 0) AS stock
+    FROM ${produtos} p
+    LEFT JOIN stock_agg st ON st.product_id = p.id
+    LEFT JOIN sales_agg sa ON sa.produto_id = p.id
+    WHERE p.active != false ${whereClause}
+    ORDER BY ${orderBy}
+    LIMIT @limit
+  `;
+
+  const [rows] = await bigquery.query({ query, params });
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.id),
+    sku: (r.code as string) ?? "",
+    name: (r.name as string) ?? "",
+    category: (r.category as string) || null,
+    price: Number(r.price) || 0,
+    stock: Number(r.stock) || 0,
+    totalSold: Number(r.total_sold) || 0,
+    totalRevenue: Number(r.total_revenue) || 0,
+    createdAt: toDateOnly(r.created_at),
+  }));
+}
+
+export type VestiProductDetail = {
+  product: VestiProductRow;
+  kpis: { totalRevenue: number; totalUnitsSold: number; avgTicket: number; uniqueBuyers: number; percentSold: number };
+  revenueOverTime: { date: string; revenue: number; units: number }[];
+  byColor: { label: string; units: number; revenue: number }[];
+  bySize: { label: string; units: number; revenue: number }[];
+  byState: { label: string; units: number; revenue: number }[];
+  level: "High Conversion" | "Standard" | "Low" | "At Risk";
+};
+
+export async function fetchVestiProductDetail(dataset: string, productId: string): Promise<VestiProductDetail | null> {
+  const produtos = vestiTable(dataset, "produtos_vesti");
+  const estoques = vestiTable(dataset, "estoques_vesti");
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+
+  const [prodRows] = await bigquery.query({
+    query: `SELECT id, code, name, price, created_at, categories[SAFE_OFFSET(0)].name AS category FROM ${produtos} WHERE id = @productId LIMIT 1`,
+    params: { productId },
+  });
+  const prod = (prodRows as Array<Record<string, unknown>>)[0];
+  if (!prod) return null;
+
+  const [[stockRows], [salesRows], [dailyRows], [colorRows], [sizeRows], [stateRows], [catalogRows]] = await Promise.all([
+    bigquery.query({ query: `SELECT COALESCE(SUM(quantity), 0) AS stock FROM ${estoques} WHERE product_id = @productId`, params: { productId } }),
+    bigquery.query({
+      query: `
+        SELECT
+          COALESCE(SUM(produto_quantidade_reservada), 0) AS total_sold,
+          COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS total_revenue,
+          COUNT(DISTINCT IF(produto_quantidade_reservada > 0, cliente_id, NULL)) AS unique_buyers
+        FROM ${view} WHERE produto_id = @productId
+      `,
+      params: { productId },
+    }),
+    bigquery.query({
+      query: `
+        SELECT data_ref AS date, COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS revenue, COALESCE(SUM(produto_quantidade_reservada), 0) AS units
+        FROM ${view} WHERE produto_id = @productId
+        GROUP BY date ORDER BY date
+      `,
+      params: { productId },
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(NULLIF(produto_cor, ''), 'Sem cor') AS label, COALESCE(SUM(produto_quantidade_reservada), 0) AS units, COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS revenue
+        FROM ${view} WHERE produto_id = @productId GROUP BY label ORDER BY revenue DESC
+      `,
+      params: { productId },
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(NULLIF(produto_tamanho, ''), 'Único') AS label, COALESCE(SUM(produto_quantidade_reservada), 0) AS units, COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS revenue
+        FROM ${view} WHERE produto_id = @productId GROUP BY label ORDER BY revenue DESC
+      `,
+      params: { productId },
+    }),
+    bigquery.query({
+      query: `
+        SELECT NULLIF(estado, '') AS label, COALESCE(SUM(produto_quantidade_reservada), 0) AS units, COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS revenue
+        FROM ${view} WHERE produto_id = @productId AND estado IS NOT NULL AND estado != '' GROUP BY label ORDER BY revenue DESC
+      `,
+      params: { productId },
+    }),
+    bigquery.query({
+      query: `
+        WITH stock_agg AS (SELECT product_id, COALESCE(SUM(quantity), 0) AS stock FROM ${estoques} GROUP BY product_id),
+        sales_agg AS (SELECT produto_id, COALESCE(SUM(produto_quantidade_reservada), 0) AS total_sold FROM ${view} WHERE produto_id IS NOT NULL GROUP BY produto_id)
+        SELECT COALESCE(sa.total_sold, 0) AS total_sold, COALESCE(st.stock, 0) AS stock
+        FROM ${produtos} p
+        LEFT JOIN stock_agg st ON st.product_id = p.id
+        LEFT JOIN sales_agg sa ON sa.produto_id = p.id
+        WHERE p.active != false
+      `,
+    }),
+  ]);
+
+  const stock = Number((stockRows as Array<Record<string, unknown>>)[0]?.stock) || 0;
+  const sales = (salesRows as Array<Record<string, unknown>>)[0];
+  const totalSold = Number(sales?.total_sold) || 0;
+  const totalRevenue = Number(sales?.total_revenue) || 0;
+
+  const catalog = catalogRows as Array<Record<string, unknown>>;
+  const catalogAvgSellThrough =
+    catalog.length > 0
+      ? catalog.reduce((sum, r) => {
+          const sold = Number(r.total_sold) || 0;
+          const st = Number(r.stock) || 0;
+          const t = sold + st;
+          return sum + (t > 0 ? sold / t : 0);
+        }, 0) / catalog.length
+      : 0;
+
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const recent30dSold = (dailyRows as Array<Record<string, unknown>>)
+    .filter((r) => new Date(toDateOnly(r.date)) >= thirtyDaysAgo)
+    .reduce((sum, r) => sum + (Number(r.units) || 0), 0);
+
+  return {
+    product: {
+      id: String(prod.id),
+      sku: (prod.code as string) ?? "",
+      name: (prod.name as string) ?? "",
+      category: (prod.category as string) || null,
+      price: Number(prod.price) || 0,
+      stock,
+      totalSold,
+      totalRevenue,
+      createdAt: toDateOnly(prod.created_at),
+    },
+    kpis: {
+      totalRevenue,
+      totalUnitsSold: totalSold,
+      avgTicket: totalSold > 0 ? totalRevenue / totalSold : 0,
+      uniqueBuyers: Number(sales?.unique_buyers) || 0,
+      percentSold: totalSold + stock > 0 ? totalSold / (totalSold + stock) : 0,
+    },
+    revenueOverTime: (dailyRows as Array<Record<string, unknown>>).map((r) => ({
+      date: toDateOnly(r.date),
+      revenue: Number(r.revenue) || 0,
+      units: Number(r.units) || 0,
+    })),
+    byColor: (colorRows as Array<Record<string, unknown>>).map((r) => ({ label: String(r.label), units: Number(r.units) || 0, revenue: Number(r.revenue) || 0 })),
+    bySize: (sizeRows as Array<Record<string, unknown>>).map((r) => ({ label: String(r.label), units: Number(r.units) || 0, revenue: Number(r.revenue) || 0 })),
+    byState: (stateRows as Array<Record<string, unknown>>).map((r) => ({ label: String(r.label), units: Number(r.units) || 0, revenue: Number(r.revenue) || 0 })),
+    level: computeVestiProductLevel(totalSold, stock, recent30dSold, catalogAvgSellThrough),
+  };
 }

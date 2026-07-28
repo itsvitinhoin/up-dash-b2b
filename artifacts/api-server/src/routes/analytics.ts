@@ -65,8 +65,10 @@ import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
 import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
-import { computeVestiWindow, computeVestiStateRevenue, fetchVestiAttributedCustomers, type VestiFilters } from "../services/vestiAnalytics";
-import { cached } from "../lib/queryCache";
+import * as vestiDashboardController from "../controllers/vestiDashboardController";
+import * as vestiOrdersController from "../controllers/vestiOrdersController";
+import * as vestiCustomersController from "../controllers/vestiCustomersController";
+import * as vestiProductsController from "../controllers/vestiProductsController";
 import {
   buildCustomerTimelineResponse,
   getMetricUser,
@@ -189,34 +191,19 @@ router.use((req, res, next) => {
   next();
 });
 
-const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function addDaysToDateOnly(value: string, days: number): string {
-  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
-  const date = new Date(Date.UTC(year, month - 1, day + days));
-  return date.toISOString().slice(0, 10);
-}
-
-function saoPauloDateOnlyStart(value: string): Date {
-  return new Date(`${value}T03:00:00.000Z`);
-}
-
-function saoPauloDateOnlyEnd(value: string): Date {
-  return new Date(`${addDaysToDateOnly(value, 1)}T02:59:59.999Z`);
-}
-
-function saoPauloDateOnly(value: Date): string {
-  return new Date(value.getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
-
-function queryDateOnly(
-  query: Record<string, unknown>,
-  key: "dateFrom" | "dateTo",
-  fallback: Date,
-): string {
-  const raw = typeof query[key] === "string" ? query[key] : null;
-  return raw && DATE_ONLY_RE.test(raw) ? raw : saoPauloDateOnly(fallback);
-}
+// Helpers de data/paginação usados em várias rotas — movidos pra
+// lib/httpQuery.ts (controllers, além de routes, precisam deles).
+import {
+  DATE_ONLY_RE,
+  addDaysToDateOnly,
+  saoPauloDateOnlyStart,
+  saoPauloDateOnlyEnd,
+  saoPauloDateOnly,
+  queryDateOnly,
+  coerceDateQuery,
+  dateRange,
+  requireClient,
+} from "../lib/httpQuery";
 
 function utcDateOnlyStart(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -249,37 +236,6 @@ function getGlobalMetaAccessToken(fallback?: string | null): string | null {
     fallback ??
     null
   );
-}
-
-// Orval generates `zod.date()` for date-time format params, but query strings
-// arrive as strings. Coerce the relevant query fields before validation.
-function coerceDateQuery(query: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...query };
-  for (const key of ["dateFrom", "dateTo", "date"]) {
-    const v = out[key];
-    if (typeof v === "string" && v.length > 0) {
-      if (DATE_ONLY_RE.test(v)) {
-        out[key] = key === "dateTo" ? saoPauloDateOnlyEnd(v) : saoPauloDateOnlyStart(v);
-        continue;
-      }
-      const parsed = new Date(v);
-      if (!Number.isNaN(parsed.getTime())) {
-        out[key] = parsed;
-      }
-    }
-  }
-  return out;
-}
-
-function dateRange(
-  from: Date | undefined,
-  to: Date | undefined,
-): { from: Date; to: Date } {
-  const now = new Date();
-  const defaultTo = to ?? now;
-  const defaultFrom =
-    from ?? new Date(defaultTo.getTime() - 30 * 24 * 60 * 60 * 1000);
-  return { from: defaultFrom, to: defaultTo };
 }
 
 function upzeroIsoRange(
@@ -562,23 +518,6 @@ async function enrichRowsWithProductImages(
       : null);
     return matchedProduct || productImageUrl ? { ...row, product, product_image_url: productImageUrl } : row;
   });
-}
-
-function requireClient(
-  req: import("express").Request,
-  res: import("express").Response,
-): string | null {
-  const clientId = resolveClientId(req);
-  if (!clientId) {
-    res.status(400).json({
-      error: true,
-      code: "CLIENT_REQUIRED",
-      message: "clientId query parameter is required for admin users",
-      status: 400,
-    });
-    return null;
-  }
-  return clientId;
 }
 
 const SIZE_VALUE_RE = /^(PP|P|M|G|GG|XG|XGG|EXG|EG|XP|XS|S|L|XL|XXL|XXXL|U|UNICO|ONE SIZE|[0-9]{1,3})$/i;
@@ -1176,114 +1115,10 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const isB2CClient = clientConfig?.dashboardType === "B2C";
 
   // Client Vesti: dado analítico vem do BigQuery (dataset por loja), não do
-  // Postgres local — sai cedo do resto da rota, que é toda montada em cima
-  // das tabelas orders/customers/events daqui. Ver NOTAS-DEV.md.
+  // Postgres local. Camada de controller cuida do resto (ver
+  // controllers/vestiDashboardController.ts). Ver NOTAS-DEV.md.
   if (clientConfig?.commercePlatform === "VESTI") {
-    if (!clientConfig.bigqueryDataset) {
-      res.status(400).json({
-        error: true,
-        code: "MISSING_BIGQUERY_DATASET",
-        message: "Client Vesti sem bigqueryDataset configurado.",
-        status: 400,
-      });
-      return;
-    }
-    const dataset = clientConfig.bigqueryDataset;
-    const vestiFilters: VestiFilters = {
-      category: category || undefined,
-      sellerId: sellerId || undefined,
-      channel: channel || undefined,
-    };
-    const filterKey = JSON.stringify(vestiFilters);
-    const VESTI_CACHE_TTL_MS = 5 * 60 * 1000;
-
-    const vestiCurrent = await cached(
-      `vesti:window:${dataset}:${dateFromOnly}:${dateToOnly}:${filterKey}`,
-      VESTI_CACHE_TTL_MS,
-      () => computeVestiWindow(dataset, dateFromOnly, dateToOnly, vestiFilters, true),
-    );
-
-    let vestiPrev: Awaited<ReturnType<typeof computeVestiWindow>> | null = null;
-    if (compare) {
-      const lengthMs = to.getTime() - from.getTime();
-      const prevTo = new Date(from.getTime() - 1);
-      const prevFrom = new Date(prevTo.getTime() - lengthMs);
-      const prevFromOnly = saoPauloDateOnly(prevFrom);
-      const prevToOnly = saoPauloDateOnly(prevTo);
-      vestiPrev = await cached(
-        `vesti:window:${dataset}:${prevFromOnly}:${prevToOnly}:${filterKey}`,
-        VESTI_CACHE_TTL_MS,
-        () => computeVestiWindow(dataset, prevFromOnly, prevToOnly, vestiFilters, false),
-      );
-    }
-
-    // Signal: regiões em alta (mesma lógica do caminho Postgres, usando
-    // estado em vez de customersTable.state). Não computamos o signal de
-    // "alta demanda, baixa conversão" pro Vesti — não existe conceito de
-    // sessão/visita nesse lado (venda por atacado via vendedora).
-    const wkEnd = to;
-    const wkStart = new Date(wkEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const pwkEnd = new Date(wkStart.getTime() - 1);
-    const pwkStart = new Date(pwkEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const [currStates, prevStates] = await Promise.all([
-      cached(`vesti:states:${dataset}:${saoPauloDateOnly(wkStart)}:${saoPauloDateOnly(wkEnd)}`, VESTI_CACHE_TTL_MS, () =>
-        computeVestiStateRevenue(dataset, saoPauloDateOnly(wkStart), saoPauloDateOnly(wkEnd)),
-      ),
-      cached(`vesti:states:${dataset}:${saoPauloDateOnly(pwkStart)}:${saoPauloDateOnly(pwkEnd)}`, VESTI_CACHE_TTL_MS, () =>
-        computeVestiStateRevenue(dataset, saoPauloDateOnly(pwkStart), saoPauloDateOnly(pwkEnd)),
-      ),
-    ]);
-    const prevStateMap = new Map(prevStates.map((r) => [r.state, r.revenue]));
-    const risingStates = currStates
-      .filter((r) => r.state && r.revenue > 0)
-      .map((r) => {
-        const prior = prevStateMap.get(r.state) ?? 0;
-        const growthPct = prior > 0 ? ((r.revenue - prior) / prior) * 100 : null;
-        return { state: r.state, revenue: r.revenue, growthPct };
-      })
-      .filter((r) => r.growthPct !== null && r.growthPct > 10)
-      .sort((a, b) => (b.growthPct ?? 0) - (a.growthPct ?? 0))
-      .slice(0, 3);
-    const vestiSignals: DashboardSignal[] =
-      risingStates.length > 0
-        ? [
-            {
-              type: "high_performing_regions",
-              severity: "info",
-              title: "High-performing regions this week",
-              body: `${risingStates.map((s) => `${s.state} (+${s.growthPct!.toFixed(0)}%)`).join(", ")} ${risingStates.length === 1 ? "is surging" : "are surging"} week-over-week. Consider shifting inventory or ad budget to these regions.`,
-              meta: { regions: risingStates.map((s) => ({ state: s.state, growthPct: +(s.growthPct!.toFixed(1)) })) },
-            },
-          ]
-        : [];
-
-    res.json(
-      GetDashboardResponse.parse({
-        kpis: vestiCurrent.kpis,
-        revenueOverTime: vestiCurrent.dailyRevenue,
-        ordersOverTime: vestiCurrent.dailyOrders,
-        leadsOverTime: vestiCurrent.dailyLeads,
-        revenueByCategory: vestiCurrent.revenueByCategory,
-        newBuyersOverTime: vestiCurrent.dailyNewBuyers,
-        returningBuyersOverTime: vestiCurrent.dailyReturningBuyers,
-        traffic: { sessions: 0, orders: vestiCurrent.kpis.orders, source: "none" },
-        dailyPerformance: vestiCurrent.dailyRevenue.map((r, i) => ({
-          date: r.date,
-          revenue: r.value,
-          orders: vestiCurrent.dailyOrders[i]?.value ?? 0,
-          sessions: 0,
-          conversionRate: 0,
-        })),
-        signals: vestiSignals,
-        ...(vestiPrev
-          ? {
-              prevKpis: vestiPrev.kpis,
-              prevRevenueOverTime: vestiPrev.dailyRevenue,
-              prevOrdersOverTime: vestiPrev.dailyOrders,
-            }
-          : {}),
-      }),
-    );
+    await vestiDashboardController.getDashboard(req, res);
     return;
   }
 
@@ -2680,7 +2515,7 @@ function buildAttributedCampaignCustomers(
   });
 }
 
-const CampaignCustomersQueryParams = GetDashboardQueryParams.pick({
+export const CampaignCustomersQueryParams = GetDashboardQueryParams.pick({
   clientId: true,
   dateFrom: true,
   dateTo: true,
@@ -2722,105 +2557,10 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
 
-  // Client Vesti: atribuição vem de tabelas pré-consolidadas no BigQuery
-  // (clientes/pedidos_atribuidos_consolidados), não da API da UP Zero.
-  // Ver vestiAnalytics.ts pra lógica completa.
+  // Client Vesti: atribuição vem de tabelas pré-consolidadas no BigQuery,
+  // não da API da UP Zero. Ver controllers/vestiDashboardController.ts.
   if (client?.commercePlatform === "VESTI") {
-    if (!client.bigqueryDataset) {
-      res.json({
-        rows: [],
-        data: [],
-        total: 0,
-        filters: { sources: [], campaigns: [], customerTypes: [] },
-        summary: { impactedCustomers: 0, attributedRevenue: 0, orders: 0, itemQuantity: 0, registrations: 0 },
-      });
-      return;
-    }
-    const dateFromOnly = saoPauloDateOnly(from);
-    const dateToOnly = saoPauloDateOnly(to);
-    const attributed = await cached(
-      `vesti:attributed:${client.bigqueryDataset}:${dateFromOnly}:${dateToOnly}`,
-      5 * 60 * 1000,
-      () => fetchVestiAttributedCustomers(client.bigqueryDataset!, dateFromOnly, dateToOnly),
-    );
-
-    let rows = attributed.map((c, index) => {
-      const touch = {
-        source: "UP Agency",
-        medium: null,
-        campaign: null,
-        occurredAt: c.firstTouchAt,
-      };
-      return {
-        customerId: null,
-        userId: index,
-        name: c.name,
-        email: c.email,
-        phone: null,
-        type: c.attributionType,
-        cpf: null,
-        cnpj: c.cnpj,
-        companyName: null,
-        documentType: c.cnpj ? "CNPJ" : null,
-        registrationStatus: null,
-        registeredAt: c.registeredAt,
-        firstSeenAt: c.firstTouchAt,
-        lastSeenAt: c.lastPurchaseAt ?? c.firstTouchAt,
-        firstTouch: touch,
-        lastTouch: touch,
-        returnTouch: null,
-        campaigns: c.firstTouchAt
-          ? [{ source: "UP Agency", medium: null, campaign: null, firstSeenAt: c.firstTouchAt, lastSeenAt: c.firstTouchAt, eventsCount: 1 }]
-          : [],
-        hasPurchase: c.purchaseCount > 0,
-        isRemarketing: c.attributionType === "Re-impacto",
-        purchaseCount: c.purchaseCount,
-        orderIds: [] as number[],
-        totalPurchaseValue: c.totalPurchaseValue,
-        addToCartCount: 0,
-        checkoutCount: 0,
-        registerSubmittedCount: 1,
-        productViewCount: 0,
-        lastEventName: null,
-        lastEventAt: c.lastPurchaseAt ?? c.firstTouchAt,
-      };
-    });
-
-    if (parsed.data.customerType) rows = rows.filter((r) => r.type === parsed.data.customerType);
-    if (parsed.data.purchase === "yes") rows = rows.filter((r) => r.hasPurchase);
-    if (parsed.data.purchase === "no") rows = rows.filter((r) => !r.hasPurchase);
-    if (parsed.data.remarketing === "yes") rows = rows.filter((r) => r.isRemarketing);
-    if (parsed.data.remarketing === "no") rows = rows.filter((r) => !r.isRemarketing);
-    if (parsed.data.document === "CNPJ") rows = rows.filter((r) => r.documentType === "CNPJ");
-    if (parsed.data.document === "none") rows = rows.filter((r) => r.documentType === null);
-    if (parsed.data.search) {
-      const search = parsed.data.search.toLowerCase();
-      rows = rows.filter(
-        (r) => r.name?.toLowerCase().includes(search) || r.email?.toLowerCase().includes(search) || r.cnpj?.includes(search),
-      );
-    }
-
-    const registeredInWindow = attributed.filter(
-      (c) => c.registeredAt && c.registeredAt >= dateFromOnly && c.registeredAt <= dateToOnly,
-    ).length;
-
-    res.json({
-      rows,
-      data: rows,
-      total: rows.length,
-      filters: {
-        sources: ["UP Agency"],
-        campaigns: [],
-        customerTypes: [...new Set(attributed.map((c) => c.attributionType).filter((v): v is string => !!v))],
-      },
-      summary: {
-        impactedCustomers: attributed.length,
-        attributedRevenue: attributed.reduce((sum, c) => sum + c.totalPurchaseValue, 0),
-        orders: attributed.reduce((sum, c) => sum + c.purchaseCount, 0),
-        itemQuantity: 0,
-        registrations: registeredInWindow,
-      },
-    });
+    await vestiDashboardController.getCampaignCustomers(req, res);
     return;
   }
 
@@ -4142,6 +3882,16 @@ router.get("/analytics/customers", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+
+  const [vestiCustCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform, bigqueryDataset: clientsTable.bigqueryDataset })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (vestiCustCheck?.commercePlatform === "VESTI") {
+    await vestiCustomersController.getCustomers(req, res);
+    return;
+  }
+
   const {
     dateFrom,
     dateTo,
@@ -4330,6 +4080,15 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+
+  const [vestiSummaryCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform, bigqueryDataset: clientsTable.bigqueryDataset })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (vestiSummaryCheck?.commercePlatform === "VESTI") {
+    await vestiCustomersController.getCustomerSummary(req, res);
+    return;
+  }
 
   const { dateFrom, dateTo, compare } = parsed.data;
   const customerRange = customerDateQueryRange(req.query as Record<string, unknown>, dateFrom, dateTo);
@@ -4820,19 +4579,32 @@ router.get("/analytics/customers/:customerId/timeline", async (req, res): Promis
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: pathParsed.error.message, status: 400 });
     return;
   }
+  const earlyClientId = resolveClientId(req) ?? (req.query.clientId as string | undefined);
+  if (!earlyClientId) {
+    res.status(400).json({ error: true, code: "CLIENT_REQUIRED", message: "clientId is required for admin users", status: 400 });
+    return;
+  }
+  const [vestiTimelineCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, earlyClientId));
+  if (vestiTimelineCheck?.commercePlatform === "VESTI") {
+    await vestiCustomersController.getCustomerTimeline(req, res);
+    return;
+  }
+
+  // Vesti não precisa de `from`/`to` (a timeline dela não é filtrada por
+  // janela hoje), então essa validação — exigida pelo caminho UpZero —
+  // só roda depois do desvio Vesti acima.
   const queryParsed = CustomerTimelineQueryParams.safeParse(req.query);
   if (!queryParsed.success) {
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: queryParsed.error.message, status: 400 });
     return;
   }
 
-  const clientId = resolveClientId(req) ?? queryParsed.data.clientId;
-  if (!clientId) {
-    res.status(400).json({ error: true, code: "CLIENT_REQUIRED", message: "clientId is required for admin users", status: 400 });
-    return;
-  }
-
+  const clientId = earlyClientId;
   const { customerId } = pathParsed.data;
+
   const [customer, client] = await Promise.all([
     db
       .select({
@@ -4926,6 +4698,15 @@ router.get("/analytics/customers/:customerId", async (req, res): Promise<void> =
   }
 
   const { customerId } = pathParsed.data;
+
+  const [vestiCustCheck2] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform, bigqueryDataset: clientsTable.bigqueryDataset })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (vestiCustCheck2?.commercePlatform === "VESTI") {
+    await vestiCustomersController.getCustomerDetail(req, res);
+    return;
+  }
 
   const [customer] = await db
     .select()
@@ -5116,9 +4897,13 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const [client] = await db
-    .select({ dashboardType: clientsTable.dashboardType, ga4PropertyId: clientsTable.ga4PropertyId })
+    .select({ dashboardType: clientsTable.dashboardType, ga4PropertyId: clientsTable.ga4PropertyId, commercePlatform: clientsTable.commercePlatform, bigqueryDataset: clientsTable.bigqueryDataset })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
+  if (client?.commercePlatform === "VESTI") {
+    await vestiProductsController.getProducts(req, res);
+    return;
+  }
   const isB2C = client?.dashboardType === "B2C";
   const { sort = "revenue", limit = 50, search, sku, category, state, size, color, dateFrom, dateTo } = parsed.data;
   const hasPeriodFilter = Boolean(dateFrom || dateTo);
@@ -5684,6 +5469,15 @@ router.get("/analytics/products/:productId", async (req, res): Promise<void> => 
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const { productId } = req.params;
+
+  const [vestiProdCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform, bigqueryDataset: clientsTable.bigqueryDataset })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (vestiProdCheck?.commercePlatform === "VESTI") {
+    await vestiProductsController.getProductDetail(req, res);
+    return;
+  }
 
   const dateFrom = qParsed.data.dateFrom ?? new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
   const dateTo = qParsed.data.dateTo ?? new Date();
@@ -6686,6 +6480,16 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
   const limit = parsed.data.limit;
   const offset = (page - 1) * limit;
   const search = parsed.data.search?.trim();
+
+  const [vestiCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform, bigqueryDataset: clientsTable.bigqueryDataset })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (vestiCheck?.commercePlatform === "VESTI") {
+    await vestiOrdersController.getOrdersPage(req, res);
+    return;
+  }
+
   const baseWhere = and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to));
   const listWhere = search
     ? and(
@@ -6934,6 +6738,15 @@ router.get("/analytics/orders-page/:orderId", async (req, res): Promise<void> =>
   const orderId = z.string().safeParse(req.params.orderId);
   if (!orderId.success) {
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: orderId.error.message, status: 400 });
+    return;
+  }
+
+  const [vestiCheck2] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform, bigqueryDataset: clientsTable.bigqueryDataset })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (vestiCheck2?.commercePlatform === "VESTI") {
+    await vestiOrdersController.getOrderDetail(req, res);
     return;
   }
 
