@@ -42,6 +42,12 @@ export const clientsTable = pgTable(
     // Calculado a partir do nome da loja pelo script-vesti-nuvem — nunca
     // digitado à mão (ver NOTAS-DEV.md sobre o bug histórico disso lá).
     bigqueryDataset: text("bigquery_dataset"),
+    // Dataset do BigQuery (projeto up-vesti-report) com as tabelas `*_erp`
+    // (clientes_erp/produtos_erp/pedidos_erp/estoque_erp) desse client,
+    // sincronizadas pelo job Miredata em script-vesti-nuvem. Independente
+    // de `bigqueryDataset`/commercePlatform — um client UpZero (ex: Obzee)
+    // pode ter ERP sem ser Vesti.
+    erpDataset: text("erp_dataset"),
     ga4MeasurementId: text("ga4_measurement_id"),
     ga4PropertyId: text("ga4_property_id"),
     ga4ApiSecret: text("ga4_api_secret"),

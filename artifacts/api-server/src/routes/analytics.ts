@@ -69,6 +69,7 @@ import * as vestiDashboardController from "../controllers/vestiDashboardControll
 import * as vestiOrdersController from "../controllers/vestiOrdersController";
 import * as vestiCustomersController from "../controllers/vestiCustomersController";
 import * as vestiProductsController from "../controllers/vestiProductsController";
+import * as erpController from "../controllers/erpController";
 import {
   buildCustomerTimelineResponse,
   getMetricUser,
@@ -9532,6 +9533,24 @@ router.post("/analytics/insight", async (req, res): Promise<void> => {
 
   const insight = await generateInsight(clientId, from, to, true, screen);
   res.json(GetInsightResponse.parse(insight));
+});
+
+// ─── ERP (Miredata) ──────────────────────────────────────────────────────────
+// Add-on independente de commercePlatform: qualquer client com `erpDataset`
+// configurado (ver services/erpAnalytics.ts) tem essas rotas disponíveis.
+// Não cobre atribuição/canal de mídia — isso não existe nas tabelas ERP,
+// ver nota em erpAnalytics.ts.
+router.get("/analytics/erp/dashboard", async (req, res): Promise<void> => {
+  await erpController.getDashboard(req, res);
+});
+router.get("/analytics/erp/orders", async (req, res): Promise<void> => {
+  await erpController.getOrders(req, res);
+});
+router.get("/analytics/erp/customers", async (req, res): Promise<void> => {
+  await erpController.getCustomers(req, res);
+});
+router.get("/analytics/erp/products", async (req, res): Promise<void> => {
+  await erpController.getProducts(req, res);
 });
 
 export default router;
