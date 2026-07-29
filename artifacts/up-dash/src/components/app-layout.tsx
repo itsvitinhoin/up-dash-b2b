@@ -147,6 +147,7 @@ const PLATFORM_PICK = "__platform__";
 const ADMIN_DISPLAY_EMAIL = "admin@updash.com";
 const GLOBAL_SWITCH_MIN_MS = 650;
 const GLOBAL_SWITCH_MAX_MS = 12000;
+const ADMIN_CLIENTS_CACHE_KEY = "updash.adminClientOptions.v1";
 const LOCAL_UI_PREVIEW =
   import.meta.env.DEV && import.meta.env.VITE_UI_PREVIEW === "1";
 const LOCAL_PREVIEW_CLIENT: Client = {
@@ -168,6 +169,46 @@ const LOCAL_PREVIEW_CLIENT: Client = {
   createdAt: "2026-07-01T00:00:00.000Z",
   updatedAt: "2026-07-23T00:00:00.000Z",
 };
+
+type AdminClientOption = {
+  id: string;
+  name: string;
+  dashboardType: "B2B" | "B2C" | null;
+  currency: string;
+  locale: string;
+};
+
+function toAdminClientOption(client: Client): AdminClientOption {
+  return {
+    id: client.id,
+    name: client.name,
+    dashboardType: client.dashboardType ?? null,
+    currency: client.currency,
+    locale: client.locale,
+  };
+}
+
+function readCachedAdminClients(): AdminClientOption[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ADMIN_CLIENTS_CACHE_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter(
+      (client): client is AdminClientOption =>
+        typeof client?.id === "string" &&
+        typeof client?.name === "string" &&
+        (client?.dashboardType === "B2B" ||
+          client?.dashboardType === "B2C" ||
+          client?.dashboardType === null) &&
+        typeof client?.currency === "string" &&
+        typeof client?.locale === "string",
+    );
+  } catch {
+    return [];
+  }
+}
 
 function isBackgroundQueryKey(queryKey: readonly unknown[]): boolean {
   const first = String(queryKey[0] ?? "");
@@ -200,6 +241,9 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { dateRange, setDateRange } = useDashboardFilters();
   const { setOpen: setShortcutsOpen } = useKeyboardShortcuts();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [cachedAdminClients, setCachedAdminClients] = useState<AdminClientOption[]>(
+    readCachedAdminClients,
+  );
   const userDisplayName = getUserDisplayName(user);
   const userInitials = getUserInitials(userDisplayName);
 
@@ -240,13 +284,34 @@ export function AppLayout({ children }: AppLayoutProps) {
       }),
     },
   );
+
+  useEffect(() => {
+    if (
+      !Array.isArray(clientsData?.data) ||
+      (clientsData.data.length === 0 && clientsData.total !== 0)
+    ) {
+      return;
+    }
+
+    const options = clientsData.data.map(toAdminClientOption);
+    setCachedAdminClients(options);
+    try {
+      localStorage.setItem(ADMIN_CLIENTS_CACHE_KEY, JSON.stringify(options));
+    } catch {
+      // The live query remains authoritative if browser storage is unavailable.
+    }
+  }, [clientsData?.data, clientsData?.total]);
+
   const adminClients = useMemo(
     () => {
-      const clients = LOCAL_UI_PREVIEW
-        ? [LOCAL_PREVIEW_CLIENT]
-        : Array.isArray(clientsData?.data)
-          ? clientsData.data
-          : [];
+      const liveClients = Array.isArray(clientsData?.data)
+        ? clientsData.data.map(toAdminClientOption)
+        : [];
+      const clients: AdminClientOption[] = LOCAL_UI_PREVIEW
+        ? [toAdminClientOption(LOCAL_PREVIEW_CLIENT)]
+        : liveClients.length > 0
+          ? liveClients
+          : cachedAdminClients;
 
       return clients
         .filter((client) => {
@@ -256,7 +321,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         })
         .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
     },
-    [clientsData?.data, selectedDashboardMode],
+    [cachedAdminClients, clientsData?.data, selectedDashboardMode],
   );
 
   // We deliberately do NOT auto-pick a client for admins here. UP Dash is an
@@ -762,7 +827,10 @@ export function AppLayout({ children }: AppLayoutProps) {
                         {t("top.loadingClients", "Carregando clientes...")}
                       </div>
                     )}
-                    {!LOCAL_UI_PREVIEW && !isLoadingClients && isClientsError && (
+                    {!LOCAL_UI_PREVIEW &&
+                      !isLoadingClients &&
+                      isClientsError &&
+                      adminClients.length === 0 && (
                       <div className="px-2 py-2 text-xs text-destructive">
                         {t("top.clientsError", "Não foi possível carregar os clientes.")}
                       </div>
