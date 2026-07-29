@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { logger } from "../lib/logger";
 import { authenticate, resolveClientId } from "../middlewares/auth";
+import { describeWhatsappDeliveryError } from "../services/whatsapp-delivery-error";
 import {
   clientsTable,
   commercialAutomationJobsTable,
@@ -1107,6 +1108,7 @@ async function persistWhatsappStatus(params: {
     .select({
       id: commercialAutomationJobsTable.id,
       ruleId: commercialAutomationJobsTable.ruleId,
+      eventId: commercialAutomationJobsTable.eventId,
       eventType: commercialAutomationRulesTable.eventType,
       ruleName: commercialAutomationRulesTable.name,
     })
@@ -1126,11 +1128,7 @@ async function persistWhatsappStatus(params: {
   if (!job) return;
 
   const error = params.status.errors?.[0];
-  const errorMessage =
-    error?.error_data?.details ??
-    error?.message ??
-    error?.title ??
-    (error?.code ? `Falha de entrega informada pela Meta (${error.code}).` : "Falha de entrega informada pela Meta.");
+  const errorMessage = describeWhatsappDeliveryError(error);
 
   if (deliveryStatus === "failed") {
     await db
@@ -1178,6 +1176,7 @@ async function persistWhatsappStatus(params: {
       ? `Falha na entrega da automação ${job.ruleName ?? job.id}: ${errorMessage}`
       : `Mensagem da automação ${job.ruleName ?? job.id} ${statusLabel}.`,
     metadata: {
+      ecommerceEventId: job.eventId,
       messageId,
       deliveryStatus,
       recipientId: params.status.recipient_id ?? null,

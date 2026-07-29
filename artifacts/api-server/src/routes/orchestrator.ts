@@ -29,6 +29,11 @@ import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth
 import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps";
 import { selectAutomationSenderPhone } from "../services/automation-sender";
 import { UpzeroExternalAdapter, extractRows } from "../services/upzero/external-adapter";
+import {
+  maskWhatsappRecipient,
+  normalizeWhatsappRecipient,
+  validateWhatsappRecipient,
+} from "../services/whatsapp-recipient";
 
 const router: IRouter = Router();
 
@@ -239,11 +244,6 @@ function dateWindow(req: Request) {
 
 function serializeCurrency(value: number) {
   return Number.isFinite(value) ? value : 0;
-}
-
-function normalizeWhatsappRecipient(value: string | null | undefined): string | null {
-  const digits = value?.replace(/\D/g, "") ?? "";
-  return digits || null;
 }
 
 function firstParam(value: string | string[] | undefined): string | null {
@@ -1567,7 +1567,8 @@ async function processDueAutomationJobs(limit = 25) {
     }
 
     const rendered = asRecord(job.renderedPayload) ?? {};
-    const to = normalizeWhatsappRecipient(firstText(rendered.to));
+    const recipient = validateWhatsappRecipient(firstText(rendered.to));
+    const to = recipient.normalized;
     const sender = asRecord(rendered.sender);
     const sellerPhone = firstText(sender?.sellerPhone);
     const senderSource = firstText(sender?.source);
@@ -1578,6 +1579,37 @@ async function processDueAutomationJobs(limit = 25) {
     const bodyParams = bodyParamsValue
       .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
       .map((text) => ({ type: "text", text: text.trim() }));
+
+    if (!recipient.isValid) {
+      const maskedRecipient = maskWhatsappRecipient(to);
+      const message = `Job bloqueado: telefone do destinatário ${maskedRecipient} inválido (${recipient.reason}).`;
+      await db
+        .update(commercialAutomationJobsTable)
+        .set({
+          status: "failed",
+          processedAt: new Date(),
+          errorMessage: message,
+          updatedAt: new Date(),
+        })
+        .where(eq(commercialAutomationJobsTable.id, job.id));
+      await db.insert(commercialAutomationLogsTable).values({
+        clientId: job.clientId,
+        ruleId: job.ruleId,
+        jobId: job.id,
+        eventType: job.eventType ?? "automation",
+        action: "automation_recipient_invalid",
+        status: "blocked",
+        message,
+        metadata: {
+          ecommerceEventId: job.eventId,
+          recipient: maskedRecipient,
+          recipientValidationReason: recipient.reason,
+          templateName,
+        },
+      });
+      results.push({ jobId: job.id, status: "failed", message });
+      continue;
+    }
 
     if (sellerPhone && senderSource !== "seller_phone") {
       const message = `Job bloqueado: o WhatsApp da vendedora (${sellerPhone}) não corresponde a um número ativo conectado.`;
@@ -1871,6 +1903,7 @@ async function buildCommercialLogs(clientId: string, limit = 100) {
   const logs = await db
     .select({
       id: commercialAutomationLogsTable.id,
+      jobId: commercialAutomationLogsTable.jobId,
       eventType: commercialAutomationLogsTable.eventType,
       action: commercialAutomationLogsTable.action,
       status: commercialAutomationLogsTable.status,
@@ -1883,8 +1916,23 @@ async function buildCommercialLogs(clientId: string, limit = 100) {
     .orderBy(desc(commercialAutomationLogsTable.createdAt))
     .limit(limit);
 
+  const jobIds = Array.from(new Set(logs
+    .map((log) => log.jobId)
+    .filter((jobId): jobId is string => Boolean(jobId))));
+  const jobs = jobIds.length > 0
+    ? await db
+      .select({
+        id: commercialAutomationJobsTable.id,
+        eventId: commercialAutomationJobsTable.eventId,
+      })
+      .from(commercialAutomationJobsTable)
+      .where(inArray(commercialAutomationJobsTable.id, jobIds))
+    : [];
+  const jobEventMap = new Map(jobs.map((job) => [job.id, job.eventId]));
+
   const eventIds = Array.from(new Set(logs
     .map((log) => firstText(asRecord(log.metadata)?.ecommerceEventId))
+    .concat(logs.map((log) => log.jobId ? jobEventMap.get(log.jobId) ?? null : null))
     .filter((eventId): eventId is string => Boolean(eventId))));
 
   if (eventIds.length === 0) return logs;
@@ -1900,7 +1948,9 @@ async function buildCommercialLogs(clientId: string, limit = 100) {
 
   const eventMap = new Map(events.map((event) => [event.id, event]));
   return logs.map((log) => {
-    const eventId = firstText(asRecord(log.metadata)?.ecommerceEventId);
+    const eventId =
+      firstText(asRecord(log.metadata)?.ecommerceEventId) ??
+      (log.jobId ? jobEventMap.get(log.jobId) ?? null : null);
     const event = eventId ? eventMap.get(eventId) : null;
     if (!event) return log;
     return {
