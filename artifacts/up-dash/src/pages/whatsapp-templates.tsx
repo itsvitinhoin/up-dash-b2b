@@ -59,6 +59,20 @@ type CreateTemplateResponse = {
   template: WhatsappTemplate | null;
 };
 
+type SyncTemplatesResponse = {
+  ok: boolean;
+  synced: number;
+  errors: string[];
+  diagnostics?: Array<{
+    phoneNumberId: string | null;
+    initialWabaId: string | null;
+    resolvedWabaId: string | null;
+    checkedWabaIds: string[];
+    matchedPhone: boolean | null;
+    templates: number;
+  }>;
+};
+
 type TemplateButtonType = "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
 
 type TemplateButtonForm = {
@@ -222,7 +236,7 @@ export default function WhatsappTemplatesPage() {
 
   const syncTemplates = useMutation({
     mutationFn: () =>
-      customFetch<{ ok: boolean; synced: number; errors: string[] }>("/api/whatsapp/templates/sync", {
+      customFetch<SyncTemplatesResponse>("/api/whatsapp/templates/sync", {
         method: "POST",
         body: JSON.stringify({
           clientId,
@@ -230,8 +244,13 @@ export default function WhatsappTemplatesPage() {
         }),
       }),
     onSuccess: (payload) => {
-      setError(payload.errors[0] ?? null);
-      setSuccessMessage(`Sincronização concluída: ${payload.synced} template(s).`);
+      const diagnostic = payload.diagnostics?.[0];
+      const emptySyncMessage = diagnostic?.matchedPhone === false
+        ? "A Meta não confirmou o número selecionado em nenhum WABA acessível por este token. Reconecte o número ou revise o acesso do aplicativo à conta do WhatsApp."
+        : "A Meta confirmou o número, mas retornou 0 templates para o WABA dele. Confirme no Gerenciador do WhatsApp se os modelos aprovados pertencem a essa mesma conta.";
+      const syncError = payload.errors[0] ?? (payload.synced === 0 ? emptySyncMessage : null);
+      setError(syncError);
+      setSuccessMessage(syncError ? null : `Sincronização concluída: ${payload.synced} template(s).`);
       void queryClient.invalidateQueries({ queryKey: templatesKey });
     },
     onError: (err) => {

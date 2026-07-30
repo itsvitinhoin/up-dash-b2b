@@ -2081,6 +2081,133 @@ async function syncTemplatesForIntegration(
   return { templates, error: null };
 }
 
+function collectWhatsappWabaIds(rawPayload: unknown): string[] {
+  if (!rawPayload || typeof rawPayload !== "object") return [];
+
+  const ids = new Set<string>();
+  const queue: unknown[] = [rawPayload];
+  let scanned = 0;
+
+  while (queue.length > 0 && scanned < 500) {
+    const current = queue.shift();
+    scanned += 1;
+    if (!current || typeof current !== "object") continue;
+
+    if (Array.isArray(current)) {
+      queue.push(...current.slice(0, 100));
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(current as Record<string, unknown>)) {
+      const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (normalizedKey === "wabaid" && typeof value === "string" && value.trim()) {
+        ids.add(value.trim());
+      }
+      if (key.toLowerCase() === "wabas" && Array.isArray(value)) {
+        for (const item of value.slice(0, 100)) {
+          if (!item || typeof item !== "object") continue;
+          const id = (item as { id?: unknown }).id;
+          if (typeof id === "string" && id.trim()) ids.add(id.trim());
+        }
+      }
+      if (value && typeof value === "object") queue.push(value);
+    }
+  }
+
+  return Array.from(ids);
+}
+
+async function discoverWhatsappWabaForPhone(
+  integration: typeof whatsappIntegrationsTable.$inferSelect,
+  phoneNumberId: string,
+) {
+  if (!integration.accessToken) {
+    return {
+      wabaId: integration.wabaId,
+      checkedWabaIds: integration.wabaId ? [integration.wabaId] : [],
+      matchedPhone: false,
+      errors: ["Integração sem token para confirmar o WABA do número."],
+    };
+  }
+
+  const candidateWabaIds = new Set<string>();
+  if (integration.wabaId) candidateWabaIds.add(integration.wabaId);
+  for (const wabaId of collectWhatsappWabaIds(integration.rawPayload)) {
+    candidateWabaIds.add(wabaId);
+  }
+
+  const businessIds = new Set<string>();
+  if (integration.businessId) businessIds.add(integration.businessId);
+
+  if (businessIds.size === 0) {
+    const businessesResponse = await fetchMetaGraph<MetaGraphList<MetaBusinessAccount>>(
+      "/me/businesses",
+      integration.accessToken,
+      { fields: "id", limit: "100" },
+    );
+    if (businessesResponse.ok) {
+      for (const business of businessesResponse.payload.data ?? []) {
+        if (business.id) businessIds.add(business.id);
+      }
+    }
+  }
+
+  const discoveryErrors: string[] = [];
+  for (const businessId of businessIds) {
+    for (const edge of ["owned_whatsapp_business_accounts", "client_whatsapp_business_accounts"]) {
+      const response = await fetchMetaGraph<MetaGraphList<MetaWhatsappBusinessAccount>>(
+        `/${businessId}/${edge}`,
+        integration.accessToken,
+        { fields: "id", limit: "100" },
+      );
+      if (!response.ok) {
+        discoveryErrors.push(
+          getMetaGraphErrorMessage(response.payload, `Erro Meta ${response.status} ao listar WABAs.`),
+        );
+        continue;
+      }
+      for (const waba of response.payload.data ?? []) {
+        if (waba.id) candidateWabaIds.add(waba.id);
+      }
+    }
+  }
+
+  const checkedWabaIds: string[] = [];
+  for (const wabaId of candidateWabaIds) {
+    const phoneResponse = await fetchMetaGraph<MetaGraphList<MetaWhatsappPhoneNumber>>(
+      `/${wabaId}/phone_numbers`,
+      integration.accessToken,
+      { fields: "id", limit: "100" },
+    );
+    if (!phoneResponse.ok) {
+      discoveryErrors.push(
+        `${wabaId}: ${getMetaGraphErrorMessage(
+          phoneResponse.payload,
+          `Erro Meta ${phoneResponse.status} ao confirmar telefones.`,
+        )}`,
+      );
+      continue;
+    }
+
+    checkedWabaIds.push(wabaId);
+    if ((phoneResponse.payload.data ?? []).some((phone) => phone.id === phoneNumberId)) {
+      return {
+        wabaId,
+        checkedWabaIds,
+        matchedPhone: true,
+        errors: discoveryErrors,
+      };
+    }
+  }
+
+  return {
+    wabaId: integration.wabaId,
+    checkedWabaIds,
+    matchedPhone: false,
+    errors: discoveryErrors,
+  };
+}
+
 async function subscribeWebhookForIntegration(integration: typeof whatsappIntegrationsTable.$inferSelect) {
   if (!integration.wabaId || !integration.accessToken) {
     return {
@@ -3280,10 +3407,61 @@ router.post("/whatsapp/templates/sync", async (req, res): Promise<void> => {
 
   const templates: Array<ReturnType<typeof serializeTemplate>> = [];
   const errors: string[] = [];
-  for (const integration of integrations) {
+  const diagnostics: Array<{
+    phoneNumberId: string | null;
+    initialWabaId: string | null;
+    resolvedWabaId: string | null;
+    checkedWabaIds: string[];
+    matchedPhone: boolean | null;
+    templates: number;
+  }> = [];
+  for (const storedIntegration of integrations) {
+    let integration = storedIntegration;
+    let resolvedWabaId = integration.wabaId;
+    let checkedWabaIds: string[] = [];
+    let matchedPhone: boolean | null = null;
+
+    if (parsed.data.phoneNumberId) {
+      const discovery = await discoverWhatsappWabaForPhone(integration, parsed.data.phoneNumberId);
+      resolvedWabaId = discovery.wabaId;
+      checkedWabaIds = discovery.checkedWabaIds;
+      matchedPhone = discovery.matchedPhone;
+
+      if (resolvedWabaId) {
+        integration = {
+          ...integration,
+          wabaId: resolvedWabaId,
+          phoneNumberId: parsed.data.phoneNumberId,
+        };
+      }
+
+      if (discovery.matchedPhone && resolvedWabaId) {
+        await db
+          .update(whatsappPhoneNumbersTable)
+          .set({
+            wabaId: resolvedWabaId,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(whatsappPhoneNumbersTable.clientId, clientId),
+              eq(whatsappPhoneNumbersTable.phoneNumberId, parsed.data.phoneNumberId),
+            ),
+          );
+      }
+    }
+
     const result = await syncTemplatesForIntegration(clientId, integration);
     templates.push(...result.templates);
     if (result.error) errors.push(result.error);
+    diagnostics.push({
+      phoneNumberId: parsed.data.phoneNumberId ?? integration.phoneNumberId,
+      initialWabaId: storedIntegration.wabaId,
+      resolvedWabaId,
+      checkedWabaIds,
+      matchedPhone,
+      templates: result.templates.length,
+    });
   }
 
   res.json({
@@ -3291,6 +3469,7 @@ router.post("/whatsapp/templates/sync", async (req, res): Promise<void> => {
     synced: templates.length,
     errors,
     templates,
+    diagnostics,
   });
 });
 
