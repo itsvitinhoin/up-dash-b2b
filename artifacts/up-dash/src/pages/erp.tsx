@@ -6,12 +6,10 @@ import {
   AlertCircle,
   BadgeCheck,
   Boxes,
-  Building2,
   CircleDollarSign,
   Package,
   PackageCheck,
   ReceiptText,
-  RefreshCw,
   Search,
   ShoppingBag,
   TrendingUp,
@@ -78,12 +76,20 @@ type ErpDashboardKpis = {
 
 type ErpSeriesPoint = { date: string; value: number };
 
+type ErpAttributionSummary = {
+  attributedCustomers: number;
+  unattributedCustomers: number;
+  attributedRevenue: number;
+  unattributedRevenue: number;
+};
+
 type ErpDashboardResponse = {
   kpis: ErpDashboardKpis;
   revenueOverTime: ErpSeriesPoint[];
   ordersOverTime: ErpSeriesPoint[];
   newCustomersOverTime: ErpSeriesPoint[];
   returningCustomersOverTime: ErpSeriesPoint[];
+  attribution: ErpAttributionSummary;
 };
 
 type ErpOrderRow = {
@@ -102,6 +108,10 @@ type ErpOrderRow = {
   netAmount: number;
   state: string | null;
   city: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  attributed: boolean;
 };
 
 type ErpOrdersResponse = { rows: ErpOrderRow[]; total: number };
@@ -121,6 +131,10 @@ type ErpCustomerRow = {
   averageTicket: number;
   firstOrderAt: string | null;
   lastOrderAt: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  attributed: boolean;
 };
 
 type ErpCustomersResponse = { rows: ErpCustomerRow[]; total: number };
@@ -202,34 +216,6 @@ const customerChartConfig = {
   returningCustomers: { label: "Recorrentes", color: "#a78bfa" },
 } satisfies ChartConfig;
 
-function PreviewBanner() {
-  return (
-    <div className="flex flex-col gap-3 rounded-lg border border-blue-500/20 bg-blue-500/[0.06] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-500/10 text-blue-400">
-          <Building2 className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-medium">Integração Miré ERP</p>
-            <Badge variant="outline" className="border-emerald-500/30 text-emerald-400">
-              Dados reais
-            </Badge>
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Não inclui atribuição por campanha/mídia ainda — essa parte depende de cruzar com o
-            rastreamento UP Zero, ainda não implementado.
-          </p>
-        </div>
-      </div>
-      <Button variant="outline" size="sm" className="shrink-0" disabled>
-        <RefreshCw className="mr-2 h-3.5 w-3.5" />
-        Sincronizado via job Miré
-      </Button>
-    </div>
-  );
-}
-
 function KpiGrid({ metrics, isLoading }: { metrics: Metric[]; isLoading: boolean }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
@@ -293,6 +279,18 @@ function StatusBadge({ status }: { status: string | null }) {
   );
 }
 
+function AttributionBadge({ source, medium }: { source: string | null; medium: string | null }) {
+  if (!source) {
+    return <span className="text-xs text-muted-foreground">Sem correspondência</span>;
+  }
+  return (
+    <div>
+      <p className="text-sm font-medium">{source}</p>
+      {medium && <p className="text-xs text-muted-foreground">{medium}</p>}
+    </div>
+  );
+}
+
 function ErpOverview() {
   const { dateRange } = useDashboardFilters();
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
@@ -313,13 +311,13 @@ function ErpOverview() {
   const cancellationPct = k && k.orders + k.cancelledOrders > 0 ? (k.cancelledOrders / (k.orders + k.cancelledOrders)) * 100 : 0;
 
   const metrics: Metric[] = [
-    { label: "Faturamento bruto", value: k?.grossRevenue ?? 0, format: formatCurrencySmart, icon: WalletCards, iconClass: "bg-blue-500/10 text-blue-400", sparkColor: "#60a5fa", subLabel: "Base", subValue: "Pedidos não cancelados" },
+    { label: "Faturamento bruto", value: k?.grossRevenue ?? 0, format: formatCurrencySmart, icon: WalletCards, iconClass: "bg-blue-500/10 text-blue-400", sparkColor: "#60a5fa", subLabel: "Base", subValue: "Não cancelados" },
     { label: "Faturamento líquido", value: k?.netRevenue ?? 0, format: formatCurrencySmart, icon: BadgeCheck, iconClass: "bg-emerald-500/10 text-emerald-400", sparkColor: "#34d399", subLabel: "Descontos", subValue: formatCurrency(k?.discountAmount ?? 0) },
     { label: "Pedidos", value: k?.orders ?? 0, format: formatNumber, icon: ReceiptText, iconClass: "bg-violet-500/10 text-violet-400", sparkColor: "#a78bfa", subLabel: "Ticket médio", subValue: formatCurrency(k?.avgTicket ?? 0) },
     { label: "Peças vendidas", value: k?.totalQuantity ?? 0, format: formatNumber, icon: PackageCheck, iconClass: "bg-amber-500/10 text-amber-400", sparkColor: "#f59e0b", subLabel: "Por pedido", subValue: k && k.orders > 0 ? (k.totalQuantity / k.orders).toFixed(1) : "0" },
     { label: "Compradores", value: k?.uniqueCustomers ?? 0, format: formatNumber, icon: Users, iconClass: "bg-cyan-500/10 text-cyan-400", sparkColor: "#22d3ee", subLabel: "Base", subValue: "Clientes únicos" },
     { label: "Clientes novos", value: k?.newCustomers ?? 0, format: formatNumber, icon: UserRoundCheck, iconClass: "bg-lime-500/10 text-lime-400", sparkColor: "#84cc16", subLabel: "Regra", subValue: "1ª compra histórica" },
-    { label: "Clientes recorrentes", value: k?.returningCustomers ?? 0, format: formatNumber, icon: Users, iconClass: "bg-purple-500/10 text-purple-400", sparkColor: "#c084fc", subLabel: "Regra", subValue: "Compra anterior ao período" },
+    { label: "Clientes recorrentes", value: k?.returningCustomers ?? 0, format: formatNumber, icon: Users, iconClass: "bg-purple-500/10 text-purple-400", sparkColor: "#c084fc", subLabel: "Regra", subValue: "Compra anterior" },
     { label: "Retenção", value: k?.retentionPct ?? 0, format: formatPercentage, icon: TrendingUp, iconClass: "bg-rose-500/10 text-rose-400", sparkColor: "#fb7185", subLabel: "Cálculo", subValue: "Recorrentes / compradores", ringValue: k?.retentionPct ?? 0 },
     { label: "Cancelamentos", value: cancellationPct, format: formatPercentage, icon: AlertCircle, iconClass: "bg-red-500/10 text-red-400", sparkColor: "#f87171", subLabel: "Pedidos", subValue: `${k?.cancelledOrders ?? 0} cancelado(s)`, ringValue: cancellationPct },
   ];
@@ -396,6 +394,34 @@ function ErpOverview() {
 
       <Card className="border-border bg-card">
         <CardContent className="p-5">
+          <SectionTitle
+            icon={Users}
+            title="Conciliação com rastreamento UP Zero"
+            description="Quantos clientes do ERP também foram rastreados como visitantes do site (mesmo documento)."
+          />
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-lg border border-border bg-muted/20 p-4">
+              <p className="text-xs text-muted-foreground">Clientes atribuídos</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">{formatNumber(data?.attribution.attributedCustomers ?? 0)}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/20 p-4">
+              <p className="text-xs text-muted-foreground">Sem correspondência</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">{formatNumber(data?.attribution.unattributedCustomers ?? 0)}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/20 p-4">
+              <p className="text-xs text-muted-foreground">Receita atribuída</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">{formatCurrency(data?.attribution.attributedRevenue ?? 0)}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/20 p-4">
+              <p className="text-xs text-muted-foreground">Receita sem correspondência</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">{formatCurrency(data?.attribution.unattributedRevenue ?? 0)}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border bg-card">
+        <CardContent className="p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <SectionTitle
               icon={Package}
@@ -446,9 +472,12 @@ function ErpOverview() {
   );
 }
 
+const ERP_PAGE_SIZE = 20;
+
 function ErpOrdersView() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [page, setPage] = useState(1);
   const { dateRange } = useDashboardFilters();
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
@@ -456,10 +485,10 @@ function ErpOrdersView() {
   const { clientId, enabled } = useErpClientId();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["erp-orders", clientId, dateFrom, dateTo, search],
+    queryKey: ["erp-orders", clientId, dateFrom, dateTo, search, page],
     queryFn: () =>
       customFetch<ErpOrdersResponse>(
-        buildErpUrl("/api/analytics/erp/orders", { clientId, dateFrom, dateTo, search: search || undefined, limit: 100 }),
+        buildErpUrl("/api/analytics/erp/orders", { clientId, dateFrom, dateTo, search: search || undefined, page, limit: ERP_PAGE_SIZE }),
       ),
     enabled,
     staleTime: 2 * 60 * 1000,
@@ -467,6 +496,7 @@ function ErpOrdersView() {
     refetchOnWindowFocus: false,
     retry: 1,
   });
+  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / ERP_PAGE_SIZE));
 
   const rows = useMemo(
     () => (data?.rows ?? []).filter((order) => status === "all" || order.status === status),
@@ -475,7 +505,7 @@ function ErpOrdersView() {
 
   const k = dashboard?.kpis;
   const metrics: Metric[] = [
-    { label: "Faturamento bruto", value: k?.grossRevenue ?? 0, format: formatCurrencySmart, icon: WalletCards, iconClass: "bg-blue-500/10 text-blue-400", sparkColor: "#60a5fa", subLabel: "Base", subValue: "Pedidos não cancelados" },
+    { label: "Faturamento bruto", value: k?.grossRevenue ?? 0, format: formatCurrencySmart, icon: WalletCards, iconClass: "bg-blue-500/10 text-blue-400", sparkColor: "#60a5fa", subLabel: "Base", subValue: "Não cancelados" },
     { label: "Faturamento líquido", value: k?.netRevenue ?? 0, format: formatCurrencySmart, icon: BadgeCheck, iconClass: "bg-emerald-500/10 text-emerald-400", sparkColor: "#34d399", subLabel: "Após ajustes", subValue: "Descontos" },
     { label: "Pedidos únicos", value: k?.orders ?? 0, format: formatNumber, icon: ReceiptText, iconClass: "bg-violet-500/10 text-violet-400", sparkColor: "#a78bfa", subLabel: "Ticket médio", subValue: formatCurrency(k?.avgTicket ?? 0) },
     { label: "Peças vendidas", value: k?.totalQuantity ?? 0, format: formatNumber, icon: Boxes, iconClass: "bg-amber-500/10 text-amber-400", sparkColor: "#f59e0b", subLabel: "Base", subValue: "Total no período" },
@@ -499,14 +529,20 @@ function ErpOrdersView() {
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setPage(1);
+                  }}
                   placeholder="Buscar pedido, cliente ou documento"
                   className="pl-9"
                 />
               </div>
               <select
                 value={status}
-                onChange={(event) => setStatus(event.target.value)}
+                onChange={(event) => {
+                  setStatus(event.target.value);
+                  setPage(1);
+                }}
                 className="h-9 rounded-md border border-input bg-background px-3 text-sm sm:w-44"
               >
                 <option value="all">Todos os status</option>
@@ -527,6 +563,7 @@ function ErpOrdersView() {
                   <TableHead>Documento</TableHead>
                   <TableHead>Vendedor</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Origem</TableHead>
                   <TableHead className="text-right">Qtd.</TableHead>
                   <TableHead className="text-right">Valor líquido</TableHead>
                 </TableRow>
@@ -534,7 +571,7 @@ function ErpOrdersView() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">Carregando...</TableCell>
+                    <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">Carregando...</TableCell>
                   </TableRow>
                 ) : (
                   rows.map((order) => (
@@ -550,6 +587,7 @@ function ErpOrdersView() {
                       <TableCell className="whitespace-nowrap text-xs">{order.document ?? "—"}</TableCell>
                       <TableCell className="whitespace-nowrap">{order.seller ?? "—"}</TableCell>
                       <TableCell><StatusBadge status={order.status} /></TableCell>
+                      <TableCell><AttributionBadge source={order.utmSource} medium={order.utmMedium} /></TableCell>
                       <TableCell className="text-right tabular-nums">{formatNumber(order.requestedQuantity)}</TableCell>
                       <TableCell className="text-right font-medium tabular-nums">{formatCurrency(order.netAmount)}</TableCell>
                     </TableRow>
@@ -558,13 +596,26 @@ function ErpOrdersView() {
               </TableBody>
             </Table>
           </div>
+          {data && data.total > 0 && (
+            <div className="flex items-center justify-between border-t px-1 pt-4">
+              <p className="text-sm text-muted-foreground">
+                Página {page} de {totalPages} ({formatNumber(data.total)} no total)
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
+                  Anterior
+                </Button>
+                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+                  Próxima
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </>
   );
 }
-
-const ERP_PAGE_SIZE = 20;
 
 function ErpCustomersView() {
   const [search, setSearch] = useState("");
@@ -634,12 +685,13 @@ function ErpCustomersView() {
                   <TableHead className="text-right">Total comprado</TableHead>
                   <TableHead className="text-right">Ticket médio</TableHead>
                   <TableHead>Vendedor</TableHead>
+                  <TableHead>Origem</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">Carregando...</TableCell>
+                    <TableCell colSpan={10} className="text-center text-sm text-muted-foreground">Carregando...</TableCell>
                   </TableRow>
                 ) : (
                   (data?.rows ?? []).map((customer) => (
@@ -656,6 +708,7 @@ function ErpCustomersView() {
                       <TableCell className="text-right font-medium tabular-nums">{formatCurrency(customer.totalSpent)}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatCurrency(customer.averageTicket)}</TableCell>
                       <TableCell className="whitespace-nowrap">{customer.seller ?? "—"}</TableCell>
+                      <TableCell><AttributionBadge source={customer.utmSource} medium={customer.utmMedium} /></TableCell>
                     </TableRow>
                   ))
                 )}
@@ -815,7 +868,6 @@ export default function ErpPage() {
 
   return (
     <div className="space-y-6" data-testid={`erp-${view}-page`}>
-      <PreviewBanner />
       {view === "overview" && <ErpOverview />}
       {view === "orders" && <ErpOrdersView />}
       {view === "customers" && <ErpCustomersView />}

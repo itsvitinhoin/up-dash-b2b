@@ -46,7 +46,7 @@ function MiniRing({
   const dash = (clamped / 100) * c;
   return (
     <svg width={size} height={size} className="-rotate-90 shrink-0" aria-hidden>
-      <circle cx={size / 2} cy={size / 2} r={r} stroke="hsl(var(--muted))" strokeOpacity={0.5} strokeWidth={stroke} fill="none" />
+      <circle cx={size / 2} cy={size / 2} r={r} stroke="hsl(var(--muted-foreground))" strokeOpacity={0.25} strokeWidth={stroke} fill="none" />
       <motion.circle
         cx={size / 2}
         cy={size / 2}
@@ -86,10 +86,10 @@ export function DashboardKpiCard({
   const isUp = change !== null && change >= 0;
   const variants = withReducedMotion(cardEntry, reduced);
   return (
-    <motion.div variants={variants}>
+    <motion.div variants={variants} className="h-full">
       <Card
         data-testid={testId}
-        className="flex flex-col p-5 bg-card border-border hover-elevate transition-shadow"
+        className="flex h-full flex-col p-5 bg-card border-border hover-elevate transition-shadow"
       >
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2.5">
@@ -162,9 +162,9 @@ export function DashboardKpiCard({
 
         <div className="mt-auto pt-3 border-t border-border space-y-2">
           {sub.map((row) => (
-            <div key={row.label} className="flex justify-between text-sm">
-              <span className="text-muted-foreground">{row.label}</span>
-              <span className="font-medium tabular-nums">{row.value}</span>
+            <div key={row.label} className="flex justify-between gap-2 text-sm">
+              <span className="shrink-0 text-muted-foreground">{row.label}</span>
+              <span className="truncate font-medium tabular-nums" title={row.value}>{row.value}</span>
             </div>
           ))}
         </div>

@@ -40,7 +40,7 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
   const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
 
   const dashboard = await cached(`erp:dashboard:${ctx.dataset}:${dateFromOnly}:${dateToOnly}`, ERP_CACHE_TTL_MS, () =>
-    fetchErpDashboard(ctx.dataset, dateFromOnly, dateToOnly),
+    fetchErpDashboard(ctx.clientId, ctx.dataset, dateFromOnly, dateToOnly),
   );
 
   res.json({
@@ -50,6 +50,7 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
     ordersOverTime: dashboard.dailyOrders,
     newCustomersOverTime: dashboard.dailyNewCustomers,
     returningCustomersOverTime: dashboard.dailyReturningCustomers,
+    attribution: dashboard.attribution,
   });
 }
 
@@ -77,7 +78,7 @@ export async function getOrders(req: Request, res: Response): Promise<void> {
 
   const cacheKey = `erp:orders:${ctx.dataset}:${dateFromOnly}:${dateToOnly}:${page}:${limit}:${search ?? ""}`;
   const result = await cached(cacheKey, ERP_CACHE_TTL_MS, () =>
-    fetchErpOrdersPage(ctx.dataset, dateFromOnly, dateToOnly, page, limit, search),
+    fetchErpOrdersPage(ctx.clientId, ctx.dataset, dateFromOnly, dateToOnly, page, limit, search),
   );
 
   res.json({
@@ -107,7 +108,7 @@ export async function getCustomers(req: Request, res: Response): Promise<void> {
   const { page, limit, search } = parsed.data;
 
   const cacheKey = `erp:customers:${ctx.dataset}:${page}:${limit}:${search ?? ""}`;
-  const result = await cached(cacheKey, ERP_CACHE_TTL_MS, () => fetchErpCustomersPage(ctx.dataset, page, limit, search));
+  const result = await cached(cacheKey, ERP_CACHE_TTL_MS, () => fetchErpCustomersPage(ctx.clientId, ctx.dataset, page, limit, search));
 
   res.json({ rows: result.rows, total: result.total, page, limit });
 }

@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
-import { db, clientsTable } from "@workspace/db";
+import { and, eq, inArray } from "drizzle-orm";
+import { db, clientsTable, customersTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
+import { hashDocument } from "./upzero/customers";
 
 /**
  * Se o client tiver um dataset de ERP configurado (independente de
@@ -24,9 +25,57 @@ export async function resolveErpDataset(clientId: string): Promise<string | null
 // agrupar por pedido_id com ANY_VALUE()/MAX(), nunca SUM() direto nesses
 // campos. Só os campos `item_*` são valores reais por linha, somáveis.
 //
-// Não existe UTM/atribuição/gasto de mídia em nenhuma tabela ERP — a
-// atribuição por campanha/canal (que o mock de erp.tsx tem) não dá pra
-// computar só com esse dado; ficou registrado como pendente separado.
+// Não existe UTM/atribuição/gasto de mídia em nenhuma tabela ERP em si — mas
+// dá pra recuperar por cruzamento: o Postgres já guarda, por client UpZero, o
+// utm_source/medium/campaign de primeiro toque de cada customer rastreado,
+// indexado por `document_hash` (sha256 do documento só com dígitos, ver
+// services/upzero/customers.ts::hashDocument). Cliente do ERP e customer
+// rastreado pela UpZero são a MESMA pessoa quando o hash do documento bate —
+// dá pra "emprestar" a atribuição de um pro outro sem precisar de nenhuma
+// integração nova. Cliente sem correspondência = "sem atribuição" (comprou
+// no atacado sem nunca ter sido rastreado como visitante do site).
+
+export type ErpAttribution = {
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+};
+
+async function matchErpDocumentsToUpzero(
+  clientId: string,
+  documents: Array<string | null | undefined>,
+): Promise<Map<string, ErpAttribution>> {
+  const hashByDocument = new Map<string, string>();
+  for (const doc of documents) {
+    const hash = hashDocument(doc);
+    if (hash) hashByDocument.set(String(doc), hash);
+  }
+  const hashes = Array.from(new Set(hashByDocument.values()));
+  if (hashes.length === 0) return new Map();
+
+  const rows = await db
+    .select({
+      documentHash: customersTable.documentHash,
+      utmSource: customersTable.utmSource,
+      utmMedium: customersTable.utmMedium,
+      utmCampaign: customersTable.utmCampaign,
+    })
+    .from(customersTable)
+    .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.documentHash, hashes)));
+
+  const byHash = new Map<string, ErpAttribution>();
+  for (const r of rows) {
+    if (!r.documentHash) continue;
+    byHash.set(r.documentHash, { utmSource: r.utmSource, utmMedium: r.utmMedium, utmCampaign: r.utmCampaign });
+  }
+
+  const byDocument = new Map<string, ErpAttribution>();
+  for (const [doc, hash] of hashByDocument) {
+    const match = byHash.get(hash);
+    if (match) byDocument.set(doc, match);
+  }
+  return byDocument;
+}
 
 function toDateOnly(value: unknown): string {
   if (value && typeof value === "object" && "value" in (value as Record<string, unknown>)) {
@@ -54,11 +103,17 @@ export type ErpDashboard = {
   dailyOrders: { date: string; value: number }[];
   dailyNewCustomers: { date: string; value: number }[];
   dailyReturningCustomers: { date: string; value: number }[];
+  attribution: {
+    attributedCustomers: number;
+    unattributedCustomers: number;
+    attributedRevenue: number;
+    unattributedRevenue: number;
+  };
 };
 
 const ERP_CANCELLED_STATUSES = ["CANCELADO", "EXCLUIDO"];
 
-export async function fetchErpDashboard(dataset: string, dateFrom: string, dateTo: string): Promise<ErpDashboard> {
+export async function fetchErpDashboard(clientId: string, dataset: string, dateFrom: string, dateTo: string): Promise<ErpDashboard> {
   const pedidos = vestiTable(dataset, "pedidos_erp");
   const cancelledList = ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ");
 
@@ -125,6 +180,43 @@ export async function fetchErpDashboard(dataset: string, dateFrom: string, dateT
   });
   const uniqueCustomers = Number((uniqueRows as Array<Record<string, unknown>>)[0]?.unique_customers) || 0;
 
+  const [customerRevenueRows] = await bigquery.query({
+    query: `
+      WITH orders AS (
+        SELECT
+          pedido_id,
+          ANY_VALUE(customer_id) AS customer_id,
+          ANY_VALUE(status) AS status,
+          ANY_VALUE(valor_liquido) AS net_amount
+        FROM ${pedidos}
+        WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
+        GROUP BY pedido_id
+      )
+      SELECT customer_id, SUM(IF(status IN (${cancelledList}), 0, net_amount)) AS net_revenue
+      FROM orders
+      WHERE customer_id IS NOT NULL
+      GROUP BY customer_id
+    `,
+    params: { dateFrom, dateTo },
+  });
+  const customerRevenueRaw = customerRevenueRows as Array<Record<string, unknown>>;
+  const customerAttribution = await matchErpDocumentsToUpzero(clientId, customerRevenueRaw.map((r) => r.customer_id as string | null));
+  let attributedCustomers = 0;
+  let unattributedCustomers = 0;
+  let attributedRevenue = 0;
+  let unattributedRevenue = 0;
+  for (const r of customerRevenueRaw) {
+    const customerId = r.customer_id as string | null;
+    const revenue = Number(r.net_revenue) || 0;
+    if (customerId && customerAttribution.has(customerId)) {
+      attributedCustomers += 1;
+      attributedRevenue += revenue;
+    } else {
+      unattributedCustomers += 1;
+      unattributedRevenue += revenue;
+    }
+  }
+
   const netRevenue = dailyRevenue.reduce((sum, r) => sum + r.value, 0);
   const grossRevenue = raw.reduce((sum, r) => sum + (Number(r.gross_revenue) || 0), 0);
   const discountAmount = raw.reduce((sum, r) => sum + (Number(r.discount_amount) || 0), 0);
@@ -155,6 +247,12 @@ export async function fetchErpDashboard(dataset: string, dateFrom: string, dateT
     dailyOrders,
     dailyNewCustomers,
     dailyReturningCustomers,
+    attribution: {
+      attributedCustomers,
+      unattributedCustomers,
+      attributedRevenue,
+      unattributedRevenue,
+    },
   };
 }
 
@@ -174,11 +272,16 @@ export type ErpOrderRow = {
   netAmount: number;
   state: string | null;
   city: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  attributed: boolean;
 };
 
 export type ErpOrdersPage = { rows: ErpOrderRow[]; total: number };
 
 export async function fetchErpOrdersPage(
+  clientId: string,
   dataset: string,
   dateFrom: string,
   dateTo: string,
@@ -231,23 +334,34 @@ export async function fetchErpOrdersPage(
     bigquery.query({ query: `${baseQuery} SELECT COUNT(*) AS total FROM base ${whereClause}`, params }),
   ]);
 
-  const rows: ErpOrderRow[] = (listRows as Array<Record<string, unknown>>).map((r) => ({
-    id: String(r.pedido_id),
-    createdAt: toDateOnly(r.created_at),
-    customerId: (r.customer_id as string) || null,
-    customerName: (r.customer_name as string) || null,
-    company: (r.company as string) || null,
-    document: (r.document as string) || null,
-    seller: (r.seller as string) || null,
-    status: (r.status as string) || null,
-    requestedQuantity: Number(r.requested_quantity) || 0,
-    fulfilledQuantity: Number(r.requested_quantity) || 0,
-    grossAmount: Number(r.gross_amount) || 0,
-    discountAmount: Number(r.discount_amount) || 0,
-    netAmount: Number(r.net_amount) || 0,
-    state: (r.state as string) || null,
-    city: (r.city as string) || null,
-  }));
+  const rawRows = listRows as Array<Record<string, unknown>>;
+  const attribution = await matchErpDocumentsToUpzero(clientId, rawRows.map((r) => r.document as string | null));
+
+  const rows: ErpOrderRow[] = rawRows.map((r) => {
+    const document = (r.document as string) || null;
+    const match = document ? attribution.get(document) : undefined;
+    return {
+      id: String(r.pedido_id),
+      createdAt: toDateOnly(r.created_at),
+      customerId: (r.customer_id as string) || null,
+      customerName: (r.customer_name as string) || null,
+      company: (r.company as string) || null,
+      document,
+      seller: (r.seller as string) || null,
+      status: (r.status as string) || null,
+      requestedQuantity: Number(r.requested_quantity) || 0,
+      fulfilledQuantity: Number(r.requested_quantity) || 0,
+      grossAmount: Number(r.gross_amount) || 0,
+      discountAmount: Number(r.discount_amount) || 0,
+      netAmount: Number(r.net_amount) || 0,
+      state: (r.state as string) || null,
+      city: (r.city as string) || null,
+      utmSource: match?.utmSource ?? null,
+      utmMedium: match?.utmMedium ?? null,
+      utmCampaign: match?.utmCampaign ?? null,
+      attributed: !!match,
+    };
+  });
 
   return { rows, total: Number((countRows as Array<Record<string, unknown>>)[0]?.total) || 0 };
 }
@@ -267,11 +381,16 @@ export type ErpCustomerRow = {
   averageTicket: number;
   firstOrderAt: string | null;
   lastOrderAt: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  attributed: boolean;
 };
 
 export type ErpCustomersPage = { rows: ErpCustomerRow[]; total: number };
 
 export async function fetchErpCustomersPage(
+  clientId: string,
   dataset: string,
   page: number,
   limit: number,
@@ -324,22 +443,33 @@ export async function fetchErpCustomersPage(
     bigquery.query({ query: `${baseQuery} SELECT COUNT(*) AS total FROM base ${whereClause}`, params }),
   ]);
 
-  const rows: ErpCustomerRow[] = (listRows as Array<Record<string, unknown>>).map((r) => ({
-    id: String(r.id),
-    name: (r.name as string) || null,
-    company: (r.company as string) || null,
-    document: (r.document as string) || null,
-    email: (r.email as string) || null,
-    phone: (r.phone as string) || null,
-    city: (r.city as string) || null,
-    state: (r.state as string) || null,
-    seller: (r.seller as string) || null,
-    orders: Number(r.orders) || 0,
-    totalSpent: Number(r.total_spent) || 0,
-    averageTicket: Number(r.orders) > 0 ? Number(r.total_spent) / Number(r.orders) : 0,
-    firstOrderAt: r.first_order_at ? toDateOnly(r.first_order_at) : null,
-    lastOrderAt: r.last_order_at ? toDateOnly(r.last_order_at) : null,
-  }));
+  const rawRows = listRows as Array<Record<string, unknown>>;
+  const attribution = await matchErpDocumentsToUpzero(clientId, rawRows.map((r) => r.document as string | null));
+
+  const rows: ErpCustomerRow[] = rawRows.map((r) => {
+    const document = (r.document as string) || null;
+    const match = document ? attribution.get(document) : undefined;
+    return {
+      id: String(r.id),
+      name: (r.name as string) || null,
+      company: (r.company as string) || null,
+      document,
+      email: (r.email as string) || null,
+      phone: (r.phone as string) || null,
+      city: (r.city as string) || null,
+      state: (r.state as string) || null,
+      seller: (r.seller as string) || null,
+      orders: Number(r.orders) || 0,
+      totalSpent: Number(r.total_spent) || 0,
+      averageTicket: Number(r.orders) > 0 ? Number(r.total_spent) / Number(r.orders) : 0,
+      firstOrderAt: r.first_order_at ? toDateOnly(r.first_order_at) : null,
+      lastOrderAt: r.last_order_at ? toDateOnly(r.last_order_at) : null,
+      utmSource: match?.utmSource ?? null,
+      utmMedium: match?.utmMedium ?? null,
+      utmCampaign: match?.utmCampaign ?? null,
+      attributed: !!match,
+    };
+  });
 
   return { rows, total: Number((countRows as Array<Record<string, unknown>>)[0]?.total) || 0 };
 }
