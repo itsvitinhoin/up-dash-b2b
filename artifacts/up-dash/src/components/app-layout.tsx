@@ -275,12 +275,17 @@ export function AppLayout({ children }: AppLayoutProps) {
     data: clientsData,
     isLoading: isLoadingClients,
     isError: isClientsError,
+    isFetching: isFetchingClients,
+    isSuccess: isClientsSuccess,
+    refetch: refetchClients,
   } = useListClients(
     { page: 1, limit: 1000 },
     {
       query: queryOpts({
         enabled: user?.role === "ADMIN" && !LOCAL_UI_PREVIEW,
         placeholderData: (previous) => previous,
+        refetchOnWindowFocus: true,
+        refetchInterval: (query) => query.state.status === "error" ? 30_000 : false,
       }),
     },
   );
@@ -288,7 +293,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   useEffect(() => {
     if (
       !Array.isArray(clientsData?.data) ||
-      (clientsData.data.length === 0 && clientsData.total !== 0)
+      clientsData.data.length === 0
     ) {
       return;
     }
@@ -336,11 +341,30 @@ export function AppLayout({ children }: AppLayoutProps) {
   });
 
   useEffect(() => {
-    if (user?.role !== "ADMIN" || !selectedClientId || !clientsData) return;
+    if (
+      user?.role !== "ADMIN" ||
+      !selectedClientId ||
+      !clientsData ||
+      !isClientsSuccess ||
+      isClientsError ||
+      isFetchingClients ||
+      clientsData.data.length === 0
+    ) {
+      return;
+    }
     if (!adminClients.some((client) => client.id === selectedClientId)) {
       setSelectedClientId(null);
     }
-  }, [adminClients, clientsData, selectedClientId, setSelectedClientId, user?.role]);
+  }, [
+    adminClients,
+    clientsData,
+    isClientsError,
+    isClientsSuccess,
+    isFetchingClients,
+    selectedClientId,
+    setSelectedClientId,
+    user?.role,
+  ]);
 
   const activeClient =
     user?.role === "CLIENT"
@@ -831,10 +855,28 @@ export function AppLayout({ children }: AppLayoutProps) {
                       !isLoadingClients &&
                       isClientsError &&
                       adminClients.length === 0 && (
-                      <div className="px-2 py-2 text-xs text-destructive">
-                        {t("top.clientsError", "Não foi possível carregar os clientes.")}
+                      <div className="space-y-2 px-2 py-2 text-xs text-destructive">
+                        <p>{t("top.clientsError", "Não foi possível carregar os clientes.")}</p>
+                        <button
+                          type="button"
+                          className="text-primary underline underline-offset-2"
+                          onPointerDown={(event) => event.preventDefault()}
+                          onClick={() => void refetchClients()}
+                        >
+                          {t("top.retryClients", "Tentar novamente")}
+                        </button>
                       </div>
                     )}
+                    {!LOCAL_UI_PREVIEW &&
+                      isClientsError &&
+                      adminClients.length > 0 && (
+                        <div className="px-2 py-2 text-xs text-amber-600 dark:text-amber-400">
+                          {t(
+                            "top.cachedClients",
+                            "Exibindo a última lista salva enquanto reconectamos.",
+                          )}
+                        </div>
+                      )}
                     {!LOCAL_UI_PREVIEW &&
                       !isLoadingClients &&
                       !isClientsError &&

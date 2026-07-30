@@ -1600,7 +1600,7 @@ export default function DashboardPage() {
     user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
   const isB2C = selectedDashboardMode === "B2C";
 
-  const { data, isLoading, isError, refetch } = useGetDashboard(
+  const { data, isLoading, isError, isFetching, refetch } = useGetDashboard(
     {
       clientId,
       dateFrom: format(dateRange.from, "yyyy-MM-dd"),
@@ -1841,7 +1841,7 @@ export default function DashboardPage() {
     );
   }
 
-  if (isError) {
+  if (isError && !data) {
     return (
       <Alert variant="destructive" data-testid="page-dashboard">
         <AlertCircle className="h-4 w-4" />
@@ -1869,6 +1869,26 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 dashboard-printable" data-testid="page-dashboard">
+      {isError && data && (
+        <Alert className="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Conexão temporariamente instável</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              Mantivemos os últimos dados carregados enquanto o dashboard tenta reconectar.
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isFetching}
+              onClick={() => refetch()}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+              Tentar novamente
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
       {/* Live indicator + export toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 no-print">
         <motion.div
