@@ -1214,6 +1214,87 @@ export async function fetchVestiCustomerTimeline(
   };
 }
 
+// ───────── Funil de conversão ─────────
+//
+// Mesmo taxonomia de evento do stape_logs usada na Timeline. Não existe
+// "sessão" separada de PageView pra Vesti (like GA4 tem) — usamos contagem
+// de PageView como proxy de visita, mesmo espírito do que o funil B2C faz
+// com sessions do GA4. `avgEventsBeforePurchase`/`topPaths` ficam vazios
+// (0/[]), igual o próprio caminho GA4 já faz hoje — não são triviais de
+// calcular e nem o funil B2C tenta.
+
+const VESTI_FUNNEL_STEPS: Array<{ step: string; label: string; eventName: string }> = [
+  { step: "VISIT", label: "Visitas", eventName: "PageView" },
+  { step: "PRODUCT_VIEW", label: "Produtos vistos", eventName: "ViewContent" },
+  { step: "ADD_TO_CART", label: "Adições ao carrinho", eventName: "AddToCart" },
+  { step: "CHECKOUT_STARTED", label: "Checkouts iniciados", eventName: "InitiateCheckout" },
+  { step: "PURCHASE", label: "Pedidos", eventName: "Purchase" },
+];
+
+export type VestiFunnel = {
+  steps: { step: string; label: string; count: number; conversionRate: number; dropOffRate: number }[];
+  overallConversion: number;
+  insights: string[];
+  suggestedActions: string[];
+  hasSiteVisitData: boolean;
+};
+
+export async function fetchVestiFunnel(storeSlug: string, dateFrom: string, dateTo: string): Promise<VestiFunnel> {
+  const [rows] = await bigquery.query({
+    query: `
+      SELECT event_name, COUNT(*) AS c
+      FROM \`up-vesti-report.stape_logs.EventsLogsTratado\`
+      WHERE client = @storeSlug AND DATE(event_ts) BETWEEN @dateFrom AND @dateTo
+      GROUP BY event_name
+    `,
+    params: { storeSlug, dateFrom, dateTo },
+  });
+  const counts = new Map((rows as Array<Record<string, unknown>>).map((r) => [String(r.event_name), Number(r.c) || 0]));
+
+  const [anyEventRows] = await bigquery.query({
+    query: `SELECT COUNT(*) AS c FROM \`up-vesti-report.stape_logs.EventsLogsTratado\` WHERE client = @storeSlug AND event_name = 'PageView' LIMIT 1`,
+    params: { storeSlug },
+  });
+  const hasSiteVisitData = (Number((anyEventRows as Array<Record<string, unknown>>)[0]?.c) || 0) > 0;
+
+  const steps = VESTI_FUNNEL_STEPS.map((step, index) => {
+    const count = counts.get(step.eventName) ?? 0;
+    const previous = index === 0 ? count : counts.get(VESTI_FUNNEL_STEPS[index - 1].eventName) ?? 0;
+    const conversionRate = index === 0 ? 100 : previous > 0 ? (count / previous) * 100 : 0;
+    return {
+      step: step.step,
+      label: step.label,
+      count,
+      conversionRate,
+      dropOffRate: index === 0 ? 0 : Math.max(0, 100 - conversionRate),
+    };
+  });
+
+  const visits = steps[0]?.count ?? 0;
+  const purchases = steps[steps.length - 1]?.count ?? 0;
+  const overallConversion = visits > 0 ? (purchases / visits) * 100 : 0;
+
+  let worst = { idx: -1, drop: -1 };
+  for (let i = 1; i < steps.length; i++) {
+    if (steps[i].dropOffRate > worst.drop) worst = { idx: i, drop: steps[i].dropOffRate };
+  }
+
+  const insights = [
+    `Funil alimentado pelo rastreamento da Vesti (stape_logs) com ${visits} visita(s) no período.`,
+    `Conversão geral de ${overallConversion.toFixed(2)}% calculada por pedidos pagos / visitas.`,
+    ...(worst.idx > 0
+      ? [`Maior queda (${worst.drop.toFixed(1)}%) entre ${steps[worst.idx - 1].label} e ${steps[worst.idx].label}.`]
+      : []),
+  ];
+
+  const suggestedActions =
+    worst.idx > 0
+      ? [`Revisar a etapa "${steps[worst.idx].label}" — é onde mais se perde cliente em relação à etapa anterior.`]
+      : [];
+
+  return { steps, overallConversion, insights, suggestedActions, hasSiteVisitData };
+}
+
 // ───────── Resumo de clientes (KPIs de cadastro) ─────────
 
 export type VestiCustomerSummary = {

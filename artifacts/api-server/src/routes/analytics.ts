@@ -3273,9 +3273,15 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     .select({
       dashboardType: clientsTable.dashboardType,
       ga4PropertyId: clientsTable.ga4PropertyId,
+      commercePlatform: clientsTable.commercePlatform,
     })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
+
+  if (funnelClient?.commercePlatform === "VESTI") {
+    await vestiDashboardController.getFunnel(req, res);
+    return;
+  }
 
   if (funnelClient?.dashboardType === "B2C" && !utmSource && !utmMedium && !utmCampaign) {
     const ga4 = await fetchGa4FunnelMetrics({

@@ -8,6 +8,7 @@ import {
   computeVestiWindow,
   computeVestiStateRevenue,
   fetchVestiAttributedCustomers,
+  fetchVestiFunnel,
   type VestiFilters,
 } from "../services/vestiAnalytics";
 
@@ -252,5 +253,42 @@ export async function getCampaignCustomers(req: Request, res: Response): Promise
       itemQuantity: 0,
       registrations: registeredInWindow,
     },
+  });
+}
+
+export async function getFunnel(req: Request, res: Response): Promise<void> {
+  const parsed = GetDashboardQueryParams.pick({ dateFrom: true, dateTo: true }).safeParse(
+    coerceDateQuery(req.query as Record<string, unknown>),
+  );
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const dataset = await resolveVestiDataset(clientId);
+  if (!dataset) {
+    res.status(404).json({ error: true, code: "NOT_VESTI_CLIENT", message: "Client não é Vesti ou não foi encontrado.", status: 404 });
+    return;
+  }
+
+  const rawQuery = req.query as Record<string, unknown>;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
+  const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
+
+  const funnel = await cached(`vesti:funnel:${dataset}:${dateFromOnly}:${dateToOnly}`, VESTI_CACHE_TTL_MS, () =>
+    fetchVestiFunnel(dataset, dateFromOnly, dateToOnly),
+  );
+
+  res.json({
+    steps: funnel.steps,
+    overallConversion: funnel.overallConversion,
+    insights: funnel.insights,
+    avgEventsBeforePurchase: 0,
+    topPaths: [],
+    suggestedActions: funnel.suggestedActions,
+    hasSiteVisitData: funnel.hasSiteVisitData,
   });
 }
