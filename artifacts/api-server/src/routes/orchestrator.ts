@@ -28,6 +28,10 @@ import {
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps";
 import { selectAutomationSenderPhone } from "../services/automation-sender";
+import {
+  getCartAutomationIdentity,
+  getWebhookPayloadLayers,
+} from "../services/orchestrator-webhook";
 import { UpzeroExternalAdapter, extractRows } from "../services/upzero/external-adapter";
 import {
   maskWhatsappRecipient,
@@ -350,16 +354,34 @@ function parseEventDate(value: unknown): Date | null {
 }
 
 function normalizeWebhookPayload(payload: unknown) {
-  const root = asRecord(payload) ?? {};
+  const { envelope, data, root } = getWebhookPayloadLayers(payload);
   const customer = asRecord(root.customer) ?? asRecord(root.user) ?? asRecord(root.lead) ?? {};
   const order = asRecord(root.order) ?? {};
   const cart = asRecord(root.cart) ?? {};
   const checkout = asRecord(root.checkout) ?? {};
-  const meta = asRecord(root.metadata) ?? {};
+  const meta = asRecord(root.metadata) ?? asRecord(root.meta) ?? {};
+  const seller = asRecord(root.seller) ?? {};
 
-  const rawEventType = firstText(root.event_type, root.eventType, root.type, root.event, root.name);
+  const rawEventType = firstText(
+    envelope.event_type,
+    envelope.eventType,
+    envelope.type,
+    envelope.event,
+    envelope.name,
+    root.event_type,
+    root.eventType,
+    root.type,
+    root.event,
+    root.name,
+  );
   const eventType = normalizeAutomationEventType(rawEventType) ?? "unknown";
-  const eventId = firstText(root.event_id, root.eventId, root.id, meta.event_id);
+  const eventId = firstText(
+    envelope.event_id,
+    envelope.eventId,
+    meta.event_id,
+    data.event_id,
+    data.eventId,
+  );
   const externalCustomerId = firstText(
     root.customer_id,
     root.customerId,
@@ -377,9 +399,12 @@ function normalizeWebhookPayload(payload: unknown) {
     order.code,
     order.number,
   );
-  const externalCartId = firstText(root.cart_id, root.cartId, cart.id, cart.external_id);
+  const externalCartId = getCartAutomationIdentity(eventType, payload)
+    ?? firstText(root.cart_id, root.cartId, cart.id, cart.external_id);
   const externalCheckoutId = firstText(root.checkout_id, root.checkoutId, checkout.id, checkout.external_id);
-  const occurredAt = parseEventDate(root.occurred_at)
+  const occurredAt = parseEventDate(envelope.timestamp)
+    ?? parseEventDate(envelope.occurred_at)
+    ?? parseEventDate(root.occurred_at)
     ?? parseEventDate(root.created_at)
     ?? parseEventDate(root.timestamp)
     ?? parseEventDate(root.period_start)
@@ -408,15 +433,34 @@ function normalizeWebhookPayload(payload: unknown) {
       cart.total_value,
       cart.total,
     ),
-    customerName: firstText(customer.name, customer.company_name, root.customer_name, root.name),
+    customerName: firstText(
+      customer.name,
+      customer.contact_name,
+      customer.company_name,
+      root.customer_name,
+      root.contact_name,
+      root.name,
+    ),
     customerPhone: firstText(customer.phone, customer.whatsapp, root.phone, root.whatsapp),
     customerEmail: firstText(customer.email, root.email),
     documentType: firstText(customer.document_type, customer.type, root.document_type),
     documentLast4: firstText(customer.document_last4, root.document_last4),
-    sellerName: firstText(root.seller_name, root.assigned_seller_name, meta.seller_name, meta.assigned_seller_name),
-    sellerPhone: firstText(root.seller_phone, root.assigned_seller_phone, meta.seller_phone, meta.assigned_seller_phone),
-    sellerEmail: firstText(root.seller_email, meta.seller_email),
-    sellerSlug: firstText(root.seller_slug, meta.seller_slug),
+    sellerName: firstText(
+      root.seller_name,
+      root.assigned_seller_name,
+      seller.name,
+      meta.seller_name,
+      meta.assigned_seller_name,
+    ),
+    sellerPhone: firstText(
+      root.seller_phone,
+      root.assigned_seller_phone,
+      seller.phone,
+      meta.seller_phone,
+      meta.assigned_seller_phone,
+    ),
+    sellerEmail: firstText(root.seller_email, seller.email, meta.seller_email),
+    sellerSlug: firstText(root.seller_slug, seller.slug, seller.seller_slug, meta.seller_slug),
   };
 }
 
@@ -1242,6 +1286,7 @@ async function scheduleAutomationJobsForEvent(params: {
   const sender = await resolveAutomationSender(params.clientId, params.payload);
   const phoneNumberId = sender.phoneNumberId;
   const duplicateWindowStart = new Date(Date.now() - 10 * 60 * 1000);
+  const cartAutomationIdentity = getCartAutomationIdentity(params.eventType, params.payload);
   const eventOrderIdentity = firstText(
     params.payload.order_number,
     getNestedValue(params.payload, "order.number"),
@@ -1265,12 +1310,24 @@ async function scheduleAutomationJobsForEvent(params: {
       const duplicateConditions = [
         eq(commercialAutomationJobsTable.clientId, params.clientId),
         eq(commercialAutomationJobsTable.ruleId, rule.id),
-        gte(commercialAutomationJobsTable.createdAt, duplicateWindowStart),
         sql`${commercialAutomationJobsTable.status} IN ('scheduled', 'processing', 'sent')`,
         sql`${commercialAutomationJobsTable.renderedPayload}->>'to' = ${to}`,
         sql`${commercialAutomationJobsTable.renderedPayload}->>'templateName' = ${rule.templateName}`,
       ];
-      if (eventOrderIdentity) {
+      if (cartAutomationIdentity) {
+        duplicateConditions.push(sql`COALESCE(
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cartId',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'id',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'external_id',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cart_id',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cartId',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'id'
+        ) = ${cartAutomationIdentity}`);
+      } else {
+        duplicateConditions.push(gte(commercialAutomationJobsTable.createdAt, duplicateWindowStart));
+      }
+      if (!cartAutomationIdentity && eventOrderIdentity) {
         duplicateConditions.push(sql`COALESCE(
           ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'order_number',
           ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'order'->>'number',
@@ -1533,6 +1590,7 @@ async function processDueAutomationJobs(limit = 25) {
       clientId: commercialAutomationJobsTable.clientId,
       ruleId: commercialAutomationJobsTable.ruleId,
       eventId: commercialAutomationJobsTable.eventId,
+      createdAt: commercialAutomationJobsTable.createdAt,
       renderedPayload: commercialAutomationJobsTable.renderedPayload,
       eventType: commercialAutomationRulesTable.eventType,
       ruleName: commercialAutomationRulesTable.name,
@@ -1567,6 +1625,71 @@ async function processDueAutomationJobs(limit = 25) {
     }
 
     const rendered = asRecord(job.renderedPayload) ?? {};
+    const sourceEvent = asRecord(rendered.sourceEvent) ?? {};
+    const cartAutomationIdentity = getCartAutomationIdentity(job.eventType, sourceEvent);
+
+    if (cartAutomationIdentity) {
+      const sameRuleCondition = job.ruleId
+        ? eq(commercialAutomationJobsTable.ruleId, job.ruleId)
+        : sql`${commercialAutomationJobsTable.ruleId} IS NULL`;
+      const [previousCartJob] = await db
+        .select({ id: commercialAutomationJobsTable.id })
+        .from(commercialAutomationJobsTable)
+        .where(
+          and(
+            eq(commercialAutomationJobsTable.clientId, job.clientId),
+            sameRuleCondition,
+            sql`${commercialAutomationJobsTable.status} IN ('processing', 'sent')`,
+            or(
+              sql`${commercialAutomationJobsTable.createdAt} < ${job.createdAt}`,
+              and(
+                eq(commercialAutomationJobsTable.createdAt, job.createdAt),
+                sql`${commercialAutomationJobsTable.id} < ${job.id}`,
+              ),
+            ),
+            sql`COALESCE(
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cartId',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'external_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cart_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cartId',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'id'
+            ) = ${cartAutomationIdentity}`,
+          ),
+        )
+        .limit(1);
+
+      if (previousCartJob) {
+        const message = `Job duplicado cancelado: a automação já foi processada para o carrinho ${cartAutomationIdentity}.`;
+        await db
+          .update(commercialAutomationJobsTable)
+          .set({
+            status: "cancelled",
+            processedAt: new Date(),
+            skipReason: "duplicate_cart_automation",
+            updatedAt: new Date(),
+          })
+          .where(eq(commercialAutomationJobsTable.id, job.id));
+        await db.insert(commercialAutomationLogsTable).values({
+          clientId: job.clientId,
+          ruleId: job.ruleId,
+          jobId: job.id,
+          eventType: job.eventType ?? "automation",
+          action: "automation_duplicate_skipped",
+          status: "info",
+          message,
+          metadata: {
+            eventId: job.eventId,
+            cartId: cartAutomationIdentity,
+            previousJobId: previousCartJob.id,
+          },
+        });
+        results.push({ jobId: job.id, status: "cancelled", message });
+        continue;
+      }
+    }
+
     const recipient = validateWhatsappRecipient(firstText(rendered.to));
     const to = recipient.normalized;
     const sender = asRecord(rendered.sender);
