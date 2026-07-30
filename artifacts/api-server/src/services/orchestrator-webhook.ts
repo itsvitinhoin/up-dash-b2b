@@ -54,3 +54,49 @@ export function getCartAutomationIdentity(
     data.id,
   );
 }
+
+export function getWebhookCustomerIdentity(
+  eventType: string | null | undefined,
+  payload: unknown,
+): string | null {
+  const normalizedEventType = eventType?.trim().toLowerCase() ?? "";
+  const { root } = getWebhookPayloadLayers(payload);
+  const customer = asRecord(root.customer) ?? asRecord(root.user) ?? asRecord(root.lead) ?? {};
+
+  return firstText(
+    root.customer_id,
+    root.customerId,
+    root.user_id,
+    root.userId,
+    customer.id,
+    customer.external_id,
+    normalizedEventType.startsWith("customer.") ? root.id : null,
+  );
+}
+
+export function getWebhookOrderIdentity(
+  eventType: string | null | undefined,
+  payload: unknown,
+): string | null {
+  const normalizedEventType = eventType?.trim().toLowerCase() ?? "";
+  const { root } = getWebhookPayloadLayers(payload);
+  const order = asRecord(root.order) ?? {};
+
+  return firstText(
+    root.order_number,
+    root.order_id,
+    root.orderId,
+    order.id,
+    order.external_id,
+    order.code,
+    order.number,
+    normalizedEventType.startsWith("order.") ? root.id : null,
+  );
+}
+
+export function selectWebhookCustomerContact(
+  webhookValue: string | null | undefined,
+  storedValue: string | null | undefined,
+): string | null {
+  return firstText(webhookValue, storedValue);
+}

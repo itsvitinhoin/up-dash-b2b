@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   getCartAutomationIdentity,
+  getWebhookCustomerIdentity,
+  getWebhookOrderIdentity,
   getWebhookPayloadLayers,
+  selectWebhookCustomerContact,
 } from "../src/services/orchestrator-webhook";
 
 describe("orchestrator webhook payload", () => {
@@ -34,5 +37,39 @@ describe("orchestrator webhook payload", () => {
 
   it("does not apply cart identity to unrelated events", () => {
     expect(getCartAutomationIdentity("customer.approved", payload)).toBeNull();
+  });
+
+  it("uses data.id as the external customer id for customer events", () => {
+    const customerPayload = {
+      event: "customer.approved",
+      data: {
+        id: 3717,
+        email: "teste@teste.com",
+        phone: "(11) 93022-6613",
+      },
+    };
+
+    expect(getWebhookCustomerIdentity("customer.approved", customerPayload)).toBe("3717");
+    expect(getWebhookOrderIdentity("customer.approved", customerPayload)).toBeNull();
+  });
+
+  it("uses data.id as the external order id only for order events", () => {
+    const orderPayload = {
+      event: "order.created",
+      data: {
+        id: 1763,
+        phone: "(11) 93022-6613",
+      },
+    };
+
+    expect(getWebhookOrderIdentity("order.created", orderPayload)).toBe("1763");
+    expect(getWebhookCustomerIdentity("order.created", orderPayload)).toBeNull();
+  });
+
+  it("keeps the explicit webhook contact ahead of stale stored data", () => {
+    expect(
+      selectWebhookCustomerContact("(11) 93022-6613", "(11) 94225-7099"),
+    ).toBe("(11) 93022-6613");
+    expect(selectWebhookCustomerContact(null, "(11) 94225-7099")).toBe("(11) 94225-7099");
   });
 });

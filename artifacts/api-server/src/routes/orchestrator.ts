@@ -30,7 +30,10 @@ import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps"
 import { selectAutomationSenderPhone } from "../services/automation-sender";
 import {
   getCartAutomationIdentity,
+  getWebhookCustomerIdentity,
+  getWebhookOrderIdentity,
   getWebhookPayloadLayers,
+  selectWebhookCustomerContact,
 } from "../services/orchestrator-webhook";
 import { UpzeroExternalAdapter, extractRows } from "../services/upzero/external-adapter";
 import {
@@ -382,23 +385,8 @@ function normalizeWebhookPayload(payload: unknown) {
     data.event_id,
     data.eventId,
   );
-  const externalCustomerId = firstText(
-    root.customer_id,
-    root.customerId,
-    root.user_id,
-    root.userId,
-    customer.id,
-    customer.external_id,
-  );
-  const externalOrderId = firstText(
-    root.order_number,
-    root.order_id,
-    root.orderId,
-    order.id,
-    order.external_id,
-    order.code,
-    order.number,
-  );
+  const externalCustomerId = getWebhookCustomerIdentity(eventType, payload);
+  const externalOrderId = getWebhookOrderIdentity(eventType, payload);
   const externalCartId = getCartAutomationIdentity(eventType, payload)
     ?? firstText(root.cart_id, root.cartId, cart.id, cart.external_id);
   const externalCheckoutId = firstText(root.checkout_id, root.checkoutId, checkout.id, checkout.external_id);
@@ -467,40 +455,48 @@ function normalizeWebhookPayload(payload: unknown) {
 type NormalizedWebhookPayload = ReturnType<typeof normalizeWebhookPayload>;
 
 async function findCustomerForWebhook(clientId: string, normalized: NormalizedWebhookPayload) {
-  const conditions = [];
+  const selectCustomer = async (identityCondition: ReturnType<typeof eq> | ReturnType<typeof sql>) => {
+    const [customer] = await db
+      .select({
+        id: customersTable.id,
+        externalId: customersTable.externalId,
+        name: customersTable.name,
+        email: customersTable.email,
+        phone: customersTable.phone,
+        documentType: customersTable.documentType,
+        documentLast4: customersTable.documentLast4,
+        registrationStatus: customersTable.registrationStatus,
+        state: customersTable.state,
+        city: customersTable.city,
+      })
+      .from(customersTable)
+      .where(and(eq(customersTable.clientId, clientId), identityCondition))
+      .limit(1);
+
+    return customer ?? null;
+  };
+
   if (normalized.externalCustomerId) {
-    conditions.push(eq(customersTable.externalId, normalized.externalCustomerId));
+    const customer = await selectCustomer(eq(customersTable.externalId, normalized.externalCustomerId));
+    if (customer) return customer;
   }
-  if (normalized.customerEmail) {
-    conditions.push(eq(customersTable.email, normalized.customerEmail));
-  }
+
   const customerPhone = normalizeWhatsappRecipient(normalized.customerPhone);
   if (customerPhone) {
-    conditions.push(sql`(
+    const customer = await selectCustomer(sql`(
       regexp_replace(coalesce(${customersTable.phone}, ''), '[^0-9]', '', 'g') = ${customerPhone}
       OR right(regexp_replace(coalesce(${customersTable.phone}, ''), '[^0-9]', '', 'g'), 11) = ${customerPhone.slice(-11)}
     )`);
+    if (customer) return customer;
   }
-  if (conditions.length === 0) return null;
 
-  const [customer] = await db
-    .select({
-      id: customersTable.id,
-      externalId: customersTable.externalId,
-      name: customersTable.name,
-      email: customersTable.email,
-      phone: customersTable.phone,
-      documentType: customersTable.documentType,
-      documentLast4: customersTable.documentLast4,
-      registrationStatus: customersTable.registrationStatus,
-      state: customersTable.state,
-      city: customersTable.city,
-    })
-    .from(customersTable)
-    .where(and(eq(customersTable.clientId, clientId), or(...conditions)))
-    .limit(1);
+  // E-mail pode ser reutilizado em testes ou recadastros. Só é seguro usá-lo
+  // quando o webhook não trouxe um identificador ou telefone mais forte.
+  if (!normalized.externalCustomerId && !customerPhone && normalized.customerEmail) {
+    return selectCustomer(eq(customersTable.email, normalized.customerEmail));
+  }
 
-  return customer ?? null;
+  return null;
 }
 
 async function findOrderForWebhook(
@@ -2148,9 +2144,9 @@ router.all("/ecommerce/webhooks/:clientId", async (req, res): Promise<void> => {
 
   const customer = await findCustomerForWebhook(client.id, normalized);
   const order = await findOrderForWebhook(client.id, normalized, customer);
-  const customerName = customer?.name ?? normalized.customerName;
-  const customerPhone = customer?.phone ?? normalized.customerPhone;
-  const customerEmail = customer?.email ?? normalized.customerEmail;
+  const customerName = selectWebhookCustomerContact(normalized.customerName, customer?.name);
+  const customerPhone = selectWebhookCustomerContact(normalized.customerPhone, customer?.phone);
+  const customerEmail = selectWebhookCustomerContact(normalized.customerEmail, customer?.email);
   const sellerName = normalized.sellerName ?? firstText(payload.seller_name, payload.assigned_seller_name);
   const sellerPhone = normalized.sellerPhone ?? firstText(payload.seller_phone, payload.assigned_seller_phone);
   const sellerEmail = normalized.sellerEmail ?? firstText(payload.seller_email);
