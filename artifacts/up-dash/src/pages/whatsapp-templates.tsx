@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clock3, Copy, FileText, Plus, RefreshCw, Save, Trash2, XCircle } from "lucide-react";
 import { customFetch } from "@workspace/api-client-react";
@@ -27,9 +27,11 @@ const NAMED_VARIABLE_PATTERN = /\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}/;
 type WhatsappConnectionsResponse = {
   phoneNumbers: Array<{
     id: string;
+    wabaId: string | null;
     phoneNumberId: string;
     displayPhoneNumber: string | null;
     verifiedName: string | null;
+    isDefault: boolean;
   }>;
 };
 
@@ -183,6 +185,22 @@ export default function WhatsappTemplatesPage() {
     enabled: Boolean(clientId),
   });
 
+  useEffect(() => {
+    if (!connections) return;
+
+    const phoneNumbers = connections?.phoneNumbers ?? [];
+    if (phoneNumbers.length === 0) {
+      if (phoneNumberId) setPhoneNumberId("");
+      return;
+    }
+
+    const selectedPhoneStillExists = phoneNumbers.some((phone) => phone.phoneNumberId === phoneNumberId);
+    if (selectedPhoneStillExists) return;
+
+    const defaultPhone = phoneNumbers.find((phone) => phone.isDefault) ?? phoneNumbers[0];
+    setPhoneNumberId(defaultPhone?.phoneNumberId ?? "");
+  }, [connections?.phoneNumbers, phoneNumberId]);
+
   const templatesQuery = useMemo(() => {
     const params = new URLSearchParams();
     if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
@@ -199,7 +217,7 @@ export default function WhatsappTemplatesPage() {
   const { data: templates, isLoading } = useQuery<WhatsappTemplatesResponse>({
     queryKey: templatesKey,
     queryFn: () => customFetch<WhatsappTemplatesResponse>(templatesQuery),
-    enabled: Boolean(clientId && phoneNumberId),
+    enabled: Boolean(clientId),
   });
 
   const syncTemplates = useMutation({

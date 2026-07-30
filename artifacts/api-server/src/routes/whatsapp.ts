@@ -918,25 +918,44 @@ async function upsertWhatsappPhoneNumber(params: {
   return phoneNumber;
 }
 
+async function getWhatsappPhoneNumber(clientId: string, phoneNumberId?: string | null) {
+  if (!phoneNumberId) return null;
+
+  const [phoneNumber] = await db
+    .select()
+    .from(whatsappPhoneNumbersTable)
+    .where(
+      and(
+        eq(whatsappPhoneNumbersTable.clientId, clientId),
+        eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId),
+      ),
+    )
+    .limit(1);
+
+  return phoneNumber ?? null;
+}
+
 async function getWhatsappIntegrationForPhone(clientId: string, phoneNumberId?: string | null) {
-  if (phoneNumberId) {
-    const [phoneNumber] = await db
-      .select()
-      .from(whatsappPhoneNumbersTable)
-      .where(
-        and(
-          eq(whatsappPhoneNumbersTable.clientId, clientId),
-          eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId),
-        ),
-      )
-      .limit(1);
+  const phoneNumber = await getWhatsappPhoneNumber(clientId, phoneNumberId);
+  if (phoneNumber) {
     if (phoneNumber?.integrationId) {
       const [integration] = await db
         .select()
         .from(whatsappIntegrationsTable)
-        .where(eq(whatsappIntegrationsTable.id, phoneNumber.integrationId))
+        .where(
+          and(
+            eq(whatsappIntegrationsTable.id, phoneNumber.integrationId),
+            eq(whatsappIntegrationsTable.clientId, clientId),
+          ),
+        )
         .limit(1);
-      if (integration) return integration;
+      if (integration) {
+        return {
+          ...integration,
+          wabaId: phoneNumber.wabaId ?? integration.wabaId,
+          phoneNumberId: phoneNumber.phoneNumberId,
+        };
+      }
     }
   }
 
@@ -945,7 +964,15 @@ async function getWhatsappIntegrationForPhone(clientId: string, phoneNumberId?: 
     .from(whatsappIntegrationsTable)
     .where(eq(whatsappIntegrationsTable.clientId, clientId))
     .limit(1);
-  return integration ?? null;
+  if (!integration) return null;
+
+  return phoneNumber
+    ? {
+        ...integration,
+        wabaId: phoneNumber.wabaId ?? integration.wabaId,
+        phoneNumberId: phoneNumber.phoneNumberId,
+      }
+    : integration;
 }
 
 async function upsertWhatsappContact(params: {
