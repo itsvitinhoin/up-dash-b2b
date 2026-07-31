@@ -3,8 +3,15 @@ import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { HealthCheckResponse } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
+import { getBigQueryCredentialDiagnostics } from "../lib/bigquery";
 
 const router: IRouter = Router();
+
+// Diagnóstico temporário pra investigar a credencial do BigQuery em
+// produção. Não expõe a chave privada. Remover depois de resolver.
+router.get("/debug/bigquery", (_req, res) => {
+  res.json(getBigQueryCredentialDiagnostics());
+});
 
 router.get("/healthz", async (_req, res) => {
   let dbStatus: "ok" | "error" = "ok";
