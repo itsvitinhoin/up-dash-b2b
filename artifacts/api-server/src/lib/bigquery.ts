@@ -62,7 +62,20 @@ export const bigquery = serviceAccountCredentials
  * nome do dataset (nunca interpolar direto — datasets vêm de dado
  * cadastrado por admin, mas isso entra numa string de SQL).
  */
+let loggedDebugMarker = false;
+
 export function vestiTable(dataset: string, table: string): string {
+  if (!loggedDebugMarker) {
+    loggedDebugMarker = true;
+    console.error(
+      "===BIGQUERY_DEBUG===",
+      JSON.stringify({
+        hasCredentials: !!serviceAccountCredentials,
+        envVarPresent: !!(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ?? process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+        envVarLength: (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ?? process.env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "").length,
+      }),
+    );
+  }
   if (!/^[A-Za-z0-9_]+$/.test(dataset)) {
     throw new Error(`dataset inválido: "${dataset}"`);
   }
