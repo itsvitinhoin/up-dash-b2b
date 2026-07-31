@@ -1,4 +1,5 @@
 import { BigQuery } from "@google-cloud/bigquery";
+import { logger } from "./logger";
 
 const VESTI_PROJECT = "up-vesti-report";
 
@@ -21,9 +22,10 @@ function loadServiceAccountCredentials(): { client_email: string; private_key: s
     process.env.GOOGLE_SERVICE_ACCOUNT_JSON ??
     null;
   if (!raw) {
-    console.warn("[bigquery] GOOGLE_APPLICATION_CREDENTIALS_JSON não definida; usando Application Default Credentials.");
+    logger.warn("[bigquery] GOOGLE_APPLICATION_CREDENTIALS_JSON não definida; usando Application Default Credentials.");
     return null;
   }
+  logger.info({ rawLength: raw.length, startsWithBrace: raw.trim().startsWith("{") }, "[bigquery] GOOGLE_APPLICATION_CREDENTIALS_JSON encontrada, tentando parsear.");
 
   // Aceita tanto o JSON colado direto quanto em base64 — evita problemas
   // de formatação ao colar um valor multi-linha num campo de formulário
@@ -38,13 +40,14 @@ function loadServiceAccountCredentials(): { client_email: string; private_key: s
   }
 
   if (!parsed) {
-    console.error("[bigquery] GOOGLE_APPLICATION_CREDENTIALS_JSON está definida mas não é um JSON válido (nem direto, nem em base64).");
+    logger.error("[bigquery] GOOGLE_APPLICATION_CREDENTIALS_JSON está definida mas não é um JSON válido (nem direto, nem em base64).");
     return null;
   }
   if (!parsed.client_email || !parsed.private_key) {
-    console.error("[bigquery] GOOGLE_APPLICATION_CREDENTIALS_JSON não tem client_email/private_key.");
+    logger.error({ hasClientEmail: !!parsed.client_email, hasPrivateKey: !!parsed.private_key }, "[bigquery] GOOGLE_APPLICATION_CREDENTIALS_JSON não tem client_email/private_key.");
     return null;
   }
+  logger.info({ clientEmail: parsed.client_email }, "[bigquery] credencial de service account carregada com sucesso.");
   return { client_email: parsed.client_email, private_key: parsed.private_key.replace(/\\n/g, "\n") };
 }
 
