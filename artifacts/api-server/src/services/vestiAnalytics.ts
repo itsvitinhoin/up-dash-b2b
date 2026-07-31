@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { stateFromPhoneDdd } from "../lib/phoneState";
+import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 
 /**
  * Se o client for Vesti e tiver dataset configurado, devolve o dataset.
@@ -1654,4 +1655,216 @@ export async function fetchVestiProductDetail(dataset: string, productId: string
     byState: (stateRows as Array<Record<string, unknown>>).map((r) => ({ label: String(r.label), units: Number(r.units) || 0, revenue: Number(r.revenue) || 0 })),
     level: computeVestiProductLevel(totalSold, stock, recent30dSold, catalogAvgSellThrough),
   };
+}
+
+// Relatório Diário (Vesti) — reaproveita o mesmo dado do dashboard
+// (computeVestiWindow) pros KPIs de venda; aqui só o breakdown por
+// produto/categoria/cor/tamanho no período, equivalente ao que o
+// caminho B2C tira de order_items (routes/analytics.ts).
+export type VestiDailyBreakdownRow = { name: string; category?: string | null; units: number; revenue: number };
+
+export type VestiDailyBreakdown = {
+  products: VestiDailyBreakdownRow[];
+  categories: VestiDailyBreakdownRow[];
+  colors: VestiDailyBreakdownRow[];
+  sizes: VestiDailyBreakdownRow[];
+};
+
+export async function fetchVestiDailyBreakdown(dataset: string, dateFrom: string, dateTo: string): Promise<VestiDailyBreakdown> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const produtos = vestiTable(dataset, "produtos_vesti");
+  const params = { dateFrom, dateTo };
+
+  const [[productRows], [categoryRows], [colorRows], [sizeRows]] = await Promise.all([
+    bigquery.query({
+      query: `
+        SELECT p.name AS name, p.categories[SAFE_OFFSET(0)].name AS category,
+          COALESCE(SUM(v.produto_quantidade_reservada), 0) AS units,
+          COALESCE(SUM(v.produto_preco_unitario * v.produto_quantidade_reservada), 0) AS revenue
+        FROM ${view} v
+        JOIN ${produtos} p ON p.id = v.produto_id
+        WHERE v.data_ref BETWEEN @dateFrom AND @dateTo AND v.pago
+        GROUP BY p.name, category
+        ORDER BY revenue DESC
+        LIMIT 10
+      `,
+      params,
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(p.categories[SAFE_OFFSET(0)].name, 'Sem categoria') AS name,
+          COALESCE(SUM(v.produto_quantidade_reservada), 0) AS units,
+          COALESCE(SUM(v.produto_preco_unitario * v.produto_quantidade_reservada), 0) AS revenue
+        FROM ${view} v
+        JOIN ${produtos} p ON p.id = v.produto_id
+        WHERE v.data_ref BETWEEN @dateFrom AND @dateTo AND v.pago
+        GROUP BY name
+        ORDER BY revenue DESC
+        LIMIT 8
+      `,
+      params,
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(NULLIF(produto_cor, ''), 'Sem cor') AS name,
+          COALESCE(SUM(produto_quantidade_reservada), 0) AS units,
+          COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS revenue
+        FROM ${view}
+        WHERE data_ref BETWEEN @dateFrom AND @dateTo AND pago
+        GROUP BY name
+        ORDER BY revenue DESC
+        LIMIT 8
+      `,
+      params,
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(NULLIF(produto_tamanho, ''), 'Único') AS name,
+          COALESCE(SUM(produto_quantidade_reservada), 0) AS units,
+          COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS revenue
+        FROM ${view}
+        WHERE data_ref BETWEEN @dateFrom AND @dateTo AND pago
+        GROUP BY name
+        ORDER BY revenue DESC
+        LIMIT 8
+      `,
+      params,
+    }),
+  ]);
+
+  const mapRow = (r: Record<string, unknown>): VestiDailyBreakdownRow => ({
+    name: String(r.name),
+    category: (r.category as string) ?? null,
+    units: Number(r.units) || 0,
+    revenue: Number(r.revenue) || 0,
+  });
+
+  return {
+    products: (productRows as Array<Record<string, unknown>>).map(mapRow),
+    categories: (categoryRows as Array<Record<string, unknown>>).map(mapRow),
+    colors: (colorRows as Array<Record<string, unknown>>).map(mapRow),
+    sizes: (sizeRows as Array<Record<string, unknown>>).map(mapRow),
+  };
+}
+
+export type VestiDailyMetricSet = {
+  approvedRevenue: number;
+  sales: number;
+  avgTicket: number;
+  costPerPurchase: number;
+  mediaSpend: number;
+  roas: number;
+};
+
+function vestiPctChange(current: number, previous: number): number | null {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return ((current - previous) / previous) * 100;
+}
+
+function vestiDailyHeuristic(params: {
+  kpis: VestiDailyMetricSet;
+  prevKpis: VestiDailyMetricSet;
+  campaigns: Array<{ name: string; spend: number; roas: number; purchases: number }>;
+  breakdown: VestiDailyBreakdown;
+}): { generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" } {
+  const revenueChange = vestiPctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue);
+  const salesChange = vestiPctChange(params.kpis.sales, params.prevKpis.sales);
+  const topCampaign = params.campaigns[0];
+  const topProduct = params.breakdown.products[0];
+  const topCategory = params.breakdown.categories[0];
+  const revenueTrend =
+    revenueChange == null ? "sem base anterior comparável" : revenueChange >= 0 ? `cresceu ${revenueChange.toFixed(1)}%` : `caiu ${Math.abs(revenueChange).toFixed(1)}%`;
+
+  return {
+    generalAnalysis: `No período, o faturamento aprovado ${revenueTrend}, com ${params.kpis.sales} pedidos pagos e ticket médio de R$${params.kpis.avgTicket.toFixed(2)}.${params.kpis.mediaSpend > 0 ? ` O investimento em mídia foi de R$${params.kpis.mediaSpend.toFixed(2)}, com ROAS de ${params.kpis.roas.toFixed(2)}x.` : ""}`,
+    reportSummary: [
+      salesChange == null
+        ? `Foram ${params.kpis.sales} pedidos pagos no período, ainda sem base anterior sólida para comparação.`
+        : `A quantidade de pedidos pagos ${salesChange >= 0 ? "subiu" : "caiu"} ${Math.abs(salesChange).toFixed(1)}% versus o período anterior.`,
+      topCampaign
+        ? `Campanha de maior investimento: ${topCampaign.name}, com R$${topCampaign.spend.toFixed(2)} investidos, ${topCampaign.purchases} compras e ROAS ${topCampaign.roas.toFixed(2)}x.`
+        : "Não houve campanhas de mídia com dados disponíveis para o período.",
+      topProduct
+        ? `Produto mais vendido: ${topProduct.name}, com ${topProduct.units} unidades e R$${topProduct.revenue.toFixed(2)} em receita.`
+        : "Não houve produtos vendidos no período.",
+      topCategory
+        ? `Categoria líder: ${topCategory.name}, com ${topCategory.units} unidades vendidas e R$${topCategory.revenue.toFixed(2)} em receita.`
+        : "Não houve categoria com venda registrada no período.",
+    ],
+    source: "heuristic",
+  };
+}
+
+export async function generateVestiDailyReportText(params: {
+  brand: string;
+  dateFrom: string;
+  dateTo: string;
+  kpis: VestiDailyMetricSet;
+  prevKpis: VestiDailyMetricSet;
+  campaigns: Array<{ name: string; spend: number; purchases: number; revenue: number; roas: number; cpa: number }>;
+  breakdown: VestiDailyBreakdown;
+}): Promise<{ generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" }> {
+  const heuristic = vestiDailyHeuristic(params);
+  const ai = getOpenAIClient();
+  if (!ai || !isAIConfigured()) return heuristic;
+
+  try {
+    const completion = await ai.chat.completions.create({
+      model: process.env.AI_INTEGRATIONS_OPENAI_MODEL ?? "gpt-5-nano",
+      max_completion_tokens: 1200,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Você é um analista sênior de vendas por atacado (venda via vendedora, não e-commerce) e mídia paga. Responda somente JSON válido, em português do Brasil, com análise objetiva para enviar ao cliente. Nunca diga que uma campanha não tem eficiência ou é ineficiente; quando houver queda ou baixo retorno, descreva a ação necessária.",
+        },
+        {
+          role: "user",
+          content: `Crie um relatório diário para "${params.brand}" no período ${params.dateFrom} até ${params.dateTo}.
+
+Métricas atuais:
+- Faturamento aprovado: R$${params.kpis.approvedRevenue.toFixed(2)}
+- Pedidos pagos: ${params.kpis.sales}
+- Ticket médio: R$${params.kpis.avgTicket.toFixed(2)}
+- Investimento em mídia: R$${params.kpis.mediaSpend.toFixed(2)}
+- ROAS: ${params.kpis.roas.toFixed(2)}x
+
+Período anterior:
+- Faturamento aprovado: R$${params.prevKpis.approvedRevenue.toFixed(2)}
+- Pedidos pagos: ${params.prevKpis.sales}
+- Ticket médio: R$${params.prevKpis.avgTicket.toFixed(2)}
+
+Campanhas principais: ${params.campaigns.slice(0, 8).map((c) => `${c.name}: gasto R$${c.spend.toFixed(2)}, compras ${c.purchases}, receita R$${c.revenue.toFixed(2)}, ROAS ${c.roas.toFixed(2)}x`).join(" | ") || "sem dados"}
+Produtos mais vendidos: ${params.breakdown.products.slice(0, 8).map((p) => `${p.name}${p.category ? ` (${p.category})` : ""}: ${p.units} un., R$${p.revenue.toFixed(2)}`).join(" | ") || "sem dados"}
+Categorias: ${params.breakdown.categories.slice(0, 8).map((c) => `${c.name}: ${c.units} un., R$${c.revenue.toFixed(2)}`).join(" | ") || "sem dados"}
+Cores: ${params.breakdown.colors.slice(0, 8).map((c) => `${c.name}: ${c.units} un., R$${c.revenue.toFixed(2)}`).join(" | ") || "sem dados"}
+Tamanhos: ${params.breakdown.sizes.slice(0, 8).map((s) => `${s.name}: ${s.units} un., R$${s.revenue.toFixed(2)}`).join(" | ") || "sem dados"}
+
+Retorne exatamente:
+{
+  "generalAnalysis": "<1 parágrafo curto com a leitura geral>",
+  "reportSummary": ["<insight 1>", "<insight 2>", "<insight 3>", "... opcional até 6"]
+}
+
+Não use markdown.`,
+        },
+      ],
+    });
+    const text = completion.choices[0]?.message?.content;
+    if (!text) return heuristic;
+    const parsed = JSON.parse(text) as { generalAnalysis?: string; reportSummary?: unknown };
+    const bullets = Array.isArray(parsed.reportSummary) ? parsed.reportSummary.map((item) => String(item).trim()).filter(Boolean) : [];
+    const generalAnalysis = typeof parsed.generalAnalysis === "string" ? parsed.generalAnalysis.trim() : "";
+    if (generalAnalysis || bullets.length > 0) {
+      return {
+        generalAnalysis: (generalAnalysis || heuristic.generalAnalysis).slice(0, 1200),
+        reportSummary: (bullets.length > 0 ? bullets : heuristic.reportSummary).slice(0, 6).map((item) => item.slice(0, 300)),
+        source: "ai",
+      };
+    }
+  } catch (err) {
+    console.warn("[vesti-daily-report] AI generation failed, using heuristic:", err instanceof Error ? err.message : err);
+  }
+  return heuristic;
 }

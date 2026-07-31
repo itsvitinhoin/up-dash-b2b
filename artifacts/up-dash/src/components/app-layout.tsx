@@ -380,6 +380,11 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   const b2bOnlyRoutes = useMemo(() => new Set(["/whatsapp", "/utm", "/sellers", "/journey", "/orquestrador", "/agente-vendas", "/erp", "/performance"]), []);
   const b2cOnlyRoutes = useMemo(() => new Set(["/daily", "/scale"]), []);
+  // Clientes Vesti são dashboardType=B2B (venda por atacado), mas já têm
+  // relatório diário via BigQuery (ver vestiDashboardController.getDailyReport)
+  // — por isso "/daily" fica liberado pra eles mesmo em modo B2B.
+  const vestiEnabledB2cRoutes = useMemo(() => new Set(["/daily"]), []);
+  const isVestiClient = activeClient?.commercePlatform === "VESTI";
   const isB2BOnlyRoute = useCallback(
     (href: string) =>
       b2bOnlyRoutes.has(href) ||
@@ -440,7 +445,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     { name: t("nav.stock", "Stock"), href: "/stock", icon: PackageSearch },
   ].filter((item) => {
     if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(item.href)) return false;
-    if (effectiveDashboardMode === "B2B" && b2cOnlyRoutes.has(item.href)) return false;
+    if (effectiveDashboardMode === "B2B" && b2cOnlyRoutes.has(item.href) && !(isVestiClient && vestiEnabledB2cRoutes.has(item.href))) return false;
     return true;
   });
 

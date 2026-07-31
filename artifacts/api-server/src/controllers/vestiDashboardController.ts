@@ -1,16 +1,32 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
+import { db, clientsTable } from "@workspace/db";
 import { GetDashboardQueryParams, GetDashboardResponse } from "@workspace/api-zod";
 import { coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
+import { fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
 import {
   resolveVestiDataset,
   computeVestiWindow,
   computeVestiStateRevenue,
   fetchVestiAttributedCustomers,
   fetchVestiFunnel,
+  fetchVestiDailyBreakdown,
+  generateVestiDailyReportText,
   type VestiFilters,
 } from "../services/vestiAnalytics";
+
+// Duplicado de propósito (mesmo padrão de routes/analytics.ts e
+// routes/clients.ts) — evita import circular controller↔routes.
+function getGlobalMetaAccessToken(fallback?: string | null): string | null {
+  return process.env.META_ADS_API_KEY ?? process.env.META_ACCESS_TOKEN ?? process.env.META_API_KEY ?? process.env.META_TOKEN ?? fallback ?? null;
+}
+
+function pctChange(current: number, previous: number): number | null {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return ((current - previous) / previous) * 100;
+}
 
 const VESTI_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -290,5 +306,124 @@ export async function getFunnel(req: Request, res: Response): Promise<void> {
     topPaths: [],
     suggestedActions: funnel.suggestedActions,
     hasSiteVisitData: funnel.hasSiteVisitData,
+  });
+}
+
+export async function getDailyReport(req: Request, res: Response): Promise<void> {
+  const parsed = z.object({ dateFrom: z.date().optional(), dateTo: z.date().optional() }).safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const dataset = await resolveVestiDataset(clientId);
+  if (!dataset) {
+    res.status(404).json({ error: true, code: "NOT_VESTI_CLIENT", message: "Client não é Vesti ou não foi encontrado.", status: 404 });
+    return;
+  }
+
+  const [client] = await db
+    .select({ name: clientsTable.name, metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  const rawQuery = req.query as Record<string, unknown>;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
+  const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
+  const span = to.getTime() - from.getTime();
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - span);
+  const prevDateFromOnly = saoPauloDateOnly(prevFrom);
+  const prevDateToOnly = saoPauloDateOnly(prevTo);
+
+  const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
+  const [metaCurrent, metaPrev] = await Promise.all([
+    metaAccessToken && client?.metaAdAccountId
+      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: dateFromOnly, until: dateToOnly }).catch((err) => {
+          console.warn("[vesti-daily-report] Meta current fetch failed:", err);
+          return null;
+        })
+      : Promise.resolve(null),
+    metaAccessToken && client?.metaAdAccountId
+      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: prevDateFromOnly, until: prevDateToOnly }).catch((err) => {
+          console.warn("[vesti-daily-report] Meta previous fetch failed:", err);
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
+  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
+
+  const [currentWindow, prevWindow, breakdown] = await Promise.all([
+    cached(`vesti:window:${dataset}:${dateFromOnly}:${dateToOnly}:{}`, 5 * 60 * 1000, () => computeVestiWindow(dataset, dateFromOnly, dateToOnly, {}, false)),
+    cached(`vesti:window:${dataset}:${prevDateFromOnly}:${prevDateToOnly}:{}`, 5 * 60 * 1000, () => computeVestiWindow(dataset, prevDateFromOnly, prevDateToOnly, {}, false)),
+    cached(`vesti:daily-breakdown:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () => fetchVestiDailyBreakdown(dataset, dateFromOnly, dateToOnly)),
+  ]);
+
+  const kpis = {
+    approvedRevenue: currentWindow.kpis.revenue,
+    sales: currentWindow.kpis.orders,
+    avgTicket: currentWindow.kpis.avgTicket,
+    mediaSpend: metaCurrent?.summary.spend ?? 0,
+    costPerPurchase: currentWindow.kpis.orders > 0 ? (metaCurrent?.summary.spend ?? 0) / currentWindow.kpis.orders : 0,
+    roas: (metaCurrent?.summary.spend ?? 0) > 0 ? currentWindow.kpis.revenue / (metaCurrent?.summary.spend ?? 0) : 0,
+  };
+  const prevKpis = {
+    approvedRevenue: prevWindow.kpis.revenue,
+    sales: prevWindow.kpis.orders,
+    avgTicket: prevWindow.kpis.avgTicket,
+    mediaSpend: metaPrev?.summary.spend ?? 0,
+    costPerPurchase: prevWindow.kpis.orders > 0 ? (metaPrev?.summary.spend ?? 0) / prevWindow.kpis.orders : 0,
+    roas: (metaPrev?.summary.spend ?? 0) > 0 ? prevWindow.kpis.revenue / (metaPrev?.summary.spend ?? 0) : 0,
+  };
+
+  const campaigns = (metaCurrent?.campaigns ?? [])
+    .map((campaign) => ({
+      id: campaign.id,
+      name: campaign.name,
+      spend: campaign.spend,
+      purchases: campaign.purchases,
+      revenue: campaign.revenue,
+      roas: campaign.roas ?? (campaign.spend > 0 ? campaign.revenue / campaign.spend : 0),
+      cpa: campaign.cpa ?? (campaign.purchases > 0 ? campaign.spend / campaign.purchases : 0),
+      clicks: campaign.clicks,
+      impressions: campaign.impressions,
+    }))
+    .sort((a, b) => b.spend - a.spend)
+    .slice(0, 10);
+
+  const analysis = await generateVestiDailyReportText({
+    brand: client?.name ?? "",
+    dateFrom: dateFromOnly,
+    dateTo: dateToOnly,
+    kpis,
+    prevKpis,
+    campaigns,
+    breakdown,
+  });
+
+  res.json({
+    client: { id: clientId, name: client?.name ?? "" },
+    period: { from: dateFromOnly, to: dateToOnly },
+    previousPeriod: { from: prevDateFromOnly, to: prevDateToOnly },
+    kpis,
+    prevKpis,
+    changes: {
+      approvedRevenue: pctChange(kpis.approvedRevenue, prevKpis.approvedRevenue),
+      sales: pctChange(kpis.sales, prevKpis.sales),
+      avgTicket: pctChange(kpis.avgTicket, prevKpis.avgTicket),
+      costPerPurchase: pctChange(kpis.costPerPurchase, prevKpis.costPerPurchase),
+      mediaSpend: pctChange(kpis.mediaSpend, prevKpis.mediaSpend),
+      roas: pctChange(kpis.roas, prevKpis.roas),
+    },
+    campaigns,
+    products: breakdown.products,
+    categories: breakdown.categories,
+    colors: breakdown.colors,
+    sizes: breakdown.sizes,
+    analysis,
+    generatedAt: new Date().toISOString(),
   });
 }

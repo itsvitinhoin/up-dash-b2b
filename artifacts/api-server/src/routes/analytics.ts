@@ -10472,12 +10472,17 @@ router.get("/analytics/daily-report", async (req, res): Promise<void> => {
       dashboardType: clientsTable.dashboardType,
       metaAdsApiKey: clientsTable.metaAdsApiKey,
       metaAdAccountId: clientsTable.metaAdAccountId,
+      commercePlatform: clientsTable.commercePlatform,
     })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
 
   if (!clientConfig) {
     res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (clientConfig.commercePlatform === "VESTI") {
+    await vestiDashboardController.getDailyReport(req, res);
     return;
   }
   if (clientConfig.dashboardType !== "B2C") {
