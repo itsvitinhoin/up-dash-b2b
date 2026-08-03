@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clock3, Copy, FileText, Plus, RefreshCw, Save, Trash2, XCircle } from "lucide-react";
 import { customFetch } from "@workspace/api-client-react";
@@ -27,9 +27,11 @@ const NAMED_VARIABLE_PATTERN = /\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}/;
 type WhatsappConnectionsResponse = {
   phoneNumbers: Array<{
     id: string;
+    wabaId: string | null;
     phoneNumberId: string;
     displayPhoneNumber: string | null;
     verifiedName: string | null;
+    isDefault: boolean;
   }>;
 };
 
@@ -55,6 +57,20 @@ type WhatsappTemplatesResponse = {
 type CreateTemplateResponse = {
   ok: boolean;
   template: WhatsappTemplate | null;
+};
+
+type SyncTemplatesResponse = {
+  ok: boolean;
+  synced: number;
+  errors: string[];
+  diagnostics?: Array<{
+    phoneNumberId: string | null;
+    initialWabaId: string | null;
+    resolvedWabaId: string | null;
+    checkedWabaIds: string[];
+    matchedPhone: boolean | null;
+    templates: number;
+  }>;
 };
 
 type TemplateButtonType = "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
@@ -183,6 +199,22 @@ export default function WhatsappTemplatesPage() {
     enabled: Boolean(clientId),
   });
 
+  useEffect(() => {
+    if (!connections) return;
+
+    const phoneNumbers = connections?.phoneNumbers ?? [];
+    if (phoneNumbers.length === 0) {
+      if (phoneNumberId) setPhoneNumberId("");
+      return;
+    }
+
+    const selectedPhoneStillExists = phoneNumbers.some((phone) => phone.phoneNumberId === phoneNumberId);
+    if (selectedPhoneStillExists) return;
+
+    const defaultPhone = phoneNumbers.find((phone) => phone.isDefault) ?? phoneNumbers[0];
+    setPhoneNumberId(defaultPhone?.phoneNumberId ?? "");
+  }, [connections?.phoneNumbers, phoneNumberId]);
+
   const templatesQuery = useMemo(() => {
     const params = new URLSearchParams();
     if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
@@ -199,12 +231,12 @@ export default function WhatsappTemplatesPage() {
   const { data: templates, isLoading } = useQuery<WhatsappTemplatesResponse>({
     queryKey: templatesKey,
     queryFn: () => customFetch<WhatsappTemplatesResponse>(templatesQuery),
-    enabled: Boolean(clientId && phoneNumberId),
+    enabled: Boolean(clientId),
   });
 
   const syncTemplates = useMutation({
     mutationFn: () =>
-      customFetch<{ ok: boolean; synced: number; errors: string[] }>("/api/whatsapp/templates/sync", {
+      customFetch<SyncTemplatesResponse>("/api/whatsapp/templates/sync", {
         method: "POST",
         body: JSON.stringify({
           clientId,
@@ -212,8 +244,13 @@ export default function WhatsappTemplatesPage() {
         }),
       }),
     onSuccess: (payload) => {
-      setError(payload.errors[0] ?? null);
-      setSuccessMessage(`Sincronização concluída: ${payload.synced} template(s).`);
+      const diagnostic = payload.diagnostics?.[0];
+      const emptySyncMessage = diagnostic?.matchedPhone === false
+        ? "A Meta não confirmou o número selecionado em nenhum WABA acessível por este token. Reconecte o número ou revise o acesso do aplicativo à conta do WhatsApp."
+        : "A Meta confirmou o número, mas retornou 0 templates para o WABA dele. Confirme no Gerenciador do WhatsApp se os modelos aprovados pertencem a essa mesma conta.";
+      const syncError = payload.errors[0] ?? (payload.synced === 0 ? emptySyncMessage : null);
+      setError(syncError);
+      setSuccessMessage(syncError ? null : `Sincronização concluída: ${payload.synced} template(s).`);
       void queryClient.invalidateQueries({ queryKey: templatesKey });
     },
     onError: (err) => {

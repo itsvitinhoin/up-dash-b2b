@@ -147,6 +147,7 @@ const PLATFORM_PICK = "__platform__";
 const ADMIN_DISPLAY_EMAIL = "admin@updash.com";
 const GLOBAL_SWITCH_MIN_MS = 650;
 const GLOBAL_SWITCH_MAX_MS = 12000;
+const ADMIN_CLIENTS_CACHE_KEY = "updash.adminClientOptions.v1";
 const LOCAL_UI_PREVIEW =
   import.meta.env.DEV && import.meta.env.VITE_UI_PREVIEW === "1";
 const LOCAL_PREVIEW_CLIENT: Client = {
@@ -168,6 +169,46 @@ const LOCAL_PREVIEW_CLIENT: Client = {
   createdAt: "2026-07-01T00:00:00.000Z",
   updatedAt: "2026-07-23T00:00:00.000Z",
 };
+
+type AdminClientOption = {
+  id: string;
+  name: string;
+  dashboardType: "B2B" | "B2C" | null;
+  currency: string;
+  locale: string;
+};
+
+function toAdminClientOption(client: Client): AdminClientOption {
+  return {
+    id: client.id,
+    name: client.name,
+    dashboardType: client.dashboardType ?? null,
+    currency: client.currency,
+    locale: client.locale,
+  };
+}
+
+function readCachedAdminClients(): AdminClientOption[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ADMIN_CLIENTS_CACHE_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter(
+      (client): client is AdminClientOption =>
+        typeof client?.id === "string" &&
+        typeof client?.name === "string" &&
+        (client?.dashboardType === "B2B" ||
+          client?.dashboardType === "B2C" ||
+          client?.dashboardType === null) &&
+        typeof client?.currency === "string" &&
+        typeof client?.locale === "string",
+    );
+  } catch {
+    return [];
+  }
+}
 
 function isBackgroundQueryKey(queryKey: readonly unknown[]): boolean {
   const first = String(queryKey[0] ?? "");
@@ -200,6 +241,9 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { dateRange, setDateRange } = useDashboardFilters();
   const { setOpen: setShortcutsOpen } = useKeyboardShortcuts();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [cachedAdminClients, setCachedAdminClients] = useState<AdminClientOption[]>(
+    readCachedAdminClients,
+  );
   const userDisplayName = getUserDisplayName(user);
   const userInitials = getUserInitials(userDisplayName);
 
@@ -227,18 +271,62 @@ export function AppLayout({ children }: AppLayoutProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const { data: clientsData } = useListClients(
-    { limit: 100, dashboardType: selectedDashboardMode },
-    { query: queryOpts({ enabled: user?.role === "ADMIN" && !LOCAL_UI_PREVIEW }) },
+  const {
+    data: clientsData,
+    isLoading: isLoadingClients,
+    isError: isClientsError,
+    isFetching: isFetchingClients,
+    isSuccess: isClientsSuccess,
+    refetch: refetchClients,
+  } = useListClients(
+    { page: 1, limit: 1000 },
+    {
+      query: queryOpts({
+        enabled: user?.role === "ADMIN" && !LOCAL_UI_PREVIEW,
+        placeholderData: (previous) => previous,
+        refetchOnWindowFocus: true,
+        refetchInterval: (query) => query.state.status === "error" ? 30_000 : false,
+      }),
+    },
   );
+
+  useEffect(() => {
+    if (
+      !Array.isArray(clientsData?.data) ||
+      clientsData.data.length === 0
+    ) {
+      return;
+    }
+
+    const options = clientsData.data.map(toAdminClientOption);
+    setCachedAdminClients(options);
+    try {
+      localStorage.setItem(ADMIN_CLIENTS_CACHE_KEY, JSON.stringify(options));
+    } catch {
+      // The live query remains authoritative if browser storage is unavailable.
+    }
+  }, [clientsData?.data, clientsData?.total]);
+
   const adminClients = useMemo(
-    () =>
-      LOCAL_UI_PREVIEW
-        ? [LOCAL_PREVIEW_CLIENT]
-        : Array.isArray(clientsData?.data)
-          ? clientsData.data
-          : [],
-    [clientsData?.data],
+    () => {
+      const liveClients = Array.isArray(clientsData?.data)
+        ? clientsData.data.map(toAdminClientOption)
+        : [];
+      const clients: AdminClientOption[] = LOCAL_UI_PREVIEW
+        ? [toAdminClientOption(LOCAL_PREVIEW_CLIENT)]
+        : liveClients.length > 0
+          ? liveClients
+          : cachedAdminClients;
+
+      return clients
+        .filter((client) => {
+          if (client.dashboardType === selectedDashboardMode) return true;
+          // Clients created before dashboard_type existed belong to B2B.
+          return selectedDashboardMode === "B2B" && !client.dashboardType;
+        })
+        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    },
+    [cachedAdminClients, clientsData?.data, selectedDashboardMode],
   );
 
   // We deliberately do NOT auto-pick a client for admins here. UP Dash is an
@@ -253,11 +341,30 @@ export function AppLayout({ children }: AppLayoutProps) {
   });
 
   useEffect(() => {
-    if (user?.role !== "ADMIN" || !selectedClientId || !clientsData) return;
+    if (
+      user?.role !== "ADMIN" ||
+      !selectedClientId ||
+      !clientsData ||
+      !isClientsSuccess ||
+      isClientsError ||
+      isFetchingClients ||
+      clientsData.data.length === 0
+    ) {
+      return;
+    }
     if (!adminClients.some((client) => client.id === selectedClientId)) {
       setSelectedClientId(null);
     }
-  }, [adminClients, clientsData, selectedClientId, setSelectedClientId, user?.role]);
+  }, [
+    adminClients,
+    clientsData,
+    isClientsError,
+    isClientsSuccess,
+    isFetchingClients,
+    selectedClientId,
+    setSelectedClientId,
+    user?.role,
+  ]);
 
   const activeClient =
     user?.role === "CLIENT"
@@ -744,6 +851,45 @@ export function AppLayout({ children }: AppLayoutProps) {
                         {client.name}
                       </SelectItem>
                     ))}
+                    {!LOCAL_UI_PREVIEW && isLoadingClients && (
+                      <div className="px-2 py-2 text-xs text-muted-foreground">
+                        {t("top.loadingClients", "Carregando clientes...")}
+                      </div>
+                    )}
+                    {!LOCAL_UI_PREVIEW &&
+                      !isLoadingClients &&
+                      isClientsError &&
+                      adminClients.length === 0 && (
+                      <div className="space-y-2 px-2 py-2 text-xs text-destructive">
+                        <p>{t("top.clientsError", "Não foi possível carregar os clientes.")}</p>
+                        <button
+                          type="button"
+                          className="text-primary underline underline-offset-2"
+                          onPointerDown={(event) => event.preventDefault()}
+                          onClick={() => void refetchClients()}
+                        >
+                          {t("top.retryClients", "Tentar novamente")}
+                        </button>
+                      </div>
+                    )}
+                    {!LOCAL_UI_PREVIEW &&
+                      isClientsError &&
+                      adminClients.length > 0 && (
+                        <div className="px-2 py-2 text-xs text-amber-600 dark:text-amber-400">
+                          {t(
+                            "top.cachedClients",
+                            "Exibindo a última lista salva enquanto reconectamos.",
+                          )}
+                        </div>
+                      )}
+                    {!LOCAL_UI_PREVIEW &&
+                      !isLoadingClients &&
+                      !isClientsError &&
+                      adminClients.length === 0 && (
+                        <div className="px-2 py-2 text-xs text-muted-foreground">
+                          {t("top.noClientsForMode", "Nenhum cliente disponível neste modo.")}
+                        </div>
+                      )}
                   </SelectContent>
                 </Select>
               </div>

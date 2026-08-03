@@ -8,6 +8,10 @@ import { ThemeProvider, useTheme } from "@/components/theme-provider";
 import { AppLayout } from "@/components/app-layout";
 import { AuthGuard } from "@/components/auth-guard";
 import { handleApiError } from "@/lib/api-error";
+import {
+  retryTransientQuery,
+  transientQueryRetryDelay,
+} from "@/lib/query-opts";
 import { DashboardFiltersProvider } from "@/lib/dashboard-filters";
 import { KeyboardShortcutsProvider } from "@/lib/keyboard-shortcuts";
 import { I18nProvider } from "@/lib/i18n";
@@ -64,7 +68,9 @@ function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
           staleTime: 2 * 60 * 1000,
           gcTime: 15 * 60 * 1000,
           refetchOnWindowFocus: false,
-          retry: 1,
+          refetchOnReconnect: true,
+          retry: retryTransientQuery,
+          retryDelay: transientQueryRetryDelay,
         },
       },
       queryCache: new QueryCache({

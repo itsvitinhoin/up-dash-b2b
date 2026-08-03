@@ -28,7 +28,19 @@ import {
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps";
 import { selectAutomationSenderPhone } from "../services/automation-sender";
+import {
+  getCartAutomationIdentity,
+  getWebhookCustomerIdentity,
+  getWebhookOrderIdentity,
+  getWebhookPayloadLayers,
+  selectWebhookCustomerContact,
+} from "../services/orchestrator-webhook";
 import { UpzeroExternalAdapter, extractRows } from "../services/upzero/external-adapter";
+import {
+  maskWhatsappRecipient,
+  normalizeWhatsappRecipient,
+  validateWhatsappRecipient,
+} from "../services/whatsapp-recipient";
 
 const router: IRouter = Router();
 
@@ -241,11 +253,6 @@ function serializeCurrency(value: number) {
   return Number.isFinite(value) ? value : 0;
 }
 
-function normalizeWhatsappRecipient(value: string | null | undefined): string | null {
-  const digits = value?.replace(/\D/g, "") ?? "";
-  return digits || null;
-}
-
 function firstParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
@@ -350,36 +357,42 @@ function parseEventDate(value: unknown): Date | null {
 }
 
 function normalizeWebhookPayload(payload: unknown) {
-  const root = asRecord(payload) ?? {};
+  const { envelope, data, root } = getWebhookPayloadLayers(payload);
   const customer = asRecord(root.customer) ?? asRecord(root.user) ?? asRecord(root.lead) ?? {};
   const order = asRecord(root.order) ?? {};
   const cart = asRecord(root.cart) ?? {};
   const checkout = asRecord(root.checkout) ?? {};
-  const meta = asRecord(root.metadata) ?? {};
+  const meta = asRecord(root.metadata) ?? asRecord(root.meta) ?? {};
+  const seller = asRecord(root.seller) ?? {};
 
-  const rawEventType = firstText(root.event_type, root.eventType, root.type, root.event, root.name);
+  const rawEventType = firstText(
+    envelope.event_type,
+    envelope.eventType,
+    envelope.type,
+    envelope.event,
+    envelope.name,
+    root.event_type,
+    root.eventType,
+    root.type,
+    root.event,
+    root.name,
+  );
   const eventType = normalizeAutomationEventType(rawEventType) ?? "unknown";
-  const eventId = firstText(root.event_id, root.eventId, root.id, meta.event_id);
-  const externalCustomerId = firstText(
-    root.customer_id,
-    root.customerId,
-    root.user_id,
-    root.userId,
-    customer.id,
-    customer.external_id,
+  const eventId = firstText(
+    envelope.event_id,
+    envelope.eventId,
+    meta.event_id,
+    data.event_id,
+    data.eventId,
   );
-  const externalOrderId = firstText(
-    root.order_number,
-    root.order_id,
-    root.orderId,
-    order.id,
-    order.external_id,
-    order.code,
-    order.number,
-  );
-  const externalCartId = firstText(root.cart_id, root.cartId, cart.id, cart.external_id);
+  const externalCustomerId = getWebhookCustomerIdentity(eventType, payload);
+  const externalOrderId = getWebhookOrderIdentity(eventType, payload);
+  const externalCartId = getCartAutomationIdentity(eventType, payload)
+    ?? firstText(root.cart_id, root.cartId, cart.id, cart.external_id);
   const externalCheckoutId = firstText(root.checkout_id, root.checkoutId, checkout.id, checkout.external_id);
-  const occurredAt = parseEventDate(root.occurred_at)
+  const occurredAt = parseEventDate(envelope.timestamp)
+    ?? parseEventDate(envelope.occurred_at)
+    ?? parseEventDate(root.occurred_at)
     ?? parseEventDate(root.created_at)
     ?? parseEventDate(root.timestamp)
     ?? parseEventDate(root.period_start)
@@ -408,55 +421,82 @@ function normalizeWebhookPayload(payload: unknown) {
       cart.total_value,
       cart.total,
     ),
-    customerName: firstText(customer.name, customer.company_name, root.customer_name, root.name),
+    customerName: firstText(
+      customer.name,
+      customer.contact_name,
+      customer.company_name,
+      root.customer_name,
+      root.contact_name,
+      root.name,
+    ),
     customerPhone: firstText(customer.phone, customer.whatsapp, root.phone, root.whatsapp),
     customerEmail: firstText(customer.email, root.email),
     documentType: firstText(customer.document_type, customer.type, root.document_type),
     documentLast4: firstText(customer.document_last4, root.document_last4),
-    sellerName: firstText(root.seller_name, root.assigned_seller_name, meta.seller_name, meta.assigned_seller_name),
-    sellerPhone: firstText(root.seller_phone, root.assigned_seller_phone, meta.seller_phone, meta.assigned_seller_phone),
-    sellerEmail: firstText(root.seller_email, meta.seller_email),
-    sellerSlug: firstText(root.seller_slug, meta.seller_slug),
+    sellerName: firstText(
+      root.seller_name,
+      root.assigned_seller_name,
+      seller.name,
+      meta.seller_name,
+      meta.assigned_seller_name,
+    ),
+    sellerPhone: firstText(
+      root.seller_phone,
+      root.assigned_seller_phone,
+      seller.phone,
+      meta.seller_phone,
+      meta.assigned_seller_phone,
+    ),
+    sellerEmail: firstText(root.seller_email, seller.email, meta.seller_email),
+    sellerSlug: firstText(root.seller_slug, seller.slug, seller.seller_slug, meta.seller_slug),
   };
 }
 
 type NormalizedWebhookPayload = ReturnType<typeof normalizeWebhookPayload>;
 
 async function findCustomerForWebhook(clientId: string, normalized: NormalizedWebhookPayload) {
-  const conditions = [];
+  const selectCustomer = async (identityCondition: ReturnType<typeof eq> | ReturnType<typeof sql>) => {
+    const [customer] = await db
+      .select({
+        id: customersTable.id,
+        externalId: customersTable.externalId,
+        name: customersTable.name,
+        email: customersTable.email,
+        phone: customersTable.phone,
+        documentType: customersTable.documentType,
+        documentLast4: customersTable.documentLast4,
+        registrationStatus: customersTable.registrationStatus,
+        state: customersTable.state,
+        city: customersTable.city,
+      })
+      .from(customersTable)
+      .where(and(eq(customersTable.clientId, clientId), identityCondition))
+      .limit(1);
+
+    return customer ?? null;
+  };
+
   if (normalized.externalCustomerId) {
-    conditions.push(eq(customersTable.externalId, normalized.externalCustomerId));
+    const customer = await selectCustomer(eq(customersTable.externalId, normalized.externalCustomerId));
+    if (customer) return customer;
   }
-  if (normalized.customerEmail) {
-    conditions.push(eq(customersTable.email, normalized.customerEmail));
-  }
+
   const customerPhone = normalizeWhatsappRecipient(normalized.customerPhone);
   if (customerPhone) {
-    conditions.push(sql`(
+    const customer = await selectCustomer(sql`(
       regexp_replace(coalesce(${customersTable.phone}, ''), '[^0-9]', '', 'g') = ${customerPhone}
       OR right(regexp_replace(coalesce(${customersTable.phone}, ''), '[^0-9]', '', 'g'), 11) = ${customerPhone.slice(-11)}
     )`);
+    if (customer) return customer;
   }
-  if (conditions.length === 0) return null;
 
-  const [customer] = await db
-    .select({
-      id: customersTable.id,
-      externalId: customersTable.externalId,
-      name: customersTable.name,
-      email: customersTable.email,
-      phone: customersTable.phone,
-      documentType: customersTable.documentType,
-      documentLast4: customersTable.documentLast4,
-      registrationStatus: customersTable.registrationStatus,
-      state: customersTable.state,
-      city: customersTable.city,
-    })
-    .from(customersTable)
-    .where(and(eq(customersTable.clientId, clientId), or(...conditions)))
-    .limit(1);
+  // E-mail pode ser reutilizado em testes ou recadastros. Só é seguro usá-lo
+  // quando o webhook não trouxe um identificador ou telefone mais forte.
+  if (!normalized.externalCustomerId && !customerPhone && normalized.customerEmail) {
+    return selectCustomer(eq(customersTable.email, normalized.customerEmail));
+  }
 
-  return customer ?? null;
+  return null;
 }
 
 async function findOrderForWebhook(
@@ -1242,6 +1282,7 @@ async function scheduleAutomationJobsForEvent(params: {
   const sender = await resolveAutomationSender(params.clientId, params.payload);
   const phoneNumberId = sender.phoneNumberId;
   const duplicateWindowStart = new Date(Date.now() - 10 * 60 * 1000);
+  const cartAutomationIdentity = getCartAutomationIdentity(params.eventType, params.payload);
   const eventOrderIdentity = firstText(
     params.payload.order_number,
     getNestedValue(params.payload, "order.number"),
@@ -1265,12 +1306,24 @@ async function scheduleAutomationJobsForEvent(params: {
       const duplicateConditions = [
         eq(commercialAutomationJobsTable.clientId, params.clientId),
         eq(commercialAutomationJobsTable.ruleId, rule.id),
-        gte(commercialAutomationJobsTable.createdAt, duplicateWindowStart),
         sql`${commercialAutomationJobsTable.status} IN ('scheduled', 'processing', 'sent')`,
         sql`${commercialAutomationJobsTable.renderedPayload}->>'to' = ${to}`,
         sql`${commercialAutomationJobsTable.renderedPayload}->>'templateName' = ${rule.templateName}`,
       ];
-      if (eventOrderIdentity) {
+      if (cartAutomationIdentity) {
+        duplicateConditions.push(sql`COALESCE(
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cartId',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'id',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'external_id',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cart_id',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cartId',
+          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'id'
+        ) = ${cartAutomationIdentity}`);
+      } else {
+        duplicateConditions.push(gte(commercialAutomationJobsTable.createdAt, duplicateWindowStart));
+      }
+      if (!cartAutomationIdentity && eventOrderIdentity) {
         duplicateConditions.push(sql`COALESCE(
           ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'order_number',
           ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'order'->>'number',
@@ -1533,6 +1586,7 @@ async function processDueAutomationJobs(limit = 25) {
       clientId: commercialAutomationJobsTable.clientId,
       ruleId: commercialAutomationJobsTable.ruleId,
       eventId: commercialAutomationJobsTable.eventId,
+      createdAt: commercialAutomationJobsTable.createdAt,
       renderedPayload: commercialAutomationJobsTable.renderedPayload,
       eventType: commercialAutomationRulesTable.eventType,
       ruleName: commercialAutomationRulesTable.name,
@@ -1567,7 +1621,73 @@ async function processDueAutomationJobs(limit = 25) {
     }
 
     const rendered = asRecord(job.renderedPayload) ?? {};
-    const to = normalizeWhatsappRecipient(firstText(rendered.to));
+    const sourceEvent = asRecord(rendered.sourceEvent) ?? {};
+    const cartAutomationIdentity = getCartAutomationIdentity(job.eventType, sourceEvent);
+
+    if (cartAutomationIdentity) {
+      const sameRuleCondition = job.ruleId
+        ? eq(commercialAutomationJobsTable.ruleId, job.ruleId)
+        : sql`${commercialAutomationJobsTable.ruleId} IS NULL`;
+      const [previousCartJob] = await db
+        .select({ id: commercialAutomationJobsTable.id })
+        .from(commercialAutomationJobsTable)
+        .where(
+          and(
+            eq(commercialAutomationJobsTable.clientId, job.clientId),
+            sameRuleCondition,
+            sql`${commercialAutomationJobsTable.status} IN ('processing', 'sent')`,
+            or(
+              sql`${commercialAutomationJobsTable.createdAt} < ${job.createdAt}`,
+              and(
+                eq(commercialAutomationJobsTable.createdAt, job.createdAt),
+                sql`${commercialAutomationJobsTable.id} < ${job.id}`,
+              ),
+            ),
+            sql`COALESCE(
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cartId',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'external_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cart_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cartId',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'id'
+            ) = ${cartAutomationIdentity}`,
+          ),
+        )
+        .limit(1);
+
+      if (previousCartJob) {
+        const message = `Job duplicado cancelado: a automação já foi processada para o carrinho ${cartAutomationIdentity}.`;
+        await db
+          .update(commercialAutomationJobsTable)
+          .set({
+            status: "cancelled",
+            processedAt: new Date(),
+            skipReason: "duplicate_cart_automation",
+            updatedAt: new Date(),
+          })
+          .where(eq(commercialAutomationJobsTable.id, job.id));
+        await db.insert(commercialAutomationLogsTable).values({
+          clientId: job.clientId,
+          ruleId: job.ruleId,
+          jobId: job.id,
+          eventType: job.eventType ?? "automation",
+          action: "automation_duplicate_skipped",
+          status: "info",
+          message,
+          metadata: {
+            eventId: job.eventId,
+            cartId: cartAutomationIdentity,
+            previousJobId: previousCartJob.id,
+          },
+        });
+        results.push({ jobId: job.id, status: "cancelled", message });
+        continue;
+      }
+    }
+
+    const recipient = validateWhatsappRecipient(firstText(rendered.to));
+    const to = recipient.normalized;
     const sender = asRecord(rendered.sender);
     const sellerPhone = firstText(sender?.sellerPhone);
     const senderSource = firstText(sender?.source);
@@ -1578,6 +1698,37 @@ async function processDueAutomationJobs(limit = 25) {
     const bodyParams = bodyParamsValue
       .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
       .map((text) => ({ type: "text", text: text.trim() }));
+
+    if (!recipient.isValid) {
+      const maskedRecipient = maskWhatsappRecipient(to);
+      const message = `Job bloqueado: telefone do destinatário ${maskedRecipient} inválido (${recipient.reason}).`;
+      await db
+        .update(commercialAutomationJobsTable)
+        .set({
+          status: "failed",
+          processedAt: new Date(),
+          errorMessage: message,
+          updatedAt: new Date(),
+        })
+        .where(eq(commercialAutomationJobsTable.id, job.id));
+      await db.insert(commercialAutomationLogsTable).values({
+        clientId: job.clientId,
+        ruleId: job.ruleId,
+        jobId: job.id,
+        eventType: job.eventType ?? "automation",
+        action: "automation_recipient_invalid",
+        status: "blocked",
+        message,
+        metadata: {
+          ecommerceEventId: job.eventId,
+          recipient: maskedRecipient,
+          recipientValidationReason: recipient.reason,
+          templateName,
+        },
+      });
+      results.push({ jobId: job.id, status: "failed", message });
+      continue;
+    }
 
     if (sellerPhone && senderSource !== "seller_phone") {
       const message = `Job bloqueado: o WhatsApp da vendedora (${sellerPhone}) não corresponde a um número ativo conectado.`;
@@ -1871,6 +2022,7 @@ async function buildCommercialLogs(clientId: string, limit = 100) {
   const logs = await db
     .select({
       id: commercialAutomationLogsTable.id,
+      jobId: commercialAutomationLogsTable.jobId,
       eventType: commercialAutomationLogsTable.eventType,
       action: commercialAutomationLogsTable.action,
       status: commercialAutomationLogsTable.status,
@@ -1883,8 +2035,23 @@ async function buildCommercialLogs(clientId: string, limit = 100) {
     .orderBy(desc(commercialAutomationLogsTable.createdAt))
     .limit(limit);
 
+  const jobIds = Array.from(new Set(logs
+    .map((log) => log.jobId)
+    .filter((jobId): jobId is string => Boolean(jobId))));
+  const jobs = jobIds.length > 0
+    ? await db
+      .select({
+        id: commercialAutomationJobsTable.id,
+        eventId: commercialAutomationJobsTable.eventId,
+      })
+      .from(commercialAutomationJobsTable)
+      .where(inArray(commercialAutomationJobsTable.id, jobIds))
+    : [];
+  const jobEventMap = new Map(jobs.map((job) => [job.id, job.eventId]));
+
   const eventIds = Array.from(new Set(logs
     .map((log) => firstText(asRecord(log.metadata)?.ecommerceEventId))
+    .concat(logs.map((log) => log.jobId ? jobEventMap.get(log.jobId) ?? null : null))
     .filter((eventId): eventId is string => Boolean(eventId))));
 
   if (eventIds.length === 0) return logs;
@@ -1900,7 +2067,9 @@ async function buildCommercialLogs(clientId: string, limit = 100) {
 
   const eventMap = new Map(events.map((event) => [event.id, event]));
   return logs.map((log) => {
-    const eventId = firstText(asRecord(log.metadata)?.ecommerceEventId);
+    const eventId =
+      firstText(asRecord(log.metadata)?.ecommerceEventId) ??
+      (log.jobId ? jobEventMap.get(log.jobId) ?? null : null);
     const event = eventId ? eventMap.get(eventId) : null;
     if (!event) return log;
     return {
@@ -1975,9 +2144,9 @@ router.all("/ecommerce/webhooks/:clientId", async (req, res): Promise<void> => {
 
   const customer = await findCustomerForWebhook(client.id, normalized);
   const order = await findOrderForWebhook(client.id, normalized, customer);
-  const customerName = customer?.name ?? normalized.customerName;
-  const customerPhone = customer?.phone ?? normalized.customerPhone;
-  const customerEmail = customer?.email ?? normalized.customerEmail;
+  const customerName = selectWebhookCustomerContact(normalized.customerName, customer?.name);
+  const customerPhone = selectWebhookCustomerContact(normalized.customerPhone, customer?.phone);
+  const customerEmail = selectWebhookCustomerContact(normalized.customerEmail, customer?.email);
   const sellerName = normalized.sellerName ?? firstText(payload.seller_name, payload.assigned_seller_name);
   const sellerPhone = normalized.sellerPhone ?? firstText(payload.seller_phone, payload.assigned_seller_phone);
   const sellerEmail = normalized.sellerEmail ?? firstText(payload.seller_email);
