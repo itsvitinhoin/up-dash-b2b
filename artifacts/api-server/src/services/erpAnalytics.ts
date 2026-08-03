@@ -5,6 +5,7 @@ import { hashDocument } from "./upzero/customers";
 import {
   calculateErpFulfilledQuantity,
   calculateErpRetentionPct,
+  calculateErpStockTurnoverPct,
   hasPaidErpCampaignSignal,
 } from "./erpMetrics";
 
@@ -614,27 +615,46 @@ export async function fetchErpCustomersPage(
   return { rows, total: Number((countRows as Array<Record<string, unknown>>)[0]?.total) || 0 };
 }
 
-export type ErpProductRow = {
+export type ErpProductVariantRow = {
   id: string;
-  name: string | null;
   sku: string;
-  category: string | null;
   color: string | null;
   size: string | null;
   units: number;
   revenue: number;
   averagePrice: number;
+  catalogPrice: number;
   stock: number;
+  turnoverPct: number;
+  salesPower: number;
+};
+
+export type ErpProductRow = {
+  id: string;
+  name: string | null;
+  category: string | null;
+  units: number;
+  revenue: number;
+  averagePrice: number;
+  stock: number;
+  turnoverPct: number;
+  salesPower: number;
+  variantCount: number;
+  outOfStockCount: number;
+  variants: ErpProductVariantRow[];
 };
 
 export type ErpProductsPage = {
   rows: ErpProductRow[];
   total: number;
+  totalSkus: number;
   filteredTotal: number;
   totalRevenue: number;
   totalUnits: number;
   totalStock: number;
   outOfStockCount: number;
+  turnoverPct: number;
+  salesPower: number;
 };
 
 export async function fetchErpProductsPage(
@@ -654,36 +674,84 @@ export async function fetchErpProductsPage(
     dateTo: filters.dateTo,
   };
   if (filters.search) {
-    conditions.push("(LOWER(produto_descricao) LIKE @search OR LOWER(sku_id) LIKE @search)");
+    conditions.push("(LOWER(product_name) LIKE @search OR LOWER(sku_id) LIKE @search OR LOWER(product_id) LIKE @search)");
     params.search = `%${filters.search.toLowerCase()}%`;
   }
   if (filters.category) {
-    conditions.push("categoria = @category");
+    conditions.push("category = @category");
     params.category = filters.category;
   }
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const baseCte = `
     WITH vendas AS (
-      SELECT item_sku_id AS sku_id, SUM(item_quantidade) AS units, SUM(item_valor_liquido) AS revenue
+      SELECT CAST(item_sku_id AS STRING) AS sku_id, SUM(item_quantidade) AS units, SUM(item_valor_liquido) AS revenue
       FROM ${pedidos}
       WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
         AND status NOT IN (${ERP_CANCELLED_STATUSES.map((status) => `'${status}'`).join(", ")})
       GROUP BY item_sku_id
     ),
     estoque_agg AS (
-      SELECT sku_id, SUM(estoque) AS stock
+      SELECT CAST(sku_id AS STRING) AS sku_id, SUM(estoque) AS stock
       FROM ${estoque}
       GROUP BY sku_id
     ),
-    base AS (
+    catalog AS (
       SELECT
-        p.sku_id, p.produto_descricao, p.categoria, p.cor, p.tamanho,
-        COALESCE(v.units, 0) AS units, COALESCE(v.revenue, 0) AS revenue,
-        COALESCE(e.stock, 0) AS stock
+        CAST(p.sku_id AS STRING) AS sku_id,
+        COALESCE(ANY_VALUE(CAST(p.produto_id AS STRING)), CAST(p.sku_id AS STRING)) AS product_id,
+        ANY_VALUE(p.produto_descricao) AS product_name,
+        ANY_VALUE(p.categoria) AS category,
+        ANY_VALUE(p.cor) AS color,
+        ANY_VALUE(p.tamanho) AS size,
+        MAX(COALESCE(
+          NULLIF(p.promocao_online, 0),
+          NULLIF(p.preco_online, 0),
+          NULLIF(p.promocao_varejo, 0),
+          NULLIF(p.preco_varejo, 0),
+          0
+        )) AS catalog_price
       FROM ${produtos} p
+      GROUP BY p.sku_id
+    ),
+    sku_base AS (
+      SELECT
+        p.sku_id, p.product_id, p.product_name, p.category, p.color, p.size,
+        p.catalog_price,
+        COALESCE(v.units, 0) AS units, COALESCE(v.revenue, 0) AS revenue,
+        COALESCE(e.stock, 0) AS stock,
+        GREATEST(COALESCE(e.stock, 0), 0) * GREATEST(p.catalog_price, 0) AS sales_power
+      FROM catalog p
       LEFT JOIN vendas v ON v.sku_id = p.sku_id
       LEFT JOIN estoque_agg e ON e.sku_id = p.sku_id
+    ),
+    filtered_skus AS (
+      SELECT * FROM sku_base ${whereClause}
+    ),
+    products AS (
+      SELECT
+        product_id,
+        ANY_VALUE(product_name) AS product_name,
+        ANY_VALUE(category) AS category,
+        SUM(units) AS units,
+        SUM(revenue) AS revenue,
+        SUM(stock) AS stock,
+        SUM(GREATEST(stock, 0)) AS available_stock,
+        SUM(sales_power) AS sales_power,
+        COUNT(*) AS variant_count,
+        COUNTIF(stock <= 0) AS out_of_stock_count,
+        ARRAY_AGG(STRUCT(
+          sku_id,
+          color,
+          size,
+          units,
+          revenue,
+          catalog_price,
+          stock,
+          sales_power
+        ) ORDER BY revenue DESC, sku_id) AS variants
+      FROM filtered_skus
+      GROUP BY product_id
     )
   `;
 
@@ -691,15 +759,14 @@ export async function fetchErpProductsPage(
     bigquery.query({
       query: `
       ${baseCte}
-      SELECT * FROM base
-      ${whereClause}
+      SELECT * FROM products
       ORDER BY revenue DESC
       LIMIT @limit OFFSET @offset
     `,
       params,
     }),
     bigquery.query({
-      query: `${baseCte} SELECT COUNT(*) AS total FROM base ${whereClause}`,
+      query: `${baseCte} SELECT COUNT(*) AS total FROM products`,
       params,
     }),
     bigquery.query({
@@ -711,21 +778,38 @@ export async function fetchErpProductsPage(
             AND status NOT IN (${ERP_CANCELLED_STATUSES.map((status) => `'${status}'`).join(", ")})
         ),
         estoque_agg AS (
-          SELECT sku_id, SUM(estoque) AS stock
+          SELECT CAST(sku_id AS STRING) AS sku_id, SUM(estoque) AS stock
           FROM ${estoque}
           GROUP BY sku_id
         ),
-        catalog_stock AS (
-          SELECT p.sku_id, COALESCE(e.stock, 0) AS stock
+        catalog AS (
+          SELECT
+            CAST(p.sku_id AS STRING) AS sku_id,
+            COALESCE(ANY_VALUE(CAST(p.produto_id AS STRING)), CAST(p.sku_id AS STRING)) AS product_id,
+            MAX(COALESCE(
+              NULLIF(p.promocao_online, 0),
+              NULLIF(p.preco_online, 0),
+              NULLIF(p.promocao_varejo, 0),
+              NULLIF(p.preco_varejo, 0),
+              0
+            )) AS catalog_price
           FROM ${produtos} p
+          GROUP BY p.sku_id
+        ),
+        catalog_stock AS (
+          SELECT p.sku_id, p.product_id, p.catalog_price, COALESCE(e.stock, 0) AS stock
+          FROM catalog p
           LEFT JOIN estoque_agg e ON e.sku_id = p.sku_id
         )
         SELECT
-          (SELECT COUNT(*) FROM ${produtos}) AS total_products,
+          (SELECT COUNT(DISTINCT product_id) FROM catalog) AS total_products,
+          (SELECT COUNT(*) FROM catalog) AS total_skus,
           (SELECT revenue FROM vendas) AS total_revenue,
           (SELECT units FROM vendas) AS total_units,
           (SELECT SUM(stock) FROM catalog_stock) AS total_stock,
-          (SELECT COUNTIF(stock <= 0) FROM catalog_stock) AS out_of_stock_count
+          (SELECT SUM(GREATEST(stock, 0)) FROM catalog_stock) AS available_stock,
+          (SELECT COUNTIF(stock <= 0) FROM catalog_stock) AS out_of_stock_count,
+          (SELECT SUM(GREATEST(stock, 0) * GREATEST(catalog_price, 0)) FROM catalog_stock) AS sales_power
       `,
       params,
     }),
@@ -734,23 +818,51 @@ export async function fetchErpProductsPage(
   const t = (totalsRows as Array<Record<string, unknown>>)[0];
 
   return {
-    rows: (rows as Array<Record<string, unknown>>).map((r) => ({
-      id: String(r.sku_id),
-      name: (r.produto_descricao as string) || null,
-      sku: String(r.sku_id),
-      category: (r.categoria as string) || null,
-      color: (r.cor as string) || null,
-      size: (r.tamanho as string) || null,
-      units: Number(r.units) || 0,
-      revenue: Number(r.revenue) || 0,
-      averagePrice: Number(r.units) > 0 ? Number(r.revenue) / Number(r.units) : 0,
-      stock: Number(r.stock) || 0,
-    })),
+    rows: (rows as Array<Record<string, unknown>>).map((r) => {
+      const units = Number(r.units) || 0;
+      const stock = Number(r.stock) || 0;
+      const availableStock = Number(r.available_stock) || 0;
+      const rawVariants = Array.isArray(r.variants) ? r.variants as Array<Record<string, unknown>> : [];
+      return {
+        id: String(r.product_id),
+        name: (r.product_name as string) || null,
+        category: (r.category as string) || null,
+        units,
+        revenue: Number(r.revenue) || 0,
+        averagePrice: units > 0 ? (Number(r.revenue) || 0) / units : 0,
+        stock,
+        turnoverPct: calculateErpStockTurnoverPct(units, availableStock),
+        salesPower: Number(r.sales_power) || 0,
+        variantCount: Number(r.variant_count) || 0,
+        outOfStockCount: Number(r.out_of_stock_count) || 0,
+        variants: rawVariants.map((variant) => {
+          const variantUnits = Number(variant.units) || 0;
+          const variantStock = Number(variant.stock) || 0;
+          const variantRevenue = Number(variant.revenue) || 0;
+          return {
+            id: String(variant.sku_id),
+            sku: String(variant.sku_id),
+            color: (variant.color as string) || null,
+            size: (variant.size as string) || null,
+            units: variantUnits,
+            revenue: variantRevenue,
+            averagePrice: variantUnits > 0 ? variantRevenue / variantUnits : 0,
+            catalogPrice: Number(variant.catalog_price) || 0,
+            stock: variantStock,
+            turnoverPct: calculateErpStockTurnoverPct(variantUnits, variantStock),
+            salesPower: Number(variant.sales_power) || 0,
+          };
+        }),
+      };
+    }),
     total: Number(t?.total_products) || 0,
+    totalSkus: Number(t?.total_skus) || 0,
     filteredTotal: Number((filteredTotalRows as Array<Record<string, unknown>>)[0]?.total) || 0,
     totalRevenue: Number(t?.total_revenue) || 0,
     totalUnits: Number(t?.total_units) || 0,
     totalStock: Number(t?.total_stock) || 0,
     outOfStockCount: Number(t?.out_of_stock_count) || 0,
+    turnoverPct: calculateErpStockTurnoverPct(Number(t?.total_units) || 0, Number(t?.available_stock) || 0),
+    salesPower: Number(t?.sales_power) || 0,
   };
 }

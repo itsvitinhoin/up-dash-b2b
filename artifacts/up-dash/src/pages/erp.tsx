@@ -1,4 +1,4 @@
-import { useDeferredValue, useState } from "react";
+import { Fragment, useDeferredValue, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -7,6 +7,8 @@ import {
   BadgeCheck,
   Boxes,
   CircleDollarSign,
+  ChevronDown,
+  ChevronRight,
   Package,
   PackageCheck,
   ReceiptText,
@@ -145,27 +147,46 @@ type ErpCustomerRow = {
 
 type ErpCustomersResponse = { rows: ErpCustomerRow[]; total: number };
 
-type ErpProductRow = {
+type ErpProductVariantRow = {
   id: string;
-  name: string | null;
   sku: string;
-  category: string | null;
   color: string | null;
   size: string | null;
   units: number;
   revenue: number;
   averagePrice: number;
+  catalogPrice: number;
   stock: number;
+  turnoverPct: number;
+  salesPower: number;
+};
+
+type ErpProductRow = {
+  id: string;
+  name: string | null;
+  category: string | null;
+  units: number;
+  revenue: number;
+  averagePrice: number;
+  stock: number;
+  turnoverPct: number;
+  salesPower: number;
+  variantCount: number;
+  outOfStockCount: number;
+  variants: ErpProductVariantRow[];
 };
 
 type ErpProductsResponse = {
   rows: ErpProductRow[];
   total: number;
+  totalSkus: number;
   filteredTotal: number;
   totalRevenue: number;
   totalUnits: number;
   totalStock: number;
   outOfStockCount: number;
+  turnoverPct: number;
+  salesPower: number;
 };
 
 function useErpClientId() {
@@ -449,31 +470,35 @@ function ErpOverview() {
                 <TableRow>
                   <TableHead>Produto</TableHead>
                   <TableHead>Categoria</TableHead>
-                  <TableHead>Cor / Tamanho</TableHead>
+                  <TableHead className="text-right">Variantes</TableHead>
                   <TableHead className="text-right">Peças</TableHead>
                   <TableHead className="text-right">Faturamento</TableHead>
+                  <TableHead className="text-right">% giro</TableHead>
                   <TableHead className="text-right">Estoque</TableHead>
+                  <TableHead className="text-right">Poder de venda</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {productsLoading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">Carregando...</TableCell>
+                    <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">Carregando...</TableCell>
                   </TableRow>
                 ) : (
                   (products?.rows ?? []).map((product) => (
                     <TableRow key={product.id}>
                       <TableCell>
                         <div className="min-w-[240px]">
-                          <p className="font-medium">{product.name ?? product.sku}</p>
-                          <p className="text-xs text-muted-foreground">{product.sku}</p>
+                          <p className="font-medium">{product.name ?? product.id}</p>
+                          <p className="text-xs text-muted-foreground">Produto {product.id}</p>
                         </div>
                       </TableCell>
                       <TableCell>{product.category ?? "—"}</TableCell>
-                      <TableCell>{product.color ?? "—"} · {product.size ?? "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatNumber(product.variantCount)}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatNumber(product.units)}</TableCell>
                       <TableCell className="text-right font-medium tabular-nums">{formatCurrency(product.revenue)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatPercentage(product.turnoverPct)}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatNumber(product.stock)}</TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">{formatCurrency(product.salesPower)}</TableCell>
                     </TableRow>
                   ))
                 )}
@@ -774,6 +799,7 @@ function ErpCustomersView() {
 function ErpProductsView() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
   const deferredSearch = useDeferredValue(search.trim());
   const { dateRange } = useDashboardFilters();
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
@@ -801,12 +827,24 @@ function ErpProductsView() {
   });
   const totalPages = Math.max(1, Math.ceil((data?.filteredTotal ?? 0) / ERP_PAGE_SIZE));
 
+  const toggleProduct = (productId: string) => {
+    setExpandedProducts((current) => {
+      const next = new Set(current);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  };
+
   const metrics: Metric[] = [
     { label: "Faturamento produtos", value: data?.totalRevenue ?? 0, format: formatCurrencySmart, icon: WalletCards, iconClass: "bg-blue-500/10 text-blue-400", sparkColor: "#60a5fa", subLabel: "Base", subValue: "Itens vendidos" },
     { label: "Peças vendidas", value: data?.totalUnits ?? 0, format: formatNumber, icon: ShoppingBag, iconClass: "bg-emerald-500/10 text-emerald-400", sparkColor: "#34d399", subLabel: "Preço médio", subValue: data && data.totalUnits > 0 ? formatCurrency(data.totalRevenue / data.totalUnits) : "—" },
-    { label: "SKUs no catálogo", value: data?.total ?? 0, format: formatNumber, icon: Package, iconClass: "bg-violet-500/10 text-violet-400", sparkColor: "#a78bfa", subLabel: "Base", subValue: "Total cadastrado" },
+    { label: "% de giro", value: data?.turnoverPct ?? 0, format: formatPercentage, icon: TrendingUp, iconClass: "bg-cyan-500/10 text-cyan-400", sparkColor: "#22d3ee", subLabel: "Cálculo", subValue: "Vendido / vendido + estoque", ringValue: data?.turnoverPct ?? 0 },
+    { label: "Poder de venda", value: data?.salesPower ?? 0, format: formatCurrencySmart, icon: CircleDollarSign, iconClass: "bg-lime-500/10 text-lime-400", sparkColor: "#84cc16", subLabel: "Cálculo", subValue: "Estoque × preço atual" },
+    { label: "Produtos pai", value: data?.total ?? 0, format: formatNumber, icon: Package, iconClass: "bg-violet-500/10 text-violet-400", sparkColor: "#a78bfa", subLabel: "Base", subValue: "Modelos cadastrados" },
+    { label: "SKUs no catálogo", value: data?.totalSkus ?? 0, format: formatNumber, icon: PackageCheck, iconClass: "bg-fuchsia-500/10 text-fuchsia-400", sparkColor: "#d946ef", subLabel: "Base", subValue: "Cor e tamanho" },
     { label: "Estoque atual", value: data?.totalStock ?? 0, format: formatNumber, icon: Boxes, iconClass: "bg-amber-500/10 text-amber-400", sparkColor: "#f59e0b", subLabel: "Unidade", subValue: "Peças em estoque" },
-    { label: "Sem estoque", value: data?.outOfStockCount ?? 0, format: formatNumber, icon: AlertCircle, iconClass: "bg-red-500/10 text-red-400", sparkColor: "#f87171", subLabel: "Participação", subValue: data && data.total > 0 ? formatPercentage((data.outOfStockCount / data.total) * 100) : "0%" },
+    { label: "SKUs sem estoque", value: data?.outOfStockCount ?? 0, format: formatNumber, icon: AlertCircle, iconClass: "bg-red-500/10 text-red-400", sparkColor: "#f87171", subLabel: "Participação", subValue: data && data.totalSkus > 0 ? formatPercentage((data.outOfStockCount / data.totalSkus) * 100) : "0%" },
   ];
 
   return (
@@ -818,7 +856,7 @@ function ErpProductsView() {
             <SectionTitle
               icon={Package}
               title="Desempenho do catálogo"
-              description="Venda, preço realizado e estoque por SKU."
+              description="Produtos agrupados por modelo. Expanda para analisar cor, tamanho, giro e estoque por SKU."
             />
             <div className="relative w-full lg:w-80">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -839,44 +877,99 @@ function ErpProductsView() {
                 <TableRow>
                   <TableHead className="min-w-[260px]">Produto</TableHead>
                   <TableHead>Categoria</TableHead>
-                  <TableHead>Cor / Tamanho</TableHead>
+                  <TableHead className="text-right">Variantes</TableHead>
                   <TableHead className="text-right">Peças</TableHead>
                   <TableHead className="text-right">Faturamento</TableHead>
-                  <TableHead className="text-right">Preço médio</TableHead>
+                  <TableHead className="text-right">% giro</TableHead>
                   <TableHead className="text-right">Estoque</TableHead>
+                  <TableHead className="text-right">Poder de venda</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">Carregando...</TableCell>
+                    <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">Carregando...</TableCell>
                   </TableRow>
                 ) : (
-                  (data?.rows ?? []).map((product) => (
-                    <TableRow key={product.id}>
-                      <TableCell>
-                        <p className="font-medium">{product.name ?? product.sku}</p>
-                        <p className="text-xs text-muted-foreground">{product.sku}</p>
-                      </TableCell>
-                      <TableCell>{product.category ?? "—"}</TableCell>
-                      <TableCell className="whitespace-nowrap">{product.color ?? "—"} · {product.size ?? "—"}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatNumber(product.units)}</TableCell>
-                      <TableCell className="text-right font-medium tabular-nums">{formatCurrency(product.revenue)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatCurrency(product.averagePrice)}</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        <Badge
-                          variant="outline"
-                          className={
-                            product.stock <= 0
-                              ? "border-red-500/30 bg-red-500/10 text-red-400"
-                              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                          }
-                        >
-                          {formatNumber(product.stock)}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  (data?.rows ?? []).map((product) => {
+                    const expanded = expandedProducts.has(product.id);
+                    return (
+                      <Fragment key={product.id}>
+                        <TableRow className="cursor-pointer" onClick={() => toggleProduct(product.id)} aria-expanded={expanded}>
+                          <TableCell>
+                            <div className="flex min-w-[260px] items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 shrink-0"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleProduct(product.id);
+                                }}
+                                title={expanded ? "Recolher variantes" : "Ver variantes"}
+                              >
+                                {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </Button>
+                              <div>
+                                <p className="font-medium">{product.name ?? product.id}</p>
+                                <p className="text-xs text-muted-foreground">Produto {product.id}</p>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>{product.category ?? "—"}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatNumber(product.variantCount)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatNumber(product.units)}</TableCell>
+                          <TableCell className="text-right font-medium tabular-nums">{formatCurrency(product.revenue)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatPercentage(product.turnoverPct)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatNumber(product.stock)}</TableCell>
+                          <TableCell className="text-right font-medium tabular-nums">{formatCurrency(product.salesPower)}</TableCell>
+                        </TableRow>
+                        {expanded && (
+                          <TableRow className="bg-muted/20 hover:bg-muted/20">
+                            <TableCell colSpan={8} className="p-0">
+                              <div className="overflow-x-auto border-l-2 border-primary/50 px-5 py-3">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>SKU</TableHead>
+                                      <TableHead>Cor</TableHead>
+                                      <TableHead>Tamanho</TableHead>
+                                      <TableHead className="text-right">Vendidas</TableHead>
+                                      <TableHead className="text-right">Faturamento</TableHead>
+                                      <TableHead className="text-right">Preço atual</TableHead>
+                                      <TableHead className="text-right">% giro</TableHead>
+                                      <TableHead className="text-right">Estoque</TableHead>
+                                      <TableHead className="text-right">Poder de venda</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {product.variants.map((variant) => (
+                                      <TableRow key={variant.id}>
+                                        <TableCell className="font-mono text-xs">{variant.sku}</TableCell>
+                                        <TableCell>{variant.color ?? "—"}</TableCell>
+                                        <TableCell>{variant.size ?? "—"}</TableCell>
+                                        <TableCell className="text-right tabular-nums">{formatNumber(variant.units)}</TableCell>
+                                        <TableCell className="text-right tabular-nums">{formatCurrency(variant.revenue)}</TableCell>
+                                        <TableCell className="text-right tabular-nums">{formatCurrency(variant.catalogPrice)}</TableCell>
+                                        <TableCell className="text-right tabular-nums">{formatPercentage(variant.turnoverPct)}</TableCell>
+                                        <TableCell className="text-right tabular-nums">
+                                          <Badge variant="outline" className={variant.stock <= 0 ? "border-red-500/30 bg-red-500/10 text-red-400" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"}>
+                                            {formatNumber(variant.stock)}
+                                          </Badge>
+                                        </TableCell>
+                                        <TableCell className="text-right font-medium tabular-nums">{formatCurrency(variant.salesPower)}</TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
