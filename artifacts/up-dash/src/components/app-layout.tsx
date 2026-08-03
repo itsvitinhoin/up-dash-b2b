@@ -176,6 +176,7 @@ type AdminClientOption = {
   dashboardType: "B2B" | "B2C" | null;
   currency: string;
   locale: string;
+  commercePlatform: Client["commercePlatform"] | null;
 };
 
 function toAdminClientOption(client: Client): AdminClientOption {
@@ -185,6 +186,7 @@ function toAdminClientOption(client: Client): AdminClientOption {
     dashboardType: client.dashboardType ?? null,
     currency: client.currency,
     locale: client.locale,
+    commercePlatform: client.commercePlatform ?? null,
   };
 }
 
@@ -195,16 +197,17 @@ function readCachedAdminClients(): AdminClientOption[] {
     const parsed = JSON.parse(localStorage.getItem(ADMIN_CLIENTS_CACHE_KEY) ?? "[]");
     if (!Array.isArray(parsed)) return [];
 
-    return parsed.filter(
-      (client): client is AdminClientOption =>
-        typeof client?.id === "string" &&
-        typeof client?.name === "string" &&
-        (client?.dashboardType === "B2B" ||
-          client?.dashboardType === "B2C" ||
-          client?.dashboardType === null) &&
-        typeof client?.currency === "string" &&
-        typeof client?.locale === "string",
-    );
+    return parsed.map(
+      (client): AdminClientOption => ({
+        id: typeof client?.id === "string" ? client.id : "",
+        name: typeof client?.name === "string" ? client.name : "",
+        dashboardType:
+          client?.dashboardType === "B2B" || client?.dashboardType === "B2C" ? client.dashboardType : null,
+        currency: typeof client?.currency === "string" ? client.currency : "BRL",
+        locale: typeof client?.locale === "string" ? client.locale : "pt-BR",
+        commercePlatform: typeof client?.commercePlatform === "string" ? client.commercePlatform : null,
+      }),
+    ).filter((client) => client.id && client.name);
   } catch {
     return [];
   }
