@@ -58,6 +58,7 @@ const GetErpOrdersQueryParams = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   search: z.coerce.string().trim().optional(),
+  status: z.coerce.string().trim().optional(),
 });
 
 export async function getOrders(req: Request, res: Response): Promise<void> {
@@ -74,11 +75,11 @@ export async function getOrders(req: Request, res: Response): Promise<void> {
   const { from, to } = dateRange(dateParsed.data.dateFrom, dateParsed.data.dateTo);
   const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
   const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
-  const { page, limit, search } = queryParsed.data;
+  const { page, limit, search, status } = queryParsed.data;
 
-  const cacheKey = `erp:orders:${ctx.dataset}:${dateFromOnly}:${dateToOnly}:${page}:${limit}:${search ?? ""}`;
+  const cacheKey = `erp:orders:${ctx.dataset}:${dateFromOnly}:${dateToOnly}:${page}:${limit}:${search ?? ""}:${status ?? ""}`;
   const result = await cached(cacheKey, ERP_CACHE_TTL_MS, () =>
-    fetchErpOrdersPage(ctx.clientId, ctx.dataset, dateFromOnly, dateToOnly, page, limit, search),
+    fetchErpOrdersPage(ctx.clientId, ctx.dataset, dateFromOnly, dateToOnly, page, limit, search, status),
   );
 
   res.json({
@@ -124,15 +125,22 @@ export async function getProducts(req: Request, res: Response): Promise<void> {
   const ctx = await requireErpDataset(req, res);
   if (!ctx) return;
 
-  const parsed = GetErpProductsQueryParams.safeParse(req.query);
-  if (!parsed.success) {
-    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+  const rawQuery = req.query as Record<string, unknown>;
+  const dateParsed = z.object({ dateFrom: z.date().optional(), dateTo: z.date().optional() }).safeParse(coerceDateQuery(rawQuery));
+  const parsed = GetErpProductsQueryParams.safeParse(rawQuery);
+  if (!dateParsed.success || !parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: (dateParsed.error ?? parsed.error)?.message, status: 400 });
     return;
   }
   const { page, limit, search, category } = parsed.data;
+  const { from, to } = dateRange(dateParsed.data.dateFrom, dateParsed.data.dateTo);
+  const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
+  const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
 
-  const cacheKey = `erp:products:${ctx.dataset}:${page}:${limit}:${search ?? ""}:${category ?? ""}`;
-  const result = await cached(cacheKey, ERP_CACHE_TTL_MS, () => fetchErpProductsPage(ctx.dataset, { search, category, page, limit }));
+  const cacheKey = `erp:products:${ctx.dataset}:${dateFromOnly}:${dateToOnly}:${page}:${limit}:${search ?? ""}:${category ?? ""}`;
+  const result = await cached(cacheKey, ERP_CACHE_TTL_MS, () =>
+    fetchErpProductsPage(ctx.dataset, { search, category, dateFrom: dateFromOnly, dateTo: dateToOnly, page, limit }),
+  );
 
-  res.json({ ...result, page, limit });
+  res.json({ ...result, period: { from: from.toISOString(), to: to.toISOString() }, page, limit });
 }

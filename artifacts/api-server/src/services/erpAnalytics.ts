@@ -1,7 +1,12 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { db, clientsTable, customersTable } from "@workspace/db";
+import { db, campaignAttributionStampsTable, clientsTable, customersTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { hashDocument } from "./upzero/customers";
+import {
+  calculateErpFulfilledQuantity,
+  calculateErpRetentionPct,
+  hasPaidErpCampaignSignal,
+} from "./erpMetrics";
 
 /**
  * Se o client tiver um dataset de ERP configurado (independente de
@@ -30,15 +35,17 @@ export async function resolveErpDataset(clientId: string): Promise<string | null
 // utm_source/medium/campaign de primeiro toque de cada customer rastreado,
 // indexado por `document_hash` (sha256 do documento só com dígitos, ver
 // services/upzero/customers.ts::hashDocument). Cliente do ERP e customer
-// rastreado pela UpZero são a MESMA pessoa quando o hash do documento bate —
-// dá pra "emprestar" a atribuição de um pro outro sem precisar de nenhuma
-// integração nova. Cliente sem correspondência = "sem atribuição" (comprou
-// no atacado sem nunca ter sido rastreado como visitante do site).
+// rastreado pela UpZero são a MESMA pessoa quando o hash do documento bate.
+// O pedido só recebe atribuição quando esse customer também possui um carimbo
+// persistente de campanha ou UTM com sinal pago. A simples igualdade de CNPJ
+// identifica a pessoa, mas não é evidência suficiente de mídia.
 
 export type ErpAttribution = {
   utmSource: string | null;
   utmMedium: string | null;
   utmCampaign: string | null;
+  evidenceType: string;
+  evidenceAt: Date | null;
 };
 
 async function matchErpDocumentsToUpzero(
@@ -55,18 +62,44 @@ async function matchErpDocumentsToUpzero(
 
   const rows = await db
     .select({
+      customerId: customersTable.id,
       documentHash: customersTable.documentHash,
       utmSource: customersTable.utmSource,
       utmMedium: customersTable.utmMedium,
       utmCampaign: customersTable.utmCampaign,
+      stampId: campaignAttributionStampsTable.id,
+      stampSource: campaignAttributionStampsTable.source,
+      stampMedium: campaignAttributionStampsTable.medium,
+      stampCampaign: campaignAttributionStampsTable.campaign,
+      stampEvidenceType: campaignAttributionStampsTable.evidenceType,
+      stampEvidenceAt: campaignAttributionStampsTable.evidenceAt,
     })
     .from(customersTable)
+    .leftJoin(
+      campaignAttributionStampsTable,
+      and(
+        eq(campaignAttributionStampsTable.clientId, clientId),
+        eq(campaignAttributionStampsTable.customerId, customersTable.id),
+      ),
+    )
     .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.documentHash, hashes)));
 
   const byHash = new Map<string, ErpAttribution>();
   for (const r of rows) {
     if (!r.documentHash) continue;
-    byHash.set(r.documentHash, { utmSource: r.utmSource, utmMedium: r.utmMedium, utmCampaign: r.utmCampaign });
+    const attribution: ErpAttribution = {
+      utmSource: r.stampSource ?? r.utmSource,
+      utmMedium: r.stampMedium ?? r.utmMedium,
+      utmCampaign: r.stampCampaign ?? r.utmCampaign,
+      evidenceType: r.stampEvidenceType ?? "customer_utm",
+      evidenceAt: r.stampEvidenceAt ?? null,
+    };
+    if (!r.stampId && !hasPaidErpCampaignSignal(attribution)) continue;
+
+    const current = byHash.get(r.documentHash);
+    if (!current || (!current.evidenceAt && attribution.evidenceAt) || (current.evidenceAt && attribution.evidenceAt && attribution.evidenceAt < current.evidenceAt)) {
+      byHash.set(r.documentHash, attribution);
+    }
   }
 
   const byDocument = new Map<string, ErpAttribution>();
@@ -91,6 +124,7 @@ export type ErpDashboard = {
     discountAmount: number;
     orders: number;
     totalQuantity: number;
+    returnedQuantity: number;
     uniqueCustomers: number;
     newCustomers: number;
     returningCustomers: number;
@@ -98,6 +132,7 @@ export type ErpDashboard = {
     cancelledOrders: number;
     cancelledAmount: number;
     avgTicket: number;
+    returnAmount: number;
   };
   dailyRevenue: { date: string; value: number }[];
   dailyOrders: { date: string; value: number }[];
@@ -115,11 +150,12 @@ const ERP_CANCELLED_STATUSES = ["CANCELADO", "EXCLUIDO"];
 
 export async function fetchErpDashboard(clientId: string, dataset: string, dateFrom: string, dateTo: string): Promise<ErpDashboard> {
   const pedidos = vestiTable(dataset, "pedidos_erp");
+  const clientes = vestiTable(dataset, "clientes_erp");
   const cancelledList = ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ");
 
   const [dailyRows] = await bigquery.query({
     query: `
-      WITH orders AS (
+      WITH all_orders AS (
         SELECT
           pedido_id,
           ANY_VALUE(customer_id) AS customer_id,
@@ -127,29 +163,43 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
           ANY_VALUE(valor_total) AS gross_amount,
           ANY_VALUE(desconto) AS discount_amount,
           ANY_VALUE(valor_liquido) AS net_amount,
-          SUM(item_quantidade) AS quantity,
+          ANY_VALUE(devolucao) AS return_amount,
+          SUM(item_quantidade) AS sold_quantity,
+          COALESCE(ANY_VALUE(devolucao_quantidade), 0) AS returned_quantity,
           ANY_VALUE(DATE(data_criado)) AS date
         FROM ${pedidos}
-        WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
         GROUP BY pedido_id
       ),
+      customer_documents AS (
+        SELECT DISTINCT REGEXP_REPLACE(CAST(documento AS STRING), r'[^0-9]', '') AS document
+        FROM ${clientes}
+        WHERE documento IS NOT NULL
+      ),
+      orders AS (
+        SELECT * FROM all_orders
+        WHERE date BETWEEN @dateFrom AND @dateTo
+      ),
       customer_history AS (
-        SELECT customer_id, COUNT(DISTINCT pedido_id) AS total_orders
-        FROM ${pedidos}
-        WHERE customer_id IS NOT NULL
-        GROUP BY customer_id
+        SELECT o.customer_id, COUNT(*) AS total_orders
+        FROM all_orders o
+        JOIN customer_documents c
+          ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
+        WHERE o.customer_id IS NOT NULL AND o.status NOT IN (${cancelledList})
+        GROUP BY o.customer_id
       )
       SELECT
         o.date,
-        COUNT(*) AS orders,
+        COUNTIF(o.status NOT IN (${cancelledList})) AS orders,
         COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.gross_amount)), 0) AS gross_revenue,
         COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.discount_amount)), 0) AS discount_amount,
         COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.net_amount)), 0) AS net_revenue,
-        COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.quantity)), 0) AS quantity,
+        COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, COALESCE(o.return_amount, 0))), 0) AS return_amount,
+        COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.sold_quantity)), 0) AS quantity,
+        COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.returned_quantity)), 0) AS returned_quantity,
         COUNTIF(o.status IN (${cancelledList})) AS cancelled_orders,
         COALESCE(SUM(IF(o.status IN (${cancelledList}), o.net_amount, 0)), 0) AS cancelled_amount,
-        COUNT(DISTINCT IF(ch.total_orders <= 1, o.customer_id, NULL)) AS new_customers,
-        COUNT(DISTINCT IF(ch.total_orders > 1, o.customer_id, NULL)) AS returning_customers
+        COUNT(DISTINCT IF(o.status NOT IN (${cancelledList}) AND ch.total_orders <= 1, o.customer_id, NULL)) AS new_customers,
+        COUNT(DISTINCT IF(o.status NOT IN (${cancelledList}) AND ch.total_orders > 1, o.customer_id, NULL)) AS returning_customers
       FROM orders o
       LEFT JOIN customer_history ch ON ch.customer_id = o.customer_id
       GROUP BY o.date
@@ -164,21 +214,48 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
   const dailyNewCustomers = raw.map((r) => ({ date: toDateOnly(r.date), value: Number(r.new_customers) || 0 }));
   const dailyReturningCustomers = raw.map((r) => ({ date: toDateOnly(r.date), value: Number(r.returning_customers) || 0 }));
 
-  const [uniqueRows] = await bigquery.query({
+  const [customerSegmentRows] = await bigquery.query({
     query: `
-      WITH orders AS (
-        SELECT pedido_id, ANY_VALUE(customer_id) AS customer_id
+      WITH all_orders AS (
+        SELECT pedido_id, ANY_VALUE(customer_id) AS customer_id, ANY_VALUE(status) AS status, ANY_VALUE(DATE(data_criado)) AS date
         FROM ${pedidos}
-        WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
         GROUP BY pedido_id
+      ),
+      customer_documents AS (
+        SELECT DISTINCT REGEXP_REPLACE(CAST(documento AS STRING), r'[^0-9]', '') AS document
+        FROM ${clientes}
+        WHERE documento IS NOT NULL
+      ),
+      customer_history AS (
+        SELECT o.customer_id, COUNT(*) AS total_orders
+        FROM all_orders o
+        JOIN customer_documents c
+          ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
+        WHERE o.customer_id IS NOT NULL AND o.status NOT IN (${cancelledList})
+        GROUP BY o.customer_id
+      ),
+      period_buyers AS (
+        SELECT DISTINCT o.customer_id
+        FROM all_orders o
+        JOIN customer_documents c
+          ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
+        WHERE o.date BETWEEN @dateFrom AND @dateTo
+          AND o.customer_id IS NOT NULL
+          AND o.status NOT IN (${cancelledList})
       )
-      SELECT COUNT(DISTINCT customer_id) AS unique_customers
-      FROM orders
-      WHERE customer_id IS NOT NULL
+      SELECT
+        COUNT(*) AS unique_customers,
+        COUNTIF(ch.total_orders <= 1) AS new_customers,
+        COUNTIF(ch.total_orders > 1) AS returning_customers
+      FROM period_buyers pb
+      JOIN customer_history ch USING (customer_id)
     `,
     params: { dateFrom, dateTo },
   });
-  const uniqueCustomers = Number((uniqueRows as Array<Record<string, unknown>>)[0]?.unique_customers) || 0;
+  const customerSegments = (customerSegmentRows as Array<Record<string, unknown>>)[0];
+  const uniqueCustomers = Number(customerSegments?.unique_customers) || 0;
+  const newCustomers = Number(customerSegments?.new_customers) || 0;
+  const returningCustomers = Number(customerSegments?.returning_customers) || 0;
 
   const [customerRevenueRows] = await bigquery.query({
     query: `
@@ -191,11 +268,21 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
         FROM ${pedidos}
         WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
         GROUP BY pedido_id
+      ),
+      customer_documents AS (
+        SELECT DISTINCT REGEXP_REPLACE(CAST(documento AS STRING), r'[^0-9]', '') AS document
+        FROM ${clientes}
+        WHERE documento IS NOT NULL
       )
-      SELECT customer_id, SUM(IF(status IN (${cancelledList}), 0, net_amount)) AS net_revenue
-      FROM orders
-      WHERE customer_id IS NOT NULL
-      GROUP BY customer_id
+      SELECT
+        o.customer_id,
+        SUM(o.net_amount) AS net_revenue,
+        LOGICAL_OR(c.document IS NOT NULL) AS is_identified
+      FROM orders o
+      LEFT JOIN customer_documents c
+        ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
+      WHERE o.customer_id IS NOT NULL AND o.status NOT IN (${cancelledList})
+      GROUP BY o.customer_id
     `,
     params: { dateFrom, dateTo },
   });
@@ -208,11 +295,12 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
   for (const r of customerRevenueRaw) {
     const customerId = r.customer_id as string | null;
     const revenue = Number(r.net_revenue) || 0;
+    const isIdentified = r.is_identified === true;
     if (customerId && customerAttribution.has(customerId)) {
-      attributedCustomers += 1;
+      if (isIdentified) attributedCustomers += 1;
       attributedRevenue += revenue;
     } else {
-      unattributedCustomers += 1;
+      if (isIdentified) unattributedCustomers += 1;
       unattributedRevenue += revenue;
     }
   }
@@ -220,25 +308,26 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
   const netRevenue = dailyRevenue.reduce((sum, r) => sum + r.value, 0);
   const grossRevenue = raw.reduce((sum, r) => sum + (Number(r.gross_revenue) || 0), 0);
   const discountAmount = raw.reduce((sum, r) => sum + (Number(r.discount_amount) || 0), 0);
+  const returnAmount = raw.reduce((sum, r) => sum + (Number(r.return_amount) || 0), 0);
   const totalQuantity = raw.reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
+  const returnedQuantity = raw.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
   const cancelledOrders = raw.reduce((sum, r) => sum + (Number(r.cancelled_orders) || 0), 0);
   const cancelledAmount = raw.reduce((sum, r) => sum + (Number(r.cancelled_amount) || 0), 0);
-  const orders = dailyOrders.reduce((sum, r) => sum + r.value, 0) - cancelledOrders;
-  const newCustomers = dailyNewCustomers.reduce((sum, r) => sum + r.value, 0);
-  const returningCustomers = dailyReturningCustomers.reduce((sum, r) => sum + r.value, 0);
-  const totalBuyers = newCustomers + returningCustomers;
+  const orders = dailyOrders.reduce((sum, r) => sum + r.value, 0);
 
   return {
     kpis: {
       grossRevenue,
       netRevenue,
       discountAmount,
+      returnAmount,
       orders,
       totalQuantity,
+      returnedQuantity,
       uniqueCustomers,
       newCustomers,
       returningCustomers,
-      retentionPct: totalBuyers > 0 ? (returningCustomers / totalBuyers) * 100 : 0,
+      retentionPct: calculateErpRetentionPct(returningCustomers, uniqueCustomers),
       cancelledOrders,
       cancelledAmount,
       avgTicket: orders > 0 ? netRevenue / orders : 0,
@@ -267,15 +356,19 @@ export type ErpOrderRow = {
   status: string | null;
   requestedQuantity: number;
   fulfilledQuantity: number;
+  returnedQuantity: number;
   grossAmount: number;
   discountAmount: number;
   netAmount: number;
+  returnAmount: number;
   state: string | null;
   city: string | null;
   utmSource: string | null;
   utmMedium: string | null;
   utmCampaign: string | null;
   attributed: boolean;
+  attributionEvidenceType: string | null;
+  attributionEvidenceAt: string | null;
 };
 
 export type ErpOrdersPage = { rows: ErpOrderRow[]; total: number };
@@ -288,6 +381,7 @@ export async function fetchErpOrdersPage(
   page: number,
   limit: number,
   search?: string,
+  status?: string,
 ): Promise<ErpOrdersPage> {
   const pedidos = vestiTable(dataset, "pedidos_erp");
   const clientes = vestiTable(dataset, "clientes_erp");
@@ -303,6 +397,8 @@ export async function fetchErpOrdersPage(
         ANY_VALUE(valor_total) AS gross_amount,
         ANY_VALUE(desconto) AS discount_amount,
         ANY_VALUE(valor_liquido) AS net_amount,
+        COALESCE(ANY_VALUE(devolucao), 0) AS return_amount,
+        COALESCE(ANY_VALUE(devolucao_quantidade), 0) AS returned_quantity,
         SUM(item_quantidade) AS requested_quantity,
         ANY_VALUE(data_criado) AS created_at
       FROM ${pedidos}
@@ -312,7 +408,8 @@ export async function fetchErpOrdersPage(
     base AS (
       SELECT
         o.pedido_id, o.customer_id, o.status, o.seller, o.gross_amount,
-        o.discount_amount, o.net_amount, o.requested_quantity, o.created_at,
+        o.discount_amount, o.net_amount, o.return_amount, o.returned_quantity,
+        o.requested_quantity, o.created_at,
         c.nome AS customer_name, c.marca AS company, c.documento AS document,
         c.estado AS state, c.cidade AS city
       FROM orders o
@@ -320,11 +417,13 @@ export async function fetchErpOrdersPage(
     )
   `;
 
-  const whereClause = search
-    ? `WHERE (LOWER(customer_name) LIKE @search OR LOWER(document) LIKE @search OR CAST(pedido_id AS STRING) LIKE @search)`
-    : "";
+  const conditions: string[] = [];
+  if (search) conditions.push("(LOWER(customer_name) LIKE @search OR LOWER(document) LIKE @search OR CAST(pedido_id AS STRING) LIKE @search)");
+  if (status) conditions.push("status = @status");
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const params: Record<string, unknown> = { dateFrom, dateTo, limit, offset };
   if (search) params.search = `%${search.toLowerCase()}%`;
+  if (status) params.status = status;
 
   const [[listRows], [countRows]] = await Promise.all([
     bigquery.query({
@@ -335,31 +434,43 @@ export async function fetchErpOrdersPage(
   ]);
 
   const rawRows = listRows as Array<Record<string, unknown>>;
-  const attribution = await matchErpDocumentsToUpzero(clientId, rawRows.map((r) => r.document as string | null));
+  const attribution = await matchErpDocumentsToUpzero(
+    clientId,
+    rawRows.map((r) => (r.document as string | null) ?? (r.customer_id as string | null)),
+  );
 
   const rows: ErpOrderRow[] = rawRows.map((r) => {
+    const customerId = (r.customer_id as string) || null;
     const document = (r.document as string) || null;
-    const match = document ? attribution.get(document) : undefined;
+    const attributionDocument = document ?? customerId;
+    const match = attributionDocument ? attribution.get(attributionDocument) : undefined;
     return {
       id: String(r.pedido_id),
       createdAt: toDateOnly(r.created_at),
-      customerId: (r.customer_id as string) || null,
+      customerId,
       customerName: (r.customer_name as string) || null,
       company: (r.company as string) || null,
       document,
       seller: (r.seller as string) || null,
       status: (r.status as string) || null,
       requestedQuantity: Number(r.requested_quantity) || 0,
-      fulfilledQuantity: Number(r.requested_quantity) || 0,
+      fulfilledQuantity: calculateErpFulfilledQuantity(
+        Number(r.requested_quantity) || 0,
+        Number(r.returned_quantity) || 0,
+      ),
+      returnedQuantity: Number(r.returned_quantity) || 0,
       grossAmount: Number(r.gross_amount) || 0,
       discountAmount: Number(r.discount_amount) || 0,
       netAmount: Number(r.net_amount) || 0,
+      returnAmount: Number(r.return_amount) || 0,
       state: (r.state as string) || null,
       city: (r.city as string) || null,
       utmSource: match?.utmSource ?? null,
       utmMedium: match?.utmMedium ?? null,
       utmCampaign: match?.utmCampaign ?? null,
       attributed: !!match,
+      attributionEvidenceType: match?.evidenceType ?? null,
+      attributionEvidenceAt: match?.evidenceAt?.toISOString() ?? null,
     };
   });
 
@@ -399,6 +510,7 @@ export async function fetchErpCustomersPage(
   const clientes = vestiTable(dataset, "clientes_erp");
   const pedidos = vestiTable(dataset, "pedidos_erp");
   const offset = (page - 1) * limit;
+  const cancelledList = ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ");
 
   const baseQuery = `
     WITH orders_agg AS (
@@ -412,10 +524,12 @@ export async function fetchErpCustomersPage(
         SELECT
           pedido_id, customer_id,
           ANY_VALUE(valor_liquido) AS valor_liquido_dedup,
-          ANY_VALUE(data_criado) AS created_at
+          ANY_VALUE(data_criado) AS created_at,
+          ANY_VALUE(status) AS status
         FROM ${pedidos}
         GROUP BY pedido_id, customer_id
       )
+      WHERE status NOT IN (${cancelledList})
       GROUP BY customer_id
     ),
     base AS (
@@ -499,7 +613,7 @@ export type ErpProductsPage = {
 
 export async function fetchErpProductsPage(
   dataset: string,
-  filters: { search?: string; category?: string; page: number; limit: number },
+  filters: { search?: string; category?: string; dateFrom: string; dateTo: string; page: number; limit: number },
 ): Promise<ErpProductsPage> {
   const produtos = vestiTable(dataset, "produtos_erp");
   const estoque = vestiTable(dataset, "estoque_erp");
@@ -507,7 +621,12 @@ export async function fetchErpProductsPage(
   const offset = (filters.page - 1) * filters.limit;
 
   const conditions: string[] = [];
-  const params: Record<string, unknown> = { limit: filters.limit, offset };
+  const params: Record<string, unknown> = {
+    limit: filters.limit,
+    offset,
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+  };
   if (filters.search) {
     conditions.push("(LOWER(produto_descricao) LIKE @search OR LOWER(sku_id) LIKE @search)");
     params.search = `%${filters.search.toLowerCase()}%`;
@@ -520,8 +639,10 @@ export async function fetchErpProductsPage(
 
   const baseCte = `
     WITH vendas AS (
-      SELECT item_sku_id AS sku_id, SUM(item_quantidade) AS units, SUM(item_valor_total) AS revenue
+      SELECT item_sku_id AS sku_id, SUM(item_quantidade) AS units, SUM(item_valor_liquido) AS revenue
       FROM ${pedidos}
+      WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
+        AND status NOT IN (${ERP_CANCELLED_STATUSES.map((status) => `'${status}'`).join(", ")})
       GROUP BY item_sku_id
     ),
     estoque_agg AS (
@@ -558,20 +679,29 @@ export async function fetchErpProductsPage(
     bigquery.query({
       query: `
         WITH vendas AS (
-          SELECT SUM(item_quantidade) AS units, SUM(item_valor_total) AS revenue
+          SELECT SUM(item_quantidade) AS units, SUM(item_valor_liquido) AS revenue
           FROM ${pedidos}
+          WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
+            AND status NOT IN (${ERP_CANCELLED_STATUSES.map((status) => `'${status}'`).join(", ")})
         ),
         estoque_agg AS (
-          SELECT SUM(estoque) AS stock, COUNTIF(estoque <= 0) AS out_of_stock
-          FROM (SELECT sku_id, SUM(estoque) AS estoque FROM ${estoque} GROUP BY sku_id)
+          SELECT sku_id, SUM(estoque) AS stock
+          FROM ${estoque}
+          GROUP BY sku_id
+        ),
+        catalog_stock AS (
+          SELECT p.sku_id, COALESCE(e.stock, 0) AS stock
+          FROM ${produtos} p
+          LEFT JOIN estoque_agg e ON e.sku_id = p.sku_id
         )
         SELECT
           (SELECT COUNT(*) FROM ${produtos}) AS total_products,
           (SELECT revenue FROM vendas) AS total_revenue,
           (SELECT units FROM vendas) AS total_units,
-          (SELECT stock FROM estoque_agg) AS total_stock,
-          (SELECT out_of_stock FROM estoque_agg) AS out_of_stock_count
+          (SELECT SUM(stock) FROM catalog_stock) AS total_stock,
+          (SELECT COUNTIF(stock <= 0) FROM catalog_stock) AS out_of_stock_count
       `,
+      params,
     }),
   ]);
 

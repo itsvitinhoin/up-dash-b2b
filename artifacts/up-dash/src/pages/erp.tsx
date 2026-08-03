@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useDeferredValue, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -65,6 +65,7 @@ type ErpDashboardKpis = {
   discountAmount: number;
   orders: number;
   totalQuantity: number;
+  returnedQuantity: number;
   uniqueCustomers: number;
   newCustomers: number;
   returningCustomers: number;
@@ -72,6 +73,7 @@ type ErpDashboardKpis = {
   cancelledOrders: number;
   cancelledAmount: number;
   avgTicket: number;
+  returnAmount: number;
 };
 
 type ErpSeriesPoint = { date: string; value: number };
@@ -103,15 +105,19 @@ type ErpOrderRow = {
   status: string | null;
   requestedQuantity: number;
   fulfilledQuantity: number;
+  returnedQuantity: number;
   grossAmount: number;
   discountAmount: number;
   netAmount: number;
+  returnAmount: number;
   state: string | null;
   city: string | null;
   utmSource: string | null;
   utmMedium: string | null;
   utmCampaign: string | null;
   attributed: boolean;
+  attributionEvidenceType: string | null;
+  attributionEvidenceAt: string | null;
 };
 
 type ErpOrdersResponse = { rows: ErpOrderRow[]; total: number };
@@ -279,13 +285,21 @@ function StatusBadge({ status }: { status: string | null }) {
   );
 }
 
-function AttributionBadge({ source, medium }: { source: string | null; medium: string | null }) {
-  if (!source) {
+function AttributionBadge({
+  source,
+  medium,
+  attributed = false,
+}: {
+  source: string | null;
+  medium: string | null;
+  attributed?: boolean;
+}) {
+  if (!source && !attributed) {
     return <span className="text-xs text-muted-foreground">Sem correspondência</span>;
   }
   return (
     <div>
-      <p className="text-sm font-medium">{source}</p>
+      <p className="text-sm font-medium">{source ?? "Mídia paga identificada"}</p>
       {medium && <p className="text-xs text-muted-foreground">{medium}</p>}
     </div>
   );
@@ -298,8 +312,8 @@ function ErpOverview() {
   const { data, isLoading } = useErpDashboard(dateFrom, dateTo);
   const { clientId, enabled } = useErpClientId();
   const { data: products, isLoading: productsLoading } = useQuery({
-    queryKey: ["erp-products-top", clientId],
-    queryFn: () => customFetch<ErpProductsResponse>(buildErpUrl("/api/analytics/erp/products", { clientId, limit: 4 })),
+    queryKey: ["erp-products-top", clientId, dateFrom, dateTo],
+    queryFn: () => customFetch<ErpProductsResponse>(buildErpUrl("/api/analytics/erp/products", { clientId, dateFrom, dateTo, limit: 4 })),
     enabled,
     staleTime: 2 * 60 * 1000,
     gcTime: 15 * 60 * 1000,
@@ -312,9 +326,9 @@ function ErpOverview() {
 
   const metrics: Metric[] = [
     { label: "Faturamento bruto", value: k?.grossRevenue ?? 0, format: formatCurrencySmart, icon: WalletCards, iconClass: "bg-blue-500/10 text-blue-400", sparkColor: "#60a5fa", subLabel: "Base", subValue: "Não cancelados" },
-    { label: "Faturamento líquido", value: k?.netRevenue ?? 0, format: formatCurrencySmart, icon: BadgeCheck, iconClass: "bg-emerald-500/10 text-emerald-400", sparkColor: "#34d399", subLabel: "Descontos", subValue: formatCurrency(k?.discountAmount ?? 0) },
+    { label: "Faturamento líquido", value: k?.netRevenue ?? 0, format: formatCurrencySmart, icon: BadgeCheck, iconClass: "bg-emerald-500/10 text-emerald-400", sparkColor: "#34d399", subLabel: "Devoluções", subValue: formatCurrency(k?.returnAmount ?? 0) },
     { label: "Pedidos", value: k?.orders ?? 0, format: formatNumber, icon: ReceiptText, iconClass: "bg-violet-500/10 text-violet-400", sparkColor: "#a78bfa", subLabel: "Ticket médio", subValue: formatCurrency(k?.avgTicket ?? 0) },
-    { label: "Peças vendidas", value: k?.totalQuantity ?? 0, format: formatNumber, icon: PackageCheck, iconClass: "bg-amber-500/10 text-amber-400", sparkColor: "#f59e0b", subLabel: "Por pedido", subValue: k && k.orders > 0 ? (k.totalQuantity / k.orders).toFixed(1) : "0" },
+    { label: "Peças vendidas", value: k?.totalQuantity ?? 0, format: formatNumber, icon: PackageCheck, iconClass: "bg-amber-500/10 text-amber-400", sparkColor: "#f59e0b", subLabel: "Devolvidas", subValue: formatNumber(k?.returnedQuantity ?? 0) },
     { label: "Compradores", value: k?.uniqueCustomers ?? 0, format: formatNumber, icon: Users, iconClass: "bg-cyan-500/10 text-cyan-400", sparkColor: "#22d3ee", subLabel: "Base", subValue: "Clientes únicos" },
     { label: "Clientes novos", value: k?.newCustomers ?? 0, format: formatNumber, icon: UserRoundCheck, iconClass: "bg-lime-500/10 text-lime-400", sparkColor: "#84cc16", subLabel: "Regra", subValue: "1ª compra histórica" },
     { label: "Clientes recorrentes", value: k?.returningCustomers ?? 0, format: formatNumber, icon: Users, iconClass: "bg-purple-500/10 text-purple-400", sparkColor: "#c084fc", subLabel: "Regra", subValue: "Compra anterior" },
@@ -478,6 +492,7 @@ function ErpOrdersView() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
+  const deferredSearch = useDeferredValue(search.trim());
   const { dateRange } = useDashboardFilters();
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
@@ -485,10 +500,18 @@ function ErpOrdersView() {
   const { clientId, enabled } = useErpClientId();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["erp-orders", clientId, dateFrom, dateTo, search, page],
+    queryKey: ["erp-orders", clientId, dateFrom, dateTo, deferredSearch, status, page],
     queryFn: () =>
       customFetch<ErpOrdersResponse>(
-        buildErpUrl("/api/analytics/erp/orders", { clientId, dateFrom, dateTo, search: search || undefined, page, limit: ERP_PAGE_SIZE }),
+        buildErpUrl("/api/analytics/erp/orders", {
+          clientId,
+          dateFrom,
+          dateTo,
+          search: deferredSearch || undefined,
+          status: status === "all" ? undefined : status,
+          page,
+          limit: ERP_PAGE_SIZE,
+        }),
       ),
     enabled,
     staleTime: 2 * 60 * 1000,
@@ -498,17 +521,14 @@ function ErpOrdersView() {
   });
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / ERP_PAGE_SIZE));
 
-  const rows = useMemo(
-    () => (data?.rows ?? []).filter((order) => status === "all" || order.status === status),
-    [data?.rows, status],
-  );
+  const rows = data?.rows ?? [];
 
   const k = dashboard?.kpis;
   const metrics: Metric[] = [
     { label: "Faturamento bruto", value: k?.grossRevenue ?? 0, format: formatCurrencySmart, icon: WalletCards, iconClass: "bg-blue-500/10 text-blue-400", sparkColor: "#60a5fa", subLabel: "Base", subValue: "Não cancelados" },
-    { label: "Faturamento líquido", value: k?.netRevenue ?? 0, format: formatCurrencySmart, icon: BadgeCheck, iconClass: "bg-emerald-500/10 text-emerald-400", sparkColor: "#34d399", subLabel: "Após ajustes", subValue: "Descontos" },
+    { label: "Faturamento líquido", value: k?.netRevenue ?? 0, format: formatCurrencySmart, icon: BadgeCheck, iconClass: "bg-emerald-500/10 text-emerald-400", sparkColor: "#34d399", subLabel: "Devoluções", subValue: formatCurrency(k?.returnAmount ?? 0) },
     { label: "Pedidos únicos", value: k?.orders ?? 0, format: formatNumber, icon: ReceiptText, iconClass: "bg-violet-500/10 text-violet-400", sparkColor: "#a78bfa", subLabel: "Ticket médio", subValue: formatCurrency(k?.avgTicket ?? 0) },
-    { label: "Peças vendidas", value: k?.totalQuantity ?? 0, format: formatNumber, icon: Boxes, iconClass: "bg-amber-500/10 text-amber-400", sparkColor: "#f59e0b", subLabel: "Base", subValue: "Total no período" },
+    { label: "Peças vendidas", value: k?.totalQuantity ?? 0, format: formatNumber, icon: Boxes, iconClass: "bg-amber-500/10 text-amber-400", sparkColor: "#f59e0b", subLabel: "Devolvidas", subValue: formatNumber(k?.returnedQuantity ?? 0) },
     { label: "Descontos", value: k?.discountAmount ?? 0, format: formatCurrencySmart, icon: CircleDollarSign, iconClass: "bg-pink-500/10 text-pink-400", sparkColor: "#f472b6", subLabel: "% do bruto", subValue: k && k.grossRevenue > 0 ? formatPercentage((k.discountAmount / k.grossRevenue) * 100) : "0%" },
     { label: "Cancelamentos", value: k?.cancelledOrders ?? 0, format: formatNumber, icon: AlertCircle, iconClass: "bg-red-500/10 text-red-400", sparkColor: "#f87171", subLabel: "Valor", subValue: formatCurrency(k?.cancelledAmount ?? 0) },
   ];
@@ -564,7 +584,7 @@ function ErpOrdersView() {
                   <TableHead>Vendedor</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Origem</TableHead>
-                  <TableHead className="text-right">Qtd.</TableHead>
+                  <TableHead className="text-right">Qtd. vend./líq.</TableHead>
                   <TableHead className="text-right">Valor líquido</TableHead>
                 </TableRow>
               </TableHeader>
@@ -587,8 +607,16 @@ function ErpOrdersView() {
                       <TableCell className="whitespace-nowrap text-xs">{order.document ?? "—"}</TableCell>
                       <TableCell className="whitespace-nowrap">{order.seller ?? "—"}</TableCell>
                       <TableCell><StatusBadge status={order.status} /></TableCell>
-                      <TableCell><AttributionBadge source={order.utmSource} medium={order.utmMedium} /></TableCell>
-                      <TableCell className="text-right tabular-nums">{formatNumber(order.requestedQuantity)}</TableCell>
+                      <TableCell>
+                        <AttributionBadge
+                          source={order.utmSource}
+                          medium={order.utmMedium}
+                          attributed={order.attributed}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumber(order.requestedQuantity)} / {formatNumber(order.fulfilledQuantity)}
+                      </TableCell>
                       <TableCell className="text-right font-medium tabular-nums">{formatCurrency(order.netAmount)}</TableCell>
                     </TableRow>
                   ))
@@ -620,6 +648,7 @@ function ErpOrdersView() {
 function ErpCustomersView() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const deferredSearch = useDeferredValue(search.trim());
   const { dateRange } = useDashboardFilters();
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
@@ -627,10 +656,10 @@ function ErpCustomersView() {
   const { clientId, enabled } = useErpClientId();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["erp-customers", clientId, search, page],
+    queryKey: ["erp-customers", clientId, deferredSearch, page],
     queryFn: () =>
       customFetch<ErpCustomersResponse>(
-        buildErpUrl("/api/analytics/erp/customers", { clientId, search: search || undefined, page, limit: ERP_PAGE_SIZE }),
+        buildErpUrl("/api/analytics/erp/customers", { clientId, search: deferredSearch || undefined, page, limit: ERP_PAGE_SIZE }),
       ),
     enabled,
     staleTime: 2 * 60 * 1000,
@@ -708,7 +737,13 @@ function ErpCustomersView() {
                       <TableCell className="text-right font-medium tabular-nums">{formatCurrency(customer.totalSpent)}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatCurrency(customer.averageTicket)}</TableCell>
                       <TableCell className="whitespace-nowrap">{customer.seller ?? "—"}</TableCell>
-                      <TableCell><AttributionBadge source={customer.utmSource} medium={customer.utmMedium} /></TableCell>
+                      <TableCell>
+                        <AttributionBadge
+                          source={customer.utmSource}
+                          medium={customer.utmMedium}
+                          attributed={customer.attributed}
+                        />
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
@@ -739,13 +774,24 @@ function ErpCustomersView() {
 function ErpProductsView() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const deferredSearch = useDeferredValue(search.trim());
+  const { dateRange } = useDashboardFilters();
+  const dateFrom = format(dateRange.from, "yyyy-MM-dd");
+  const dateTo = format(dateRange.to, "yyyy-MM-dd");
   const { clientId, enabled } = useErpClientId();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["erp-products", clientId, search, page],
+    queryKey: ["erp-products", clientId, dateFrom, dateTo, deferredSearch, page],
     queryFn: () =>
       customFetch<ErpProductsResponse>(
-        buildErpUrl("/api/analytics/erp/products", { clientId, search: search || undefined, page, limit: ERP_PAGE_SIZE }),
+        buildErpUrl("/api/analytics/erp/products", {
+          clientId,
+          dateFrom,
+          dateTo,
+          search: deferredSearch || undefined,
+          page,
+          limit: ERP_PAGE_SIZE,
+        }),
       ),
     enabled,
     staleTime: 2 * 60 * 1000,
