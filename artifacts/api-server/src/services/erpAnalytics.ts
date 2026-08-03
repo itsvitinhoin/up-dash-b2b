@@ -48,10 +48,15 @@ export type ErpAttribution = {
   evidenceAt: Date | null;
 };
 
-async function matchErpDocumentsToUpzero(
+export type ErpDocumentMatch = {
+  customerId: string;
+  attribution: ErpAttribution | null;
+};
+
+export async function matchErpDocumentsWithUpzero(
   clientId: string,
   documents: Array<string | null | undefined>,
-): Promise<Map<string, ErpAttribution>> {
+): Promise<Map<string, ErpDocumentMatch>> {
   const hashByDocument = new Map<string, string>();
   for (const doc of documents) {
     const hash = hashDocument(doc);
@@ -84,7 +89,7 @@ async function matchErpDocumentsToUpzero(
     )
     .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.documentHash, hashes)));
 
-  const byHash = new Map<string, ErpAttribution>();
+  const byHash = new Map<string, ErpDocumentMatch>();
   for (const r of rows) {
     if (!r.documentHash) continue;
     const attribution: ErpAttribution = {
@@ -94,20 +99,41 @@ async function matchErpDocumentsToUpzero(
       evidenceType: r.stampEvidenceType ?? "customer_utm",
       evidenceAt: r.stampEvidenceAt ?? null,
     };
-    if (!r.stampId && !hasPaidErpCampaignSignal(attribution)) continue;
+    const paidAttribution = r.stampId || hasPaidErpCampaignSignal(attribution)
+      ? attribution
+      : null;
 
     const current = byHash.get(r.documentHash);
-    if (!current || (!current.evidenceAt && attribution.evidenceAt) || (current.evidenceAt && attribution.evidenceAt && attribution.evidenceAt < current.evidenceAt)) {
-      byHash.set(r.documentHash, attribution);
+    if (
+      !current ||
+      (!current.attribution && paidAttribution) ||
+      (current.attribution && paidAttribution?.evidenceAt && (!current.attribution.evidenceAt || paidAttribution.evidenceAt < current.attribution.evidenceAt))
+    ) {
+      byHash.set(r.documentHash, {
+        customerId: r.customerId,
+        attribution: paidAttribution,
+      });
     }
   }
 
-  const byDocument = new Map<string, ErpAttribution>();
+  const byDocument = new Map<string, ErpDocumentMatch>();
   for (const [doc, hash] of hashByDocument) {
     const match = byHash.get(hash);
     if (match) byDocument.set(doc, match);
   }
   return byDocument;
+}
+
+export async function matchErpDocumentsToUpzero(
+  clientId: string,
+  documents: Array<string | null | undefined>,
+): Promise<Map<string, ErpAttribution>> {
+  const identityMatches = await matchErpDocumentsWithUpzero(clientId, documents);
+  const attributed = new Map<string, ErpAttribution>();
+  for (const [document, match] of identityMatches) {
+    if (match.attribution) attributed.set(document, match.attribution);
+  }
+  return attributed;
 }
 
 function toDateOnly(value: unknown): string {

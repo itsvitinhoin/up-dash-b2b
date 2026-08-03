@@ -9544,8 +9544,8 @@ router.post("/analytics/insight", async (req, res): Promise<void> => {
 // ─── ERP (Miredata) ──────────────────────────────────────────────────────────
 // Add-on independente de commercePlatform: qualquer client com `erpDataset`
 // configurado (ver services/erpAnalytics.ts) tem essas rotas disponíveis.
-// Não cobre atribuição/canal de mídia — isso não existe nas tabelas ERP,
-// ver nota em erpAnalytics.ts.
+// A tela operacional ERP usa somente o Miré. A rota Performance abaixo
+// concilia o ERP com identidade/atribuição UP Zero e investimento de mídia.
 router.get("/analytics/erp/dashboard", async (req, res): Promise<void> => {
   await erpController.getDashboard(req, res);
 });
@@ -9557,6 +9557,9 @@ router.get("/analytics/erp/customers", async (req, res): Promise<void> => {
 });
 router.get("/analytics/erp/products", async (req, res): Promise<void> => {
   await erpController.getProducts(req, res);
+});
+router.get("/analytics/performance", async (req, res): Promise<void> => {
+  await erpController.getPerformance(req, res);
 });
 
 export default router;

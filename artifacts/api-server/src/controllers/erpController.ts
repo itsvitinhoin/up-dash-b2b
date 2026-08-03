@@ -9,6 +9,7 @@ import {
   fetchErpCustomersPage,
   fetchErpProductsPage,
 } from "../services/erpAnalytics";
+import { fetchPerformanceDashboard } from "../services/performanceAnalytics";
 
 const ERP_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -143,4 +144,61 @@ export async function getProducts(req: Request, res: Response): Promise<void> {
   );
 
   res.json({ ...result, period: { from: from.toISOString(), to: to.toISOString() }, page, limit });
+}
+
+const GetPerformanceQueryParams = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
+function maskDocument(value: string | null): string | null {
+  if (!value) return null;
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 14) return `CNPJ **.***.***/****-${digits.slice(-2)}`;
+  if (digits.length === 11) return `CPF ***.***.***-${digits.slice(-2)}`;
+  return `***${digits.slice(-4)}`;
+}
+
+export async function getPerformance(req: Request, res: Response): Promise<void> {
+  const ctx = await requireErpDataset(req, res);
+  if (!ctx) return;
+
+  const rawQuery = req.query as Record<string, unknown>;
+  const dateParsed = z.object({ dateFrom: z.date().optional(), dateTo: z.date().optional() }).safeParse(coerceDateQuery(rawQuery));
+  const queryParsed = GetPerformanceQueryParams.safeParse(rawQuery);
+  if (!dateParsed.success || !queryParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: (dateParsed.error ?? queryParsed.error)?.message, status: 400 });
+    return;
+  }
+
+  const { from, to } = dateRange(dateParsed.data.dateFrom, dateParsed.data.dateTo);
+  const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
+  const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
+  const { page, limit } = queryParsed.data;
+
+  const [dashboard, orders] = await Promise.all([
+    cached(`performance:dashboard:${ctx.clientId}:${ctx.dataset}:${dateFromOnly}:${dateToOnly}`, ERP_CACHE_TTL_MS, () =>
+      fetchPerformanceDashboard(ctx.clientId, ctx.dataset, dateFromOnly, dateToOnly),
+    ),
+    cached(`performance:orders:${ctx.clientId}:${ctx.dataset}:${dateFromOnly}:${dateToOnly}:${page}:${limit}`, ERP_CACHE_TTL_MS, () =>
+      fetchErpOrdersPage(ctx.clientId, ctx.dataset, dateFromOnly, dateToOnly, page, limit),
+    ),
+  ]);
+
+  const rows = orders.rows.map((order) => {
+    const documentKey = (order.document ?? order.customerId ?? "").replace(/\D/g, "");
+    return {
+      ...order,
+      document: maskDocument(order.document ?? order.customerId),
+      buyerType: dashboard.buyerTypeByDocument[documentKey] ?? "UNKNOWN",
+      attribution: order.attributed ? "ATRIBUIDO" : "SEM_ORIGEM",
+    };
+  });
+  const { buyerTypeByDocument: _buyerTypes, ...publicDashboard } = dashboard;
+
+  res.json({
+    period: { from: from.toISOString(), to: to.toISOString() },
+    ...publicDashboard,
+    orders: { rows, total: orders.total, page, limit },
+  });
 }
