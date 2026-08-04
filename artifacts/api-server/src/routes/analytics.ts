@@ -10862,6 +10862,15 @@ router.get("/analytics/scale", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
 
+  const [scaleVestiCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (scaleVestiCheck?.commercePlatform === "VESTI") {
+    await vestiDashboardController.getScale(req, res);
+    return;
+  }
+
   const rawQuery = req.query as Record<string, unknown>;
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);

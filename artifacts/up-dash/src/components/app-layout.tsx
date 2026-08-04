@@ -493,7 +493,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   // Clientes Vesti são dashboardType=B2B (venda por atacado), mas já têm
   // relatório diário via BigQuery (ver vestiDashboardController.getDailyReport)
   // — por isso "/daily" fica liberado pra eles mesmo em modo B2B.
-  const vestiEnabledB2cRoutes = useMemo(() => new Set(["/daily"]), []);
+  const vestiEnabledB2cRoutes = useMemo(() => new Set(["/daily", "/scale"]), []);
   const isVestiClient = activeClient?.commercePlatform === "VESTI";
   const isB2BOnlyRoute = useCallback(
     (href: string) =>

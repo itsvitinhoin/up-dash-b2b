@@ -19,9 +19,10 @@ import {
   TrendingUp,
   Wallet,
 } from "lucide-react";
-import { customFetch } from "@workspace/api-client-react";
+import { customFetch, useGetClient } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
+import { queryOpts } from "@/lib/query-opts";
 import { formatCurrency, formatCurrencySmart, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -236,7 +237,17 @@ export default function ScalePage() {
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const fadeVariants = withReducedMotion(fadeInUp, reduced);
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
-  const enabled = selectedDashboardMode === "B2C" && (user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId));
+  const targetClientId = user?.role === "CLIENT" ? user?.clientId : clientId;
+  // Escala é B2C-only por padrão, mas clientes Vesti também têm essa
+  // análise via BigQuery (vestiDashboardController.getScale) — mesma
+  // lógica de detecção usada no Daily (daily.tsx).
+  const { data: targetClient, isLoading: isTargetClientLoading } = useGetClient(targetClientId || "", {
+    query: queryOpts({ enabled: !!targetClientId }),
+  });
+  const isVestiClient = targetClient?.commercePlatform === "VESTI";
+  const isSupportedClient = selectedDashboardMode === "B2C" || isVestiClient;
+  const hasClientSelected = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+  const enabled = hasClientSelected && isSupportedClient;
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
   const [targetRevenueInput, setTargetRevenueInput] = useState("");
@@ -280,12 +291,23 @@ export default function ScalePage() {
     });
   };
 
-  if (selectedDashboardMode !== "B2C") {
+  if (!hasClientSelected) {
     return (
       <Alert data-testid="page-scale-b2b-warning">
         <Scale className="h-4 w-4" />
-        <AlertTitle>Escala é exclusivo do B2C</AlertTitle>
-        <AlertDescription>Selecione o dashboard B2C para analisar poder de venda, estoque e mídia.</AlertDescription>
+        <AlertTitle>Selecione um cliente</AlertTitle>
+        <AlertDescription>Escolha uma marca para analisar poder de venda, estoque e mídia.</AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (!isSupportedClient) {
+    if (isTargetClientLoading) return <ScaleLoadingState />;
+    return (
+      <Alert data-testid="page-scale-b2b-warning">
+        <Scale className="h-4 w-4" />
+        <AlertTitle>Escala não disponível para este cliente</AlertTitle>
+        <AlertDescription>Análise de escala disponível para clientes B2C (Nuvemshop) ou Vesti.</AlertDescription>
       </Alert>
     );
   }
@@ -294,7 +316,7 @@ export default function ScalePage() {
     return (
       <Alert variant="destructive" data-testid="page-scale-error">
         <AlertTitle>Não foi possível carregar a análise de escala.</AlertTitle>
-        <AlertDescription>Verifique se o cliente B2C está selecionado e se as integrações de Nuvemshop, Meta e GA4 estão configuradas.</AlertDescription>
+        <AlertDescription>Verifique se as integrações necessárias estão configuradas.</AlertDescription>
         <Button className="mt-4" variant="outline" onClick={() => refetch()}>
           Tentar novamente
         </Button>

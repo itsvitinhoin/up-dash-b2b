@@ -2729,3 +2729,190 @@ export async function fetchVestiJourney(dataset: string, dateFrom: string, dateT
     nonBuyers: buildGroup(nonBuyerEventCounts, nonBuyerUtmCounts, nonBuyerDepthSum, nonBuyerCount),
   };
 }
+
+// Escala (Vesti) — junta estoque+preço (mesmo padrão do Estoque) pra
+// "poder de venda", vendas do período/rolling 90d (mesmo padrão do
+// Dashboard) e visitas via `stape_logs` (mesmo truque do Funil). A
+// matemática de projeção (cenários, gap de poder de venda, status) é
+// idêntica à do B2C — fica no controller, não repetida aqui, porque não
+// depende de nada específico de BigQuery/Vesti.
+export type VestiScaleBreakdownRow = { name: string; revenue: number; units: number; orders: number };
+export type VestiScaleStockRow = { name: string; stockUnits: number; salesPower: number };
+
+export type VestiScaleData = {
+  currentSalesPower: number;
+  availableStockUnits: number;
+  activeProducts: number;
+  availableProducts: number;
+  brokenGradePct: number;
+  brokenGradeCount: number;
+  productGroupCount: number;
+  revenue: number;
+  orders: number;
+  rollingRevenue: number;
+  rollingOrders: number;
+  sessions: number;
+  rollingSessions: number;
+  categories: VestiScaleBreakdownRow[];
+  colors: VestiScaleBreakdownRow[];
+  sizes: VestiScaleBreakdownRow[];
+  stockByCategory: VestiScaleStockRow[];
+};
+
+export async function fetchVestiScaleData(
+  dataset: string,
+  dateFrom: string,
+  dateTo: string,
+  rollingDateFrom: string,
+  rollingDateTo: string,
+): Promise<VestiScaleData> {
+  const produtos = vestiTable(dataset, "produtos_vesti");
+  const estoques = vestiTable(dataset, "estoques_vesti");
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+
+  const [
+    [productRows],
+    [gradeRows],
+    [salesRows],
+    [rollingSalesRows],
+    [sessionsRows],
+    [rollingSessionsRows],
+    [categoryRows],
+    [colorRows],
+    [sizeRows],
+  ] = await Promise.all([
+    bigquery.query({
+      query: `
+        WITH stock_agg AS (
+          SELECT product_id, COALESCE(SUM(quantity), 0) AS stock
+          FROM ${estoques}
+          GROUP BY product_id
+        )
+        SELECT p.id, p.price, COALESCE(st.stock, 0) AS stock,
+          p.categories[SAFE_OFFSET(0)].name AS category
+        FROM ${produtos} p
+        LEFT JOIN stock_agg st ON st.product_id = p.id
+        WHERE p.active != false
+      `,
+    }),
+    bigquery.query({
+      query: `
+        WITH sizes AS (
+          SELECT product_id, size_id, COALESCE(SUM(quantity), 0) AS qty
+          FROM ${estoques}
+          GROUP BY product_id, size_id
+        )
+        SELECT product_id, COUNTIF(qty = 0) AS zero_sizes, COUNTIF(qty > 0) AS nonzero_sizes
+        FROM sizes
+        GROUP BY product_id
+      `,
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(SUM(valor_reservado), 0) AS revenue, COUNT(DISTINCT IF(pago, pedido_id, NULL)) AS orders
+        FROM ${view}
+        WHERE data_ref BETWEEN @dateFrom AND @dateTo
+      `,
+      params: { dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(SUM(valor_reservado), 0) AS revenue, COUNT(DISTINCT IF(pago, pedido_id, NULL)) AS orders
+        FROM ${view}
+        WHERE data_ref BETWEEN @rollingDateFrom AND @rollingDateTo
+      `,
+      params: { rollingDateFrom, rollingDateTo },
+    }),
+    bigquery.query({
+      query: `SELECT COUNT(*) AS visits FROM \`up-vesti-report.stape_logs.EventsLogsTratado\` WHERE client = @dataset AND event_name = 'PageView' AND DATE(event_ts) BETWEEN @dateFrom AND @dateTo`,
+      params: { dataset, dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `SELECT COUNT(*) AS visits FROM \`up-vesti-report.stape_logs.EventsLogsTratado\` WHERE client = @dataset AND event_name = 'PageView' AND DATE(event_ts) BETWEEN @rollingDateFrom AND @rollingDateTo`,
+      params: { dataset, rollingDateFrom, rollingDateTo },
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(p.categories[SAFE_OFFSET(0)].name, 'Sem categoria') AS name,
+          COALESCE(SUM(v.produto_preco_unitario * v.produto_quantidade_reservada), 0) AS revenue,
+          COALESCE(SUM(v.produto_quantidade_reservada), 0) AS units,
+          COUNT(DISTINCT IF(v.pago, v.pedido_id, NULL)) AS orders
+        FROM ${view} v
+        JOIN ${produtos} p ON p.id = v.produto_id
+        WHERE v.data_ref BETWEEN @dateFrom AND @dateTo AND v.pago
+        GROUP BY name
+        ORDER BY revenue DESC
+        LIMIT 8
+      `,
+      params: { dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(NULLIF(produto_cor, ''), 'Sem cor') AS name,
+          COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS revenue,
+          COALESCE(SUM(produto_quantidade_reservada), 0) AS units
+        FROM ${view}
+        WHERE data_ref BETWEEN @dateFrom AND @dateTo AND pago
+        GROUP BY name
+        ORDER BY revenue DESC
+        LIMIT 8
+      `,
+      params: { dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(NULLIF(produto_tamanho, ''), 'Único') AS name,
+          COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS revenue,
+          COALESCE(SUM(produto_quantidade_reservada), 0) AS units
+        FROM ${view}
+        WHERE data_ref BETWEEN @dateFrom AND @dateTo AND pago
+        GROUP BY name
+        ORDER BY revenue DESC
+        LIMIT 8
+      `,
+      params: { dateFrom, dateTo },
+    }),
+  ]);
+
+  const products = productRows as Array<Record<string, unknown>>;
+  const availableProducts = products.filter((p) => (Number(p.stock) || 0) > 0);
+  const currentSalesPower = availableProducts.reduce((s, p) => s + (Number(p.stock) || 0) * (Number(p.price) || 0), 0);
+  const availableStockUnits = availableProducts.reduce((s, p) => s + (Number(p.stock) || 0), 0);
+
+  const stockByCategoryMap = new Map<string, VestiScaleStockRow>();
+  for (const p of availableProducts) {
+    const name = (p.category as string) || "Sem categoria";
+    const row = stockByCategoryMap.get(name) ?? { name, stockUnits: 0, salesPower: 0 };
+    row.stockUnits += Number(p.stock) || 0;
+    row.salesPower += (Number(p.stock) || 0) * (Number(p.price) || 0);
+    stockByCategoryMap.set(name, row);
+  }
+
+  const grades = gradeRows as Array<Record<string, unknown>>;
+  const brokenGroups = grades.filter((g) => (Number(g.zero_sizes) || 0) > 0 && (Number(g.nonzero_sizes) || 0) > 0).length;
+  const productGroupCount = grades.length;
+  const brokenGradePct = productGroupCount > 0 ? (brokenGroups / productGroupCount) * 100 : 0;
+
+  const mapBreakdown = (rows: Array<Record<string, unknown>>): VestiScaleBreakdownRow[] =>
+    rows.map((r) => ({ name: String(r.name), revenue: Number(r.revenue) || 0, units: Number(r.units) || 0, orders: Number(r.orders) || 0 }));
+
+  return {
+    currentSalesPower,
+    availableStockUnits,
+    activeProducts: products.length,
+    availableProducts: availableProducts.length,
+    brokenGradePct,
+    brokenGradeCount: brokenGroups,
+    productGroupCount,
+    revenue: Number((salesRows as Array<Record<string, unknown>>)[0]?.revenue) || 0,
+    orders: Number((salesRows as Array<Record<string, unknown>>)[0]?.orders) || 0,
+    rollingRevenue: Number((rollingSalesRows as Array<Record<string, unknown>>)[0]?.revenue) || 0,
+    rollingOrders: Number((rollingSalesRows as Array<Record<string, unknown>>)[0]?.orders) || 0,
+    sessions: Number((sessionsRows as Array<Record<string, unknown>>)[0]?.visits) || 0,
+    rollingSessions: Number((rollingSessionsRows as Array<Record<string, unknown>>)[0]?.visits) || 0,
+    categories: mapBreakdown(categoryRows as Array<Record<string, unknown>>),
+    colors: mapBreakdown(colorRows as Array<Record<string, unknown>>),
+    sizes: mapBreakdown(sizeRows as Array<Record<string, unknown>>),
+    stockByCategory: Array.from(stockByCategoryMap.values()).sort((a, b) => b.salesPower - a.salesPower).slice(0, 8),
+  };
+}

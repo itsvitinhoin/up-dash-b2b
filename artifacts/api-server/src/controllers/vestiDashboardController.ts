@@ -3,7 +3,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
 import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse, GetJourneyQueryParams, GetJourneyResponse } from "@workspace/api-zod";
-import { coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly } from "../lib/httpQuery";
+import { addDaysToDateOnly, coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly, saoPauloDateOnlyEnd, saoPauloDateOnlyStart } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
 import { fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
 import {
@@ -16,6 +16,7 @@ import {
   generateVestiDailyReportText,
   fetchVestiGeography,
   fetchVestiJourney,
+  fetchVestiScaleData,
   type VestiFilters,
 } from "../services/vestiAnalytics";
 
@@ -480,4 +481,246 @@ export async function getJourney(req: Request, res: Response): Promise<void> {
   );
 
   res.json(GetJourneyResponse.parse(journey));
+}
+
+const GetVestiScaleQueryParams = z.object({
+  dateFrom: z.date().optional(),
+  dateTo: z.date().optional(),
+  simulatedSalesPower: z.coerce.number().positive().optional(),
+  targetRevenue: z.coerce.number().positive().optional(),
+});
+
+// Status/projeção — mesma matemática do caminho B2C (routes/analytics.ts,
+// /analytics/scale). Não depende de nada específico de BigQuery, só dos
+// números já calculados, por isso fica aqui em vez de duplicar no service.
+function vestiScaleStatus(params: { brokenGradePct: number; conversionRate: number; roas: number; salesPowerGap: number }): "ready" | "caution" | "blocked" {
+  if (params.salesPowerGap > 0 && params.brokenGradePct > 35) return "blocked";
+  if (params.brokenGradePct <= 20 && params.conversionRate >= 1.2 && params.roas >= 3 && params.salesPowerGap <= 0) return "ready";
+  return "caution";
+}
+
+function vestiScaleInsights(params: {
+  brand: string;
+  currentSalesPower: number;
+  simulatedSalesPower: number;
+  monthlyTurnoverPct: number;
+  monthlyRevenue: number;
+  projectedRevenue: number;
+  monthlyMediaSpend: number;
+  projectedMediaSpend: number;
+  roas: number;
+  brokenGradePct: number;
+  topCategories: Array<{ name: string; revenue: number }>;
+  status: "ready" | "caution" | "blocked";
+}): { headline: string; summary: string; actions: string[]; risks: string[]; source: "heuristic" } {
+  const topCategory = params.topCategories[0]?.name ?? "categoria líder";
+  const incrementalRevenue = Math.max(0, params.projectedRevenue - params.monthlyRevenue);
+  const headline =
+    params.status === "ready"
+      ? "Projeto com bom espaço para escalar em ondas controladas"
+      : params.status === "blocked"
+        ? "Escala depende primeiro de profundidade e recomposição de grade"
+        : "Escala possível, mas com trava operacional para acompanhar";
+  return {
+    headline,
+    summary: `Com R$${params.simulatedSalesPower.toFixed(0)} de poder de venda e giro mensal de ${params.monthlyTurnoverPct.toFixed(1)}%, ${params.brand} pode mirar cerca de R$${params.projectedRevenue.toFixed(0)} por mês — um incremento de aproximadamente R$${incrementalRevenue.toFixed(0)} sobre a média recente.`,
+    actions: [
+      `Priorizar profundidade em ${topCategory}, principal categoria em receita no período.`,
+      "Usar o poder de venda simulado como teto operacional pra não acelerar mídia em cima de estoque que não sustenta a receita projetada.",
+      params.roas > 0
+        ? `Manter ROAS de referência (${params.roas.toFixed(2)}x) como piso pra decidir se vale subir investimento em mídia.`
+        : "Ainda não há gasto de mídia atribuível no período — vale validar se há investimento de mídia sendo feito fora do Meta Ads cadastrado.",
+    ],
+    risks: [
+      `${params.brokenGradePct.toFixed(1)}% das grades de produto estão incompletas (falta tamanho/cor); isso reduz a eficiência de qualquer aumento de mídia.`,
+    ],
+    source: "heuristic",
+  };
+}
+
+export async function getScale(req: Request, res: Response): Promise<void> {
+  const parsed = GetVestiScaleQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const dataset = await resolveVestiDataset(clientId);
+  if (!dataset) {
+    res.status(404).json({ error: true, code: "NOT_VESTI_CLIENT", message: "Client não é Vesti ou não foi encontrado.", status: 404 });
+    return;
+  }
+
+  const [client] = await db
+    .select({ name: clientsTable.name, metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  const rawQuery = req.query as Record<string, unknown>;
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
+  const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
+  const days = Math.max(1, Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000)));
+  const months = Math.max(1 / 30, days / 30);
+  const rollingDateToOnly = dateToOnly;
+  const rollingDateFromOnly = addDaysToDateOnly(rollingDateToOnly, -89);
+  const rollingFrom = saoPauloDateOnlyStart(rollingDateFromOnly);
+  const rollingTo = saoPauloDateOnlyEnd(rollingDateToOnly);
+  const rollingMonths = 3;
+
+  const scaleData = await cached(`vesti:scale:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () =>
+    fetchVestiScaleData(dataset, dateFromOnly, dateToOnly, rollingDateFromOnly, rollingDateToOnly),
+  );
+
+  const revenue = scaleData.revenue;
+  const orders = scaleData.orders;
+  const avgTicket = orders > 0 ? revenue / orders : 0;
+  const monthlyRevenue = revenue / months;
+  const monthlyOrders = orders / months;
+  const monthlyTurnoverPct = scaleData.currentSalesPower > 0 ? (monthlyRevenue / scaleData.currentSalesPower) * 100 : 0;
+  const periodTurnoverPct = scaleData.currentSalesPower > 0 ? (revenue / scaleData.currentSalesPower) * 100 : 0;
+  const rollingRevenue = scaleData.rollingRevenue;
+  const rollingOrders = scaleData.rollingOrders;
+  const rollingMonthlyRevenue = rollingRevenue / rollingMonths;
+  const rollingMonthlyOrders = rollingOrders / rollingMonths;
+  const rollingAvgTicket = rollingOrders > 0 ? rollingRevenue / rollingOrders : 0;
+  const rollingMonthlyTurnoverPct = scaleData.currentSalesPower > 0 ? (rollingMonthlyRevenue / scaleData.currentSalesPower) * 100 : 0;
+
+  const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
+  const [metaCurrent, metaRolling] = await Promise.all([
+    metaAccessToken && client?.metaAdAccountId
+      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: dateFromOnly, until: dateToOnly }).catch((err) => {
+          console.warn("[vesti-scale] Meta current fetch failed:", err);
+          return null;
+        })
+      : Promise.resolve(null),
+    metaAccessToken && client?.metaAdAccountId
+      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: rollingDateFromOnly, until: rollingDateToOnly }).catch((err) => {
+          console.warn("[vesti-scale] Meta rolling fetch failed:", err);
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
+  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
+
+  const mediaSpend = metaCurrent?.summary.spend ?? 0;
+  const rollingMediaSpend = metaRolling?.summary.spend ?? 0;
+  const monthlyMediaSpend = mediaSpend / months;
+  const rollingMonthlyMediaSpend = rollingMediaSpend / rollingMonths;
+  const roas = mediaSpend > 0 ? revenue / mediaSpend : 0;
+  const cpa = orders > 0 ? mediaSpend / orders : 0;
+  const rollingRoas = rollingMediaSpend > 0 ? rollingRevenue / rollingMediaSpend : 0;
+  const rollingCpa = rollingOrders > 0 ? rollingMediaSpend / rollingOrders : 0;
+
+  const sessions = scaleData.sessions;
+  const rollingSessions = scaleData.rollingSessions;
+  const conversionRate = sessions > 0 ? (orders / sessions) * 100 : 0;
+  const rollingConversionRate = rollingSessions > 0 ? (rollingOrders / rollingSessions) * 100 : 0;
+
+  const baselineTurnoverPct = rollingMonthlyTurnoverPct || monthlyTurnoverPct;
+  const baselineRoas = rollingRoas || roas;
+  const baselineAvgTicket = rollingAvgTicket || avgTicket;
+  const targetRevenue = parsed.data.targetRevenue ?? Math.max(rollingMonthlyRevenue || monthlyRevenue, 0) * 1.5;
+  const requiredSalesPower = baselineTurnoverPct > 0 ? targetRevenue / (baselineTurnoverPct / 100) : 0;
+  const simulatedSalesPower = parsed.data.simulatedSalesPower ?? requiredSalesPower;
+  const projectedRevenue = targetRevenue;
+  const projectedMediaSpend = baselineRoas > 0 ? targetRevenue / baselineRoas : 0;
+  const projectedOrders = baselineAvgTicket > 0 ? targetRevenue / baselineAvgTicket : 0;
+  const projectedCpa = projectedOrders > 0 ? projectedMediaSpend / projectedOrders : 0;
+  const salesPowerGap = Math.max(0, requiredSalesPower - scaleData.currentSalesPower);
+  const revenueIncrement = Math.max(0, projectedRevenue - rollingMonthlyRevenue);
+  const mediaSpendIncrement = Math.max(0, projectedMediaSpend - rollingMonthlyMediaSpend);
+  const status = vestiScaleStatus({ brokenGradePct: scaleData.brokenGradePct, conversionRate: rollingConversionRate || conversionRate, roas: baselineRoas, salesPowerGap });
+
+  const insights = vestiScaleInsights({
+    brand: client?.name ?? "",
+    currentSalesPower: scaleData.currentSalesPower,
+    simulatedSalesPower: requiredSalesPower,
+    monthlyTurnoverPct: baselineTurnoverPct,
+    monthlyRevenue: rollingMonthlyRevenue || monthlyRevenue,
+    projectedRevenue,
+    monthlyMediaSpend: rollingMonthlyMediaSpend || monthlyMediaSpend,
+    projectedMediaSpend,
+    roas: baselineRoas,
+    brokenGradePct: scaleData.brokenGradePct,
+    topCategories: scaleData.categories,
+    status,
+  });
+
+  res.json({
+    client: { id: clientId, name: client?.name ?? "" },
+    period: { from: dateFromOnly, to: dateToOnly, days },
+    kpis: {
+      currentSalesPower: scaleData.currentSalesPower,
+      revenue,
+      orders,
+      availableStockUnits: scaleData.availableStockUnits,
+      activeProducts: scaleData.activeProducts,
+      availableProducts: scaleData.availableProducts,
+      periodTurnoverPct,
+      monthlyRevenue,
+      monthlyOrders,
+      avgTicket,
+      monthlyTurnoverPct,
+      mediaSpend,
+      monthlyMediaSpend,
+      roas,
+      cpa,
+      sessions,
+      conversionRate,
+      brokenGradePct: scaleData.brokenGradePct,
+      brokenGradeCount: scaleData.brokenGradeCount,
+      productGroupCount: scaleData.productGroupCount,
+    },
+    benchmarks: {
+      windowDays: 90,
+      from: rollingDateFromOnly,
+      to: rollingDateToOnly,
+      monthlyRevenue: rollingMonthlyRevenue,
+      monthlyOrders: rollingMonthlyOrders,
+      avgTicket: rollingAvgTicket,
+      monthlyTurnoverPct: rollingMonthlyTurnoverPct,
+      mediaSpend: rollingMediaSpend,
+      monthlyMediaSpend: rollingMonthlyMediaSpend,
+      roas: rollingRoas,
+      cpa: rollingCpa,
+      sessions: rollingSessions,
+      conversionRate: rollingConversionRate,
+    },
+    projection: {
+      targetRevenue,
+      simulatedSalesPower,
+      requiredSalesPower,
+      projectedRevenue,
+      projectedMediaSpend,
+      projectedOrders,
+      projectedCpa,
+      revenueIncrement,
+      mediaSpendIncrement,
+      salesPowerGap,
+      status,
+      scenarios: [0.8, 1, 1.25].map((factor) => {
+        const scenarioRevenue = targetRevenue * factor;
+        const power = baselineTurnoverPct > 0 ? scenarioRevenue / (baselineTurnoverPct / 100) : 0;
+        const scenarioMedia = baselineRoas > 0 ? scenarioRevenue / baselineRoas : 0;
+        return {
+          name: factor < 1 ? "Conservador" : factor === 1 ? "Base" : "Agressivo",
+          salesPower: power,
+          revenue: scenarioRevenue,
+          mediaSpend: scenarioMedia,
+          orders: baselineAvgTicket > 0 ? scenarioRevenue / baselineAvgTicket : 0,
+        };
+      }),
+    },
+    breakdowns: {
+      categories: scaleData.categories,
+      colors: scaleData.colors,
+      sizes: scaleData.sizes,
+      stockByCategory: scaleData.stockByCategory,
+    },
+    insights,
+    generatedAt: new Date().toISOString(),
+  });
 }
