@@ -63,3 +63,25 @@ export function calculateErpRetentionPct(returningCustomers: number, uniqueCusto
 export function calculateErpFulfilledQuantity(requestedQuantity: number, returnedQuantity: number): number {
   return Math.max(requestedQuantity - returnedQuantity, 0);
 }
+
+export function calculateErpStockTurnoverPct(unitsSold: number, currentStock: number): number {
+  const sold = Math.max(unitsSold, 0);
+  const stock = Math.max(currentStock, 0);
+  return sold + stock > 0 ? (sold / (sold + stock)) * 100 : 0;
+}
+
+export function calculateErpStockCoverageDays(
+  unitsSold: number,
+  currentStock: number,
+  periodDays: number,
+): number | null {
+  const sold = Math.max(unitsSold, 0);
+  if (sold === 0) return null;
+
+  const dailySales = sold / Math.max(periodDays, 1);
+  return Math.max(currentStock, 0) / dailySales;
+}
+
+export function calculateErpSalesPower(currentStock: number, catalogPrice: number): number {
+  return Math.max(currentStock, 0) * Math.max(catalogPrice, 0);
+}
