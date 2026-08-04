@@ -3,6 +3,7 @@ import { db, clientsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { stateFromPhoneDdd } from "../lib/phoneState";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
+import { addDaysToDateOnly } from "../lib/httpQuery";
 
 /**
  * Se o client for Vesti e tiver dataset configurado, devolve o dataset.
@@ -2087,5 +2088,246 @@ export async function fetchVestiGeography(dataset: string, dateFrom: string, dat
     cities: Array.from(cityMap.values())
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 50),
+  };
+}
+
+// Estoque (Vesti) — mesma fórmula do lado B2C (routes/analytics.ts,
+// /analytics/stock):
+//   dailyVelocity = unitsSold / periodDays
+//   coverageDays  = stock / dailyVelocity  (null quando velocity = 0)
+//   Stockout      = velocity > 0 && coverageDays < 7
+//   Overstock     = (velocity == 0 && stock > restockThreshold*2) || coverageDays > 90
+//   Healthy       = resto
+// Reaproveita o mesmo join estoque+produto de `fetchVestiProductsPage`.
+export type VestiStockRow = {
+  productId: string;
+  sku: string;
+  name: string;
+  category: string | null;
+  stock: number;
+  restockThreshold: number;
+  dailyVelocity: number;
+  coverageDays: number | null;
+  risk: "Stockout" | "Overstock" | "Healthy";
+  unitsSold: number;
+  lastRestockDate: string | null;
+  bySize: Array<{ size: string; unitsSold: number }>;
+  byColor: Array<{ color: string; unitsSold: number }>;
+};
+
+export type VestiStock = {
+  kpis: { totalUnits: number; avgCoverageDays: number; stockoutRiskCount: number; overstockRiskCount: number; sellThroughRate: number };
+  prevKpis: { totalUnits: number; avgCoverageDays: number; stockoutRiskCount: number; overstockRiskCount: number; sellThroughRate: number };
+  stockoutRisk: VestiStockRow[];
+  overstockRisk: VestiStockRow[];
+  highTurnover: VestiStockRow[];
+  categoryBreakdown: Array<{ category: string; stockUnits: number; unitsSold: number; dailyVelocity: number }>;
+  colorBreakdown: Array<{ color: string; unitsSold: number; stockUnits: number }>;
+  sizeBreakdown: Array<{ size: string; unitsSold: number; stockUnits: number }>;
+  skus: VestiStockRow[];
+  total: number;
+};
+
+function classifyVestiStockRisk(stock: number, restockThreshold: number, coverageDays: number | null, dailyVelocity: number): "Stockout" | "Overstock" | "Healthy" {
+  if (dailyVelocity > 0 && coverageDays !== null && coverageDays < 7) return "Stockout";
+  if ((dailyVelocity === 0 && stock > restockThreshold * 2) || (coverageDays !== null && coverageDays > 90)) return "Overstock";
+  return "Healthy";
+}
+
+export async function fetchVestiStock(
+  dataset: string,
+  dateFrom: string,
+  dateTo: string,
+  filters: { sort: string; sortDir: "asc" | "desc"; search?: string; category?: string; risk?: "Stockout" | "Overstock" | "Healthy"; page: number; limit: number },
+): Promise<VestiStock> {
+  const produtos = vestiTable(dataset, "produtos_vesti");
+  const estoques = vestiTable(dataset, "estoques_vesti");
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+
+  const [fromY, fromM, fromD] = dateFrom.split("-").map(Number);
+  const [toY, toM, toD] = dateTo.split("-").map(Number);
+  const periodDays = Math.max(1, Math.round((Date.UTC(toY, toM - 1, toD) - Date.UTC(fromY, fromM - 1, fromD)) / 86_400_000) + 1);
+  const prevDateTo = addDaysToDateOnly(dateFrom, -1);
+  const prevDateFrom = addDaysToDateOnly(dateFrom, -periodDays);
+
+  const [[productRows], [salesRows], [prevSalesRows], [sizeRows], [colorRows]] = await Promise.all([
+    bigquery.query({
+      query: `
+        WITH stock_agg AS (
+          SELECT product_id, COALESCE(SUM(quantity), 0) AS stock
+          FROM ${estoques}
+          GROUP BY product_id
+        )
+        SELECT p.id, p.code, p.name, p.created_at,
+          p.categories[SAFE_OFFSET(0)].name AS category,
+          COALESCE(st.stock, 0) AS stock
+        FROM ${produtos} p
+        LEFT JOIN stock_agg st ON st.product_id = p.id
+        WHERE p.active != false
+      `,
+    }),
+    bigquery.query({
+      query: `
+        SELECT produto_id, COALESCE(SUM(produto_quantidade_reservada), 0) AS units_sold
+        FROM ${view}
+        WHERE produto_id IS NOT NULL AND data_ref BETWEEN @dateFrom AND @dateTo
+        GROUP BY produto_id
+      `,
+      params: { dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `
+        SELECT produto_id, COALESCE(SUM(produto_quantidade_reservada), 0) AS units_sold
+        FROM ${view}
+        WHERE produto_id IS NOT NULL AND data_ref BETWEEN @prevDateFrom AND @prevDateTo
+        GROUP BY produto_id
+      `,
+      params: { prevDateFrom, prevDateTo },
+    }),
+    bigquery.query({
+      query: `
+        SELECT produto_id, COALESCE(NULLIF(produto_tamanho, ''), 'Único') AS size, COALESCE(SUM(produto_quantidade_reservada), 0) AS units_sold
+        FROM ${view}
+        WHERE produto_id IS NOT NULL AND data_ref BETWEEN @dateFrom AND @dateTo
+        GROUP BY produto_id, size
+      `,
+      params: { dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `
+        SELECT produto_id, COALESCE(NULLIF(produto_cor, ''), 'Sem cor') AS color, COALESCE(SUM(produto_quantidade_reservada), 0) AS units_sold
+        FROM ${view}
+        WHERE produto_id IS NOT NULL AND data_ref BETWEEN @dateFrom AND @dateTo
+        GROUP BY produto_id, color
+      `,
+      params: { dateFrom, dateTo },
+    }),
+  ]);
+
+  const salesById = new Map((salesRows as Array<Record<string, unknown>>).map((r) => [String(r.produto_id), Number(r.units_sold) || 0]));
+  const prevSalesById = new Map((prevSalesRows as Array<Record<string, unknown>>).map((r) => [String(r.produto_id), Number(r.units_sold) || 0]));
+  const sizesById = new Map<string, Array<{ size: string; unitsSold: number }>>();
+  for (const r of sizeRows as Array<Record<string, unknown>>) {
+    const pid = String(r.produto_id);
+    const list = sizesById.get(pid) ?? [];
+    list.push({ size: String(r.size), unitsSold: Number(r.units_sold) || 0 });
+    sizesById.set(pid, list);
+  }
+  const colorsById = new Map<string, Array<{ color: string; unitsSold: number }>>();
+  for (const r of colorRows as Array<Record<string, unknown>>) {
+    const pid = String(r.produto_id);
+    const list = colorsById.get(pid) ?? [];
+    list.push({ color: String(r.color), unitsSold: Number(r.units_sold) || 0 });
+    colorsById.set(pid, list);
+  }
+
+  const buildRows = (salesMap: Map<string, number>): VestiStockRow[] =>
+    (productRows as Array<Record<string, unknown>>).map((r) => {
+      const id = String(r.id);
+      const stock = Number(r.stock) || 0;
+      const unitsSold = salesMap.get(id) ?? 0;
+      const dailyVelocity = unitsSold / periodDays;
+      const coverageDays = dailyVelocity > 0 ? stock / dailyVelocity : null;
+      return {
+        productId: id,
+        sku: (r.code as string) ?? "",
+        name: (r.name as string) ?? "",
+        category: (r.category as string) || null,
+        stock,
+        restockThreshold: VESTI_DEFAULT_RESTOCK_THRESHOLD,
+        dailyVelocity,
+        coverageDays,
+        risk: classifyVestiStockRisk(stock, VESTI_DEFAULT_RESTOCK_THRESHOLD, coverageDays, dailyVelocity),
+        unitsSold,
+        lastRestockDate: r.created_at ? toDateOnly(r.created_at) : null,
+        bySize: sizesById.get(id) ?? [],
+        byColor: colorsById.get(id) ?? [],
+      };
+    });
+
+  const allProducts = buildRows(salesById);
+  const allProductsPrev = buildRows(prevSalesById);
+
+  function buildKpis(rows: VestiStockRow[]) {
+    const totalUnits = rows.reduce((s, r) => s + r.stock, 0);
+    const withVelocity = rows.filter((r) => r.coverageDays !== null);
+    const avgCoverageDays = withVelocity.length > 0 ? withVelocity.reduce((s, r) => s + (r.coverageDays ?? 0), 0) / withVelocity.length : 0;
+    const stockoutRiskCount = rows.filter((r) => r.risk === "Stockout").length;
+    const overstockRiskCount = rows.filter((r) => r.risk === "Overstock").length;
+    const totalSold = rows.reduce((s, r) => s + r.unitsSold, 0);
+    const sellThroughRate = totalSold + totalUnits > 0 ? (totalSold / (totalSold + totalUnits)) * 100 : 0;
+    return { totalUnits, avgCoverageDays, stockoutRiskCount, overstockRiskCount, sellThroughRate };
+  }
+
+  const stockoutRisk = [...allProducts].filter((r) => r.risk === "Stockout").sort((a, b) => (a.coverageDays ?? 999) - (b.coverageDays ?? 999)).slice(0, 10);
+  const overstockRisk = [...allProducts].filter((r) => r.risk === "Overstock").sort((a, b) => (b.coverageDays ?? 0) - (a.coverageDays ?? 0)).slice(0, 10);
+  const highTurnover = [...allProducts].filter((r) => r.dailyVelocity > 0).sort((a, b) => b.dailyVelocity - a.dailyVelocity).slice(0, 10);
+
+  const categoryMap = new Map<string, { stockUnits: number; unitsSold: number }>();
+  const colorMap = new Map<string, { unitsSold: number; stockUnits: number }>();
+  const sizeMap = new Map<string, { unitsSold: number; stockUnits: number }>();
+  for (const row of allProducts) {
+    const cat = row.category ?? "Sem categoria";
+    const catRow = categoryMap.get(cat) ?? { stockUnits: 0, unitsSold: 0 };
+    catRow.stockUnits += row.stock;
+    catRow.unitsSold += row.unitsSold;
+    categoryMap.set(cat, catRow);
+    for (const s of row.bySize) {
+      const sizeRow = sizeMap.get(s.size) ?? { unitsSold: 0, stockUnits: 0 };
+      sizeRow.unitsSold += s.unitsSold;
+      sizeMap.set(s.size, sizeRow);
+    }
+    for (const c of row.byColor) {
+      const colorRow = colorMap.get(c.color) ?? { unitsSold: 0, stockUnits: 0 };
+      colorRow.unitsSold += c.unitsSold;
+      colorMap.set(c.color, colorRow);
+    }
+  }
+  const categoryBreakdown = Array.from(categoryMap.entries()).map(([category, v]) => ({
+    category,
+    stockUnits: v.stockUnits,
+    unitsSold: v.unitsSold,
+    dailyVelocity: v.unitsSold / periodDays,
+  }));
+  const colorBreakdown = Array.from(colorMap.entries()).map(([color, v]) => ({ color, unitsSold: v.unitsSold, stockUnits: v.stockUnits }));
+  const sizeBreakdown = Array.from(sizeMap.entries()).map(([size, v]) => ({ size, unitsSold: v.unitsSold, stockUnits: v.stockUnits }));
+
+  let filtered = allProducts;
+  if (filters.search) {
+    const s = filters.search.toLowerCase();
+    filtered = filtered.filter((r) => r.name.toLowerCase().includes(s) || r.sku.toLowerCase().includes(s));
+  }
+  if (filters.category) filtered = filtered.filter((r) => r.category === filters.category);
+  if (filters.risk) filtered = filtered.filter((r) => r.risk === filters.risk);
+
+  const dir = filters.sortDir === "asc" ? 1 : -1;
+  const sorted = [...filtered].sort((a, b) => {
+    switch (filters.sort) {
+      case "sku": return dir * a.sku.localeCompare(b.sku, "pt-BR");
+      case "name": return dir * a.name.localeCompare(b.name, "pt-BR");
+      case "category": return dir * (a.category ?? "").localeCompare(b.category ?? "", "pt-BR");
+      case "risk": return dir * a.risk.localeCompare(b.risk, "pt-BR");
+      case "lastRestockDate": return dir * (a.lastRestockDate ?? "").localeCompare(b.lastRestockDate ?? "");
+      case "dailyVelocity": return dir * (a.dailyVelocity - b.dailyVelocity);
+      case "unitsSold": return dir * (a.unitsSold - b.unitsSold);
+      case "coverageDays": return dir * ((a.coverageDays ?? 999999) - (b.coverageDays ?? 999999));
+      default: return dir * (a.stock - b.stock);
+    }
+  });
+
+  const offset = (filters.page - 1) * filters.limit;
+  const skus = sorted.slice(offset, offset + filters.limit);
+
+  return {
+    kpis: buildKpis(allProducts),
+    prevKpis: buildKpis(allProductsPrev),
+    stockoutRisk,
+    overstockRisk,
+    highTurnover,
+    categoryBreakdown,
+    colorBreakdown,
+    sizeBreakdown,
+    skus,
+    total: sorted.length,
   };
 }

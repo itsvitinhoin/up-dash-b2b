@@ -1,8 +1,8 @@
 import type { Request, Response } from "express";
-import { GetProductsQueryParams, GetProductDetailQueryParams } from "@workspace/api-zod";
-import { coerceDateQuery, requireClient } from "../lib/httpQuery";
+import { GetProductsQueryParams, GetProductDetailQueryParams, GetStockQueryParams, GetStockResponse } from "@workspace/api-zod";
+import { coerceDateQuery, dateRange, requireClient, saoPauloDateOnly } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
-import { resolveVestiDataset, fetchVestiProductsPage, fetchVestiProductDetail } from "../services/vestiAnalytics";
+import { resolveVestiDataset, fetchVestiProductsPage, fetchVestiProductDetail, fetchVestiStock } from "../services/vestiAnalytics";
 
 const VESTI_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -96,4 +96,33 @@ export async function getProductDetail(req: Request, res: Response): Promise<voi
     bySize: detail.bySize,
     byState: detail.byState,
   });
+}
+
+export async function getStock(req: Request, res: Response): Promise<void> {
+  const parsed = GetStockQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const dataset = await resolveVestiDataset(clientId);
+  if (!dataset) {
+    res.status(404).json({ error: true, code: "NOT_VESTI_CLIENT", message: "Client não é Vesti ou não foi encontrado.", status: 404 });
+    return;
+  }
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = saoPauloDateOnly(from);
+  const dateToOnly = saoPauloDateOnly(to);
+  const { page, limit, sort, sortDir, search, category, risk } = parsed.data;
+
+  const stock = await cached(
+    `vesti:stock:${dataset}:${dateFromOnly}:${dateToOnly}:${sort}:${sortDir}:${search ?? ""}:${category ?? ""}:${risk ?? ""}:${page}:${limit}`,
+    VESTI_CACHE_TTL_MS,
+    () => fetchVestiStock(dataset, dateFromOnly, dateToOnly, { sort, sortDir, search, category, risk, page, limit }),
+  );
+
+  res.json(GetStockResponse.parse({ ...stock, page, limit }));
 }

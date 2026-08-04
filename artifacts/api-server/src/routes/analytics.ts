@@ -7746,9 +7746,13 @@ router.get("/analytics/stock", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
   const [client] = await db
-    .select({ dashboardType: clientsTable.dashboardType })
+    .select({ dashboardType: clientsTable.dashboardType, commercePlatform: clientsTable.commercePlatform })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
+  if (client?.commercePlatform === "VESTI") {
+    await vestiProductsController.getStock(req, res);
+    return;
+  }
   const isB2C = client?.dashboardType === "B2C";
 
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
