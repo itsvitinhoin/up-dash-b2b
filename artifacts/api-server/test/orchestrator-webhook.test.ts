@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getCartAutomationDedupeKey,
   getCartAutomationIdentity,
   getWebhookCustomerIdentity,
   getWebhookOrderIdentity,
@@ -37,6 +38,58 @@ describe("orchestrator webhook payload", () => {
 
   it("does not apply cart identity to unrelated events", () => {
     expect(getCartAutomationIdentity("customer.approved", payload)).toBeNull();
+  });
+
+  it("keeps the same dedupe key across repeated updates of the same cart", () => {
+    const first = getCartAutomationDedupeKey({
+      eventType: "cart_abandoned",
+      payload,
+      recipient: "5511942257099",
+    });
+    const repeated = getCartAutomationDedupeKey({
+      eventType: "cart_abandoned",
+      payload: {
+        ...payload,
+        timestamp: "2026-07-31T12:00:00Z",
+      },
+      recipient: "5511942257099",
+    });
+
+    expect(first).toBe("cart:57081");
+    expect(repeated).toBe(first);
+  });
+
+  it("allows a new automation for a different cart", () => {
+    const first = getCartAutomationDedupeKey({
+      eventType: "cart_abandoned",
+      payload,
+      recipient: "5511942257099",
+    });
+    const nextCart = getCartAutomationDedupeKey({
+      eventType: "cart_abandoned",
+      payload: { ...payload, data: { ...payload.data, id: 57082, cart_id: 57082 } },
+      recipient: "5511942257099",
+    });
+
+    expect(first).toBe("cart:57081");
+    expect(nextCart).toBe("cart:57082");
+  });
+
+  it("uses a stable recipient lock when the platform omits the cart id", () => {
+    const withoutCartId = { event: "cart_abandoned", data: { phone: "(11) 94225-7099" } };
+    const first = getCartAutomationDedupeKey({
+      eventType: "cart_abandoned",
+      payload: withoutCartId,
+      recipient: "5511942257099",
+    });
+    const repeated = getCartAutomationDedupeKey({
+      eventType: "cart_abandoned",
+      payload: withoutCartId,
+      recipient: "5511942257099",
+    });
+
+    expect(first).toBe("recipient:5511942257099");
+    expect(repeated).toBe(first);
   });
 
   it("uses data.id as the external customer id for customer events", () => {

@@ -55,6 +55,24 @@ export function getCartAutomationIdentity(
   );
 }
 
+export function getCartAutomationDedupeKey(params: {
+  eventType: string | null | undefined;
+  payload: unknown;
+  recipient: string | null | undefined;
+}): string | null {
+  const normalizedEventType = params.eventType?.trim().toLowerCase();
+  if (!["cart_created", "cart_abandoned"].includes(normalizedEventType ?? "")) {
+    return null;
+  }
+
+  const cartId = getCartAutomationIdentity(normalizedEventType, params.payload);
+  if (cartId) return `cart:${cartId}`;
+
+  const recipient = params.recipient?.replace(/\D/g, "") ?? "";
+  if (!recipient) return null;
+  return `recipient:${recipient}`;
+}
+
 export function getWebhookCustomerIdentity(
   eventType: string | null | undefined,
   payload: unknown,

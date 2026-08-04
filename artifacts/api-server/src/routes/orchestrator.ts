@@ -29,6 +29,7 @@ import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth
 import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps";
 import { selectAutomationSenderPhone } from "../services/automation-sender";
 import {
+  getCartAutomationDedupeKey,
   getCartAutomationIdentity,
   getWebhookCustomerIdentity,
   getWebhookOrderIdentity,
@@ -1264,6 +1265,7 @@ async function scheduleAutomationJobsForEvent(params: {
       templateLanguage: commercialAutomationRulesTable.templateLanguage,
       templateCategory: commercialAutomationRulesTable.templateCategory,
       delayMinutes: commercialAutomationRulesTable.delayMinutes,
+      cooldownHours: commercialAutomationRulesTable.cooldownHours,
       isEnabled: commercialAutomationRulesTable.isEnabled,
     })
     .from(commercialAutomationRulesTable)
@@ -1281,8 +1283,10 @@ async function scheduleAutomationJobsForEvent(params: {
   const to = normalizeWhatsappRecipient(params.customerPhone);
   const sender = await resolveAutomationSender(params.clientId, params.payload);
   const phoneNumberId = sender.phoneNumberId;
-  const duplicateWindowStart = new Date(Date.now() - 10 * 60 * 1000);
   const cartAutomationIdentity = getCartAutomationIdentity(params.eventType, params.payload);
+  const isCartAutomationEvent = ["cart_created", "cart_abandoned"].includes(
+    (normalizeAutomationEventType(params.eventType) ?? params.eventType).toLowerCase(),
+  );
   const eventOrderIdentity = firstText(
     params.payload.order_number,
     getNestedValue(params.payload, "order.number"),
@@ -1291,6 +1295,11 @@ async function scheduleAutomationJobsForEvent(params: {
   );
 
   for (const rule of rules) {
+    const dedupeKey = getCartAutomationDedupeKey({
+      eventType: params.eventType,
+      payload: params.payload,
+      recipient: to,
+    });
     const [existingJob] = await db
       .select({ id: commercialAutomationJobsTable.id })
       .from(commercialAutomationJobsTable)
@@ -1311,17 +1320,26 @@ async function scheduleAutomationJobsForEvent(params: {
         sql`${commercialAutomationJobsTable.renderedPayload}->>'templateName' = ${rule.templateName}`,
       ];
       if (cartAutomationIdentity) {
-        duplicateConditions.push(sql`COALESCE(
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cartId',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'id',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'external_id',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cart_id',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cartId',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'id'
-        ) = ${cartAutomationIdentity}`);
+        duplicateConditions.push(sql`(
+          COALESCE(
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cartId',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'id',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'external_id',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cart_id',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cartId',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'id'
+          ) = ${cartAutomationIdentity}
+          OR ${commercialAutomationJobsTable.createdAt} >= ${new Date(Date.now() - Math.max(rule.cooldownHours ?? 24, 1) * 60 * 60 * 1000)}
+        )`);
       } else {
-        duplicateConditions.push(gte(commercialAutomationJobsTable.createdAt, duplicateWindowStart));
+        const duplicateWindowMinutes = isCartAutomationEvent
+          ? Math.max(rule.cooldownHours ?? 24, 1) * 60
+          : 10;
+        duplicateConditions.push(gte(
+          commercialAutomationJobsTable.createdAt,
+          new Date(Date.now() - duplicateWindowMinutes * 60 * 1000),
+        ));
       }
       if (!cartAutomationIdentity && eventOrderIdentity) {
         duplicateConditions.push(sql`COALESCE(
@@ -1406,31 +1424,101 @@ async function scheduleAutomationJobsForEvent(params: {
       wabaId: sender.wabaId,
       payload: params.payload,
     });
-    const [job] = await db
-      .insert(commercialAutomationJobsTable)
-      .values({
+    const jobValues = {
+      clientId: params.clientId,
+      ruleId: rule.id,
+      eventId: params.eventRecordId,
+      customerId: params.customerId,
+      status: "scheduled",
+      scheduledAt,
+      renderedPayload: {
+        to,
+        phoneNumberId,
+        templateName: rule.templateName,
+        languageCode: rule.templateLanguage,
+        bodyParams,
+        sourceEvent: params.payload,
+        sender,
+      },
+    };
+
+    const insertedJobs = isCartAutomationEvent && dedupeKey
+      ? await db.transaction(async (tx) => {
+        const lockKey = `cart-automation:${params.clientId}:${rule.id}:recipient:${to}`;
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+
+        const finalDuplicateConditions = [
+          eq(commercialAutomationJobsTable.clientId, params.clientId),
+          eq(commercialAutomationJobsTable.ruleId, rule.id),
+          sql`${commercialAutomationJobsTable.status} IN ('scheduled', 'processing', 'sent')`,
+          sql`${commercialAutomationJobsTable.renderedPayload}->>'to' = ${to}`,
+          sql`${commercialAutomationJobsTable.renderedPayload}->>'templateName' = ${rule.templateName}`,
+        ];
+        if (cartAutomationIdentity) {
+          finalDuplicateConditions.push(sql`(
+            COALESCE(
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cartId',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'external_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cart_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cartId',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'id'
+            ) = ${cartAutomationIdentity}
+            OR ${commercialAutomationJobsTable.createdAt} >= ${new Date(Date.now() - Math.max(rule.cooldownHours ?? 24, 1) * 60 * 60 * 1000)}
+          )`);
+        } else {
+          finalDuplicateConditions.push(gte(
+            commercialAutomationJobsTable.createdAt,
+            new Date(Date.now() - Math.max(rule.cooldownHours ?? 24, 1) * 60 * 60 * 1000),
+          ));
+        }
+
+        const [concurrentDuplicate] = await tx
+          .select({ id: commercialAutomationJobsTable.id })
+          .from(commercialAutomationJobsTable)
+          .where(and(...finalDuplicateConditions))
+          .limit(1);
+        if (concurrentDuplicate) return [];
+
+        return tx
+          .insert(commercialAutomationJobsTable)
+          .values(jobValues)
+          .returning({ id: commercialAutomationJobsTable.id });
+      })
+      : await db
+        .insert(commercialAutomationJobsTable)
+        .values(jobValues)
+        .returning({ id: commercialAutomationJobsTable.id });
+    const [job] = insertedJobs;
+
+    if (!job) {
+      await db.insert(commercialAutomationLogsTable).values({
         clientId: params.clientId,
         ruleId: rule.id,
-        eventId: params.eventRecordId,
-        customerId: params.customerId,
-        status: "scheduled",
-        scheduledAt,
-        renderedPayload: {
-          to,
-          phoneNumberId,
-          templateName: rule.templateName,
-          languageCode: rule.templateLanguage,
-          bodyParams,
-          sourceEvent: params.payload,
-          sender,
+        eventType: params.eventType,
+        action: "automation_duplicate_skipped",
+        status: "info",
+        message: `Automação ${rule.name} ignorada porque este carrinho já possui o mesmo disparo agendado ou processado.`,
+        metadata: {
+          eventRecordId: params.eventRecordId,
+          dedupeKey,
+          recipient: maskWhatsappRecipient(to),
         },
-      })
-      .returning({ id: commercialAutomationJobsTable.id });
+      });
+      scheduled.push({
+        ruleId: rule.id,
+        jobId: null,
+        status: "duplicate",
+        reason: "cart_automation_idempotency",
+      });
+      continue;
+    }
 
     await db.insert(commercialAutomationLogsTable).values({
       clientId: params.clientId,
       ruleId: rule.id,
-      jobId: job?.id ?? null,
+      jobId: job.id,
       eventType: params.eventType,
       action: "automation_scheduled",
       status: "info",
@@ -1444,7 +1532,7 @@ async function scheduleAutomationJobsForEvent(params: {
       },
     });
 
-    scheduled.push({ ruleId: rule.id, jobId: job?.id ?? null, status: "scheduled" });
+    scheduled.push({ ruleId: rule.id, jobId: job.id, status: "scheduled" });
   }
 
   return scheduled;
