@@ -2916,3 +2916,103 @@ export async function fetchVestiScaleData(
     stockByCategory: Array.from(stockByCategoryMap.values()).sort((a, b) => b.salesPower - a.salesPower).slice(0, 8),
   };
 }
+
+// Marketing (Vesti) — "caminho rápido" combinado com o time (04/08/2026):
+// não existe UTM de campanha em pedido nativo Vesti, então em vez de tentar
+// cruzar por e-mail com o `stape_logs` (frágil, e-mail nem sempre vem no
+// evento de compra), usamos `clientes_atribuidos_consolidados` +
+// `pedidos_atribuidos_consolidados` — tabelas já prontas no BigQuery,
+// mesmas que o `backend-dash` usa em produção. `origem_vesti` é canal
+// grosso (Site, Link, VestiShop, Erp, Aplicativo), não campanha/anúncio —
+// por isso não dá pra montar `stateBreakdown`/`ageBreakdown` nem ROAS por
+// criativo específico (ficam vazios/zerados, documentado no contrato).
+export type VestiMarketingChannelRow = { platform: string; leads: number; attributedRevenue: number };
+
+export type VestiMarketingData = {
+  totalLeads: number;
+  approvedLeads: number;
+  totalAttributedRevenue: number;
+  leadsOverTime: VestiSeriesPoint[];
+  revenueOverTime: VestiSeriesPoint[];
+  platformBreakdown: VestiMarketingChannelRow[];
+};
+
+export async function fetchVestiMarketingData(dataset: string, dateFrom: string, dateTo: string): Promise<VestiMarketingData> {
+  const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
+  const pedidosAtribuidos = vestiTable(dataset, "pedidos_atribuidos_consolidados");
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+
+  const [[leadsRows], [leadsSeriesRows], [revenueRows], [revenueSeriesRows]] = await Promise.all([
+    bigquery.query({
+      query: `SELECT COUNT(*) AS total FROM ${clientesAtribuidos} WHERE data_cadastro BETWEEN @dateFrom AND @dateTo`,
+      params: { dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `
+        SELECT FORMAT_DATE('%Y-%m-%d', data_cadastro) AS date, COUNT(*) AS value
+        FROM ${clientesAtribuidos}
+        WHERE data_cadastro BETWEEN @dateFrom AND @dateTo
+        GROUP BY date
+        ORDER BY date
+      `,
+      params: { dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `
+        WITH pedidos_attr AS (
+          SELECT pa.pedido_id, ca.origem_vesti
+          FROM ${pedidosAtribuidos} pa
+          JOIN ${clientesAtribuidos} ca ON LOWER(ca.email) = LOWER(pa.email)
+          WHERE pa.data_ref BETWEEN @dateFrom AND @dateTo
+        ),
+        orders_rev AS (
+          SELECT CAST(pedido_id AS STRING) AS pedido_id, COALESCE(SUM(valor_reservado), 0) AS revenue
+          FROM ${view}
+          WHERE data_ref BETWEEN @dateFrom AND @dateTo AND pago
+          GROUP BY pedido_id
+        )
+        SELECT COALESCE(NULLIF(pa.origem_vesti, ''), 'Não identificado') AS platform,
+          COUNT(DISTINCT pa.pedido_id) AS leads,
+          COALESCE(SUM(o.revenue), 0) AS revenue
+        FROM pedidos_attr pa
+        LEFT JOIN orders_rev o ON o.pedido_id = pa.pedido_id
+        GROUP BY platform
+        ORDER BY revenue DESC
+      `,
+      params: { dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `
+        WITH pedidos_attr AS (
+          SELECT DISTINCT pa.pedido_id
+          FROM ${pedidosAtribuidos} pa
+          WHERE pa.data_ref BETWEEN @dateFrom AND @dateTo
+        )
+        SELECT v.data_ref AS date, COALESCE(SUM(v.valor_reservado), 0) AS value
+        FROM ${view} v
+        JOIN pedidos_attr pa ON CAST(v.pedido_id AS STRING) = pa.pedido_id
+        WHERE v.data_ref BETWEEN @dateFrom AND @dateTo AND v.pago
+        GROUP BY date
+        ORDER BY date
+      `,
+      params: { dateFrom, dateTo },
+    }),
+  ]);
+
+  const totalLeads = Number((leadsRows as Array<Record<string, unknown>>)[0]?.total) || 0;
+  const platformBreakdown = (revenueRows as Array<Record<string, unknown>>).map((r) => ({
+    platform: String(r.platform),
+    leads: Number(r.leads) || 0,
+    attributedRevenue: Number(r.revenue) || 0,
+  }));
+  const totalAttributedRevenue = platformBreakdown.reduce((s, r) => s + r.attributedRevenue, 0);
+
+  return {
+    totalLeads,
+    approvedLeads: totalLeads,
+    totalAttributedRevenue,
+    leadsOverTime: (leadsSeriesRows as Array<Record<string, unknown>>).map((r) => ({ date: toDateOnly(r.date), value: Number(r.value) || 0 })),
+    revenueOverTime: (revenueSeriesRows as Array<Record<string, unknown>>).map((r) => ({ date: toDateOnly(r.date), value: Number(r.value) || 0 })),
+    platformBreakdown,
+  };
+}

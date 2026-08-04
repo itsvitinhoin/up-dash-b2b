@@ -11265,6 +11265,15 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
 
+  const [marketingVestiCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (marketingVestiCheck?.commercePlatform === "VESTI") {
+    await vestiDashboardController.getMarketing(req, res);
+    return;
+  }
+
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const since = from.toISOString().slice(0, 10);
   const until = to.toISOString().slice(0, 10);

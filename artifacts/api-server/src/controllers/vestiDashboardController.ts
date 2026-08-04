@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
-import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse, GetJourneyQueryParams, GetJourneyResponse } from "@workspace/api-zod";
+import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse, GetJourneyQueryParams, GetJourneyResponse, GetMarketingQueryParams, GetMarketingResponse } from "@workspace/api-zod";
 import { addDaysToDateOnly, coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly, saoPauloDateOnlyEnd, saoPauloDateOnlyStart } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
 import { fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
@@ -17,6 +17,7 @@ import {
   fetchVestiGeography,
   fetchVestiJourney,
   fetchVestiScaleData,
+  fetchVestiMarketingData,
   type VestiFilters,
 } from "../services/vestiAnalytics";
 
@@ -723,4 +724,126 @@ export async function getScale(req: Request, res: Response): Promise<void> {
     insights,
     generatedAt: new Date().toISOString(),
   });
+}
+
+export async function getMarketing(req: Request, res: Response): Promise<void> {
+  const parsed = GetMarketingQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const dataset = await resolveVestiDataset(clientId);
+  if (!dataset) {
+    res.status(404).json({ error: true, code: "NOT_VESTI_CLIENT", message: "Client não é Vesti ou não foi encontrado.", status: 404 });
+    return;
+  }
+
+  const [client] = await db
+    .select({ metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = saoPauloDateOnly(from);
+  const dateToOnly = saoPauloDateOnly(to);
+  const periodMs = to.getTime() - from.getTime();
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - periodMs);
+  const prevDateFromOnly = saoPauloDateOnly(prevFrom);
+  const prevDateToOnly = saoPauloDateOnly(prevTo);
+  const { creativesPage, creativesPageSize, utmSource } = parsed.data;
+
+  const [channelData, prevChannelData] = await Promise.all([
+    cached(`vesti:marketing:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () => fetchVestiMarketingData(dataset, dateFromOnly, dateToOnly)),
+    cached(`vesti:marketing:${dataset}:${prevDateFromOnly}:${prevDateToOnly}`, 5 * 60 * 1000, () => fetchVestiMarketingData(dataset, prevDateFromOnly, prevDateToOnly)),
+  ]);
+
+  const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
+  const [metaCurrent, metaPrev] = await Promise.all([
+    metaAccessToken && client?.metaAdAccountId
+      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: dateFromOnly, until: dateToOnly }).catch((err) => {
+          console.warn("[vesti-marketing] Meta current fetch failed:", err);
+          return null;
+        })
+      : Promise.resolve(null),
+    metaAccessToken && client?.metaAdAccountId
+      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: prevDateFromOnly, until: prevDateToOnly }).catch((err) => {
+          console.warn("[vesti-marketing] Meta previous fetch failed:", err);
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
+  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
+
+  const buildKpis = (channel: typeof channelData, spend: number) => {
+    const roas = spend > 0 ? channel.totalAttributedRevenue / spend : 0;
+    const cpl = channel.totalLeads > 0 ? spend / channel.totalLeads : 0;
+    const cpa = channel.approvedLeads > 0 ? spend / channel.approvedLeads : 0;
+    return {
+      totalSpend: spend,
+      attributedRevenue: channel.totalAttributedRevenue,
+      roas,
+      totalLeads: channel.totalLeads,
+      approvedLeads: channel.approvedLeads,
+      approvalRate: channel.totalLeads > 0 ? (channel.approvedLeads / channel.totalLeads) * 100 : 0,
+      cpl,
+      cpa,
+    };
+  };
+
+  const spend = metaCurrent?.summary.spend ?? 0;
+  const prevSpend = metaPrev?.summary.spend ?? 0;
+
+  const allAds = metaCurrent?.ads ?? [];
+  const filteredAds = utmSource ? allAds.filter((ad) => ad.name.toLowerCase().includes(utmSource.toLowerCase())) : allAds;
+  const creativesOffset = (creativesPage - 1) * creativesPageSize;
+  const pagedAds = filteredAds.slice(creativesOffset, creativesOffset + creativesPageSize);
+
+  const spendByDay = new Map<string, number>();
+  for (const point of metaCurrent?.daily ?? []) {
+    spendByDay.set(point.date, (spendByDay.get(point.date) ?? 0) + point.spend);
+  }
+
+  res.json(
+    GetMarketingResponse.parse({
+      kpis: buildKpis(channelData, spend),
+      prevKpis: buildKpis(prevChannelData, prevSpend),
+      leadsOverTime: channelData.leadsOverTime,
+      revenueOverTime: channelData.revenueOverTime,
+      spendOverTime: Array.from(spendByDay.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value })),
+      creatives: pagedAds.map((ad) => ({
+        id: ad.id,
+        name: ad.name,
+        platform: "Meta",
+        status: ad.status ?? "UNKNOWN",
+        imageUrl: null,
+        clicks: ad.clicks,
+        impressions: ad.impressions,
+        ctr: ad.impressions > 0 ? (ad.clicks / ad.impressions) * 100 : 0,
+        leads: ad.leads,
+        approvedLeads: ad.purchases,
+        spend: ad.spend,
+        attributedRevenue: ad.revenue,
+        roas: ad.roas ?? 0,
+        cpl: ad.cpl ?? 0,
+        cpa: ad.cpa ?? 0,
+      })),
+      platformBreakdown: channelData.platformBreakdown.map((p) => ({
+        platform: p.platform,
+        spend: 0,
+        leads: p.leads,
+        approvedLeads: p.leads,
+        clicks: 0,
+        impressions: 0,
+        attributedRevenue: p.attributedRevenue,
+        roas: 0,
+      })),
+      stateBreakdown: [],
+      ageBreakdown: [],
+      creativesTotal: filteredAds.length,
+    }),
+  );
 }
