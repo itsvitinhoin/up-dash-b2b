@@ -10,6 +10,7 @@ import { hashDocument } from "./upzero/customers";
 import {
   calculateErpFulfilledQuantity,
   calculateErpRetentionPct,
+  calculateErpStockCoverageDays,
   calculateErpStockTurnoverPct,
   hasPaidErpCampaignSignal,
 } from "./erpMetrics";
@@ -1039,6 +1040,7 @@ export async function fetchErpProductsPage(
       | "stock"
       | "turnover"
       | "sales_power"
+      | "coverage"
       | "margin";
     dateFrom: string;
     dateTo: string;
@@ -1057,6 +1059,14 @@ export async function fetchErpProductsPage(
     offset,
     dateFrom: filters.dateFrom,
     dateTo: filters.dateTo,
+    periodDays: Math.max(
+      1,
+      Math.round(
+        (new Date(`${filters.dateTo}T00:00:00Z`).getTime() -
+          new Date(`${filters.dateFrom}T00:00:00Z`).getTime()) /
+          86_400_000,
+      ) + 1,
+    ),
   };
   if (filters.search) {
     conditions.push(
@@ -1080,6 +1090,8 @@ export async function fetchErpProductsPage(
     stock: "stock",
     turnover: "SAFE_DIVIDE(units, units + GREATEST(stock, 0))",
     sales_power: "sales_power",
+    coverage:
+      "SAFE_DIVIDE(GREATEST(available_stock, 0), SAFE_DIVIDE(units, @periodDays))",
     margin: "SAFE_DIVIDE(revenue - cost_amount, revenue)",
   }[filters.sort ?? "revenue"];
 
@@ -1232,10 +1244,6 @@ export async function fetchErpProductsPage(
         86_400_000,
     ) + 1,
   );
-  const coverageDays = (units: number, stock: number): number | null => {
-    if (units <= 0) return null;
-    return Math.max(stock, 0) / (units / periodDays);
-  };
   const mapBreakdown = <T>(
     value: unknown,
     mapper: (row: Record<string, unknown>) => T,
@@ -1268,7 +1276,11 @@ export async function fetchErpProductsPage(
         costAmount,
         grossProfit,
         grossMarginPct: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
-        coverageDays: coverageDays(units, availableStock),
+        coverageDays: calculateErpStockCoverageDays(
+          units,
+          availableStock,
+          periodDays,
+        ),
         variantCount: Number(r.variant_count) || 0,
         outOfStockCount: Number(r.out_of_stock_count) || 0,
         variants: rawVariants.map((variant) => {
@@ -1296,7 +1308,11 @@ export async function fetchErpProductsPage(
             grossProfit: variantProfit,
             grossMarginPct:
               variantRevenue > 0 ? (variantProfit / variantRevenue) * 100 : 0,
-            coverageDays: coverageDays(variantUnits, variantStock),
+            coverageDays: calculateErpStockCoverageDays(
+              variantUnits,
+              variantStock,
+              periodDays,
+            ),
           };
         }),
       };
@@ -1324,9 +1340,10 @@ export async function fetchErpProductsPage(
           100
         : 0,
     negativeStockCount: Number(t?.negative_stock_count) || 0,
-    coverageDays: coverageDays(
+    coverageDays: calculateErpStockCoverageDays(
       Number(t?.total_units) || 0,
       Number(t?.available_stock) || 0,
+      periodDays,
     ),
     breakdowns: {
       categories: mapBreakdown(breakdown.categories, (row) => ({

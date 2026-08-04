@@ -206,7 +206,15 @@ const GetErpProductsQueryParams = z.object({
   category: z.coerce.string().trim().optional(),
   stockStatus: z.enum(["in_stock", "out_of_stock", "negative"]).optional(),
   sort: z
-    .enum(["revenue", "units", "stock", "turnover", "sales_power", "margin"])
+    .enum([
+      "revenue",
+      "units",
+      "stock",
+      "turnover",
+      "sales_power",
+      "coverage",
+      "margin",
+    ])
     .optional(),
 });
 

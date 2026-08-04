@@ -1428,6 +1428,8 @@ function ProductTable({
   setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>;
   stockMode?: boolean;
 }) {
+  const columnCount = stockMode ? 10 : 9;
+
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -1438,16 +1440,22 @@ function ProductTable({
             <TableHead className="text-right">SKUs</TableHead>
             <TableHead className="text-right">Vendidas</TableHead>
             <TableHead className="text-right">Faturamento</TableHead>
-            <TableHead className="text-right">Margem</TableHead>
+            <TableHead className="text-right">
+              {stockMode ? "Margem" : "Dias restantes"}
+            </TableHead>
             <TableHead className="text-right">Giro</TableHead>
-            <TableHead className="text-right">Cobertura</TableHead>
+            {stockMode && (
+              <TableHead className="text-right">Cobertura</TableHead>
+            )}
             <TableHead className="text-right">Estoque</TableHead>
             <TableHead className="text-right">Poder de venda</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {loading && <EmptyRow colSpan={10} loading />}
-          {!loading && !data?.rows.length && <EmptyRow colSpan={10} />}
+          {loading && <EmptyRow colSpan={columnCount} loading />}
+          {!loading && !data?.rows.length && (
+            <EmptyRow colSpan={columnCount} />
+          )}
           {(data?.rows ?? []).map((p) => (
             <Fragment key={p.id}>
               <TableRow
@@ -1482,16 +1490,22 @@ function ProductTable({
                   {formatCurrency(p.revenue)}
                 </TableCell>
                 <TableCell className="text-right">
-                  {formatPercentage(p.grossMarginPct)}
+                  {stockMode
+                    ? formatPercentage(p.grossMarginPct)
+                    : p.coverageDays === null
+                      ? "Sem vendas"
+                      : `${Math.round(p.coverageDays)} dias`}
                 </TableCell>
                 <TableCell className="text-right">
                   {formatPercentage(p.turnoverPct)}
                 </TableCell>
-                <TableCell className="text-right">
-                  {p.coverageDays === null
-                    ? "Sem giro"
-                    : `${Math.round(p.coverageDays)} dias`}
-                </TableCell>
+                {stockMode && (
+                  <TableCell className="text-right">
+                    {p.coverageDays === null
+                      ? "Sem giro"
+                      : `${Math.round(p.coverageDays)} dias`}
+                  </TableCell>
+                )}
                 <TableCell className="text-right">
                   <Badge
                     variant="outline"
@@ -1510,7 +1524,7 @@ function ProductTable({
               </TableRow>
               {expanded.has(p.id) && (
                 <TableRow className="bg-muted/20">
-                  <TableCell colSpan={10} className="p-4">
+                  <TableCell colSpan={columnCount} className="p-4">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1520,11 +1534,15 @@ function ProductTable({
                           <TableHead className="text-right">Vendidas</TableHead>
                           <TableHead className="text-right">Receita</TableHead>
                           <TableHead className="text-right">Preço</TableHead>
-                          <TableHead className="text-right">Margem</TableHead>
-                          <TableHead className="text-right">Giro</TableHead>
                           <TableHead className="text-right">
-                            Cobertura
+                            {stockMode ? "Margem" : "Dias restantes"}
                           </TableHead>
+                          <TableHead className="text-right">Giro</TableHead>
+                          {stockMode && (
+                            <TableHead className="text-right">
+                              Cobertura
+                            </TableHead>
+                          )}
                           <TableHead className="text-right">Estoque</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -1546,16 +1564,22 @@ function ProductTable({
                               {formatCurrency(v.catalogPrice)}
                             </TableCell>
                             <TableCell className="text-right">
-                              {formatPercentage(v.grossMarginPct)}
+                              {stockMode
+                                ? formatPercentage(v.grossMarginPct)
+                                : v.coverageDays === null
+                                  ? "Sem vendas"
+                                  : `${Math.round(v.coverageDays)} dias`}
                             </TableCell>
                             <TableCell className="text-right">
                               {formatPercentage(v.turnoverPct)}
                             </TableCell>
-                            <TableCell className="text-right">
-                              {v.coverageDays === null
-                                ? "Sem giro"
-                                : `${Math.round(v.coverageDays)} dias`}
-                            </TableCell>
+                            {stockMode && (
+                              <TableCell className="text-right">
+                                {v.coverageDays === null
+                                  ? "Sem giro"
+                                  : `${Math.round(v.coverageDays)} dias`}
+                              </TableCell>
+                            )}
                             <TableCell className="text-right">
                               {formatNumber(v.stock)}
                             </TableCell>
@@ -1623,9 +1647,31 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           { header: "Tamanho", accessor: (r) => r.v.size },
           { header: "Vendidas", accessor: (r) => r.v.units },
           { header: "Receita", accessor: (r) => r.v.revenue },
-          { header: "Margem %", accessor: (r) => r.v.grossMarginPct },
+          ...(stockMode
+            ? [
+                {
+                  header: "Margem %",
+                  accessor: (r: { v: ErpProductVariant }) =>
+                    r.v.grossMarginPct,
+                },
+              ]
+            : [
+                {
+                  header: "Dias restantes",
+                  accessor: (r: { v: ErpProductVariant }) =>
+                    r.v.coverageDays,
+                },
+              ]),
           { header: "Giro %", accessor: (r) => r.v.turnoverPct },
-          { header: "Cobertura dias", accessor: (r) => r.v.coverageDays },
+          ...(stockMode
+            ? [
+                {
+                  header: "Cobertura dias",
+                  accessor: (r: { v: ErpProductVariant }) =>
+                    r.v.coverageDays,
+                },
+              ]
+            : []),
           { header: "Estoque", accessor: (r) => r.v.stock },
           { header: "Poder de venda", accessor: (r) => r.v.salesPower },
         ],
@@ -1774,7 +1820,11 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
             title={
               stockMode ? "Inteligência de estoque" : "Desempenho do catálogo"
             }
-            description="Produtos pai expansíveis para análise por SKU, cor e tamanho."
+            description={
+              stockMode
+                ? "Produtos pai expansíveis para análise por SKU, cor e tamanho."
+                : "Dias restantes = estoque atual ÷ média diária vendida no período selecionado."
+            }
             action={<ExportButton onClick={exportCsv} busy={exporting} />}
           />
           <div className="mt-4 grid gap-2 lg:grid-cols-[minmax(240px,1fr)_200px_190px_190px]">
@@ -1844,7 +1894,13 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
                 <SelectItem value="sales_power">
                   Maior poder de venda
                 </SelectItem>
-                <SelectItem value="margin">Maior margem</SelectItem>
+                {stockMode ? (
+                  <SelectItem value="margin">Maior margem</SelectItem>
+                ) : (
+                  <SelectItem value="coverage">
+                    Mais dias restantes
+                  </SelectItem>
+                )}
               </SelectContent>
             </Select>
           </div>

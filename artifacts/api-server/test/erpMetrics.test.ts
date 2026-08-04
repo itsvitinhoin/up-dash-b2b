@@ -3,6 +3,7 @@ import {
   calculateErpFulfilledQuantity,
   calculateErpRetentionPct,
   calculateErpSalesPower,
+  calculateErpStockCoverageDays,
   calculateErpStockTurnoverPct,
   hasPaidErpCampaignSignal,
 } from "../src/services/erpMetrics";
@@ -64,5 +65,12 @@ describe("ERP metric rules", () => {
     expect(calculateErpSalesPower(8, 129)).toBe(1032);
     expect(calculateErpSalesPower(-2, 129)).toBe(0);
     expect(calculateErpSalesPower(8, -10)).toBe(0);
+  });
+
+  it("calculates remaining stock days from the selected period sales pace", () => {
+    expect(calculateErpStockCoverageDays(30, 60, 30)).toBe(60);
+    expect(calculateErpStockCoverageDays(15, 10, 30)).toBe(20);
+    expect(calculateErpStockCoverageDays(10, -2, 30)).toBe(0);
+    expect(calculateErpStockCoverageDays(0, 50, 30)).toBeNull();
   });
 });
