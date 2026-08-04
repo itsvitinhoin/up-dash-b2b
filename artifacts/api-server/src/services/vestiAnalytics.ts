@@ -2019,3 +2019,73 @@ export async function fetchVestiRfm(
 
   return { segments, composition, customers, total: sorted.length };
 }
+
+// Geografia (Vesti) — mesmo desenho do `/analytics/geography` B2C
+// (states + cities), a partir de `dashboard_vendas_view.estado`/`.cidade`
+// (já usado no signal de "regiões em alta" do dashboard). Pedido é
+// deduplicado por `pedido_id` antes de agregar, já que a view é por item.
+export type VestiGeography = {
+  states: Array<{ state: string; orders: number; revenue: number; customers: number }>;
+  cities: Array<{ state: string; city: string; orders: number; revenue: number }>;
+};
+
+export async function fetchVestiGeography(dataset: string, dateFrom: string, dateTo: string): Promise<VestiGeography> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const clientes = vestiTable(dataset, "clientes_vesti");
+
+  // `estado` vem vazio na maior parte das linhas (mesma limitação já
+  // documentada na página de Clientes) — por isso o mesmo fallback:
+  // infere o estado pelo DDD do telefone quando falta endereço real.
+  // Precisa trazer telefone e agregar em JS (não dá pra aplicar
+  // `stateFromPhoneDdd` dentro do BigQuery).
+  const [rows] = await bigquery.query({
+    query: `
+      WITH pedidos AS (
+        SELECT
+          pedido_id,
+          ANY_VALUE(estado) AS state,
+          ANY_VALUE(cidade) AS city,
+          ANY_VALUE(cliente_id) AS cliente_id,
+          COALESCE(SUM(valor_reservado), 0) AS revenue
+        FROM ${view}
+        WHERE data_ref BETWEEN @dateFrom AND @dateTo AND pago
+        GROUP BY pedido_id
+      )
+      SELECT p.*, c.phone
+      FROM pedidos p
+      LEFT JOIN ${clientes} c ON c.id = p.cliente_id
+    `,
+    params: { dateFrom, dateTo },
+  });
+
+  const stateMap = new Map<string, { orders: number; revenue: number; customers: Set<string> }>();
+  const cityMap = new Map<string, { state: string; city: string; orders: number; revenue: number }>();
+  for (const r of rows as Array<Record<string, unknown>>) {
+    const rawState = (r.state as string) || null;
+    const state = rawState || stateFromPhoneDdd(r.phone as string) || "Unknown";
+    const city = (r.city as string) || "Unknown";
+    const clienteId = r.cliente_id ? String(r.cliente_id) : null;
+    const revenue = Number(r.revenue) || 0;
+
+    const stateAgg = stateMap.get(state) ?? { orders: 0, revenue: 0, customers: new Set<string>() };
+    stateAgg.orders += 1;
+    stateAgg.revenue += revenue;
+    if (clienteId) stateAgg.customers.add(clienteId);
+    stateMap.set(state, stateAgg);
+
+    const cityKey = `${state}::${city}`;
+    const cityAgg = cityMap.get(cityKey) ?? { state, city, orders: 0, revenue: 0 };
+    cityAgg.orders += 1;
+    cityAgg.revenue += revenue;
+    cityMap.set(cityKey, cityAgg);
+  }
+
+  return {
+    states: Array.from(stateMap.entries())
+      .map(([state, v]) => ({ state, orders: v.orders, revenue: v.revenue, customers: v.customers.size }))
+      .sort((a, b) => b.revenue - a.revenue),
+    cities: Array.from(cityMap.values())
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 50),
+  };
+}

@@ -6215,6 +6215,16 @@ router.get("/analytics/geography", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+
+  const [geoClientCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (geoClientCheck?.commercePlatform === "VESTI") {
+    await vestiDashboardController.getGeography(req, res);
+    return;
+  }
+
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const { utmSource, utmMedium } = parsed.data;
 

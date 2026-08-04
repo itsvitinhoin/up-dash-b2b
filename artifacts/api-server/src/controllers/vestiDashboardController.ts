@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
-import { GetDashboardQueryParams, GetDashboardResponse } from "@workspace/api-zod";
+import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse } from "@workspace/api-zod";
 import { coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
 import { fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
@@ -14,6 +14,7 @@ import {
   fetchVestiFunnel,
   fetchVestiDailyBreakdown,
   generateVestiDailyReportText,
+  fetchVestiGeography,
   type VestiFilters,
 } from "../services/vestiAnalytics";
 
@@ -426,4 +427,30 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
     analysis,
     generatedAt: new Date().toISOString(),
   });
+}
+
+export async function getGeography(req: Request, res: Response): Promise<void> {
+  const parsed = GetGeographyQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const dataset = await resolveVestiDataset(clientId);
+  if (!dataset) {
+    res.status(404).json({ error: true, code: "NOT_VESTI_CLIENT", message: "Client não é Vesti ou não foi encontrado.", status: 404 });
+    return;
+  }
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = saoPauloDateOnly(from);
+  const dateToOnly = saoPauloDateOnly(to);
+
+  const geography = await cached(`vesti:geography:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () =>
+    fetchVestiGeography(dataset, dateFromOnly, dateToOnly),
+  );
+
+  res.json(GetGeographyResponse.parse(geography));
 }
