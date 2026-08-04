@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
-import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse, GetJourneyQueryParams, GetJourneyResponse, GetMarketingQueryParams, GetMarketingResponse } from "@workspace/api-zod";
+import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse, GetJourneyQueryParams, GetJourneyResponse, GetMarketingQueryParams, GetMarketingResponse, GetUtmQueryParams, GetUtmResponse } from "@workspace/api-zod";
 import { addDaysToDateOnly, coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly, saoPauloDateOnlyEnd, saoPauloDateOnlyStart } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
 import { fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
@@ -18,6 +18,7 @@ import {
   fetchVestiJourney,
   fetchVestiScaleData,
   fetchVestiMarketingData,
+  fetchVestiUtmData,
   type VestiFilters,
 } from "../services/vestiAnalytics";
 
@@ -844,6 +845,54 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
       stateBreakdown: [],
       ageBreakdown: [],
       creativesTotal: filteredAds.length,
+    }),
+  );
+}
+
+export async function getUtm(req: Request, res: Response): Promise<void> {
+  const parsed = GetUtmQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const dataset = await resolveVestiDataset(clientId);
+  if (!dataset) {
+    res.status(404).json({ error: true, code: "NOT_VESTI_CLIENT", message: "Client não é Vesti ou não foi encontrado.", status: 404 });
+    return;
+  }
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = saoPauloDateOnly(from);
+  const dateToOnly = saoPauloDateOnly(to);
+  const { utmSource } = parsed.data;
+
+  const utmData = await cached(`vesti:utm:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () => fetchVestiUtmData(dataset, dateFromOnly, dateToOnly));
+
+  const rows = utmSource ? utmData.rows.filter((r) => r.source.toLowerCase() === utmSource.toLowerCase()) : utmData.rows;
+  const totalRegistrations = rows.reduce((s, r) => s + r.registrations, 0);
+  const totalApprovals = totalRegistrations;
+  const totalBuyers = rows.reduce((s, r) => s + r.buyers, 0);
+  const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
+  const topRow = [...rows].sort((a, b) => b.revenue - a.revenue)[0] ?? null;
+
+  res.json(
+    GetUtmResponse.parse({
+      kpis: {
+        totalSessions: utmData.totalSessions,
+        totalRegistrations,
+        totalApprovals,
+        approvalPct: totalRegistrations > 0 ? 100 : 0,
+        totalBuyers,
+        totalRevenue,
+        conversionPct: totalRegistrations > 0 ? (totalBuyers / totalRegistrations) * 100 : 0,
+        totalRoas: null,
+        topSource: topRow?.source ?? null,
+        topSourceRevenue: topRow?.revenue ?? 0,
+      },
+      rows,
     }),
   );
 }

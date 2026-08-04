@@ -9553,6 +9553,15 @@ router.get("/analytics/utm", async (req, res): Promise<void> => {
   const clientId = requireClient(req, res);
   if (!clientId) return;
 
+  const [utmVestiCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (utmVestiCheck?.commercePlatform === "VESTI") {
+    await vestiDashboardController.getUtm(req, res);
+    return;
+  }
+
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const groupBy    = parsed.data.groupBy;
   const filterSrc  = parsed.data.utmSource  || undefined;

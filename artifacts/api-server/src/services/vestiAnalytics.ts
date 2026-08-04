@@ -3016,3 +3016,104 @@ export async function fetchVestiMarketingData(dataset: string, dateFrom: string,
     platformBreakdown,
   };
 }
+
+// UTM (Vesti) — mesma fonte do Marketing (`clientes_atribuidos_consolidados`
+// + `pedidos_atribuidos_consolidados`), só que agrupado por linha em vez de
+// por canal solto. `groupBy` (source/campaign/sourceMediumCampaign) do
+// contrato B2C não se aplica de verdade aqui — só temos `origem_vesti`
+// (canal grosso), sem medium/campanha separados, então sempre agrupamos
+// por canal independente do parâmetro (documentado, não é ignorado por
+// engano). `subRows` fica sempre vazio pela mesma razão.
+export type VestiUtmRow = {
+  key: string;
+  source: string;
+  medium: null;
+  campaign: null;
+  registrations: number;
+  approvals: number;
+  approvalPct: number;
+  buyers: number;
+  revenue: number;
+  conversionPct: number;
+  roas: null;
+  subRows: never[];
+};
+
+export type VestiUtmData = {
+  totalSessions: number;
+  rows: VestiUtmRow[];
+};
+
+export async function fetchVestiUtmData(dataset: string, dateFrom: string, dateTo: string): Promise<VestiUtmData> {
+  const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
+  const pedidosAtribuidos = vestiTable(dataset, "pedidos_atribuidos_consolidados");
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+
+  const [[rows], [sessionsRows]] = await Promise.all([
+    bigquery.query({
+      query: `
+        WITH pedidos_attr AS (
+          SELECT pa.pedido_id, pa.email, ca.origem_vesti
+          FROM ${pedidosAtribuidos} pa
+          JOIN ${clientesAtribuidos} ca ON LOWER(ca.email) = LOWER(pa.email)
+          WHERE pa.data_ref BETWEEN @dateFrom AND @dateTo
+        ),
+        orders_rev AS (
+          SELECT CAST(pedido_id AS STRING) AS pedido_id, COALESCE(SUM(valor_reservado), 0) AS revenue
+          FROM ${view}
+          WHERE data_ref BETWEEN @dateFrom AND @dateTo AND pago
+          GROUP BY pedido_id
+        ),
+        registrations AS (
+          SELECT COALESCE(NULLIF(origem_vesti, ''), 'Não identificado') AS source, COUNT(*) AS registrations
+          FROM ${clientesAtribuidos}
+          WHERE data_cadastro BETWEEN @dateFrom AND @dateTo
+          GROUP BY source
+        ),
+        buyers AS (
+          SELECT COALESCE(NULLIF(pa.origem_vesti, ''), 'Não identificado') AS source,
+            COUNT(DISTINCT pa.email) AS buyers,
+            COALESCE(SUM(o.revenue), 0) AS revenue
+          FROM pedidos_attr pa
+          LEFT JOIN orders_rev o ON o.pedido_id = pa.pedido_id
+          GROUP BY source
+        )
+        SELECT
+          COALESCE(r.source, b.source) AS source,
+          COALESCE(r.registrations, 0) AS registrations,
+          COALESCE(b.buyers, 0) AS buyers,
+          COALESCE(b.revenue, 0) AS revenue
+        FROM registrations r
+        FULL OUTER JOIN buyers b ON b.source = r.source
+        ORDER BY revenue DESC
+      `,
+      params: { dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `SELECT COUNT(*) AS visits FROM \`up-vesti-report.stape_logs.EventsLogsTratado\` WHERE client = @dataset AND event_name = 'PageView' AND DATE(event_ts) BETWEEN @dateFrom AND @dateTo`,
+      params: { dataset, dateFrom, dateTo },
+    }),
+  ]);
+
+  return {
+    totalSessions: Number((sessionsRows as Array<Record<string, unknown>>)[0]?.visits) || 0,
+    rows: (rows as Array<Record<string, unknown>>).map((r) => {
+      const registrations = Number(r.registrations) || 0;
+      const buyers = Number(r.buyers) || 0;
+      return {
+        key: String(r.source),
+        source: String(r.source),
+        medium: null,
+        campaign: null,
+        registrations,
+        approvals: registrations,
+        approvalPct: 100,
+        buyers,
+        revenue: Number(r.revenue) || 0,
+        conversionPct: registrations > 0 ? (buyers / registrations) * 100 : 0,
+        roas: null,
+        subRows: [],
+      };
+    }),
+  };
+}
