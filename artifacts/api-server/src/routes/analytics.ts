@@ -8464,6 +8464,16 @@ router.get("/analytics/journey", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+
+  const [journeyClientCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (journeyClientCheck?.commercePlatform === "VESTI") {
+    await vestiDashboardController.getJourney(req, res);
+    return;
+  }
+
   const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
   const utmMed = (parsed.data as Record<string, unknown>).utmMedium as string | undefined;
   const stateFilt = (parsed.data as Record<string, unknown>).state as string | undefined;

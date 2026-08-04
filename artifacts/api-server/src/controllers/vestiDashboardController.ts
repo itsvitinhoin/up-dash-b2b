@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
-import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse } from "@workspace/api-zod";
+import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse, GetJourneyQueryParams, GetJourneyResponse } from "@workspace/api-zod";
 import { coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
 import { fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
@@ -15,6 +15,7 @@ import {
   fetchVestiDailyBreakdown,
   generateVestiDailyReportText,
   fetchVestiGeography,
+  fetchVestiJourney,
   type VestiFilters,
 } from "../services/vestiAnalytics";
 
@@ -453,4 +454,30 @@ export async function getGeography(req: Request, res: Response): Promise<void> {
   );
 
   res.json(GetGeographyResponse.parse(geography));
+}
+
+export async function getJourney(req: Request, res: Response): Promise<void> {
+  const parsed = GetJourneyQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const dataset = await resolveVestiDataset(clientId);
+  if (!dataset) {
+    res.status(404).json({ error: true, code: "NOT_VESTI_CLIENT", message: "Client não é Vesti ou não foi encontrado.", status: 404 });
+    return;
+  }
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = saoPauloDateOnly(from);
+  const dateToOnly = saoPauloDateOnly(to);
+
+  const journey = await cached(`vesti:journey:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () =>
+    fetchVestiJourney(dataset, dateFromOnly, dateToOnly),
+  );
+
+  res.json(GetJourneyResponse.parse(journey));
 }

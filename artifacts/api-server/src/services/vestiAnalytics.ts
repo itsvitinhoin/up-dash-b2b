@@ -2545,3 +2545,187 @@ export async function fetchVestiSellerOrders(
     total: Number((countRows as Array<Record<string, unknown>>)[0]?.total) || 0,
   };
 }
+
+// Jornada (Vesti) — mesma fonte do Funil (`stape_logs.EventsLogsTratado`),
+// mas aqui sequenciamos os eventos por `client_id` (visitante rastreado)
+// em vez de só contar por etapa. Cada visitante forma uma "jornada"
+// ordenada por `event_ts`; a partir disso: caminhos mais comuns
+// (topPaths), grafo de transições evento→evento (eventNodes/eventEdges) e
+// comparação compradores vs não-compradores.
+const VESTI_JOURNEY_LAYER: Record<string, number> = {
+  PageView: 0,
+  Lead: 0,
+  GetUpagency: 0,
+  Contact: 0,
+  ViewContent: 1,
+  AddToCart: 2,
+  InitiateCheckout: 3,
+  Purchase: 4,
+};
+
+function toEpochMs(value: unknown): number {
+  if (value && typeof value === "object" && "value" in (value as Record<string, unknown>)) {
+    return new Date(String((value as { value: unknown }).value)).getTime();
+  }
+  return new Date(String(value)).getTime();
+}
+
+export type VestiJourney = {
+  kpis: {
+    avgEventsBeforePurchase: number;
+    avgTimeToFirstPurchaseDays: number | null;
+    avgTimeBetweenPurchasesDays: number | null;
+    pctBuyersFromFirstSession: number;
+  };
+  topPaths: Array<{ steps: string[]; visitCount: number; conversionRate: number }>;
+  eventNodes: Array<{ id: string; label: string; count: number; layer: number }>;
+  eventEdges: Array<{ source: string; target: string; count: number }>;
+  buyers: { avgSessionDepth: number; eventCounts: Array<{ eventType: string; count: number }>; topUtmSources: Array<{ source: string; count: number }> };
+  nonBuyers: { avgSessionDepth: number; eventCounts: Array<{ eventType: string; count: number }>; topUtmSources: Array<{ source: string; count: number }> };
+};
+
+export async function fetchVestiJourney(dataset: string, dateFrom: string, dateTo: string): Promise<VestiJourney> {
+  const [rows] = await bigquery.query({
+    query: `
+      SELECT client_id, event_name, event_ts, request_url
+      FROM \`up-vesti-report.stape_logs.EventsLogsTratado\`
+      WHERE client = @dataset AND DATE(event_ts) BETWEEN @dateFrom AND @dateTo AND client_id IS NOT NULL AND client_id != ''
+      ORDER BY client_id, event_ts
+    `,
+    params: { dataset, dateFrom, dateTo },
+  });
+
+  type Ev = { event: string; ts: number; url: string | null };
+  const byClient = new Map<string, Ev[]>();
+  for (const r of rows as Array<Record<string, unknown>>) {
+    const cid = String(r.client_id);
+    const list = byClient.get(cid) ?? [];
+    list.push({ event: String(r.event_name), ts: toEpochMs(r.event_ts), url: (r.request_url as string) ?? null });
+    byClient.set(cid, list);
+  }
+
+  const emptyGroup = { avgSessionDepth: 0, eventCounts: [], topUtmSources: [] };
+  if (byClient.size === 0) {
+    return {
+      kpis: { avgEventsBeforePurchase: 0, avgTimeToFirstPurchaseDays: null, avgTimeBetweenPurchasesDays: null, pctBuyersFromFirstSession: 0 },
+      topPaths: [],
+      eventNodes: [],
+      eventEdges: [],
+      buyers: emptyGroup,
+      nonBuyers: emptyGroup,
+    };
+  }
+
+  const pathCounts = new Map<string, { steps: string[]; count: number; withPurchase: number }>();
+  const nodeCounts = new Map<string, number>();
+  const edgeCounts = new Map<string, { source: string; target: string; count: number }>();
+  const eventsBeforePurchase: number[] = [];
+  const timeToFirstPurchaseDays: number[] = [];
+  const timeBetweenPurchasesDays: number[] = [];
+  let buyersFromFirstSession = 0;
+  let totalBuyers = 0;
+
+  const buyerEventCounts = new Map<string, number>();
+  const nonBuyerEventCounts = new Map<string, number>();
+  const buyerUtmCounts = new Map<string, number>();
+  const nonBuyerUtmCounts = new Map<string, number>();
+  let buyerDepthSum = 0;
+  let nonBuyerDepthSum = 0;
+  let buyerCount = 0;
+  let nonBuyerCount = 0;
+
+  for (const events of byClient.values()) {
+    // Já vem ordenado por event_ts na query, mas garante (empates de
+    // timestamp podem vir em qualquer ordem do BigQuery).
+    events.sort((a, b) => a.ts - b.ts);
+
+    // Caminho: eventos únicos consecutivos (colapsa repetição direta,
+    // ex: 3x PageView seguidos vira 1 "PageView" no caminho), até 6 passos.
+    const steps: string[] = [];
+    for (const ev of events) {
+      if (steps[steps.length - 1] !== ev.event) steps.push(ev.event);
+      if (steps.length >= 6) break;
+    }
+    const purchaseIndex = events.findIndex((e) => e.event === "Purchase");
+    const hasPurchase = purchaseIndex >= 0;
+
+    const pathKey = steps.join(">");
+    const pathEntry = pathCounts.get(pathKey) ?? { steps, count: 0, withPurchase: 0 };
+    pathEntry.count += 1;
+    if (hasPurchase) pathEntry.withPurchase += 1;
+    pathCounts.set(pathKey, pathEntry);
+
+    for (let i = 0; i < events.length; i++) {
+      nodeCounts.set(events[i].event, (nodeCounts.get(events[i].event) ?? 0) + 1);
+      if (i > 0 && events[i - 1].event !== events[i].event) {
+        const key = `${events[i - 1].event}>${events[i].event}`;
+        const edge = edgeCounts.get(key) ?? { source: events[i - 1].event, target: events[i].event, count: 0 };
+        edge.count += 1;
+        edgeCounts.set(key, edge);
+      }
+    }
+
+    const firstTouchUtm = extractUtmFromRequestUrl(events[0]?.url);
+    const utmKey = firstTouchUtm.source || "Direto";
+
+    if (hasPurchase) {
+      totalBuyers += 1;
+      eventsBeforePurchase.push(purchaseIndex);
+      const purchaseTs = events[purchaseIndex].ts;
+      const firstTs = events[0].ts;
+      timeToFirstPurchaseDays.push((purchaseTs - firstTs) / 86_400_000);
+      if (new Date(purchaseTs).toISOString().slice(0, 10) === new Date(firstTs).toISOString().slice(0, 10)) {
+        buyersFromFirstSession += 1;
+      }
+      const purchaseEvents = events.filter((e) => e.event === "Purchase");
+      if (purchaseEvents.length > 1) {
+        timeBetweenPurchasesDays.push((purchaseEvents[purchaseEvents.length - 1].ts - purchaseEvents[0].ts) / 86_400_000);
+      }
+
+      buyerCount += 1;
+      buyerDepthSum += events.length;
+      for (const ev of events) buyerEventCounts.set(ev.event, (buyerEventCounts.get(ev.event) ?? 0) + 1);
+      buyerUtmCounts.set(utmKey, (buyerUtmCounts.get(utmKey) ?? 0) + 1);
+    } else {
+      nonBuyerCount += 1;
+      nonBuyerDepthSum += events.length;
+      for (const ev of events) nonBuyerEventCounts.set(ev.event, (nonBuyerEventCounts.get(ev.event) ?? 0) + 1);
+      nonBuyerUtmCounts.set(utmKey, (nonBuyerUtmCounts.get(utmKey) ?? 0) + 1);
+    }
+  }
+
+  const avg = (arr: number[]): number | null => (arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : null);
+
+  const topPaths = Array.from(pathCounts.values())
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10)
+    .map((p) => ({ steps: p.steps, visitCount: p.count, conversionRate: p.count > 0 ? (p.withPurchase / p.count) * 100 : 0 }));
+
+  const eventNodes = Array.from(nodeCounts.entries()).map(([id, count]) => ({
+    id,
+    label: id,
+    count,
+    layer: VESTI_JOURNEY_LAYER[id] ?? 5,
+  }));
+  const eventEdges = Array.from(edgeCounts.values());
+
+  const buildGroup = (eventCounts: Map<string, number>, utmCounts: Map<string, number>, depthSum: number, count: number) => ({
+    avgSessionDepth: count > 0 ? depthSum / count : 0,
+    eventCounts: Array.from(eventCounts.entries()).map(([eventType, c]) => ({ eventType, count: c })).sort((a, b) => b.count - a.count),
+    topUtmSources: Array.from(utmCounts.entries()).map(([source, c]) => ({ source, count: c })).sort((a, b) => b.count - a.count).slice(0, 10),
+  });
+
+  return {
+    kpis: {
+      avgEventsBeforePurchase: avg(eventsBeforePurchase) ?? 0,
+      avgTimeToFirstPurchaseDays: avg(timeToFirstPurchaseDays),
+      avgTimeBetweenPurchasesDays: avg(timeBetweenPurchasesDays),
+      pctBuyersFromFirstSession: totalBuyers > 0 ? (buyersFromFirstSession / totalBuyers) * 100 : 0,
+    },
+    topPaths,
+    eventNodes,
+    eventEdges,
+    buyers: buildGroup(buyerEventCounts, buyerUtmCounts, buyerDepthSum, buyerCount),
+    nonBuyers: buildGroup(nonBuyerEventCounts, nonBuyerUtmCounts, nonBuyerDepthSum, nonBuyerCount),
+  };
+}
