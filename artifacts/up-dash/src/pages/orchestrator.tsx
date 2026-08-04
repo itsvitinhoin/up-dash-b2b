@@ -23,6 +23,7 @@ import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -222,6 +223,9 @@ type OrchestratorAutomationRule = {
   templateName: string | null;
   templateLanguage: string | null;
   delayMinutes: number;
+  cooldownHours: number;
+  maxSendsPerCustomerMonth: number;
+  sendOncePerCart: boolean;
   channel: string;
   approval: string;
   updatedAt: string;
@@ -263,6 +267,9 @@ type OrchestratorAutomationRulePatch = {
   templateLanguage?: string | null;
   templateCategory?: string | null;
   delayMinutes?: number;
+  cooldownHours?: number;
+  maxSendsPerCustomerMonth?: number;
+  sendOncePerCart?: boolean;
 };
 
 type OrchestratorClientSummaryResponse = {
@@ -760,6 +767,9 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
     eventType: "cart_abandoned",
     templateValue: "",
     delayMinutes: 1440,
+    cooldownHours: 24,
+    maxSendsPerCustomerMonth: 4,
+    sendOncePerCart: true,
     isEnabled: false,
   });
   const automationsQuery = useQuery<OrchestratorAutomationsResponse>({
@@ -797,12 +807,23 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
           templateLanguage: template?.language ?? null,
           templateCategory: template?.category ?? null,
           delayMinutes: newRule.delayMinutes,
+          cooldownHours: newRule.cooldownHours,
+          maxSendsPerCustomerMonth: newRule.maxSendsPerCustomerMonth,
+          sendOncePerCart: newRule.sendOncePerCart,
         }),
       });
     },
     onSuccess: () => {
       setIsCreatingRule(false);
-      setNewRule({ eventType: "cart_abandoned", templateValue: "", delayMinutes: 1440, isEnabled: false });
+      setNewRule({
+        eventType: "cart_abandoned",
+        templateValue: "",
+        delayMinutes: 1440,
+        cooldownHours: 24,
+        maxSendsPerCustomerMonth: 4,
+        sendOncePerCart: true,
+        isEnabled: false,
+      });
       void queryClient.invalidateQueries({ queryKey: ["orchestrator-automations", clientId] });
       toast.success("Nova etapa da automação criada.");
     },
@@ -966,6 +987,30 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                   {createRule.isPending ? "Criando..." : "Criar etapa"}
                 </Button>
               </div>
+              {["cart_created", "cart_abandoned"].includes(newRule.eventType) && (
+                <div className="grid gap-4 rounded-md border border-border p-4 xl:col-span-4 md:grid-cols-3">
+                  <label className="flex items-start gap-3 text-sm">
+                    <Checkbox
+                      checked={newRule.sendOncePerCart}
+                      onCheckedChange={(checked) => setNewRule((current) => ({
+                        ...current,
+                        sendOncePerCart: checked === true,
+                      }))}
+                    />
+                    <span><strong className="block font-medium">Enviar apenas 1x por carrinho</strong><span className="text-xs text-muted-foreground">Impede repetir esta etapa para o mesmo carrinho.</span></span>
+                  </label>
+                  <div className="space-y-2">
+                    <Label>Intervalo mínimo por cliente</Label>
+                    <Input type="number" min={1} max={720} value={newRule.cooldownHours} onChange={(event) => setNewRule((current) => ({ ...current, cooldownHours: Number(event.target.value || 1) }))} />
+                    <p className="text-xs text-muted-foreground">horas entre envios desta etapa</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Limite em 30 dias</Label>
+                    <Input type="number" min={1} max={100} value={newRule.maxSendsPerCustomerMonth} onChange={(event) => setNewRule((current) => ({ ...current, maxSendsPerCustomerMonth: Number(event.target.value || 1) }))} />
+                    <p className="text-xs text-muted-foreground">máximo por cliente nesta etapa</p>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -1057,6 +1102,27 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                   <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{rule.enabled ? "ON" : "OFF"}</p><p className="text-muted-foreground">status</p></div>
                   <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{rule.approval === "automatic_after_delay" ? "Auto" : "Review"}</p><p className="text-muted-foreground">envio</p></div>
                 </div>
+                {["cart_created", "cart_abandoned"].includes(rule.eventType) && (
+                  <div className="grid gap-4 rounded-md border border-border p-4 xl:col-span-4 md:grid-cols-3">
+                    <label className="flex items-start gap-3 text-sm">
+                      <Checkbox
+                        checked={rule.sendOncePerCart}
+                        onCheckedChange={(checked) => updateRule.mutate({ ruleId: rule.id, patch: { sendOncePerCart: checked === true } })}
+                      />
+                      <span><strong className="block font-medium">Enviar apenas 1x por carrinho</strong><span className="text-xs text-muted-foreground">Evita repetir esta etapa quando o mesmo carrinho for atualizado.</span></span>
+                    </label>
+                    <div className="space-y-2">
+                      <Label>Intervalo mínimo por cliente</Label>
+                      <Input type="number" min={1} max={720} value={rule.cooldownHours} onChange={(event) => updateRule.mutate({ ruleId: rule.id, patch: { cooldownHours: Number(event.target.value || 1) } })} />
+                      <p className="text-xs text-muted-foreground">horas entre envios desta etapa</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Limite em 30 dias</Label>
+                      <Input type="number" min={1} max={100} value={rule.maxSendsPerCustomerMonth} onChange={(event) => updateRule.mutate({ ruleId: rule.id, patch: { maxSendsPerCustomerMonth: Number(event.target.value || 1) } })} />
+                      <p className="text-xs text-muted-foreground">máximo por cliente nesta etapa</p>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           );

@@ -209,6 +209,9 @@ const UpdateAutomationRuleBody = z.object({
   templateLanguage: z.string().trim().nullable().optional(),
   templateCategory: z.string().trim().nullable().optional(),
   delayMinutes: z.coerce.number().int().min(0).max(10080).optional(),
+  cooldownHours: z.coerce.number().int().min(1).max(720).optional(),
+  maxSendsPerCustomerMonth: z.coerce.number().int().min(1).max(100).optional(),
+  sendOncePerCart: z.boolean().optional(),
 });
 
 const CreateAutomationRuleBody = z.object({
@@ -220,6 +223,9 @@ const CreateAutomationRuleBody = z.object({
   templateLanguage: z.string().trim().nullable().optional(),
   templateCategory: z.string().trim().nullable().optional(),
   delayMinutes: z.coerce.number().int().min(0).max(10080).default(0),
+  cooldownHours: z.coerce.number().int().min(1).max(720).default(24),
+  maxSendsPerCustomerMonth: z.coerce.number().int().min(1).max(100).default(4),
+  sendOncePerCart: z.boolean().optional().default(true),
 });
 
 const UpdateCommercialOperationBody = z.object({
@@ -983,6 +989,9 @@ async function buildAutomationRules(clientId: string) {
       templateName: commercialAutomationRulesTable.templateName,
       templateLanguage: commercialAutomationRulesTable.templateLanguage,
       delayMinutes: commercialAutomationRulesTable.delayMinutes,
+      cooldownHours: commercialAutomationRulesTable.cooldownHours,
+      maxSendsPerCustomerMonth: commercialAutomationRulesTable.maxSendsPerCustomerMonth,
+      conditions: commercialAutomationRulesTable.conditions,
       createdAt: commercialAutomationRulesTable.createdAt,
       updatedAt: commercialAutomationRulesTable.updatedAt,
     })
@@ -993,7 +1002,12 @@ async function buildAutomationRules(clientId: string) {
       commercialAutomationRulesTable.delayMinutes,
       commercialAutomationRulesTable.createdAt,
     );
-  return normalizeAutomationRuleSteps(rows, normalizeAutomationEventType);
+  return normalizeAutomationRuleSteps(rows, normalizeAutomationEventType).map((rule) => ({
+    ...rule,
+    sendOncePerCart: !rule.conditions
+      || typeof rule.conditions !== "object"
+      || (rule.conditions as Record<string, unknown>).sendOncePerCart !== false,
+  }));
 }
 
 async function buildAutomationEventOptions(clientId: string) {
@@ -1266,6 +1280,8 @@ async function scheduleAutomationJobsForEvent(params: {
       templateCategory: commercialAutomationRulesTable.templateCategory,
       delayMinutes: commercialAutomationRulesTable.delayMinutes,
       cooldownHours: commercialAutomationRulesTable.cooldownHours,
+      maxSendsPerCustomerMonth: commercialAutomationRulesTable.maxSendsPerCustomerMonth,
+      conditions: commercialAutomationRulesTable.conditions,
       isEnabled: commercialAutomationRulesTable.isEnabled,
     })
     .from(commercialAutomationRulesTable)
@@ -1295,6 +1311,9 @@ async function scheduleAutomationJobsForEvent(params: {
   );
 
   for (const rule of rules) {
+    const sendOncePerCart = !rule.conditions
+      || typeof rule.conditions !== "object"
+      || (rule.conditions as Record<string, unknown>).sendOncePerCart !== false;
     const dedupeKey = getCartAutomationDedupeKey({
       eventType: params.eventType,
       payload: params.payload,
@@ -1319,7 +1338,7 @@ async function scheduleAutomationJobsForEvent(params: {
         sql`${commercialAutomationJobsTable.renderedPayload}->>'to' = ${to}`,
         sql`${commercialAutomationJobsTable.renderedPayload}->>'templateName' = ${rule.templateName}`,
       ];
-      if (cartAutomationIdentity) {
+      if (cartAutomationIdentity && sendOncePerCart) {
         duplicateConditions.push(sql`(
           COALESCE(
             ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
@@ -1454,7 +1473,7 @@ async function scheduleAutomationJobsForEvent(params: {
           sql`${commercialAutomationJobsTable.renderedPayload}->>'to' = ${to}`,
           sql`${commercialAutomationJobsTable.renderedPayload}->>'templateName' = ${rule.templateName}`,
         ];
-        if (cartAutomationIdentity) {
+        if (cartAutomationIdentity && sendOncePerCart) {
           finalDuplicateConditions.push(sql`(
             COALESCE(
               ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
@@ -1474,23 +1493,48 @@ async function scheduleAutomationJobsForEvent(params: {
           ));
         }
 
+        const [monthlyUsage] = await tx
+          .select({ total: sql<number>`COUNT(*)::int` })
+          .from(commercialAutomationJobsTable)
+          .where(and(
+            eq(commercialAutomationJobsTable.clientId, params.clientId),
+            eq(commercialAutomationJobsTable.ruleId, rule.id),
+            sql`${commercialAutomationJobsTable.status} IN ('scheduled', 'processing', 'sent')`,
+            sql`${commercialAutomationJobsTable.renderedPayload}->>'to' = ${to}`,
+            gte(commercialAutomationJobsTable.createdAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+          ));
+        if ((monthlyUsage?.total ?? 0) >= Math.max(rule.maxSendsPerCustomerMonth ?? 4, 1)) {
+          return { jobs: [], reason: "customer_30_day_limit" };
+        }
+
         const [concurrentDuplicate] = await tx
           .select({ id: commercialAutomationJobsTable.id })
           .from(commercialAutomationJobsTable)
           .where(and(...finalDuplicateConditions))
           .limit(1);
-        if (concurrentDuplicate) return [];
+        if (concurrentDuplicate) {
+          return {
+            jobs: [],
+            reason: cartAutomationIdentity && sendOncePerCart
+              ? "same_cart_or_cooldown"
+              : "cooldown_active",
+          };
+        }
 
-        return tx
+        const jobs = await tx
           .insert(commercialAutomationJobsTable)
           .values(jobValues)
           .returning({ id: commercialAutomationJobsTable.id });
+        return { jobs, reason: null };
       })
-      : await db
-        .insert(commercialAutomationJobsTable)
-        .values(jobValues)
-        .returning({ id: commercialAutomationJobsTable.id });
-    const [job] = insertedJobs;
+      : {
+          jobs: await db
+            .insert(commercialAutomationJobsTable)
+            .values(jobValues)
+            .returning({ id: commercialAutomationJobsTable.id }),
+          reason: null,
+        };
+    const [job] = insertedJobs.jobs;
 
     if (!job) {
       await db.insert(commercialAutomationLogsTable).values({
@@ -1499,18 +1543,24 @@ async function scheduleAutomationJobsForEvent(params: {
         eventType: params.eventType,
         action: "automation_duplicate_skipped",
         status: "info",
-        message: `Automação ${rule.name} ignorada porque este carrinho já possui o mesmo disparo agendado ou processado.`,
+        message: insertedJobs.reason === "customer_30_day_limit"
+          ? `Automação ${rule.name} ignorada: o cliente atingiu o limite de ${rule.maxSendsPerCustomerMonth ?? 4} envio(s) desta etapa em 30 dias.`
+          : `Automação ${rule.name} ignorada: este carrinho já recebeu a etapa ou o intervalo mínimo de ${rule.cooldownHours ?? 24} hora(s) ainda está ativo.`,
         metadata: {
           eventRecordId: params.eventRecordId,
           dedupeKey,
           recipient: maskWhatsappRecipient(to),
+          reason: insertedJobs.reason,
+          sendOncePerCart,
+          cooldownHours: rule.cooldownHours,
+          maxSendsPerCustomerMonth: rule.maxSendsPerCustomerMonth,
         },
       });
       scheduled.push({
         ruleId: rule.id,
         jobId: null,
         status: "duplicate",
-        reason: "cart_automation_idempotency",
+        reason: insertedJobs.reason ?? "cart_automation_idempotency",
       });
       continue;
     }
@@ -2700,6 +2750,9 @@ router.post("/orchestrator/automations", requireAdmin, async (req, res): Promise
       templateLanguage: parsed.data.templateLanguage || null,
       templateCategory: parsed.data.templateCategory || null,
       delayMinutes: parsed.data.delayMinutes,
+      cooldownHours: parsed.data.cooldownHours,
+      maxSendsPerCustomerMonth: parsed.data.maxSendsPerCustomerMonth,
+      conditions: { sendOncePerCart: parsed.data.sendOncePerCart },
     })
     .returning();
 
@@ -2715,6 +2768,9 @@ router.post("/orchestrator/automations", requireAdmin, async (req, res): Promise
       isEnabled: created.isEnabled,
       templateName: created.templateName,
       delayMinutes: created.delayMinutes,
+      cooldownHours: created.cooldownHours,
+      maxSendsPerCustomerMonth: created.maxSendsPerCustomerMonth,
+      sendOncePerCart: parsed.data.sendOncePerCart,
     },
   });
 
@@ -2787,6 +2843,7 @@ router.patch("/orchestrator/automations/:ruleId", requireAdmin, async (req, res)
       id: commercialAutomationRulesTable.id,
       clientId: commercialAutomationRulesTable.clientId,
       eventType: commercialAutomationRulesTable.eventType,
+      conditions: commercialAutomationRulesTable.conditions,
     })
     .from(commercialAutomationRulesTable)
     .where(eq(commercialAutomationRulesTable.id, ruleId))
@@ -2828,6 +2885,20 @@ router.patch("/orchestrator/automations/:ruleId", requireAdmin, async (req, res)
       ...(patch.templateLanguage !== undefined ? { templateLanguage: patch.templateLanguage || null } : {}),
       ...(patch.templateCategory !== undefined ? { templateCategory: patch.templateCategory || null } : {}),
       ...(patch.delayMinutes !== undefined ? { delayMinutes: patch.delayMinutes } : {}),
+      ...(patch.cooldownHours !== undefined ? { cooldownHours: patch.cooldownHours } : {}),
+      ...(patch.maxSendsPerCustomerMonth !== undefined
+        ? { maxSendsPerCustomerMonth: patch.maxSendsPerCustomerMonth }
+        : {}),
+      ...(patch.sendOncePerCart !== undefined
+        ? {
+            conditions: {
+              ...(rule.conditions && typeof rule.conditions === "object"
+                ? rule.conditions as Record<string, unknown>
+                : {}),
+              sendOncePerCart: patch.sendOncePerCart,
+            },
+          }
+        : {}),
       updatedAt: new Date(),
     })
     .where(eq(commercialAutomationRulesTable.id, rule.id))
@@ -2844,6 +2915,11 @@ router.patch("/orchestrator/automations/:ruleId", requireAdmin, async (req, res)
       isEnabled: updated.isEnabled,
       templateName: updated.templateName,
       delayMinutes: updated.delayMinutes,
+      cooldownHours: updated.cooldownHours,
+      maxSendsPerCustomerMonth: updated.maxSendsPerCustomerMonth,
+      sendOncePerCart: updated.conditions && typeof updated.conditions === "object"
+        ? (updated.conditions as Record<string, unknown>).sendOncePerCart !== false
+        : true,
     },
   });
 
