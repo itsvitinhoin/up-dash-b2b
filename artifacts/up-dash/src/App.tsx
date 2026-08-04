@@ -1,5 +1,10 @@
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
-import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryCache,
+  MutationCache,
+} from "@tanstack/react-query";
 import { AnimatePresence } from "framer-motion";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -77,9 +82,7 @@ function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
   }, [logout]);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      {children}
-    </QueryClientProvider>
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
 }
 
@@ -103,14 +106,18 @@ function Router() {
 
         <Route path="/workspace-select">
           <AuthGuard adminOnly>
-            <PageTransition routeKey="workspace-select"><WorkspaceSelectPage /></PageTransition>
+            <PageTransition routeKey="workspace-select">
+              <WorkspaceSelectPage />
+            </PageTransition>
           </AuthGuard>
         </Route>
 
         <Route path="/dashboard">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="dashboard"><DashboardPage /></PageTransition>
+              <PageTransition routeKey="dashboard">
+                <DashboardPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -118,7 +125,9 @@ function Router() {
         <Route path="/">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="dashboard"><DashboardPage /></PageTransition>
+              <PageTransition routeKey="dashboard">
+                <DashboardPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -126,7 +135,9 @@ function Router() {
         <Route path="/funnel">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="funnel"><FunnelPage /></PageTransition>
+              <PageTransition routeKey="funnel">
+                <FunnelPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -134,7 +145,9 @@ function Router() {
         <Route path="/daily">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="daily"><DailyPage /></PageTransition>
+              <PageTransition routeKey="daily">
+                <DailyPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -142,7 +155,9 @@ function Router() {
         <Route path="/scale">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="scale"><ScalePage /></PageTransition>
+              <PageTransition routeKey="scale">
+                <ScalePage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -150,7 +165,9 @@ function Router() {
         <Route path="/customers/:customerId">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="customer-detail"><CustomerDetailPage /></PageTransition>
+              <PageTransition routeKey="customer-detail">
+                <CustomerDetailPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -158,7 +175,9 @@ function Router() {
         <Route path="/customers">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="customers"><CustomersPage /></PageTransition>
+              <PageTransition routeKey="customers">
+                <CustomersPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -166,7 +185,9 @@ function Router() {
         <Route path="/orders">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="orders"><OrdersPage /></PageTransition>
+              <PageTransition routeKey="orders">
+                <OrdersPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -174,7 +195,9 @@ function Router() {
         <Route path="/products/:productId">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="product-detail"><ProductDetailPage /></PageTransition>
+              <PageTransition routeKey="product-detail">
+                <ProductDetailPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -182,7 +205,9 @@ function Router() {
         <Route path="/products">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="products"><ProductsPage /></PageTransition>
+              <PageTransition routeKey="products">
+                <ProductsPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -190,7 +215,9 @@ function Router() {
         <Route path="/sellers/:sellerId">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="seller-detail"><SellerDetailPage /></PageTransition>
+              <PageTransition routeKey="seller-detail">
+                <SellerDetailPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -198,7 +225,9 @@ function Router() {
         <Route path="/sellers">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="sellers"><SellersPage /></PageTransition>
+              <PageTransition routeKey="sellers">
+                <SellersPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -206,7 +235,9 @@ function Router() {
         <Route path="/geography">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="geography"><GeographyPage /></PageTransition>
+              <PageTransition routeKey="geography">
+                <GeographyPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -214,7 +245,9 @@ function Router() {
         <Route path="/notifications">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="notifications"><NotificationsPage /></PageTransition>
+              <PageTransition routeKey="notifications">
+                <NotificationsPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -222,7 +255,9 @@ function Router() {
         <Route path="/compare">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="compare"><ComparePage /></PageTransition>
+              <PageTransition routeKey="compare">
+                <ComparePage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -230,7 +265,9 @@ function Router() {
         <Route path="/overview">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="overview"><OverviewPage /></PageTransition>
+              <PageTransition routeKey="overview">
+                <OverviewPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -238,7 +275,9 @@ function Router() {
         <Route path="/clients">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="clients"><ClientsPage /></PageTransition>
+              <PageTransition routeKey="clients">
+                <ClientsPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -246,7 +285,9 @@ function Router() {
         <Route path="/accesses">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="accesses"><AccessesPage /></PageTransition>
+              <PageTransition routeKey="accesses">
+                <AccessesPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -254,7 +295,9 @@ function Router() {
         <Route path="/extractions">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="extractions"><ExtractionsPage /></PageTransition>
+              <PageTransition routeKey="extractions">
+                <ExtractionsPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -262,7 +305,9 @@ function Router() {
         <Route path="/relatorios-automaticos">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="automatic-reports"><AutomaticReportsPage /></PageTransition>
+              <PageTransition routeKey="automatic-reports">
+                <AutomaticReportsPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -270,7 +315,9 @@ function Router() {
         <Route path="/marketing">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="marketing"><MarketingPage /></PageTransition>
+              <PageTransition routeKey="marketing">
+                <MarketingPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -278,7 +325,9 @@ function Router() {
         <Route path="/erp/pedidos">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="erp-orders"><ErpPage /></PageTransition>
+              <PageTransition routeKey="erp-orders">
+                <ErpPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -286,7 +335,9 @@ function Router() {
         <Route path="/erp/clientes">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="erp-customers"><ErpPage /></PageTransition>
+              <PageTransition routeKey="erp-customers">
+                <ErpPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -294,7 +345,29 @@ function Router() {
         <Route path="/erp/produtos">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="erp-products"><ErpPage /></PageTransition>
+              <PageTransition routeKey="erp-products">
+                <ErpPage />
+              </PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/erp/estoque">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="erp-stock">
+                <ErpPage />
+              </PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/erp/vendedores">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="erp-sellers">
+                <ErpPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -302,7 +375,9 @@ function Router() {
         <Route path="/erp">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="erp-overview"><ErpPage /></PageTransition>
+              <PageTransition routeKey="erp-overview">
+                <ErpPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -310,7 +385,9 @@ function Router() {
         <Route path="/performance">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="performance"><PerformancePage /></PageTransition>
+              <PageTransition routeKey="performance">
+                <PerformancePage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -318,7 +395,9 @@ function Router() {
         <Route path="/whatsapp/conversas">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="whatsapp-conversations"><WhatsappConversationsPage /></PageTransition>
+              <PageTransition routeKey="whatsapp-conversations">
+                <WhatsappConversationsPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -326,7 +405,9 @@ function Router() {
         <Route path="/whatsapp/conexoes">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="whatsapp-connections"><WhatsappConnectionsPage /></PageTransition>
+              <PageTransition routeKey="whatsapp-connections">
+                <WhatsappConnectionsPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -334,7 +415,9 @@ function Router() {
         <Route path="/whatsapp/envios">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="whatsapp-sends"><WhatsappSendsPage /></PageTransition>
+              <PageTransition routeKey="whatsapp-sends">
+                <WhatsappSendsPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -342,7 +425,9 @@ function Router() {
         <Route path="/whatsapp/templates">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="whatsapp-templates"><WhatsappTemplatesPage /></PageTransition>
+              <PageTransition routeKey="whatsapp-templates">
+                <WhatsappTemplatesPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -350,7 +435,9 @@ function Router() {
         <Route path="/whatsapp">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="whatsapp"><WhatsappPage /></PageTransition>
+              <PageTransition routeKey="whatsapp">
+                <WhatsappPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -358,7 +445,9 @@ function Router() {
         <Route path="/stock">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="stock"><StockIntelligencePage /></PageTransition>
+              <PageTransition routeKey="stock">
+                <StockIntelligencePage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -366,7 +455,9 @@ function Router() {
         <Route path="/journey">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="journey"><JourneyPage /></PageTransition>
+              <PageTransition routeKey="journey">
+                <JourneyPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -374,7 +465,9 @@ function Router() {
         <Route path="/rfm">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="rfm"><RfmPage /></PageTransition>
+              <PageTransition routeKey="rfm">
+                <RfmPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -382,7 +475,9 @@ function Router() {
         <Route path="/utm">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="utm"><UtmPage /></PageTransition>
+              <PageTransition routeKey="utm">
+                <UtmPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -390,7 +485,9 @@ function Router() {
         <Route path="/orquestrador">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="orchestrator"><OrchestratorPage /></PageTransition>
+              <PageTransition routeKey="orchestrator">
+                <OrchestratorPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -398,7 +495,9 @@ function Router() {
         <Route path="/orquestrador/crm">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="orchestrator-crm"><OrchestratorPage /></PageTransition>
+              <PageTransition routeKey="orchestrator-crm">
+                <OrchestratorPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -406,7 +505,9 @@ function Router() {
         <Route path="/orquestrador/cadastros">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="orchestrator-registrations"><OrchestratorPage /></PageTransition>
+              <PageTransition routeKey="orchestrator-registrations">
+                <OrchestratorPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -414,7 +515,9 @@ function Router() {
         <Route path="/orquestrador/automacoes">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="orchestrator-automations"><OrchestratorPage /></PageTransition>
+              <PageTransition routeKey="orchestrator-automations">
+                <OrchestratorPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -422,7 +525,9 @@ function Router() {
         <Route path="/orquestrador/configuracoes">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="orchestrator-settings"><OrchestratorPage /></PageTransition>
+              <PageTransition routeKey="orchestrator-settings">
+                <OrchestratorPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -430,7 +535,9 @@ function Router() {
         <Route path="/orquestrador/simulador">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="orchestrator-simulator"><OrchestratorPage /></PageTransition>
+              <PageTransition routeKey="orchestrator-simulator">
+                <OrchestratorPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -438,7 +545,9 @@ function Router() {
         <Route path="/orquestrador/logs">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="orchestrator-logs"><OrchestratorPage /></PageTransition>
+              <PageTransition routeKey="orchestrator-logs">
+                <OrchestratorPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -446,7 +555,9 @@ function Router() {
         <Route path="/orquestrador/clientes/:clientId">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="orchestrator-client-summary"><OrchestratorPage /></PageTransition>
+              <PageTransition routeKey="orchestrator-client-summary">
+                <OrchestratorPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -454,7 +565,9 @@ function Router() {
         <Route path="/orquestrador/clientes/:clientId/:section">
           <AuthGuard adminOnly>
             <AppLayout>
-              <PageTransition routeKey="orchestrator-client"><OrchestratorPage /></PageTransition>
+              <PageTransition routeKey="orchestrator-client">
+                <OrchestratorPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -462,7 +575,9 @@ function Router() {
         <Route path="/agente-vendas">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="sales-agent"><SalesAgentPage /></PageTransition>
+              <PageTransition routeKey="sales-agent">
+                <SalesAgentPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -470,7 +585,9 @@ function Router() {
         <Route path="/agente-vendas/crm">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="sales-agent-crm"><SalesAgentPage /></PageTransition>
+              <PageTransition routeKey="sales-agent-crm">
+                <SalesAgentPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -478,7 +595,9 @@ function Router() {
         <Route path="/agente-vendas/simulacao">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="sales-agent-simulation"><SalesAgentPage /></PageTransition>
+              <PageTransition routeKey="sales-agent-simulation">
+                <SalesAgentPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -486,7 +605,9 @@ function Router() {
         <Route path="/agente-vendas/configuracoes">
           <AuthGuard>
             <AppLayout>
-              <PageTransition routeKey="sales-agent-settings"><SalesAgentPage /></PageTransition>
+              <PageTransition routeKey="sales-agent-settings">
+                <SalesAgentPage />
+              </PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>
@@ -505,7 +626,8 @@ function ShortcutsBridge({ children }: { children: React.ReactNode }) {
     <KeyboardShortcutsProvider
       onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
       onFocusSearch={() => {
-        const focus = (window as unknown as { __focusSearch?: () => void }).__focusSearch;
+        const focus = (window as unknown as { __focusSearch?: () => void })
+          .__focusSearch;
         focus?.();
       }}
     >

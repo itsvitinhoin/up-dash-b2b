@@ -1,5 +1,10 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { db, campaignAttributionStampsTable, clientsTable, customersTable } from "@workspace/db";
+import {
+  db,
+  campaignAttributionStampsTable,
+  clientsTable,
+  customersTable,
+} from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { hashDocument } from "./upzero/customers";
 import {
@@ -14,7 +19,9 @@ import {
  * commercePlatform — um client UpZero como a Obzee pode ter ERP sem ser
  * Vesti), devolve o dataset. Senão, `null`.
  */
-export async function resolveErpDataset(clientId: string): Promise<string | null> {
+export async function resolveErpDataset(
+  clientId: string,
+): Promise<string | null> {
   const [row] = await db
     .select({ erpDataset: clientsTable.erpDataset })
     .from(clientsTable)
@@ -88,7 +95,12 @@ export async function matchErpDocumentsWithUpzero(
         eq(campaignAttributionStampsTable.customerId, customersTable.id),
       ),
     )
-    .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.documentHash, hashes)));
+    .where(
+      and(
+        eq(customersTable.clientId, clientId),
+        inArray(customersTable.documentHash, hashes),
+      ),
+    );
 
   const byHash = new Map<string, ErpDocumentMatch>();
   for (const r of rows) {
@@ -100,15 +112,17 @@ export async function matchErpDocumentsWithUpzero(
       evidenceType: r.stampEvidenceType ?? "customer_utm",
       evidenceAt: r.stampEvidenceAt ?? null,
     };
-    const paidAttribution = r.stampId || hasPaidErpCampaignSignal(attribution)
-      ? attribution
-      : null;
+    const paidAttribution =
+      r.stampId || hasPaidErpCampaignSignal(attribution) ? attribution : null;
 
     const current = byHash.get(r.documentHash);
     if (
       !current ||
       (!current.attribution && paidAttribution) ||
-      (current.attribution && paidAttribution?.evidenceAt && (!current.attribution.evidenceAt || paidAttribution.evidenceAt < current.attribution.evidenceAt))
+      (current.attribution &&
+        paidAttribution?.evidenceAt &&
+        (!current.attribution.evidenceAt ||
+          paidAttribution.evidenceAt < current.attribution.evidenceAt))
     ) {
       byHash.set(r.documentHash, {
         customerId: r.customerId,
@@ -129,7 +143,10 @@ export async function matchErpDocumentsToUpzero(
   clientId: string,
   documents: Array<string | null | undefined>,
 ): Promise<Map<string, ErpAttribution>> {
-  const identityMatches = await matchErpDocumentsWithUpzero(clientId, documents);
+  const identityMatches = await matchErpDocumentsWithUpzero(
+    clientId,
+    documents,
+  );
   const attributed = new Map<string, ErpAttribution>();
   for (const [document, match] of identityMatches) {
     if (match.attribution) attributed.set(document, match.attribution);
@@ -138,7 +155,11 @@ export async function matchErpDocumentsToUpzero(
 }
 
 function toDateOnly(value: unknown): string {
-  if (value && typeof value === "object" && "value" in (value as Record<string, unknown>)) {
+  if (
+    value &&
+    typeof value === "object" &&
+    "value" in (value as Record<string, unknown>)
+  ) {
     return String((value as { value: unknown }).value);
   }
   return String(value);
@@ -160,6 +181,9 @@ export type ErpDashboard = {
     cancelledAmount: number;
     avgTicket: number;
     returnAmount: number;
+    avgItemsPerOrder: number;
+    returnRatePct: number;
+    discountRatePct: number;
   };
   dailyRevenue: { date: string; value: number }[];
   dailyOrders: { date: string; value: number }[];
@@ -171,11 +195,33 @@ export type ErpDashboard = {
     attributedRevenue: number;
     unattributedRevenue: number;
   };
+  breakdowns: {
+    statuses: Array<{ label: string; orders: number; revenue: number }>;
+    payments: Array<{ label: string; orders: number; revenue: number }>;
+    sellers: Array<{
+      label: string;
+      orders: number;
+      revenue: number;
+      customers: number;
+    }>;
+    stores: Array<{ label: string; orders: number; revenue: number }>;
+    states: Array<{
+      label: string;
+      orders: number;
+      revenue: number;
+      customers: number;
+    }>;
+  };
 };
 
 const ERP_CANCELLED_STATUSES = ["CANCELADO", "EXCLUIDO"];
 
-export async function fetchErpDashboard(clientId: string, dataset: string, dateFrom: string, dateTo: string): Promise<ErpDashboard> {
+export async function fetchErpDashboard(
+  clientId: string,
+  dataset: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<ErpDashboard> {
   const pedidos = vestiTable(dataset, "pedidos_erp");
   const clientes = vestiTable(dataset, "clientes_erp");
   const cancelledList = ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ");
@@ -236,10 +282,22 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
   });
 
   const raw = dailyRows as Array<Record<string, unknown>>;
-  const dailyRevenue = raw.map((r) => ({ date: toDateOnly(r.date), value: Number(r.net_revenue) || 0 }));
-  const dailyOrders = raw.map((r) => ({ date: toDateOnly(r.date), value: Number(r.orders) || 0 }));
-  const dailyNewCustomers = raw.map((r) => ({ date: toDateOnly(r.date), value: Number(r.new_customers) || 0 }));
-  const dailyReturningCustomers = raw.map((r) => ({ date: toDateOnly(r.date), value: Number(r.returning_customers) || 0 }));
+  const dailyRevenue = raw.map((r) => ({
+    date: toDateOnly(r.date),
+    value: Number(r.net_revenue) || 0,
+  }));
+  const dailyOrders = raw.map((r) => ({
+    date: toDateOnly(r.date),
+    value: Number(r.orders) || 0,
+  }));
+  const dailyNewCustomers = raw.map((r) => ({
+    date: toDateOnly(r.date),
+    value: Number(r.new_customers) || 0,
+  }));
+  const dailyReturningCustomers = raw.map((r) => ({
+    date: toDateOnly(r.date),
+    value: Number(r.returning_customers) || 0,
+  }));
 
   const [customerSegmentRows] = await bigquery.query({
     query: `
@@ -279,7 +337,9 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
     `,
     params: { dateFrom, dateTo },
   });
-  const customerSegments = (customerSegmentRows as Array<Record<string, unknown>>)[0];
+  const customerSegments = (
+    customerSegmentRows as Array<Record<string, unknown>>
+  )[0];
   const uniqueCustomers = Number(customerSegments?.unique_customers) || 0;
   const newCustomers = Number(customerSegments?.new_customers) || 0;
   const returningCustomers = Number(customerSegments?.returning_customers) || 0;
@@ -313,8 +373,13 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
     `,
     params: { dateFrom, dateTo },
   });
-  const customerRevenueRaw = customerRevenueRows as Array<Record<string, unknown>>;
-  const customerAttribution = await matchErpDocumentsToUpzero(clientId, customerRevenueRaw.map((r) => r.customer_id as string | null));
+  const customerRevenueRaw = customerRevenueRows as Array<
+    Record<string, unknown>
+  >;
+  const customerAttribution = await matchErpDocumentsToUpzero(
+    clientId,
+    customerRevenueRaw.map((r) => r.customer_id as string | null),
+  );
   let attributedCustomers = 0;
   let unattributedCustomers = 0;
   let attributedRevenue = 0;
@@ -332,14 +397,107 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
     }
   }
 
+  const [breakdownRows] = await bigquery.query({
+    query: `
+      WITH orders AS (
+        SELECT
+          pedido_id,
+          ANY_VALUE(customer_id) AS customer_id,
+          COALESCE(ANY_VALUE(status), 'NAO_IDENTIFICADO') AS status,
+          COALESCE(ANY_VALUE(payment_method), 'NAO_IDENTIFICADO') AS payment_method,
+          COALESCE(ANY_VALUE(seller), 'NAO_IDENTIFICADO') AS seller,
+          COALESCE(ANY_VALUE(store_nome), CONCAT('Loja ', CAST(ANY_VALUE(store_id) AS STRING))) AS store_name,
+          ANY_VALUE(valor_liquido) AS net_amount
+        FROM ${pedidos}
+        WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
+        GROUP BY pedido_id
+      ),
+      customer_geo AS (
+        SELECT
+          REGEXP_REPLACE(CAST(documento AS STRING), r'[^0-9]', '') AS document,
+          COALESCE(ANY_VALUE(estado), 'NAO_IDENTIFICADO') AS state
+        FROM ${clientes}
+        WHERE documento IS NOT NULL
+        GROUP BY document
+      ),
+      enriched AS (
+        SELECT o.*, COALESCE(c.state, 'NAO_IDENTIFICADO') AS state
+        FROM orders o
+        LEFT JOIN customer_geo c
+          ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
+      )
+      SELECT
+        ARRAY(
+          SELECT AS STRUCT status AS label, COUNT(*) AS orders,
+            SUM(IF(status IN (${cancelledList}), 0, net_amount)) AS revenue
+          FROM enriched GROUP BY status ORDER BY orders DESC
+        ) AS statuses,
+        ARRAY(
+          SELECT AS STRUCT payment_method AS label, COUNT(*) AS orders,
+            SUM(IF(status IN (${cancelledList}), 0, net_amount)) AS revenue
+          FROM enriched WHERE status NOT IN (${cancelledList})
+          GROUP BY payment_method ORDER BY revenue DESC LIMIT 10
+        ) AS payments,
+        ARRAY(
+          SELECT AS STRUCT seller AS label, COUNT(*) AS orders,
+            SUM(net_amount) AS revenue, COUNT(DISTINCT customer_id) AS customers
+          FROM enriched WHERE status NOT IN (${cancelledList})
+          GROUP BY seller ORDER BY revenue DESC LIMIT 10
+        ) AS sellers,
+        ARRAY(
+          SELECT AS STRUCT store_name AS label, COUNT(*) AS orders,
+            SUM(net_amount) AS revenue
+          FROM enriched WHERE status NOT IN (${cancelledList})
+          GROUP BY store_name ORDER BY revenue DESC
+        ) AS stores,
+        ARRAY(
+          SELECT AS STRUCT state AS label, COUNT(*) AS orders,
+            SUM(net_amount) AS revenue, COUNT(DISTINCT customer_id) AS customers
+          FROM enriched WHERE status NOT IN (${cancelledList})
+          GROUP BY state ORDER BY revenue DESC LIMIT 15
+        ) AS states
+    `,
+    params: { dateFrom, dateTo },
+  });
+
+  const breakdown = (breakdownRows as Array<Record<string, unknown>>)[0] ?? {};
+  const mapBreakdown = <T>(
+    value: unknown,
+    mapper: (row: Record<string, unknown>) => T,
+  ): T[] =>
+    (Array.isArray(value) ? (value as Array<Record<string, unknown>>) : []).map(
+      mapper,
+    );
+
   const netRevenue = dailyRevenue.reduce((sum, r) => sum + r.value, 0);
-  const grossRevenue = raw.reduce((sum, r) => sum + (Number(r.gross_revenue) || 0), 0);
-  const discountAmount = raw.reduce((sum, r) => sum + (Number(r.discount_amount) || 0), 0);
-  const returnAmount = raw.reduce((sum, r) => sum + (Number(r.return_amount) || 0), 0);
-  const totalQuantity = raw.reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
-  const returnedQuantity = raw.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
-  const cancelledOrders = raw.reduce((sum, r) => sum + (Number(r.cancelled_orders) || 0), 0);
-  const cancelledAmount = raw.reduce((sum, r) => sum + (Number(r.cancelled_amount) || 0), 0);
+  const grossRevenue = raw.reduce(
+    (sum, r) => sum + (Number(r.gross_revenue) || 0),
+    0,
+  );
+  const discountAmount = raw.reduce(
+    (sum, r) => sum + (Number(r.discount_amount) || 0),
+    0,
+  );
+  const returnAmount = raw.reduce(
+    (sum, r) => sum + (Number(r.return_amount) || 0),
+    0,
+  );
+  const totalQuantity = raw.reduce(
+    (sum, r) => sum + (Number(r.quantity) || 0),
+    0,
+  );
+  const returnedQuantity = raw.reduce(
+    (sum, r) => sum + (Number(r.returned_quantity) || 0),
+    0,
+  );
+  const cancelledOrders = raw.reduce(
+    (sum, r) => sum + (Number(r.cancelled_orders) || 0),
+    0,
+  );
+  const cancelledAmount = raw.reduce(
+    (sum, r) => sum + (Number(r.cancelled_amount) || 0),
+    0,
+  );
   const orders = dailyOrders.reduce((sum, r) => sum + r.value, 0);
 
   return {
@@ -354,10 +512,17 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
       uniqueCustomers,
       newCustomers,
       returningCustomers,
-      retentionPct: calculateErpRetentionPct(returningCustomers, uniqueCustomers),
+      retentionPct: calculateErpRetentionPct(
+        returningCustomers,
+        uniqueCustomers,
+      ),
       cancelledOrders,
       cancelledAmount,
       avgTicket: orders > 0 ? netRevenue / orders : 0,
+      avgItemsPerOrder: orders > 0 ? totalQuantity / orders : 0,
+      returnRatePct: grossRevenue > 0 ? (returnAmount / grossRevenue) * 100 : 0,
+      discountRatePct:
+        grossRevenue > 0 ? (discountAmount / grossRevenue) * 100 : 0,
     },
     dailyRevenue,
     dailyOrders,
@@ -369,8 +534,53 @@ export async function fetchErpDashboard(clientId: string, dataset: string, dateF
       attributedRevenue,
       unattributedRevenue,
     },
+    breakdowns: {
+      statuses: mapBreakdown(breakdown.statuses, (row) => ({
+        label: String(row.label ?? "NAO_IDENTIFICADO"),
+        orders: Number(row.orders) || 0,
+        revenue: Number(row.revenue) || 0,
+      })),
+      payments: mapBreakdown(breakdown.payments, (row) => ({
+        label: String(row.label ?? "NAO_IDENTIFICADO"),
+        orders: Number(row.orders) || 0,
+        revenue: Number(row.revenue) || 0,
+      })),
+      sellers: mapBreakdown(breakdown.sellers, (row) => ({
+        label: String(row.label ?? "NAO_IDENTIFICADO"),
+        orders: Number(row.orders) || 0,
+        revenue: Number(row.revenue) || 0,
+        customers: Number(row.customers) || 0,
+      })),
+      stores: mapBreakdown(breakdown.stores, (row) => ({
+        label: String(row.label ?? "NAO_IDENTIFICADO"),
+        orders: Number(row.orders) || 0,
+        revenue: Number(row.revenue) || 0,
+      })),
+      states: mapBreakdown(breakdown.states, (row) => ({
+        label: String(row.label ?? "NAO_IDENTIFICADO"),
+        orders: Number(row.orders) || 0,
+        revenue: Number(row.revenue) || 0,
+        customers: Number(row.customers) || 0,
+      })),
+    },
   };
 }
+
+export type ErpOrderItemRow = {
+  id: string;
+  sku: string | null;
+  productId: string | null;
+  name: string | null;
+  category: string | null;
+  color: string | null;
+  size: string | null;
+  quantity: number;
+  unitPrice: number;
+  costPrice: number;
+  discountAmount: number;
+  grossAmount: number;
+  netAmount: number;
+};
 
 export type ErpOrderRow = {
   id: string;
@@ -380,6 +590,10 @@ export type ErpOrderRow = {
   company: string | null;
   document: string | null;
   seller: string | null;
+  store: string | null;
+  paymentMethod: string | null;
+  freightAmount: number;
+  channel: string;
   status: string | null;
   requestedQuantity: number;
   fulfilledQuantity: number;
@@ -396,6 +610,7 @@ export type ErpOrderRow = {
   attributed: boolean;
   attributionEvidenceType: string | null;
   attributionEvidenceAt: string | null;
+  items: ErpOrderItemRow[];
 };
 
 export type ErpOrdersPage = { rows: ErpOrderRow[]; total: number };
@@ -421,20 +636,41 @@ export async function fetchErpOrdersPage(
         ANY_VALUE(customer_id) AS customer_id,
         ANY_VALUE(status) AS status,
         ANY_VALUE(seller) AS seller,
+        ANY_VALUE(store_nome) AS store_name,
+        ANY_VALUE(payment_method) AS payment_method,
+        COALESCE(ANY_VALUE(frete), 0) AS freight_amount,
+        COALESCE(ANY_VALUE(online), 0) AS online,
+        COALESCE(ANY_VALUE(retail), 0) AS retail,
         ANY_VALUE(valor_total) AS gross_amount,
         ANY_VALUE(desconto) AS discount_amount,
         ANY_VALUE(valor_liquido) AS net_amount,
         COALESCE(ANY_VALUE(devolucao), 0) AS return_amount,
         COALESCE(ANY_VALUE(devolucao_quantidade), 0) AS returned_quantity,
         SUM(item_quantidade) AS requested_quantity,
-        ANY_VALUE(data_criado) AS created_at
+        ANY_VALUE(data_criado) AS created_at,
+        ARRAY_AGG(STRUCT(
+          CAST(item_id AS STRING) AS item_id,
+          CAST(item_sku_id AS STRING) AS sku_id,
+          CAST(item_produto_id AS STRING) AS product_id,
+          item_descricao AS item_name,
+          item_categoria AS category,
+          item_cor AS color,
+          item_tamanho AS size,
+          item_quantidade AS quantity,
+          item_preco AS unit_price,
+          item_preco_custo AS cost_price,
+          item_desconto AS discount_amount,
+          item_valor_total AS gross_amount,
+          item_valor_liquido AS net_amount
+        ) ORDER BY item_descricao, item_cor, item_tamanho) AS items
       FROM ${pedidos}
       WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
       GROUP BY pedido_id
     ),
     base AS (
       SELECT
-        o.pedido_id, o.customer_id, o.status, o.seller, o.gross_amount,
+        o.pedido_id, o.customer_id, o.status, o.seller, o.store_name, o.payment_method,
+        o.freight_amount, o.online, o.retail, o.items, o.gross_amount,
         o.discount_amount, o.net_amount, o.return_amount, o.returned_quantity,
         o.requested_quantity, o.created_at,
         c.nome AS customer_name, c.marca AS company, c.documento AS document,
@@ -445,9 +681,14 @@ export async function fetchErpOrdersPage(
   `;
 
   const conditions: string[] = [];
-  if (search) conditions.push("(LOWER(customer_name) LIKE @search OR LOWER(document) LIKE @search OR CAST(pedido_id AS STRING) LIKE @search)");
+  if (search)
+    conditions.push(
+      "(LOWER(customer_name) LIKE @search OR LOWER(document) LIKE @search OR CAST(pedido_id AS STRING) LIKE @search)",
+    );
   if (status) conditions.push("status = @status");
-  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const whereClause = conditions.length
+    ? `WHERE ${conditions.join(" AND ")}`
+    : "";
   const params: Record<string, unknown> = { dateFrom, dateTo, limit, offset };
   if (search) params.search = `%${search.toLowerCase()}%`;
   if (status) params.status = status;
@@ -457,20 +698,27 @@ export async function fetchErpOrdersPage(
       query: `${baseQuery} SELECT * FROM base ${whereClause} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
       params,
     }),
-    bigquery.query({ query: `${baseQuery} SELECT COUNT(*) AS total FROM base ${whereClause}`, params }),
+    bigquery.query({
+      query: `${baseQuery} SELECT COUNT(*) AS total FROM base ${whereClause}`,
+      params,
+    }),
   ]);
 
   const rawRows = listRows as Array<Record<string, unknown>>;
   const attribution = await matchErpDocumentsToUpzero(
     clientId,
-    rawRows.map((r) => (r.document as string | null) ?? (r.customer_id as string | null)),
+    rawRows.map(
+      (r) => (r.document as string | null) ?? (r.customer_id as string | null),
+    ),
   );
 
   const rows: ErpOrderRow[] = rawRows.map((r) => {
     const customerId = (r.customer_id as string) || null;
     const document = (r.document as string) || null;
     const attributionDocument = document ?? customerId;
-    const match = attributionDocument ? attribution.get(attributionDocument) : undefined;
+    const match = attributionDocument
+      ? attribution.get(attributionDocument)
+      : undefined;
     return {
       id: String(r.pedido_id),
       createdAt: toDateOnly(r.created_at),
@@ -479,6 +727,15 @@ export async function fetchErpOrdersPage(
       company: (r.company as string) || null,
       document,
       seller: (r.seller as string) || null,
+      store: (r.store_name as string) || null,
+      paymentMethod: (r.payment_method as string) || null,
+      freightAmount: Number(r.freight_amount) || 0,
+      channel:
+        Number(r.online) === 1
+          ? "Online"
+          : Number(r.retail) === 1
+            ? "Loja física"
+            : "Não identificado",
       status: (r.status as string) || null,
       requestedQuantity: Number(r.requested_quantity) || 0,
       fulfilledQuantity: calculateErpFulfilledQuantity(
@@ -498,10 +755,31 @@ export async function fetchErpOrdersPage(
       attributed: !!match,
       attributionEvidenceType: match?.evidenceType ?? null,
       attributionEvidenceAt: match?.evidenceAt?.toISOString() ?? null,
+      items: (Array.isArray(r.items)
+        ? (r.items as Array<Record<string, unknown>>)
+        : []
+      ).map((item) => ({
+        id: String(item.item_id ?? item.sku_id ?? ""),
+        sku: item.sku_id ? String(item.sku_id) : null,
+        productId: item.product_id ? String(item.product_id) : null,
+        name: (item.item_name as string) || null,
+        category: (item.category as string) || null,
+        color: (item.color as string) || null,
+        size: (item.size as string) || null,
+        quantity: Number(item.quantity) || 0,
+        unitPrice: Number(item.unit_price) || 0,
+        costPrice: Number(item.cost_price) || 0,
+        discountAmount: Number(item.discount_amount) || 0,
+        grossAmount: Number(item.gross_amount) || 0,
+        netAmount: Number(item.net_amount) || 0,
+      })),
     };
   });
 
-  return { rows, total: Number((countRows as Array<Record<string, unknown>>)[0]?.total) || 0 };
+  return {
+    rows,
+    total: Number((countRows as Array<Record<string, unknown>>)[0]?.total) || 0,
+  };
 }
 
 export type ErpCustomerRow = {
@@ -517,6 +795,11 @@ export type ErpCustomerRow = {
   orders: number;
   totalSpent: number;
   averageTicket: number;
+  historicalOrders: number;
+  lifetimeValue: number;
+  buyerType: "NEW" | "RETURNING";
+  daysSinceLastOrder: number | null;
+  segment: "CHAMPION" | "LOYAL" | "POTENTIAL" | "AT_RISK";
   firstOrderAt: string | null;
   lastOrderAt: string | null;
   utmSource: string | null;
@@ -530,9 +813,12 @@ export type ErpCustomersPage = { rows: ErpCustomerRow[]; total: number };
 export async function fetchErpCustomersPage(
   clientId: string,
   dataset: string,
+  dateFrom: string,
+  dateTo: string,
   page: number,
   limit: number,
   search?: string,
+  filters?: { buyerType?: string; seller?: string; state?: string },
 ): Promise<ErpCustomersPage> {
   const clientes = vestiTable(dataset, "clientes_erp");
   const pedidos = vestiTable(dataset, "pedidos_erp");
@@ -540,52 +826,98 @@ export async function fetchErpCustomersPage(
   const cancelledList = ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ");
 
   const baseQuery = `
-    WITH orders_agg AS (
+    WITH order_level AS (
+      SELECT
+        pedido_id, customer_id,
+        ANY_VALUE(valor_liquido) AS net_amount,
+        ANY_VALUE(data_criado) AS created_at,
+        ANY_VALUE(status) AS status
+      FROM ${pedidos}
+      GROUP BY pedido_id, customer_id
+    ),
+    history AS (
       SELECT
         customer_id,
         COUNT(DISTINCT pedido_id) AS orders,
-        SUM(valor_liquido_dedup) AS total_spent,
+        SUM(net_amount) AS total_spent,
         MIN(created_at) AS first_order_at,
         MAX(created_at) AS last_order_at
-      FROM (
-        SELECT
-          pedido_id, customer_id,
-          ANY_VALUE(valor_liquido) AS valor_liquido_dedup,
-          ANY_VALUE(data_criado) AS created_at,
-          ANY_VALUE(status) AS status
-        FROM ${pedidos}
-        GROUP BY pedido_id, customer_id
-      )
+      FROM order_level
       WHERE status NOT IN (${cancelledList})
+      GROUP BY customer_id
+    ),
+    period_orders AS (
+      SELECT
+        customer_id,
+        COUNT(DISTINCT pedido_id) AS orders,
+        SUM(net_amount) AS total_spent
+      FROM order_level
+      WHERE status NOT IN (${cancelledList})
+        AND DATE(created_at) BETWEEN @dateFrom AND @dateTo
       GROUP BY customer_id
     ),
     base AS (
       SELECT
         c.documento AS id, c.nome AS name, c.marca AS company, c.documento AS document,
         c.email, c.celular AS phone, c.cidade AS city, c.estado AS state, c.seller,
-        COALESCE(oa.orders, 0) AS orders, COALESCE(oa.total_spent, 0) AS total_spent,
-        oa.first_order_at, oa.last_order_at
+        COALESCE(po.orders, 0) AS orders, COALESCE(po.total_spent, 0) AS total_spent,
+        COALESCE(h.orders, 0) AS historical_orders,
+        COALESCE(h.total_spent, 0) AS lifetime_value,
+        h.first_order_at, h.last_order_at,
+        IF(DATE(h.first_order_at) >= @dateFrom, 'NEW', 'RETURNING') AS buyer_type,
+        DATE_DIFF(CURRENT_DATE('America/Sao_Paulo'), DATE(h.last_order_at), DAY) AS days_since_last_order,
+        CASE
+          WHEN h.orders >= 4 AND DATE_DIFF(CURRENT_DATE('America/Sao_Paulo'), DATE(h.last_order_at), DAY) <= 60 THEN 'CHAMPION'
+          WHEN h.orders >= 2 AND DATE_DIFF(CURRENT_DATE('America/Sao_Paulo'), DATE(h.last_order_at), DAY) <= 90 THEN 'LOYAL'
+          WHEN h.orders >= 2 AND DATE_DIFF(CURRENT_DATE('America/Sao_Paulo'), DATE(h.last_order_at), DAY) > 90 THEN 'AT_RISK'
+          ELSE 'POTENTIAL'
+        END AS segment
       FROM ${clientes} c
-      LEFT JOIN orders_agg oa ON oa.customer_id = c.documento
+      JOIN period_orders po ON po.customer_id = c.documento
+      JOIN history h ON h.customer_id = c.documento
     )
   `;
 
-  const whereClause = search
-    ? `WHERE (LOWER(name) LIKE @search OR LOWER(document) LIKE @search OR LOWER(email) LIKE @search)`
+  const conditions: string[] = [];
+  const params: Record<string, unknown> = { limit, offset, dateFrom, dateTo };
+  if (search) {
+    conditions.push(
+      "(LOWER(name) LIKE @search OR LOWER(document) LIKE @search OR LOWER(email) LIKE @search)",
+    );
+    params.search = `%${search.toLowerCase()}%`;
+  }
+  if (filters?.buyerType) {
+    conditions.push("buyer_type = @buyerType");
+    params.buyerType = filters.buyerType;
+  }
+  if (filters?.seller) {
+    conditions.push("seller = @seller");
+    params.seller = filters.seller;
+  }
+  if (filters?.state) {
+    conditions.push("state = @state");
+    params.state = filters.state;
+  }
+  const whereClause = conditions.length
+    ? `WHERE ${conditions.join(" AND ")}`
     : "";
-  const params: Record<string, unknown> = { limit, offset };
-  if (search) params.search = `%${search.toLowerCase()}%`;
 
   const [[listRows], [countRows]] = await Promise.all([
     bigquery.query({
       query: `${baseQuery} SELECT * FROM base ${whereClause} ORDER BY total_spent DESC LIMIT @limit OFFSET @offset`,
       params,
     }),
-    bigquery.query({ query: `${baseQuery} SELECT COUNT(*) AS total FROM base ${whereClause}`, params }),
+    bigquery.query({
+      query: `${baseQuery} SELECT COUNT(*) AS total FROM base ${whereClause}`,
+      params,
+    }),
   ]);
 
   const rawRows = listRows as Array<Record<string, unknown>>;
-  const attribution = await matchErpDocumentsToUpzero(clientId, rawRows.map((r) => r.document as string | null));
+  const attribution = await matchErpDocumentsToUpzero(
+    clientId,
+    rawRows.map((r) => r.document as string | null),
+  );
 
   const rows: ErpCustomerRow[] = rawRows.map((r) => {
     const document = (r.document as string) || null;
@@ -602,7 +934,18 @@ export async function fetchErpCustomersPage(
       seller: (r.seller as string) || null,
       orders: Number(r.orders) || 0,
       totalSpent: Number(r.total_spent) || 0,
-      averageTicket: Number(r.orders) > 0 ? Number(r.total_spent) / Number(r.orders) : 0,
+      averageTicket:
+        Number(r.orders) > 0 ? Number(r.total_spent) / Number(r.orders) : 0,
+      historicalOrders: Number(r.historical_orders) || 0,
+      lifetimeValue: Number(r.lifetime_value) || 0,
+      buyerType: r.buyer_type === "RETURNING" ? "RETURNING" : "NEW",
+      daysSinceLastOrder:
+        r.days_since_last_order === null
+          ? null
+          : Number(r.days_since_last_order) || 0,
+      segment: ["CHAMPION", "LOYAL", "AT_RISK"].includes(String(r.segment))
+        ? (r.segment as "CHAMPION" | "LOYAL" | "AT_RISK")
+        : "POTENTIAL",
       firstOrderAt: r.first_order_at ? toDateOnly(r.first_order_at) : null,
       lastOrderAt: r.last_order_at ? toDateOnly(r.last_order_at) : null,
       utmSource: match?.utmSource ?? null,
@@ -612,7 +955,10 @@ export async function fetchErpCustomersPage(
     };
   });
 
-  return { rows, total: Number((countRows as Array<Record<string, unknown>>)[0]?.total) || 0 };
+  return {
+    rows,
+    total: Number((countRows as Array<Record<string, unknown>>)[0]?.total) || 0,
+  };
 }
 
 export type ErpProductVariantRow = {
@@ -627,6 +973,10 @@ export type ErpProductVariantRow = {
   stock: number;
   turnoverPct: number;
   salesPower: number;
+  costAmount: number;
+  grossProfit: number;
+  grossMarginPct: number;
+  coverageDays: number | null;
 };
 
 export type ErpProductRow = {
@@ -639,6 +989,10 @@ export type ErpProductRow = {
   stock: number;
   turnoverPct: number;
   salesPower: number;
+  costAmount: number;
+  grossProfit: number;
+  grossMarginPct: number;
+  coverageDays: number | null;
   variantCount: number;
   outOfStockCount: number;
   variants: ErpProductVariantRow[];
@@ -655,11 +1009,42 @@ export type ErpProductsPage = {
   outOfStockCount: number;
   turnoverPct: number;
   salesPower: number;
+  totalCost: number;
+  grossProfit: number;
+  grossMarginPct: number;
+  negativeStockCount: number;
+  coverageDays: number | null;
+  breakdowns: {
+    categories: Array<{
+      label: string;
+      units: number;
+      revenue: number;
+      stock: number;
+      salesPower: number;
+    }>;
+    colors: Array<{ label: string; units: number; revenue: number }>;
+    sizes: Array<{ label: string; units: number; revenue: number }>;
+  };
 };
 
 export async function fetchErpProductsPage(
   dataset: string,
-  filters: { search?: string; category?: string; dateFrom: string; dateTo: string; page: number; limit: number },
+  filters: {
+    search?: string;
+    category?: string;
+    stockStatus?: "in_stock" | "out_of_stock" | "negative";
+    sort?:
+      | "revenue"
+      | "units"
+      | "stock"
+      | "turnover"
+      | "sales_power"
+      | "margin";
+    dateFrom: string;
+    dateTo: string;
+    page: number;
+    limit: number;
+  },
 ): Promise<ErpProductsPage> {
   const produtos = vestiTable(dataset, "produtos_erp");
   const estoque = vestiTable(dataset, "estoque_erp");
@@ -674,18 +1059,37 @@ export async function fetchErpProductsPage(
     dateTo: filters.dateTo,
   };
   if (filters.search) {
-    conditions.push("(LOWER(product_name) LIKE @search OR LOWER(sku_id) LIKE @search OR LOWER(product_id) LIKE @search)");
+    conditions.push(
+      "(LOWER(product_name) LIKE @search OR LOWER(sku_id) LIKE @search OR LOWER(product_id) LIKE @search)",
+    );
     params.search = `%${filters.search.toLowerCase()}%`;
   }
   if (filters.category) {
     conditions.push("category = @category");
     params.category = filters.category;
   }
-  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  if (filters.stockStatus === "in_stock") conditions.push("stock > 0");
+  if (filters.stockStatus === "out_of_stock") conditions.push("stock = 0");
+  if (filters.stockStatus === "negative") conditions.push("stock < 0");
+  const whereClause = conditions.length
+    ? `WHERE ${conditions.join(" AND ")}`
+    : "";
+  const sortColumn = {
+    revenue: "revenue",
+    units: "units",
+    stock: "stock",
+    turnover: "SAFE_DIVIDE(units, units + GREATEST(stock, 0))",
+    sales_power: "sales_power",
+    margin: "SAFE_DIVIDE(revenue - cost_amount, revenue)",
+  }[filters.sort ?? "revenue"];
 
   const baseCte = `
     WITH vendas AS (
-      SELECT CAST(item_sku_id AS STRING) AS sku_id, SUM(item_quantidade) AS units, SUM(item_valor_liquido) AS revenue
+      SELECT
+        CAST(item_sku_id AS STRING) AS sku_id,
+        SUM(item_quantidade) AS units,
+        SUM(item_valor_liquido) AS revenue,
+        SUM(COALESCE(item_preco_custo, 0) * COALESCE(item_quantidade, 0)) AS cost_amount
       FROM ${pedidos}
       WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
         AND status NOT IN (${ERP_CANCELLED_STATUSES.map((status) => `'${status}'`).join(", ")})
@@ -704,6 +1108,7 @@ export async function fetchErpProductsPage(
         ANY_VALUE(p.categoria) AS category,
         ANY_VALUE(p.cor) AS color,
         ANY_VALUE(p.tamanho) AS size,
+        MAX(COALESCE(p.preco_custo, 0)) AS cost_price,
         MAX(COALESCE(
           NULLIF(p.promocao_online, 0),
           NULLIF(p.preco_online, 0),
@@ -717,8 +1122,9 @@ export async function fetchErpProductsPage(
     sku_base AS (
       SELECT
         p.sku_id, p.product_id, p.product_name, p.category, p.color, p.size,
-        p.catalog_price,
+        p.catalog_price, p.cost_price,
         COALESCE(v.units, 0) AS units, COALESCE(v.revenue, 0) AS revenue,
+        COALESCE(v.cost_amount, 0) AS cost_amount,
         COALESCE(e.stock, 0) AS stock,
         GREATEST(COALESCE(e.stock, 0), 0) * GREATEST(p.catalog_price, 0) AS sales_power
       FROM catalog p
@@ -735,6 +1141,7 @@ export async function fetchErpProductsPage(
         ANY_VALUE(category) AS category,
         SUM(units) AS units,
         SUM(revenue) AS revenue,
+        SUM(cost_amount) AS cost_amount,
         SUM(stock) AS stock,
         SUM(GREATEST(stock, 0)) AS available_stock,
         SUM(sales_power) AS sales_power,
@@ -746,6 +1153,8 @@ export async function fetchErpProductsPage(
           size,
           units,
           revenue,
+          cost_amount,
+          cost_price,
           catalog_price,
           stock,
           sales_power
@@ -755,90 +1164,119 @@ export async function fetchErpProductsPage(
     )
   `;
 
-  const [[rows], [filteredTotalRows], [totalsRows]] = await Promise.all([
-    bigquery.query({
-      query: `
+  const [[rows], [filteredTotalRows], [totalsRows], [breakdownRows]] =
+    await Promise.all([
+      bigquery.query({
+        query: `
       ${baseCte}
       SELECT * FROM products
-      ORDER BY revenue DESC
+      ORDER BY ${sortColumn} DESC
       LIMIT @limit OFFSET @offset
     `,
-      params,
-    }),
-    bigquery.query({
-      query: `${baseCte} SELECT COUNT(*) AS total FROM products`,
-      params,
-    }),
-    bigquery.query({
-      query: `
-        WITH vendas AS (
-          SELECT SUM(item_quantidade) AS units, SUM(item_valor_liquido) AS revenue
-          FROM ${pedidos}
-          WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
-            AND status NOT IN (${ERP_CANCELLED_STATUSES.map((status) => `'${status}'`).join(", ")})
-        ),
-        estoque_agg AS (
-          SELECT CAST(sku_id AS STRING) AS sku_id, SUM(estoque) AS stock
-          FROM ${estoque}
-          GROUP BY sku_id
-        ),
-        catalog AS (
-          SELECT
-            CAST(p.sku_id AS STRING) AS sku_id,
-            COALESCE(ANY_VALUE(CAST(p.produto_id AS STRING)), CAST(p.sku_id AS STRING)) AS product_id,
-            MAX(COALESCE(
-              NULLIF(p.promocao_online, 0),
-              NULLIF(p.preco_online, 0),
-              NULLIF(p.promocao_varejo, 0),
-              NULLIF(p.preco_varejo, 0),
-              0
-            )) AS catalog_price
-          FROM ${produtos} p
-          GROUP BY p.sku_id
-        ),
-        catalog_stock AS (
-          SELECT p.sku_id, p.product_id, p.catalog_price, COALESCE(e.stock, 0) AS stock
-          FROM catalog p
-          LEFT JOIN estoque_agg e ON e.sku_id = p.sku_id
-        )
+        params,
+      }),
+      bigquery.query({
+        query: `${baseCte} SELECT COUNT(*) AS total FROM products`,
+        params,
+      }),
+      bigquery.query({
+        query: `
+        ${baseCte}
         SELECT
-          (SELECT COUNT(DISTINCT product_id) FROM catalog) AS total_products,
-          (SELECT COUNT(*) FROM catalog) AS total_skus,
-          (SELECT revenue FROM vendas) AS total_revenue,
-          (SELECT units FROM vendas) AS total_units,
-          (SELECT SUM(stock) FROM catalog_stock) AS total_stock,
-          (SELECT SUM(GREATEST(stock, 0)) FROM catalog_stock) AS available_stock,
-          (SELECT COUNTIF(stock <= 0) FROM catalog_stock) AS out_of_stock_count,
-          (SELECT SUM(GREATEST(stock, 0) * GREATEST(catalog_price, 0)) FROM catalog_stock) AS sales_power
+          COUNT(DISTINCT product_id) AS total_products,
+          COUNT(*) AS total_skus,
+          SUM(revenue) AS total_revenue,
+          SUM(cost_amount) AS total_cost,
+          SUM(units) AS total_units,
+          SUM(stock) AS total_stock,
+          SUM(GREATEST(stock, 0)) AS available_stock,
+          COUNTIF(stock <= 0) AS out_of_stock_count,
+          COUNTIF(stock < 0) AS negative_stock_count,
+          SUM(sales_power) AS sales_power
+        FROM filtered_skus
       `,
-      params,
-    }),
-  ]);
+        params,
+      }),
+      bigquery.query({
+        query: `
+        ${baseCte}
+        SELECT
+          ARRAY(
+            SELECT AS STRUCT COALESCE(category, 'NAO_IDENTIFICADO') AS label,
+              SUM(units) AS units, SUM(revenue) AS revenue, SUM(stock) AS stock,
+              SUM(sales_power) AS sales_power
+            FROM filtered_skus GROUP BY label ORDER BY revenue DESC LIMIT 15
+          ) AS categories,
+          ARRAY(
+            SELECT AS STRUCT COALESCE(color, 'NAO_IDENTIFICADO') AS label,
+              SUM(units) AS units, SUM(revenue) AS revenue
+            FROM filtered_skus GROUP BY label ORDER BY revenue DESC LIMIT 15
+          ) AS colors,
+          ARRAY(
+            SELECT AS STRUCT COALESCE(size, 'NAO_IDENTIFICADO') AS label,
+              SUM(units) AS units, SUM(revenue) AS revenue
+            FROM filtered_skus GROUP BY label ORDER BY revenue DESC LIMIT 15
+          ) AS sizes
+      `,
+        params,
+      }),
+    ]);
 
   const t = (totalsRows as Array<Record<string, unknown>>)[0];
+  const breakdown = (breakdownRows as Array<Record<string, unknown>>)[0] ?? {};
+  const periodDays = Math.max(
+    1,
+    Math.round(
+      (new Date(`${filters.dateTo}T00:00:00Z`).getTime() -
+        new Date(`${filters.dateFrom}T00:00:00Z`).getTime()) /
+        86_400_000,
+    ) + 1,
+  );
+  const coverageDays = (units: number, stock: number): number | null => {
+    if (units <= 0) return null;
+    return Math.max(stock, 0) / (units / periodDays);
+  };
+  const mapBreakdown = <T>(
+    value: unknown,
+    mapper: (row: Record<string, unknown>) => T,
+  ): T[] =>
+    (Array.isArray(value) ? (value as Array<Record<string, unknown>>) : []).map(
+      mapper,
+    );
 
   return {
     rows: (rows as Array<Record<string, unknown>>).map((r) => {
       const units = Number(r.units) || 0;
       const stock = Number(r.stock) || 0;
       const availableStock = Number(r.available_stock) || 0;
-      const rawVariants = Array.isArray(r.variants) ? r.variants as Array<Record<string, unknown>> : [];
+      const rawVariants = Array.isArray(r.variants)
+        ? (r.variants as Array<Record<string, unknown>>)
+        : [];
+      const revenue = Number(r.revenue) || 0;
+      const costAmount = Number(r.cost_amount) || 0;
+      const grossProfit = revenue - costAmount;
       return {
         id: String(r.product_id),
         name: (r.product_name as string) || null,
         category: (r.category as string) || null,
         units,
-        revenue: Number(r.revenue) || 0,
-        averagePrice: units > 0 ? (Number(r.revenue) || 0) / units : 0,
+        revenue,
+        averagePrice: units > 0 ? revenue / units : 0,
         stock,
         turnoverPct: calculateErpStockTurnoverPct(units, availableStock),
         salesPower: Number(r.sales_power) || 0,
+        costAmount,
+        grossProfit,
+        grossMarginPct: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
+        coverageDays: coverageDays(units, availableStock),
         variantCount: Number(r.variant_count) || 0,
         outOfStockCount: Number(r.out_of_stock_count) || 0,
         variants: rawVariants.map((variant) => {
           const variantUnits = Number(variant.units) || 0;
           const variantStock = Number(variant.stock) || 0;
           const variantRevenue = Number(variant.revenue) || 0;
+          const variantCost = Number(variant.cost_amount) || 0;
+          const variantProfit = variantRevenue - variantCost;
           return {
             id: String(variant.sku_id),
             sku: String(variant.sku_id),
@@ -849,20 +1287,65 @@ export async function fetchErpProductsPage(
             averagePrice: variantUnits > 0 ? variantRevenue / variantUnits : 0,
             catalogPrice: Number(variant.catalog_price) || 0,
             stock: variantStock,
-            turnoverPct: calculateErpStockTurnoverPct(variantUnits, variantStock),
+            turnoverPct: calculateErpStockTurnoverPct(
+              variantUnits,
+              variantStock,
+            ),
             salesPower: Number(variant.sales_power) || 0,
+            costAmount: variantCost,
+            grossProfit: variantProfit,
+            grossMarginPct:
+              variantRevenue > 0 ? (variantProfit / variantRevenue) * 100 : 0,
+            coverageDays: coverageDays(variantUnits, variantStock),
           };
         }),
       };
     }),
     total: Number(t?.total_products) || 0,
     totalSkus: Number(t?.total_skus) || 0,
-    filteredTotal: Number((filteredTotalRows as Array<Record<string, unknown>>)[0]?.total) || 0,
+    filteredTotal:
+      Number((filteredTotalRows as Array<Record<string, unknown>>)[0]?.total) ||
+      0,
     totalRevenue: Number(t?.total_revenue) || 0,
     totalUnits: Number(t?.total_units) || 0,
     totalStock: Number(t?.total_stock) || 0,
     outOfStockCount: Number(t?.out_of_stock_count) || 0,
-    turnoverPct: calculateErpStockTurnoverPct(Number(t?.total_units) || 0, Number(t?.available_stock) || 0),
+    turnoverPct: calculateErpStockTurnoverPct(
+      Number(t?.total_units) || 0,
+      Number(t?.available_stock) || 0,
+    ),
     salesPower: Number(t?.sales_power) || 0,
+    totalCost: Number(t?.total_cost) || 0,
+    grossProfit: (Number(t?.total_revenue) || 0) - (Number(t?.total_cost) || 0),
+    grossMarginPct:
+      Number(t?.total_revenue) > 0
+        ? (((Number(t?.total_revenue) || 0) - (Number(t?.total_cost) || 0)) /
+            Number(t?.total_revenue)) *
+          100
+        : 0,
+    negativeStockCount: Number(t?.negative_stock_count) || 0,
+    coverageDays: coverageDays(
+      Number(t?.total_units) || 0,
+      Number(t?.available_stock) || 0,
+    ),
+    breakdowns: {
+      categories: mapBreakdown(breakdown.categories, (row) => ({
+        label: String(row.label ?? "NAO_IDENTIFICADO"),
+        units: Number(row.units) || 0,
+        revenue: Number(row.revenue) || 0,
+        stock: Number(row.stock) || 0,
+        salesPower: Number(row.salesPower ?? row.sales_power) || 0,
+      })),
+      colors: mapBreakdown(breakdown.colors, (row) => ({
+        label: String(row.label ?? "NAO_IDENTIFICADO"),
+        units: Number(row.units) || 0,
+        revenue: Number(row.revenue) || 0,
+      })),
+      sizes: mapBreakdown(breakdown.sizes, (row) => ({
+        label: String(row.label ?? "NAO_IDENTIFICADO"),
+        units: Number(row.units) || 0,
+        revenue: Number(row.revenue) || 0,
+      })),
+    },
   };
 }

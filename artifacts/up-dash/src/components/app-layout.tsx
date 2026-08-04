@@ -1,4 +1,11 @@
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useLocation } from "wouter";
 import { useIsFetching } from "@tanstack/react-query";
 import { Globe2 } from "lucide-react";
@@ -96,49 +103,310 @@ interface PageMeta {
 }
 
 const pageMeta: Record<string, PageMeta> = {
-  "/": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/dashboard": { title: "Overview", subtitle: "", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/daily": { title: "Daily", subtitle: "Relatório diário B2C para PDF", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/scale": { title: "Escala", subtitle: "Poder de venda, mídia e projeção de crescimento B2C", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/funnel": { title: "Conversion funnel", subtitle: "Visit through purchase", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/customers": { title: "Customers", subtitle: "RFM segmentation and lifetime value", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/orders": { title: "Orders", subtitle: "Pedidos, atendimento e origem", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/products": { title: "Products", subtitle: "Performance and ranking", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/sellers": { title: "Sellers", subtitle: "Top performers across the catalog", hasDateRange: false, hasFilterBar: true, requiresClient: true },
-  "/geography": { title: "Geography", subtitle: "Sales distribution by region", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/clients": { title: "Clients", subtitle: "Brand accounts on the platform", hasDateRange: true, hasFilterBar: false },
-  "/accesses": { title: "Acessos", subtitle: "Client logins filtered by brand", hasDateRange: false, hasFilterBar: false },
-  "/extractions": { title: "Extrações", subtitle: "Histórico dos agendamentos de dados", hasDateRange: false, hasFilterBar: false },
-  "/relatorios-automaticos": { title: "Relatórios automáticos", subtitle: "Envio interno de relatórios por WhatsApp Oficial da UP", hasDateRange: false, hasFilterBar: false },
-  "/notifications": { title: "Notifications", subtitle: "Anomalies, top movers, and rollups", hasDateRange: false, hasFilterBar: false, requiresClient: true },
-  "/compare": { title: "Compare brands", subtitle: "Benchmark up to four clients side-by-side", hasDateRange: true, hasFilterBar: false },
-  "/overview": { title: "Platform overview", subtitle: "Every brand on UP Dash, at a glance", hasDateRange: true, hasFilterBar: false },
-  "/marketing": { title: "Marketing", subtitle: "Ad spend, ROAS, CPL, and creative performance", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/erp": { title: "ERP", subtitle: "Visão operacional do Miré", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/erp/pedidos": { title: "Pedidos ERP", subtitle: "Faturamento, atendimento e situação comercial", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/erp/clientes": { title: "Clientes ERP", subtitle: "Base histórica de compradores e relacionamento", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/erp/produtos": { title: "Produtos ERP", subtitle: "Venda, grade, estoque e cobertura", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/performance": { title: "Performance", subtitle: "Mídia, ERP e e-commerce em uma visão consolidada", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/whatsapp": { title: "WhatsApp", subtitle: "Atendimento, velocidade e produtividade", hasDateRange: false, hasFilterBar: false, requiresClient: true },
-  "/whatsapp/conversas": { title: "Conversas WhatsApp", subtitle: "Inbox em tempo real por cliente", hasDateRange: false, hasFilterBar: false, requiresClient: true },
-  "/whatsapp/conexoes": { title: "Conexões WhatsApp", subtitle: "Números, webhooks e integrações por cliente", hasDateRange: false, hasFilterBar: false, requiresClient: true },
-  "/whatsapp/envios": { title: "Envios WhatsApp", subtitle: "Disparos teste e validação da Cloud API", hasDateRange: false, hasFilterBar: false, requiresClient: true },
-  "/whatsapp/templates": { title: "Templates WhatsApp", subtitle: "Criação e aprovação de modelos oficiais", hasDateRange: false, hasFilterBar: false, requiresClient: true },
-  "/stock": { title: "Stock Intelligence", subtitle: "Coverage, risk, and inventory health", hasDateRange: false, hasFilterBar: true, requiresClient: true },
-  "/journey": { title: "Journey Analytics", subtitle: "Event flow, top paths, and buyer behaviour", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/rfm": { title: "RFM Segmentation", subtitle: "Recency, frequency, and monetary analysis", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/utm": { title: "UTM / Source Analysis", subtitle: "Attribution by source, medium, and campaign", hasDateRange: true, hasFilterBar: true, requiresClient: true },
-  "/orquestrador": { title: "IA Comercial", subtitle: "Orquestrador comercial B2B com WhatsApp e UP Zero", hasDateRange: true, hasFilterBar: false },
-  "/orquestrador/crm": { title: "CRM Comercial", subtitle: "Pipeline de atendimento e oportunidades B2B", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/orquestrador/cadastros": { title: "Cadastros IA", subtitle: "Clientes captados e cadastros acompanhados pelo agente", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/orquestrador/automacoes": { title: "Automações Comerciais", subtitle: "Regras seguras por evento de e-commerce", hasDateRange: false, hasFilterBar: false },
-  "/orquestrador/configuracoes": { title: "Configurações IA", subtitle: "Limites, handoffs e operação assistida", hasDateRange: false, hasFilterBar: false },
-  "/orquestrador/simulador": { title: "Simulador IA", subtitle: "Teste de respostas antes de conectar backend real", hasDateRange: false, hasFilterBar: false },
-  "/orquestrador/logs": { title: "Logs IA", subtitle: "Auditoria visual dos eventos do orquestrador", hasDateRange: true, hasFilterBar: false },
-  "/agente-vendas": { title: "Agente de Vendas", subtitle: "IA comercial assistida para atendimento B2B", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/agente-vendas/crm": { title: "CRM do Agente", subtitle: "Pipeline comercial assistido para leads e oportunidades", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/agente-vendas/simulacao": { title: "Simulação do Agente", subtitle: "Teste respostas antes de usar em atendimento real", hasDateRange: true, hasFilterBar: false, requiresClient: true },
-  "/agente-vendas/configuracoes": { title: "Configurações do Agente", subtitle: "Regras, limites e ações permitidas", hasDateRange: false, hasFilterBar: false, requiresClient: true },
+  "/": {
+    title: "Overview",
+    subtitle: "",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/dashboard": {
+    title: "Overview",
+    subtitle: "",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/daily": {
+    title: "Daily",
+    subtitle: "Relatório diário B2C para PDF",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/scale": {
+    title: "Escala",
+    subtitle: "Poder de venda, mídia e projeção de crescimento B2C",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/funnel": {
+    title: "Conversion funnel",
+    subtitle: "Visit through purchase",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/customers": {
+    title: "Customers",
+    subtitle: "RFM segmentation and lifetime value",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/orders": {
+    title: "Orders",
+    subtitle: "Pedidos, atendimento e origem",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/products": {
+    title: "Products",
+    subtitle: "Performance and ranking",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/sellers": {
+    title: "Sellers",
+    subtitle: "Top performers across the catalog",
+    hasDateRange: false,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/geography": {
+    title: "Geography",
+    subtitle: "Sales distribution by region",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/clients": {
+    title: "Clients",
+    subtitle: "Brand accounts on the platform",
+    hasDateRange: true,
+    hasFilterBar: false,
+  },
+  "/accesses": {
+    title: "Acessos",
+    subtitle: "Client logins filtered by brand",
+    hasDateRange: false,
+    hasFilterBar: false,
+  },
+  "/extractions": {
+    title: "Extrações",
+    subtitle: "Histórico dos agendamentos de dados",
+    hasDateRange: false,
+    hasFilterBar: false,
+  },
+  "/relatorios-automaticos": {
+    title: "Relatórios automáticos",
+    subtitle: "Envio interno de relatórios por WhatsApp Oficial da UP",
+    hasDateRange: false,
+    hasFilterBar: false,
+  },
+  "/notifications": {
+    title: "Notifications",
+    subtitle: "Anomalies, top movers, and rollups",
+    hasDateRange: false,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/compare": {
+    title: "Compare brands",
+    subtitle: "Benchmark up to four clients side-by-side",
+    hasDateRange: true,
+    hasFilterBar: false,
+  },
+  "/overview": {
+    title: "Platform overview",
+    subtitle: "Every brand on UP Dash, at a glance",
+    hasDateRange: true,
+    hasFilterBar: false,
+  },
+  "/marketing": {
+    title: "Marketing",
+    subtitle: "Ad spend, ROAS, CPL, and creative performance",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/erp": {
+    title: "ERP",
+    subtitle: "Visão operacional do Miré",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/erp/pedidos": {
+    title: "Pedidos ERP",
+    subtitle: "Faturamento, atendimento e situação comercial",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/erp/clientes": {
+    title: "Clientes ERP",
+    subtitle: "Base histórica de compradores e relacionamento",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/erp/produtos": {
+    title: "Produtos ERP",
+    subtitle: "Venda, grade, estoque e cobertura",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/erp/estoque": {
+    title: "Estoque ERP",
+    subtitle: "Giro, cobertura, risco e poder de venda",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/erp/vendedores": {
+    title: "Vendedores ERP",
+    subtitle: "Produtividade comercial por vendedor e loja",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/performance": {
+    title: "Performance",
+    subtitle: "Mídia, ERP e e-commerce em uma visão consolidada",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/whatsapp": {
+    title: "WhatsApp",
+    subtitle: "Atendimento, velocidade e produtividade",
+    hasDateRange: false,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/whatsapp/conversas": {
+    title: "Conversas WhatsApp",
+    subtitle: "Inbox em tempo real por cliente",
+    hasDateRange: false,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/whatsapp/conexoes": {
+    title: "Conexões WhatsApp",
+    subtitle: "Números, webhooks e integrações por cliente",
+    hasDateRange: false,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/whatsapp/envios": {
+    title: "Envios WhatsApp",
+    subtitle: "Disparos teste e validação da Cloud API",
+    hasDateRange: false,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/whatsapp/templates": {
+    title: "Templates WhatsApp",
+    subtitle: "Criação e aprovação de modelos oficiais",
+    hasDateRange: false,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/stock": {
+    title: "Stock Intelligence",
+    subtitle: "Coverage, risk, and inventory health",
+    hasDateRange: false,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/journey": {
+    title: "Journey Analytics",
+    subtitle: "Event flow, top paths, and buyer behaviour",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/rfm": {
+    title: "RFM Segmentation",
+    subtitle: "Recency, frequency, and monetary analysis",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/utm": {
+    title: "UTM / Source Analysis",
+    subtitle: "Attribution by source, medium, and campaign",
+    hasDateRange: true,
+    hasFilterBar: true,
+    requiresClient: true,
+  },
+  "/orquestrador": {
+    title: "IA Comercial",
+    subtitle: "Orquestrador comercial B2B com WhatsApp e UP Zero",
+    hasDateRange: true,
+    hasFilterBar: false,
+  },
+  "/orquestrador/crm": {
+    title: "CRM Comercial",
+    subtitle: "Pipeline de atendimento e oportunidades B2B",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/orquestrador/cadastros": {
+    title: "Cadastros IA",
+    subtitle: "Clientes captados e cadastros acompanhados pelo agente",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/orquestrador/automacoes": {
+    title: "Automações Comerciais",
+    subtitle: "Regras seguras por evento de e-commerce",
+    hasDateRange: false,
+    hasFilterBar: false,
+  },
+  "/orquestrador/configuracoes": {
+    title: "Configurações IA",
+    subtitle: "Limites, handoffs e operação assistida",
+    hasDateRange: false,
+    hasFilterBar: false,
+  },
+  "/orquestrador/simulador": {
+    title: "Simulador IA",
+    subtitle: "Teste de respostas antes de conectar backend real",
+    hasDateRange: false,
+    hasFilterBar: false,
+  },
+  "/orquestrador/logs": {
+    title: "Logs IA",
+    subtitle: "Auditoria visual dos eventos do orquestrador",
+    hasDateRange: true,
+    hasFilterBar: false,
+  },
+  "/agente-vendas": {
+    title: "Agente de Vendas",
+    subtitle: "IA comercial assistida para atendimento B2B",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/agente-vendas/crm": {
+    title: "CRM do Agente",
+    subtitle: "Pipeline comercial assistido para leads e oportunidades",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/agente-vendas/simulacao": {
+    title: "Simulação do Agente",
+    subtitle: "Teste respostas antes de usar em atendimento real",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  "/agente-vendas/configuracoes": {
+    title: "Configurações do Agente",
+    subtitle: "Regras, limites e ações permitidas",
+    hasDateRange: false,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
 };
 
 // Sentinel value for the topbar picker when an admin selects the
@@ -182,7 +450,10 @@ function getUserDisplayName(user: ReturnType<typeof useAuth>["user"]) {
 
 function getUserInitials(displayName: string) {
   const parts = displayName.trim().split(/\s+/).filter(Boolean);
-  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
@@ -207,11 +478,13 @@ export function AppLayout({ children }: AppLayoutProps) {
   // a button that opens a palette (not an <input>), so "focusing search"
   // means opening the palette.
   useEffect(() => {
-    (window as unknown as { __focusSearch?: () => void }).__focusSearch = () => {
-      setSearchOpen(true);
-    };
+    (window as unknown as { __focusSearch?: () => void }).__focusSearch =
+      () => {
+        setSearchOpen(true);
+      };
     return () => {
-      delete (window as unknown as { __focusSearch?: () => void }).__focusSearch;
+      delete (window as unknown as { __focusSearch?: () => void })
+        .__focusSearch;
     };
   }, []);
 
@@ -229,7 +502,11 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   const { data: clientsData } = useListClients(
     { limit: 100, dashboardType: selectedDashboardMode },
-    { query: queryOpts({ enabled: user?.role === "ADMIN" && !LOCAL_UI_PREVIEW }) },
+    {
+      query: queryOpts({
+        enabled: user?.role === "ADMIN" && !LOCAL_UI_PREVIEW,
+      }),
+    },
   );
   const adminClients = useMemo(
     () =>
@@ -257,7 +534,13 @@ export function AppLayout({ children }: AppLayoutProps) {
     if (!adminClients.some((client) => client.id === selectedClientId)) {
       setSelectedClientId(null);
     }
-  }, [adminClients, clientsData, selectedClientId, setSelectedClientId, user?.role]);
+  }, [
+    adminClients,
+    clientsData,
+    selectedClientId,
+    setSelectedClientId,
+    user?.role,
+  ]);
 
   const activeClient =
     user?.role === "CLIENT"
@@ -277,11 +560,15 @@ export function AppLayout({ children }: AppLayoutProps) {
     query: queryOpts({ enabled: !LOCAL_UI_PREVIEW, refetchInterval: 60000 }),
   });
   const activeDataLoads = useIsFetching({
-    predicate: (query) => query.state.fetchStatus === "fetching" && !isBackgroundQueryKey(query.queryKey),
+    predicate: (query) =>
+      query.state.fetchStatus === "fetching" &&
+      !isBackgroundQueryKey(query.queryKey),
   });
 
   const [isGlobalSwitchLoading, setIsGlobalSwitchLoading] = useState(false);
-  const [globalSwitchReason, setGlobalSwitchReason] = useState<"client" | "period" | "context">("context");
+  const [globalSwitchReason, setGlobalSwitchReason] = useState<
+    "client" | "period" | "context"
+  >("context");
   const previousGlobalContext = useRef<{
     clientId: string;
     dateFrom: string;
@@ -294,10 +581,10 @@ export function AppLayout({ children }: AppLayoutProps) {
     () => ({
       clientId:
         user?.role === "CLIENT"
-          ? user.clientId ?? ""
+          ? (user.clientId ?? "")
           : location === "/overview"
             ? PLATFORM_PICK
-            : selectedClientId ?? "",
+            : (selectedClientId ?? ""),
       dateFrom: dateRange.from.toISOString(),
       dateTo: dateRange.to.toISOString(),
       mode: user?.role === "CLIENT" ? "CLIENT" : selectedDashboardMode,
@@ -318,8 +605,12 @@ export function AppLayout({ children }: AppLayoutProps) {
     previousGlobalContext.current = globalContext;
     if (!previous) return;
 
-    const clientChanged = previous.clientId !== globalContext.clientId || previous.mode !== globalContext.mode;
-    const periodChanged = previous.dateFrom !== globalContext.dateFrom || previous.dateTo !== globalContext.dateTo;
+    const clientChanged =
+      previous.clientId !== globalContext.clientId ||
+      previous.mode !== globalContext.mode;
+    const periodChanged =
+      previous.dateFrom !== globalContext.dateFrom ||
+      previous.dateTo !== globalContext.dateTo;
     if (!clientChanged && !periodChanged) return;
 
     globalSwitchStartedAt.current = Date.now();
@@ -349,20 +640,57 @@ export function AppLayout({ children }: AppLayoutProps) {
     return () => window.clearTimeout(settleTimer);
   }, [activeDataLoads, isGlobalSwitchLoading, globalContext]);
 
-  const meta =
-    pageMeta[location] ??
-    (location.startsWith("/products/") ? { title: "Product detail", subtitle: "Performance profile", hasDateRange: false, hasFilterBar: false, requiresClient: true } : null) ??
-    (location.startsWith("/customers/") ? { title: "Customer detail", subtitle: "Purchase history and behaviour", hasDateRange: false, hasFilterBar: false, requiresClient: true } : null) ??
-    (location.startsWith("/sellers/") ? { title: "Seller detail", subtitle: "Revenue, orders and top customers", hasDateRange: true, hasFilterBar: false, requiresClient: true } : null) ??
-    (location.startsWith("/orquestrador/clientes/") ? { title: "Operação IA Comercial", subtitle: "Configuração e qualidade por cliente B2B", hasDateRange: true, hasFilterBar: false, requiresClient: true } : null) ??
-    { title: "UP Dash", subtitle: "", hasDateRange: false, hasFilterBar: false };
+  const meta = pageMeta[location] ??
+    (location.startsWith("/products/")
+      ? {
+          title: "Product detail",
+          subtitle: "Performance profile",
+          hasDateRange: false,
+          hasFilterBar: false,
+          requiresClient: true,
+        }
+      : null) ??
+    (location.startsWith("/customers/")
+      ? {
+          title: "Customer detail",
+          subtitle: "Purchase history and behaviour",
+          hasDateRange: false,
+          hasFilterBar: false,
+          requiresClient: true,
+        }
+      : null) ??
+    (location.startsWith("/sellers/")
+      ? {
+          title: "Seller detail",
+          subtitle: "Revenue, orders and top customers",
+          hasDateRange: true,
+          hasFilterBar: false,
+          requiresClient: true,
+        }
+      : null) ??
+    (location.startsWith("/orquestrador/clientes/")
+      ? {
+          title: "Operação IA Comercial",
+          subtitle: "Configuração e qualidade por cliente B2B",
+          hasDateRange: true,
+          hasFilterBar: false,
+          requiresClient: true,
+        }
+      : null) ?? {
+      title: "UP Dash",
+      subtitle: "",
+      hasDateRange: false,
+      hasFilterBar: false,
+    };
   const pageTranslationKey =
     location === "/" || location === "/dashboard"
       ? "dashboard"
       : location === "/orders"
         ? "orders"
         : null;
-  const titleText = pageTranslationKey ? t(`page.${pageTranslationKey}.title`, meta.title) : meta.title;
+  const titleText = pageTranslationKey
+    ? t(`page.${pageTranslationKey}.title`, meta.title)
+    : meta.title;
   const subtitleText =
     location === "/" || location === "/dashboard"
       ? `${format(new Date(), "EEEE, MMM d")} · ${t("page.dashboard.live", "live data")}`
@@ -372,13 +700,27 @@ export function AppLayout({ children }: AppLayoutProps) {
   const globalLoadingClientName =
     location === "/overview"
       ? "visão da plataforma"
-      : activeClient?.name ?? (user?.role === "CLIENT" ? "sua marca" : "cliente selecionado");
+      : (activeClient?.name ??
+        (user?.role === "CLIENT" ? "sua marca" : "cliente selecionado"));
   const globalLoadingDescription =
     globalSwitchReason === "period"
       ? `Atualizando ${globalLoadingClientName} para ${format(dateRange.from, "dd/MM/yyyy")} a ${format(dateRange.to, "dd/MM/yyyy")}.`
       : `Carregando dados de ${globalLoadingClientName}.`;
 
-  const b2bOnlyRoutes = useMemo(() => new Set(["/whatsapp", "/utm", "/sellers", "/journey", "/orquestrador", "/agente-vendas", "/erp", "/performance"]), []);
+  const b2bOnlyRoutes = useMemo(
+    () =>
+      new Set([
+        "/whatsapp",
+        "/utm",
+        "/sellers",
+        "/journey",
+        "/orquestrador",
+        "/agente-vendas",
+        "/erp",
+        "/performance",
+      ]),
+    [],
+  );
   const b2cOnlyRoutes = useMemo(() => new Set(["/daily", "/scale"]), []);
   // Clientes Vesti são dashboardType=B2B (venda por atacado), mas já têm
   // relatório diário via BigQuery (ver vestiDashboardController.getDailyReport)
@@ -407,7 +749,11 @@ export function AppLayout({ children }: AppLayoutProps) {
   };
 
   const analyticsNav = [
-    { name: t("nav.dashboard", "Dashboard"), href: "/dashboard", icon: LayoutDashboard },
+    {
+      name: t("nav.dashboard", "Dashboard"),
+      href: "/dashboard",
+      icon: LayoutDashboard,
+    },
     { name: t("nav.daily", "Daily"), href: "/daily", icon: CalendarDays },
     { name: t("nav.scale", "Escala"), href: "/scale", icon: Scale },
     {
@@ -415,23 +761,73 @@ export function AppLayout({ children }: AppLayoutProps) {
       href: "/erp",
       icon: Store,
       children: [
-        { name: t("nav.erp.overview", "Visão Geral"), href: "/erp", icon: LayoutDashboard },
-        { name: t("nav.erp.orders", "Pedidos"), href: "/erp/pedidos", icon: ReceiptText },
-        { name: t("nav.erp.customers", "Clientes"), href: "/erp/clientes", icon: Users },
-        { name: t("nav.erp.products", "Produtos"), href: "/erp/produtos", icon: Package },
+        {
+          name: t("nav.erp.overview", "Visão Geral"),
+          href: "/erp",
+          icon: LayoutDashboard,
+        },
+        {
+          name: t("nav.erp.orders", "Pedidos"),
+          href: "/erp/pedidos",
+          icon: ReceiptText,
+        },
+        {
+          name: t("nav.erp.customers", "Clientes"),
+          href: "/erp/clientes",
+          icon: Users,
+        },
+        {
+          name: t("nav.erp.products", "Produtos"),
+          href: "/erp/produtos",
+          icon: Package,
+        },
+        {
+          name: t("nav.erp.stock", "Estoque"),
+          href: "/erp/estoque",
+          icon: PackageSearch,
+        },
+        {
+          name: t("nav.erp.sellers", "Vendedores e lojas"),
+          href: "/erp/vendedores",
+          icon: Users,
+        },
       ],
     },
-    { name: t("nav.performance", "Performance"), href: "/performance", icon: Gauge },
-    { name: t("nav.marketing", "Marketing"), href: "/marketing", icon: Megaphone },
+    {
+      name: t("nav.performance", "Performance"),
+      href: "/performance",
+      icon: Gauge,
+    },
+    {
+      name: t("nav.marketing", "Marketing"),
+      href: "/marketing",
+      icon: Megaphone,
+    },
     {
       name: t("nav.whatsapp", "WhatsApp"),
       href: "/whatsapp",
       icon: MessageCircle,
       children: [
-        { name: t("nav.whatsapp.conversations", "Conversas"), href: "/whatsapp/conversas", icon: MessageSquareText },
-        { name: t("nav.whatsapp.connections", "Conexões"), href: "/whatsapp/conexoes", icon: PlugZap },
-        { name: t("nav.whatsapp.sends", "Envios"), href: "/whatsapp/envios", icon: Send },
-        { name: t("nav.whatsapp.templates", "Templates"), href: "/whatsapp/templates", icon: FileText },
+        {
+          name: t("nav.whatsapp.conversations", "Conversas"),
+          href: "/whatsapp/conversas",
+          icon: MessageSquareText,
+        },
+        {
+          name: t("nav.whatsapp.connections", "Conexões"),
+          href: "/whatsapp/conexoes",
+          icon: PlugZap,
+        },
+        {
+          name: t("nav.whatsapp.sends", "Envios"),
+          href: "/whatsapp/envios",
+          icon: Send,
+        },
+        {
+          name: t("nav.whatsapp.templates", "Templates"),
+          href: "/whatsapp/templates",
+          icon: FileText,
+        },
       ],
     },
     { name: t("nav.funnel", "Funnel"), href: "/funnel", icon: Filter },
@@ -444,36 +840,98 @@ export function AppLayout({ children }: AppLayoutProps) {
     { name: t("nav.sellers", "Sellers"), href: "/sellers", icon: ShoppingBag },
     { name: t("nav.stock", "Stock"), href: "/stock", icon: PackageSearch },
   ].filter((item) => {
-    if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(item.href)) return false;
-    if (effectiveDashboardMode === "B2B" && b2cOnlyRoutes.has(item.href) && !(isVestiClient && vestiEnabledB2cRoutes.has(item.href))) return false;
+    if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(item.href))
+      return false;
+    if (
+      effectiveDashboardMode === "B2B" &&
+      b2cOnlyRoutes.has(item.href) &&
+      !(isVestiClient && vestiEnabledB2cRoutes.has(item.href))
+    )
+      return false;
     return true;
   });
 
   const workspaceNav: NavEntry[] = [
     { name: t("nav.geography", "Geography"), href: "/geography", icon: MapPin },
-    { name: t("nav.notifications", "Notifications"), href: "/notifications", icon: Bell },
+    {
+      name: t("nav.notifications", "Notifications"),
+      href: "/notifications",
+      icon: Bell,
+    },
   ];
 
   if (user?.role === "ADMIN") {
-    workspaceNav.unshift({ name: t("nav.platformOverview", "Platform overview"), href: "/overview", icon: Globe2 });
-    workspaceNav.push({ name: t("nav.compareBrands", "Compare brands"), href: "/compare", icon: GitCompareArrows });
-    workspaceNav.push({ name: t("nav.clients", "Clients"), href: "/clients", icon: Building2 });
-    workspaceNav.push({ name: t("nav.accesses", "Acessos"), href: "/accesses", icon: KeyRound });
-    workspaceNav.push({ name: t("nav.extractions", "Extrações"), href: "/extractions", icon: History });
-    workspaceNav.push({ name: t("nav.automaticReports", "Relatórios automáticos"), href: "/relatorios-automaticos", icon: FileClock });
+    workspaceNav.unshift({
+      name: t("nav.platformOverview", "Platform overview"),
+      href: "/overview",
+      icon: Globe2,
+    });
+    workspaceNav.push({
+      name: t("nav.compareBrands", "Compare brands"),
+      href: "/compare",
+      icon: GitCompareArrows,
+    });
+    workspaceNav.push({
+      name: t("nav.clients", "Clients"),
+      href: "/clients",
+      icon: Building2,
+    });
+    workspaceNav.push({
+      name: t("nav.accesses", "Acessos"),
+      href: "/accesses",
+      icon: KeyRound,
+    });
+    workspaceNav.push({
+      name: t("nav.extractions", "Extrações"),
+      href: "/extractions",
+      icon: History,
+    });
+    workspaceNav.push({
+      name: t("nav.automaticReports", "Relatórios automáticos"),
+      href: "/relatorios-automaticos",
+      icon: FileClock,
+    });
     if (selectedDashboardMode === "B2B") {
       workspaceNav.push({
         name: t("nav.orchestrator", "IA Comercial"),
         href: "/orquestrador",
         icon: Bot,
         children: [
-          { name: t("nav.orchestrator.overview", "Visão Geral"), href: "/orquestrador", icon: Sparkles },
-          { name: t("nav.orchestrator.crm", "CRM"), href: "/orquestrador/crm", icon: Workflow },
-          { name: t("nav.orchestrator.registrations", "Cadastros"), href: "/orquestrador/cadastros", icon: Users },
-          { name: t("nav.orchestrator.automations", "Automações"), href: "/orquestrador/automacoes", icon: Bot },
-          { name: t("nav.orchestrator.settings", "Configurações"), href: "/orquestrador/configuracoes", icon: Settings2 },
-          { name: t("nav.orchestrator.simulator", "Simulador"), href: "/orquestrador/simulador", icon: PlayCircle },
-          { name: t("nav.orchestrator.logs", "Logs"), href: "/orquestrador/logs", icon: FileText },
+          {
+            name: t("nav.orchestrator.overview", "Visão Geral"),
+            href: "/orquestrador",
+            icon: Sparkles,
+          },
+          {
+            name: t("nav.orchestrator.crm", "CRM"),
+            href: "/orquestrador/crm",
+            icon: Workflow,
+          },
+          {
+            name: t("nav.orchestrator.registrations", "Cadastros"),
+            href: "/orquestrador/cadastros",
+            icon: Users,
+          },
+          {
+            name: t("nav.orchestrator.automations", "Automações"),
+            href: "/orquestrador/automacoes",
+            icon: Bot,
+          },
+          {
+            name: t("nav.orchestrator.settings", "Configurações"),
+            href: "/orquestrador/configuracoes",
+            icon: Settings2,
+          },
+          {
+            name: t("nav.orchestrator.simulator", "Simulador"),
+            href: "/orquestrador/simulador",
+            icon: PlayCircle,
+          },
+          {
+            name: t("nav.orchestrator.logs", "Logs"),
+            href: "/orquestrador/logs",
+            icon: FileText,
+          },
         ],
       });
     }
@@ -483,9 +941,21 @@ export function AppLayout({ children }: AppLayoutProps) {
       href: "/agente-vendas",
       icon: Bot,
       children: [
-        { name: t("nav.salesAgent.crm", "CRM"), href: "/agente-vendas/crm", icon: Workflow },
-        { name: t("nav.salesAgent.simulation", "Simulação"), href: "/agente-vendas/simulacao", icon: PlayCircle },
-        { name: t("nav.salesAgent.settings", "Configurações"), href: "/agente-vendas/configuracoes", icon: Settings2 },
+        {
+          name: t("nav.salesAgent.crm", "CRM"),
+          href: "/agente-vendas/crm",
+          icon: Workflow,
+        },
+        {
+          name: t("nav.salesAgent.simulation", "Simulação"),
+          href: "/agente-vendas/simulacao",
+          icon: PlayCircle,
+        },
+        {
+          name: t("nav.salesAgent.settings", "Configurações"),
+          href: "/agente-vendas/configuracoes",
+          icon: Settings2,
+        },
       ],
     });
   }
@@ -495,8 +965,10 @@ export function AppLayout({ children }: AppLayoutProps) {
       location === item.href ||
       (item.href === "/dashboard" && location === "/") ||
       Boolean(item.children?.some((child) => child.href === location)) ||
-      (item.href === "/orquestrador" && location.startsWith("/orquestrador/clientes/")) ||
-      (item.href === "/agente-vendas" && location.startsWith("/agente-vendas/"));
+      (item.href === "/orquestrador" &&
+        location.startsWith("/orquestrador/clientes/")) ||
+      (item.href === "/agente-vendas" &&
+        location.startsWith("/agente-vendas/"));
     return (
       <div>
         <Link href={item.href}>
@@ -590,7 +1062,9 @@ export function AppLayout({ children }: AppLayoutProps) {
               {userDisplayName}
             </p>
             <p className="text-xs text-muted-foreground truncate">
-              {user?.role === "CLIENT" && clientData ? clientData.name : "UP Dash team"}
+              {user?.role === "CLIENT" && clientData
+                ? clientData.name
+                : "UP Dash team"}
             </p>
           </div>
         </div>
@@ -624,7 +1098,10 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <span className="sr-only">Toggle navigation</span>
               </Button>
             </SheetTrigger>
-            <SheetContent side="left" className="w-64 p-0 bg-sidebar border-border flex flex-col">
+            <SheetContent
+              side="left"
+              className="w-64 p-0 bg-sidebar border-border flex flex-col"
+            >
               <SidebarContent />
             </SheetContent>
           </Sheet>
@@ -634,7 +1111,9 @@ export function AppLayout({ children }: AppLayoutProps) {
               {titleText}
             </h1>
             {subtitleText && (
-              <p className="text-xs text-muted-foreground truncate">{subtitleText}</p>
+              <p className="text-xs text-muted-foreground truncate">
+                {subtitleText}
+              </p>
             )}
           </div>
 
@@ -647,7 +1126,9 @@ export function AppLayout({ children }: AppLayoutProps) {
               className="relative w-full h-9 bg-card border border-border rounded-md pl-10 pr-12 text-sm text-left text-muted-foreground hover:bg-accent/40 focus:outline-none focus:ring-1 focus:ring-primary"
             >
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <span className="truncate">{t("top.search", "Search SKUs, categories, customers")}</span>
+              <span className="truncate">
+                {t("top.search", "Search SKUs, categories, customers")}
+              </span>
               <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono bg-muted border border-border rounded text-muted-foreground">
                 /
               </kbd>
@@ -664,11 +1145,16 @@ export function AppLayout({ children }: AppLayoutProps) {
                     setSelectedDashboardMode(mode);
                     if (
                       mode === "B2C" &&
-                      (location.startsWith("/whatsapp") || location.startsWith("/sellers") || location === "/utm")
+                      (location.startsWith("/whatsapp") ||
+                        location.startsWith("/sellers") ||
+                        location === "/utm")
                     ) {
                       navigate("/dashboard");
                     }
-                    if (mode === "B2B" && (location === "/daily" || location === "/scale")) {
+                    if (
+                      mode === "B2B" &&
+                      (location === "/daily" || location === "/scale")
+                    ) {
                       navigate("/dashboard");
                     }
                   }}
@@ -705,7 +1191,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                   value={
                     location === "/overview"
                       ? PLATFORM_PICK
-                      : selectedClientId ?? undefined
+                      : (selectedClientId ?? undefined)
                   }
                   onValueChange={(val) => {
                     if (val === PLATFORM_PICK) {
@@ -724,7 +1210,9 @@ export function AppLayout({ children }: AppLayoutProps) {
                     data-testid="client-picker"
                     className="h-9 bg-card border-border"
                   >
-                    <SelectValue placeholder={t("top.selectClient", "Select a client")} />
+                    <SelectValue
+                      placeholder={t("top.selectClient", "Select a client")}
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem
@@ -754,7 +1242,10 @@ export function AppLayout({ children }: AppLayoutProps) {
             )}
 
             <div className="hidden sm:block w-24">
-              <Select value={language} onValueChange={(value) => setLanguage(value as typeof language)}>
+              <Select
+                value={language}
+                onValueChange={(value) => setLanguage(value as typeof language)}
+              >
                 <SelectTrigger
                   data-testid="language-picker"
                   aria-label={t("top.language", "Language")}
@@ -796,12 +1287,19 @@ export function AppLayout({ children }: AppLayoutProps) {
               aria-label={t("top.toggleTheme", "Toggle theme")}
               data-testid="theme-toggle"
             >
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {theme === "dark" ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <Moon className="h-4 w-4" />
+              )}
             </Button>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="relative h-9 w-9 rounded-full p-0">
+                <Button
+                  variant="ghost"
+                  className="relative h-9 w-9 rounded-full p-0"
+                >
                   <Avatar className="h-9 w-9 bg-primary/15">
                     <AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">
                       {userInitials}
@@ -821,11 +1319,19 @@ export function AppLayout({ children }: AppLayoutProps) {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setShortcutsOpen(true)} className="cursor-pointer">
+                <DropdownMenuItem
+                  onClick={() => setShortcutsOpen(true)}
+                  className="cursor-pointer"
+                >
                   <HelpCircle className="mr-2 h-4 w-4" />
-                  <span>{t("top.keyboardShortcuts", "Keyboard shortcuts")}</span>
+                  <span>
+                    {t("top.keyboardShortcuts", "Keyboard shortcuts")}
+                  </span>
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={logout} className="text-destructive cursor-pointer">
+                <DropdownMenuItem
+                  onClick={logout}
+                  className="text-destructive cursor-pointer"
+                >
                   <LogOut className="mr-2 h-4 w-4" />
                   <span>{t("top.logout", "Log out")}</span>
                 </DropdownMenuItem>
@@ -837,24 +1343,42 @@ export function AppLayout({ children }: AppLayoutProps) {
         {meta.hasFilterBar && <FilterBar />}
 
         <main className="flex-1 overflow-y-auto bg-background p-4 sm:p-6 md:p-8 print-area">
-          {meta.requiresClient && user?.role === "ADMIN" && !selectedClientId ? (
-            <div className="mx-auto flex max-w-xl flex-col items-center justify-center gap-4 rounded-2xl border border-dashed bg-card/50 p-10 text-center" data-testid="empty-no-client-selected">
+          {meta.requiresClient &&
+          user?.role === "ADMIN" &&
+          !selectedClientId ? (
+            <div
+              className="mx-auto flex max-w-xl flex-col items-center justify-center gap-4 rounded-2xl border border-dashed bg-card/50 p-10 text-center"
+              data-testid="empty-no-client-selected"
+            >
               <div className="rounded-full bg-muted p-3">
                 <Building2 className="h-6 w-6 text-muted-foreground" />
               </div>
               <div className="space-y-1">
                 <h2 className="text-lg font-semibold">
-                  {t("empty.selectClient.title", "Select a {mode} client to continue").replace("{mode}", selectedDashboardMode)}
+                  {t(
+                    "empty.selectClient.title",
+                    "Select a {mode} client to continue",
+                  ).replace("{mode}", selectedDashboardMode)}
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  {t("empty.selectClient.body", "This page shows data for one client at a time. Pick a client from the top selector or open the platform overview to see every brand.")}
+                  {t(
+                    "empty.selectClient.body",
+                    "This page shows data for one client at a time. Pick a client from the top selector or open the platform overview to see every brand.",
+                  )}
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2">
-                <Button onClick={() => navigate("/overview")} data-testid="link-go-to-overview">
+                <Button
+                  onClick={() => navigate("/overview")}
+                  data-testid="link-go-to-overview"
+                >
                   {t("empty.selectClient.overview", "Go to platform overview")}
                 </Button>
-                <Button variant="outline" onClick={() => navigate("/clients")} data-testid="link-go-to-clients">
+                <Button
+                  variant="outline"
+                  onClick={() => navigate("/clients")}
+                  data-testid="link-go-to-clients"
+                >
                   {t("empty.selectClient.clients", "Browse all brands")}
                 </Button>
               </div>
