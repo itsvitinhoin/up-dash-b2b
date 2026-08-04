@@ -69,6 +69,7 @@ import * as vestiDashboardController from "../controllers/vestiDashboardControll
 import * as vestiOrdersController from "../controllers/vestiOrdersController";
 import * as vestiCustomersController from "../controllers/vestiCustomersController";
 import * as vestiProductsController from "../controllers/vestiProductsController";
+import * as vestiSellersController from "../controllers/vestiSellersController";
 import * as erpController from "../controllers/erpController";
 import {
   buildCustomerTimelineResponse,
@@ -5953,6 +5954,16 @@ router.get("/analytics/sellers/:sellerId/orders", async (req, res): Promise<void
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+
+  const [sellerOrdersClientCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (sellerOrdersClientCheck?.commercePlatform === "VESTI") {
+    await vestiSellersController.getSellerOrders(req, res);
+    return;
+  }
+
   const { sellerId } = req.params;
   const page = Math.max(1, qParsed.data.page ?? 1);
   const limit = Math.min(100, Math.max(1, qParsed.data.limit ?? 25));
@@ -6034,6 +6045,16 @@ router.get("/analytics/sellers/:sellerId", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+
+  const [sellerDetailClientCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (sellerDetailClientCheck?.commercePlatform === "VESTI") {
+    await vestiSellersController.getSellerDetail(req, res);
+    return;
+  }
+
   const { sellerId } = req.params;
   const { from: dateFrom, to: dateTo } = dateRange(qParsed.data.dateFrom, qParsed.data.dateTo);
   const periodMs = dateTo.getTime() - dateFrom.getTime();
@@ -6171,6 +6192,16 @@ router.get("/analytics/sellers", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+
+  const [sellersListClientCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (sellersListClientCheck?.commercePlatform === "VESTI") {
+    await vestiSellersController.getSellers(req, res);
+    return;
+  }
+
   const { limit = 20, state } = parsed.data;
 
   const sellerConditions: SQL[] = [eq(sellersTable.clientId, clientId)];

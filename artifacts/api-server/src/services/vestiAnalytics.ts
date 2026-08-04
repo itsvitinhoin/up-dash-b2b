@@ -2331,3 +2331,217 @@ export async function fetchVestiStock(
     total: sorted.length,
   };
 }
+
+// Vendedores (Vesti) — não existe tabela de vendedor com ID sincronizada
+// (diferente do B2C, que tem `sellersTable` própria); só o nome em texto
+// livre no campo `vendedora` de `dashboard_vendas_view`. Usamos o próprio
+// nome como "id" sintético (é o que identifica um vendedor de forma
+// estável nesse lado) — mesma resolução prática já usada nos filtros de
+// vendedor do Dashboard.
+export type VestiSellerRow = { id: string; name: string; email: null; totalOrders: number; totalRevenue: number; avgTicket: number };
+
+export async function fetchVestiSellers(dataset: string, limit: number): Promise<VestiSellerRow[]> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const [rows] = await bigquery.query({
+    query: `
+      WITH pedidos AS (
+        SELECT pedido_id, ANY_VALUE(vendedora) AS vendedora, COALESCE(SUM(valor_reservado), 0) AS revenue
+        FROM ${view}
+        WHERE vendedora IS NOT NULL AND vendedora != ''
+        GROUP BY pedido_id
+      )
+      SELECT vendedora, COUNT(*) AS total_orders, COALESCE(SUM(revenue), 0) AS total_revenue
+      FROM pedidos
+      GROUP BY vendedora
+      ORDER BY total_revenue DESC
+      LIMIT @limit
+    `,
+    params: { limit },
+  });
+  return (rows as Array<Record<string, unknown>>).map((r) => {
+    const totalOrders = Number(r.total_orders) || 0;
+    const totalRevenue = Number(r.total_revenue) || 0;
+    return {
+      id: String(r.vendedora),
+      name: String(r.vendedora),
+      email: null,
+      totalOrders,
+      totalRevenue,
+      avgTicket: totalOrders > 0 ? totalRevenue / totalOrders : 0,
+    };
+  });
+}
+
+export type VestiSellerKpis = { revenue: number; orders: number; avgTicket: number; uniqueCustomers: number; approvalRate: number; conversionRate: number };
+export type VestiSellerDetail = {
+  seller: { id: string; name: string; email: null; phone: null; createdAt: string };
+  kpis: VestiSellerKpis;
+  prevKpis: VestiSellerKpis;
+  revenueOverTime: Array<{ date: string; revenue: number }>;
+  prevRevenueOverTime: Array<{ date: string; revenue: number }>;
+  categoryBreakdown: Array<{ category: string; revenue: number }>;
+  stateBreakdown: Array<{ state: string; revenue: number }>;
+} | null;
+
+async function fetchVestiSellerKpisAndSeries(
+  view: string,
+  sellerName: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<{ kpis: VestiSellerKpis; revenueOverTime: Array<{ date: string; revenue: number }> }> {
+  const [rows] = await bigquery.query({
+    query: `
+      WITH pedidos AS (
+        SELECT
+          pedido_id,
+          ANY_VALUE(data_ref) AS data_ref,
+          ANY_VALUE(pago) AS pago,
+          ANY_VALUE(cliente_id) AS cliente_id,
+          COALESCE(SUM(valor_reservado), 0) AS revenue
+        FROM ${view}
+        WHERE vendedora = @sellerName AND data_ref BETWEEN @dateFrom AND @dateTo
+        GROUP BY pedido_id
+      )
+      SELECT data_ref, pago, cliente_id, revenue
+      FROM pedidos
+    `,
+    params: { sellerName, dateFrom, dateTo },
+  });
+  const orderRows = rows as Array<Record<string, unknown>>;
+  const orders = orderRows.length;
+  const approvedOrders = orderRows.filter((r) => r.pago).length;
+  const revenue = orderRows.reduce((s, r) => s + (Number(r.revenue) || 0), 0);
+  const uniqueCustomers = new Set(orderRows.filter((r) => r.cliente_id).map((r) => String(r.cliente_id))).size;
+
+  const seriesMap = new Map<string, number>();
+  for (const r of orderRows) {
+    const date = toDateOnly(r.data_ref);
+    seriesMap.set(date, (seriesMap.get(date) ?? 0) + (Number(r.revenue) || 0));
+  }
+  const revenueOverTime = Array.from(seriesMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, rev]) => ({ date, revenue: rev }));
+
+  return {
+    kpis: {
+      revenue,
+      orders,
+      avgTicket: approvedOrders > 0 ? revenue / approvedOrders : 0,
+      uniqueCustomers,
+      approvalRate: orders > 0 ? (approvedOrders / orders) * 100 : 0,
+      conversionRate: orders > 0 ? (approvedOrders / orders) * 100 : 0,
+    },
+    revenueOverTime,
+  };
+}
+
+export async function fetchVestiSellerDetail(dataset: string, sellerName: string, dateFrom: string, dateTo: string, prevDateFrom: string, prevDateTo: string): Promise<VestiSellerDetail> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const produtos = vestiTable(dataset, "produtos_vesti");
+
+  const [current, prev, [categoryRows], [stateRows], [existsRows]] = await Promise.all([
+    fetchVestiSellerKpisAndSeries(view, sellerName, dateFrom, dateTo),
+    fetchVestiSellerKpisAndSeries(view, sellerName, prevDateFrom, prevDateTo),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(p.categories[SAFE_OFFSET(0)].name, 'Sem categoria') AS category,
+          COALESCE(SUM(v.produto_preco_unitario * v.produto_quantidade_reservada), 0) AS revenue
+        FROM ${view} v
+        JOIN ${produtos} p ON p.id = v.produto_id
+        WHERE v.vendedora = @sellerName AND v.data_ref BETWEEN @dateFrom AND @dateTo AND v.pago
+        GROUP BY category
+        ORDER BY revenue DESC
+        LIMIT 10
+      `,
+      params: { sellerName, dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `
+        SELECT COALESCE(NULLIF(estado, ''), 'Desconhecido') AS state, COALESCE(SUM(valor_reservado), 0) AS revenue
+        FROM ${view}
+        WHERE vendedora = @sellerName AND data_ref BETWEEN @dateFrom AND @dateTo AND pago
+        GROUP BY state
+        ORDER BY revenue DESC
+        LIMIT 10
+      `,
+      params: { sellerName, dateFrom, dateTo },
+    }),
+    bigquery.query({
+      query: `SELECT 1 FROM ${view} WHERE vendedora = @sellerName LIMIT 1`,
+      params: { sellerName },
+    }),
+  ]);
+
+  if ((existsRows as unknown[]).length === 0) return null;
+
+  return {
+    seller: { id: sellerName, name: sellerName, email: null, phone: null, createdAt: new Date(0).toISOString() },
+    kpis: current.kpis,
+    prevKpis: prev.kpis,
+    revenueOverTime: current.revenueOverTime,
+    prevRevenueOverTime: prev.revenueOverTime,
+    categoryBreakdown: (categoryRows as Array<Record<string, unknown>>).map((r) => ({ category: String(r.category), revenue: Number(r.revenue) || 0 })),
+    stateBreakdown: (stateRows as Array<Record<string, unknown>>).map((r) => ({ state: String(r.state), revenue: Number(r.revenue) || 0 })),
+  };
+}
+
+export type VestiSellerOrderRow = { id: string; customerId: string; customerName: string; amount: number; status: string; state: string | null; city: string | null; createdAt: string };
+
+export async function fetchVestiSellerOrders(
+  dataset: string,
+  sellerName: string,
+  dateFrom: string,
+  dateTo: string,
+  page: number,
+  limit: number,
+): Promise<{ rows: VestiSellerOrderRow[]; total: number }> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const offset = (page - 1) * limit;
+
+  const [[listRows], [countRows]] = await Promise.all([
+    bigquery.query({
+      query: `
+        WITH pedidos AS (
+          SELECT
+            pedido_id,
+            ANY_VALUE(cliente_id) AS cliente_id,
+            ANY_VALUE(cliente_nome) AS cliente_nome,
+            ANY_VALUE(status_pedido) AS status_pedido,
+            ANY_VALUE(estado) AS state,
+            ANY_VALUE(cidade) AS city,
+            ANY_VALUE(data_ref) AS data_ref,
+            COALESCE(SUM(valor_reservado), 0) AS amount
+          FROM ${view}
+          WHERE vendedora = @sellerName AND data_ref BETWEEN @dateFrom AND @dateTo
+          GROUP BY pedido_id
+        )
+        SELECT * FROM pedidos
+        ORDER BY data_ref DESC
+        LIMIT @limit OFFSET @offset
+      `,
+      params: { sellerName, dateFrom, dateTo, limit, offset },
+    }),
+    bigquery.query({
+      query: `
+        SELECT COUNT(DISTINCT pedido_id) AS total
+        FROM ${view}
+        WHERE vendedora = @sellerName AND data_ref BETWEEN @dateFrom AND @dateTo
+      `,
+      params: { sellerName, dateFrom, dateTo },
+    }),
+  ]);
+
+  return {
+    rows: (listRows as Array<Record<string, unknown>>).map((r) => ({
+      id: String(r.pedido_id),
+      customerId: r.cliente_id ? String(r.cliente_id) : "",
+      customerName: (r.cliente_nome as string) || "",
+      amount: Number(r.amount) || 0,
+      status: (r.status_pedido as string) || "",
+      state: (r.state as string) || null,
+      city: (r.city as string) || null,
+      createdAt: toDateOnly(r.data_ref),
+    })),
+    total: Number((countRows as Array<Record<string, unknown>>)[0]?.total) || 0,
+  };
+}
