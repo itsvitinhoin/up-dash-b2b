@@ -1868,3 +1868,154 @@ Não use markdown.`,
   }
   return heuristic;
 }
+
+// RFM (Vesti) — mesmas 5 faixas e mesma fórmula do lado B2C
+// (routes/analytics.ts, `deriveRfmSegment`), pra manter o contrato de
+// resposta (`GetRfmResponse`) idêntico. Existe uma tabela
+// `rfm_clientes_final` já pré-calculada no BigQuery, mas com uma
+// taxonomia de segmento diferente (12 segmentos em PT-BR) — em vez de
+// tentar mapear pra essas 5 faixas (perderia nuance e ia divergir da
+// fórmula real), recalculamos direto de `dashboard_vendas_view` +
+// `clientes_vesti`, igual todo o resto do Vesti já faz.
+const RFM_SEGMENT_ORDER = ["Champions", "Loyal", "Potential", "At Risk", "Lost"] as const;
+type VestiRfmSegmentName = (typeof RFM_SEGMENT_ORDER)[number];
+
+function deriveVestiRfmSegment(recencyDays: number, frequency: number, monetary: number): VestiRfmSegmentName {
+  if (recencyDays <= 30 && frequency >= 3 && monetary >= 3000) return "Champions";
+  if (recencyDays <= 90 && frequency >= 2) return "Loyal";
+  if (recencyDays <= 60) return "Potential";
+  if (recencyDays <= 180) return "At Risk";
+  return "Lost";
+}
+
+export type VestiRfm = {
+  segments: Array<{ segment: string; customerCount: number; revenue: number; avgTicket: number; pct: number }>;
+  composition: Array<{ month: string; Champions: number; Loyal: number; Potential: number; AtRisk: number; Lost: number }>;
+  customers: Array<{ id: string; name: string | null; email: string; segment: string; recencyDays: number; frequency: number; monetary: number }>;
+  total: number;
+};
+
+export async function fetchVestiRfm(
+  dataset: string,
+  dateFrom: string,
+  dateTo: string,
+  filters: { segment?: string; sortBy: string; sortDir: "asc" | "desc"; page: number; limit: number },
+): Promise<VestiRfm> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const clientes = vestiTable(dataset, "clientes_vesti");
+
+  const [rows] = await bigquery.query({
+    query: `
+      WITH orders_agg AS (
+        SELECT
+          cliente_id,
+          COUNT(DISTINCT pedido_id) AS frequency,
+          COALESCE(SUM(valor_reservado), 0) AS monetary,
+          MIN(data_ref) AS first_purchase_at,
+          MAX(data_ref) AS last_purchase_at
+        FROM ${view}
+        WHERE cliente_id IS NOT NULL AND data_ref BETWEEN @dateFrom AND @dateTo
+        GROUP BY cliente_id
+      )
+      SELECT
+        c.id, c.name, c.email,
+        oa.frequency, oa.monetary, oa.first_purchase_at, oa.last_purchase_at
+      FROM ${clientes} c
+      JOIN orders_agg oa ON oa.cliente_id = c.id
+    `,
+    params: { dateFrom, dateTo },
+  });
+
+  const toEnd = new Date(`${dateTo}T23:59:59`).getTime();
+  const enriched = (rows as Array<Record<string, unknown>>).map((r) => {
+    const lastPurchaseAt = r.last_purchase_at ? new Date(toDateOnly(r.last_purchase_at)) : null;
+    const recencyDays =
+      lastPurchaseAt && Number.isFinite(lastPurchaseAt.getTime())
+        ? Math.max(0, Math.round((toEnd - lastPurchaseAt.getTime()) / 86_400_000))
+        : 9999;
+    const frequency = Number(r.frequency) || 0;
+    const monetary = Number(r.monetary) || 0;
+    return {
+      id: String(r.id),
+      name: (r.name as string) || null,
+      email: String(r.email ?? ""),
+      firstPurchaseAt: r.first_purchase_at ? toDateOnly(r.first_purchase_at) : null,
+      lastPurchaseAt: r.last_purchase_at ? toDateOnly(r.last_purchase_at) : null,
+      recencyDays,
+      frequency,
+      monetary,
+      segment: deriveVestiRfmSegment(recencyDays, frequency, monetary),
+    };
+  });
+
+  const segmentAggMap = new Map<string, { customerCount: number; revenue: number }>();
+  for (const row of enriched) {
+    const current = segmentAggMap.get(row.segment) ?? { customerCount: 0, revenue: 0 };
+    current.customerCount += 1;
+    current.revenue += row.monetary;
+    segmentAggMap.set(row.segment, current);
+  }
+  const totalCustomers = enriched.length;
+  const segments = RFM_SEGMENT_ORDER.map((seg) => {
+    const agg = segmentAggMap.get(seg) ?? { customerCount: 0, revenue: 0 };
+    return {
+      segment: seg,
+      customerCount: agg.customerCount,
+      revenue: agg.revenue,
+      avgTicket: agg.customerCount > 0 ? agg.revenue / agg.customerCount : 0,
+      pct: totalCustomers > 0 ? (agg.customerCount / totalCustomers) * 100 : 0,
+    };
+  });
+
+  // Composição mensal: em qual mês cada cliente (já classificado acima)
+  // teve pedido dentro da janela — mesma lógica do lado B2C (não é uma
+  // reconstrução histórica do segmento mês a mês, é "em quais meses os
+  // clientes de cada segmento atual compraram").
+  const segmentByCustomerId = new Map(enriched.map((row) => [row.id, row.segment]));
+  const customerIds = enriched.map((row) => row.id);
+  const monthMap = new Map<string, { Champions: number; Loyal: number; Potential: number; AtRisk: number; Lost: number }>();
+  if (customerIds.length > 0) {
+    const [monthRows] = await bigquery.query({
+      query: `
+        SELECT FORMAT_DATE('%Y-%m', data_ref) AS month, cliente_id
+        FROM ${view}
+        WHERE cliente_id IN UNNEST(@customerIds) AND data_ref BETWEEN @dateFrom AND @dateTo
+        GROUP BY month, cliente_id
+      `,
+      params: { customerIds, dateFrom, dateTo },
+    });
+    for (const r of monthRows as Array<Record<string, unknown>>) {
+      const month = String(r.month);
+      const seg = segmentByCustomerId.get(String(r.cliente_id));
+      if (!seg) continue;
+      const existing = monthMap.get(month) ?? { Champions: 0, Loyal: 0, Potential: 0, AtRisk: 0, Lost: 0 };
+      if (seg === "At Risk") existing.AtRisk += 1;
+      else existing[seg as Exclude<VestiRfmSegmentName, "At Risk">] += 1;
+      monthMap.set(month, existing);
+    }
+  }
+  const composition = Array.from(monthMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, v]) => ({ month, ...v }));
+
+  const filtered = filters.segment ? enriched.filter((row) => row.segment === filters.segment) : enriched;
+  const sorted = filtered.sort((a, b) => {
+    const dir = filters.sortDir === "asc" ? 1 : -1;
+    if (filters.sortBy === "name") return dir * (a.name ?? "").localeCompare(b.name ?? "", "pt-BR");
+    if (filters.sortBy === "segment") return dir * a.segment.localeCompare(b.segment, "pt-BR");
+    const key = filters.sortBy as "recencyDays" | "frequency" | "monetary";
+    return dir * ((a[key] ?? 0) - (b[key] ?? 0));
+  });
+  const offset = (filters.page - 1) * filters.limit;
+  const customers = sorted.slice(offset, offset + filters.limit).map((row) => ({
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    segment: row.segment,
+    recencyDays: row.recencyDays,
+    frequency: row.frequency,
+    monetary: row.monetary,
+  }));
+
+  return { segments, composition, customers, total: sorted.length };
+}

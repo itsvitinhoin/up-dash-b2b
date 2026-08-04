@@ -8583,6 +8583,16 @@ router.get("/analytics/rfm", async (req, res): Promise<void> => {
   }
   const clientId = requireClient(req, res);
   if (!clientId) return;
+
+  const [rfmClientCheck] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (rfmClientCheck?.commercePlatform === "VESTI") {
+    await vestiCustomersController.getRfm(req, res);
+    return;
+  }
+
   const { page, limit, segment, sortBy, sortDir } = parsed.data;
   const orderStatus = (parsed.data as Record<string, unknown>).orderStatus as "all" | "approved" | "pending" | "rejected";
   const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;

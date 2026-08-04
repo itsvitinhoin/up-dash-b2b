@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { GetCustomerDetailParams, GetCustomerDetailQueryParams } from "@workspace/api-zod";
-import { DATE_ONLY_RE, requireClient } from "../lib/httpQuery";
+import { GetCustomerDetailParams, GetCustomerDetailQueryParams, GetRfmQueryParams, GetRfmResponse } from "@workspace/api-zod";
+import { DATE_ONLY_RE, coerceDateQuery, dateRange, requireClient, saoPauloDateOnly } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
 import { resolveClientId } from "../middlewares/auth";
 import {
@@ -11,6 +11,7 @@ import {
   fetchVestiCustomerDetail,
   fetchVestiCustomerEmail,
   fetchVestiCustomerTimeline,
+  fetchVestiRfm,
 } from "../services/vestiAnalytics";
 
 const VESTI_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -267,4 +268,31 @@ export async function getCustomerDetail(req: Request, res: Response): Promise<vo
     opportunityLevel: detail.customer.totalSpent > 5000 ? "HIGH" : detail.customer.totalOrders > 0 ? "MEDIUM" : "LOW",
     assignedSeller: null,
   });
+}
+
+export async function getRfm(req: Request, res: Response): Promise<void> {
+  const parsed = GetRfmQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+
+  const dataset = await resolveVestiDataset(clientId);
+  if (!dataset) {
+    res.status(404).json({ error: true, code: "NOT_VESTI_CLIENT", message: "Client não é Vesti ou não foi encontrado.", status: 404 });
+    return;
+  }
+
+  const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
+  const dateFromOnly = saoPauloDateOnly(from);
+  const dateToOnly = saoPauloDateOnly(to);
+  const { page, limit, segment, sortBy, sortDir } = parsed.data;
+
+  const rfm = await cached(`vesti:rfm:${dataset}:${dateFromOnly}:${dateToOnly}:${segment ?? ""}:${sortBy}:${sortDir}:${page}:${limit}`, VESTI_CACHE_TTL_MS, () =>
+    fetchVestiRfm(dataset, dateFromOnly, dateToOnly, { segment, sortBy, sortDir, page, limit }),
+  );
+
+  res.json(GetRfmResponse.parse({ ...rfm, page, limit }));
 }
