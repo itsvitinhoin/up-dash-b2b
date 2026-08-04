@@ -12,6 +12,7 @@ import {
   Clock3,
   CreditCard,
   Download,
+  Eye,
   Layers3,
   MapPin,
   Package,
@@ -34,6 +35,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   XAxis,
   YAxis,
 } from "recharts";
@@ -44,6 +46,13 @@ import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   ChartConfig,
   ChartContainer,
@@ -463,6 +472,35 @@ function StatusBadge({ status }: { status: string | null }) {
     </Badge>
   );
 }
+function CoverageDaysBadge({
+  value,
+  emptyLabel = "Sem vendas",
+}: {
+  value: number | null;
+  emptyLabel?: string;
+}) {
+  if (value === null) {
+    return (
+      <Badge variant="outline" className="text-muted-foreground">
+        {emptyLabel}
+      </Badge>
+    );
+  }
+
+  const days = Math.round(value);
+  const className =
+    days <= 15
+      ? "border-red-500/30 bg-red-500/10 text-red-500"
+      : days <= 60
+        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500"
+        : "border-amber-500/30 bg-amber-500/10 text-amber-500";
+
+  return (
+    <Badge variant="outline" className={className}>
+      {days} dias
+    </Badge>
+  );
+}
 function AttributionBadge({
   row,
 }: {
@@ -512,7 +550,7 @@ function BreakdownCard({
           <BarChart
             data={data}
             layout="vertical"
-            margin={{ left: 8, right: 16 }}
+            margin={{ left: 8, right: currency ? 82 : 56 }}
           >
             <CartesianGrid horizontal={false} strokeDasharray="3 3" />
             <XAxis type="number" hide />
@@ -539,7 +577,19 @@ function BreakdownCard({
               dataKey={valueKey}
               fill="var(--color-primary)"
               radius={[0, 4, 4, 0]}
-            />
+            >
+              <LabelList
+                dataKey={valueKey}
+                position="right"
+                className="fill-foreground"
+                fontSize={11}
+                formatter={(value: number) =>
+                  currency
+                    ? formatCurrencySmart(Number(value))
+                    : formatNumber(Number(value))
+                }
+              />
+            </Bar>
           </BarChart>
         </ChartContainer>
       </CardContent>
@@ -734,12 +784,28 @@ function ErpOverview() {
                   dataKey="primary"
                   fill="var(--color-primary)"
                   radius={[3, 3, 0, 0]}
-                />
+                >
+                  <LabelList
+                    dataKey="primary"
+                    position="top"
+                    className="fill-foreground"
+                    fontSize={10}
+                    formatter={(value: number) => formatNumber(Number(value))}
+                  />
+                </Bar>
                 <Bar
                   dataKey="secondary"
                   fill="var(--color-secondary)"
                   radius={[3, 3, 0, 0]}
-                />
+                >
+                  <LabelList
+                    dataKey="secondary"
+                    position="top"
+                    className="fill-foreground"
+                    fontSize={10}
+                    formatter={(value: number) => formatNumber(Number(value))}
+                  />
+                </Bar>
               </BarChart>
             </ChartContainer>
           </CardContent>
@@ -999,9 +1065,7 @@ function ErpOrdersView() {
               </TableHeader>
               <TableBody>
                 {isLoading && <EmptyRow colSpan={9} loading />}
-                {!isLoading && !data?.rows.length && (
-                  <EmptyRow colSpan={9} />
-                )}
+                {!isLoading && !data?.rows.length && <EmptyRow colSpan={9} />}
                 {(data?.rows ?? []).map((order) => (
                   <Fragment key={order.id}>
                     <TableRow
@@ -1148,10 +1212,144 @@ function ErpOrdersView() {
   );
 }
 
+function BuyerOrderHistoryDialog({
+  customer,
+  page,
+  onPageChange,
+  onOpenChange,
+}: {
+  customer: ErpCustomerRow | null;
+  page: number;
+  onPageChange: (page: number) => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { clientId, enabled } = useErpClientId();
+  const document = customer?.document ?? customer?.id;
+  const { data, isLoading } = useQuery<ErpOrdersResponse>({
+    queryKey: ["erp-customer-order-history", clientId, document, page],
+    queryFn: () =>
+      customFetch(
+        buildUrl("/api/analytics/erp/orders", {
+          clientId,
+          customerDocument: document,
+          allTime: "true",
+          page,
+          limit: PAGE_SIZE,
+        }),
+      ),
+    enabled: enabled && !!document,
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
+  });
+
+  return (
+    <Dialog open={!!customer} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[88vh] max-w-6xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Histórico de pedidos</DialogTitle>
+          <DialogDescription>
+            {customer?.name ?? "Comprador"} ·{" "}
+            {customer?.document ?? "Sem documento"}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-3 border-y py-4 sm:grid-cols-3">
+          <div>
+            <p className="text-xs text-muted-foreground">Pedidos históricos</p>
+            <p className="mt-1 text-lg font-semibold">
+              {formatNumber(customer?.historicalOrders ?? 0)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">
+              Valor total comprado
+            </p>
+            <p className="mt-1 text-lg font-semibold">
+              {formatCurrency(customer?.lifetimeValue ?? 0)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">
+              Ticket médio histórico
+            </p>
+            <p className="mt-1 text-lg font-semibold">
+              {formatCurrency(
+                (customer?.historicalOrders ?? 0) > 0
+                  ? (customer?.lifetimeValue ?? 0) /
+                      (customer?.historicalOrders ?? 1)
+                  : 0,
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Pedido</TableHead>
+                <TableHead>Data</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Loja / vendedor</TableHead>
+                <TableHead className="text-right">Peças</TableHead>
+                <TableHead className="text-right">Valor líquido</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading && <EmptyRow colSpan={6} loading />}
+              {!isLoading && !data?.rows.length && <EmptyRow colSpan={6} />}
+              {(data?.rows ?? []).map((order) => (
+                <TableRow key={order.id}>
+                  <TableCell>
+                    <p className="font-medium">#{order.id}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {order.paymentMethod ?? "Pagamento não identificado"}
+                    </p>
+                  </TableCell>
+                  <TableCell>
+                    {order.createdAt
+                      ? format(new Date(order.createdAt), "dd/MM/yyyy")
+                      : "—"}
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={order.status} />
+                  </TableCell>
+                  <TableCell>
+                    <p>{order.store ?? "—"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {order.seller ?? "Sem vendedor"}
+                    </p>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {formatNumber(order.requestedQuantity)}
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {formatCurrency(order.netAmount)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+
+        <Pagination
+          page={page}
+          total={data?.total ?? 0}
+          size={PAGE_SIZE}
+          onChange={onPageChange}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ErpCustomersView() {
   const [search, setSearch] = useState("");
   const [buyerType, setBuyerType] = useState("all");
   const [page, setPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [selectedCustomer, setSelectedCustomer] =
+    useState<ErpCustomerRow | null>(null);
   const [exporting, setExporting] = useState(false);
   const deferred = useDeferredValue(search.trim());
   const { dateFrom, dateTo } = usePeriod();
@@ -1313,13 +1511,33 @@ function ErpCustomersView() {
               </TableHeader>
               <TableBody>
                 {isLoading && <EmptyRow colSpan={10} loading />}
-                {!isLoading && !data?.rows.length && (
-                  <EmptyRow colSpan={10} />
-                )}
+                {!isLoading && !data?.rows.length && <EmptyRow colSpan={10} />}
                 {(data?.rows ?? []).map((c) => (
-                  <TableRow key={c.id}>
+                  <TableRow
+                    key={c.id}
+                    role="button"
+                    tabIndex={0}
+                    className="cursor-pointer hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    onClick={() => {
+                      setHistoryPage(1);
+                      setSelectedCustomer(c);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setHistoryPage(1);
+                        setSelectedCustomer(c);
+                      }
+                    }}
+                  >
                     <TableCell>
-                      <p className="min-w-52 font-medium">{c.name ?? "—"}</p>
+                      <div className="flex min-w-52 items-start gap-2">
+                        <Eye className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                        <div>
+                          <p className="font-medium">{c.name ?? "—"}</p>
+                          <p className="text-xs text-primary">Ver pedidos</p>
+                        </div>
+                      </div>
                       <p className="text-xs text-muted-foreground">
                         {c.document ?? "—"} · {c.email ?? "—"}
                       </p>
@@ -1374,6 +1592,14 @@ function ErpCustomersView() {
           />
         </CardContent>
       </Card>
+      <BuyerOrderHistoryDialog
+        customer={selectedCustomer}
+        page={historyPage}
+        onPageChange={setHistoryPage}
+        onOpenChange={(open) => {
+          if (!open) setSelectedCustomer(null);
+        }}
+      />
     </>
   );
 }
@@ -1453,9 +1679,7 @@ function ProductTable({
         </TableHeader>
         <TableBody>
           {loading && <EmptyRow colSpan={columnCount} loading />}
-          {!loading && !data?.rows.length && (
-            <EmptyRow colSpan={columnCount} />
-          )}
+          {!loading && !data?.rows.length && <EmptyRow colSpan={columnCount} />}
           {(data?.rows ?? []).map((p) => (
             <Fragment key={p.id}>
               <TableRow
@@ -1490,20 +1714,21 @@ function ProductTable({
                   {formatCurrency(p.revenue)}
                 </TableCell>
                 <TableCell className="text-right">
-                  {stockMode
-                    ? formatPercentage(p.grossMarginPct)
-                    : p.coverageDays === null
-                      ? "Sem vendas"
-                      : `${Math.round(p.coverageDays)} dias`}
+                  {stockMode ? (
+                    formatPercentage(p.grossMarginPct)
+                  ) : (
+                    <CoverageDaysBadge value={p.coverageDays} />
+                  )}
                 </TableCell>
                 <TableCell className="text-right">
                   {formatPercentage(p.turnoverPct)}
                 </TableCell>
                 {stockMode && (
                   <TableCell className="text-right">
-                    {p.coverageDays === null
-                      ? "Sem giro"
-                      : `${Math.round(p.coverageDays)} dias`}
+                    <CoverageDaysBadge
+                      value={p.coverageDays}
+                      emptyLabel="Sem giro"
+                    />
                   </TableCell>
                 )}
                 <TableCell className="text-right">
@@ -1564,20 +1789,21 @@ function ProductTable({
                               {formatCurrency(v.catalogPrice)}
                             </TableCell>
                             <TableCell className="text-right">
-                              {stockMode
-                                ? formatPercentage(v.grossMarginPct)
-                                : v.coverageDays === null
-                                  ? "Sem vendas"
-                                  : `${Math.round(v.coverageDays)} dias`}
+                              {stockMode ? (
+                                formatPercentage(v.grossMarginPct)
+                              ) : (
+                                <CoverageDaysBadge value={v.coverageDays} />
+                              )}
                             </TableCell>
                             <TableCell className="text-right">
                               {formatPercentage(v.turnoverPct)}
                             </TableCell>
                             {stockMode && (
                               <TableCell className="text-right">
-                                {v.coverageDays === null
-                                  ? "Sem giro"
-                                  : `${Math.round(v.coverageDays)} dias`}
+                                <CoverageDaysBadge
+                                  value={v.coverageDays}
+                                  emptyLabel="Sem giro"
+                                />
                               </TableCell>
                             )}
                             <TableCell className="text-right">
@@ -1651,15 +1877,13 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
             ? [
                 {
                   header: "Margem %",
-                  accessor: (r: { v: ErpProductVariant }) =>
-                    r.v.grossMarginPct,
+                  accessor: (r: { v: ErpProductVariant }) => r.v.grossMarginPct,
                 },
               ]
             : [
                 {
                   header: "Dias restantes",
-                  accessor: (r: { v: ErpProductVariant }) =>
-                    r.v.coverageDays,
+                  accessor: (r: { v: ErpProductVariant }) => r.v.coverageDays,
                 },
               ]),
           { header: "Giro %", accessor: (r) => r.v.turnoverPct },
@@ -1667,8 +1891,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
             ? [
                 {
                   header: "Cobertura dias",
-                  accessor: (r: { v: ErpProductVariant }) =>
-                    r.v.coverageDays,
+                  accessor: (r: { v: ErpProductVariant }) => r.v.coverageDays,
                 },
               ]
             : []),
@@ -1823,7 +2046,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
             description={
               stockMode
                 ? "Produtos pai expansíveis para análise por SKU, cor e tamanho."
-                : "Dias restantes = estoque atual ÷ média diária vendida no período selecionado."
+                : "Dias restantes = estoque ÷ média diária. Vermelho: até 15 dias; verde: 16–60; âmbar: acima de 60."
             }
             action={<ExportButton onClick={exportCsv} busy={exporting} />}
           />
@@ -1897,9 +2120,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
                 {stockMode ? (
                   <SelectItem value="margin">Maior margem</SelectItem>
                 ) : (
-                  <SelectItem value="coverage">
-                    Mais dias restantes
-                  </SelectItem>
+                  <SelectItem value="coverage">Mais dias restantes</SelectItem>
                 )}
               </SelectContent>
             </Select>
