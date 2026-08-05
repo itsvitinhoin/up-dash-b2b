@@ -27,7 +27,10 @@ import {
 } from "@workspace/db";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps";
-import { selectAutomationSenderPhone } from "../services/automation-sender";
+import {
+  buildAutomationWabaCandidates,
+  selectAutomationSenderPhone,
+} from "../services/automation-sender";
 import {
   getCartAutomationDedupeKey,
   getCartAutomationIdentity,
@@ -42,6 +45,8 @@ import {
   normalizeWhatsappRecipient,
   validateWhatsappRecipient,
 } from "../services/whatsapp-recipient";
+import { describeWhatsappDeliveryError } from "../services/whatsapp-delivery-error";
+import { fetchWhatsappTemplateCatalog } from "../services/whatsapp-template-catalog";
 
 const router: IRouter = Router();
 
@@ -1072,7 +1077,7 @@ async function buildAutomationTemplateBodyParams(params: {
   templateId: string | null;
   templateName: string | null;
   templateLanguage: string | null;
-  wabaId?: string | null;
+  wabaIds?: string[];
   payload: Record<string, unknown>;
 }) {
   if (!params.templateId && !params.templateName) return [];
@@ -1081,26 +1086,33 @@ async function buildAutomationTemplateBodyParams(params: {
     eq(whatsappMessageTemplatesTable.clientId, params.clientId),
     eq(whatsappMessageTemplatesTable.status, "APPROVED"),
   ];
-  if (params.templateId) {
-    templateConditions.push(eq(whatsappMessageTemplatesTable.templateId, params.templateId));
-  } else if (params.templateName) {
+  // A template name/language is shared by every sender in the same WABA.
+  // Rule template IDs are local records and may point to an older sync.
+  if (params.templateName) {
     templateConditions.push(eq(whatsappMessageTemplatesTable.name, params.templateName));
+  } else if (params.templateId) {
+    templateConditions.push(eq(whatsappMessageTemplatesTable.templateId, params.templateId));
   }
   if (params.templateLanguage) {
     templateConditions.push(eq(whatsappMessageTemplatesTable.language, params.templateLanguage));
   }
-  if (params.wabaId) {
-    templateConditions.push(eq(whatsappMessageTemplatesTable.wabaId, params.wabaId));
+  if (params.wabaIds?.length) {
+    templateConditions.push(inArray(whatsappMessageTemplatesTable.wabaId, params.wabaIds));
   }
 
-  const [template] = await db
+  const templates = await db
     .select({
+      wabaId: whatsappMessageTemplatesTable.wabaId,
       components: whatsappMessageTemplatesTable.components,
       rawPayload: whatsappMessageTemplatesTable.rawPayload,
     })
     .from(whatsappMessageTemplatesTable)
-    .where(and(...templateConditions))
-    .limit(1);
+    .where(and(...templateConditions));
+  const template = params.wabaIds?.length
+    ? params.wabaIds
+        .map((wabaId) => templates.find((row) => row.wabaId === wabaId))
+        .find((row) => row !== undefined)
+    : templates[0];
 
   const normalized = normalizeWebhookPayload(params.payload);
   const payloadOrder = asRecord(params.payload.order) ?? {};
@@ -1231,6 +1243,48 @@ async function resolveAutomationSender(clientId: string, payload?: Record<string
     .orderBy(desc(whatsappPhoneNumbersTable.updatedAt));
   const selection = selectAutomationSenderPhone(phones, sellerPhone);
   const phone = selection.phone;
+  let integrationWabaId: string | null = null;
+
+  if (phone?.integrationId) {
+    const [integration] = await db
+      .select({ wabaId: whatsappIntegrationsTable.wabaId })
+      .from(whatsappIntegrationsTable)
+      .where(
+        and(
+          eq(whatsappIntegrationsTable.id, phone.integrationId),
+          eq(whatsappIntegrationsTable.clientId, clientId),
+        ),
+      )
+      .limit(1);
+    integrationWabaId = integration?.wabaId ?? null;
+  }
+
+  if (!integrationWabaId && phone?.phoneNumberId) {
+    const [integration] = await db
+      .select({ wabaId: whatsappIntegrationsTable.wabaId })
+      .from(whatsappIntegrationsTable)
+      .where(
+        and(
+          eq(whatsappIntegrationsTable.clientId, clientId),
+          eq(whatsappIntegrationsTable.phoneNumberId, phone.phoneNumberId),
+        ),
+      )
+      .limit(1);
+    integrationWabaId = integration?.wabaId ?? null;
+  }
+
+  if (!integrationWabaId && phone) {
+    const [integration] = await db
+      .select({ wabaId: whatsappIntegrationsTable.wabaId })
+      .from(whatsappIntegrationsTable)
+      .where(eq(whatsappIntegrationsTable.clientId, clientId))
+      .limit(1);
+    integrationWabaId = integration?.wabaId ?? null;
+  }
+
+  // The integration is the canonical WABA for numbers connected under it.
+  // Keep the phone value as a compatibility candidate for older local rows.
+  const wabaIds = buildAutomationWabaCandidates(integrationWabaId, phone?.wabaId);
 
   return {
     phoneNumberId: phone?.phoneNumberId ?? null,
@@ -1240,8 +1294,143 @@ async function resolveAutomationSender(clientId: string, payload?: Record<string
     displayPhoneNumber: phone?.displayPhoneNumber ?? null,
     verifiedName: phone?.verifiedName ?? null,
     integrationId: phone?.integrationId ?? null,
-    wabaId: phone?.wabaId ?? null,
+    wabaId: wabaIds[0] ?? null,
+    wabaIds,
     blockedReason: selection.blockedReason,
+  };
+}
+
+async function findApprovedAutomationTemplate(params: {
+  clientId: string;
+  templateName: string;
+  languageCode: string;
+  wabaIds: string[];
+}) {
+  const conditions = [
+    eq(whatsappMessageTemplatesTable.clientId, params.clientId),
+    eq(whatsappMessageTemplatesTable.name, params.templateName),
+    eq(whatsappMessageTemplatesTable.language, params.languageCode),
+    eq(whatsappMessageTemplatesTable.status, "APPROVED"),
+  ];
+  if (params.wabaIds.length) {
+    conditions.push(inArray(whatsappMessageTemplatesTable.wabaId, params.wabaIds));
+  }
+
+  const [template] = await db
+    .select({ id: whatsappMessageTemplatesTable.id })
+    .from(whatsappMessageTemplatesTable)
+    .where(and(...conditions))
+    .limit(1);
+
+  return template ?? null;
+}
+
+async function refreshAutomationTemplateCatalog(params: {
+  clientId: string;
+  integrationId: string;
+  accessToken: string;
+  wabaIds: string[];
+}) {
+  const existingTemplates = await db
+    .select({
+      wabaId: whatsappMessageTemplatesTable.wabaId,
+      name: whatsappMessageTemplatesTable.name,
+      language: whatsappMessageTemplatesTable.language,
+      rawPayload: whatsappMessageTemplatesTable.rawPayload,
+    })
+    .from(whatsappMessageTemplatesTable)
+    .where(eq(whatsappMessageTemplatesTable.clientId, params.clientId));
+  const exactPayloads = new Map<string, Record<string, unknown>>();
+  const sharedPayloads = new Map<string, Record<string, unknown>>();
+
+  for (const template of existingTemplates) {
+    const rawPayload = asRecord(template.rawPayload) ?? {};
+    const templateKey = `${template.name}\u0000${template.language}`;
+    const exactKey = `${template.wabaId}\u0000${templateKey}`;
+    exactPayloads.set(exactKey, rawPayload);
+    const currentShared = sharedPayloads.get(templateKey);
+    if (!currentShared || rawPayload.upDashVariableMapping) {
+      sharedPayloads.set(templateKey, rawPayload);
+    }
+  }
+
+  const syncedWabaIds: string[] = [];
+  const errors: Array<{ wabaId: string; message: string }> = [];
+  let syncedTemplates = 0;
+
+  for (const wabaId of params.wabaIds) {
+    const result = await fetchWhatsappTemplateCatalog({
+      wabaId,
+      accessToken: params.accessToken,
+      graphApiVersion: process.env.META_GRAPH_API_VERSION ?? "v23.0",
+    });
+
+    if (result.error) {
+      errors.push({ wabaId, message: result.error });
+      continue;
+    }
+
+    syncedWabaIds.push(wabaId);
+    const now = new Date();
+    for (const template of result.templates) {
+      const templateKey = `${template.name}\u0000${template.language}`;
+      const existingRawPayload = exactPayloads.get(`${wabaId}\u0000${templateKey}`)
+        ?? sharedPayloads.get(templateKey)
+        ?? {};
+      const rawPayload = {
+        ...template.rawPayload,
+        ...(existingRawPayload.upDashVariableMapping
+          ? { upDashVariableMapping: existingRawPayload.upDashVariableMapping }
+          : {}),
+        ...(existingRawPayload.upDashButtons
+          ? { upDashButtons: existingRawPayload.upDashButtons }
+          : {}),
+        ...(existingRawPayload.upDashTemplateScope
+          ? { upDashTemplateScope: existingRawPayload.upDashTemplateScope }
+          : {}),
+      };
+
+      await db
+        .insert(whatsappMessageTemplatesTable)
+        .values({
+          clientId: params.clientId,
+          integrationId: params.integrationId,
+          wabaId,
+          templateId: template.id,
+          name: template.name,
+          language: template.language,
+          status: template.status,
+          category: template.category,
+          components: template.components,
+          rawPayload,
+          lastSyncedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            whatsappMessageTemplatesTable.clientId,
+            whatsappMessageTemplatesTable.wabaId,
+            whatsappMessageTemplatesTable.name,
+            whatsappMessageTemplatesTable.language,
+          ],
+          set: {
+            integrationId: params.integrationId,
+            templateId: template.id,
+            status: template.status,
+            category: template.category,
+            components: template.components,
+            rawPayload,
+            lastSyncedAt: now,
+            updatedAt: now,
+          },
+        });
+      syncedTemplates += 1;
+    }
+  }
+
+  return {
+    syncedTemplates,
+    syncedWabaIds,
+    errors,
   };
 }
 
@@ -1440,7 +1629,7 @@ async function scheduleAutomationJobsForEvent(params: {
       templateId: rule.templateId,
       templateName: rule.templateName,
       templateLanguage: rule.templateLanguage,
-      wabaId: sender.wabaId,
+      wabaIds: sender.wabaIds,
       payload: params.payload,
     });
     const jobValues = {
@@ -1894,7 +2083,12 @@ async function processDueAutomationJobs(limit = 25) {
     }
 
     if (!to || !phoneNumberId || !templateName) {
-      const message = "Job sem telefone, número conectado ou template configurado.";
+      const missingFields = [
+        !to ? "telefone do destinatário" : null,
+        !phoneNumberId ? "número emissor conectado" : null,
+        !templateName ? "template" : null,
+      ].filter((value): value is string => Boolean(value));
+      const message = `Job bloqueado por configuração incompleta: ${missingFields.join(", ")}.`;
       await db
         .update(commercialAutomationJobsTable)
         .set({
@@ -1971,7 +2165,8 @@ async function processDueAutomationJobs(limit = 25) {
     }
 
     if (!sendIntegration?.accessToken) {
-      const message = "O número emissor não possui uma integração WhatsApp válida vinculada a este cliente.";
+      const senderLabel = firstText(sender?.verifiedName, sender?.sellerName, sender?.displayPhoneNumber);
+      const message = `O número emissor${senderLabel ? ` (${senderLabel})` : ""} não possui uma integração WhatsApp válida vinculada a este cliente.`;
       await db
         .update(commercialAutomationJobsTable)
         .set({
@@ -1995,24 +2190,63 @@ async function processDueAutomationJobs(limit = 25) {
       continue;
     }
 
-    const templateConditions = [
-      eq(whatsappMessageTemplatesTable.clientId, job.clientId),
-      eq(whatsappMessageTemplatesTable.name, templateName),
-      eq(whatsappMessageTemplatesTable.language, languageCode),
-      eq(whatsappMessageTemplatesTable.status, "APPROVED"),
-    ];
-    const senderWabaId = senderPhone?.wabaId ?? sendIntegration.wabaId;
-    if (senderWabaId) {
-      templateConditions.push(eq(whatsappMessageTemplatesTable.wabaId, senderWabaId));
+    const senderWabaIds = buildAutomationWabaCandidates(
+      senderPhone?.wabaId,
+      sendIntegration.wabaId,
+      ...(Array.isArray(sender?.wabaIds)
+        ? sender.wabaIds.filter((value): value is string => typeof value === "string")
+        : []),
+    );
+    let approvedTemplate = await findApprovedAutomationTemplate({
+      clientId: job.clientId,
+      templateName,
+      languageCode,
+      wabaIds: senderWabaIds,
+    });
+    let templateRefresh: Awaited<ReturnType<typeof refreshAutomationTemplateCatalog>> | null = null;
+
+    if (!approvedTemplate && senderWabaIds.length) {
+      templateRefresh = await refreshAutomationTemplateCatalog({
+        clientId: job.clientId,
+        integrationId: sendIntegration.id,
+        accessToken: sendIntegration.accessToken,
+        wabaIds: senderWabaIds,
+      });
+      approvedTemplate = await findApprovedAutomationTemplate({
+        clientId: job.clientId,
+        templateName,
+        languageCode,
+        wabaIds: senderWabaIds,
+      });
+
+      if (templateRefresh.syncedTemplates > 0) {
+        await db.insert(commercialAutomationLogsTable).values({
+          clientId: job.clientId,
+          ruleId: job.ruleId,
+          jobId: job.id,
+          eventType: job.eventType ?? "automation",
+          action: "automation_templates_refreshed",
+          status: "info",
+          message: `${templateRefresh.syncedTemplates} template(s) sincronizado(s) automaticamente antes do envio.`,
+          metadata: {
+            eventId: job.eventId,
+            phoneNumberId,
+            senderWabaIds,
+            syncedWabaIds: templateRefresh.syncedWabaIds,
+          },
+        });
+      }
     }
-    const [approvedTemplate] = await db
-      .select({ id: whatsappMessageTemplatesTable.id })
-      .from(whatsappMessageTemplatesTable)
-      .where(and(...templateConditions))
-      .limit(1);
 
     if (!approvedTemplate) {
-      const message = `O template ${templateName} (${languageCode}) não está aprovado no WABA do número emissor.`;
+      const refreshErrors = templateRefresh?.errors
+        .map((error) => `${error.wabaId}: ${error.message}`)
+        .join("; ");
+      const senderLabel = firstText(sender?.verifiedName, sender?.sellerName, sender?.displayPhoneNumber);
+      const message = [
+        `O template ${templateName} (${languageCode}) não está aprovado no WABA do número emissor${senderLabel ? ` (${senderLabel})` : ""}.`,
+        refreshErrors ? `A sincronização com a Meta retornou: ${refreshErrors}` : null,
+      ].filter(Boolean).join(" ");
       await db
         .update(commercialAutomationJobsTable)
         .set({
@@ -2030,7 +2264,16 @@ async function processDueAutomationJobs(limit = 25) {
         action: "automation_send_failed",
         status: "blocked",
         message,
-        metadata: { eventId: job.eventId, to, phoneNumberId, templateName, languageCode, senderWabaId, sender },
+        metadata: {
+          eventId: job.eventId,
+          to,
+          phoneNumberId,
+          templateName,
+          languageCode,
+          senderWabaIds,
+          templateRefresh,
+          sender,
+        },
       });
       results.push({ jobId: job.id, status: "failed", message });
       continue;
@@ -2057,10 +2300,21 @@ async function processDueAutomationJobs(limit = 25) {
         },
       }),
     });
-    const metaPayload = await response.json() as { messages?: Array<{ id?: string }>; error?: { message?: string } };
+    const metaPayload = await response.json() as {
+      messages?: Array<{ id?: string }>;
+      error?: {
+        code?: number;
+        message?: string;
+        title?: string;
+        error_data?: { details?: string };
+      };
+    };
 
     if (!response.ok) {
-      const message = metaPayload.error?.message ?? `Meta recusou o envio do template (${response.status}).`;
+      const describedError = describeWhatsappDeliveryError(metaPayload.error);
+      const message = metaPayload.error
+        ? describedError
+        : `Meta recusou o envio do template (HTTP ${response.status}).`;
       await db
         .update(commercialAutomationJobsTable)
         .set({

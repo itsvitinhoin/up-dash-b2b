@@ -20,6 +20,18 @@ export type AutomationSenderSelection = {
     | null;
 };
 
+export function buildAutomationWabaCandidates(
+  ...values: Array<string | null | undefined>
+) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value?.trim() ?? "")
+        .filter((value) => value.length > 0),
+    ),
+  );
+}
+
 function phoneDigits(value: string | null | undefined) {
   const digits = value?.replace(/\D/g, "") ?? "";
   return digits || null;

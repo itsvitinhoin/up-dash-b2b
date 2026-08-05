@@ -1451,6 +1451,16 @@ function LogsPage({ clientId }: { clientId?: string }) {
                   </pre>
                 </details>
               ) : null}
+              {log.action.startsWith("automation_") && log.metadata ? (
+                <details className="mt-2 rounded-md border border-border/70 bg-muted/10">
+                  <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground">
+                    Diagnóstico técnico do envio
+                  </summary>
+                  <pre className="max-h-72 overflow-auto border-t border-border/70 p-3 text-xs leading-relaxed">
+                    {prettyJson(log.metadata)}
+                  </pre>
+                </details>
+              ) : null}
             </div>
           ))}
           {!logsQuery.isLoading && renderedLogs.length === 0 && (

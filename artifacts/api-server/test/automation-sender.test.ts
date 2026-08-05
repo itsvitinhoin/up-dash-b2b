@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAutomationWabaCandidates,
   selectAutomationSenderPhone,
   type AutomationSenderPhoneCandidate,
 } from "../src/services/automation-sender";
@@ -32,6 +33,18 @@ describe("WhatsApp automation sender selection", () => {
     expect(result.phone?.phoneNumberId).toBe("phone-seller");
     expect(result.source).toBe("seller_phone");
     expect(result.blockedReason).toBeNull();
+  });
+
+  it("reuses one shared WABA for the seller and default integration", () => {
+    expect(
+      buildAutomationWabaCandidates("waba-mx", "waba-mx", null),
+    ).toEqual(["waba-mx"]);
+  });
+
+  it("keeps both local WABA references while stale phone data is repaired", () => {
+    expect(
+      buildAutomationWabaCandidates("waba-mx", "waba-phone-stale"),
+    ).toEqual(["waba-mx", "waba-phone-stale"]);
   });
 
   it("blocks instead of falling back when seller_phone does not match", () => {
