@@ -5,6 +5,8 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { RfmCustomerRowDocumentType } from "./rfmCustomerRowDocumentType";
+import type { RfmOrderSummary } from "./rfmOrderSummary";
 
 export interface RfmCustomerRow {
   id: string;
@@ -12,9 +14,22 @@ export interface RfmCustomerRow {
   name?: string | null;
   email: string;
   /** @nullable */
+  phone?: string | null;
+  /** @nullable */
+  state?: string | null;
+  /** @nullable */
+  city?: string | null;
+  /** @nullable */
+  documentType?: RfmCustomerRowDocumentType;
+  /** @nullable */
   segment?: string | null;
   /** @nullable */
   recencyDays?: number | null;
   frequency: number;
   monetary: number;
+  /** @nullable */
+  firstPurchaseAt?: Date | null;
+  /** @nullable */
+  lastPurchaseAt?: Date | null;
+  latestOrders: RfmOrderSummary[];
 }

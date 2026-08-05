@@ -9,4 +9,8 @@
 export type GetAdminOverviewParams = {
   dateFrom?: Date;
   dateTo?: Date;
+  /**
+   * Comma-separated client IDs included in the platform aggregation.
+   */
+  clientIds?: string;
 };

@@ -8,6 +8,7 @@
 import type { CategoryShare } from "./categoryShare";
 import type { DashboardDailyPerformance } from "./dashboardDailyPerformance";
 import type { DashboardKpis } from "./dashboardKpis";
+import type { DashboardSalesBreakdown } from "./dashboardSalesBreakdown";
 import type { DashboardSignal } from "./dashboardSignal";
 import type { DashboardTraffic } from "./dashboardTraffic";
 import type { TimeSeriesPoint } from "./timeSeriesPoint";
@@ -18,6 +19,9 @@ export interface DashboardResponse {
   ordersOverTime: TimeSeriesPoint[];
   leadsOverTime: TimeSeriesPoint[];
   revenueByCategory: CategoryShare[];
+  salesByCategory: DashboardSalesBreakdown[];
+  salesByColor: DashboardSalesBreakdown[];
+  salesBySize: DashboardSalesBreakdown[];
   /** Equivalent KPI totals for the immediately preceding period of
 the same length. Only present when the request was made with
 `compare=true`.

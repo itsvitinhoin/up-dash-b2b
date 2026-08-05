@@ -560,6 +560,16 @@ paths:
           schema:
             type: string
         - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
+        - in: query
           name: rfmSegment
           schema:
             type: string
@@ -581,6 +591,33 @@ paths:
           name: search
           schema:
             type: string
+        - in: query
+          name: documentType
+          schema:
+            type: string
+            enum: [CPF, CNPJ]
+        - in: query
+          name: registrationStatus
+          schema:
+            type: string
+            enum: [PENDING, APPROVED, REJECTED]
+        - in: query
+          name: purchaseStatus
+          schema:
+            type: string
+            enum: [buyers, non_buyers]
+        - in: query
+          name: sortBy
+          schema:
+            type: string
+            enum: [totalSpent, totalOrders, createdAt, firstPurchaseAt, lastPurchaseAt, name]
+            default: totalSpent
+        - in: query
+          name: sortDir
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
         - in: query
           name: page
           schema:
@@ -673,6 +710,16 @@ paths:
           name: clientId
           schema:
             type: string
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date-time
         - in: query
           name: sort
           schema:
@@ -1199,6 +1246,13 @@ paths:
           schema:
             type: string
           description: Restrict RFM analysis to customers who purchased this product (name or SKU match).
+        - in: query
+          name: orderStatus
+          schema:
+            type: string
+            enum: [all, approved, pending, rejected]
+            default: all
+          description: Restrict RFM metrics to orders with the selected commercial status.
       responses:
         "200":
           description: RFM segmentation payload
@@ -1449,6 +1503,11 @@ paths:
           schema:
             type: string
             format: date-time
+        - in: query
+          name: clientIds
+          schema:
+            type: string
+          description: Comma-separated client IDs included in the platform aggregation.
       responses:
         "200":
           description: Platform overview payload
@@ -2241,6 +2300,19 @@ components:
           type: number
       required: [date, revenue, orders, sessions, conversionRate]
 
+    DashboardSalesBreakdown:
+      type: object
+      properties:
+        name:
+          type: string
+        revenue:
+          type: number
+        units:
+          type: integer
+        orders:
+          type: integer
+      required: [name, revenue, units, orders]
+
     DashboardResponse:
       type: object
       properties:
@@ -2262,6 +2334,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CategoryShare"
+        salesByCategory:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardSalesBreakdown"
+        salesByColor:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardSalesBreakdown"
+        salesBySize:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardSalesBreakdown"
         prevKpis:
           allOf:
             - $ref: "#/components/schemas/DashboardKpis"
@@ -2312,6 +2396,9 @@ components:
         - ordersOverTime
         - leadsOverTime
         - revenueByCategory
+        - salesByCategory
+        - salesByColor
+        - salesBySize
         - newBuyersOverTime
         - returningBuyersOverTime
         - signals
@@ -2694,6 +2781,15 @@ components:
           type: ["string", "null"]
         email:
           type: string
+        phone:
+          type: ["string", "null"]
+        state:
+          type: ["string", "null"]
+        city:
+          type: ["string", "null"]
+        documentType:
+          type: ["string", "null"]
+          enum: [CPF, CNPJ, null]
         segment:
           type: ["string", "null"]
         recencyDays:
@@ -2702,7 +2798,39 @@ components:
           type: integer
         monetary:
           type: number
-      required: [id, email, frequency, monetary]
+        firstPurchaseAt:
+          type: ["string", "null"]
+          format: date-time
+        lastPurchaseAt:
+          type: ["string", "null"]
+          format: date-time
+        latestOrders:
+          type: array
+          items:
+            $ref: "#/components/schemas/RfmOrderSummary"
+      required: [id, email, frequency, monetary, latestOrders]
+
+    RfmOrderSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        externalId:
+          type: ["string", "null"]
+        status:
+          type: string
+        amount:
+          type: number
+        fulfilledAmount:
+          type: number
+        requestedQuantity:
+          type: number
+        fulfilledQuantity:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, status, amount, fulfilledAmount, requestedQuantity, fulfilledQuantity, createdAt]
 
     RfmResponse:
       type: object
@@ -2955,6 +3083,17 @@ components:
         createdAt:
           type: string
           format: date-time
+        gradeStatus:
+          type: string
+          enum: [complete, broken]
+        variantCount:
+          type: integer
+        availableVariantCount:
+          type: integer
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductVariantMetrics"
       required:
         - id
         - sku
@@ -2970,6 +3109,33 @@ components:
         - percentSold
         - level
         - createdAt
+
+    ProductVariantMetrics:
+      type: object
+      properties:
+        productId:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        color:
+          type: ["string", "null"]
+        size:
+          type: ["string", "null"]
+        stock:
+          type: integer
+        price:
+          type: number
+        totalSold:
+          type: integer
+        totalRevenue:
+          type: number
+        status:
+          type: string
+        imageUrl:
+          type: ["string", "null"]
+      required: [productId, sku, name, stock, price, totalSold, totalRevenue, status]
 
     ProductDetailResponse:
       type: object
@@ -3583,6 +3749,61 @@ components:
           type: number
       required: [ageGroup, leads, attributedRevenue, roas]
 
+    MetaCreativeMetric:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        spend:
+          type: number
+        impressions:
+          type: integer
+        clicks:
+          type: integer
+        ctr:
+          type: number
+        leads:
+          type: integer
+        purchases:
+          type: integer
+        cpl:
+          type: number
+        cpa:
+          type: number
+        previewUrl:
+          type: ["string", "null"]
+        thumbnailUrl:
+          type: ["string", "null"]
+        imageUrl:
+          type: ["string", "null"]
+        videoUrl:
+          type: ["string", "null"]
+        mediaType:
+          type: string
+          enum: [video, image, unknown]
+      required: [id, name, status, spend, impressions, clicks, ctr, leads, purchases, cpl, cpa, mediaType]
+
+    MetaTopCreatives:
+      type: object
+      properties:
+        ctr:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetaCreativeMetric"
+        cpl:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetaCreativeMetric"
+        leads:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetaCreativeMetric"
+      required: [ctr, cpl, leads]
+
     MarketingResponse:
       type: object
       properties:
@@ -3606,6 +3827,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CreativeMetrics"
+        topCreatives:
+          $ref: "#/components/schemas/MetaTopCreatives"
         platformBreakdown:
           type: array
           items:
@@ -3621,7 +3844,7 @@ components:
         creativesTotal:
           type: integer
           description: Total number of creatives before pagination
-      required: [kpis, prevKpis, leadsOverTime, revenueOverTime, spendOverTime, creatives, platformBreakdown, stateBreakdown, ageBreakdown, creativesTotal]
+      required: [kpis, prevKpis, leadsOverTime, revenueOverTime, spendOverTime, creatives, topCreatives, platformBreakdown, stateBreakdown, ageBreakdown, creativesTotal]
 
     CustomerSummaryKpis:
       type: object
@@ -3629,6 +3852,10 @@ components:
         totalRegistrations:
           type: integer
         approvedRegistrations:
+          type: integer
+        pendingRegistrations:
+          type: integer
+        rejectedRegistrations:
           type: integer
         approvalRatePct:
           type: number
@@ -3643,6 +3870,8 @@ components:
       required:
         - totalRegistrations
         - approvedRegistrations
+        - pendingRegistrations
+        - rejectedRegistrations
         - approvalRatePct
         - customersWithoutPurchase
         - totalBuyers
@@ -4026,7 +4255,39 @@ components:
               unitsSold:
                 type: integer
             required: [color, unitsSold]
+        gradeStatus:
+          type: string
+          enum: [complete, broken]
+        variantCount:
+          type: integer
+        availableVariantCount:
+          type: integer
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/StockVariantRow"
       required: [productId, sku, name, stock, restockThreshold, dailyVelocity, risk, unitsSold, bySize, byColor]
+
+    StockVariantRow:
+      type: object
+      properties:
+        productId:
+          type: string
+        sku:
+          type: string
+        name:
+          type: string
+        color:
+          type: ["string", "null"]
+        size:
+          type: ["string", "null"]
+        stock:
+          type: integer
+        unitsSold:
+          type: integer
+        imageUrl:
+          type: ["string", "null"]
+      required: [productId, sku, name, stock, unitsSold]
 
     CategoryStockRow:
       type: object

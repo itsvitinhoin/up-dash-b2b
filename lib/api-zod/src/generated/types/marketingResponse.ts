@@ -10,6 +10,7 @@ import type { MarketingAgeGroupRow } from "./marketingAgeGroupRow";
 import type { MarketingKpis } from "./marketingKpis";
 import type { MarketingPlatformRow } from "./marketingPlatformRow";
 import type { MarketingStateRow } from "./marketingStateRow";
+import type { MetaTopCreatives } from "./metaTopCreatives";
 import type { TimeSeriesPoint } from "./timeSeriesPoint";
 
 export interface MarketingResponse {
@@ -19,6 +20,7 @@ export interface MarketingResponse {
   revenueOverTime: TimeSeriesPoint[];
   spendOverTime: TimeSeriesPoint[];
   creatives: CreativeMetrics[];
+  topCreatives: MetaTopCreatives;
   platformBreakdown: MarketingPlatformRow[];
   stateBreakdown: MarketingStateRow[];
   ageBreakdown: MarketingAgeGroupRow[];

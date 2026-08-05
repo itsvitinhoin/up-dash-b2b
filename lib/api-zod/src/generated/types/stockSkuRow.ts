@@ -7,7 +7,9 @@
  */
 import type { StockSkuRowByColorItem } from "./stockSkuRowByColorItem";
 import type { StockSkuRowBySizeItem } from "./stockSkuRowBySizeItem";
+import type { StockSkuRowGradeStatus } from "./stockSkuRowGradeStatus";
 import type { StockSkuRowRisk } from "./stockSkuRowRisk";
+import type { StockVariantRow } from "./stockVariantRow";
 
 export interface StockSkuRow {
   productId: string;
@@ -35,4 +37,8 @@ export interface StockSkuRow {
   bySize: StockSkuRowBySizeItem[];
   /** Per-product units sold breakdown by color in the selected period. */
   byColor: StockSkuRowByColorItem[];
+  gradeStatus?: StockSkuRowGradeStatus;
+  variantCount?: number;
+  availableVariantCount?: number;
+  variants?: StockVariantRow[];
 }

@@ -5,6 +5,7 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { GetRfmOrderStatus } from "./getRfmOrderStatus";
 import type { GetRfmSortBy } from "./getRfmSortBy";
 import type { GetRfmSortDir } from "./getRfmSortDir";
 
@@ -37,4 +38,8 @@ export type GetRfmParams = {
    * Restrict RFM analysis to customers who purchased this product (name or SKU match).
    */
   product?: string;
+  /**
+   * Restrict RFM metrics to orders with the selected commercial status.
+   */
+  orderStatus?: GetRfmOrderStatus;
 };
