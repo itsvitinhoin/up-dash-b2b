@@ -19,6 +19,7 @@ import {
   fetchVestiScaleData,
   fetchVestiMarketingData,
   fetchVestiUtmData,
+  fetchVestiMetaSpendFromBigQuery,
   type VestiFilters,
 } from "../services/vestiAnalytics";
 
@@ -26,6 +27,30 @@ import {
 // routes/clients.ts) — evita import circular controller↔routes.
 function getGlobalMetaAccessToken(fallback?: string | null): string | null {
   return process.env.META_ADS_API_KEY ?? process.env.META_ACCESS_TOKEN ?? process.env.META_API_KEY ?? process.env.META_TOKEN ?? fallback ?? null;
+}
+
+// Fallback de investimento Meta Ads (05/08/2026): a maioria dos clients
+// Vesti não tem token de API do Meta configurado (metaAdsApiKey), então a
+// chamada ao vivo no Graph API nunca acontece e o card fica zerado — mesmo
+// quando a marca tem campanha ativa. Só que o gasto real já existe
+// pré-ingerido no BigQuery (`data_ads_global.ads_insights_account`, outro
+// pipeline). Se a chamada ao vivo não trouxe nada mas o client tem
+// `metaAdAccountId` cadastrado, busca de lá em vez de deixar em zero.
+async function resolveVestiInvestment(
+  client: { metaAdAccountId?: string | null } | undefined,
+  dateFromOnly: string,
+  dateToOnly: string,
+  liveSpend: number,
+): Promise<number> {
+  if (liveSpend > 0) return liveSpend;
+  if (!client?.metaAdAccountId) return 0;
+  try {
+    const bq = await fetchVestiMetaSpendFromBigQuery(client.metaAdAccountId, dateFromOnly, dateToOnly);
+    return bq.spend;
+  } catch (err) {
+    console.warn("[vesti] Meta spend BigQuery fallback failed:", err);
+    return 0;
+  }
 }
 
 function pctChange(current: number, previous: number): number | null {
@@ -229,7 +254,7 @@ export async function getCampaignCustomers(req: Request, res: Response): Promise
         })
       : null;
   if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
-  const investment = metaCurrent?.summary.spend ?? 0;
+  const investment = await resolveVestiInvestment(client, dateFromOnly, dateToOnly, metaCurrent?.summary.spend ?? 0);
 
   let rows = attributed.map((c, index) => {
     const touch = { source: "UP Agency", medium: null, campaign: null, occurredAt: c.firstTouchAt };
@@ -393,27 +418,29 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
   ]);
   if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
 
-  const [currentWindow, prevWindow, breakdown] = await Promise.all([
+  const [currentWindow, prevWindow, breakdown, currentMediaSpend, prevMediaSpend] = await Promise.all([
     cached(`vesti:window:${dataset}:${dateFromOnly}:${dateToOnly}:{}`, 5 * 60 * 1000, () => computeVestiWindow(dataset, dateFromOnly, dateToOnly, {}, false)),
     cached(`vesti:window:${dataset}:${prevDateFromOnly}:${prevDateToOnly}:{}`, 5 * 60 * 1000, () => computeVestiWindow(dataset, prevDateFromOnly, prevDateToOnly, {}, false)),
     cached(`vesti:daily-breakdown:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () => fetchVestiDailyBreakdown(dataset, dateFromOnly, dateToOnly)),
+    resolveVestiInvestment(client, dateFromOnly, dateToOnly, metaCurrent?.summary.spend ?? 0),
+    resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly, metaPrev?.summary.spend ?? 0),
   ]);
 
   const kpis = {
     approvedRevenue: currentWindow.kpis.revenue,
     sales: currentWindow.kpis.orders,
     avgTicket: currentWindow.kpis.avgTicket,
-    mediaSpend: metaCurrent?.summary.spend ?? 0,
-    costPerPurchase: currentWindow.kpis.orders > 0 ? (metaCurrent?.summary.spend ?? 0) / currentWindow.kpis.orders : 0,
-    roas: (metaCurrent?.summary.spend ?? 0) > 0 ? currentWindow.kpis.revenue / (metaCurrent?.summary.spend ?? 0) : 0,
+    mediaSpend: currentMediaSpend,
+    costPerPurchase: currentWindow.kpis.orders > 0 ? currentMediaSpend / currentWindow.kpis.orders : 0,
+    roas: currentMediaSpend > 0 ? currentWindow.kpis.revenue / currentMediaSpend : 0,
   };
   const prevKpis = {
     approvedRevenue: prevWindow.kpis.revenue,
     sales: prevWindow.kpis.orders,
     avgTicket: prevWindow.kpis.avgTicket,
-    mediaSpend: metaPrev?.summary.spend ?? 0,
-    costPerPurchase: prevWindow.kpis.orders > 0 ? (metaPrev?.summary.spend ?? 0) / prevWindow.kpis.orders : 0,
-    roas: (metaPrev?.summary.spend ?? 0) > 0 ? prevWindow.kpis.revenue / (metaPrev?.summary.spend ?? 0) : 0,
+    mediaSpend: prevMediaSpend,
+    costPerPurchase: prevWindow.kpis.orders > 0 ? prevMediaSpend / prevWindow.kpis.orders : 0,
+    roas: prevMediaSpend > 0 ? prevWindow.kpis.revenue / prevMediaSpend : 0,
   };
 
   const campaigns = (metaCurrent?.campaigns ?? [])
@@ -639,8 +666,10 @@ export async function getScale(req: Request, res: Response): Promise<void> {
   ]);
   if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
 
-  const mediaSpend = metaCurrent?.summary.spend ?? 0;
-  const rollingMediaSpend = metaRolling?.summary.spend ?? 0;
+  const [mediaSpend, rollingMediaSpend] = await Promise.all([
+    resolveVestiInvestment(client, dateFromOnly, dateToOnly, metaCurrent?.summary.spend ?? 0),
+    resolveVestiInvestment(client, rollingDateFromOnly, rollingDateToOnly, metaRolling?.summary.spend ?? 0),
+  ]);
   const monthlyMediaSpend = mediaSpend / months;
   const rollingMonthlyMediaSpend = rollingMediaSpend / rollingMonths;
   const roas = mediaSpend > 0 ? revenue / mediaSpend : 0;
@@ -811,6 +840,11 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
   ]);
   if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
 
+  const [spend, prevSpend] = await Promise.all([
+    resolveVestiInvestment(client, dateFromOnly, dateToOnly, metaCurrent?.summary.spend ?? 0),
+    resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly, metaPrev?.summary.spend ?? 0),
+  ]);
+
   const buildKpis = (channel: typeof channelData, spend: number) => {
     const roas = spend > 0 ? channel.totalAttributedRevenue / spend : 0;
     const cpl = channel.totalLeads > 0 ? spend / channel.totalLeads : 0;
@@ -826,9 +860,6 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
       cpa,
     };
   };
-
-  const spend = metaCurrent?.summary.spend ?? 0;
-  const prevSpend = metaPrev?.summary.spend ?? 0;
 
   const allAds = metaCurrent?.ads ?? [];
   const filteredAds = utmSource ? allAds.filter((ad) => ad.name.toLowerCase().includes(utmSource.toLowerCase())) : allAds;

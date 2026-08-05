@@ -2928,6 +2928,44 @@ export async function fetchVestiScaleData(
   };
 }
 
+// Investimento Meta Ads via BigQuery (05/08/2026) — descoberto que existe
+// um dataset global `data_ads_global` (mesmo projeto `up-vesti-report`)
+// já ingerido por outro pipeline com o gasto real de dezenas de contas de
+// anúncio (uma por marca, ex: "[ATACADO] Vogabox" = act_1328518845320770).
+// Isso resolve o card de Investimento/ROAS ficar zerado pra client Vesti
+// sem token de API do Meta configurado (que é a maioria) — usa esse dado
+// já pronto em vez de depender da API ao vivo do Graph, que precisa de
+// access token por client. `adAccountId` vem de `clients.metaAdAccountId`
+// (não é segredo, só o ID da conta — precisa ser preenchido manualmente
+// olhando o dataset por enquanto, não tem join automático confiável por
+// nome de marca).
+export type VestiMetaSpendSummary = { spend: number; leads: number; purchases: number; purchaseValue: number };
+
+export async function fetchVestiMetaSpendFromBigQuery(
+  adAccountId: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<VestiMetaSpendSummary> {
+  const query = `
+    SELECT
+      COALESCE(SUM(spend), 0) AS spend,
+      COALESCE(SUM(leads_qty), 0) AS leads,
+      COALESCE(SUM(purchases_qty), 0) AS purchases,
+      COALESCE(SUM(purchase_value), 0) AS purchase_value
+    FROM ${vestiTable("data_ads_global", "ads_insights_account")}
+    WHERE ad_account_id = @adAccountId
+      AND date_start BETWEEN @dateFrom AND @dateTo
+  `;
+  const [rows] = await bigquery.query({ query, params: { adAccountId, dateFrom, dateTo } });
+  const row = (rows as Array<Record<string, unknown>>)[0];
+  return {
+    spend: Number(row?.spend) || 0,
+    leads: Number(row?.leads) || 0,
+    purchases: Number(row?.purchases) || 0,
+    purchaseValue: Number(row?.purchase_value) || 0,
+  };
+}
+
 // Marketing (Vesti) — "caminho rápido" combinado com o time (04/08/2026):
 // não existe UTM de campanha em pedido nativo Vesti, então em vez de tentar
 // cruzar por e-mail com o `stape_logs` (frágil, e-mail nem sempre vem no
