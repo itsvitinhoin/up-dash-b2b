@@ -140,6 +140,71 @@ export async function matchErpDocumentsWithUpzero(
   return byDocument;
 }
 
+// Fallback pra client Vesti nativo (05/08/2026): `matchErpDocumentsWithUpzero`
+// acima só encontra alguma coisa se o comprador tiver um registro na tabela
+// `customers` do Postgres (rastreamento UpZero). Client Vesti não passa por
+// ali — o cadastro dele vive inteiro no BigQuery (`clientes_atribuidos_consolidados`,
+// que já tem CNPJ). Sem isso, Performance mostra Receita Atribuída/Cobertura
+// sempre em 0% pra qualquer client Vesti, mesmo com atribuição real
+// disponível. Mesma fonte já usada em fetchVestiAttributedCustomers
+// (services/vestiAnalytics.ts) — aqui só casa por documento em vez de e-mail,
+// já que é isso que `pedidos_erp.customer_id` guarda.
+export async function matchErpDocumentsWithVestiAttribution(
+  dataset: string,
+  documents: Array<string | null | undefined>,
+): Promise<Map<string, ErpDocumentMatch>> {
+  const normalizedDocuments = new Set(
+    documents
+      .map((doc) => (doc ? String(doc).replace(/[^0-9]/g, "") : null))
+      .filter((doc): doc is string => !!doc),
+  );
+  if (normalizedDocuments.size === 0) return new Map();
+
+  const clientes = vestiTable(dataset, "clientes_atribuidos_consolidados");
+  let rows: Array<Record<string, unknown>>;
+  try {
+    const [result] = await bigquery.query({
+      query: `
+        SELECT
+          REGEXP_REPLACE(CAST(cnpj AS STRING), r'[^0-9]', '') AS document,
+          tipo_atribuicao,
+          origem_vesti,
+          primeiro_toque_agencia
+        FROM ${clientes}
+        WHERE cnpj IS NOT NULL
+          AND REGEXP_REPLACE(CAST(cnpj AS STRING), r'[^0-9]', '') IN UNNEST(@documents)
+      `,
+      params: { documents: Array.from(normalizedDocuments) },
+    });
+    rows = result as Array<Record<string, unknown>>;
+  } catch (err) {
+    // Client sem tabela de atribuição Vesti nesse dataset (ex: ERP puro,
+    // sem o pipeline de tracking da agência) — não é erro, só não tem
+    // como enriquecer, comportamento igual a não achar nenhum match.
+    console.warn("[erp] Vesti attribution fallback indisponível:", err instanceof Error ? err.message : err);
+    return new Map();
+  }
+
+  const byDocument = new Map<string, ErpDocumentMatch>();
+  for (const r of rows) {
+    const document = r.document as string;
+    if (!document || byDocument.has(document)) continue;
+    byDocument.set(document, {
+      customerId: document,
+      attribution: {
+        utmSource: (r.origem_vesti as string) || "UP Agency",
+        utmMedium: null,
+        utmCampaign: null,
+        evidenceType: "vesti_attribution",
+        evidenceAt: r.primeiro_toque_agencia
+          ? new Date(String((r.primeiro_toque_agencia as { value?: string })?.value ?? r.primeiro_toque_agencia))
+          : null,
+      },
+    });
+  }
+  return byDocument;
+}
+
 export async function matchErpDocumentsToUpzero(
   clientId: string,
   documents: Array<string | null | undefined>,

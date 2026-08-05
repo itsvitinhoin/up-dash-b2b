@@ -181,7 +181,14 @@ async function fetchKpis(
     revenue,
     orders,
     avgTicket: orders > 0 ? revenue / orders : 0,
-    conversionRate: 0,
+    // Vesti não tem sessão/visita no nível de pedido pra calcular conversão
+    // de tráfego de verdade (isso só existe via stape_logs, usado no
+    // Funil/Jornada/Escala). O card "Conversion rate" do dashboard, pro
+    // lado não-B2C, já rotula os sub-valores como "Approved leads"/"Orders"
+    // (não "Sessões"/"Pedidos") — ou seja, aqui ele representa a mesma
+    // conversão de lead→pedido pago que approvalRate, então reaproveita a
+    // fórmula em vez de ficar zerado.
+    conversionRate: leads > 0 ? (approvedLeads / leads) * 100 : 0,
     approvalRate: leads > 0 ? (approvedLeads / leads) * 100 : 0,
     leads,
     approvedLeads,
@@ -377,7 +384,8 @@ export type VestiAttributedCustomer = {
   registeredAt: string | null; // data_cadastro
   firstTouchAt: string | null; // primeiro_toque_agencia
   purchaseCount: number;
-  totalPurchaseValue: number;
+  totalPurchaseValue: number; // valor_reservado (pago) dos pedidos atribuídos
+  totalRequestedValue: number; // valor_solicitado (bruto, independente de pago) dos pedidos atribuídos
   lastPurchaseAt: string | null;
 };
 
@@ -397,7 +405,7 @@ export async function fetchVestiAttributedCustomers(
       WHERE po.data_ref BETWEEN @dateFrom AND @dateTo
     ),
     order_revenue AS (
-      SELECT DISTINCT v.pedido_id, v.valor_reservado
+      SELECT DISTINCT v.pedido_id, v.valor_reservado, v.valor_solicitado
       FROM ${view} v
       WHERE v.pedido_id IN (SELECT pedido_id FROM attributed_orders)
     ),
@@ -406,6 +414,7 @@ export async function fetchVestiAttributedCustomers(
         ao.email,
         COUNT(DISTINCT ao.pedido_id) AS purchase_count,
         COALESCE(SUM(orv.valor_reservado), 0) AS total_purchase_value,
+        COALESCE(SUM(orv.valor_solicitado), 0) AS total_requested_value,
         MAX(ao.purchase_ts) AS last_purchase_ts
       FROM attributed_orders ao
       LEFT JOIN order_revenue orv ON orv.pedido_id = ao.pedido_id
@@ -421,6 +430,7 @@ export async function fetchVestiAttributedCustomers(
       c.primeiro_toque_agencia AS first_touch_at,
       COALESCE(pco.purchase_count, 0) AS purchase_count,
       COALESCE(pco.total_purchase_value, 0) AS total_purchase_value,
+      COALESCE(pco.total_requested_value, 0) AS total_requested_value,
       pco.last_purchase_ts AS last_purchase_at
     FROM ${clientes} c
     LEFT JOIN per_customer_orders pco ON pco.email = c.email
@@ -440,6 +450,7 @@ export async function fetchVestiAttributedCustomers(
     firstTouchAt: r.first_touch_at ? String((r.first_touch_at as { value?: string })?.value ?? r.first_touch_at) : null,
     purchaseCount: Number(r.purchase_count) || 0,
     totalPurchaseValue: Number(r.total_purchase_value) || 0,
+    totalRequestedValue: Number(r.total_requested_value) || 0,
     lastPurchaseAt: r.last_purchase_at
       ? String((r.last_purchase_at as { value?: string })?.value ?? r.last_purchase_at)
       : null,
@@ -2914,6 +2925,44 @@ export async function fetchVestiScaleData(
     colors: mapBreakdown(colorRows as Array<Record<string, unknown>>),
     sizes: mapBreakdown(sizeRows as Array<Record<string, unknown>>),
     stockByCategory: Array.from(stockByCategoryMap.values()).sort((a, b) => b.salesPower - a.salesPower).slice(0, 8),
+  };
+}
+
+// Investimento Meta Ads via BigQuery (05/08/2026) — descoberto que existe
+// um dataset global `data_ads_global` (mesmo projeto `up-vesti-report`)
+// já ingerido por outro pipeline com o gasto real de dezenas de contas de
+// anúncio (uma por marca, ex: "[ATACADO] Vogabox" = act_1328518845320770).
+// Isso resolve o card de Investimento/ROAS ficar zerado pra client Vesti
+// sem token de API do Meta configurado (que é a maioria) — usa esse dado
+// já pronto em vez de depender da API ao vivo do Graph, que precisa de
+// access token por client. `adAccountId` vem de `clients.metaAdAccountId`
+// (não é segredo, só o ID da conta — precisa ser preenchido manualmente
+// olhando o dataset por enquanto, não tem join automático confiável por
+// nome de marca).
+export type VestiMetaSpendSummary = { spend: number; leads: number; purchases: number; purchaseValue: number };
+
+export async function fetchVestiMetaSpendFromBigQuery(
+  adAccountId: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<VestiMetaSpendSummary> {
+  const query = `
+    SELECT
+      COALESCE(SUM(spend), 0) AS spend,
+      COALESCE(SUM(leads_qty), 0) AS leads,
+      COALESCE(SUM(purchases_qty), 0) AS purchases,
+      COALESCE(SUM(purchase_value), 0) AS purchase_value
+    FROM ${vestiTable("data_ads_global", "ads_insights_account")}
+    WHERE ad_account_id = @adAccountId
+      AND date_start BETWEEN @dateFrom AND @dateTo
+  `;
+  const [rows] = await bigquery.query({ query, params: { adAccountId, dateFrom, dateTo } });
+  const row = (rows as Array<Record<string, unknown>>)[0];
+  return {
+    spend: Number(row?.spend) || 0,
+    leads: Number(row?.leads) || 0,
+    purchases: Number(row?.purchases) || 0,
+    purchaseValue: Number(row?.purchase_value) || 0,
   };
 }
 

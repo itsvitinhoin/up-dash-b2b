@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { db, clientsTable, eventsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { fetchMetaMarketingData } from "./meta-ads";
-import { fetchErpDashboard, matchErpDocumentsWithUpzero } from "./erpAnalytics";
+import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution } from "./erpAnalytics";
 import {
   calculatePerformanceRatios,
   normalizePerformanceChannel,
@@ -370,6 +370,21 @@ export async function fetchPerformanceDashboard(
   const customerDays = customerDayResult[0] as CustomerDayRow[];
   const documents = customerDays.map((row) => row.document ?? row.customer_id);
   const matches = await matchErpDocumentsWithUpzero(clientId, documents);
+  // Client Vesti nativo não tem comprador nenhum rastreado no Postgres (ver
+  // matchErpDocumentsWithVestiAttribution) — preenche só o que a UpZero não
+  // achou, sem sobrescrever um match que já veio de lá.
+  const unmatchedDocuments = documents.filter((doc) => {
+    const normalized = doc ? String(doc).replace(/[^0-9]/g, "") : null;
+    return normalized && !matches.has(String(doc));
+  });
+  if (unmatchedDocuments.length > 0) {
+    const vestiMatches = await matchErpDocumentsWithVestiAttribution(dataset, unmatchedDocuments);
+    for (const doc of unmatchedDocuments) {
+      const normalized = String(doc).replace(/[^0-9]/g, "");
+      const vestiMatch = vestiMatches.get(normalized);
+      if (vestiMatch) matches.set(String(doc), vestiMatch);
+    }
+  }
   const client = clientRows[0];
   const token = getMetaAccessToken(client?.metaAdsApiKey);
 
