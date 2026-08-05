@@ -778,22 +778,29 @@ function CampaignCustomersPanel({
           </p>
         </div>
         {data && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-right">
-            <div>
+          // flex-wrap em vez de grid de 4 colunas fixas: com colunas
+          // iguais, "R$ 588.083,12" (~102px) não cabia nos ~62px que
+          // sobravam por coluna em telas de notebook comuns (~1024-1280px
+          // de largura útil, depois da sidebar) e vazava por cima da
+          // coluna "Clientes" vizinha. Cada item agora tem sua própria
+          // largura mínima e quebra de linha se precisar, em vez de
+          // sobrepor o vizinho.
+          <div className="flex flex-wrap justify-end gap-x-4 gap-y-2 text-right">
+            <div className="min-w-[56px]">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Clientes</p>
-              <p className="text-sm font-semibold tabular-nums">{formatNumber(data.summary.impactedCustomers)}</p>
+              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatNumber(data.summary.impactedCustomers)}</p>
             </div>
-            <div>
+            <div className="min-w-[110px]">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Solicitado</p>
-              <p className="text-sm font-semibold tabular-nums">{formatCurrency(data.summary.requestedValue ?? data.summary.attributedRevenue)}</p>
+              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatCurrency(data.summary.requestedValue ?? data.summary.attributedRevenue)}</p>
             </div>
-            <div>
+            <div className="min-w-[56px]">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pedidos</p>
-              <p className="text-sm font-semibold tabular-nums">{formatNumber(data.summary.orders)}</p>
+              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatNumber(data.summary.orders)}</p>
             </div>
-            <div>
+            <div className="min-w-[56px]">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Cadastros</p>
-              <p className="text-sm font-semibold tabular-nums">{formatNumber(data.summary.registrations)}</p>
+              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatNumber(data.summary.registrations)}</p>
             </div>
           </div>
         )}

@@ -181,7 +181,14 @@ async function fetchKpis(
     revenue,
     orders,
     avgTicket: orders > 0 ? revenue / orders : 0,
-    conversionRate: 0,
+    // Vesti não tem sessão/visita no nível de pedido pra calcular conversão
+    // de tráfego de verdade (isso só existe via stape_logs, usado no
+    // Funil/Jornada/Escala). O card "Conversion rate" do dashboard, pro
+    // lado não-B2C, já rotula os sub-valores como "Approved leads"/"Orders"
+    // (não "Sessões"/"Pedidos") — ou seja, aqui ele representa a mesma
+    // conversão de lead→pedido pago que approvalRate, então reaproveita a
+    // fórmula em vez de ficar zerado.
+    conversionRate: leads > 0 ? (approvedLeads / leads) * 100 : 0,
     approvalRate: leads > 0 ? (approvedLeads / leads) * 100 : 0,
     leads,
     approvedLeads,
@@ -377,7 +384,8 @@ export type VestiAttributedCustomer = {
   registeredAt: string | null; // data_cadastro
   firstTouchAt: string | null; // primeiro_toque_agencia
   purchaseCount: number;
-  totalPurchaseValue: number;
+  totalPurchaseValue: number; // valor_reservado (pago) dos pedidos atribuídos
+  totalRequestedValue: number; // valor_solicitado (bruto, independente de pago) dos pedidos atribuídos
   lastPurchaseAt: string | null;
 };
 
@@ -397,7 +405,7 @@ export async function fetchVestiAttributedCustomers(
       WHERE po.data_ref BETWEEN @dateFrom AND @dateTo
     ),
     order_revenue AS (
-      SELECT DISTINCT v.pedido_id, v.valor_reservado
+      SELECT DISTINCT v.pedido_id, v.valor_reservado, v.valor_solicitado
       FROM ${view} v
       WHERE v.pedido_id IN (SELECT pedido_id FROM attributed_orders)
     ),
@@ -406,6 +414,7 @@ export async function fetchVestiAttributedCustomers(
         ao.email,
         COUNT(DISTINCT ao.pedido_id) AS purchase_count,
         COALESCE(SUM(orv.valor_reservado), 0) AS total_purchase_value,
+        COALESCE(SUM(orv.valor_solicitado), 0) AS total_requested_value,
         MAX(ao.purchase_ts) AS last_purchase_ts
       FROM attributed_orders ao
       LEFT JOIN order_revenue orv ON orv.pedido_id = ao.pedido_id
@@ -421,6 +430,7 @@ export async function fetchVestiAttributedCustomers(
       c.primeiro_toque_agencia AS first_touch_at,
       COALESCE(pco.purchase_count, 0) AS purchase_count,
       COALESCE(pco.total_purchase_value, 0) AS total_purchase_value,
+      COALESCE(pco.total_requested_value, 0) AS total_requested_value,
       pco.last_purchase_ts AS last_purchase_at
     FROM ${clientes} c
     LEFT JOIN per_customer_orders pco ON pco.email = c.email
@@ -440,6 +450,7 @@ export async function fetchVestiAttributedCustomers(
     firstTouchAt: r.first_touch_at ? String((r.first_touch_at as { value?: string })?.value ?? r.first_touch_at) : null,
     purchaseCount: Number(r.purchase_count) || 0,
     totalPurchaseValue: Number(r.total_purchase_value) || 0,
+    totalRequestedValue: Number(r.total_requested_value) || 0,
     lastPurchaseAt: r.last_purchase_at
       ? String((r.last_purchase_at as { value?: string })?.value ?? r.last_purchase_at)
       : null,

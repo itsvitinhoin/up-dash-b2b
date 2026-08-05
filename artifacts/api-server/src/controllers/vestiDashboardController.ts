@@ -59,7 +59,17 @@ const EMPTY_CAMPAIGN_CUSTOMERS_RESPONSE = {
   data: [],
   total: 0,
   filters: { sources: [], campaigns: [], customerTypes: [] },
-  summary: { impactedCustomers: 0, attributedRevenue: 0, orders: 0, itemQuantity: 0, registrations: 0 },
+  summary: {
+    impactedCustomers: 0,
+    attributedRevenue: 0,
+    requestedValue: 0,
+    fulfilledValue: 0,
+    investment: 0,
+    roas: 0,
+    orders: 0,
+    itemQuantity: 0,
+    registrations: 0,
+  },
 };
 
 export async function getDashboard(req: Request, res: Response): Promise<void> {
@@ -203,6 +213,24 @@ export async function getCampaignCustomers(req: Request, res: Response): Promise
     () => fetchVestiAttributedCustomers(dataset, dateFromOnly, dateToOnly),
   );
 
+  // Investimento (Meta Ads) — mesmo padrão do getScale/getMarketing: só
+  // busca se o client tiver conta de anúncio configurada, senão fica 0
+  // (não é bug, é cliente sem Meta Ads ligado ainda).
+  const [client] = await db
+    .select({ metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
+  const metaCurrent =
+    metaAccessToken && client?.metaAdAccountId
+      ? await fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: dateFromOnly, until: dateToOnly }).catch((err) => {
+          console.warn("[vesti-campaign-customers] Meta spend fetch failed:", err);
+          return null;
+        })
+      : null;
+  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
+  const investment = metaCurrent?.summary.spend ?? 0;
+
   let rows = attributed.map((c, index) => {
     const touch = { source: "UP Agency", medium: null, campaign: null, occurredAt: c.firstTouchAt };
     return {
@@ -270,6 +298,10 @@ export async function getCampaignCustomers(req: Request, res: Response): Promise
     summary: {
       impactedCustomers: attributed.length,
       attributedRevenue: attributed.reduce((sum, c) => sum + c.totalPurchaseValue, 0),
+      requestedValue: attributed.reduce((sum, c) => sum + c.totalRequestedValue, 0),
+      fulfilledValue: attributed.reduce((sum, c) => sum + c.totalPurchaseValue, 0),
+      investment,
+      roas: investment > 0 ? attributed.reduce((sum, c) => sum + c.totalPurchaseValue, 0) / investment : 0,
       orders: attributed.reduce((sum, c) => sum + c.purchaseCount, 0),
       itemQuantity: 0,
       registrations: registeredInWindow,
