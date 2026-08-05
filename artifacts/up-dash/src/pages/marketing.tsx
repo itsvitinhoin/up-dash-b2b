@@ -730,7 +730,17 @@ export default function MarketingPage() {
   const containerVariants = withReducedMotion(staggerContainer, reduced);
   const fadeVariants = withReducedMotion(fadeInUp, reduced);
 
-  const hasNoData = !isLoading && data && (data.kpis.totalSpend === 0 || data.creatives.length === 0);
+  // "Sem dado" só quando NENHUMA fonte tem algo: nem mídia paga (spend/
+  // creatives, o caso B2C normal) nem atribuição por canal (platformBreakdown
+  // — é o que o Vesti mostra, mesmo sem Meta Ads configurado). Antes checava
+  // só spend/creatives, o que escondia o Marketing inteiro de clientes Vesti
+  // com atribuição real mas sem mídia paga cadastrada.
+  const hasNoData =
+    !isLoading &&
+    data &&
+    data.kpis.totalSpend === 0 &&
+    data.creatives.length === 0 &&
+    data.platformBreakdown.length === 0;
 
   if (isError) {
     return (
