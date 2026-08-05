@@ -627,7 +627,7 @@ export default function RfmPage() {
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="text-sm tabular-nums">{formatDateTime(c.lastPurchaseAt).split(",")[0]}</div>
-                              <div className="text-[11px] text-muted-foreground">{c.latestOrders.length} pedido(s)</div>
+                              <div className="text-[11px] text-muted-foreground">{(c.latestOrders ?? []).length} pedido(s)</div>
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-1.5">
@@ -744,7 +744,7 @@ export default function RfmPage() {
                   {ordersCustomer?.name ?? "Cliente"} · {ordersCustomer?.email}
                 </DialogDescription>
               </DialogHeader>
-              {!ordersCustomer || ordersCustomer.latestOrders.length === 0 ? (
+              {!ordersCustomer || (ordersCustomer.latestOrders ?? []).length === 0 ? (
                 <EmptyState
                   icon={ClipboardList}
                   title="Sem pedidos recentes"
@@ -753,7 +753,7 @@ export default function RfmPage() {
                 />
               ) : (
                 <div className="space-y-3">
-                  {ordersCustomer.latestOrders.map((order) => (
+                  {(ordersCustomer.latestOrders ?? []).map((order) => (
                     <div key={order.id} className="rounded-lg border border-border p-3">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
