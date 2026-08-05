@@ -28,6 +28,7 @@ import {
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps";
 import {
+  buildAutomationSenderWabaCandidates,
   buildAutomationWabaCandidates,
   selectAutomationSenderPhone,
 } from "../services/automation-sender";
@@ -1325,6 +1326,27 @@ async function findApprovedAutomationTemplate(params: {
   return template ?? null;
 }
 
+async function findApprovedAutomationTemplateWabaIds(params: {
+  clientId: string;
+  templateName: string;
+  languageCode: string;
+}) {
+  const templates = await db
+    .selectDistinct({ wabaId: whatsappMessageTemplatesTable.wabaId })
+    .from(whatsappMessageTemplatesTable)
+    .where(and(
+      eq(whatsappMessageTemplatesTable.clientId, params.clientId),
+      eq(whatsappMessageTemplatesTable.name, params.templateName),
+      eq(whatsappMessageTemplatesTable.language, params.languageCode),
+      eq(whatsappMessageTemplatesTable.status, "APPROVED"),
+      sql`${whatsappMessageTemplatesTable.wabaId} IS NOT NULL`,
+    ));
+
+  return templates
+    .map((template) => template.wabaId?.trim() ?? "")
+    .filter((wabaId) => wabaId.length > 0);
+}
+
 async function refreshAutomationTemplateCatalog(params: {
   clientId: string;
   integrationId: string;
@@ -2190,13 +2212,19 @@ async function processDueAutomationJobs(limit = 25) {
       continue;
     }
 
-    const senderWabaIds = buildAutomationWabaCandidates(
-      senderPhone?.wabaId,
-      sendIntegration.wabaId,
-      ...(Array.isArray(sender?.wabaIds)
+    const approvedTemplateWabaIds = await findApprovedAutomationTemplateWabaIds({
+      clientId: job.clientId,
+      templateName,
+      languageCode,
+    });
+    const senderWabaIds = buildAutomationSenderWabaCandidates({
+      phoneWabaId: senderPhone?.wabaId,
+      integrationWabaId: sendIntegration.wabaId,
+      storedWabaIds: Array.isArray(sender?.wabaIds)
         ? sender.wabaIds.filter((value): value is string => typeof value === "string")
-        : []),
-    );
+        : [],
+      approvedTemplateWabaIds,
+    });
     let approvedTemplate = await findApprovedAutomationTemplate({
       clientId: job.clientId,
       templateName,
@@ -2232,6 +2260,7 @@ async function processDueAutomationJobs(limit = 25) {
             eventId: job.eventId,
             phoneNumberId,
             senderWabaIds,
+            approvedTemplateWabaIds,
             syncedWabaIds: templateRefresh.syncedWabaIds,
           },
         });
@@ -2271,6 +2300,7 @@ async function processDueAutomationJobs(limit = 25) {
           templateName,
           languageCode,
           senderWabaIds,
+          approvedTemplateWabaIds,
           templateRefresh,
           sender,
         },

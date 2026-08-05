@@ -32,6 +32,20 @@ export function buildAutomationWabaCandidates(
   );
 }
 
+export function buildAutomationSenderWabaCandidates(params: {
+  phoneWabaId?: string | null;
+  integrationWabaId?: string | null;
+  storedWabaIds?: Array<string | null | undefined>;
+  approvedTemplateWabaIds?: Array<string | null | undefined>;
+}) {
+  return buildAutomationWabaCandidates(
+    params.phoneWabaId,
+    params.integrationWabaId,
+    ...(params.storedWabaIds ?? []),
+    ...(params.approvedTemplateWabaIds ?? []),
+  );
+}
+
 function phoneDigits(value: string | null | undefined) {
   const digits = value?.replace(/\D/g, "") ?? "";
   return digits || null;
