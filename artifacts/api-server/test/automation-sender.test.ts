@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildAutomationSenderWabaCandidates,
   buildAutomationWabaCandidates,
+  selectAutomationTemplateByWaba,
   selectAutomationSenderPhone,
   type AutomationSenderPhoneCandidate,
 } from "../src/services/automation-sender";
@@ -57,6 +58,27 @@ describe("WhatsApp automation sender selection", () => {
         approvedTemplateWabaIds: ["waba-template-approved"],
       }),
     ).toEqual(["waba-stale", "waba-template-approved"]);
+  });
+
+  it("falls back to the approved client template when the preferred WABA is stale", () => {
+    const templates = [
+      { id: "template-approved", wabaId: "waba-template-approved" },
+    ];
+
+    expect(
+      selectAutomationTemplateByWaba(templates, ["waba-stale"]),
+    ).toEqual(templates[0]);
+  });
+
+  it("prefers the template from the sender WABA when it is available", () => {
+    const templates = [
+      { id: "template-fallback", wabaId: "waba-fallback" },
+      { id: "template-sender", wabaId: "waba-sender" },
+    ];
+
+    expect(
+      selectAutomationTemplateByWaba(templates, ["waba-sender"]),
+    ).toEqual(templates[1]);
   });
 
   it("blocks instead of falling back when seller_phone does not match", () => {

@@ -30,6 +30,7 @@ import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps"
 import {
   buildAutomationSenderWabaCandidates,
   buildAutomationWabaCandidates,
+  selectAutomationTemplateByWaba,
   selectAutomationSenderPhone,
 } from "../services/automation-sender";
 import {
@@ -1097,10 +1098,6 @@ async function buildAutomationTemplateBodyParams(params: {
   if (params.templateLanguage) {
     templateConditions.push(eq(whatsappMessageTemplatesTable.language, params.templateLanguage));
   }
-  if (params.wabaIds?.length) {
-    templateConditions.push(inArray(whatsappMessageTemplatesTable.wabaId, params.wabaIds));
-  }
-
   const templates = await db
     .select({
       wabaId: whatsappMessageTemplatesTable.wabaId,
@@ -1109,11 +1106,10 @@ async function buildAutomationTemplateBodyParams(params: {
     })
     .from(whatsappMessageTemplatesTable)
     .where(and(...templateConditions));
-  const template = params.wabaIds?.length
-    ? params.wabaIds
-        .map((wabaId) => templates.find((row) => row.wabaId === wabaId))
-        .find((row) => row !== undefined)
-    : templates[0];
+  const template = selectAutomationTemplateByWaba(
+    templates,
+    params.wabaIds ?? [],
+  );
 
   const normalized = normalizeWebhookPayload(params.payload);
   const payloadOrder = asRecord(params.payload.order) ?? {};
@@ -2044,7 +2040,7 @@ async function processDueAutomationJobs(limit = 25) {
     const templateName = firstText(rendered.templateName, job.templateName);
     const languageCode = firstText(rendered.languageCode, job.templateLanguage) ?? "pt_BR";
     const bodyParamsValue = Array.isArray(rendered.bodyParams) ? rendered.bodyParams : [];
-    const bodyParams = bodyParamsValue
+    let bodyParams = bodyParamsValue
       .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
       .map((text) => ({ type: "text", text: text.trim() }));
 
@@ -2307,6 +2303,23 @@ async function processDueAutomationJobs(limit = 25) {
       });
       results.push({ jobId: job.id, status: "failed", message });
       continue;
+    }
+
+    if (bodyParams.length === 0) {
+      const sourceEvent = asRecord(rendered.sourceEvent);
+      if (sourceEvent) {
+        const rebuiltBodyParams = await buildAutomationTemplateBodyParams({
+          clientId: job.clientId,
+          templateId: null,
+          templateName,
+          templateLanguage: languageCode,
+          wabaIds: senderWabaIds,
+          payload: sourceEvent,
+        });
+        bodyParams = rebuiltBodyParams
+          .filter((value) => value.trim().length > 0)
+          .map((text) => ({ type: "text", text: text.trim() }));
+      }
     }
 
     const components = bodyParams.length

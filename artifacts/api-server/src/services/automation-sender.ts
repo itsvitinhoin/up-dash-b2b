@@ -46,6 +46,17 @@ export function buildAutomationSenderWabaCandidates(params: {
   );
 }
 
+export function selectAutomationTemplateByWaba<
+  T extends { wabaId: string | null },
+>(templates: T[], preferredWabaIds: string[] = []) {
+  for (const wabaId of preferredWabaIds) {
+    const template = templates.find((row) => row.wabaId === wabaId);
+    if (template) return template;
+  }
+
+  return templates[0];
+}
+
 function phoneDigits(value: string | null | undefined) {
   const digits = value?.replace(/\D/g, "") ?? "";
   return digits || null;
