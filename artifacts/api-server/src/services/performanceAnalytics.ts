@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { db, clientsTable, eventsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { fetchMetaMarketingData } from "./meta-ads";
-import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution } from "./erpAnalytics";
+import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution, fetchVestiFunnelEventCounts } from "./erpAnalytics";
 import {
   calculatePerformanceRatios,
   normalizePerformanceChannel,
@@ -610,7 +610,7 @@ export async function fetchPerformanceDashboard(
     (document) => buyerTypeByDocument[document] === "NEW",
   ).length;
   const eventSummary = eventSummaryResult.rows[0] ?? ({} as EventSummaryRow);
-  const eventCounts = {
+  let eventCounts = {
     visits: Number(eventSummary.visits) || 0,
     registrations: Number(eventSummary.registrations) || 0,
     approvals: Number(eventSummary.approvals) || 0,
@@ -619,6 +619,20 @@ export async function fetchPerformanceDashboard(
     checkouts: Number(eventSummary.checkouts) || 0,
     purchases: Number(eventSummary.purchases) || 0,
   };
+  // Client Vesti nativo não tem evento nenhum na tabela `events` do
+  // Postgres (rastreamento é via stape_logs/BigQuery) — as 5 etapas do
+  // funil ficavam sempre em 0. Heurística: se as 4 etapas de evento vierem
+  // todas zeradas, tenta o equivalente Vesti antes de assumir que é zero
+  // de verdade (client pequeno/sem tráfego no período).
+  if (
+    eventCounts.registrations === 0 &&
+    eventCounts.addToCart === 0 &&
+    eventCounts.checkouts === 0 &&
+    eventCounts.purchases === 0
+  ) {
+    const vestiFunnel = await fetchVestiFunnelEventCounts(dataset, dateFrom, dateTo);
+    eventCounts = { ...eventCounts, ...vestiFunnel };
+  }
   const funnelValues = [
     {
       key: "clicks",
