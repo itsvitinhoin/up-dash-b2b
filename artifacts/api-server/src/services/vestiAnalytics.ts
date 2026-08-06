@@ -132,11 +132,19 @@ async function fetchKpis(
   dateTo: string,
   filter: FilterClause,
 ): Promise<VestiKpis> {
+  // "Cliente"/"comprador" (customers, new/returning, repeat) sempre conta
+  // só pedido PAGO — mesma convenção do backend-dash (dashboardPerformanceService,
+  // clientes_kpis: "base_periodo ... WHERE pago = TRUE"), confirmada
+  // comparando número real (Vogabox: Clientes 84 = só pagos; 114 é o total
+  // incluindo pedido não pago, que não é "cliente" pro legado). `revenue`/
+  // `requestedRevenue`/`leads` continuam sem esse filtro de propósito —
+  // já batem exatamente com "Valor Atendido"/"Valor Solicitado"/"Pedidos"
+  // do legado, que também não filtram por pago nesses três campos.
   const query = `
     WITH first_purchase AS (
       SELECT cliente_id, MIN(data_ref) AS first_date
       FROM ${view}
-      WHERE cliente_id IS NOT NULL
+      WHERE cliente_id IS NOT NULL AND pago
       GROUP BY cliente_id
     ),
     window_rows AS (
@@ -147,7 +155,7 @@ async function fetchKpis(
     orders_per_customer AS (
       SELECT cliente_id, COUNT(DISTINCT pedido_id) AS pedidos
       FROM window_rows
-      WHERE cliente_id IS NOT NULL
+      WHERE cliente_id IS NOT NULL AND pago
       GROUP BY cliente_id
     )
     SELECT
@@ -155,10 +163,10 @@ async function fetchKpis(
       COALESCE(SUM(v.valor_solicitado), 0) AS requested_revenue,
       COUNT(DISTINCT v.pedido_id) AS leads,
       COUNT(DISTINCT IF(v.pago, v.pedido_id, NULL)) AS approved_leads,
-      COUNT(DISTINCT v.cliente_id) AS customers,
-      COUNT(DISTINCT IF(fp.first_date >= @dateFrom, v.cliente_id, NULL)) AS new_buyers,
-      COUNT(DISTINCT IF(fp.first_date < @dateFrom, v.cliente_id, NULL)) AS returning_buyers,
-      COUNT(DISTINCT IF(opc.pedidos > 1, v.cliente_id, NULL)) AS repeat_customers
+      COUNT(DISTINCT IF(v.pago, v.cliente_id, NULL)) AS customers,
+      COUNT(DISTINCT IF(v.pago AND fp.first_date >= @dateFrom, v.cliente_id, NULL)) AS new_buyers,
+      COUNT(DISTINCT IF(v.pago AND fp.first_date < @dateFrom, v.cliente_id, NULL)) AS returning_buyers,
+      COUNT(DISTINCT IF(v.pago AND opc.pedidos > 1, v.cliente_id, NULL)) AS repeat_customers
     FROM window_rows v
     LEFT JOIN first_purchase fp ON fp.cliente_id = v.cliente_id
     LEFT JOIN orders_per_customer opc ON opc.cliente_id = v.cliente_id
