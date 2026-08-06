@@ -885,6 +885,22 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
   const creativesOffset = (creativesPage - 1) * creativesPageSize;
   const pagedAds = filteredAds.slice(creativesOffset, creativesOffset + creativesPageSize);
 
+  // Imagem do criativo (05/08/2026): `fetchMetaMarketingData` já busca a
+  // imagem real via uma chamada extra no Graph API, mas só pros top-N por
+  // métrica (`metaCurrent.topCreatives` — evita 1 chamada por anúncio,
+  // que seria caro/lento pra lista inteira). O `creatives` aqui embaixo
+  // sempre mandava `imageUrl: null` fixo, mesmo pros anúncios que JÁ
+  // tinham imagem buscada. Reaproveita o que já foi buscado em vez de
+  // não usar de propósito.
+  const creativeImageById = new Map<string, string | null>();
+  for (const group of [metaCurrent?.topCreatives?.ctr, metaCurrent?.topCreatives?.cpl, metaCurrent?.topCreatives?.leads]) {
+    for (const creative of group ?? []) {
+      if (!creativeImageById.has(creative.id)) {
+        creativeImageById.set(creative.id, creative.imageUrl ?? creative.thumbnailUrl ?? null);
+      }
+    }
+  }
+
   const spendByDay = new Map<string, number>();
   for (const point of metaCurrent?.daily ?? []) {
     spendByDay.set(point.date, (spendByDay.get(point.date) ?? 0) + point.spend);
@@ -902,7 +918,7 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
         name: ad.name,
         platform: "Meta",
         status: ad.status ?? "UNKNOWN",
-        imageUrl: null,
+        imageUrl: creativeImageById.get(ad.id) ?? null,
         clicks: ad.clicks,
         impressions: ad.impressions,
         ctr: ad.impressions > 0 ? (ad.clicks / ad.impressions) * 100 : 0,
