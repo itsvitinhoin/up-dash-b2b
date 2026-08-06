@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildAutomationSenderWabaCandidates,
   buildAutomationWabaCandidates,
   selectAutomationTemplateByWaba,
   selectAutomationSenderPhone,
@@ -43,31 +42,20 @@ describe("WhatsApp automation sender selection", () => {
     ).toEqual(["waba-mx"]);
   });
 
-  it("keeps both local WABA references while stale phone data is repaired", () => {
+  it("keeps candidate ordering deterministic while stale data is repaired", () => {
     expect(
       buildAutomationWabaCandidates("waba-mx", "waba-phone-stale"),
     ).toEqual(["waba-mx", "waba-phone-stale"]);
   });
 
-  it("includes the approved catalog WABA when integration metadata is stale", () => {
-    expect(
-      buildAutomationSenderWabaCandidates({
-        phoneWabaId: "waba-stale",
-        integrationWabaId: "waba-stale",
-        storedWabaIds: ["waba-stale"],
-        approvedTemplateWabaIds: ["waba-template-approved"],
-      }),
-    ).toEqual(["waba-stale", "waba-template-approved"]);
-  });
-
-  it("falls back to the approved client template when the preferred WABA is stale", () => {
+  it("does not use a template approved in another WABA", () => {
     const templates = [
       { id: "template-approved", wabaId: "waba-template-approved" },
     ];
 
     expect(
       selectAutomationTemplateByWaba(templates, ["waba-stale"]),
-    ).toEqual(templates[0]);
+    ).toBeUndefined();
   });
 
   it("prefers the template from the sender WABA when it is available", () => {

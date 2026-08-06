@@ -28,7 +28,6 @@ import {
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps";
 import {
-  buildAutomationSenderWabaCandidates,
   buildAutomationWabaCandidates,
   selectAutomationTemplateByWaba,
   selectAutomationSenderPhone,
@@ -49,6 +48,11 @@ import {
 } from "../services/whatsapp-recipient";
 import { describeWhatsappDeliveryError } from "../services/whatsapp-delivery-error";
 import { fetchWhatsappTemplateCatalog } from "../services/whatsapp-template-catalog";
+import {
+  addWhatsappWabaVerification,
+  discoverWhatsappWabaForPhone,
+  getVerifiedWhatsappWabaId,
+} from "../services/whatsapp-waba-discovery";
 
 const router: IRouter = Router();
 
@@ -1279,9 +1283,9 @@ async function resolveAutomationSender(clientId: string, payload?: Record<string
     integrationWabaId = integration?.wabaId ?? null;
   }
 
-  // The integration is the canonical WABA for numbers connected under it.
-  // Keep the phone value as a compatibility candidate for older local rows.
-  const wabaIds = buildAutomationWabaCandidates(integrationWabaId, phone?.wabaId);
+  // The phone is the canonical WABA boundary. The integration value is only
+  // used until the phone-to-WABA relationship is confirmed with Meta.
+  const wabaIds = buildAutomationWabaCandidates(phone?.wabaId, integrationWabaId);
 
   return {
     phoneNumberId: phone?.phoneNumberId ?? null,
@@ -1320,27 +1324,6 @@ async function findApprovedAutomationTemplate(params: {
     .limit(1);
 
   return template ?? null;
-}
-
-async function findApprovedAutomationTemplateWabaIds(params: {
-  clientId: string;
-  templateName: string;
-  languageCode: string;
-}) {
-  const templates = await db
-    .selectDistinct({ wabaId: whatsappMessageTemplatesTable.wabaId })
-    .from(whatsappMessageTemplatesTable)
-    .where(and(
-      eq(whatsappMessageTemplatesTable.clientId, params.clientId),
-      eq(whatsappMessageTemplatesTable.name, params.templateName),
-      eq(whatsappMessageTemplatesTable.language, params.languageCode),
-      eq(whatsappMessageTemplatesTable.status, "APPROVED"),
-      sql`${whatsappMessageTemplatesTable.wabaId} IS NOT NULL`,
-    ));
-
-  return templates
-    .map((template) => template.wabaId?.trim() ?? "")
-    .filter((wabaId) => wabaId.length > 0);
 }
 
 async function refreshAutomationTemplateCatalog(params: {
@@ -2134,6 +2117,7 @@ async function processDueAutomationJobs(limit = 25) {
       .select({
         integrationId: whatsappPhoneNumbersTable.integrationId,
         wabaId: whatsappPhoneNumbersTable.wabaId,
+        rawPayload: whatsappPhoneNumbersTable.rawPayload,
       })
       .from(whatsappPhoneNumbersTable)
       .where(
@@ -2208,19 +2192,110 @@ async function processDueAutomationJobs(limit = 25) {
       continue;
     }
 
-    const approvedTemplateWabaIds = await findApprovedAutomationTemplateWabaIds({
-      clientId: job.clientId,
-      templateName,
-      languageCode,
-    });
-    const senderWabaIds = buildAutomationSenderWabaCandidates({
-      phoneWabaId: senderPhone?.wabaId,
-      integrationWabaId: sendIntegration.wabaId,
-      storedWabaIds: Array.isArray(sender?.wabaIds)
-        ? sender.wabaIds.filter((value): value is string => typeof value === "string")
-        : [],
-      approvedTemplateWabaIds,
-    });
+    const verifiedSenderWabaId = getVerifiedWhatsappWabaId(
+      senderPhone?.rawPayload,
+      senderPhone?.wabaId,
+    );
+    const senderWabaDiscovery = verifiedSenderWabaId
+      ? {
+          wabaId: verifiedSenderWabaId,
+          checkedWabaIds: [verifiedSenderWabaId],
+          matchedPhone: true,
+          errors: [],
+        }
+      : await discoverWhatsappWabaForPhone({
+          integration: sendIntegration,
+          phoneNumberId,
+          graphApiVersion: process.env.META_GRAPH_API_VERSION ?? "v23.0",
+          candidateWabaIds: [
+            senderPhone?.wabaId,
+            sendIntegration.wabaId,
+            ...(Array.isArray(sender?.wabaIds)
+              ? sender.wabaIds.filter((value): value is string => typeof value === "string")
+              : []),
+          ],
+        });
+    const senderWabaId = senderWabaDiscovery.matchedPhone
+      ? senderWabaDiscovery.wabaId
+      : null;
+
+    if (!senderWabaId) {
+      const senderLabel = firstText(sender?.verifiedName, sender?.sellerName, sender?.displayPhoneNumber);
+      const discoveryDetails = senderWabaDiscovery.errors.length
+        ? ` A Meta retornou: ${senderWabaDiscovery.errors.join("; ")}`
+        : "";
+      const message = `Não foi possível confirmar a WABA do número emissor${senderLabel ? ` (${senderLabel})` : ""}.${discoveryDetails}`;
+      await db
+        .update(commercialAutomationJobsTable)
+        .set({
+          status: "failed",
+          processedAt: new Date(),
+          errorMessage: message,
+          updatedAt: new Date(),
+        })
+        .where(eq(commercialAutomationJobsTable.id, job.id));
+      await db.insert(commercialAutomationLogsTable).values({
+        clientId: job.clientId,
+        ruleId: job.ruleId,
+        jobId: job.id,
+        eventType: job.eventType ?? "automation",
+        action: "automation_send_failed",
+        status: "blocked",
+        message,
+        metadata: {
+          eventId: job.eventId,
+          to,
+          phoneNumberId,
+          templateName,
+          sender,
+          wabaDiscovery: senderWabaDiscovery,
+        },
+      });
+      results.push({ jobId: job.id, status: "failed", message });
+      continue;
+    }
+
+    if (!verifiedSenderWabaId) {
+      const verifiedAt = new Date();
+      await db
+        .update(whatsappPhoneNumbersTable)
+        .set({
+          wabaId: senderWabaId,
+          rawPayload: addWhatsappWabaVerification(senderPhone?.rawPayload, {
+            wabaId: senderWabaId,
+            verifiedAt: verifiedAt.toISOString(),
+          }),
+          lastSyncedAt: verifiedAt,
+          updatedAt: verifiedAt,
+        })
+        .where(
+          and(
+            eq(whatsappPhoneNumbersTable.clientId, job.clientId),
+            eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId),
+          ),
+        );
+
+      if (senderPhone?.wabaId !== senderWabaId) {
+        await db.insert(commercialAutomationLogsTable).values({
+          clientId: job.clientId,
+          ruleId: job.ruleId,
+          jobId: job.id,
+          eventType: job.eventType ?? "automation",
+          action: "automation_sender_waba_reconciled",
+          status: "info",
+          message: `WABA do número emissor atualizada para ${senderWabaId} antes do envio.`,
+          metadata: {
+            eventId: job.eventId,
+            phoneNumberId,
+            previousWabaId: senderPhone?.wabaId ?? null,
+            senderWabaId,
+            wabaDiscovery: senderWabaDiscovery,
+          },
+        });
+      }
+    }
+
+    const senderWabaIds = [senderWabaId];
     let approvedTemplate = await findApprovedAutomationTemplate({
       clientId: job.clientId,
       templateName,
@@ -2256,8 +2331,8 @@ async function processDueAutomationJobs(limit = 25) {
             eventId: job.eventId,
             phoneNumberId,
             senderWabaIds,
-            approvedTemplateWabaIds,
             syncedWabaIds: templateRefresh.syncedWabaIds,
+            wabaDiscovery: senderWabaDiscovery,
           },
         });
       }
@@ -2296,9 +2371,9 @@ async function processDueAutomationJobs(limit = 25) {
           templateName,
           languageCode,
           senderWabaIds,
-          approvedTemplateWabaIds,
           templateRefresh,
           sender,
+          wabaDiscovery: senderWabaDiscovery,
         },
       });
       results.push({ jobId: job.id, status: "failed", message });
@@ -2375,7 +2450,17 @@ async function processDueAutomationJobs(limit = 25) {
         action: "automation_send_failed",
         status: "blocked",
         message,
-        metadata: { eventId: job.eventId, to, phoneNumberId, templateName, sender, meta: metaPayload },
+        metadata: {
+          eventId: job.eventId,
+          to,
+          phoneNumberId,
+          senderWabaId,
+          templateName,
+          languageCode,
+          sender,
+          wabaDiscovery: senderWabaDiscovery,
+          meta: metaPayload,
+        },
       });
       results.push({ jobId: job.id, status: "failed", message });
       continue;
@@ -2405,6 +2490,7 @@ async function processDueAutomationJobs(limit = 25) {
         jobId: job.id,
         ruleId: job.ruleId,
         sender,
+        senderWabaId,
         templateName,
         languageCode,
         meta: metaPayload,
@@ -2419,7 +2505,16 @@ async function processDueAutomationJobs(limit = 25) {
       action: "automation_template_sent",
       status: "ok",
       message: `Template ${templateName} aceito pela Meta; aguardando confirmação de entrega.`,
-      metadata: { eventId: job.eventId, to, phoneNumberId, templateName, sender, messageIds },
+      metadata: {
+        eventId: job.eventId,
+        to,
+        phoneNumberId,
+        senderWabaId,
+        templateName,
+        languageCode,
+        sender,
+        messageIds,
+      },
     });
     results.push({ jobId: job.id, status: "sent", message: `Template ${templateName} aceito pela Meta.` });
   }

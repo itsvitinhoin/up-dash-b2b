@@ -32,20 +32,6 @@ export function buildAutomationWabaCandidates(
   );
 }
 
-export function buildAutomationSenderWabaCandidates(params: {
-  phoneWabaId?: string | null;
-  integrationWabaId?: string | null;
-  storedWabaIds?: Array<string | null | undefined>;
-  approvedTemplateWabaIds?: Array<string | null | undefined>;
-}) {
-  return buildAutomationWabaCandidates(
-    params.phoneWabaId,
-    params.integrationWabaId,
-    ...(params.storedWabaIds ?? []),
-    ...(params.approvedTemplateWabaIds ?? []),
-  );
-}
-
 export function selectAutomationTemplateByWaba<
   T extends { wabaId: string | null },
 >(templates: T[], preferredWabaIds: string[] = []) {
@@ -54,7 +40,7 @@ export function selectAutomationTemplateByWaba<
     if (template) return template;
   }
 
-  return templates[0];
+  return preferredWabaIds.length === 0 ? templates[0] : undefined;
 }
 
 function phoneDigits(value: string | null | undefined) {
