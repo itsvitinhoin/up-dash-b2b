@@ -81,7 +81,7 @@ import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-f
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
-import { resolveVestiDataset, fetchVestiJourney } from "../services/vestiAnalytics";
+import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm } from "../services/vestiAnalytics";
 
 const router: IRouter = Router();
 
@@ -10015,6 +10015,26 @@ async function buildJourneyInsightContext(clientId: string, from: Date, to: Date
 }
 
 async function buildRfmInsightContext(clientId: string, from: Date, to: Date) {
+  // Client Vesti nativo não tem nada em customers/orders do Postgres
+  // (mesma causa raiz já corrigida hoje em Performance/Funil/Jornada) —
+  // esse insight sempre dizia "No RFM segments computed yet", mesmo com
+  // a própria tela de RFM já mostrando segmentos reais (fetchVestiRfm).
+  const vestiDataset = await resolveVestiDataset(clientId);
+  if (vestiDataset) {
+    const dateFromOnly = saoPauloDateOnly(from);
+    const dateToOnly = saoPauloDateOnly(to);
+    const [rfm, brand] = await Promise.all([
+      fetchVestiRfm(vestiDataset, dateFromOnly, dateToOnly, { sortBy: "monetary", sortDir: "desc", page: 1, limit: 1 }),
+      db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)),
+    ]);
+    const segMap: Record<string, { count: number; revenue: number }> = {};
+    for (const seg of rfm.segments) {
+      segMap[seg.segment] = { count: seg.customerCount, revenue: seg.revenue };
+    }
+    const total = rfm.segments.reduce((s, seg) => s + seg.customerCount, 0);
+    return { segMap, total, brand: brand[0]?.name ?? "the brand" };
+  }
+
   // Scope to customers who had at least one purchase in the selected period
   const periodBuyerIds = db
     .select({ id: ordersTable.customerId })
