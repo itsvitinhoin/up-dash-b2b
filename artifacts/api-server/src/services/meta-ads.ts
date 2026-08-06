@@ -4,16 +4,6 @@ import { db, creativesTable } from "@workspace/db";
 const DEFAULT_GRAPH_VERSION = "v24.0";
 const GRAPH_BASE = "https://graph.facebook.com";
 
-// Diagnóstico temporário (05/08/2026) — sem acesso a log do Vercel dos
-// dois lados, essa é a forma de enxergar por que fetchAdCreativeDetails
-// tá voltando null pra todo anúncio do Vogabox. Captura o último erro
-// real (não engolido silenciosamente) pra devolver na própria resposta
-// da API. Remover depois de diagnosticado.
-let lastCreativeFetchError: string | null = null;
-export function getLastCreativeFetchError(): string | null {
-  return lastCreativeFetchError;
-}
-
 type MetaAction = { action_type?: string; value?: string };
 type MetaRoas = { action_type?: string; value?: string };
 
@@ -467,8 +457,7 @@ async function fetchAdCreativeDetails(accessToken: string, adId: string): Promis
       fields: "id,name,status,effective_status,preview_shareable_link,creative{id,name,thumbnail_url,image_url,video_id,effective_object_story_id,object_story_spec}",
     })}`);
   } catch (err) {
-    lastCreativeFetchError = err instanceof Error ? err.message : String(err);
-    console.error("[meta-ads] fetchAdCreativeDetails failed:", adId, lastCreativeFetchError);
+    console.warn("[meta-ads] fetchAdCreativeDetails failed:", adId, err instanceof Error ? err.message : err);
     return null;
   }
 }

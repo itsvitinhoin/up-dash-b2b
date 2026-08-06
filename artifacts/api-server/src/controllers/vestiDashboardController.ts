@@ -5,7 +5,7 @@ import { db, clientsTable } from "@workspace/db";
 import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse, GetJourneyQueryParams, GetJourneyResponse, GetMarketingQueryParams, GetMarketingResponse, GetUtmQueryParams, GetUtmResponse } from "@workspace/api-zod";
 import { addDaysToDateOnly, coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly, saoPauloDateOnlyEnd, saoPauloDateOnlyStart } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
-import { fetchMetaMarketingData, upsertMetaCreatives, getLastCreativeFetchError } from "../services/meta-ads";
+import { fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
 import {
   resolveVestiDataset,
   computeVestiWindow,
@@ -906,48 +906,45 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
     spendByDay.set(point.date, (spendByDay.get(point.date) ?? 0) + point.spend);
   }
 
-  const parsedResponse = GetMarketingResponse.parse({
-    kpis: buildKpis(channelData, spend),
-    prevKpis: buildKpis(prevChannelData, prevSpend),
-    leadsOverTime: channelData.leadsOverTime,
-    revenueOverTime: channelData.revenueOverTime,
-    spendOverTime: Array.from(spendByDay.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value })),
-    creatives: pagedAds.map((ad) => ({
-      id: ad.id,
-      name: ad.name,
-      platform: "Meta",
-      status: ad.status ?? "UNKNOWN",
-      imageUrl: creativeImageById.get(ad.id) ?? null,
-      clicks: ad.clicks,
-      impressions: ad.impressions,
-      ctr: ad.impressions > 0 ? (ad.clicks / ad.impressions) * 100 : 0,
-      leads: ad.leads,
-      approvedLeads: ad.purchases,
-      spend: ad.spend,
-      attributedRevenue: ad.revenue,
-      roas: ad.roas ?? 0,
-      cpl: ad.cpl ?? 0,
-      cpa: ad.cpa ?? 0,
-    })),
-    platformBreakdown: channelData.platformBreakdown.map((p) => ({
-      platform: p.platform,
-      spend: 0,
-      leads: p.leads,
-      approvedLeads: p.leads,
-      clicks: 0,
-      impressions: 0,
-      attributedRevenue: p.attributedRevenue,
-      roas: 0,
-    })),
-    stateBreakdown: [],
-    ageBreakdown: [],
-    creativesTotal: filteredAds.length,
-  });
-  // Diagnóstico temporário (05/08/2026) — sem acesso a log do Vercel dos
-  // dois lados, expõe o erro real (se algum) da busca de imagem do
-  // criativo direto na resposta, fora do schema (parse já rodou). Tirar
-  // depois de achar a causa.
-  res.json({ ...parsedResponse, _debugCreativeImageError: getLastCreativeFetchError() });
+  res.json(
+    GetMarketingResponse.parse({
+      kpis: buildKpis(channelData, spend),
+      prevKpis: buildKpis(prevChannelData, prevSpend),
+      leadsOverTime: channelData.leadsOverTime,
+      revenueOverTime: channelData.revenueOverTime,
+      spendOverTime: Array.from(spendByDay.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value })),
+      creatives: pagedAds.map((ad) => ({
+        id: ad.id,
+        name: ad.name,
+        platform: "Meta",
+        status: ad.status ?? "UNKNOWN",
+        imageUrl: creativeImageById.get(ad.id) ?? null,
+        clicks: ad.clicks,
+        impressions: ad.impressions,
+        ctr: ad.impressions > 0 ? (ad.clicks / ad.impressions) * 100 : 0,
+        leads: ad.leads,
+        approvedLeads: ad.purchases,
+        spend: ad.spend,
+        attributedRevenue: ad.revenue,
+        roas: ad.roas ?? 0,
+        cpl: ad.cpl ?? 0,
+        cpa: ad.cpa ?? 0,
+      })),
+      platformBreakdown: channelData.platformBreakdown.map((p) => ({
+        platform: p.platform,
+        spend: 0,
+        leads: p.leads,
+        approvedLeads: p.leads,
+        clicks: 0,
+        impressions: 0,
+        attributedRevenue: p.attributedRevenue,
+        roas: 0,
+      })),
+      stateBreakdown: [],
+      ageBreakdown: [],
+      creativesTotal: filteredAds.length,
+    }),
+  );
 }
 
 export async function getUtm(req: Request, res: Response): Promise<void> {
