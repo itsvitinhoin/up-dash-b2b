@@ -1493,7 +1493,7 @@ export async function fetchVestiCustomerSummary(
 
 const VESTI_DEFAULT_RESTOCK_THRESHOLD = 10;
 
-function computeVestiProductLevel(
+export function computeVestiProductLevel(
   totalSold: number,
   stock: number,
   recent30dSold: number,
@@ -1583,6 +1583,36 @@ export async function fetchVestiProductsPage(
     totalRevenue: Number(r.total_revenue) || 0,
     createdAt: toDateOnly(r.created_at),
   }));
+}
+
+// "Sales Power"/"Active SKUs" (tira de /analytics/products/summary) —
+// achado 06/08/2026: essa rota só lia orderItems/orders do Postgres
+// (UpZero), sempre zero pra client Vesti nativo, mesma causa raiz de
+// tudo que foi corrigido hoje. SKU "ativo" aqui = produto com pelo menos
+// uma venda PAGA no período (diferente de "produto ativo" no catálogo).
+export type VestiProductsSummary = { activeSkus: number; totalRevenue: number };
+
+export async function fetchVestiProductsSummary(
+  dataset: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<VestiProductsSummary> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const [rows] = await bigquery.query({
+    query: `
+      SELECT
+        COUNT(DISTINCT produto_id) AS active_skus,
+        COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS total_revenue
+      FROM ${view}
+      WHERE produto_id IS NOT NULL AND data_ref BETWEEN @dateFrom AND @dateTo AND pago
+    `,
+    params: { dateFrom, dateTo },
+  });
+  const row = (rows as Array<Record<string, unknown>>)[0];
+  return {
+    activeSkus: Number(row?.active_skus) || 0,
+    totalRevenue: Number(row?.total_revenue) || 0,
+  };
 }
 
 export type VestiProductDetail = {

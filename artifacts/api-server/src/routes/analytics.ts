@@ -81,7 +81,7 @@ import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-f
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
-import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData } from "../services/vestiAnalytics";
+import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiProductsPage, computeVestiProductLevel } from "../services/vestiAnalytics";
 
 const router: IRouter = Router();
 
@@ -5350,6 +5350,24 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
   const prevTo = new Date(dateFrom.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - periodMs);
 
+  const vestiDataset = await resolveVestiDataset(clientId);
+  if (vestiDataset) {
+    const [current, prev] = await Promise.all([
+      fetchVestiProductsSummary(vestiDataset, saoPauloDateOnly(dateFrom), saoPauloDateOnly(dateTo)),
+      fetchVestiProductsSummary(vestiDataset, saoPauloDateOnly(prevFrom), saoPauloDateOnly(prevTo)),
+    ]);
+    const salesPower = current.activeSkus > 0 ? current.totalRevenue / current.activeSkus / periodDays : 0;
+    const prevSalesPower = prev.activeSkus > 0 ? prev.totalRevenue / prev.activeSkus / periodDays : 0;
+    res.json({
+      salesPower,
+      prevSalesPower,
+      salesPowerChangePct: prevSalesPower > 0 ? ((salesPower - prevSalesPower) / prevSalesPower) * 100 : null,
+      activeSkus: current.activeSkus,
+      periodDays,
+    });
+    return;
+  }
+
   const [currentRows, prevRows] = await Promise.all([
     db
       .select({
@@ -7230,6 +7248,49 @@ No markdown, no preamble.`;
 
   // Products-specific insight
   if (screen === "products") {
+    // Client Vesti nativo não tem nada em `products` do Postgres (mesma
+    // causa raiz de tudo que foi corrigido hoje) — o heurístico abaixo
+    // dava um resultado internamente contraditório ("No product sales
+    // recorded yet" + "All SKUs have recorded at least one sale — good
+    // catalog health" na mesma mensagem), porque topProducts vazio E
+    // totalProducts=0 caem nos dois ramos "sem problema" do heurístico ao
+    // mesmo tempo. Reaproveita fetchVestiProductsPage (mesmo dado real já
+    // usado na própria tela) em vez de reescrever a lógica duas vezes.
+    const vestiProductsDataset = await resolveVestiDataset(clientId);
+    if (vestiProductsDataset) {
+      const vestiProducts = await fetchVestiProductsPage(vestiProductsDataset, { sort: "revenue", limit: 200 });
+      const vestiCatalogAvg =
+        vestiProducts.length > 0
+          ? vestiProducts.reduce((s, p) => {
+              const t = p.totalSold + p.stock;
+              return s + (t > 0 ? p.totalSold / t : 0);
+            }, 0) / vestiProducts.length
+          : 0;
+      const vestiLevels = vestiProducts.map((p) => computeVestiProductLevel(p.totalSold, p.stock, 0, vestiCatalogAvg));
+      const vestiAtRisk = vestiLevels.filter((l) => l === "At Risk").length;
+      const vestiHighConv = vestiLevels.filter((l) => l === "High Conversion").length;
+      const vestiTotal = vestiLevels.length;
+      const vestiTop = vestiProducts[0];
+      const vestiHeuristic = {
+        headline: vestiTop
+          ? `Top product "${vestiTop.name}" has generated ${vestiTop.totalRevenue.toFixed(0)} in lifetime revenue`
+          : "No product sales recorded yet",
+        body: `${vestiHighConv} of ${vestiTotal} products are High Conversion (65%+ sell-through). ${vestiAtRisk > 0 ? `${vestiAtRisk} product${vestiAtRisk > 1 ? "s" : ""} are At Risk — never sold or very low turnover.` : vestiTotal > 0 ? "No products are At Risk." : "No catalog data available for this period."}`,
+        bullets: [
+          `High Conversion SKUs: ${vestiHighConv} of ${vestiTotal} — consider re-ordering your bestsellers`,
+          vestiAtRisk > 0
+            ? `${vestiAtRisk} At Risk SKU${vestiAtRisk > 1 ? "s" : ""} — these have never sold or have very poor turnover; consider markdown or discontinuation`
+            : vestiTotal > 0
+              ? "All SKUs have recorded at least one sale — good catalog health"
+              : "Add sales data to unlock product performance insights",
+          vestiTop ? `"${vestiTop.name}" leads with ${vestiTop.totalSold} units sold — study what drives its performance` : "Add sales data to unlock product performance insights",
+        ],
+      };
+      const vestiGeneratedAt = new Date().toISOString();
+      insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt } });
+      return { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt, cached: false };
+    }
+
     // Gather top-level product KPIs: top 5 by revenue, level distribution, sell-through
     const [topProducts, levelCounts] = await Promise.all([
       db
