@@ -1327,6 +1327,8 @@ export type VestiCustomerSummary = {
     approvalRatePct: number;
     customersWithoutPurchase: number;
     totalBuyers: number;
+    avgTimeToFirstPurchaseDays: number | null;
+    avgTimeBetweenPurchasesDays: number | null;
   };
   registrationsOverTime: { date: string; registrations: number; approved: number }[];
   registrationsByState: { state: string; count: number }[];
@@ -1349,8 +1351,15 @@ export async function fetchVestiCustomerSummary(
       FROM ${clientes}
       WHERE 1=1 ${dateFilter}
     ),
-    buyers AS (
-      SELECT DISTINCT cliente_id FROM ${view} WHERE cliente_id IS NOT NULL
+    purchases AS (
+      SELECT
+        cliente_id,
+        MIN(data_ref) AS first_purchase_date,
+        MAX(data_ref) AS last_purchase_date,
+        COUNT(DISTINCT pedido_id) AS order_count
+      FROM ${view}
+      WHERE cliente_id IS NOT NULL AND pago
+      GROUP BY cliente_id
     )
     SELECT
       COUNT(*) AS total_registrations,
@@ -1362,10 +1371,16 @@ export async function fetchVestiCustomerSummary(
       -- esquecido esse filtro e contava qualquer cadastro (aprovado,
       -- pendente ou rejeitado), inflando "Approved No Purchase" acima do
       -- próprio total de aprovados (bug real, achado 06/08/2026).
-      COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP') AND b.cliente_id IS NOT NULL) AS total_buyers,
-      COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP') AND b.cliente_id IS NULL) AS customers_without_purchase
+      COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP') AND p.cliente_id IS NOT NULL) AS total_buyers,
+      COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP') AND p.cliente_id IS NULL) AS customers_without_purchase,
+      -- "Avg Days to 1st" ficava sempre travado em "—" no controller
+      -- (avgTimeToFirstPurchaseDays hardcoded null) — nunca tinha sido
+      -- calculado de verdade. Mesma fórmula do B2C original (timeToFirstRow):
+      -- dias entre cadastro e primeira compra PAGA, só quem já comprou.
+      AVG(IF(p.first_purchase_date IS NOT NULL AND p.first_purchase_date >= DATE(r.created_at), DATE_DIFF(p.first_purchase_date, DATE(r.created_at), DAY), NULL)) AS avg_time_to_first_purchase_days,
+      AVG(IF(p.order_count > 1, DATE_DIFF(p.last_purchase_date, p.first_purchase_date, DAY) / (p.order_count - 1), NULL)) AS avg_time_between_purchases_days
     FROM regs r
-    LEFT JOIN buyers b ON b.cliente_id = r.id
+    LEFT JOIN purchases p ON p.cliente_id = r.id
   `;
 
   const dailyQuery = `
@@ -1437,6 +1452,8 @@ export async function fetchVestiCustomerSummary(
       approvalRatePct: totalRegistrations > 0 ? (approvedRegistrations / totalRegistrations) * 100 : 0,
       customersWithoutPurchase: Number(k?.customers_without_purchase) || 0,
       totalBuyers: Number(k?.total_buyers) || 0,
+      avgTimeToFirstPurchaseDays: k?.avg_time_to_first_purchase_days != null ? Math.round(Number(k.avg_time_to_first_purchase_days) * 10) / 10 : null,
+      avgTimeBetweenPurchasesDays: k?.avg_time_between_purchases_days != null ? Math.round(Number(k.avg_time_between_purchases_days) * 10) / 10 : null,
     },
     registrationsOverTime: (dailyRows as Array<Record<string, unknown>>).map((r) => ({
       date: toDateOnly(r.date),
