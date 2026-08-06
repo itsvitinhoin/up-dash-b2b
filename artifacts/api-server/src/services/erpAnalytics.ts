@@ -834,12 +834,26 @@ export async function fetchErpOrdersPage(
   ]);
 
   const rawRows = listRows as Array<Record<string, unknown>>;
-  const attribution = await matchErpDocumentsToUpzero(
-    clientId,
-    rawRows.map(
-      (r) => (r.document as string | null) ?? (r.customer_id as string | null),
-    ),
+  const orderDocuments = rawRows.map(
+    (r) => (r.document as string | null) ?? (r.customer_id as string | null),
   );
+  const attribution = await matchErpDocumentsToUpzero(clientId, orderDocuments);
+  // Mesmo fallback do fetchPerformanceDashboard (05/08/2026) — sem isso a
+  // lista de pedidos (usada no "Baixar XLS" e no drill-down por pedido)
+  // mostrava TODO pedido como "SEM_ORIGEM" pra client Vesti nativo, mesmo
+  // com os cards do topo já contando atribuição de verdade (inconsistência
+  // real: o card dizia "130 atribuídos", a lista de pedidos não mostrava
+  // nenhum). Só preenche o que a UpZero não achou.
+  const unmatchedOrderDocuments = orderDocuments.filter((doc) => doc && !attribution.has(doc));
+  if (unmatchedOrderDocuments.length > 0) {
+    const vestiMatches = await matchErpDocumentsWithVestiAttribution(dataset, unmatchedOrderDocuments);
+    for (const doc of unmatchedOrderDocuments) {
+      if (!doc) continue;
+      const normalized = doc.replace(/[^0-9]/g, "");
+      const vestiMatch = vestiMatches.get(normalized);
+      if (vestiMatch?.attribution) attribution.set(doc, vestiMatch.attribution);
+    }
+  }
 
   const rows: ErpOrderRow[] = rawRows.map((r) => {
     const customerId = (r.customer_id as string) || null;
