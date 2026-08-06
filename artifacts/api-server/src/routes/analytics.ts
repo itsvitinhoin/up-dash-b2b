@@ -81,7 +81,7 @@ import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-f
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
-import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm } from "../services/vestiAnalytics";
+import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData } from "../services/vestiAnalytics";
 
 const router: IRouter = Router();
 
@@ -7641,7 +7641,33 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
 
   // UTM-specific insight
   if (screen === "utm") {
-    const utmData = await buildUtmAnalytics(clientId, from, to, "source");
+    // Mesma causa raiz de Jornada/RFM/Performance hoje: buildUtmAnalytics
+    // só lê rastreamento UpZero (API/Postgres), sempre vazio pra client
+    // Vesti nativo — dizia "0 registrations across 0 acquisition sources"
+    // contradizendo a própria tela de UTM (que já usa fetchVestiUtmData e
+    // mostra 4 fontes reais). Reaproveita o mesmo dado da tela em vez de
+    // recalcular por um caminho que nunca teve nada pra esse client.
+    const vestiDataset = await resolveVestiDataset(clientId);
+    const utmData = vestiDataset
+      ? await (async () => {
+          const vestiUtm = await fetchVestiUtmData(vestiDataset, saoPauloDateOnly(from), saoPauloDateOnly(to));
+          const rows = [...vestiUtm.rows].sort((a, b) => b.revenue - a.revenue);
+          const totalRegistrations = rows.reduce((s, r) => s + r.registrations, 0);
+          const totalApprovals = rows.reduce((s, r) => s + r.approvals, 0);
+          const totalBuyers = rows.reduce((s, r) => s + r.buyers, 0);
+          const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
+          return {
+            rows: rows.map((r) => ({ key: r.source, registrations: r.registrations, buyers: r.buyers, revenue: r.revenue, conversionPct: r.conversionPct, roas: r.roas })),
+            kpis: {
+              totalRegistrations,
+              approvalPct: totalRegistrations > 0 ? (totalApprovals / totalRegistrations) * 100 : 0,
+              conversionPct: totalRegistrations > 0 ? (totalBuyers / totalRegistrations) * 100 : 0,
+              totalBuyers,
+              totalRevenue,
+            },
+          };
+        })()
+      : await buildUtmAnalytics(clientId, from, to, "source");
     const topRow = utmData.rows[0];
     const heuristic = {
       headline: topRow
