@@ -526,6 +526,7 @@ export async function fetchVestiOrdersPage(
 ): Promise<VestiOrdersPage> {
   const view = vestiTable(dataset, "dashboard_vendas_view");
   const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
+  const clientes = vestiTable(dataset, "clientes_vesti");
   const offset = (page - 1) * limit;
 
   const kpiQuery = `
@@ -555,10 +556,23 @@ export async function fetchVestiOrdersPage(
       COALESCE(SUM(p.fulfilled_quantity), 0) AS fulfilled_quantity,
       COUNT(DISTINCT p.pedido_id) AS orders,
       COUNT(DISTINCT IF(opc.n = 1, p.cliente_id, NULL)) AS new_customers,
-      COUNT(DISTINCT IF(opc.n > 1, p.cliente_id, NULL)) AS returning_customers,
-      COUNT(DISTINCT IF(p.pago, p.cliente_id, NULL)) AS approved_leads
+      COUNT(DISTINCT IF(opc.n > 1, p.cliente_id, NULL)) AS returning_customers
     FROM pedidos p
     LEFT JOIN orders_per_customer opc ON opc.cliente_id = p.cliente_id
+  `;
+
+  // "% de conversão" — mesma fórmula do B2C original (routes/analytics.ts,
+  // conversionBase = approvedLeads pro lado não-B2C): pedidos ÷ CADASTROS
+  // APROVADOS no período (não "clientes com pedido pago", que era o que
+  // essa query calculava antes como "approved_leads" — unidade errada,
+  // cliente vs pedido, dava base >100% às vezes). Ficava sempre 0.0%
+  // porque o controller nem tentava calcular, só zerava na resposta.
+  const approvedRegistrationsQuery = `
+    SELECT COUNT(*) AS approved_registrations
+    FROM ${clientes}
+    WHERE DATE(created_at) BETWEEN @dateFrom AND @dateTo
+      AND COALESCE(active, true) != false
+      AND profile.name IN ('Liberado', 'VIP')
   `;
 
   const searchClause = search ? `AND (
@@ -601,8 +615,9 @@ export async function fetchVestiOrdersPage(
   `;
 
   const searchParam = search ? `%${search.toLowerCase()}%` : undefined;
-  const [[kpiRows], [listRows], [countRows]] = await Promise.all([
+  const [[kpiRows], [approvedRegRows], [listRows], [countRows]] = await Promise.all([
     bigquery.query({ query: kpiQuery, params: { dateFrom, dateTo } }),
+    bigquery.query({ query: approvedRegistrationsQuery, params: { dateFrom, dateTo } }),
     bigquery.query({
       query: listQuery,
       params: { dateFrom, dateTo, limit, offset, ...(searchParam ? { search: searchParam } : {}) },
@@ -647,7 +662,7 @@ export async function fetchVestiOrdersPage(
       newCustomers,
       returningCustomers,
       retentionPct: customerCount > 0 ? (returningCustomers / customerCount) * 100 : 0,
-      approvedLeads: Number(k?.approved_leads) || 0,
+      approvedLeads: Number((approvedRegRows as Array<Record<string, unknown>>)[0]?.approved_registrations) || 0,
     },
     rows,
     total: Number(countRows[0]?.total) || 0,
