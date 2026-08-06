@@ -81,6 +81,7 @@ import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-f
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
+import { resolveVestiDataset, fetchVestiJourney } from "../services/vestiAnalytics";
 
 const router: IRouter = Router();
 
@@ -9945,6 +9946,31 @@ function buildFunnelSuggestedActions(
 // ── Journey / RFM AI Insight Helpers ────────────────────────────────────────
 
 async function buildJourneyInsightContext(clientId: string, from: Date, to: Date) {
+  // Client Vesti nativo não tem nada nas tabelas events/orders/customers
+  // do Postgres (rastreamento vive no BigQuery) — esse insight sempre
+  // dizia "0.0 eventos antes da compra", contradizendo a própria tela de
+  // Jornada (que já usa fetchVestiJourney e mostra o número real). Mesma
+  // causa raiz já corrigida em Performance/Funil hoje, mesmo padrão de
+  // fallback. Limite de 180 dias — fetchVestiJourney sequencia evento
+  // bruto por client_id, caro em período largo.
+  const vestiDataset = await resolveVestiDataset(clientId);
+  if (vestiDataset) {
+    const days = Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000));
+    if (days <= 180) {
+      const dateFromOnly = saoPauloDateOnly(from);
+      const dateToOnly = saoPauloDateOnly(to);
+      const [journey, brand] = await Promise.all([
+        fetchVestiJourney(vestiDataset, dateFromOnly, dateToOnly),
+        db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)),
+      ]);
+      return {
+        avgEventsBeforePurchase: journey.kpis.avgEventsBeforePurchase,
+        avgTimeToFirstPurchaseDays: journey.kpis.avgTimeToFirstPurchaseDays ?? 0,
+        brand: brand[0]?.name ?? "the brand",
+      };
+    }
+  }
+
   const [kpiRow] = await db
     .select({
       avgTTFP: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (first_purchase_at - created_at)) / 86400), 0)::float`,
