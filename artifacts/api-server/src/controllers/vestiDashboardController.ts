@@ -537,6 +537,25 @@ export async function getJourney(req: Request, res: Response): Promise<void> {
   const dateFromOnly = saoPauloDateOnly(from);
   const dateToOnly = saoPauloDateOnly(to);
 
+  // Guarda de escala (05/08/2026): fetchVestiJourney puxa evento BRUTO
+  // (não agregado) do stape_logs pra sequenciar por client_id em JS — em
+  // períodos muito largos (testado: 431 dias/Vogabox = 111mil+ linhas) o
+  // tempo passa dos 60s configurados no Vercel (vercel.json) e a função
+  // é morta por FUNCTION_INVOCATION_TIMEOUT, sem nenhum erro visível pro
+  // usuário (a tela simplesmente não carrega nada). Em vez de deixar
+  // travar silencioso, avisa antes de tentar.
+  const journeyDays = Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000));
+  const JOURNEY_MAX_DAYS = 180;
+  if (journeyDays > JOURNEY_MAX_DAYS) {
+    res.status(400).json({
+      error: true,
+      code: "DATE_RANGE_TOO_WIDE",
+      message: `Jornada não suporta períodos maiores que ${JOURNEY_MAX_DAYS} dias (pedido: ${journeyDays} dias). Reduza o período — a página monta o caminho evento a evento, e períodos muito largos derrubam a consulta por timeout.`,
+      status: 400,
+    });
+    return;
+  }
+
   const journey = await cached(`vesti:journey:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () =>
     fetchVestiJourney(dataset, dateFromOnly, dateToOnly),
   );
