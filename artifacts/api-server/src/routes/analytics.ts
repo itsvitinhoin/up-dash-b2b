@@ -81,7 +81,7 @@ import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-f
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
-import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiProductsPage, computeVestiProductLevel } from "../services/vestiAnalytics";
+import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
 
 const router: IRouter = Router();
 
@@ -7495,6 +7495,39 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
 
   // Stock-specific insight
   if (screen === "stock") {
+    // Mesma causa raiz de hoje: `products`/`orderItems` do Postgres
+    // sempre vazio pra client Vesti nativo. Com prods.length=0, o
+    // heurístico caía sempre no ramo "saudável" (0% sell-through descrito
+    // como "healthy" — contraditório), mesmo com estoque real disponível
+    // (fetchVestiStock, já usado na própria tela de Estoque).
+    const vestiStockDataset = await resolveVestiDataset(clientId);
+    if (vestiStockDataset) {
+      const dateFromOnly = saoPauloDateOnly(from);
+      const dateToOnly = saoPauloDateOnly(to);
+      const vestiStock = await fetchVestiStock(vestiStockDataset, dateFromOnly, dateToOnly, { sort: "coverageDays", sortDir: "asc", page: 1, limit: 50 });
+      const vStockout = vestiStock.kpis.stockoutRiskCount;
+      const vOverstock = vestiStock.kpis.overstockRiskCount;
+      const vSellThrough = vestiStock.kpis.sellThroughRate.toFixed(1);
+      const vStockoutNames = vestiStock.stockoutRisk.slice(0, 3).map((r) => r.name);
+      const vTotalSold = vestiStock.skus.reduce((s, r) => s + r.unitsSold, 0);
+      const vestiHeuristic = {
+        headline: vStockout > 0
+          ? `${vStockout} SKU${vStockout > 1 ? "s are" : " is"} at critical stockout risk this week`
+          : vOverstock > 0
+            ? `${vOverstock} SKU${vOverstock > 1 ? "s have" : " has"} excess inventory — review pricing or promotions`
+            : `Inventory is healthy with a ${vSellThrough}% sell-through rate`,
+        body: `In the selected period, ${vTotalSold} units were sold across ${vestiStock.total} active SKUs. Sell-through rate stands at ${vSellThrough}%. ${vStockout > 0 ? `${vStockout} product${vStockout > 1 ? "s need" : " needs"} urgent replenishment.` : vOverstock > 0 ? `${vOverstock} product${vOverstock > 1 ? "s are" : " is"} overstocked.` : "No critical risk items detected."}`,
+        bullets: [
+          vStockoutNames.length > 0 ? `Stockout risk: ${vStockoutNames.join(", ")}` : "No stockout-risk products in this period",
+          vOverstock > 0 ? `${vOverstock} SKU${vOverstock > 1 ? "s" : ""} with >90 days coverage — consider markdowns` : "No overstock issues detected",
+          `Current sell-through rate: ${vSellThrough}% — aim for 60–80% for fashion`,
+        ],
+      };
+      const vestiGeneratedAt = new Date().toISOString();
+      insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt } });
+      return { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt, cached: false };
+    }
+
     const periodDays = Math.max(1, (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
     const prods = await db
       .select({
