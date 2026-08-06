@@ -360,12 +360,29 @@ export async function getFunnel(req: Request, res: Response): Promise<void> {
     fetchVestiFunnel(dataset, dateFromOnly, dateToOnly),
   );
 
+  // `avgEventsBeforePurchase`/`topPaths` ficavam sempre fixos em 0/[] —
+  // nunca tinham sido implementados de verdade, mesmo já existindo pronto
+  // em fetchVestiJourney (mesma conta usada na página Jornada). Reaproveita
+  // aqui, com o mesmo limite de 180 dias da Jornada (fetchVestiJourney
+  // sequencia evento bruto por client_id, caro em período largo — sem
+  // esse limite reintroduziria o mesmo risco de timeout já corrigido lá).
+  const funnelDays = Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000));
+  let avgEventsBeforePurchase = 0;
+  let topPaths: Awaited<ReturnType<typeof fetchVestiJourney>>["topPaths"] = [];
+  if (funnelDays <= 180) {
+    const journey = await cached(`vesti:journey:${dataset}:${dateFromOnly}:${dateToOnly}`, VESTI_CACHE_TTL_MS, () =>
+      fetchVestiJourney(dataset, dateFromOnly, dateToOnly),
+    );
+    avgEventsBeforePurchase = journey.kpis.avgEventsBeforePurchase;
+    topPaths = journey.topPaths;
+  }
+
   res.json({
     steps: funnel.steps,
     overallConversion: funnel.overallConversion,
     insights: funnel.insights,
-    avgEventsBeforePurchase: 0,
-    topPaths: [],
+    avgEventsBeforePurchase,
+    topPaths,
     suggestedActions: funnel.suggestedActions,
     hasSiteVisitData: funnel.hasSiteVisitData,
   });
