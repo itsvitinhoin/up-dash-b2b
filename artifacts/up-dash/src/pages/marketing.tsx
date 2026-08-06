@@ -627,6 +627,38 @@ export default function MarketingPage() {
   const cplChange = useMemo(() => data ? computeChange(data.kpis.cpl, data.prevKpis.cpl) : null, [data]);
   const cpaChange = useMemo(() => data ? computeChange(data.kpis.cpa, data.prevKpis.cpa) : null, [data]);
 
+  // "Top Meta Creatives" (Best CTR/Lowest CPL/Most Leads) sempre mostrava
+  // "No creatives" pra QUALQUER client (B2C ou Vesti) — não é bug de dado,
+  // é que `data.topCreatives` nunca existiu no contrato da API
+  // (GetMarketingResponse não declara esse campo), então sempre lia
+  // `undefined`. `data.creatives` (a lista paginada de anúncios) sempre
+  // teve dado real. Deriva os 3 rankings aqui em vez de depender de um
+  // campo que o backend nunca manda.
+  const topCreatives = useMemo(() => {
+    const creatives = data?.creatives ?? [];
+    const toTopCreative = (c: CreativeRow): MetaTopCreative => ({
+      id: c.id,
+      name: c.name,
+      status: c.status,
+      spend: c.spend,
+      impressions: c.impressions,
+      clicks: c.clicks,
+      ctr: c.ctr,
+      leads: c.leads,
+      purchases: c.approvedLeads,
+      cpl: c.cpl,
+      cpa: c.cpa,
+      imageUrl: c.imageUrl,
+      mediaType: "unknown",
+    });
+    const byCtr = [...creatives].sort((a, b) => b.ctr - a.ctr).slice(0, 3).map(toTopCreative);
+    // CPL só faz sentido comparando quem teve lead — senão um anúncio com
+    // gasto mínimo e 0 lead "ganha" por CPL zerado, o que é enganoso.
+    const byCpl = [...creatives].filter((c) => c.leads > 0).sort((a, b) => a.cpl - b.cpl).slice(0, 3).map(toTopCreative);
+    const byLeads = [...creatives].sort((a, b) => b.leads - a.leads).slice(0, 3).map(toTopCreative);
+    return { ctr: byCtr, cpl: byCpl, leads: byLeads };
+  }, [data]);
+
   // ── Sparklines (reuse time-series data) ──────────────────────────────────
   const sparkLeads = data?.leadsOverTime.map((p) => p.value) ?? [];
   const sparkRevenue = data?.revenueOverTime.map((p) => p.value) ?? [];
@@ -939,9 +971,9 @@ export default function MarketingPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-              <TopCreativesColumn title="Best CTR" items={data?.topCreatives?.ctr ?? []} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn title={isB2C ? "Menor custo por compra" : "Lowest CPL"} items={data?.topCreatives?.cpl ?? []} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn title={isB2C ? "Mais compras" : "Most Leads"} items={data?.topCreatives?.leads ?? []} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn title="Best CTR" items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn title={isB2C ? "Menor custo por compra" : "Lowest CPL"} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn title={isB2C ? "Mais compras" : "Most Leads"} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
             </div>
           )}
         </motion.div>
