@@ -1357,8 +1357,13 @@ export async function fetchVestiCustomerSummary(
       COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP')) AS approved_registrations,
       COUNTIF(COALESCE(active, true) != false AND COALESCE(profile_name, '') NOT IN ('Liberado', 'VIP')) AS pending_registrations,
       COUNTIF(active = false) AS rejected_registrations,
-      COUNTIF(b.cliente_id IS NOT NULL) AS total_buyers,
-      COUNTIF(b.cliente_id IS NULL) AS customers_without_purchase
+      -- "Total Buyers"/"Approved No Purchase" no B2C original (routes/analytics.ts,
+      -- noBuyersRow/buyersRow) só contam cadastro APROVADO — aqui tinha
+      -- esquecido esse filtro e contava qualquer cadastro (aprovado,
+      -- pendente ou rejeitado), inflando "Approved No Purchase" acima do
+      -- próprio total de aprovados (bug real, achado 06/08/2026).
+      COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP') AND b.cliente_id IS NOT NULL) AS total_buyers,
+      COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP') AND b.cliente_id IS NULL) AS customers_without_purchase
     FROM regs r
     LEFT JOIN buyers b ON b.cliente_id = r.id
   `;
