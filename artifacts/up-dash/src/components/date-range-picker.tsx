@@ -138,7 +138,13 @@ function getRangeLabel(range: DateRange): string {
   if (isSameDay(range.from, range.to)) {
     return format(range.from, "MMM d, yyyy");
   }
-  return `${format(range.from, "MMM d")} – ${format(range.to, "MMM d, yyyy")}`;
+  // Só omite o ano do início quando os dois lados caem no mesmo ano — senão
+  // "Jun 1, 2025 – Aug 5, 2026" virava "Jun 1 – Aug 5, 2026", parecendo um
+  // período de 2 meses em vez de 14 (achado real, confundiu comparação com
+  // outro sistema porque os dois pareciam ter o mesmo filtro).
+  const sameYear = range.from.getFullYear() === range.to.getFullYear();
+  const fromFormat = sameYear ? "MMM d" : "MMM d, yyyy";
+  return `${format(range.from, fromFormat)} – ${format(range.to, "MMM d, yyyy")}`;
 }
 
 export function DateRangePicker({ value, onChange, className }: DateRangePickerProps) {
