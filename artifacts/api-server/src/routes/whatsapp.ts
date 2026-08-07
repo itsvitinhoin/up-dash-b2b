@@ -97,7 +97,9 @@ function getMetaAppSecret(): string | null {
 function isValidWhatsappWebhookSignature(req: Request): boolean {
   const appSecret = getMetaAppSecret();
   if (!appSecret) {
-    logger.warn("whatsapp webhook: META_APP_SECRET não configurado, não é possível validar assinatura");
+    logger.warn(
+      "whatsapp webhook: META_APP_SECRET não configurado, não é possível validar assinatura",
+    );
     return false;
   }
   const header = req.get("x-hub-signature-256");
@@ -105,7 +107,9 @@ function isValidWhatsappWebhookSignature(req: Request): boolean {
   const rawBody = req.rawBody;
   if (!rawBody) return false;
 
-  const expected = createHmac("sha256", appSecret).update(rawBody).digest("hex");
+  const expected = createHmac("sha256", appSecret)
+    .update(rawBody)
+    .digest("hex");
   const expectedBuffer = Buffer.from(expected, "utf8");
   const receivedBuffer = Buffer.from(header.slice("sha256=".length), "utf8");
   return (
@@ -2047,6 +2051,51 @@ function serializeTemplate(
   };
 }
 
+type WhatsappTemplateSummary = {
+  approved: number;
+  pending: number;
+  rejected: number;
+  total: number;
+  lastSyncedAt: string | null;
+};
+
+function buildWhatsappTemplateSummaries(
+  rows: Array<typeof whatsappMessageTemplatesTable.$inferSelect>,
+) {
+  const summaries = new Map<string, WhatsappTemplateSummary>();
+
+  for (const row of rows) {
+    const rawPayload = jsonRecord(row.rawPayload);
+    if (rawPayload.upDashTemplateScope === "agency_report") continue;
+
+    const current = summaries.get(row.wabaId) ?? {
+      approved: 0,
+      pending: 0,
+      rejected: 0,
+      total: 0,
+      lastSyncedAt: null,
+    };
+    const status = row.status.toUpperCase();
+
+    current.total += 1;
+    if (status === "APPROVED") current.approved += 1;
+    else if (status === "REJECTED") current.rejected += 1;
+    else current.pending += 1;
+
+    const lastSyncedAt = iso(row.lastSyncedAt);
+    if (
+      lastSyncedAt &&
+      (!current.lastSyncedAt || lastSyncedAt > current.lastSyncedAt)
+    ) {
+      current.lastSyncedAt = lastSyncedAt;
+    }
+
+    summaries.set(row.wabaId, current);
+  }
+
+  return summaries;
+}
+
 function collectPayloadVariablePaths(
   value: unknown,
   prefix = "",
@@ -2761,6 +2810,18 @@ router.get("/whatsapp/connections", async (req, res): Promise<void> => {
     phoneNumbers,
     integrations,
   );
+  const templateRows = await db
+    .select()
+    .from(whatsappMessageTemplatesTable)
+    .where(eq(whatsappMessageTemplatesTable.clientId, clientId));
+  const templateSummaries = buildWhatsappTemplateSummaries(templateRows);
+  const emptyTemplateSummary: WhatsappTemplateSummary = {
+    approved: 0,
+    pending: 0,
+    rejected: 0,
+    total: 0,
+    lastSyncedAt: null,
+  };
 
   res.json({
     callbackUrl: WHATSAPP_CALLBACK_URL,
@@ -2772,6 +2833,9 @@ router.get("/whatsapp/connections", async (req, res): Promise<void> => {
     phoneNumbers: phoneNumbers.map((phone) => ({
       ...serializePhoneNumber(phone),
       ...phoneOperationalDetails.get(phone.phoneNumberId),
+      templateSummary:
+        (phone.wabaId ? templateSummaries.get(phone.wabaId) : null) ??
+        emptyTemplateSummary,
     })),
   });
 });

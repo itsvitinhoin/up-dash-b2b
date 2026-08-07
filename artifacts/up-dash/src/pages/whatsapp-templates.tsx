@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  ChevronRight,
   Clock3,
   Copy,
   FileText,
+  MessageCircle,
   Plus,
   RefreshCw,
   Save,
@@ -49,6 +51,15 @@ type WhatsappConnectionsResponse = {
     displayPhoneNumber: string | null;
     verifiedName: string | null;
     isDefault: boolean;
+    operationalStatus?: "healthy" | "warning" | "error";
+    operationalMessage?: string;
+    templateSummary: {
+      approved: number;
+      pending: number;
+      rejected: number;
+      total: number;
+      lastSyncedAt: string | null;
+    };
   }>;
 };
 
@@ -218,6 +229,7 @@ export default function WhatsappTemplatesPage() {
   const [statusFilter, setStatusFilter] = useState(ALL);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const autoSyncedPhoneRef = useRef<string | null>(null);
   const [templateMappings, setTemplateMappings] = useState<
     Record<string, Record<string, { key: string; example: string }>>
   >({});
@@ -241,7 +253,11 @@ export default function WhatsappTemplatesPage() {
     return `/api/whatsapp/connections${query ? `?${query}` : ""}`;
   }, [selectedClientId, user?.role]);
 
-  const { data: connections } = useQuery<WhatsappConnectionsResponse>({
+  const {
+    data: connections,
+    isLoading: isLoadingConnections,
+    isError: connectionsFailed,
+  } = useQuery<WhatsappConnectionsResponse>({
     queryKey: ["whatsapp-template-connections", clientId],
     queryFn: () => customFetch<WhatsappConnectionsResponse>(connectionsQuery),
     enabled: Boolean(clientId),
@@ -269,10 +285,7 @@ export default function WhatsappTemplatesPage() {
       (phone) => phone.phoneNumberId === phoneNumberId,
     );
     if (selectedPhoneStillExists) return;
-
-    const defaultPhone =
-      phoneNumbers.find((phone) => phone.isDefault) ?? phoneNumbers[0];
-    setPhoneNumberId(defaultPhone?.phoneNumberId ?? "");
+    setPhoneNumberId("");
   }, [connections?.phoneNumbers, phoneNumberId]);
 
   const templatesQuery = useMemo(() => {
@@ -296,15 +309,15 @@ export default function WhatsappTemplatesPage() {
   });
 
   const syncTemplates = useMutation({
-    mutationFn: () =>
+    mutationFn: (targetPhoneNumberId: string) =>
       customFetch<SyncTemplatesResponse>("/api/whatsapp/templates/sync", {
         method: "POST",
         body: JSON.stringify({
           clientId,
-          phoneNumberId: scopedPhoneNumberId,
+          phoneNumberId: targetPhoneNumberId,
         }),
       }),
-    onSuccess: (payload) => {
+    onSuccess: (payload, targetPhoneNumberId) => {
       const diagnostic = payload.diagnostics?.[0];
       const emptySyncMessage =
         diagnostic?.matchedPhone === false
@@ -318,7 +331,12 @@ export default function WhatsappTemplatesPage() {
           ? null
           : `Sincronização concluída: ${payload.synced} template(s).`,
       );
-      void queryClient.invalidateQueries({ queryKey: templatesKey });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-templates", clientId, targetPhoneNumberId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-template-connections", clientId],
+      });
     },
     onError: (err) => {
       setSuccessMessage(null);
@@ -329,6 +347,19 @@ export default function WhatsappTemplatesPage() {
       );
     },
   });
+
+  useEffect(() => {
+    if (!scopedPhoneNumberId) {
+      autoSyncedPhoneRef.current = null;
+      return;
+    }
+    if (autoSyncedPhoneRef.current === scopedPhoneNumberId) return;
+
+    autoSyncedPhoneRef.current = scopedPhoneNumberId;
+    setError(null);
+    setSuccessMessage(null);
+    syncTemplates.mutate(scopedPhoneNumberId);
+  }, [scopedPhoneNumberId]);
 
   const createTemplate = useMutation({
     mutationFn: () =>
@@ -471,22 +502,6 @@ export default function WhatsappTemplatesPage() {
     }
     return Array.from(map.values());
   }, [templates?.data, templates?.variableOptions?.raw]);
-
-  const statusCounts = useMemo(() => {
-    const rows = templates?.data ?? [];
-    return {
-      approved: rows.filter(
-        (template) => template.status.toUpperCase() === "APPROVED",
-      ).length,
-      pending: rows.filter(
-        (template) =>
-          !["APPROVED", "REJECTED"].includes(template.status.toUpperCase()),
-      ).length,
-      rejected: rows.filter(
-        (template) => template.status.toUpperCase() === "REJECTED",
-      ).length,
-    };
-  }, [templates?.data]);
 
   const bodyPlaceholders = useMemo(() => {
     const placeholders = new Set<string>();
@@ -639,104 +654,211 @@ export default function WhatsappTemplatesPage() {
     }
   };
 
+  const openPhoneTemplates = (targetPhoneNumberId: string) => {
+    setError(null);
+    setSuccessMessage(null);
+    setTemplateMappings({});
+    setStatusFilter(ALL);
+
+    if (targetPhoneNumberId === scopedPhoneNumberId) {
+      syncTemplates.mutate(targetPhoneNumberId);
+      return;
+    }
+
+    setPhoneNumberId(targetPhoneNumberId);
+  };
+
   return (
     <div className="space-y-4" data-testid="page-whatsapp-templates">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+      <section className="space-y-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-semibold">
             <FileText className="h-4 w-4 text-primary" />
-            Templates WhatsApp
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Crie templates de texto e acompanhe os modelos aprovados, pendentes
-            ou recusados pela Meta.
+            Templates por número
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Abra um número para sincronizar e gerenciar os templates do WABA
+            correspondente.
           </p>
-        </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px_180px]">
-          <div className="space-y-2">
-            <Label>Número / perfil WhatsApp</Label>
-            <Select
-              value={phoneNumberId}
-              onValueChange={(value) => {
-                setPhoneNumberId(value);
-                setError(null);
-                setSuccessMessage(null);
-                setTemplateMappings({});
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione o número" />
-              </SelectTrigger>
-              <SelectContent>
-                {(connections?.phoneNumbers ?? []).map((phone) => (
-                  <SelectItem key={phone.id} value={phone.phoneNumberId}>
-                    {phoneLabel(phone)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {selectedPhone?.wabaId ? (
-              <p className="truncate font-mono text-[11px] text-muted-foreground">
-                WABA: {selectedPhone.wabaId}
-              </p>
-            ) : null}
-          </div>
-          <div className="space-y-2">
-            <Label>Status</Label>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger>
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>Todos</SelectItem>
-                <SelectItem value="APPROVED">Aprovados</SelectItem>
-                <SelectItem value="PENDING">Pendentes</SelectItem>
-                <SelectItem value="REJECTED">Recusados</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-end">
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => syncTemplates.mutate()}
-              disabled={!scopedPhoneNumberId || syncTemplates.isPending}
-            >
-              <RefreshCw
-                className={`mr-2 h-4 w-4 ${syncTemplates.isPending ? "animate-spin" : ""}`}
-              />
-              Sincronizar
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Aprovados</p>
-            <p className="mt-2 text-2xl font-semibold text-emerald-500">
-              {statusCounts.approved}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Pendentes</p>
-            <p className="mt-2 text-2xl font-semibold text-amber-500">
-              {statusCounts.pending}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Recusados</p>
-            <p className="mt-2 text-2xl font-semibold text-red-500">
-              {statusCounts.rejected}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+        {isLoadingConnections ? (
+          <div className="flex h-28 items-center justify-center rounded-md border border-border text-sm text-muted-foreground">
+            <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+            Carregando números conectados...
+          </div>
+        ) : connectionsFailed ? (
+          <Alert variant="destructive">
+            <XCircle className="h-4 w-4" />
+            <AlertTitle>Não foi possível carregar as conexões</AlertTitle>
+            <AlertDescription>
+              Atualize a página ou confira a conexão do cliente selecionado.
+            </AlertDescription>
+          </Alert>
+        ) : (connections?.phoneNumbers ?? []).length === 0 ? (
+          <Alert>
+            <MessageCircle className="h-4 w-4" />
+            <AlertTitle>Nenhum número conectado</AlertTitle>
+            <AlertDescription>
+              Conecte um WhatsApp em WhatsApp &gt; Conexões para gerenciar seus
+              templates.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {(connections?.phoneNumbers ?? []).map((phone) => {
+              const summary = phone.templateSummary ?? {
+                approved: 0,
+                pending: 0,
+                rejected: 0,
+                total: 0,
+                lastSyncedAt: null,
+              };
+              const isSelected = phone.phoneNumberId === scopedPhoneNumberId;
+              const isSyncing =
+                syncTemplates.isPending &&
+                syncTemplates.variables === phone.phoneNumberId;
+              const healthBorder =
+                phone.operationalStatus === "error"
+                  ? "border-red-500/60"
+                  : phone.operationalStatus === "warning"
+                    ? "border-amber-500/50"
+                    : "border-border";
+
+              return (
+                <button
+                  key={phone.id}
+                  type="button"
+                  className={`group min-h-44 rounded-md border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-70 ${healthBorder} ${
+                    isSelected ? "ring-1 ring-primary" : ""
+                  }`}
+                  onClick={() => openPhoneTemplates(phone.phoneNumberId)}
+                  disabled={syncTemplates.isPending}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                          <MessageCircle className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">
+                            {phoneLabel(phone)}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {phone.displayPhoneNumber ?? phone.phoneNumberId}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    {isSyncing ? (
+                      <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-primary" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                    )}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-3 gap-3 border-y border-border/70 py-3">
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground">
+                        Aprovados
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-emerald-500">
+                        {summary.approved}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground">
+                        Pendentes
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-amber-500">
+                        {summary.pending}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground">
+                        Recusados
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-red-500">
+                        {summary.rejected}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                    <span className="truncate font-mono">
+                      WABA: {phone.wabaId ?? "não identificado"}
+                    </span>
+                    <span className="shrink-0">
+                      {isSyncing
+                        ? "Sincronizando..."
+                        : `${summary.total} no total`}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Último sync: {formatSyncDate(summary.lastSyncedAt)}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {!selectedPhone ? (
+        !isLoadingConnections &&
+        !connectionsFailed &&
+        (connections?.phoneNumbers ?? []).length > 0 ? (
+          <Alert>
+            <FileText className="h-4 w-4" />
+            <AlertTitle>Selecione um número</AlertTitle>
+            <AlertDescription>
+              Clique em um card acima para abrir a criação e a lista de
+              templates daquele número.
+            </AlertDescription>
+          </Alert>
+        ) : null
+      ) : (
+        <>
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+                <div>
+                  <CardTitle className="text-base">
+                    {phoneLabel(selectedPhone)}
+                  </CardTitle>
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    WABA: {selectedPhone.wabaId ?? "não identificado"}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-full sm:w-48">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todos os status</SelectItem>
+                      <SelectItem value="APPROVED">Aprovados</SelectItem>
+                      <SelectItem value="PENDING">Pendentes</SelectItem>
+                      <SelectItem value="REJECTED">Recusados</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="outline"
+                    onClick={() => syncTemplates.mutate(scopedPhoneNumberId)}
+                    disabled={!scopedPhoneNumberId || syncTemplates.isPending}
+                  >
+                    <RefreshCw
+                      className={`mr-2 h-4 w-4 ${syncTemplates.isPending ? "animate-spin" : ""}`}
+                    />
+                    {syncTemplates.isPending
+                      ? "Sincronizando"
+                      : "Sincronizar agora"}
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+          </Card>
 
       {(successMessage || error) && (
         <Alert variant={error ? "destructive" : "default"}>
@@ -1342,6 +1464,8 @@ export default function WhatsappTemplatesPage() {
           </Table>
         </CardContent>
       </Card>
+        </>
+      )}
     </div>
   );
 }
