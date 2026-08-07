@@ -4,6 +4,7 @@ import { z } from "zod";
 import { logger } from "../lib/logger";
 import { authenticate, resolveClientId } from "../middlewares/auth";
 import { describeWhatsappDeliveryError } from "../services/whatsapp-delivery-error";
+import { selectWhatsappIntegrationForPhone } from "../services/whatsapp-integration-selection";
 import {
   addWhatsappWabaVerification,
   discoverWhatsappWabaForPhone as discoverWhatsappWabaForPhoneFromMeta,
@@ -688,12 +689,28 @@ async function resolveWhatsappClientByPhoneNumber(phoneNumberId?: string | null)
     .where(eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId))
     .limit(1);
   if (phoneNumber) {
-    const [integration] = await db
+    const integrations = await db
       .select()
       .from(whatsappIntegrationsTable)
       .where(eq(whatsappIntegrationsTable.clientId, phoneNumber.clientId))
-      .limit(1);
-    return integration ?? null;
+      .orderBy(desc(whatsappIntegrationsTable.updatedAt));
+    const integration = selectWhatsappIntegrationForPhone(integrations, phoneNumber);
+    if (integration) {
+      return {
+        ...integration,
+        wabaId: phoneNumber.wabaId ?? integration.wabaId,
+        phoneNumberId: phoneNumber.phoneNumberId,
+      };
+    }
+
+    // Inbound webhooks can still be routed by the stored phone ownership while
+    // that WABA waits for its own Embedded Signup token.
+    return {
+      id: null,
+      clientId: phoneNumber.clientId,
+      wabaId: phoneNumber.wabaId,
+      phoneNumberId: phoneNumber.phoneNumberId,
+    };
   }
 
   const [integration] = await db
@@ -796,7 +813,13 @@ async function persistWhatsappDiscoveryToken(params: {
   const [currentIntegration] = await db
     .select()
     .from(whatsappIntegrationsTable)
-    .where(eq(whatsappIntegrationsTable.clientId, params.clientId))
+    .where(
+      and(
+        eq(whatsappIntegrationsTable.clientId, params.clientId),
+        sql`${whatsappIntegrationsTable.wabaId} IS NULL`,
+        sql`${whatsappIntegrationsTable.phoneNumberId} IS NULL`,
+      ),
+    )
     .limit(1);
 
   const now = new Date();
@@ -940,43 +963,47 @@ async function getWhatsappPhoneNumber(clientId: string, phoneNumberId?: string |
 }
 
 async function getWhatsappIntegrationForPhone(clientId: string, phoneNumberId?: string | null) {
-  const phoneNumber = await getWhatsappPhoneNumber(clientId, phoneNumberId);
-  if (phoneNumber) {
-    if (phoneNumber?.integrationId) {
-      const [integration] = await db
-        .select()
-        .from(whatsappIntegrationsTable)
-        .where(
-          and(
-            eq(whatsappIntegrationsTable.id, phoneNumber.integrationId),
-            eq(whatsappIntegrationsTable.clientId, clientId),
-          ),
-        )
-        .limit(1);
-      if (integration) {
-        return {
-          ...integration,
-          wabaId: phoneNumber.wabaId ?? integration.wabaId,
-          phoneNumberId: phoneNumber.phoneNumberId,
-        };
-      }
-    }
+  let phoneNumber = await getWhatsappPhoneNumber(clientId, phoneNumberId);
+  if (!phoneNumberId) {
+    const [defaultPhoneNumber] = await db
+      .select()
+      .from(whatsappPhoneNumbersTable)
+      .where(
+        and(
+          eq(whatsappPhoneNumbersTable.clientId, clientId),
+          eq(whatsappPhoneNumbersTable.isDefault, true),
+          eq(whatsappPhoneNumbersTable.status, "active"),
+        ),
+      )
+      .limit(1);
+    phoneNumber = defaultPhoneNumber ?? null;
   }
 
-  const [integration] = await db
+  const integrations = await db
     .select()
     .from(whatsappIntegrationsTable)
     .where(eq(whatsappIntegrationsTable.clientId, clientId))
-    .limit(1);
-  if (!integration) return null;
+    .orderBy(desc(whatsappIntegrationsTable.updatedAt));
 
-  return phoneNumber
-    ? {
-        ...integration,
-        wabaId: phoneNumber.wabaId ?? integration.wabaId,
-        phoneNumberId: phoneNumber.phoneNumberId,
-      }
-    : integration;
+  if (phoneNumber) {
+    const integration = selectWhatsappIntegrationForPhone(integrations, phoneNumber);
+    if (!integration) return null;
+    return {
+      ...integration,
+      wabaId: phoneNumber.wabaId ?? integration.wabaId,
+      phoneNumberId: phoneNumber.phoneNumberId,
+    };
+  }
+
+  if (phoneNumberId) {
+    return selectWhatsappIntegrationForPhone(integrations, {
+      integrationId: null,
+      wabaId: null,
+      phoneNumberId,
+    });
+  }
+
+  return integrations.find((integration) => integration.status === "connected" && integration.accessToken) ?? null;
 }
 
 async function upsertWhatsappContact(params: {
@@ -2635,7 +2662,12 @@ router.post("/whatsapp/connections/import-existing", async (req, res): Promise<v
   const [currentIntegration] = await db
     .select()
     .from(whatsappIntegrationsTable)
-    .where(eq(whatsappIntegrationsTable.clientId, clientId))
+    .where(
+      and(
+        eq(whatsappIntegrationsTable.clientId, clientId),
+        eq(whatsappIntegrationsTable.wabaId, parsed.data.wabaId),
+      ),
+    )
     .limit(1);
   const accessToken = providedToken ?? currentIntegration?.accessToken ?? null;
 
@@ -2702,7 +2734,7 @@ router.post("/whatsapp/connections/import-existing", async (req, res): Promise<v
       connectedAt: currentIntegration?.connectedAt ?? new Date(),
     })
     .onConflictDoUpdate({
-      target: whatsappIntegrationsTable.clientId,
+      target: [whatsappIntegrationsTable.clientId, whatsappIntegrationsTable.wabaId],
       set: {
         appId: getWhatsappEmbeddedSignupAppId(),
         configId: getWhatsappEmbeddedSignupConfigId(),
@@ -3286,6 +3318,16 @@ router.post("/whatsapp/templates/sync", async (req, res): Promise<void> => {
   const selectedIntegration = parsed.data.phoneNumberId
     ? await getWhatsappIntegrationForPhone(clientId, parsed.data.phoneNumberId)
     : null;
+  if (parsed.data.phoneNumberId && !selectedIntegration?.accessToken) {
+    res.status(409).json({
+      error: true,
+      code: "WHATSAPP_WABA_RECONNECT_REQUIRED",
+      message:
+        "Este número ainda não possui um token válido para a própria WABA. Reconecte esse número pelo Embedded Signup antes de sincronizar os templates.",
+      status: 409,
+    });
+    return;
+  }
   const integrations = selectedIntegration
     ? [selectedIntegration]
     : await db
@@ -3816,16 +3858,12 @@ router.post("/whatsapp/conversations/:conversationId/messages", async (req, res)
     .from(whatsappContactsTable)
     .where(eq(whatsappContactsTable.id, conversation.contactId))
     .limit(1);
-  const [integration] = await db
-    .select()
-    .from(whatsappIntegrationsTable)
-    .where(eq(whatsappIntegrationsTable.clientId, clientId))
-    .limit(1);
+  const requestedPhoneNumberId = parsed.data.phoneNumberId ?? conversation.phoneNumberId ?? null;
   const sendIntegration = await getWhatsappIntegrationForPhone(
     clientId,
-    parsed.data.phoneNumberId ?? conversation.phoneNumberId ?? integration?.phoneNumberId ?? null,
+    requestedPhoneNumberId,
   );
-  const sendPhoneNumberId = parsed.data.phoneNumberId ?? conversation.phoneNumberId ?? sendIntegration?.phoneNumberId ?? null;
+  const sendPhoneNumberId = requestedPhoneNumberId ?? sendIntegration?.phoneNumberId ?? null;
 
   if (!contact || !sendPhoneNumberId || !sendIntegration?.accessToken) {
     res.status(409).json({
@@ -4067,6 +4105,7 @@ router.get("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
     .select()
     .from(whatsappIntegrationsTable)
     .where(eq(whatsappIntegrationsTable.clientId, clientId))
+    .orderBy(desc(whatsappIntegrationsTable.updatedAt))
     .limit(1);
 
   const appId = getWhatsappEmbeddedSignupAppId();
@@ -4125,7 +4164,7 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
         error: null,
       };
   const hasSignupIdentity = parsed.data.event === "FINISH" || parsed.data.wabaId || parsed.data.phoneNumberId;
-  if (!hasSignupIdentity || !token.accessToken) {
+  if (!hasSignupIdentity || !parsed.data.wabaId || !parsed.data.phoneNumberId || !token.accessToken) {
     res.status(422).json({
       error: true,
       code: "WHATSAPP_SIGNUP_INCOMPLETE",
@@ -4146,8 +4185,8 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
       appId,
       configId,
       businessId: parsed.data.businessId ?? null,
-      wabaId: parsed.data.wabaId ?? null,
-      phoneNumberId: parsed.data.phoneNumberId ?? null,
+      wabaId: parsed.data.wabaId,
+      phoneNumberId: parsed.data.phoneNumberId,
       signupCode: parsed.data.code ?? null,
       accessToken: token.accessToken,
       tokenType: token.tokenType,
@@ -4158,13 +4197,13 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
       connectedAt: status === "connected" ? new Date() : null,
     })
     .onConflictDoUpdate({
-      target: whatsappIntegrationsTable.clientId,
+      target: [whatsappIntegrationsTable.clientId, whatsappIntegrationsTable.wabaId],
       set: {
         appId,
         configId,
         businessId: parsed.data.businessId ?? null,
-        wabaId: parsed.data.wabaId ?? null,
-        phoneNumberId: parsed.data.phoneNumberId ?? null,
+        wabaId: parsed.data.wabaId,
+        phoneNumberId: parsed.data.phoneNumberId,
         signupCode: parsed.data.code ?? null,
         accessToken: token.accessToken,
         tokenType: token.tokenType,
@@ -4268,11 +4307,7 @@ router.post("/whatsapp/meta-test-calls", async (req, res): Promise<void> => {
     return;
   }
 
-  const [integration] = await db
-    .select()
-    .from(whatsappIntegrationsTable)
-    .where(eq(whatsappIntegrationsTable.clientId, clientId))
-    .limit(1);
+  const integration = await getWhatsappIntegrationForPhone(clientId);
 
   if (!integration?.accessToken) {
     res.status(409).json({

@@ -29,6 +29,9 @@ import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth
 import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps";
 import {
   buildAutomationWabaCandidates,
+  getAutomationAudience,
+  hasAssignedSellerSenderMismatch,
+  resolveAutomationDeliveryRouting,
   selectAutomationTemplateByWaba,
   selectAutomationSenderPhone,
 } from "../services/automation-sender";
@@ -213,6 +216,7 @@ const CreateAgentBody = z.object({
 });
 
 const UpdateAutomationRuleBody = z.object({
+  audience: z.enum(["customer", "internal_seller"]).optional(),
   eventType: z.string().trim().min(1).optional(),
   isEnabled: z.boolean().optional(),
   templateId: z.string().trim().nullable().optional(),
@@ -227,6 +231,7 @@ const UpdateAutomationRuleBody = z.object({
 
 const CreateAutomationRuleBody = z.object({
   clientId: z.string().trim().min(1),
+  audience: z.enum(["customer", "internal_seller"]).optional().default("customer"),
   eventType: z.string().trim().min(1),
   isEnabled: z.boolean().optional().default(false),
   templateId: z.string().trim().nullable().optional(),
@@ -1015,6 +1020,7 @@ async function buildAutomationRules(clientId: string) {
     );
   return normalizeAutomationRuleSteps(rows, normalizeAutomationEventType).map((rule) => ({
     ...rule,
+    audience: getAutomationAudience(rule.conditions),
     sendOncePerCart: !rule.conditions
       || typeof rule.conditions !== "object"
       || (rule.conditions as Record<string, unknown>).sendOncePerCart !== false,
@@ -1071,6 +1077,7 @@ async function buildWhatsappTemplateOptions(clientId: string) {
       language: whatsappMessageTemplatesTable.language,
       status: whatsappMessageTemplatesTable.status,
       category: whatsappMessageTemplatesTable.category,
+      wabaId: whatsappMessageTemplatesTable.wabaId,
     })
     .from(whatsappMessageTemplatesTable)
     .where(eq(whatsappMessageTemplatesTable.clientId, clientId))
@@ -1216,7 +1223,11 @@ async function buildAutomationTemplateBodyParams(params: {
   return Array.from({ length: placeholderCount }, (_, index) => mappedValues.get(String(index + 1)) ?? "-");
 }
 
-async function resolveAutomationSender(clientId: string, payload?: Record<string, unknown>) {
+async function resolveAutomationSender(
+  clientId: string,
+  payload?: Record<string, unknown>,
+  senderStrategy: "assigned_seller" | "default_phone" = "assigned_seller",
+) {
   const sellerPhone = firstText(
     payload?.seller_phone,
     payload?.assigned_seller_phone,
@@ -1242,9 +1253,12 @@ async function resolveAutomationSender(clientId: string, payload?: Record<string
     .from(whatsappPhoneNumbersTable)
     .where(and(eq(whatsappPhoneNumbersTable.clientId, clientId), eq(whatsappPhoneNumbersTable.status, "active")))
     .orderBy(desc(whatsappPhoneNumbersTable.updatedAt));
-  const selection = selectAutomationSenderPhone(phones, sellerPhone);
+  const selection = selectAutomationSenderPhone(
+    phones,
+    senderStrategy === "assigned_seller" ? sellerPhone : null,
+  );
   const phone = selection.phone;
-  let integrationWabaId: string | null = null;
+  let integrationWabaId: string | null = phone?.wabaId ?? null;
 
   if (phone?.integrationId) {
     const [integration] = await db
@@ -1274,22 +1288,14 @@ async function resolveAutomationSender(clientId: string, payload?: Record<string
     integrationWabaId = integration?.wabaId ?? null;
   }
 
-  if (!integrationWabaId && phone) {
-    const [integration] = await db
-      .select({ wabaId: whatsappIntegrationsTable.wabaId })
-      .from(whatsappIntegrationsTable)
-      .where(eq(whatsappIntegrationsTable.clientId, clientId))
-      .limit(1);
-    integrationWabaId = integration?.wabaId ?? null;
-  }
-
-  // The phone is the canonical WABA boundary. The integration value is only
-  // used until the phone-to-WABA relationship is confirmed with Meta.
+  // The selected phone is the WABA boundary. Never borrow an integration from
+  // another WABA belonging to the same client.
   const wabaIds = buildAutomationWabaCandidates(phone?.wabaId, integrationWabaId);
 
   return {
     phoneNumberId: phone?.phoneNumberId ?? null,
     source: selection.source,
+    strategy: senderStrategy,
     sellerPhone,
     sellerName,
     displayPhoneNumber: phone?.displayPhoneNumber ?? null,
@@ -1486,9 +1492,25 @@ async function scheduleAutomationJobsForEvent(params: {
   const rules = normalizeAutomationRuleSteps(rawRules, normalizeAutomationEventType);
 
   const scheduled: Array<{ ruleId: string; jobId: string | null; status: string; reason?: string }> = [];
-  const to = normalizeWhatsappRecipient(params.customerPhone);
-  const sender = await resolveAutomationSender(params.clientId, params.payload);
-  const phoneNumberId = sender.phoneNumberId;
+  const customerRecipient = normalizeWhatsappRecipient(params.customerPhone);
+  const sellerPhone = firstText(
+    params.payload.seller_phone,
+    params.payload.assigned_seller_phone,
+    getNestedValue(params.payload, "seller.phone"),
+    getNestedValue(params.payload, "assigned_seller.phone"),
+  );
+  const hasCustomerAutomation = rules.some(
+    (rule) => getAutomationAudience(rule.conditions) === "customer",
+  );
+  const hasInternalSellerNotification = rules.some(
+    (rule) => getAutomationAudience(rule.conditions) === "internal_seller",
+  );
+  const assignedSellerSender = hasCustomerAutomation
+    ? await resolveAutomationSender(params.clientId, params.payload, "assigned_seller")
+    : null;
+  const defaultSender = hasInternalSellerNotification
+    ? await resolveAutomationSender(params.clientId, params.payload, "default_phone")
+    : null;
   const cartAutomationIdentity = getCartAutomationIdentity(params.eventType, params.payload);
   const isCartAutomationEvent = ["cart_created", "cart_abandoned"].includes(
     (normalizeAutomationEventType(params.eventType) ?? params.eventType).toLowerCase(),
@@ -1501,6 +1523,27 @@ async function scheduleAutomationJobsForEvent(params: {
   );
 
   for (const rule of rules) {
+    const routing = resolveAutomationDeliveryRouting({
+      conditions: rule.conditions,
+      customerPhone: customerRecipient,
+      sellerPhone,
+    });
+    const to = normalizeWhatsappRecipient(routing.recipientPhone);
+    const sender = routing.senderStrategy === "default_phone"
+      ? defaultSender
+      : assignedSellerSender;
+    const phoneNumberId = sender?.phoneNumberId ?? null;
+    const notificationSubjectId = routing.audience === "internal_seller"
+      ? firstText(
+          params.customerId,
+          getWebhookCustomerIdentity(params.eventType, params.payload),
+          getNestedValue(params.payload, "customer.document"),
+          params.payload.document,
+          getNestedValue(params.payload, "customer.email"),
+          params.payload.email,
+          params.customerPhone,
+        )
+      : null;
     const sendOncePerCart = !rule.conditions
       || typeof rule.conditions !== "object"
       || (rule.conditions as Record<string, unknown>).sendOncePerCart !== false;
@@ -1528,7 +1571,11 @@ async function scheduleAutomationJobsForEvent(params: {
         sql`${commercialAutomationJobsTable.renderedPayload}->>'to' = ${to}`,
         sql`${commercialAutomationJobsTable.renderedPayload}->>'templateName' = ${rule.templateName}`,
       ];
-      if (cartAutomationIdentity && sendOncePerCart) {
+      if (routing.audience === "internal_seller" && notificationSubjectId) {
+        duplicateConditions.push(
+          sql`${commercialAutomationJobsTable.renderedPayload}->>'notificationSubjectId' = ${notificationSubjectId}`,
+        );
+      } else if (cartAutomationIdentity && sendOncePerCart) {
         duplicateConditions.push(sql`(
           COALESCE(
             ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
@@ -1585,24 +1632,34 @@ async function scheduleAutomationJobsForEvent(params: {
     }
 
     if (!to) {
+      const missingRecipientMessage = routing.audience === "internal_seller"
+        ? `Automação ${rule.name} não foi agendada porque o evento não trouxe seller_phone da vendedora atribuída.`
+        : `Automação ${rule.name} não foi agendada porque o evento não trouxe telefone.`;
       await db.insert(commercialAutomationLogsTable).values({
         clientId: params.clientId,
         ruleId: rule.id,
         eventType: params.eventType,
         action: "automation_not_scheduled",
         status: "blocked",
-        message: `Automação ${rule.name} não foi agendada porque o evento não trouxe telefone.`,
-        metadata: { eventRecordId: params.eventRecordId },
+        message: missingRecipientMessage,
+        metadata: { eventRecordId: params.eventRecordId, routing },
       });
-      scheduled.push({ ruleId: rule.id, jobId: null, status: "blocked", reason: "phone_missing" });
+      scheduled.push({
+        ruleId: rule.id,
+        jobId: null,
+        status: "blocked",
+        reason: routing.audience === "internal_seller" ? "seller_phone_missing" : "phone_missing",
+      });
       continue;
     }
 
     if (!phoneNumberId) {
-      const sellerIdentification = sender.sellerName || sender.sellerPhone;
-      const message = sender.blockedReason === "seller_phone_not_matched"
-        ? `Automação ${rule.name} não foi agendada porque o WhatsApp da vendedora${sellerIdentification ? ` (${sellerIdentification})` : ""} não corresponde a nenhum número ativo conectado.`
-        : `Automação ${rule.name} não foi agendada porque a marca não possui um número padrão ativo.`;
+      const sellerIdentification = sender?.sellerName || sender?.sellerPhone;
+      const message = routing.senderStrategy === "default_phone"
+        ? `Automação ${rule.name} não foi agendada porque a marca não possui um número padrão ativo para notificações internas.`
+        : sender?.blockedReason === "seller_phone_not_matched"
+          ? `Automação ${rule.name} não foi agendada porque o WhatsApp da vendedora${sellerIdentification ? ` (${sellerIdentification})` : ""} não corresponde a nenhum número ativo conectado.`
+          : `Automação ${rule.name} não foi agendada porque a marca não possui um número padrão ativo.`;
       await db.insert(commercialAutomationLogsTable).values({
         clientId: params.clientId,
         ruleId: rule.id,
@@ -1619,7 +1676,7 @@ async function scheduleAutomationJobsForEvent(params: {
         ruleId: rule.id,
         jobId: null,
         status: "blocked",
-        reason: sender.blockedReason ?? "sender_phone_missing",
+        reason: sender?.blockedReason ?? "sender_phone_missing",
       });
       continue;
     }
@@ -1630,7 +1687,7 @@ async function scheduleAutomationJobsForEvent(params: {
       templateId: rule.templateId,
       templateName: rule.templateName,
       templateLanguage: rule.templateLanguage,
-      wabaIds: sender.wabaIds,
+      wabaIds: sender?.wabaIds ?? [],
       payload: params.payload,
     });
     const jobValues = {
@@ -1648,10 +1705,36 @@ async function scheduleAutomationJobsForEvent(params: {
         bodyParams,
         sourceEvent: params.payload,
         sender,
+        routing,
+        audience: routing.audience,
+        notificationSubjectId,
       },
     };
 
-    const insertedJobs = isCartAutomationEvent && dedupeKey
+    const insertedJobs = routing.audience === "internal_seller" && notificationSubjectId
+      ? await db.transaction(async (tx) => {
+        const lockKey = `internal-notification:${params.clientId}:${rule.id}:${notificationSubjectId}`;
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+        const [duplicate] = await tx
+          .select({ id: commercialAutomationJobsTable.id })
+          .from(commercialAutomationJobsTable)
+          .where(and(
+            eq(commercialAutomationJobsTable.clientId, params.clientId),
+            eq(commercialAutomationJobsTable.ruleId, rule.id),
+            sql`${commercialAutomationJobsTable.status} IN ('scheduled', 'processing', 'sent')`,
+            sql`${commercialAutomationJobsTable.renderedPayload}->>'notificationSubjectId' = ${notificationSubjectId}`,
+          ))
+          .limit(1);
+        if (duplicate) {
+          return { jobs: [], reason: "same_internal_notification_subject" };
+        }
+        const jobs = await tx
+          .insert(commercialAutomationJobsTable)
+          .values(jobValues)
+          .returning({ id: commercialAutomationJobsTable.id });
+        return { jobs, reason: null };
+      })
+      : isCartAutomationEvent && dedupeKey
       ? await db.transaction(async (tx) => {
         const lockKey = `cart-automation:${params.clientId}:${rule.id}:recipient:${to}`;
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
@@ -1733,7 +1816,9 @@ async function scheduleAutomationJobsForEvent(params: {
         eventType: params.eventType,
         action: "automation_duplicate_skipped",
         status: "info",
-        message: insertedJobs.reason === "customer_30_day_limit"
+        message: insertedJobs.reason === "same_internal_notification_subject"
+          ? `Automação ${rule.name} ignorada: esta vendedora já recebeu a notificação deste cadastro.`
+          : insertedJobs.reason === "customer_30_day_limit"
           ? `Automação ${rule.name} ignorada: o cliente atingiu o limite de ${rule.maxSendsPerCustomerMonth ?? 4} envio(s) desta etapa em 30 dias.`
           : `Automação ${rule.name} ignorada: este carrinho já recebeu a etapa ou o intervalo mínimo de ${rule.cooldownHours ?? 24} hora(s) ainda está ativo.`,
         metadata: {
@@ -1744,6 +1829,8 @@ async function scheduleAutomationJobsForEvent(params: {
           sendOncePerCart,
           cooldownHours: rule.cooldownHours,
           maxSendsPerCustomerMonth: rule.maxSendsPerCustomerMonth,
+          routing,
+          notificationSubjectId,
         },
       });
       scheduled.push({
@@ -1769,6 +1856,8 @@ async function scheduleAutomationJobsForEvent(params: {
         templateName: rule.templateName,
         phoneNumberId,
         sender,
+        routing,
+        notificationSubjectId,
       },
     });
 
@@ -2017,6 +2106,10 @@ async function processDueAutomationJobs(limit = 25) {
     const recipient = validateWhatsappRecipient(firstText(rendered.to));
     const to = recipient.normalized;
     const sender = asRecord(rendered.sender);
+    const routing = asRecord(rendered.routing);
+    const audience = firstText(rendered.audience, routing?.audience) === "internal_seller"
+      ? "internal_seller"
+      : "customer";
     const sellerPhone = firstText(sender?.sellerPhone);
     const senderSource = firstText(sender?.source);
     const phoneNumberId = firstText(rendered.phoneNumberId) ?? await findAutomationPhoneNumberId(job.clientId);
@@ -2058,7 +2151,7 @@ async function processDueAutomationJobs(limit = 25) {
       continue;
     }
 
-    if (sellerPhone && senderSource !== "seller_phone") {
+    if (hasAssignedSellerSenderMismatch({ audience, sellerPhone, senderSource })) {
       const message = `Job bloqueado: o WhatsApp da vendedora (${sellerPhone}) não corresponde a um número ativo conectado.`;
       await db
         .update(commercialAutomationJobsTable)
@@ -2140,9 +2233,11 @@ async function processDueAutomationJobs(limit = 25) {
       )
       .limit(1);
 
-    let sendIntegration = exactIntegration;
+    const isSenderWabaCompatible = (integration: typeof whatsappIntegrationsTable.$inferSelect | undefined) =>
+      Boolean(integration && (!senderPhone?.wabaId || integration.wabaId === senderPhone.wabaId));
+    let sendIntegration = isSenderWabaCompatible(exactIntegration) ? exactIntegration : undefined;
     if (!sendIntegration && senderPhone?.integrationId) {
-      [sendIntegration] = await db
+      const [boundIntegration] = await db
         .select()
         .from(whatsappIntegrationsTable)
         .where(
@@ -2152,6 +2247,7 @@ async function processDueAutomationJobs(limit = 25) {
           ),
         )
         .limit(1);
+      sendIntegration = isSenderWabaCompatible(boundIntegration) ? boundIntegration : undefined;
     }
     if (!sendIntegration && senderPhone?.wabaId) {
       [sendIntegration] = await db
@@ -3144,7 +3240,12 @@ router.post("/orchestrator/automations", requireAdmin, async (req, res): Promise
       delayMinutes: parsed.data.delayMinutes,
       cooldownHours: parsed.data.cooldownHours,
       maxSendsPerCustomerMonth: parsed.data.maxSendsPerCustomerMonth,
-      conditions: { sendOncePerCart: parsed.data.sendOncePerCart },
+      conditions: {
+        audience: parsed.data.audience,
+        senderStrategy: parsed.data.audience === "internal_seller" ? "default_phone" : "assigned_seller",
+        recipientStrategy: parsed.data.audience === "internal_seller" ? "assigned_seller" : "event_customer",
+        sendOncePerCart: parsed.data.sendOncePerCart,
+      },
     })
     .returning();
 
@@ -3163,12 +3264,14 @@ router.post("/orchestrator/automations", requireAdmin, async (req, res): Promise
       cooldownHours: created.cooldownHours,
       maxSendsPerCustomerMonth: created.maxSendsPerCustomerMonth,
       sendOncePerCart: parsed.data.sendOncePerCart,
+      audience: parsed.data.audience,
     },
   });
 
   res.status(201).json({
     rule: {
       ...created,
+      audience: getAutomationAudience(created.conditions),
       enabled: created.isEnabled,
       channel: "whatsapp_template",
       approval: "automatic_after_delay",
@@ -3184,6 +3287,7 @@ router.get("/orchestrator/automations", requireAdmin, async (req, res): Promise<
     const rules = await buildAutomationRules(client.id);
     const templates = await buildWhatsappTemplateOptions(client.id);
     const eventOptions = await buildAutomationEventOptions(client.id);
+    const defaultSender = await resolveAutomationSender(client.id, undefined, "default_phone");
     const [jobStats] = await db
       .select({
         scheduled: sql<number>`COUNT(*) FILTER (WHERE ${commercialAutomationJobsTable.status} = 'scheduled')::int`,
@@ -3197,6 +3301,14 @@ router.get("/orchestrator/automations", requireAdmin, async (req, res): Promise<
       client,
       eventOptions,
       templates,
+      defaultSender: defaultSender.phoneNumberId
+        ? {
+            phoneNumberId: defaultSender.phoneNumberId,
+            displayPhoneNumber: defaultSender.displayPhoneNumber,
+            verifiedName: defaultSender.verifiedName,
+            wabaId: defaultSender.wabaId,
+          }
+        : null,
       jobStats: jobStats ?? { scheduled: 0, sent: 0, failed: 0 },
       rules: rules.map((rule) => ({
         ...rule,
@@ -3281,13 +3393,22 @@ router.patch("/orchestrator/automations/:ruleId", requireAdmin, async (req, res)
       ...(patch.maxSendsPerCustomerMonth !== undefined
         ? { maxSendsPerCustomerMonth: patch.maxSendsPerCustomerMonth }
         : {}),
-      ...(patch.sendOncePerCart !== undefined
+      ...(patch.sendOncePerCart !== undefined || patch.audience !== undefined
         ? {
             conditions: {
               ...(rule.conditions && typeof rule.conditions === "object"
                 ? rule.conditions as Record<string, unknown>
                 : {}),
-              sendOncePerCart: patch.sendOncePerCart,
+              ...(patch.sendOncePerCart !== undefined
+                ? { sendOncePerCart: patch.sendOncePerCart }
+                : {}),
+              ...(patch.audience !== undefined
+                ? {
+                    audience: patch.audience,
+                    senderStrategy: patch.audience === "internal_seller" ? "default_phone" : "assigned_seller",
+                    recipientStrategy: patch.audience === "internal_seller" ? "assigned_seller" : "event_customer",
+                  }
+                : {}),
             },
           }
         : {}),
@@ -3312,10 +3433,16 @@ router.patch("/orchestrator/automations/:ruleId", requireAdmin, async (req, res)
       sendOncePerCart: updated.conditions && typeof updated.conditions === "object"
         ? (updated.conditions as Record<string, unknown>).sendOncePerCart !== false
         : true,
+      audience: getAutomationAudience(updated.conditions),
     },
   });
 
-  res.json({ rule: updated });
+  res.json({
+    rule: {
+      ...updated,
+      audience: getAutomationAudience(updated.conditions),
+    },
+  });
 });
 
 router.post("/orchestrator/automations/process-due", requireAdmin, async (_req, res): Promise<void> => {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAutomationWabaCandidates,
+  getAutomationAudience,
+  hasAssignedSellerSenderMismatch,
+  resolveAutomationDeliveryRouting,
   selectAutomationTemplateByWaba,
   selectAutomationSenderPhone,
   type AutomationSenderPhoneCandidate,
@@ -25,6 +28,53 @@ const sellerPhone: AutomationSenderPhoneCandidate = {
 };
 
 describe("WhatsApp automation sender selection", () => {
+  it("keeps existing rules as customer-facing automations", () => {
+    expect(getAutomationAudience(null)).toBe("customer");
+    expect(getAutomationAudience({ sendOncePerCart: true })).toBe("customer");
+  });
+
+  it("routes internal notifications from the default number to the assigned seller", () => {
+    expect(resolveAutomationDeliveryRouting({
+      conditions: { audience: "internal_seller" },
+      customerPhone: "+55 11 91111-1111",
+      sellerPhone: "+55 11 92222-2222",
+    })).toEqual({
+      audience: "internal_seller",
+      senderStrategy: "default_phone",
+      recipientStrategy: "assigned_seller",
+      recipientPhone: "+55 11 92222-2222",
+    });
+  });
+
+  it("keeps the current customer flow assigned to the seller sender", () => {
+    expect(resolveAutomationDeliveryRouting({
+      conditions: { audience: "customer" },
+      customerPhone: "+55 11 91111-1111",
+      sellerPhone: "+55 11 92222-2222",
+    })).toEqual({
+      audience: "customer",
+      senderStrategy: "assigned_seller",
+      recipientStrategy: "event_customer",
+      recipientPhone: "+55 11 91111-1111",
+    });
+  });
+
+  it("does not apply the assigned-seller sender guard to internal notifications", () => {
+    expect(hasAssignedSellerSenderMismatch({
+      audience: "internal_seller",
+      sellerPhone: "+55 11 92222-2222",
+      senderSource: "default_phone",
+    })).toBe(false);
+  });
+
+  it("keeps the assigned-seller sender guard for customer messages", () => {
+    expect(hasAssignedSellerSenderMismatch({
+      audience: "customer",
+      sellerPhone: "+55 11 92222-2222",
+      senderSource: "default_phone",
+    })).toBe(true);
+  });
+
   it("uses the connected seller number when seller_phone matches", () => {
     const result = selectAutomationSenderPhone(
       [defaultPhone, sellerPhone],
