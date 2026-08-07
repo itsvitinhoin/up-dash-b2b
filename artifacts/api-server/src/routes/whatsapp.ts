@@ -1,4 +1,5 @@
 import { Router, type IRouter, type Request } from "express";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { logger } from "../lib/logger";
@@ -78,6 +79,32 @@ function getWhatsappEmbeddedSignupConfigId(): string | null {
 
 function getMetaAppSecret(): string | null {
   return process.env.META_APP_SECRET ?? process.env.FACEBOOK_APP_SECRET ?? null;
+}
+
+// Achado em revisão de segurança (06/08/2026): o POST do webhook processava
+// qualquer payload recebido sem checar se veio mesmo da Meta — só o GET de
+// handshake validava o verify_token. Sem isso, quem descobrisse a URL e um
+// phone_number_id válido conseguia injetar evento falso. Meta assina todo
+// POST com HMAC-SHA256 do corpo bruto usando o App Secret — ver
+// https://developers.facebook.com/docs/graph-api/webhooks/getting-started#validate-payloads
+function isValidWhatsappWebhookSignature(req: Request): boolean {
+  const appSecret = getMetaAppSecret();
+  if (!appSecret) {
+    logger.warn("whatsapp webhook: META_APP_SECRET não configurado, não é possível validar assinatura");
+    return false;
+  }
+  const header = req.get("x-hub-signature-256");
+  if (!header || !header.startsWith("sha256=")) return false;
+  const rawBody = req.rawBody;
+  if (!rawBody) return false;
+
+  const expected = createHmac("sha256", appSecret).update(rawBody).digest("hex");
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  const receivedBuffer = Buffer.from(header.slice("sha256=".length), "utf8");
+  return (
+    expectedBuffer.length === receivedBuffer.length &&
+    timingSafeEqual(expectedBuffer, receivedBuffer)
+  );
 }
 
 function getWhatsappSystemUserAccessToken(): string | null {
@@ -1444,6 +1471,24 @@ router.get("/webhooks/whatsapp", (req, res): void => {
 });
 
 router.post("/webhooks/whatsapp", async (req, res): Promise<void> => {
+  // Se o App Secret está configurado, a assinatura PRECISA bater — rejeita
+  // payload forjado. Se não está configurado, só avisa e segue processando
+  // (fail-open de propósito aqui: não sabemos com certeza se META_APP_SECRET
+  // já está setado em produção, e quebrar recebimento de mensagem de todo
+  // client de uma vez é pior do que a janela de exposição atual, que já
+  // existe há mais tempo). Assim que confirmado que a env var está
+  // configurada, dá pra trocar pra fail-closed nos dois casos.
+  if (getMetaAppSecret() && !isValidWhatsappWebhookSignature(req)) {
+    logger.warn("whatsapp webhook: assinatura invalida, payload rejeitado");
+    res.status(401).json({
+      error: true,
+      code: "INVALID_SIGNATURE",
+      message: "Invalid webhook signature.",
+      status: 401,
+    });
+    return;
+  }
+
   const payload = req.body as WhatsappWebhookPayload;
   const summary = summarizePayload(payload);
   let persistedMessages = 0;

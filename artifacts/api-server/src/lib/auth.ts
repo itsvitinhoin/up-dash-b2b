@@ -36,11 +36,20 @@ export function verifyPassword(plain: string, hash: string): Promise<boolean> {
 }
 
 export function signAccessToken(payload: AccessTokenPayload): string {
-  return jwt.sign(payload, ACCESS_SECRET, { expiresIn: ACCESS_EXPIRES_IN });
+  return jwt.sign(payload, ACCESS_SECRET, {
+    expiresIn: ACCESS_EXPIRES_IN,
+    algorithm: "HS256",
+  });
 }
 
+// Fixa o algoritmo aceito (achado em revisão de segurança, 06/08/2026):
+// sem isso, jwt.verify aceita qualquer algoritmo presente no header do
+// token. A lib já bloqueia o caso clássico de "alg: none", mas travar
+// explicitamente em HS256 é defesa em profundidade sem custo nenhum.
 export function verifyAccessToken(token: string): AccessTokenPayload {
-  return jwt.verify(token, ACCESS_SECRET) as AccessTokenPayload;
+  return jwt.verify(token, ACCESS_SECRET, {
+    algorithms: ["HS256"],
+  }) as AccessTokenPayload;
 }
 
 function hashRefreshToken(token: string): string {
