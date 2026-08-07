@@ -79,7 +79,7 @@ export default function JourneyPage() {
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
 
-  const { data, isLoading, isError, refetch } = useGetJourney(
+  const { data, isLoading, isError, error, refetch } = useGetJourney(
     {
       clientId,
       dateFrom: format(dateRange.from, "yyyy-MM-dd"),
@@ -155,8 +155,8 @@ export default function JourneyPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error</AlertTitle>
-          <AlertDescription className="flex items-center justify-between">
-            Failed to load journey data.
+          <AlertDescription className="flex items-center justify-between gap-3">
+            {(error as { data?: { message?: string } } | undefined)?.data?.message ?? "Failed to load journey data."}
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="mr-2 h-4 w-4" /> Retry
             </Button>

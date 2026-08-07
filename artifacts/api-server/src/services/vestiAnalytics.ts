@@ -132,11 +132,19 @@ async function fetchKpis(
   dateTo: string,
   filter: FilterClause,
 ): Promise<VestiKpis> {
+  // "Cliente"/"comprador" (customers, new/returning, repeat) sempre conta
+  // só pedido PAGO — mesma convenção do backend-dash (dashboardPerformanceService,
+  // clientes_kpis: "base_periodo ... WHERE pago = TRUE"), confirmada
+  // comparando número real (Vogabox: Clientes 84 = só pagos; 114 é o total
+  // incluindo pedido não pago, que não é "cliente" pro legado). `revenue`/
+  // `requestedRevenue`/`leads` continuam sem esse filtro de propósito —
+  // já batem exatamente com "Valor Atendido"/"Valor Solicitado"/"Pedidos"
+  // do legado, que também não filtram por pago nesses três campos.
   const query = `
     WITH first_purchase AS (
       SELECT cliente_id, MIN(data_ref) AS first_date
       FROM ${view}
-      WHERE cliente_id IS NOT NULL
+      WHERE cliente_id IS NOT NULL AND pago
       GROUP BY cliente_id
     ),
     window_rows AS (
@@ -147,7 +155,7 @@ async function fetchKpis(
     orders_per_customer AS (
       SELECT cliente_id, COUNT(DISTINCT pedido_id) AS pedidos
       FROM window_rows
-      WHERE cliente_id IS NOT NULL
+      WHERE cliente_id IS NOT NULL AND pago
       GROUP BY cliente_id
     )
     SELECT
@@ -155,10 +163,10 @@ async function fetchKpis(
       COALESCE(SUM(v.valor_solicitado), 0) AS requested_revenue,
       COUNT(DISTINCT v.pedido_id) AS leads,
       COUNT(DISTINCT IF(v.pago, v.pedido_id, NULL)) AS approved_leads,
-      COUNT(DISTINCT v.cliente_id) AS customers,
-      COUNT(DISTINCT IF(fp.first_date >= @dateFrom, v.cliente_id, NULL)) AS new_buyers,
-      COUNT(DISTINCT IF(fp.first_date < @dateFrom, v.cliente_id, NULL)) AS returning_buyers,
-      COUNT(DISTINCT IF(opc.pedidos > 1, v.cliente_id, NULL)) AS repeat_customers
+      COUNT(DISTINCT IF(v.pago, v.cliente_id, NULL)) AS customers,
+      COUNT(DISTINCT IF(v.pago AND fp.first_date >= @dateFrom, v.cliente_id, NULL)) AS new_buyers,
+      COUNT(DISTINCT IF(v.pago AND fp.first_date < @dateFrom, v.cliente_id, NULL)) AS returning_buyers,
+      COUNT(DISTINCT IF(v.pago AND opc.pedidos > 1, v.cliente_id, NULL)) AS repeat_customers
     FROM window_rows v
     LEFT JOIN first_purchase fp ON fp.cliente_id = v.cliente_id
     LEFT JOIN orders_per_customer opc ON opc.cliente_id = v.cliente_id
@@ -518,6 +526,7 @@ export async function fetchVestiOrdersPage(
 ): Promise<VestiOrdersPage> {
   const view = vestiTable(dataset, "dashboard_vendas_view");
   const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
+  const clientes = vestiTable(dataset, "clientes_vesti");
   const offset = (page - 1) * limit;
 
   const kpiQuery = `
@@ -547,10 +556,23 @@ export async function fetchVestiOrdersPage(
       COALESCE(SUM(p.fulfilled_quantity), 0) AS fulfilled_quantity,
       COUNT(DISTINCT p.pedido_id) AS orders,
       COUNT(DISTINCT IF(opc.n = 1, p.cliente_id, NULL)) AS new_customers,
-      COUNT(DISTINCT IF(opc.n > 1, p.cliente_id, NULL)) AS returning_customers,
-      COUNT(DISTINCT IF(p.pago, p.cliente_id, NULL)) AS approved_leads
+      COUNT(DISTINCT IF(opc.n > 1, p.cliente_id, NULL)) AS returning_customers
     FROM pedidos p
     LEFT JOIN orders_per_customer opc ON opc.cliente_id = p.cliente_id
+  `;
+
+  // "% de conversão" — mesma fórmula do B2C original (routes/analytics.ts,
+  // conversionBase = approvedLeads pro lado não-B2C): pedidos ÷ CADASTROS
+  // APROVADOS no período (não "clientes com pedido pago", que era o que
+  // essa query calculava antes como "approved_leads" — unidade errada,
+  // cliente vs pedido, dava base >100% às vezes). Ficava sempre 0.0%
+  // porque o controller nem tentava calcular, só zerava na resposta.
+  const approvedRegistrationsQuery = `
+    SELECT COUNT(*) AS approved_registrations
+    FROM ${clientes}
+    WHERE DATE(created_at) BETWEEN @dateFrom AND @dateTo
+      AND COALESCE(active, true) != false
+      AND profile.name IN ('Liberado', 'VIP')
   `;
 
   const searchClause = search ? `AND (
@@ -593,8 +615,9 @@ export async function fetchVestiOrdersPage(
   `;
 
   const searchParam = search ? `%${search.toLowerCase()}%` : undefined;
-  const [[kpiRows], [listRows], [countRows]] = await Promise.all([
+  const [[kpiRows], [approvedRegRows], [listRows], [countRows]] = await Promise.all([
     bigquery.query({ query: kpiQuery, params: { dateFrom, dateTo } }),
+    bigquery.query({ query: approvedRegistrationsQuery, params: { dateFrom, dateTo } }),
     bigquery.query({
       query: listQuery,
       params: { dateFrom, dateTo, limit, offset, ...(searchParam ? { search: searchParam } : {}) },
@@ -639,7 +662,7 @@ export async function fetchVestiOrdersPage(
       newCustomers,
       returningCustomers,
       retentionPct: customerCount > 0 ? (returningCustomers / customerCount) * 100 : 0,
-      approvedLeads: Number(k?.approved_leads) || 0,
+      approvedLeads: Number((approvedRegRows as Array<Record<string, unknown>>)[0]?.approved_registrations) || 0,
     },
     rows,
     total: Number(countRows[0]?.total) || 0,
@@ -1319,6 +1342,8 @@ export type VestiCustomerSummary = {
     approvalRatePct: number;
     customersWithoutPurchase: number;
     totalBuyers: number;
+    avgTimeToFirstPurchaseDays: number | null;
+    avgTimeBetweenPurchasesDays: number | null;
   };
   registrationsOverTime: { date: string; registrations: number; approved: number }[];
   registrationsByState: { state: string; count: number }[];
@@ -1341,18 +1366,36 @@ export async function fetchVestiCustomerSummary(
       FROM ${clientes}
       WHERE 1=1 ${dateFilter}
     ),
-    buyers AS (
-      SELECT DISTINCT cliente_id FROM ${view} WHERE cliente_id IS NOT NULL
+    purchases AS (
+      SELECT
+        cliente_id,
+        MIN(data_ref) AS first_purchase_date,
+        MAX(data_ref) AS last_purchase_date,
+        COUNT(DISTINCT pedido_id) AS order_count
+      FROM ${view}
+      WHERE cliente_id IS NOT NULL AND pago
+      GROUP BY cliente_id
     )
     SELECT
       COUNT(*) AS total_registrations,
       COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP')) AS approved_registrations,
       COUNTIF(COALESCE(active, true) != false AND COALESCE(profile_name, '') NOT IN ('Liberado', 'VIP')) AS pending_registrations,
       COUNTIF(active = false) AS rejected_registrations,
-      COUNTIF(b.cliente_id IS NOT NULL) AS total_buyers,
-      COUNTIF(b.cliente_id IS NULL) AS customers_without_purchase
+      -- "Total Buyers"/"Approved No Purchase" no B2C original (routes/analytics.ts,
+      -- noBuyersRow/buyersRow) só contam cadastro APROVADO — aqui tinha
+      -- esquecido esse filtro e contava qualquer cadastro (aprovado,
+      -- pendente ou rejeitado), inflando "Approved No Purchase" acima do
+      -- próprio total de aprovados (bug real, achado 06/08/2026).
+      COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP') AND p.cliente_id IS NOT NULL) AS total_buyers,
+      COUNTIF(COALESCE(active, true) != false AND profile_name IN ('Liberado', 'VIP') AND p.cliente_id IS NULL) AS customers_without_purchase,
+      -- "Avg Days to 1st" ficava sempre travado em "—" no controller
+      -- (avgTimeToFirstPurchaseDays hardcoded null) — nunca tinha sido
+      -- calculado de verdade. Mesma fórmula do B2C original (timeToFirstRow):
+      -- dias entre cadastro e primeira compra PAGA, só quem já comprou.
+      AVG(IF(p.first_purchase_date IS NOT NULL AND p.first_purchase_date >= DATE(r.created_at), DATE_DIFF(p.first_purchase_date, DATE(r.created_at), DAY), NULL)) AS avg_time_to_first_purchase_days,
+      AVG(IF(p.order_count > 1, DATE_DIFF(p.last_purchase_date, p.first_purchase_date, DAY) / (p.order_count - 1), NULL)) AS avg_time_between_purchases_days
     FROM regs r
-    LEFT JOIN buyers b ON b.cliente_id = r.id
+    LEFT JOIN purchases p ON p.cliente_id = r.id
   `;
 
   const dailyQuery = `
@@ -1424,6 +1467,8 @@ export async function fetchVestiCustomerSummary(
       approvalRatePct: totalRegistrations > 0 ? (approvedRegistrations / totalRegistrations) * 100 : 0,
       customersWithoutPurchase: Number(k?.customers_without_purchase) || 0,
       totalBuyers: Number(k?.total_buyers) || 0,
+      avgTimeToFirstPurchaseDays: k?.avg_time_to_first_purchase_days != null ? Math.round(Number(k.avg_time_to_first_purchase_days) * 10) / 10 : null,
+      avgTimeBetweenPurchasesDays: k?.avg_time_between_purchases_days != null ? Math.round(Number(k.avg_time_between_purchases_days) * 10) / 10 : null,
     },
     registrationsOverTime: (dailyRows as Array<Record<string, unknown>>).map((r) => ({
       date: toDateOnly(r.date),
@@ -1448,7 +1493,7 @@ export async function fetchVestiCustomerSummary(
 
 const VESTI_DEFAULT_RESTOCK_THRESHOLD = 10;
 
-function computeVestiProductLevel(
+export function computeVestiProductLevel(
   totalSold: number,
   stock: number,
   recent30dSold: number,
@@ -1538,6 +1583,36 @@ export async function fetchVestiProductsPage(
     totalRevenue: Number(r.total_revenue) || 0,
     createdAt: toDateOnly(r.created_at),
   }));
+}
+
+// "Sales Power"/"Active SKUs" (tira de /analytics/products/summary) —
+// achado 06/08/2026: essa rota só lia orderItems/orders do Postgres
+// (UpZero), sempre zero pra client Vesti nativo, mesma causa raiz de
+// tudo que foi corrigido hoje. SKU "ativo" aqui = produto com pelo menos
+// uma venda PAGA no período (diferente de "produto ativo" no catálogo).
+export type VestiProductsSummary = { activeSkus: number; totalRevenue: number };
+
+export async function fetchVestiProductsSummary(
+  dataset: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<VestiProductsSummary> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const [rows] = await bigquery.query({
+    query: `
+      SELECT
+        COUNT(DISTINCT produto_id) AS active_skus,
+        COALESCE(SUM(produto_preco_unitario * produto_quantidade_reservada), 0) AS total_revenue
+      FROM ${view}
+      WHERE produto_id IS NOT NULL AND data_ref BETWEEN @dateFrom AND @dateTo AND pago
+    `,
+    params: { dateFrom, dateTo },
+  });
+  const row = (rows as Array<Record<string, unknown>>)[0];
+  return {
+    activeSkus: Number(row?.active_skus) || 0,
+    totalRevenue: Number(row?.total_revenue) || 0,
+  };
 }
 
 export type VestiProductDetail = {

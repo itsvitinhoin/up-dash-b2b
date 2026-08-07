@@ -45,9 +45,15 @@ export async function getOrdersPage(req: Request, res: Response): Promise<void> 
     fetchVestiOrdersPage(dataset, dateFromOnly, dateToOnly, page, limit, search),
   );
 
+  // "% de conversão" ficava sempre travada em 0% — o controller nem
+  // tentava calcular. Mesma fórmula do B2C original pro lado não-B2C
+  // (routes/analytics.ts: conversionBase = approvedLeads): pedidos do
+  // período ÷ cadastros aprovados no período.
+  const conversionPct = page_.kpis.approvedLeads > 0 ? (page_.kpis.orders / page_.kpis.approvedLeads) * 100 : 0;
+
   res.json({
     period: { from: from.toISOString(), to: to.toISOString() },
-    kpis: { ...page_.kpis, conversionPct: 0, sessions: 0 },
+    kpis: { ...page_.kpis, conversionPct, sessions: 0 },
     rows: page_.rows.map((r) => ({
       id: r.id,
       externalId: r.externalId,

@@ -205,6 +205,69 @@ export async function matchErpDocumentsWithVestiAttribution(
   return byDocument;
 }
 
+// Fallback pro "Funil consolidado" do Performance (05/08/2026): as etapas
+// "UP Zero" (Cadastros, Cadastros aprovados, Adições ao carrinho,
+// Checkouts, Pedidos no e-commerce) vêm da tabela `events` do Postgres —
+// que client Vesti nativo nunca populou (evento de tracking dele vive no
+// BigQuery, `stape_logs`). Sem isso as 5 etapas ficam sempre em 0, mesmo
+// com evento real disponível. `registrations`/`approvals` usam
+// `clientes_vesti` (mesma fonte/definição do `novosCadastros`/
+// `cadastrosLiberados` do backend-dash); `addToCart`/`checkouts`/
+// `purchases` usam os eventos correspondentes do `stape_logs`.
+export type VestiFunnelEventCounts = {
+  registrations: number;
+  approvals: number;
+  addToCart: number;
+  checkouts: number;
+  purchases: number;
+};
+
+export async function fetchVestiFunnelEventCounts(
+  dataset: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<VestiFunnelEventCounts> {
+  try {
+    const [[cadRows], [eventRows]] = await Promise.all([
+      bigquery.query({
+        query: `
+          SELECT
+            COUNT(*) AS registrations,
+            COUNTIF(profile.name = 'Liberado') AS approvals
+          FROM ${vestiTable(dataset, "clientes_vesti")}
+          WHERE DATE(created_at) BETWEEN @dateFrom AND @dateTo
+        `,
+        params: { dateFrom, dateTo },
+      }),
+      bigquery.query({
+        query: `
+          SELECT
+            COUNTIF(event_name = 'AddToCart') AS add_to_cart,
+            COUNTIF(event_name = 'InitiateCheckout') AS checkouts,
+            COUNTIF(event_name = 'Purchase') AS purchases
+          FROM \`up-vesti-report.stape_logs.EventsLogsTratado\`
+          WHERE client = @dataset AND DATE(event_ts) BETWEEN @dateFrom AND @dateTo
+        `,
+        params: { dataset, dateFrom, dateTo },
+      }),
+    ]);
+    const cad = (cadRows as Array<Record<string, unknown>>)[0];
+    const ev = (eventRows as Array<Record<string, unknown>>)[0];
+    return {
+      registrations: Number(cad?.registrations) || 0,
+      approvals: Number(cad?.approvals) || 0,
+      addToCart: Number(ev?.add_to_cart) || 0,
+      checkouts: Number(ev?.checkouts) || 0,
+      purchases: Number(ev?.purchases) || 0,
+    };
+  } catch (err) {
+    // Dataset sem essas tabelas (ex: ERP puro, sem pipeline Vesti) — não é
+    // erro, só não tem como enriquecer.
+    console.warn("[erp] Vesti funnel fallback indisponível:", err instanceof Error ? err.message : err);
+    return { registrations: 0, approvals: 0, addToCart: 0, checkouts: 0, purchases: 0 };
+  }
+}
+
 export async function matchErpDocumentsToUpzero(
   clientId: string,
   documents: Array<string | null | undefined>,
@@ -784,12 +847,26 @@ export async function fetchErpOrdersPage(
   ]);
 
   const rawRows = listRows as Array<Record<string, unknown>>;
-  const attribution = await matchErpDocumentsToUpzero(
-    clientId,
-    rawRows.map(
-      (r) => (r.document as string | null) ?? (r.customer_id as string | null),
-    ),
+  const orderDocuments = rawRows.map(
+    (r) => (r.document as string | null) ?? (r.customer_id as string | null),
   );
+  const attribution = await matchErpDocumentsToUpzero(clientId, orderDocuments);
+  // Mesmo fallback do fetchPerformanceDashboard (05/08/2026) — sem isso a
+  // lista de pedidos (usada no "Baixar XLS" e no drill-down por pedido)
+  // mostrava TODO pedido como "SEM_ORIGEM" pra client Vesti nativo, mesmo
+  // com os cards do topo já contando atribuição de verdade (inconsistência
+  // real: o card dizia "130 atribuídos", a lista de pedidos não mostrava
+  // nenhum). Só preenche o que a UpZero não achou.
+  const unmatchedOrderDocuments = orderDocuments.filter((doc) => doc && !attribution.has(doc));
+  if (unmatchedOrderDocuments.length > 0) {
+    const vestiMatches = await matchErpDocumentsWithVestiAttribution(dataset, unmatchedOrderDocuments);
+    for (const doc of unmatchedOrderDocuments) {
+      if (!doc) continue;
+      const normalized = doc.replace(/[^0-9]/g, "");
+      const vestiMatch = vestiMatches.get(normalized);
+      if (vestiMatch?.attribution) attribution.set(doc, vestiMatch.attribution);
+    }
+  }
 
   const rows: ErpOrderRow[] = rawRows.map((r) => {
     const customerId = (r.customer_id as string) || null;

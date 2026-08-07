@@ -125,11 +125,7 @@ export async function getCustomerSummary(req: Request, res: Response): Promise<v
     fetchVestiCustomerSummary(dataset, vDateFrom, vDateTo),
   );
   res.json({
-    kpis: {
-      ...summary.kpis,
-      avgTimeToFirstPurchaseDays: null,
-      avgTimeBetweenPurchasesDays: null,
-    },
+    kpis: summary.kpis,
     registrationsOverTime: summary.registrationsOverTime,
     registrationsByState: summary.registrationsByState,
     registrationsBySource: summary.registrationsBySource,

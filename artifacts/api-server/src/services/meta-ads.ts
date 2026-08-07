@@ -456,7 +456,8 @@ async function fetchAdCreativeDetails(accessToken: string, adId: string): Promis
       access_token: accessToken,
       fields: "id,name,status,effective_status,preview_shareable_link,creative{id,name,thumbnail_url,image_url,video_id,effective_object_story_id,object_story_spec}",
     })}`);
-  } catch {
+  } catch (err) {
+    console.warn("[meta-ads] fetchAdCreativeDetails failed:", adId, err instanceof Error ? err.message : err);
     return null;
   }
 }

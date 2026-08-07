@@ -81,6 +81,7 @@ import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-f
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
+import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
 
 const router: IRouter = Router();
 
@@ -5349,6 +5350,24 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
   const prevTo = new Date(dateFrom.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - periodMs);
 
+  const vestiDataset = await resolveVestiDataset(clientId);
+  if (vestiDataset) {
+    const [current, prev] = await Promise.all([
+      fetchVestiProductsSummary(vestiDataset, saoPauloDateOnly(dateFrom), saoPauloDateOnly(dateTo)),
+      fetchVestiProductsSummary(vestiDataset, saoPauloDateOnly(prevFrom), saoPauloDateOnly(prevTo)),
+    ]);
+    const salesPower = current.activeSkus > 0 ? current.totalRevenue / current.activeSkus / periodDays : 0;
+    const prevSalesPower = prev.activeSkus > 0 ? prev.totalRevenue / prev.activeSkus / periodDays : 0;
+    res.json({
+      salesPower,
+      prevSalesPower,
+      salesPowerChangePct: prevSalesPower > 0 ? ((salesPower - prevSalesPower) / prevSalesPower) * 100 : null,
+      activeSkus: current.activeSkus,
+      periodDays,
+    });
+    return;
+  }
+
   const [currentRows, prevRows] = await Promise.all([
     db
       .select({
@@ -7229,6 +7248,49 @@ No markdown, no preamble.`;
 
   // Products-specific insight
   if (screen === "products") {
+    // Client Vesti nativo não tem nada em `products` do Postgres (mesma
+    // causa raiz de tudo que foi corrigido hoje) — o heurístico abaixo
+    // dava um resultado internamente contraditório ("No product sales
+    // recorded yet" + "All SKUs have recorded at least one sale — good
+    // catalog health" na mesma mensagem), porque topProducts vazio E
+    // totalProducts=0 caem nos dois ramos "sem problema" do heurístico ao
+    // mesmo tempo. Reaproveita fetchVestiProductsPage (mesmo dado real já
+    // usado na própria tela) em vez de reescrever a lógica duas vezes.
+    const vestiProductsDataset = await resolveVestiDataset(clientId);
+    if (vestiProductsDataset) {
+      const vestiProducts = await fetchVestiProductsPage(vestiProductsDataset, { sort: "revenue", limit: 200 });
+      const vestiCatalogAvg =
+        vestiProducts.length > 0
+          ? vestiProducts.reduce((s, p) => {
+              const t = p.totalSold + p.stock;
+              return s + (t > 0 ? p.totalSold / t : 0);
+            }, 0) / vestiProducts.length
+          : 0;
+      const vestiLevels = vestiProducts.map((p) => computeVestiProductLevel(p.totalSold, p.stock, 0, vestiCatalogAvg));
+      const vestiAtRisk = vestiLevels.filter((l) => l === "At Risk").length;
+      const vestiHighConv = vestiLevels.filter((l) => l === "High Conversion").length;
+      const vestiTotal = vestiLevels.length;
+      const vestiTop = vestiProducts[0];
+      const vestiHeuristic = {
+        headline: vestiTop
+          ? `Top product "${vestiTop.name}" has generated ${vestiTop.totalRevenue.toFixed(0)} in lifetime revenue`
+          : "No product sales recorded yet",
+        body: `${vestiHighConv} of ${vestiTotal} products are High Conversion (65%+ sell-through). ${vestiAtRisk > 0 ? `${vestiAtRisk} product${vestiAtRisk > 1 ? "s" : ""} are At Risk — never sold or very low turnover.` : vestiTotal > 0 ? "No products are At Risk." : "No catalog data available for this period."}`,
+        bullets: [
+          `High Conversion SKUs: ${vestiHighConv} of ${vestiTotal} — consider re-ordering your bestsellers`,
+          vestiAtRisk > 0
+            ? `${vestiAtRisk} At Risk SKU${vestiAtRisk > 1 ? "s" : ""} — these have never sold or have very poor turnover; consider markdown or discontinuation`
+            : vestiTotal > 0
+              ? "All SKUs have recorded at least one sale — good catalog health"
+              : "Add sales data to unlock product performance insights",
+          vestiTop ? `"${vestiTop.name}" leads with ${vestiTop.totalSold} units sold — study what drives its performance` : "Add sales data to unlock product performance insights",
+        ],
+      };
+      const vestiGeneratedAt = new Date().toISOString();
+      insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt } });
+      return { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt, cached: false };
+    }
+
     // Gather top-level product KPIs: top 5 by revenue, level distribution, sell-through
     const [topProducts, levelCounts] = await Promise.all([
       db
@@ -7433,6 +7495,39 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
 
   // Stock-specific insight
   if (screen === "stock") {
+    // Mesma causa raiz de hoje: `products`/`orderItems` do Postgres
+    // sempre vazio pra client Vesti nativo. Com prods.length=0, o
+    // heurístico caía sempre no ramo "saudável" (0% sell-through descrito
+    // como "healthy" — contraditório), mesmo com estoque real disponível
+    // (fetchVestiStock, já usado na própria tela de Estoque).
+    const vestiStockDataset = await resolveVestiDataset(clientId);
+    if (vestiStockDataset) {
+      const dateFromOnly = saoPauloDateOnly(from);
+      const dateToOnly = saoPauloDateOnly(to);
+      const vestiStock = await fetchVestiStock(vestiStockDataset, dateFromOnly, dateToOnly, { sort: "coverageDays", sortDir: "asc", page: 1, limit: 50 });
+      const vStockout = vestiStock.kpis.stockoutRiskCount;
+      const vOverstock = vestiStock.kpis.overstockRiskCount;
+      const vSellThrough = vestiStock.kpis.sellThroughRate.toFixed(1);
+      const vStockoutNames = vestiStock.stockoutRisk.slice(0, 3).map((r) => r.name);
+      const vTotalSold = vestiStock.skus.reduce((s, r) => s + r.unitsSold, 0);
+      const vestiHeuristic = {
+        headline: vStockout > 0
+          ? `${vStockout} SKU${vStockout > 1 ? "s are" : " is"} at critical stockout risk this week`
+          : vOverstock > 0
+            ? `${vOverstock} SKU${vOverstock > 1 ? "s have" : " has"} excess inventory — review pricing or promotions`
+            : `Inventory is healthy with a ${vSellThrough}% sell-through rate`,
+        body: `In the selected period, ${vTotalSold} units were sold across ${vestiStock.total} active SKUs. Sell-through rate stands at ${vSellThrough}%. ${vStockout > 0 ? `${vStockout} product${vStockout > 1 ? "s need" : " needs"} urgent replenishment.` : vOverstock > 0 ? `${vOverstock} product${vOverstock > 1 ? "s are" : " is"} overstocked.` : "No critical risk items detected."}`,
+        bullets: [
+          vStockoutNames.length > 0 ? `Stockout risk: ${vStockoutNames.join(", ")}` : "No stockout-risk products in this period",
+          vOverstock > 0 ? `${vOverstock} SKU${vOverstock > 1 ? "s" : ""} with >90 days coverage — consider markdowns` : "No overstock issues detected",
+          `Current sell-through rate: ${vSellThrough}% — aim for 60–80% for fashion`,
+        ],
+      };
+      const vestiGeneratedAt = new Date().toISOString();
+      insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt } });
+      return { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt, cached: false };
+    }
+
     const periodDays = Math.max(1, (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
     const prods = await db
       .select({
@@ -7640,7 +7735,33 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
 
   // UTM-specific insight
   if (screen === "utm") {
-    const utmData = await buildUtmAnalytics(clientId, from, to, "source");
+    // Mesma causa raiz de Jornada/RFM/Performance hoje: buildUtmAnalytics
+    // só lê rastreamento UpZero (API/Postgres), sempre vazio pra client
+    // Vesti nativo — dizia "0 registrations across 0 acquisition sources"
+    // contradizendo a própria tela de UTM (que já usa fetchVestiUtmData e
+    // mostra 4 fontes reais). Reaproveita o mesmo dado da tela em vez de
+    // recalcular por um caminho que nunca teve nada pra esse client.
+    const vestiDataset = await resolveVestiDataset(clientId);
+    const utmData = vestiDataset
+      ? await (async () => {
+          const vestiUtm = await fetchVestiUtmData(vestiDataset, saoPauloDateOnly(from), saoPauloDateOnly(to));
+          const rows = [...vestiUtm.rows].sort((a, b) => b.revenue - a.revenue);
+          const totalRegistrations = rows.reduce((s, r) => s + r.registrations, 0);
+          const totalApprovals = rows.reduce((s, r) => s + r.approvals, 0);
+          const totalBuyers = rows.reduce((s, r) => s + r.buyers, 0);
+          const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
+          return {
+            rows: rows.map((r) => ({ key: r.source, registrations: r.registrations, buyers: r.buyers, revenue: r.revenue, conversionPct: r.conversionPct, roas: r.roas })),
+            kpis: {
+              totalRegistrations,
+              approvalPct: totalRegistrations > 0 ? (totalApprovals / totalRegistrations) * 100 : 0,
+              conversionPct: totalRegistrations > 0 ? (totalBuyers / totalRegistrations) * 100 : 0,
+              totalBuyers,
+              totalRevenue,
+            },
+          };
+        })()
+      : await buildUtmAnalytics(clientId, from, to, "source");
     const topRow = utmData.rows[0];
     const heuristic = {
       headline: topRow
@@ -9945,6 +10066,31 @@ function buildFunnelSuggestedActions(
 // ── Journey / RFM AI Insight Helpers ────────────────────────────────────────
 
 async function buildJourneyInsightContext(clientId: string, from: Date, to: Date) {
+  // Client Vesti nativo não tem nada nas tabelas events/orders/customers
+  // do Postgres (rastreamento vive no BigQuery) — esse insight sempre
+  // dizia "0.0 eventos antes da compra", contradizendo a própria tela de
+  // Jornada (que já usa fetchVestiJourney e mostra o número real). Mesma
+  // causa raiz já corrigida em Performance/Funil hoje, mesmo padrão de
+  // fallback. Limite de 180 dias — fetchVestiJourney sequencia evento
+  // bruto por client_id, caro em período largo.
+  const vestiDataset = await resolveVestiDataset(clientId);
+  if (vestiDataset) {
+    const days = Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000));
+    if (days <= 180) {
+      const dateFromOnly = saoPauloDateOnly(from);
+      const dateToOnly = saoPauloDateOnly(to);
+      const [journey, brand] = await Promise.all([
+        fetchVestiJourney(vestiDataset, dateFromOnly, dateToOnly),
+        db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)),
+      ]);
+      return {
+        avgEventsBeforePurchase: journey.kpis.avgEventsBeforePurchase,
+        avgTimeToFirstPurchaseDays: journey.kpis.avgTimeToFirstPurchaseDays ?? 0,
+        brand: brand[0]?.name ?? "the brand",
+      };
+    }
+  }
+
   const [kpiRow] = await db
     .select({
       avgTTFP: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (first_purchase_at - created_at)) / 86400), 0)::float`,
@@ -9989,6 +10135,26 @@ async function buildJourneyInsightContext(clientId: string, from: Date, to: Date
 }
 
 async function buildRfmInsightContext(clientId: string, from: Date, to: Date) {
+  // Client Vesti nativo não tem nada em customers/orders do Postgres
+  // (mesma causa raiz já corrigida hoje em Performance/Funil/Jornada) —
+  // esse insight sempre dizia "No RFM segments computed yet", mesmo com
+  // a própria tela de RFM já mostrando segmentos reais (fetchVestiRfm).
+  const vestiDataset = await resolveVestiDataset(clientId);
+  if (vestiDataset) {
+    const dateFromOnly = saoPauloDateOnly(from);
+    const dateToOnly = saoPauloDateOnly(to);
+    const [rfm, brand] = await Promise.all([
+      fetchVestiRfm(vestiDataset, dateFromOnly, dateToOnly, { sortBy: "monetary", sortDir: "desc", page: 1, limit: 1 }),
+      db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)),
+    ]);
+    const segMap: Record<string, { count: number; revenue: number }> = {};
+    for (const seg of rfm.segments) {
+      segMap[seg.segment] = { count: seg.customerCount, revenue: seg.revenue };
+    }
+    const total = rfm.segments.reduce((s, seg) => s + seg.customerCount, 0);
+    return { segMap, total, brand: brand[0]?.name ?? "the brand" };
+  }
+
   // Scope to customers who had at least one purchase in the selected period
   const periodBuyerIds = db
     .select({ id: ordersTable.customerId })

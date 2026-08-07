@@ -360,12 +360,29 @@ export async function getFunnel(req: Request, res: Response): Promise<void> {
     fetchVestiFunnel(dataset, dateFromOnly, dateToOnly),
   );
 
+  // `avgEventsBeforePurchase`/`topPaths` ficavam sempre fixos em 0/[] —
+  // nunca tinham sido implementados de verdade, mesmo já existindo pronto
+  // em fetchVestiJourney (mesma conta usada na página Jornada). Reaproveita
+  // aqui, com o mesmo limite de 180 dias da Jornada (fetchVestiJourney
+  // sequencia evento bruto por client_id, caro em período largo — sem
+  // esse limite reintroduziria o mesmo risco de timeout já corrigido lá).
+  const funnelDays = Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000));
+  let avgEventsBeforePurchase = 0;
+  let topPaths: Awaited<ReturnType<typeof fetchVestiJourney>>["topPaths"] = [];
+  if (funnelDays <= 180) {
+    const journey = await cached(`vesti:journey:${dataset}:${dateFromOnly}:${dateToOnly}`, VESTI_CACHE_TTL_MS, () =>
+      fetchVestiJourney(dataset, dateFromOnly, dateToOnly),
+    );
+    avgEventsBeforePurchase = journey.kpis.avgEventsBeforePurchase;
+    topPaths = journey.topPaths;
+  }
+
   res.json({
     steps: funnel.steps,
     overallConversion: funnel.overallConversion,
     insights: funnel.insights,
-    avgEventsBeforePurchase: 0,
-    topPaths: [],
+    avgEventsBeforePurchase,
+    topPaths,
     suggestedActions: funnel.suggestedActions,
     hasSiteVisitData: funnel.hasSiteVisitData,
   });
@@ -536,6 +553,25 @@ export async function getJourney(req: Request, res: Response): Promise<void> {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const dateFromOnly = saoPauloDateOnly(from);
   const dateToOnly = saoPauloDateOnly(to);
+
+  // Guarda de escala (05/08/2026): fetchVestiJourney puxa evento BRUTO
+  // (não agregado) do stape_logs pra sequenciar por client_id em JS — em
+  // períodos muito largos (testado: 431 dias/Vogabox = 111mil+ linhas) o
+  // tempo passa dos 60s configurados no Vercel (vercel.json) e a função
+  // é morta por FUNCTION_INVOCATION_TIMEOUT, sem nenhum erro visível pro
+  // usuário (a tela simplesmente não carrega nada). Em vez de deixar
+  // travar silencioso, avisa antes de tentar.
+  const journeyDays = Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000));
+  const JOURNEY_MAX_DAYS = 180;
+  if (journeyDays > JOURNEY_MAX_DAYS) {
+    res.status(400).json({
+      error: true,
+      code: "DATE_RANGE_TOO_WIDE",
+      message: `Jornada não suporta períodos maiores que ${JOURNEY_MAX_DAYS} dias (pedido: ${journeyDays} dias). Reduza o período — a página monta o caminho evento a evento, e períodos muito largos derrubam a consulta por timeout.`,
+      status: 400,
+    });
+    return;
+  }
 
   const journey = await cached(`vesti:journey:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () =>
     fetchVestiJourney(dataset, dateFromOnly, dateToOnly),
@@ -866,6 +902,22 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
   const creativesOffset = (creativesPage - 1) * creativesPageSize;
   const pagedAds = filteredAds.slice(creativesOffset, creativesOffset + creativesPageSize);
 
+  // Imagem do criativo (05/08/2026): `fetchMetaMarketingData` já busca a
+  // imagem real via uma chamada extra no Graph API, mas só pros top-N por
+  // métrica (`metaCurrent.topCreatives` — evita 1 chamada por anúncio,
+  // que seria caro/lento pra lista inteira). O `creatives` aqui embaixo
+  // sempre mandava `imageUrl: null` fixo, mesmo pros anúncios que JÁ
+  // tinham imagem buscada. Reaproveita o que já foi buscado em vez de
+  // não usar de propósito.
+  const creativeImageById = new Map<string, string | null>();
+  for (const group of [metaCurrent?.topCreatives?.ctr, metaCurrent?.topCreatives?.cpl, metaCurrent?.topCreatives?.leads]) {
+    for (const creative of group ?? []) {
+      if (!creativeImageById.has(creative.id)) {
+        creativeImageById.set(creative.id, creative.imageUrl ?? creative.thumbnailUrl ?? null);
+      }
+    }
+  }
+
   const spendByDay = new Map<string, number>();
   for (const point of metaCurrent?.daily ?? []) {
     spendByDay.set(point.date, (spendByDay.get(point.date) ?? 0) + point.spend);
@@ -883,7 +935,7 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
         name: ad.name,
         platform: "Meta",
         status: ad.status ?? "UNKNOWN",
-        imageUrl: null,
+        imageUrl: creativeImageById.get(ad.id) ?? null,
         clicks: ad.clicks,
         impressions: ad.impressions,
         ctr: ad.impressions > 0 ? (ad.clicks / ad.impressions) * 100 : 0,
