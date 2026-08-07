@@ -54,7 +54,19 @@ app.use(
 );
 app.use(compression());
 app.use(cors(buildCorsOptions()));
-app.use(express.json({ limit: "1mb" }));
+app.use(
+  express.json({
+    limit: "1mb",
+    // Guarda o corpo bruto (bytes exatos recebidos, antes do parse) pra
+    // rotas que precisam validar assinatura HMAC sobre o payload original
+    // (ex: webhook do WhatsApp/Meta) — depois do JSON.parse não dá mais
+    // pra recalcular o hash de forma confiável (espaçamento/ordem de
+    // chave pode mudar na re-serialização).
+    verify: (req, _res, buf) => {
+      (req as express.Request).rawBody = buf;
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 const apiLimiter = buildApiLimiter();

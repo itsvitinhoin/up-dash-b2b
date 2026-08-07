@@ -5,6 +5,11 @@ declare global {
   namespace Express {
     interface Request {
       user?: AccessTokenPayload;
+      // Bytes exatos do corpo da requisição, capturados antes do JSON.parse
+      // (ver app.ts) — necessário pra validar assinatura HMAC de webhook
+      // (ex: X-Hub-Signature-256 da Meta), que não sobrevive a re-serializar
+      // o JSON já parseado.
+      rawBody?: Buffer;
     }
   }
 }
