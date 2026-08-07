@@ -81,4 +81,38 @@ app.get("/", (_req, res) => {
   res.redirect(301, "/up-dash");
 });
 
+// Error handler global (achado em 07/08/2026: sem isso, qualquer exceção não
+// tratada numa rota async cai no handler padrão do Express, que em produção
+// (NODE_ENV=production) esconde a mensagem e devolve só um HTML genérico
+// "Internal Server Error" — quebra o formato {error,code,message,status} que
+// o resto da API usa e não deixa nem log nem cliente saberem o que houve.
+// A stack completa vai só pro log (pino); o cliente recebe a mensagem, que já
+// costuma bastar pra diagnosticar (e nunca inclui segredo — nossas exceções
+// não carregam dado sensível na message).
+app.use(
+  (
+    err: unknown,
+    req: express.Request,
+    res: express.Response,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _next: express.NextFunction,
+  ): void => {
+    logger.error(
+      {
+        err,
+        method: req.method,
+        url: req.url?.split("?")[0],
+      },
+      "[app] unhandled error",
+    );
+    if (res.headersSent) return;
+    res.status(500).json({
+      error: true,
+      code: "INTERNAL_ERROR",
+      message: err instanceof Error ? err.message : "Internal server error",
+      status: 500,
+    });
+  },
+);
+
 export default app;
