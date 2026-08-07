@@ -120,6 +120,8 @@ type SaveWhatsappEmbeddedSignupPayload = {
 
 type WhatsappPhoneNumber = {
   id: string;
+  integrationId: string | null;
+  wabaId: string | null;
   phoneNumberId: string;
   displayPhoneNumber: string | null;
   verifiedName: string | null;
@@ -129,6 +131,15 @@ type WhatsappPhoneNumber = {
   status: string;
   isDefault: boolean;
   lastSyncedAt: string | null;
+  integrationStatus: string | null;
+  hasAccessToken: boolean;
+  tokenError: string | null;
+  operationalStatus: "healthy" | "warning" | "error";
+  operationalMessage: string;
+  lastDispatchAt: string | null;
+  lastSuccessfulDispatchAt: string | null;
+  lastErrorAt: string | null;
+  lastErrorMessage: string | null;
 };
 
 type WhatsappConnectionsResponse = {
@@ -188,7 +199,11 @@ function loadFacebookSdk(appId: string, version: string): Promise<void> {
         }
         if (attempts >= 80) {
           window.clearInterval(timer);
-          reject(new Error("Facebook SDK carregou, mas não ficou disponível para iniciar o Embed."));
+          reject(
+            new Error(
+              "Facebook SDK carregou, mas não ficou disponível para iniciar o Embed.",
+            ),
+          );
         }
       }, 100);
       return;
@@ -200,19 +215,25 @@ function loadFacebookSdk(appId: string, version: string): Promise<void> {
     script.defer = true;
     script.crossOrigin = "anonymous";
     script.src = "https://connect.facebook.net/pt_BR/sdk.js";
-    script.onerror = () => reject(new Error("Não foi possível carregar o Facebook SDK."));
+    script.onerror = () =>
+      reject(new Error("Não foi possível carregar o Facebook SDK."));
     document.body.appendChild(script);
   });
 }
 
-function parseEmbeddedSignupMessage(value: unknown): WhatsappEmbeddedSignupSession | null {
-  const data = typeof value === "string" ? (() => {
-    try {
-      return JSON.parse(value) as unknown;
-    } catch {
-      return null;
-    }
-  })() : value;
+function parseEmbeddedSignupMessage(
+  value: unknown,
+): WhatsappEmbeddedSignupSession | null {
+  const data =
+    typeof value === "string"
+      ? (() => {
+          try {
+            return JSON.parse(value) as unknown;
+          } catch {
+            return null;
+          }
+        })()
+      : value;
 
   if (!data || typeof data !== "object") return null;
   const maybe = data as WhatsappEmbeddedSignupSession;
@@ -231,7 +252,15 @@ function numberTitle(phone: WhatsappPhoneNumber) {
   return phone.verifiedName ?? phone.displayPhoneNumber ?? "Número WhatsApp";
 }
 
-function historySyncCopy(sync: WhatsappConnectionsResponse["historySync"] | undefined) {
+function operationalLabel(phone: WhatsappPhoneNumber) {
+  if (phone.operationalStatus === "error") return "Atenção necessária";
+  if (phone.operationalStatus === "warning") return "Conexão pendente";
+  return "Conectado";
+}
+
+function historySyncCopy(
+  sync: WhatsappConnectionsResponse["historySync"] | undefined,
+) {
   if (!sync) {
     return {
       title: "Sincronização de conversas",
@@ -298,7 +327,8 @@ export default function WhatsappConnectionsPage() {
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
   const [signupError, setSignupError] = useState<string | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<string | null>(null);
-  const [metaTestResult, setMetaTestResult] = useState<MetaPermissionTestResponse | null>(null);
+  const [metaTestResult, setMetaTestResult] =
+    useState<MetaPermissionTestResponse | null>(null);
   const [isEmbeddedSignupActive, setIsEmbeddedSignupActive] = useState(false);
   const sessionInfoRef = useRef<WhatsappEmbeddedSignupSession | null>(null);
   const signupCodeRef = useRef<string | null>(null);
@@ -323,51 +353,66 @@ export default function WhatsappConnectionsPage() {
 
   const connectionsQuery = useMemo(() => {
     const params = new URLSearchParams();
-    if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+    if (user?.role === "ADMIN" && selectedClientId)
+      params.set("clientId", selectedClientId);
     const query = params.toString();
     return `/api/whatsapp/connections${query ? `?${query}` : ""}`;
   }, [selectedClientId, user?.role]);
 
   const embeddedSignupQuery = useMemo(() => {
     const params = new URLSearchParams();
-    if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+    if (user?.role === "ADMIN" && selectedClientId)
+      params.set("clientId", selectedClientId);
     const query = params.toString();
     return `/api/whatsapp/embedded-signup${query ? `?${query}` : ""}`;
   }, [selectedClientId, user?.role]);
 
-  const connectionsKey = useMemo(() => ["whatsapp-connections", clientId], [clientId]);
-  const embeddedSignupKey = useMemo(() => ["whatsapp-embedded-signup", clientId], [clientId]);
+  const connectionsKey = useMemo(
+    () => ["whatsapp-connections", clientId],
+    [clientId],
+  );
+  const embeddedSignupKey = useMemo(
+    () => ["whatsapp-embedded-signup", clientId],
+    [clientId],
+  );
 
-  const { data, isLoading, isFetching } = useQuery<WhatsappConnectionsResponse>({
-    queryKey: connectionsKey,
-    queryFn: () => customFetch<WhatsappConnectionsResponse>(connectionsQuery),
-    enabled: Boolean(clientId),
-    refetchInterval: (query) => {
-      if (isEmbeddedSignupActive) return false;
-      const response = query.state.data as WhatsappConnectionsResponse | undefined;
-      return response?.historySync?.state === "waiting" || response?.historySync?.state === "syncing"
-        ? 5000
-        : false;
+  const { data, isLoading, isFetching } = useQuery<WhatsappConnectionsResponse>(
+    {
+      queryKey: connectionsKey,
+      queryFn: () => customFetch<WhatsappConnectionsResponse>(connectionsQuery),
+      enabled: Boolean(clientId),
+      refetchInterval: (query) => {
+        if (isEmbeddedSignupActive) return false;
+        const response = query.state.data as
+          | WhatsappConnectionsResponse
+          | undefined;
+        return response?.historySync?.state === "waiting" ||
+          response?.historySync?.state === "syncing"
+          ? 5000
+          : false;
+      },
+      refetchIntervalInBackground: false,
+      refetchOnWindowFocus: false,
     },
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: false,
-  });
+  );
 
-  const { data: embeddedSignup, isLoading: isLoadingEmbeddedSignup } = useQuery<WhatsappEmbeddedSignupResponse>({
-    queryKey: embeddedSignupKey,
-    queryFn: () => customFetch<WhatsappEmbeddedSignupResponse>(embeddedSignupQuery),
-    enabled: Boolean(clientId),
-  });
+  const { data: embeddedSignup, isLoading: isLoadingEmbeddedSignup } =
+    useQuery<WhatsappEmbeddedSignupResponse>({
+      queryKey: embeddedSignupKey,
+      queryFn: () =>
+        customFetch<WhatsappEmbeddedSignupResponse>(embeddedSignupQuery),
+      enabled: Boolean(clientId),
+    });
 
   const saveEmbeddedSignup = useMutation({
     mutationFn: (payload: SaveWhatsappEmbeddedSignupPayload) =>
-      customFetch<{ ok: true; integration: WhatsappEmbeddedSignupResponse["integration"] }>(
-        "/api/whatsapp/embedded-signup",
-        {
-          method: "POST",
-          body: JSON.stringify(payload),
-        },
-      ),
+      customFetch<{
+        ok: true;
+        integration: WhatsappEmbeddedSignupResponse["integration"];
+      }>("/api/whatsapp/embedded-signup", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
     onSuccess: () => {
       setSignupError(null);
       sessionInfoRef.current = null;
@@ -375,13 +420,25 @@ export default function WhatsappConnectionsPage() {
       saveAttemptedRef.current = false;
       void queryClient.invalidateQueries({ queryKey: connectionsKey });
       void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
-      void queryClient.invalidateQueries({ queryKey: ["whatsapp-dashboard-conversations", clientId] });
-      void queryClient.invalidateQueries({ queryKey: ["whatsapp-dashboard-connections", clientId] });
-      void queryClient.invalidateQueries({ queryKey: ["whatsapp-template-connections", clientId] });
-      void queryClient.invalidateQueries({ queryKey: ["whatsapp-templates", clientId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-dashboard-conversations", clientId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-dashboard-connections", clientId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-template-connections", clientId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-templates", clientId],
+      });
     },
     onError: (error) => {
-      setSignupError(error instanceof Error ? error.message : "Não foi possível salvar a conexão do WhatsApp.");
+      setSignupError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível salvar a conexão do WhatsApp.",
+      );
     },
   });
 
@@ -397,7 +454,11 @@ export default function WhatsappConnectionsPage() {
       void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
     },
     onError: (error) => {
-      setSignupError(error instanceof Error ? error.message : "Não foi possível limpar a tentativa anterior.");
+      setSignupError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível limpar a tentativa anterior.",
+      );
     },
   });
 
@@ -413,7 +474,11 @@ export default function WhatsappConnectionsPage() {
     },
     onError: (error) => {
       setMetaTestResult(null);
-      setSignupError(error instanceof Error ? error.message : "Não foi possível executar os testes da Meta.");
+      setSignupError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível executar os testes da Meta.",
+      );
     },
   });
 
@@ -441,25 +506,33 @@ export default function WhatsappConnectionsPage() {
 
   const subscribeWebhook = useMutation({
     mutationFn: (phoneNumberId?: string | null) =>
-      customFetch<{ ok: boolean; wabaId: string }>("/api/whatsapp/connections/subscribe-webhook", {
-        method: "POST",
-        body: JSON.stringify({
-          clientId,
-          phoneNumberId,
-        }),
-      }),
+      customFetch<{ ok: boolean; wabaId: string }>(
+        "/api/whatsapp/connections/subscribe-webhook",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            clientId,
+            phoneNumberId,
+          }),
+        },
+      ),
     onSuccess: () => {
       setSignupError(null);
     },
     onError: (error) => {
-      setSignupError(error instanceof Error ? error.message : "Não foi possível ativar o webhook no WABA.");
+      setSignupError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível ativar o webhook no WABA.",
+      );
     },
   });
 
   const deletePhoneNumber = useMutation({
     mutationFn: (phoneNumberId: string) => {
       const params = new URLSearchParams();
-      if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+      if (user?.role === "ADMIN" && selectedClientId)
+        params.set("clientId", selectedClientId);
       const query = params.toString();
       return customFetch<{ ok: boolean }>(
         `/api/whatsapp/connections/phone-numbers/${encodeURIComponent(phoneNumberId)}${query ? `?${query}` : ""}`,
@@ -467,19 +540,26 @@ export default function WhatsappConnectionsPage() {
       );
     },
     onSuccess: () => {
-      setConnectionNotice("Número removido. Se ele era o padrão, outro número ativo foi definido automaticamente.");
+      setConnectionNotice(
+        "Número removido. Se ele era o padrão, outro número ativo foi definido automaticamente.",
+      );
       void queryClient.invalidateQueries({ queryKey: connectionsKey });
       void queryClient.invalidateQueries({ queryKey: embeddedSignupKey });
     },
     onError: (error) => {
-      setSignupError(error instanceof Error ? error.message : "Não foi possível excluir o número conectado.");
+      setSignupError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível excluir o número conectado.",
+      );
     },
   });
 
   const setDefaultPhoneNumber = useMutation({
     mutationFn: (phoneNumberId: string) => {
       const params = new URLSearchParams();
-      if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+      if (user?.role === "ADMIN" && selectedClientId)
+        params.set("clientId", selectedClientId);
       const query = params.toString();
       return customFetch<{ ok: boolean; phoneNumber: WhatsappPhoneNumber }>(
         `/api/whatsapp/connections/phone-numbers/${encodeURIComponent(phoneNumberId)}/default${query ? `?${query}` : ""}`,
@@ -488,12 +568,18 @@ export default function WhatsappConnectionsPage() {
     },
     onSuccess: (result) => {
       setSignupError(null);
-      setConnectionNotice(`${numberTitle(result.phoneNumber)} foi definido como o número padrão da marca.`);
+      setConnectionNotice(
+        `${numberTitle(result.phoneNumber)} foi definido como o número padrão da marca.`,
+      );
       void queryClient.invalidateQueries({ queryKey: connectionsKey });
     },
     onError: (error) => {
       setConnectionNotice(null);
-      setSignupError(error instanceof Error ? error.message : "Não foi possível definir o número padrão.");
+      setSignupError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível definir o número padrão.",
+      );
     },
   });
 
@@ -506,9 +592,13 @@ export default function WhatsappConnectionsPage() {
     const session = sessionInfoRef.current;
     const code = signupCodeRef.current;
     const sessionData = session?.data;
-    const hasSessionIdentity = session?.event === "FINISH" || sessionData?.waba_id || sessionData?.phone_number_id;
+    const hasSessionIdentity =
+      session?.event === "FINISH" ||
+      sessionData?.waba_id ||
+      sessionData?.phone_number_id;
 
-    if (!clientId || !code || !hasSessionIdentity || saveAttemptedRef.current) return;
+    if (!clientId || !code || !hasSessionIdentity || saveAttemptedRef.current)
+      return;
 
     saveAttemptedRef.current = true;
     saveEmbeddedSignup.mutate({
@@ -536,7 +626,12 @@ export default function WhatsappConnectionsPage() {
   const isMetaTestBusy = runMetaTestCalls.isPending;
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      if (!["https://www.facebook.com", "https://web.facebook.com"].includes(event.origin)) return;
+      if (
+        !["https://www.facebook.com", "https://web.facebook.com"].includes(
+          event.origin,
+        )
+      )
+        return;
       const session = parseEmbeddedSignupMessage(event.data);
       if (!session) return;
 
@@ -560,24 +655,33 @@ export default function WhatsappConnectionsPage() {
     const facebook = embeddedSignup?.facebook;
     if (!facebook?.appId || !facebook.configId) {
       finishEmbeddedSignupAttempt();
-      setSignupError("Configure WHATSAPP_EMBEDDED_SIGNUP_APP_ID e WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID na Vercel antes de iniciar o fluxo.");
+      setSignupError(
+        "Configure WHATSAPP_EMBEDDED_SIGNUP_APP_ID e WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID na Vercel antes de iniciar o fluxo.",
+      );
       return;
     }
 
     try {
       await loadFacebookSdk(facebook.appId, facebook.graphApiVersion);
 
-      signupTimeoutRef.current = window.setTimeout(() => {
-        finishEmbeddedSignupAttempt();
-        setSignupError("A conexão com a Meta expirou. Clique em Conectar com Meta para iniciar novamente.");
-      }, 10 * 60 * 1000);
+      signupTimeoutRef.current = window.setTimeout(
+        () => {
+          finishEmbeddedSignupAttempt();
+          setSignupError(
+            "A conexão com a Meta expirou. Clique em Conectar com Meta para iniciar novamente.",
+          );
+        },
+        10 * 60 * 1000,
+      );
 
       window.FB?.login(
         (response) => {
           finishEmbeddedSignupAttempt();
           const code = response.authResponse?.code ?? null;
           if (!code) {
-            setSignupError("A Meta não retornou o code de autenticação. Refaça a conexão pelo botão Conectar com Meta.");
+            setSignupError(
+              "A Meta não retornou o code de autenticação. Refaça a conexão pelo botão Conectar com Meta.",
+            );
             return;
           }
 
@@ -594,7 +698,8 @@ export default function WhatsappConnectionsPage() {
         },
         {
           config_id: facebook.configId,
-          scope: "public_profile,business_management,whatsapp_business_management,whatsapp_business_messaging",
+          scope:
+            "public_profile,business_management,whatsapp_business_management,whatsapp_business_messaging",
           return_scopes: true,
           response_type: "code",
           override_default_response_type: true,
@@ -608,7 +713,11 @@ export default function WhatsappConnectionsPage() {
       );
     } catch (error) {
       finishEmbeddedSignupAttempt();
-      setSignupError(error instanceof Error ? error.message : "Não foi possível abrir o Embedded Signup da Meta.");
+      setSignupError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível abrir o Embedded Signup da Meta.",
+      );
     }
   };
 
@@ -623,11 +732,17 @@ export default function WhatsappConnectionsPage() {
                 Conectar WhatsApp Business
               </CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">
-                Cada cliente pode conectar o próprio WABA e sincronizar vários números para análise.
+                Cada cliente pode conectar o próprio WABA e sincronizar vários
+                números para análise.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={launchEmbeddedSignup} disabled={!embeddedSignup?.facebook?.isConfigured || isSignupBusy}>
+              <Button
+                onClick={launchEmbeddedSignup}
+                disabled={
+                  !embeddedSignup?.facebook?.isConfigured || isSignupBusy
+                }
+              >
                 {isEmbeddedSignupActive ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
@@ -659,24 +774,34 @@ export default function WhatsappConnectionsPage() {
             <MessageCircle className="h-4 w-4" />
             <AlertTitle>Token do cliente via Embedded Signup</AlertTitle>
             <AlertDescription>
-              Use apenas <span className="font-medium">Conectar com Meta</span>. Esse botão abre o onboarding oficial hospedado pela Meta com a opção de compartilhar
-              uma conta do WhatsApp Business já existente na BM do cliente. O token salvo é sempre gerado pelo próprio cliente durante o fluxo.
+              Use apenas <span className="font-medium">Conectar com Meta</span>.
+              Esse botão abre o onboarding oficial hospedado pela Meta com a
+              opção de compartilhar uma conta do WhatsApp Business já existente
+              na BM do cliente. O token salvo é sempre gerado pelo próprio
+              cliente durante o fluxo.
             </AlertDescription>
           </Alert>
 
           {metaTestResult && (
             <div className="grid gap-2 md:grid-cols-2">
               {metaTestResult.results.map((result) => (
-                <div key={result.permission} className="rounded-md border border-border bg-muted/20 p-3">
+                <div
+                  key={result.permission}
+                  className="rounded-md border border-border bg-muted/20 p-3"
+                >
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-medium">{result.permission}</p>
                     <Badge variant={result.ok ? "secondary" : "destructive"}>
                       {result.ok ? "OK" : `HTTP ${result.status || "-"}`}
                     </Badge>
                   </div>
-                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">{result.endpoint}</p>
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    {result.endpoint}
+                  </p>
                   {result.message && (
-                    <p className="mt-2 text-xs text-muted-foreground">{result.message}</p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {result.message}
+                    </p>
                   )}
                 </div>
               ))}
@@ -688,7 +813,9 @@ export default function WhatsappConnectionsPage() {
               <Settings className="h-4 w-4" />
               <AlertTitle>Configuração da Meta pendente</AlertTitle>
               <AlertDescription>
-                Configure as envs WHATSAPP_EMBEDDED_SIGNUP_APP_ID e WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID na Vercel para habilitar o botão.
+                Configure as envs WHATSAPP_EMBEDDED_SIGNUP_APP_ID e
+                WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID na Vercel para habilitar o
+                botão.
               </AlertDescription>
             </Alert>
           )}
@@ -712,26 +839,58 @@ export default function WhatsappConnectionsPage() {
         <CardContent>
           <div className="grid gap-3 md:grid-cols-5">
             <div className="rounded-md border border-border bg-muted/20 p-3">
-              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Cliente</p>
-              <p className="mt-1 truncate text-sm font-medium">{embeddedSignup?.client?.name ?? "Selecione um cliente"}</p>
-            </div>
-            <div className="rounded-md border border-border bg-muted/20 p-3">
-              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Status</p>
-              <p className={cn("mt-1 text-sm font-medium", isWhatsappConnected ? "text-emerald-500" : "text-amber-500")}>
-                {isWhatsappConnected ? "Conectado" : integration?.status === "pending" ? "Pendente" : "Não conectado"}
+              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+                Cliente
+              </p>
+              <p className="mt-1 truncate text-sm font-medium">
+                {embeddedSignup?.client?.name ?? "Selecione um cliente"}
               </p>
             </div>
             <div className="rounded-md border border-border bg-muted/20 p-3">
-              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">WABA ID</p>
-              <p className="mt-1 truncate font-mono text-xs">{integration?.wabaId ?? "-"}</p>
+              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+                Status
+              </p>
+              <p
+                className={cn(
+                  "mt-1 text-sm font-medium",
+                  isWhatsappConnected ? "text-emerald-500" : "text-amber-500",
+                )}
+              >
+                {isWhatsappConnected
+                  ? "Conectado"
+                  : integration?.status === "pending"
+                    ? "Pendente"
+                    : "Não conectado"}
+              </p>
             </div>
             <div className="rounded-md border border-border bg-muted/20 p-3">
-              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Phone Number ID</p>
-              <p className="mt-1 truncate font-mono text-xs">{integration?.phoneNumberId ?? "-"}</p>
+              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+                WABA ID
+              </p>
+              <p className="mt-1 truncate font-mono text-xs">
+                {integration?.wabaId ?? "-"}
+              </p>
             </div>
             <div className="rounded-md border border-border bg-muted/20 p-3">
-              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Token</p>
-              <p className={cn("mt-1 text-sm font-medium", integration?.hasAccessToken ? "text-emerald-500" : "text-muted-foreground")}>
+              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+                Phone Number ID
+              </p>
+              <p className="mt-1 truncate font-mono text-xs">
+                {integration?.phoneNumberId ?? "-"}
+              </p>
+            </div>
+            <div className="rounded-md border border-border bg-muted/20 p-3">
+              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+                Token
+              </p>
+              <p
+                className={cn(
+                  "mt-1 text-sm font-medium",
+                  integration?.hasAccessToken
+                    ? "text-emerald-500"
+                    : "text-muted-foreground",
+                )}
+              >
                 {integration?.hasAccessToken ? "Gerado no backend" : "-"}
               </p>
             </div>
@@ -747,7 +906,9 @@ export default function WhatsappConnectionsPage() {
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Conexões</p>
-              <p className="text-2xl font-semibold">{connectedIntegrations.length}</p>
+              <p className="text-2xl font-semibold">
+                {connectedIntegrations.length}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -757,8 +918,12 @@ export default function WhatsappConnectionsPage() {
               <Smartphone className="h-4 w-4" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Números cadastrados</p>
-              <p className="text-2xl font-semibold">{data?.phoneNumbers?.length ?? 0}</p>
+              <p className="text-xs text-muted-foreground">
+                Números cadastrados
+              </p>
+              <p className="text-2xl font-semibold">
+                {data?.phoneNumbers?.length ?? 0}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -767,7 +932,8 @@ export default function WhatsappConnectionsPage() {
             <div
               className={cn(
                 "rounded-md p-2",
-                syncCopy.tone === "success" && "bg-emerald-500/10 text-emerald-500",
+                syncCopy.tone === "success" &&
+                  "bg-emerald-500/10 text-emerald-500",
                 syncCopy.tone === "danger" && "bg-red-500/10 text-red-500",
                 syncCopy.tone === "info" && "bg-sky-500/10 text-sky-500",
                 syncCopy.tone === "muted" && "bg-muted text-muted-foreground",
@@ -797,7 +963,9 @@ export default function WhatsappConnectionsPage() {
             <div>
               <p className="text-xs text-muted-foreground">Webhook</p>
               <p className="text-sm font-medium">
-                {data?.webhookVerifyTokenConfigured ? "Token configurado" : "Token pendente"}
+                {data?.webhookVerifyTokenConfigured
+                  ? "Token configurado"
+                  : "Token pendente"}
               </p>
             </div>
           </CardContent>
@@ -813,10 +981,15 @@ export default function WhatsappConnectionsPage() {
                 Webhook da Meta
               </CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">
-                Use este callback na configuração do WhatsApp para receber mensagens em tempo quase real.
+                Use este callback na configuração do WhatsApp para receber
+                mensagens em tempo quase real.
               </p>
             </div>
-            <Button variant="outline" onClick={copyCallback} disabled={!data?.callbackUrl}>
+            <Button
+              variant="outline"
+              onClick={copyCallback}
+              disabled={!data?.callbackUrl}
+            >
               <Copy className="mr-2 h-4 w-4" />
               Copiar callback
             </Button>
@@ -824,15 +997,20 @@ export default function WhatsappConnectionsPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="rounded-md border border-border bg-muted/20 p-3">
-            <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Callback URL</p>
-            <p className="mt-1 break-all font-mono text-sm">{data?.callbackUrl ?? "-"}</p>
+            <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+              Callback URL
+            </p>
+            <p className="mt-1 break-all font-mono text-sm">
+              {data?.callbackUrl ?? "-"}
+            </p>
           </div>
           <Alert>
             <Webhook className="h-4 w-4" />
             <AlertTitle>Campo obrigatório na Meta</AlertTitle>
             <AlertDescription>
-              Assine o campo <span className="font-mono">messages</span>. Sem essa assinatura a mensagem chega no WhatsApp,
-              mas não entra no UP Dash.
+              Assine o campo <span className="font-mono">messages</span>. Sem
+              essa assinatura a mensagem chega no WhatsApp, mas não entra no UP
+              Dash.
             </AlertDescription>
           </Alert>
         </CardContent>
@@ -846,10 +1024,12 @@ export default function WhatsappConnectionsPage() {
                 <div
                   className={cn(
                     "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
-                    syncCopy.tone === "success" && "bg-emerald-500/10 text-emerald-500",
+                    syncCopy.tone === "success" &&
+                      "bg-emerald-500/10 text-emerald-500",
                     syncCopy.tone === "danger" && "bg-red-500/10 text-red-500",
                     syncCopy.tone === "info" && "bg-sky-500/10 text-sky-500",
-                    syncCopy.tone === "muted" && "bg-muted text-muted-foreground",
+                    syncCopy.tone === "muted" &&
+                      "bg-muted text-muted-foreground",
                   )}
                 >
                   {syncCopy.isLoading ? (
@@ -864,11 +1044,19 @@ export default function WhatsappConnectionsPage() {
                 </div>
                 <div>
                   <h2 className="text-sm font-semibold">{syncCopy.title}</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">{syncCopy.description}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {syncCopy.description}
+                  </p>
                 </div>
               </div>
-              <Button variant="outline" onClick={() => syncNumbers.mutate()} disabled={syncNumbers.isPending || isFetching}>
-                <RefreshCw className={`mr-2 h-4 w-4 ${syncNumbers.isPending || isFetching ? "animate-spin" : ""}`} />
+              <Button
+                variant="outline"
+                onClick={() => syncNumbers.mutate()}
+                disabled={syncNumbers.isPending || isFetching}
+              >
+                <RefreshCw
+                  className={`mr-2 h-4 w-4 ${syncNumbers.isPending || isFetching ? "animate-spin" : ""}`}
+                />
                 Sincronizar agora
               </Button>
             </div>
@@ -878,13 +1066,19 @@ export default function WhatsappConnectionsPage() {
                 <div className="h-2 overflow-hidden rounded-full bg-muted">
                   <div
                     className="h-full rounded-full bg-primary transition-all"
-                    style={{ width: `${Math.min(100, Math.max(0, syncProgress))}%` }}
+                    style={{
+                      width: `${Math.min(100, Math.max(0, syncProgress))}%`,
+                    }}
                   />
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   <span>Progresso: {Math.round(syncProgress)}%</span>
-                  {data.historySync.phase != null && <span>Fase: {data.historySync.phase}</span>}
-                  {data.historySync.chunkOrder != null && <span>Lote: {data.historySync.chunkOrder}</span>}
+                  {data.historySync.phase != null && (
+                    <span>Fase: {data.historySync.phase}</span>
+                  )}
+                  {data.historySync.chunkOrder != null && (
+                    <span>Lote: {data.historySync.chunkOrder}</span>
+                  )}
                 </div>
               </div>
             )}
@@ -892,19 +1086,27 @@ export default function WhatsappConnectionsPage() {
             <div className="grid gap-2 text-xs sm:grid-cols-4">
               <div className="rounded-md border border-border bg-muted/20 p-3">
                 <p className="text-muted-foreground">Mensagens importadas</p>
-                <p className="mt-1 text-lg font-semibold">{data.historySync.importedMessages.toLocaleString("pt-BR")}</p>
+                <p className="mt-1 text-lg font-semibold">
+                  {data.historySync.importedMessages.toLocaleString("pt-BR")}
+                </p>
               </div>
               <div className="rounded-md border border-border bg-muted/20 p-3">
                 <p className="text-muted-foreground">Eventos de histórico</p>
-                <p className="mt-1 text-lg font-semibold">{data.historySync.historyEvents.toLocaleString("pt-BR")}</p>
+                <p className="mt-1 text-lg font-semibold">
+                  {data.historySync.historyEvents.toLocaleString("pt-BR")}
+                </p>
               </div>
               <div className="rounded-md border border-border bg-muted/20 p-3">
                 <p className="text-muted-foreground">Último lote</p>
-                <p className="mt-1 font-medium">{dateLabel(data.historySync.lastHistoryEventAt)}</p>
+                <p className="mt-1 font-medium">
+                  {dateLabel(data.historySync.lastHistoryEventAt)}
+                </p>
               </div>
               <div className="rounded-md border border-border bg-muted/20 p-3">
                 <p className="text-muted-foreground">Última mensagem</p>
-                <p className="mt-1 font-medium">{dateLabel(data.historySync.lastMessageAt)}</p>
+                <p className="mt-1 font-medium">
+                  {dateLabel(data.historySync.lastMessageAt)}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -920,8 +1122,9 @@ export default function WhatsappConnectionsPage() {
                 Telefones de campanha
               </CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">
-                O número padrão envia automações quando o webhook não informa uma vendedora. Quando informa, o telefone
-                precisa corresponder a uma conexão ativa.
+                O número padrão envia automações quando o webhook não informa
+                uma vendedora. Quando informa, o telefone precisa corresponder a
+                uma conexão ativa.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -930,7 +1133,9 @@ export default function WhatsappConnectionsPage() {
                 onClick={() => syncNumbers.mutate()}
                 disabled={syncNumbers.isPending || isFetching}
               >
-                <RefreshCw className={`mr-2 h-4 w-4 ${syncNumbers.isPending ? "animate-spin" : ""}`} />
+                <RefreshCw
+                  className={`mr-2 h-4 w-4 ${syncNumbers.isPending ? "animate-spin" : ""}`}
+                />
                 Sincronizar números
               </Button>
               <Button
@@ -941,7 +1146,12 @@ export default function WhatsappConnectionsPage() {
                 <Webhook className="mr-2 h-4 w-4" />
                 Ativar webhook no WABA
               </Button>
-              <Button onClick={launchEmbeddedSignup} disabled={!embeddedSignup?.facebook?.isConfigured || isSignupBusy}>
+              <Button
+                onClick={launchEmbeddedSignup}
+                disabled={
+                  !embeddedSignup?.facebook?.isConfigured || isSignupBusy
+                }
+              >
                 {isEmbeddedSignupActive ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
@@ -954,25 +1164,43 @@ export default function WhatsappConnectionsPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">Carregando conexões...</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              Carregando conexões...
+            </p>
           ) : (data?.phoneNumbers?.length ?? 0) === 0 ? (
             <div className="rounded-md border border-dashed p-8 text-center">
               <Smartphone className="mx-auto h-8 w-8 text-muted-foreground" />
-              <h2 className="mt-3 text-base font-semibold">Não há telefones cadastrados nessa categoria</h2>
+              <h2 className="mt-3 text-base font-semibold">
+                Não há telefones cadastrados nessa categoria
+              </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Conecte o WhatsApp pelo Embedded Signup e sincronize os telefones do WABA.
+                Conecte o WhatsApp pelo Embedded Signup e sincronize os
+                telefones do WABA.
               </p>
               <div className="mt-4 flex justify-center gap-2">
-                <Button onClick={launchEmbeddedSignup} disabled={!embeddedSignup?.facebook?.isConfigured || isSignupBusy}>
+                <Button
+                  onClick={launchEmbeddedSignup}
+                  disabled={
+                    !embeddedSignup?.facebook?.isConfigured || isSignupBusy
+                  }
+                >
                   {isEmbeddedSignupActive ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     <MessageCircle className="mr-2 h-4 w-4" />
                   )}
-                  {isEmbeddedSignupActive ? "Conectando..." : "Conectar com Meta"}
+                  {isEmbeddedSignupActive
+                    ? "Conectando..."
+                    : "Conectar com Meta"}
                 </Button>
-                <Button variant="outline" onClick={() => syncNumbers.mutate()} disabled={syncNumbers.isPending || isFetching}>
-                  <RefreshCw className={`mr-2 h-4 w-4 ${syncNumbers.isPending ? "animate-spin" : ""}`} />
+                <Button
+                  variant="outline"
+                  onClick={() => syncNumbers.mutate()}
+                  disabled={syncNumbers.isPending || isFetching}
+                >
+                  <RefreshCw
+                    className={`mr-2 h-4 w-4 ${syncNumbers.isPending ? "animate-spin" : ""}`}
+                  />
                   Sincronizar
                 </Button>
               </div>
@@ -982,7 +1210,14 @@ export default function WhatsappConnectionsPage() {
               {data?.phoneNumbers?.map((phone) => (
                 <Card
                   key={phone.id}
-                  className={cn("border-border bg-card", phone.isDefault && "border-emerald-500/40")}
+                  className={cn(
+                    "border-border bg-card",
+                    phone.operationalStatus === "healthy" &&
+                      "border-emerald-500/50",
+                    phone.operationalStatus === "warning" &&
+                      "border-amber-500/60",
+                    phone.operationalStatus === "error" && "border-red-500/70",
+                  )}
                 >
                   <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.8fr)_260px]">
                     <div className="space-y-3">
@@ -992,9 +1227,37 @@ export default function WhatsappConnectionsPage() {
                         </div>
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="truncate text-base font-semibold">{numberTitle(phone)}</h3>
-                            <Badge variant={phone.status === "active" ? "secondary" : "outline"}>
-                              {phone.status === "active" ? "Disponível" : phone.status}
+                            <h3 className="truncate text-base font-semibold">
+                              {numberTitle(phone)}
+                            </h3>
+                            <Badge
+                              variant={
+                                phone.status === "active"
+                                  ? "secondary"
+                                  : "outline"
+                              }
+                            >
+                              {phone.status === "active"
+                                ? "Disponível"
+                                : phone.status}
+                            </Badge>
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                phone.operationalStatus === "healthy" &&
+                                  "border-emerald-500/30 bg-emerald-500/10 text-emerald-500",
+                                phone.operationalStatus === "warning" &&
+                                  "border-amber-500/30 bg-amber-500/10 text-amber-500",
+                                phone.operationalStatus === "error" &&
+                                  "border-red-500/30 bg-red-500/10 text-red-500",
+                              )}
+                            >
+                              {phone.operationalStatus === "error" ? (
+                                <AlertCircle className="mr-1 h-3 w-3" />
+                              ) : (
+                                <CheckCircle2 className="mr-1 h-3 w-3" />
+                              )}
+                              {operationalLabel(phone)}
                             </Badge>
                             {phone.isDefault && (
                               <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/10">
@@ -1003,25 +1266,59 @@ export default function WhatsappConnectionsPage() {
                               </Badge>
                             )}
                           </div>
-                          <p className="mt-1 font-mono text-sm text-muted-foreground">{phone.displayPhoneNumber ?? phone.phoneNumberId}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Última sincronização: {dateLabel(phone.lastSyncedAt)}
+                          <p className="mt-1 font-mono text-sm text-muted-foreground">
+                            {phone.displayPhoneNumber ?? phone.phoneNumberId}
                           </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Última sincronização:{" "}
+                            {dateLabel(phone.lastSyncedAt)}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Último disparo: {dateLabel(phone.lastDispatchAt)}
+                          </p>
+                          {phone.operationalStatus === "error" ? (
+                            <p className="mt-2 text-xs text-red-500">
+                              {phone.operationalMessage}
+                              {phone.lastErrorAt
+                                ? ` · ${dateLabel(phone.lastErrorAt)}`
+                                : ""}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
 
-                      <div className="grid gap-2 sm:grid-cols-3">
+                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                         <div className="rounded-md border border-border bg-muted/20 p-3">
-                          <p className="text-[11px] font-mono uppercase text-muted-foreground">Phone ID</p>
-                          <p className="mt-1 truncate font-mono text-xs">{phone.phoneNumberId}</p>
+                          <p className="text-[11px] font-mono uppercase text-muted-foreground">
+                            WABA ID
+                          </p>
+                          <p className="mt-1 truncate font-mono text-xs">
+                            {phone.wabaId ?? "-"}
+                          </p>
                         </div>
                         <div className="rounded-md border border-border bg-muted/20 p-3">
-                          <p className="text-[11px] font-mono uppercase text-muted-foreground">Plataforma</p>
-                          <p className="mt-1 text-sm">{phone.platformType ?? "-"}</p>
+                          <p className="text-[11px] font-mono uppercase text-muted-foreground">
+                            Phone ID
+                          </p>
+                          <p className="mt-1 truncate font-mono text-xs">
+                            {phone.phoneNumberId}
+                          </p>
                         </div>
                         <div className="rounded-md border border-border bg-muted/20 p-3">
-                          <p className="text-[11px] font-mono uppercase text-muted-foreground">Verificação</p>
-                          <p className="mt-1 text-sm">{phone.codeVerificationStatus ?? "-"}</p>
+                          <p className="text-[11px] font-mono uppercase text-muted-foreground">
+                            Plataforma
+                          </p>
+                          <p className="mt-1 text-sm">
+                            {phone.platformType ?? "-"}
+                          </p>
+                        </div>
+                        <div className="rounded-md border border-border bg-muted/20 p-3">
+                          <p className="text-[11px] font-mono uppercase text-muted-foreground">
+                            Verificação
+                          </p>
+                          <p className="mt-1 text-sm">
+                            {phone.codeVerificationStatus ?? "-"}
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -1038,7 +1335,9 @@ export default function WhatsappConnectionsPage() {
                         </Badge>
                         <Badge variant="outline">
                           <MessageSquareText className="mr-1 h-3 w-3" />
-                          Mensagens ativas
+                          {phone.hasAccessToken
+                            ? "Token ativo"
+                            : "Token ausente"}
                         </Badge>
                         <Badge variant="outline">
                           <Webhook className="mr-1 h-3 w-3" />
@@ -1046,7 +1345,9 @@ export default function WhatsappConnectionsPage() {
                         </Badge>
                         <Badge variant="outline">
                           <Settings className="mr-1 h-3 w-3" />
-                          {phone.verifiedName ? "Nome verificado" : "Nome pendente"}
+                          {phone.verifiedName
+                            ? "Nome verificado"
+                            : "Nome pendente"}
                         </Badge>
                       </div>
                     </div>
@@ -1054,35 +1355,53 @@ export default function WhatsappConnectionsPage() {
                     <div className="flex flex-col gap-2">
                       <Button
                         variant={phone.isDefault ? "secondary" : "outline"}
-                        onClick={() => setDefaultPhoneNumber.mutate(phone.phoneNumberId)}
-                        disabled={phone.isDefault || setDefaultPhoneNumber.isPending}
+                        onClick={() =>
+                          setDefaultPhoneNumber.mutate(phone.phoneNumberId)
+                        }
+                        disabled={
+                          phone.isDefault || setDefaultPhoneNumber.isPending
+                        }
                       >
                         {setDefaultPhoneNumber.isPending ? (
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         ) : (
                           <CheckCircle2 className="mr-2 h-4 w-4" />
                         )}
-                        {phone.isDefault ? "Número padrão" : "Definir como padrão"}
+                        {phone.isDefault
+                          ? "Número padrão"
+                          : "Definir como padrão"}
                       </Button>
                       <Button asChild>
-                        <Link href={`/whatsapp/conversas?waPhone=${encodeURIComponent(phone.phoneNumberId)}`}>
+                        <Link
+                          href={`/whatsapp/conversas?waPhone=${encodeURIComponent(phone.phoneNumberId)}`}
+                        >
                           <MessageCircle className="mr-2 h-4 w-4" />
                           Ver conversas
                         </Link>
                       </Button>
                       <Button variant="outline" asChild>
-                        <Link href={`/whatsapp/envios?waPhone=${encodeURIComponent(phone.phoneNumberId)}`}>
+                        <Link
+                          href={`/whatsapp/envios?waPhone=${encodeURIComponent(phone.phoneNumberId)}`}
+                        >
                           <Send className="mr-2 h-4 w-4" />
                           Envio teste
                         </Link>
                       </Button>
-                      <Button variant="outline" onClick={() => syncNumbers.mutate()} disabled={syncNumbers.isPending || isFetching}>
-                        <RefreshCw className={`mr-2 h-4 w-4 ${syncNumbers.isPending ? "animate-spin" : ""}`} />
+                      <Button
+                        variant="outline"
+                        onClick={() => syncNumbers.mutate()}
+                        disabled={syncNumbers.isPending || isFetching}
+                      >
+                        <RefreshCw
+                          className={`mr-2 h-4 w-4 ${syncNumbers.isPending ? "animate-spin" : ""}`}
+                        />
                         Atualizar dados
                       </Button>
                       <Button
                         variant="outline"
-                        onClick={() => subscribeWebhook.mutate(phone.phoneNumberId)}
+                        onClick={() =>
+                          subscribeWebhook.mutate(phone.phoneNumberId)
+                        }
                         disabled={subscribeWebhook.isPending}
                       >
                         <Webhook className="mr-2 h-4 w-4" />
@@ -1095,7 +1414,8 @@ export default function WhatsappConnectionsPage() {
                           const confirmed = window.confirm(
                             "Excluir este número conectado do UP Dash? O histórico de conversas será preservado.",
                           );
-                          if (confirmed) deletePhoneNumber.mutate(phone.phoneNumberId);
+                          if (confirmed)
+                            deletePhoneNumber.mutate(phone.phoneNumberId);
                         }}
                         disabled={deletePhoneNumber.isPending}
                       >
