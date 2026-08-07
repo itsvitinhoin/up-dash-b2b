@@ -8,6 +8,10 @@ import { describeWhatsappDeliveryError } from "../services/whatsapp-delivery-err
 import { deriveWhatsappConnectionHealth } from "../services/whatsapp-connection-health";
 import { selectWhatsappIntegrationForPhone } from "../services/whatsapp-integration-selection";
 import {
+  buildWhatsappTemplateSummaries,
+  emptyWhatsappTemplateSummary,
+} from "../services/whatsapp-template-summary";
+import {
   addWhatsappWabaVerification,
   discoverWhatsappWabaForPhone as discoverWhatsappWabaForPhoneFromMeta,
 } from "../services/whatsapp-waba-discovery";
@@ -2051,51 +2055,6 @@ function serializeTemplate(
   };
 }
 
-type WhatsappTemplateSummary = {
-  approved: number;
-  pending: number;
-  rejected: number;
-  total: number;
-  lastSyncedAt: string | null;
-};
-
-function buildWhatsappTemplateSummaries(
-  rows: Array<typeof whatsappMessageTemplatesTable.$inferSelect>,
-) {
-  const summaries = new Map<string, WhatsappTemplateSummary>();
-
-  for (const row of rows) {
-    const rawPayload = jsonRecord(row.rawPayload);
-    if (rawPayload.upDashTemplateScope === "agency_report") continue;
-
-    const current = summaries.get(row.wabaId) ?? {
-      approved: 0,
-      pending: 0,
-      rejected: 0,
-      total: 0,
-      lastSyncedAt: null,
-    };
-    const status = row.status.toUpperCase();
-
-    current.total += 1;
-    if (status === "APPROVED") current.approved += 1;
-    else if (status === "REJECTED") current.rejected += 1;
-    else current.pending += 1;
-
-    const lastSyncedAt = iso(row.lastSyncedAt);
-    if (
-      lastSyncedAt &&
-      (!current.lastSyncedAt || lastSyncedAt > current.lastSyncedAt)
-    ) {
-      current.lastSyncedAt = lastSyncedAt;
-    }
-
-    summaries.set(row.wabaId, current);
-  }
-
-  return summaries;
-}
-
 function collectPayloadVariablePaths(
   value: unknown,
   prefix = "",
@@ -2815,13 +2774,7 @@ router.get("/whatsapp/connections", async (req, res): Promise<void> => {
     .from(whatsappMessageTemplatesTable)
     .where(eq(whatsappMessageTemplatesTable.clientId, clientId));
   const templateSummaries = buildWhatsappTemplateSummaries(templateRows);
-  const emptyTemplateSummary: WhatsappTemplateSummary = {
-    approved: 0,
-    pending: 0,
-    rejected: 0,
-    total: 0,
-    lastSyncedAt: null,
-  };
+  const emptyTemplateSummary = emptyWhatsappTemplateSummary();
 
   res.json({
     callbackUrl: WHATSAPP_CALLBACK_URL,
