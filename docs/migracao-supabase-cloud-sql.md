@@ -1,113 +1,58 @@
 # Migração do banco: Supabase → Cloud SQL (PostgreSQL)
 
-Status: planejado, não iniciado. Última atualização: 07/08/2026.
+Status: **dado já migrado, falta o corte em produção**. Última atualização: 10/08/2026.
 
 ## Por que dá pra migrar sem dor
 
-- Zero dependência de SDK/schema exclusivo do Supabase no código (`@workspace/db` usa só `pg` + Drizzle via `DATABASE_URL`). Sem uso de `auth.*`, `storage.*`, `realtime.*` nem `CREATE EXTENSION` específica em nenhuma das 33 migrations.
-- Banco pequeno: **203 MB** (medido via `/api/admin/db-diagnostics`, admin-only, adicionado nesta sessão em `routes/health.ts`). `pg_dump`/`restore` é questão de segundos.
-- Postgres **17.6** em produção hoje. Provisionar Cloud SQL na mesma major version (17).
-- `max_connections` efetivo hoje: **60**, sem histórico de esgotamento de conexão. Cloud SQL, mesmo em tier básico pago, libera 100+ por padrão — não precisamos de PgBouncer/pooler dedicado no dia 1.
+- Zero dependência de SDK/schema exclusivo do Supabase no código (`@workspace/db` usava só `pg` + Drizzle via `DATABASE_URL`). Sem uso de `auth.*`, `storage.*`, `realtime.*` nem `CREATE EXTENSION` específica em nenhuma das 33 migrations.
+- Banco pequeno: **203 MB** (medido via `/api/admin/db-diagnostics`, admin-only, `routes/health.ts`). `pg_dump`/`restore` levou menos de um minuto.
+- Postgres **17.6** em produção → instância Cloud SQL já provisionada na mesma major version (17).
+- `max_connections` efetivo hoje no Supabase: **60**, sem histórico de esgotamento. Não precisamos de PgBouncer/pooler dedicado no dia 1.
 
-## Decisões já tomadas
+## O que já está feito
 
-| Decisão | Escolha |
+1. ✅ Instância Cloud SQL **`vesti-database`** (projeto `up-vesti-report`, região `us-central1`, Postgres 17) — já existia, compartilhada com outros bancos (`upflow`, etc). Banco `up_dash_b2b` criado dentro dela.
+2. ✅ Dump do Supabase (`pg_dump --format=custom`, via pooler `aws-1-sa-east-1.pooler.supabase.com:5432` — o host direto `db.*.supabase.co` só resolve por IPv6, não conectou).
+3. ✅ Restore no Cloud SQL via Cloud SQL Auth Proxy, filtrando só os schemas relevantes (`--schema=public --schema=drizzle` — os schemas internos do Supabase `auth`/`storage`/`realtime`/`vault` foram propositalmente deixados de fora, não são usados pelo app).
+4. ✅ Conferido: RLS ligado nas mesmas 11 tabelas, **59 clients** (bate exatamente: 21 originais + 38 Vesti onboardados nesta sessão), 9783 orders, 11671 customers.
+5. ✅ Código (`lib/db/src/index.ts`, commit `5c09ee4`) agora suporta conectar via **Cloud SQL Connector** em vez de string de conexão crua — autentica pela Cloud SQL Admin API com uma service account (mTLS efêmero), **sem precisar abrir a instância pra internet** (rejeitamos de propósito o caminho de "IP público + rede autorizada 0.0.0.0/0"). Ativado só quando a env var `CLOUD_SQL_CONNECTION_NAME` está definida — se não estiver, o código continua usando `DATABASE_URL` normal (Supabase), então nada quebrou em produção ainda.
+
+## O que falta — só o corte
+
+### 1. Configurar as env vars em produção (Vercel)
+
+| Env var | Valor |
 |---|---|
-| Produto GCP | Cloud SQL for PostgreSQL (não AlloyDB) |
-| Versão | PostgreSQL 17 |
-| Pooler dedicado (PgBouncer/Cloud Run) | Não no dia 1 — só se monitoramento pós-corte mostrar esgotamento real |
-| `max_connections` alvo | ~150–200 (folga sobre os 60 atuais) |
+| `CLOUD_SQL_CONNECTION_NAME` | `up-vesti-report:us-central1:vesti-database` |
+| `DB_USER` | `postgres` (ou criar um usuário de app dedicado antes) |
+| `DB_PASSWORD` | a senha definida no Cloud SQL |
+| `DB_NAME` | `up_dash_b2b` |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | **provavelmente já existe** — é a mesma env var que o BigQuery já usa em produção (`lib/bigquery.ts`). Só precisa conferir se a service account tem o papel **Cloud SQL Client** (`roles/cloudsql.client`) no projeto `up-vesti-report`; a mesma credencial já testada nesta sessão (`script-vesti-nuvem/credentials.json`) funcionou pro proxy, então é boa candidata. |
 
-## Passo a passo
+**Não remover `DATABASE_URL` ainda** — só definir as 4 novas. O código só usa o Cloud SQL Connector se `CLOUD_SQL_CONNECTION_NAME` estiver presente; `DATABASE_URL` fica como estava, pronta pra rollback instantâneo.
 
-### 1. Provisionar o Cloud SQL
+### 2. Testar num preview deploy antes de produção
 
-```bash
-gcloud sql instances create up-dash-db \
-  --database-version=POSTGRES_17 \
-  --tier=db-custom-2-4096 \
-  --region=southamerica-east1 \
-  --database-flags=max_connections=200 \
-  --storage-size=10 \
-  --storage-auto-increase
-```
+Criar um preview deploy (branch separada) na Vercel com as 4 env vars acima configuradas **só nesse preview**. Rodar o smoke test (mesmo estilo do feito pros 39 clientes Vesti) contra ele antes de tocar produção de verdade.
 
-Ajustar `--tier` e `--region` conforme custo/latência desejados (região perto da Vercel/usuários — `southamerica-east1` é um ponto de partida razoável pra um time no Brasil; conferir se bate com onde a Vercel roda as functions hoje).
+### 3. Corte (cutover)
 
-Criar o banco e um usuário de aplicação (evitar usar o usuário `postgres` padrão):
+1. Dump incremental final do Supabase (pra pegar qualquer escrita entre o dump de 10/08 e agora) + restore no Cloud SQL, mesmo processo do passo já feito.
+2. Configurar as 4 env vars em **produção** na Vercel.
+3. Redeploy.
+4. Rodar o smoke test em produção.
 
-```bash
-gcloud sql databases create updash --instance=up-dash-db
-gcloud sql users create updash_app --instance=up-dash-db --password='<GERAR_SENHA_FORTE>'
-```
+### 4. Rollback
 
-### 2. Dump do Supabase
+Se algo der errado: remover/desmarcar `CLOUD_SQL_CONNECTION_NAME` na Vercel e redeploy — o código volta a usar `DATABASE_URL` (Supabase) automaticamente, sem precisar reverter código. Manter o Supabase **pausado, não deletado**, por 1–2 semanas depois do corte.
 
-Sem precisar do painel do Supabase — só a `DATABASE_URL` de produção (já configurada na Vercel, ninguém precisa digitar senha em lugar novo, só usar a env var existente num `pg_dump` local/CI):
+### 5. Monitorar depois do corte
 
-```bash
-pg_dump "$DATABASE_URL" \
-  --no-owner --no-privileges \
-  --format=custom \
-  --file=updash_backup.dump
-```
-
-`--no-owner --no-privileges` evita erro de restore por causa de roles específicas do Supabase que não existem no Cloud SQL.
-
-### 3. Restore no Cloud SQL
-
-Via Cloud SQL Auth Proxy (mais simples pra rodar de uma máquina local/CI sem abrir IP público):
-
-```bash
-cloud-sql-proxy <PROJECT_ID>:southamerica-east1:up-dash-db &
-pg_restore \
-  --no-owner --no-privileges \
-  -h 127.0.0.1 -p 5432 -U updash_app -d updash \
-  updash_backup.dump
-```
-
-### 4. Conferir que migrou certo
-
-```sql
--- RLS ligado nas mesmas 11 tabelas de antes
-SELECT relname, relrowsecurity
-FROM pg_class
-WHERE relname IN (
-  'ai_agent_configs','ai_commercial_operations','ai_crm_cards',
-  'campaign_attribution_stamps','commercial_automation_jobs',
-  'commercial_automation_logs','commercial_automation_rules',
-  'daily_client_metrics','ecommerce_webhook_configs',
-  'ecommerce_webhook_events','upzero_integrations'
-);
-
--- Contagem de linhas nas tabelas principais bate com o Supabase
-SELECT 'clients' t, count(*) FROM clients
-UNION ALL SELECT 'orders', count(*) FROM orders
-UNION ALL SELECT 'customers', count(*) FROM customers;
-```
-
-Rodar essas duas queries nos dois bancos (Supabase antigo e Cloud SQL novo) e comparar os números antes de seguir.
-
-### 5. Testar num ambiente isolado antes de produção
-
-Apontar um preview deploy da Vercel (branch separada, `DATABASE_URL` só nesse preview) pro Cloud SQL novo. Rodar smoke test manual nas rotas principais (mesmo estilo do smoke test dos 39 clientes Vesti feito nesta sessão) contra esse preview antes de tocar produção.
-
-### 6. Corte (cutover)
-
-1. Comunicar janela curta de manutenção (alguns minutos).
-2. `pg_dump` incremental final (banco pequeno, deve levar segundos) pra pegar qualquer escrita entre o dump inicial e agora.
-3. Trocar `DATABASE_URL` na Vercel (Project Settings → Environment Variables) pro Cloud SQL.
-4. Redeploy.
-5. Rodar o smoke test de novo, agora em produção.
-
-### 7. Rollback
-
-Manter a instância do Supabase **pausada, não deletada**, por pelo menos 1–2 semanas. Se algo aparecer, trocar `DATABASE_URL` de volta e redeploy — reversível em minutos enquanto o Supabase ainda existir.
-
-### 8. Monitorar depois do corte
-
-Console GCP → SQL → instância → aba **Monitoring** → conexões ativas. Olhar principalmente nos horários de pico (webhooks de e-commerce/WhatsApp + clientes acessando dashboard). Só considerar PgBouncer/Cloud Run se aparecer esgotamento real — não antes.
+Console GCP → SQL → `vesti-database` → aba **Monitoring** → conexões ativas. Olhar principalmente nos horários de pico (webhooks de e-commerce/WhatsApp + clientes acessando dashboard). Só considerar PgBouncer/Cloud Run se aparecer esgotamento real — não antes.
 
 ## Pendências / limpeza
 
-- `GET /api/admin/db-diagnostics` (admin-only, `routes/health.ts`) foi adicionado só pra planejar essa migração sem precisar do painel do Supabase. Remover depois que a migração for concluída (ou manter se for útil pra comparar com o Cloud SQL depois — decidir na hora).
+- **Trocar a senha do banco do Supabase** — foi digitada em texto puro numa conversa durante essa migração, vale rotacionar por precaução (Supabase → Settings → Database → Reset database password), mesmo não sendo mais a base principal depois do corte.
+- `GET /api/admin/db-diagnostics` (admin-only, `routes/health.ts`) — remover depois que a migração for concluída (ou manter se for útil pra comparar com o Cloud SQL depois).
+- Deletar o arquivo local `updash_backup.dump` (contém dado sensível do Supabase — `auth.users`, `vault.secrets`) depois de confirmado o corte.
+- Os `prisma_migrate_shadow_db_*` vistos na instância `vesti-database` são sobras de migration de outro projeto (Prisma) — não relacionados a essa migração, dá pra apagar quando conveniente.
