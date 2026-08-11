@@ -239,6 +239,13 @@
       "when": 1786458241659,
       "tag": "0033_hidden_nav_items",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786478400000,
+      "tag": "0034_whatsapp_integrations_client_waba",
+      "breakpoints": true
     }
   ]
 }
