@@ -2859,7 +2859,12 @@ router.post("/whatsapp/connections/import-existing", async (req, res): Promise<v
       connectedAt: currentIntegration?.connectedAt ?? new Date(),
     })
     .onConflictDoUpdate({
-      target: whatsappIntegrationsTable.clientId,
+      // Corrigido 11/08/2026: o schema mudou pra unique(client_id, waba_id)
+      // em 06/08 (commit 294a46d, suporte a múltiplos WABAs por marca), mas
+      // esse upsert continuava mirando só client_id — não batia com
+      // nenhuma constraint real, dando 42P10 (ON CONFLICT sem constraint
+      // correspondente) toda vez que alguém tentava conectar/reconectar.
+      target: [whatsappIntegrationsTable.clientId, whatsappIntegrationsTable.wabaId],
       set: {
         appId: getWhatsappEmbeddedSignupAppId(),
         configId: getWhatsappEmbeddedSignupConfigId(),
@@ -4299,7 +4304,12 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
       connectedAt: status === "connected" ? new Date() : null,
     })
     .onConflictDoUpdate({
-      target: whatsappIntegrationsTable.clientId,
+      // Mesma correção do outro upsert dessa tabela (ver comentário lá
+      // embaixo, fluxo "manual_existing_bm_import") — schema mudou pra
+      // unique(client_id, waba_id) em 06/08 (multi-WABA), esse upsert não
+      // foi atualizado junto e dava 42P10 sempre que alguém tentava
+      // conectar o WhatsApp via Embedded Signup.
+      target: [whatsappIntegrationsTable.clientId, whatsappIntegrationsTable.wabaId],
       set: {
         appId,
         configId,
