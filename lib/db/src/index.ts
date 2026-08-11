@@ -1,26 +1,13 @@
 import "dotenv/config";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { Connector, AuthTypes, IpAddressTypes } from "@google-cloud/cloud-sql-connector";
-import { GoogleAuth } from "google-auth-library";
 import * as schema from "./schema";
 
 const { Pool } = pg;
 
-// Duas formas de apontar o banco: `DATABASE_URL` direta (Supabase hoje, ou
-// qualquer Postgres com IP acessível) ou, se `CLOUD_SQL_CONNECTION_NAME`
-// estiver definida, via Cloud SQL Connector (migração pra Cloud SQL,
-// 07/08/2026 — ver docs/migracao-supabase-cloud-sql.md). O connector
-// autentica pela Cloud SQL Admin API usando uma service account e conecta
-// com mTLS efêmero — não precisa liberar IP em "redes autorizadas" do
-// Cloud SQL, o que seria necessário com uma DATABASE_URL comum apontando
-// pro IP público (rejeitado de propósito: exporia a porta 5432 pra
-// internet inteira só por causa da Vercel não ter IP fixo).
-const cloudSqlConnectionName = process.env.CLOUD_SQL_CONNECTION_NAME;
-
-if (!cloudSqlConnectionName && !process.env.DATABASE_URL) {
+if (!process.env.DATABASE_URL) {
   throw new Error(
-    "DATABASE_URL (ou CLOUD_SQL_CONNECTION_NAME) must be set. Did you forget to provision a database?",
+    "DATABASE_URL must be set. Did you forget to provision a database?",
   );
 }
 
@@ -139,9 +126,10 @@ class ResilientPool extends Pool {
   }
 }
 
-const poolBaseConfig = {
+export const pool = new ResilientPool({
+  connectionString: process.env.DATABASE_URL,
   // Each serverless instance owns its own pg Pool. Keeping the default of ten
-  // connections per instance can exhaust the pooler during traffic bursts.
+  // connections per instance can exhaust Supavisor during traffic bursts.
   max: Number.isFinite(configuredPoolMax) && configuredPoolMax > 0
     ? configuredPoolMax
     : isServerless
@@ -151,59 +139,7 @@ const poolBaseConfig = {
   connectionTimeoutMillis: 10_000,
   allowExitOnIdle: isServerless,
   keepAlive: true,
-};
-
-// Mesmo padrão de `GOOGLE_APPLICATION_CREDENTIALS_JSON` já usado pro
-// BigQuery em artifacts/api-server/src/lib/bigquery.ts — service account
-// colada inteira numa env var (aceita JSON direto ou em base64), já que a
-// Vercel não tem filesystem persistente pra apontar um arquivo de
-// credencial. `null` faz o Connector cair pro Application Default
-// Credentials (ok em dev local com `gcloud auth application-default login`
-// ou `GOOGLE_APPLICATION_CREDENTIALS` apontando um arquivo).
-function parseServiceAccountCredentials(): { client_email: string; private_key: string } | null {
-  const raw = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ?? process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!raw) return null;
-  const tryParse = (text: string) => {
-    try {
-      return JSON.parse(text) as { client_email?: string; private_key?: string };
-    } catch {
-      return null;
-    }
-  };
-  const parsed = tryParse(raw) ?? tryParse(Buffer.from(raw, "base64").toString("utf-8"));
-  if (!parsed?.client_email || !parsed?.private_key) return null;
-  return { client_email: parsed.client_email, private_key: parsed.private_key.replace(/\\n/g, "\n") };
-}
-
-async function buildPool(): Promise<InstanceType<typeof ResilientPool>> {
-  if (!cloudSqlConnectionName) {
-    return new ResilientPool({ connectionString: process.env.DATABASE_URL, ...poolBaseConfig });
-  }
-
-  if (!process.env.DB_USER || !process.env.DB_PASSWORD || !process.env.DB_NAME) {
-    throw new Error(
-      "DB_USER, DB_PASSWORD e DB_NAME devem estar definidos quando CLOUD_SQL_CONNECTION_NAME é usado.",
-    );
-  }
-
-  const credentials = parseServiceAccountCredentials();
-  const connector = new Connector(credentials ? { auth: new GoogleAuth({ credentials }) } : undefined);
-  const clientOpts = await connector.getOptions({
-    instanceConnectionName: cloudSqlConnectionName,
-    ipType: IpAddressTypes.PUBLIC,
-    authType: AuthTypes.PASSWORD,
-  });
-
-  return new ResilientPool({
-    ...clientOpts,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    ...poolBaseConfig,
-  });
-}
-
-export const pool = await buildPool();
+});
 
 pool.on("error", (error) => {
   console.error("[database] Idle PostgreSQL connection failed", {
