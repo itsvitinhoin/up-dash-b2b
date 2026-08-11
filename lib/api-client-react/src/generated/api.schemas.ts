@@ -132,6 +132,11 @@ export interface Client {
    */
   bigqueryDataset?: string | null;
   /**
+   * Sidebar nav item hrefs manually hidden for this client (e.g. "/erp"). Null/empty means everything applicable is shown.
+   * @nullable
+   */
+  hiddenNavItems?: string[] | null;
+  /**
    * Nuvemshop store id for B2C data ingestion.
    * @nullable
    */
@@ -274,6 +279,8 @@ export interface CreateClientRequest {
   commercePlatform?: CreateClientRequestCommercePlatform;
   /** BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI. */
   bigqueryDataset?: string;
+  /** Sidebar nav item hrefs to hide for this client (e.g. "/erp"). */
+  hiddenNavItems?: string[];
   /** Optional Nuvemshop store id for B2C clients. */
   nuvemshopStoreId?: string;
   /** Optional Nuvemshop access token for B2C clients. Stored server-side and never returned. */
@@ -342,6 +349,11 @@ export interface UpdateClientRequest {
    * @nullable
    */
   bigqueryDataset?: string | null;
+  /**
+   * Sidebar nav item hrefs manually hidden for this client. Pass null/empty to show everything applicable again.
+   * @nullable
+   */
+  hiddenNavItems?: string[] | null;
   /**
    * Nuvemshop store id. Pass null to clear it.
    * @nullable

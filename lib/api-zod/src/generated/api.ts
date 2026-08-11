@@ -121,6 +121,12 @@ export const ListClientsResponse = zod.object({
         .describe(
           "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
         ),
+      hiddenNavItems: zod
+        .array(zod.string())
+        .nullish()
+        .describe(
+          "Sidebar nav item hrefs manually hidden for this client (e.g. \"\/erp\"). Null\/empty means everything applicable is shown.",
+        ),
       nuvemshopStoreId: zod
         .string()
         .nullish()
@@ -261,6 +267,12 @@ export const CreateClientBody = zod.object({
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI.",
     ),
+  hiddenNavItems: zod
+    .array(zod.string())
+    .optional()
+    .describe(
+      "Sidebar nav item hrefs to hide for this client (e.g. \"\/erp\").",
+    ),
   nuvemshopStoreId: zod
     .string()
     .optional()
@@ -387,6 +399,12 @@ export const GetClientResponse = zod.object({
     .nullish()
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
+    ),
+  hiddenNavItems: zod
+    .array(zod.string())
+    .nullish()
+    .describe(
+      "Sidebar nav item hrefs manually hidden for this client (e.g. \"\/erp\"). Null\/empty means everything applicable is shown.",
     ),
   nuvemshopStoreId: zod
     .string()
@@ -519,6 +537,12 @@ export const UpdateClientBody = zod
       .describe(
         "BigQuery dataset (project up-vesti-report) this client reads analytics from. Pass null to clear it.",
       ),
+    hiddenNavItems: zod
+      .array(zod.string())
+      .nullish()
+      .describe(
+        "Sidebar nav item hrefs manually hidden for this client. Pass null\/empty to show everything applicable again.",
+      ),
     nuvemshopStoreId: zod
       .string()
       .nullish()
@@ -565,6 +589,12 @@ export const UpdateClientResponse = zod.object({
     .nullish()
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
+    ),
+  hiddenNavItems: zod
+    .array(zod.string())
+    .nullish()
+    .describe(
+      "Sidebar nav item hrefs manually hidden for this client (e.g. \"\/erp\"). Null\/empty means everything applicable is shown.",
     ),
   nuvemshopStoreId: zod
     .string()
