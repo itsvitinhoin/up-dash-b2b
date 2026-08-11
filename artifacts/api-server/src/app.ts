@@ -86,9 +86,17 @@ app.get("/", (_req, res) => {
 // (NODE_ENV=production) esconde a mensagem e devolve só um HTML genérico
 // "Internal Server Error" — quebra o formato {error,code,message,status} que
 // o resto da API usa e não deixa nem log nem cliente saberem o que houve.
-// A stack completa vai só pro log (pino); o cliente recebe a mensagem, que já
-// costuma bastar pra diagnosticar (e nunca inclui segredo — nossas exceções
-// não carregam dado sensível na message).
+// A stack completa vai só pro log (pino).
+//
+// CORREÇÃO (11/08/2026): a versão original mandava `err.message` direto pro
+// cliente. Isso vazou um access_token do WhatsApp/Meta em texto puro na tela
+// de um cliente real — erro do Drizzle/postgres inclui a query SQL inteira +
+// os parâmetros bindados dentro da própria `.message` quando um insert/update
+// falha, e a gente não tem controle sobre o que uma lib de terceiro decide
+// colocar ali. Erro não tratado (isso aqui só pega o que nenhuma rota já
+// tratou explicitamente) nunca devolve detalhe pro cliente — só um código
+// genérico. Detalhe completo continua indo pro log (pino), que é onde deve
+// ficar.
 app.use(
   (
     err: unknown,
@@ -109,7 +117,7 @@ app.use(
     res.status(500).json({
       error: true,
       code: "INTERNAL_ERROR",
-      message: err instanceof Error ? err.message : "Internal server error",
+      message: "Internal server error. Please try again or contact support.",
       status: 500,
     });
   },
