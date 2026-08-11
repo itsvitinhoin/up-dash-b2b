@@ -48,6 +48,13 @@ export const clientsTable = pgTable(
     // de `bigqueryDataset`/commercePlatform — um client UpZero (ex: Obzee)
     // pode ter ERP sem ser Vesti.
     erpDataset: text("erp_dataset"),
+    // Abas do menu lateral escondidas manualmente pra esse client (valores
+    // = `href` do item, ex: "/erp", "/performance" — ver NAV_ITEM_HREFS em
+    // app-layout.tsx). `null`/vazio = mostra tudo (comportamento de antes,
+    // nenhum client existente é afetado). Controle manual por admin —
+    // pedido 11/08/2026 pra esconder abas de clients sem a integração
+    // correspondente (ex: ERP) em vez de mostrar tela vazia/erro.
+    hiddenNavItems: text("hidden_nav_items").array(),
     ga4MeasurementId: text("ga4_measurement_id"),
     ga4PropertyId: text("ga4_property_id"),
     ga4ApiSecret: text("ga4_api_secret"),

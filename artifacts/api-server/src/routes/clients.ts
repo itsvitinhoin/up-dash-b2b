@@ -933,6 +933,18 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
   if ("commercePlatform" in bodyParsed.data) {
     updates.commercePlatform = bodyParsed.data.commercePlatform;
   }
+  // `bigqueryDataset` já existia no schema do UpdateClientBody mas nunca era
+  // de fato aplicado aqui (achado 11/08/2026 ao expor o campo na tela de
+  // admin) — sem isso não dava pra trocar/corrigir o dataset Vesti de um
+  // client existente via PATCH, só criando do zero.
+  if ("bigqueryDataset" in bodyParsed.data) {
+    const dataset = bodyParsed.data.bigqueryDataset?.trim();
+    updates.bigqueryDataset = dataset || null;
+  }
+  if ("hiddenNavItems" in bodyParsed.data) {
+    const items = bodyParsed.data.hiddenNavItems;
+    updates.hiddenNavItems = items && items.length > 0 ? items : null;
+  }
   if ("nuvemshopStoreId" in bodyParsed.data) {
     const storeId = bodyParsed.data.nuvemshopStoreId?.trim();
     updates.nuvemshopStoreId = storeId || null;

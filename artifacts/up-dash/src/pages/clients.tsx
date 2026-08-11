@@ -51,7 +51,9 @@ import {
   Trash2,
   UserRound,
   Store,
+  Tag,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import {
@@ -78,6 +80,38 @@ const CURRENCY_OPTIONS: Array<{ code: string; locale: string; label: string }> =
   { code: "EUR", locale: "pt-PT", label: "Euro (EUR) — Português (Portugal)" },
   { code: "GBP", locale: "en-GB", label: "Pound (GBP) — English (UK)" },
   { code: "MXN", locale: "es-MX", label: "Peso (MXN) — Español (México)" },
+];
+
+// Espelha os `href` do menu lateral em components/app-layout.tsx (só os
+// itens com dado real por trás — Dashboard fica de fora de propósito,
+// escondê-lo deixaria o client sem nenhuma página ao logar).
+const NAV_ITEM_OPTIONS: Array<{ href: string; label: string }> = [
+  { href: "/erp", label: "ERP" },
+  { href: "/performance", label: "Performance" },
+  { href: "/marketing", label: "Marketing" },
+  { href: "/whatsapp", label: "WhatsApp" },
+  { href: "/funnel", label: "Funil" },
+  { href: "/journey", label: "Jornada" },
+  { href: "/rfm", label: "RFM" },
+  { href: "/utm", label: "UTM" },
+  { href: "/customers", label: "Clientes" },
+  { href: "/orders", label: "Pedidos" },
+  { href: "/products", label: "Produtos" },
+  { href: "/sellers", label: "Vendedores" },
+  { href: "/stock", label: "Estoque" },
+  { href: "/geography", label: "Geografia" },
+  { href: "/daily", label: "Daily (B2C)" },
+  { href: "/scale", label: "Escala (B2C)" },
+];
+
+const COMMERCE_PLATFORM_OPTIONS: Array<{
+  value: "UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI";
+  label: string;
+}> = [
+  { value: "UPZERO", label: "UP Zero" },
+  { value: "NUVEMSHOP", label: "Nuvemshop" },
+  { value: "VESTI", label: "Vesti" },
+  { value: "MANUAL", label: "Manual" },
 ];
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -772,6 +806,243 @@ function MetaAdsKeyDialog({
               <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
             ) : (
               "Save Meta"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PlatformDialog({
+  clientId,
+  clientName,
+  currentPlatform,
+  currentDataset,
+}: {
+  clientId: string;
+  clientName: string;
+  currentPlatform: "UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI" | null | undefined;
+  currentDataset: string | null | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const [platform, setPlatform] = useState<"UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI">("UPZERO");
+  const [dataset, setDataset] = useState("");
+  const updateMutation = useUpdateClient();
+  const queryClient = useQueryClient();
+
+  function handleOpen(o: boolean) {
+    if (o) {
+      setPlatform(currentPlatform ?? "UPZERO");
+      setDataset(currentDataset ?? "");
+      updateMutation.reset();
+    }
+    setOpen(o);
+  }
+
+  function handleSave() {
+    updateMutation.mutate(
+      {
+        clientId,
+        data: {
+          commercePlatform: platform,
+          bigqueryDataset: platform === "VESTI" ? dataset.trim() || null : null,
+        },
+      },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+          setOpen(false);
+          toast.success("Plataforma atualizada");
+        },
+        onError: () => {
+          toast.error("Falha ao atualizar plataforma");
+        },
+      }
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" title="Plataforma de dados">
+          <Tag className="h-3 w-3" />
+          {currentPlatform ?? "Plataforma"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Tag className="h-4 w-4" /> Plataforma
+          </DialogTitle>
+          <DialogDescription>
+            De onde <strong>{clientName}</strong> lê os dados analíticos.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="platform-select">Plataforma</Label>
+            <Select value={platform} onValueChange={(v) => setPlatform(v as typeof platform)}>
+              <SelectTrigger id="platform-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {COMMERCE_PLATFORM_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {platform === "VESTI" && (
+            <div className="space-y-2">
+              <Label htmlFor="bigquery-dataset">Dataset BigQuery</Label>
+              <Input
+                id="bigquery-dataset"
+                value={dataset}
+                onChange={(e) => setDataset(e.target.value)}
+                placeholder="nome_da_loja"
+                className="font-mono text-xs"
+              />
+              <p className="text-xs text-muted-foreground">
+                Dataset do projeto up-vesti-report (BigQuery) que esse client lê. Nunca digitar à mão sem confirmar — vem calculado pelo script-vesti-nuvem a partir do nome da loja.
+              </p>
+            </div>
+          )}
+          {updateMutation.isError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>Falha ao salvar. Tenta de novo.</AlertDescription>
+            </Alert>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSave} disabled={updateMutation.isPending}>
+            {updateMutation.isPending ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</>
+            ) : (
+              "Salvar"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function VisibleTabsDialog({
+  clientId,
+  clientName,
+  currentHidden,
+}: {
+  clientId: string;
+  clientName: string;
+  currentHidden: string[] | null | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const updateMutation = useUpdateClient();
+  const queryClient = useQueryClient();
+
+  function handleOpen(o: boolean) {
+    if (o) {
+      setHidden(new Set(currentHidden ?? []));
+      updateMutation.reset();
+    }
+    setOpen(o);
+  }
+
+  function toggle(href: string, checked: boolean) {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (checked) next.delete(href);
+      else next.add(href);
+      return next;
+    });
+  }
+
+  function handleSave() {
+    updateMutation.mutate(
+      {
+        clientId,
+        data: {
+          hiddenNavItems: hidden.size > 0 ? Array.from(hidden) : null,
+        },
+      },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+          setOpen(false);
+          toast.success("Abas visíveis atualizadas");
+        },
+        onError: () => {
+          toast.error("Falha ao atualizar abas visíveis");
+        },
+      }
+    );
+  }
+
+  const hiddenCount = currentHidden?.length ?? 0;
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={`h-7 gap-1 text-xs ${hiddenCount > 0 ? "text-amber-500 hover:text-amber-400" : ""}`}
+          title="Escolher abas visíveis"
+        >
+          {hiddenCount > 0 ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+          {hiddenCount > 0 ? `${hiddenCount} escondida${hiddenCount > 1 ? "s" : ""}` : "Abas"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Eye className="h-4 w-4" /> Abas visíveis
+          </DialogTitle>
+          <DialogDescription>
+            Desmarca o que <strong>{clientName}</strong> não deve ver no menu (ex: cliente sem ERP configurado). Dashboard nunca é escondido.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid grid-cols-2 gap-2 py-2">
+          {NAV_ITEM_OPTIONS.map((item) => (
+            <label
+              key={item.href}
+              className="flex items-center gap-2 rounded-md border p-2 text-sm cursor-pointer hover:bg-accent"
+            >
+              <Checkbox
+                checked={!hidden.has(item.href)}
+                onCheckedChange={(checked) => toggle(item.href, checked === true)}
+              />
+              {item.label}
+            </label>
+          ))}
+        </div>
+        {updateMutation.isError && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>Falha ao salvar. Tenta de novo.</AlertDescription>
+          </Alert>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSave} disabled={updateMutation.isPending}>
+            {updateMutation.isPending ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</>
+            ) : (
+              "Salvar"
             )}
           </Button>
         </DialogFooter>
@@ -1821,14 +2092,23 @@ export default function ClientsPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline" className="gap-1">
-                          {client.dashboardType === "B2C" ? (
-                            <Store className="h-3 w-3" />
-                          ) : (
-                            <Building2 className="h-3 w-3" />
-                          )}
-                          {client.dashboardType}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant="outline" className="w-fit gap-1">
+                            {client.dashboardType === "B2C" ? (
+                              <Store className="h-3 w-3" />
+                            ) : (
+                              <Building2 className="h-3 w-3" />
+                            )}
+                            {client.dashboardType}
+                          </Badge>
+                          <Badge
+                            variant={client.commercePlatform === "VESTI" ? "default" : "secondary"}
+                            className="w-fit gap-1"
+                          >
+                            <Tag className="h-3 w-3" />
+                            {client.commercePlatform ?? "—"}
+                          </Badge>
+                        </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-1">
@@ -1946,6 +2226,17 @@ export default function ClientsPage() {
                           />
                           <SiteVisitsDialog clientId={client.id} clientName={client.name} />
                           <RotateKeyDialog clientId={client.id} clientName={client.name} />
+                          <PlatformDialog
+                            clientId={client.id}
+                            clientName={client.name}
+                            currentPlatform={client.commercePlatform}
+                            currentDataset={client.bigqueryDataset}
+                          />
+                          <VisibleTabsDialog
+                            clientId={client.id}
+                            clientName={client.name}
+                            currentHidden={client.hiddenNavItems}
+                          />
                         </div>
                       </TableCell>
                     </TableRow>
