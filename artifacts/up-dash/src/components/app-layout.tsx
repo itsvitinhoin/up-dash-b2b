@@ -67,6 +67,7 @@ import {
   type Client,
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   Select,
@@ -1339,7 +1340,17 @@ export function AppLayout({ children }: AppLayoutProps) {
                     )}
                     {adminClients.map((client) => (
                       <SelectItem key={client.id} value={client.id}>
-                        {client.name}
+                        <span className="flex w-full items-center justify-between gap-2">
+                          <span className="truncate">{client.name}</span>
+                          {client.commercePlatform && (
+                            <Badge
+                              variant={client.commercePlatform === "VESTI" ? "default" : "secondary"}
+                              className="shrink-0 px-1.5 py-0 text-[10px] font-normal"
+                            >
+                              {client.commercePlatform}
+                            </Badge>
+                          )}
+                        </span>
                       </SelectItem>
                     ))}
                     {!LOCAL_UI_PREVIEW && isLoadingClients && (
