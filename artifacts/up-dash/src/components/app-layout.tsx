@@ -67,6 +67,7 @@ import {
   type Client,
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   Select,
@@ -445,6 +446,10 @@ type AdminClientOption = {
   currency: string;
   locale: string;
   commercePlatform: Client["commercePlatform"] | null;
+  // Abas do menu lateral escondidas manualmente pra esse client (admin
+  // configura em /clients — ver VisibleTabsDialog). Null/vazio = mostra
+  // tudo que já seria mostrado pelas regras de B2B/B2C/Vesti de sempre.
+  hiddenNavItems: string[] | null;
 };
 
 function toAdminClientOption(client: Client): AdminClientOption {
@@ -455,6 +460,7 @@ function toAdminClientOption(client: Client): AdminClientOption {
     currency: client.currency,
     locale: client.locale,
     commercePlatform: client.commercePlatform ?? null,
+    hiddenNavItems: client.hiddenNavItems ?? null,
   };
 }
 
@@ -474,6 +480,7 @@ function readCachedAdminClients(): AdminClientOption[] {
         currency: typeof client?.currency === "string" ? client.currency : "BRL",
         locale: typeof client?.locale === "string" ? client.locale : "pt-BR",
         commercePlatform: typeof client?.commercePlatform === "string" ? client.commercePlatform : null,
+        hiddenNavItems: Array.isArray(client?.hiddenNavItems) ? client.hiddenNavItems : null,
       }),
     ).filter((client) => client.id && client.name);
   } catch {
@@ -948,6 +955,10 @@ export function AppLayout({ children }: AppLayoutProps) {
       !(isVestiClient && vestiEnabledB2cRoutes.has(item.href))
     )
       return false;
+    // Aba escondida manualmente pra esse client (admin, tela /clients —
+    // pedido 11/08/2026: clients sem ERP configurado, por ex., não
+    // precisam ver a aba levando pra uma tela sempre vazia/com erro).
+    if (activeClient?.hiddenNavItems?.includes(item.href)) return false;
     return true;
   });
 
@@ -1329,7 +1340,17 @@ export function AppLayout({ children }: AppLayoutProps) {
                     )}
                     {adminClients.map((client) => (
                       <SelectItem key={client.id} value={client.id}>
-                        {client.name}
+                        <span className="flex w-full items-center justify-between gap-2">
+                          <span className="truncate">{client.name}</span>
+                          {client.commercePlatform && (
+                            <Badge
+                              variant={client.commercePlatform === "VESTI" ? "default" : "secondary"}
+                              className="shrink-0 px-1.5 py-0 text-[10px] font-normal"
+                            >
+                              {client.commercePlatform}
+                            </Badge>
+                          )}
+                        </span>
                       </SelectItem>
                     ))}
                     {!LOCAL_UI_PREVIEW && isLoadingClients && (

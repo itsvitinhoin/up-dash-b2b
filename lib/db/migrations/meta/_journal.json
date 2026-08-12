@@ -225,6 +225,20 @@
       "when": 1785293700000,
       "tag": "0031_erp_dataset",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786008040000,
+      "tag": "0032_enable_rls_missing_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786458241659,
+      "tag": "0033_hidden_nav_items",
+      "breakpoints": true
     }
   ]
 }
