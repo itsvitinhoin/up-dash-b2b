@@ -203,7 +203,37 @@ async function buildPool(): Promise<InstanceType<typeof ResilientPool>> {
   });
 }
 
-export const pool = await buildPool();
+// Achado 12/08/2026: `export const pool = await buildPool()` direto (sem
+// try/catch) derruba o módulo inteiro se o Cloud SQL Connector falhar por
+// qualquer motivo (credencial errada, env var faltando, IAM sem permissão
+// etc) — e esse módulo é importado por toda rota, então uma falha aqui tira
+// o app do ar inteiro sem deixar nem `/api/healthz` responder pra dizer o
+// que houve. Já aconteceu duas vezes tentando cortar pra Cloud SQL sem
+// conseguir ver o erro real (sem acesso a log da Vercel). Agora: falha na
+// inicialização não derruba o módulo — fica guardada em
+// `dbInitializationError` (visível via GET /api/admin/db-diagnostics,
+// admin-only) e o pool cai pra uma conexão inválida, que só falha quando
+// uma query de verdade for tentada (tratado normalmente pelo resto do app,
+// igual qualquer erro transiente de banco).
+let dbInitError: string | null = null;
+let poolInstance: InstanceType<typeof ResilientPool>;
+try {
+  poolInstance = await buildPool();
+} catch (err) {
+  dbInitError =
+    err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  console.error("[database] Falha ao inicializar o pool — app segue no ar, queries vão falhar", {
+    error: dbInitError,
+  });
+  poolInstance = new ResilientPool({
+    connectionString: "postgres://invalid:invalid@127.0.0.1:1/invalid",
+    max: 1,
+    connectionTimeoutMillis: 2_000,
+  });
+}
+
+export const pool = poolInstance;
+export const dbInitializationError = dbInitError;
 
 pool.on("error", (error) => {
   console.error("[database] Idle PostgreSQL connection failed", {
