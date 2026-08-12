@@ -2,7 +2,9 @@ import "dotenv/config";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { Connector, AuthTypes, IpAddressTypes } from "@google-cloud/cloud-sql-connector";
-import { GoogleAuth } from "google-auth-library";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as schema from "./schema";
 
 const { Pool } = pg;
@@ -157,22 +159,39 @@ const poolBaseConfig = {
 // BigQuery em artifacts/api-server/src/lib/bigquery.ts — service account
 // colada inteira numa env var (aceita JSON direto ou em base64), já que a
 // Vercel não tem filesystem persistente pra apontar um arquivo de
-// credencial. `null` faz o Connector cair pro Application Default
-// Credentials (ok em dev local com `gcloud auth application-default login`
-// ou `GOOGLE_APPLICATION_CREDENTIALS` apontando um arquivo).
-function parseServiceAccountCredentials(): { client_email: string; private_key: string } | null {
+// credencial normalmente. `/tmp` é a exceção — é gravável em toda função
+// serverless da Vercel (e localmente), então escrevemos ali e apontamos
+// `GOOGLE_APPLICATION_CREDENTIALS` (a env var padrão, baseada em arquivo)
+// pra lá.
+//
+// Achado 12/08/2026: a tentativa anterior construía um `GoogleAuth` do
+// `google-auth-library` importado aqui e passava a instância pro
+// `cloud-sql-connector` via `{ auth }`. O connector faz `loginAuth
+// instanceof GoogleAuth` internamente — como são dois pacotes distintos no
+// workspace (mesmo com a mesma versão declarada), o pnpm pode instalar
+// cópias fisicamente diferentes da lib, e `instanceof` falha silenciosamente
+// entre elas. O connector então tratava minha instância como um
+// `AuthClient` qualquer, embrulhava ela de novo sem credencial nenhuma, e
+// a chamada pra Admin API saía sem autenticação ("missing required
+// authentication credential"). Escrever um arquivo e deixar o
+// `google-auth-library` *interno* do connector descobrir sozinho (ADC
+// padrão) evita depender de passar objetos entre cópias da lib.
+function materializeCredentialsFile(): string | null {
   const raw = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ?? process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (!raw) return null;
   const tryParse = (text: string) => {
     try {
-      return JSON.parse(text) as { client_email?: string; private_key?: string };
+      return JSON.parse(text) as Record<string, unknown>;
     } catch {
       return null;
     }
   };
   const parsed = tryParse(raw) ?? tryParse(Buffer.from(raw, "base64").toString("utf-8"));
-  if (!parsed?.client_email || !parsed?.private_key) return null;
-  return { client_email: parsed.client_email, private_key: parsed.private_key.replace(/\\n/g, "\n") };
+  if (typeof parsed?.client_email !== "string" || typeof parsed?.private_key !== "string") return null;
+  const normalized = { ...parsed, private_key: (parsed.private_key as string).replace(/\\n/g, "\n") };
+  const path = join(tmpdir(), "gcp-service-account.json");
+  writeFileSync(path, JSON.stringify(normalized), { mode: 0o600 });
+  return path;
 }
 
 async function buildPool(): Promise<InstanceType<typeof ResilientPool>> {
@@ -186,8 +205,11 @@ async function buildPool(): Promise<InstanceType<typeof ResilientPool>> {
     );
   }
 
-  const credentials = parseServiceAccountCredentials();
-  const connector = new Connector(credentials ? { auth: new GoogleAuth({ credentials }) } : undefined);
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    const credentialsPath = materializeCredentialsFile();
+    if (credentialsPath) process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialsPath;
+  }
+  const connector = new Connector();
   const clientOpts = await connector.getOptions({
     instanceConnectionName: cloudSqlConnectionName,
     ipType: IpAddressTypes.PUBLIC,
