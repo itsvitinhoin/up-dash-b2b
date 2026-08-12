@@ -66,7 +66,16 @@ async function buildAll() {
       "@aws-sdk/*",
       "@azure/*",
       "@opentelemetry/*",
-      "@google-cloud/*",
+      // Só o bigquery precisa ficar de fora do bundle (usa @grpc/grpc-js,
+      // que já é externalizado à parte, e carrega .proto por path
+      // traversal). O wildcard "@google-cloud/*" externalizava TODO
+      // pacote da família — incluindo cloud-sql-connector, que não tem
+      // essa necessidade e é puro JS. Isso quebrou produção (11/08/2026,
+      // FUNCTION_INVOCATION_FAILED): a Vercel não rastreou o import
+      // externalizado do cloud-sql-connector corretamente no deploy.
+      // Deixando ele empacotar direto no bundle elimina essa dependência
+      // de rastreamento em tempo de deploy.
+      "@google-cloud/bigquery",
       "@google/*",
       "googleapis",
       "firebase-admin",
