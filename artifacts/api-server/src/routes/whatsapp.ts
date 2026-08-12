@@ -2045,85 +2045,98 @@ async function syncTemplatesForIntegration(
   let nextUrl: string | null = `https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/message_templates`;
   let page = 0;
 
-  while (nextUrl && page < 50) {
-    const url = new URL(nextUrl);
-    if (page === 0) {
-      url.searchParams.set("fields", "id,name,language,status,category,components");
-      url.searchParams.set("limit", "100");
-    }
+  // Achado 12/08/2026: mesmo problema do subscribeWebhookForIntegration —
+  // sem try/catch, qualquer falha de rede/JSON malformado da Meta (ou erro
+  // de banco no upsert do template) estourava sem tratamento e derrubava a
+  // rota inteira com um 500 genérico, mesmo já tendo salvo a integração
+  // com sucesso um passo antes. Devolve o que já foi sincronizado até o
+  // ponto da falha, com o erro, em vez de estourar.
+  try {
+    while (nextUrl && page < 50) {
+      const url = new URL(nextUrl);
+      if (page === 0) {
+        url.searchParams.set("fields", "id,name,language,status,category,components");
+        url.searchParams.set("limit", "100");
+      }
 
-    const response = await fetch(url.toString(), {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${integration.accessToken}`,
-      },
-    });
-    const payload = (await response.json()) as {
-      data?: Array<{
-        id?: string;
-        name?: string;
-        language?: string;
-        status?: string;
-        category?: string;
-        components?: unknown;
-      }>;
-      paging?: {
-        next?: string;
-      };
-      error?: { message?: string };
-    };
-
-    if (!response.ok) {
-      return {
-        templates,
-        error: payload.error?.message ?? `Erro Meta ${response.status} ao sincronizar templates.`,
-      };
-    }
-
-    for (const row of payload.data ?? []) {
-      if (!row.name || !row.language || !row.status) continue;
-      const [existingTemplate] = await db
-        .select({
-          rawPayload: whatsappMessageTemplatesTable.rawPayload,
-        })
-        .from(whatsappMessageTemplatesTable)
-        .where(
-          and(
-            eq(whatsappMessageTemplatesTable.clientId, clientId),
-            eq(whatsappMessageTemplatesTable.wabaId, integration.wabaId),
-            eq(whatsappMessageTemplatesTable.name, row.name),
-            eq(whatsappMessageTemplatesTable.language, row.language),
-          ),
-        )
-        .limit(1);
-      const existingRawPayload = typeof existingTemplate?.rawPayload === "object" && existingTemplate.rawPayload !== null
-        ? existingTemplate.rawPayload as Record<string, unknown>
-        : {};
-      const template = await upsertWhatsappTemplate({
-        clientId,
-        integrationId: integration.id,
-        wabaId: integration.wabaId,
-        templateId: row.id ?? null,
-        name: row.name,
-        language: row.language,
-        status: row.status,
-        category: row.category ?? null,
-        components: row.components ?? null,
-        rawPayload: {
-          ...row,
-          ...(existingRawPayload.upDashVariableMapping ? { upDashVariableMapping: existingRawPayload.upDashVariableMapping } : {}),
-          ...(existingRawPayload.upDashButtons ? { upDashButtons: existingRawPayload.upDashButtons } : {}),
-          ...(existingRawPayload.upDashTemplateScope ? { upDashTemplateScope: existingRawPayload.upDashTemplateScope } : {}),
+      const response = await fetch(url.toString(), {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${integration.accessToken}`,
         },
       });
-      if (template) templates.push(serializeTemplate(template));
+      const payload = (await response.json()) as {
+        data?: Array<{
+          id?: string;
+          name?: string;
+          language?: string;
+          status?: string;
+          category?: string;
+          components?: unknown;
+        }>;
+        paging?: {
+          next?: string;
+        };
+        error?: { message?: string };
+      };
+
+      if (!response.ok) {
+        return {
+          templates,
+          error: payload.error?.message ?? `Erro Meta ${response.status} ao sincronizar templates.`,
+        };
+      }
+
+      for (const row of payload.data ?? []) {
+        if (!row.name || !row.language || !row.status) continue;
+        const [existingTemplate] = await db
+          .select({
+            rawPayload: whatsappMessageTemplatesTable.rawPayload,
+          })
+          .from(whatsappMessageTemplatesTable)
+          .where(
+            and(
+              eq(whatsappMessageTemplatesTable.clientId, clientId),
+              eq(whatsappMessageTemplatesTable.wabaId, integration.wabaId),
+              eq(whatsappMessageTemplatesTable.name, row.name),
+              eq(whatsappMessageTemplatesTable.language, row.language),
+            ),
+          )
+          .limit(1);
+        const existingRawPayload = typeof existingTemplate?.rawPayload === "object" && existingTemplate.rawPayload !== null
+          ? existingTemplate.rawPayload as Record<string, unknown>
+          : {};
+        const template = await upsertWhatsappTemplate({
+          clientId,
+          integrationId: integration.id,
+          wabaId: integration.wabaId,
+          templateId: row.id ?? null,
+          name: row.name,
+          language: row.language,
+          status: row.status,
+          category: row.category ?? null,
+          components: row.components ?? null,
+          rawPayload: {
+            ...row,
+            ...(existingRawPayload.upDashVariableMapping ? { upDashVariableMapping: existingRawPayload.upDashVariableMapping } : {}),
+            ...(existingRawPayload.upDashButtons ? { upDashButtons: existingRawPayload.upDashButtons } : {}),
+            ...(existingRawPayload.upDashTemplateScope ? { upDashTemplateScope: existingRawPayload.upDashTemplateScope } : {}),
+          },
+        });
+        if (template) templates.push(serializeTemplate(template));
+      }
+
+      nextUrl = payload.paging?.next ?? null;
+      page += 1;
     }
 
-    nextUrl = payload.paging?.next ?? null;
-    page += 1;
+    return { templates, error: null };
+  } catch (error) {
+    return {
+      templates,
+      error: error instanceof Error ? error.message : "Erro inesperado ao sincronizar templates.",
+    };
   }
-
-  return { templates, error: null };
 }
 
 function collectWhatsappWabaIds(rawPayload: unknown): string[] {
@@ -2261,37 +2274,51 @@ async function subscribeWebhookForIntegration(integration: typeof whatsappIntegr
     };
   }
 
-  const response = await fetch(
-    `https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/subscribed_apps`,
-    {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${integration.accessToken}`,
+  // Achado 12/08/2026: essa chamada pra Meta não tinha try/catch — ao
+  // contrário de exchangeEmbeddedSignupCode (que trata erro de rede/JSON
+  // malformado e devolve um objeto de erro normal), qualquer falha aqui
+  // (timeout, DNS, resposta que não é JSON) estourava sem tratamento e
+  // virava um 500 genérico pro cliente — mesmo com a integração já salva
+  // certinho no banco um passo antes (por isso "Conectado" aparecia na
+  // tela junto com o erro).
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${integration.wabaId}/subscribed_apps`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${integration.accessToken}`,
+        },
+        body: JSON.stringify({
+          override_callback_uri: WHATSAPP_CALLBACK_URL,
+          verify_token: process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
+        }),
       },
-      body: JSON.stringify({
-        override_callback_uri: WHATSAPP_CALLBACK_URL,
-        verify_token: process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
-      }),
-    },
-  );
-  const payload = (await response.json()) as {
-    success?: boolean;
-    error?: { message?: string };
-  };
+    );
+    const payload = (await response.json()) as {
+      success?: boolean;
+      error?: { message?: string };
+    };
 
-  if (!response.ok || payload.success === false) {
+    if (!response.ok || payload.success === false) {
+      return {
+        ok: false,
+        error: payload.error?.message ?? `Erro Meta ${response.status} ao ativar webhook.`,
+      };
+    }
+
+    return {
+      ok: true,
+      error: null,
+    };
+  } catch (error) {
     return {
       ok: false,
-      error: payload.error?.message ?? `Erro Meta ${response.status} ao ativar webhook.`,
+      error: error instanceof Error ? error.message : "Erro inesperado ao ativar webhook.",
     };
   }
-
-  return {
-    ok: true,
-    error: null,
-  };
 }
 
 function getStoredWhatsappWebhookValue(metadata: unknown): {
