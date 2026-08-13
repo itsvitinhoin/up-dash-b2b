@@ -89,10 +89,52 @@ sem erro nenhum. Precisa chamar a API do UpZero pra esse cliente
 especificamente (usando a `upZeroApiKey` dele) e comparar o JSON bruto
 devolvido com o que `resolveItems()` em `upzero-sync.ts` espera.
 
+## 5. `/api/analytics/orders-page` lento pra QUALQUER cliente UpZero — ✅ CORRIGIDO em 13/08/2026
+
+Achado ao testar o fix do item 1: mesmo clientes que sincronizam bem
+(Phize) levavam **~53s** pra abrir a página de Pedidos, mesmo com range de
+data pequeno e zero pedidos no resultado. **Não tinha relação com a
+migração pra Cloud SQL** (banco respondia rápido, índice existia, sem
+esgotamento de conexão — tudo checado e descartado).
+
+**Causa real:** `upzeroAttributionHistoryRange()` (`analytics.ts`) sempre
+busca atribuição de campanha do UpZero desde **01/05/2026 fixo** até agora,
+**independente do período que o usuário pediu na tela**. Isso é quebrado em
+janelas de 12h (`UPZERO_ANALYTICS_CHUNK_MS`) processadas em lotes de 4 por
+vez (`UPZERO_ANALYTICS_CONCURRENCY`). De 01/05 até hoje são ~104 dias =
+~208 janelas = **52 lotes sequenciais**. Cada dia que passa, essa janela
+só cresce (o início é fixo, o fim é "agora") — ou seja, esse endpoint vinha
+ficando mais lento progressivamente desde maio, não é uma regressão de
+hoje.
+
+**Fix aplicado** (`artifacts/api-server/src/routes/analytics.ts`):
+- `UPZERO_ANALYTICS_CONCURRENCY`: 4 → **16** (~13 lotes em vez de 52).
+- Novo orçamento de parede `UPZERO_ANALYTICS_FETCH_BUDGET_MS` (**20s**) nos
+  dois pontos que fazem esse loop de lotes (`getUpzeroAnalyticsMetricsChunked`
+  e `getUpzeroAnalyticsFactsChunked`) — se estourar, para de buscar mais
+  janelas e segue com a atribuição parcial já coletada, em vez de travar a
+  página inteira. Mesmo padrão usado no item 1.
+
+**Não corrigido ainda:** as chamadas individuais pra API do UpZero dentro
+desse fetch (`getUpzeroAnalyticsMetrics`/`getUpzeroAnalyticsFactsAsMetrics`,
+em `services/upzero/`) não têm timeout próprio nenhum — diferente do
+`upzero-sync.ts`, que já usa `AbortSignal.timeout()`. Se uma chamada
+individual travar de verdade (não só ser lenta), o orçamento entre lotes
+não ajuda a interromper ela no meio. Vale adicionar o mesmo padrão de
+timeout por chamada usado em `upzero-sync.ts`.
+
+**Pergunta em aberto pro produto:** por que a atribuição sempre olha desde
+01/05 fixo? Se não há razão de negócio pra isso, o fix de verdade seria
+limitar essa janela (ex.: X dias antes do período pedido) em vez de só
+tornar a busca mais rápida/resiliente.
+
 ## Resumo de prioridade sugerida
 
-1. ~~Timeout estrutural~~ — feito.
-2. Obzee (401) — mais simples de resolver, só precisa de uma chave nova.
-3. MX Fashion (envelope) — precisa investigação ativa na API do UpZero.
-4. `fetch failed` intermitente — precisa mais dados/observação pra saber se
+1. ~~Timeout estrutural (sync)~~ — feito.
+2. ~~Orders-page lento (atribuição UpZero)~~ — feito.
+3. Obzee (401) — mais simples de resolver, só precisa de uma chave nova.
+4. MX Fashion (envelope) — precisa investigação ativa na API do UpZero.
+5. `fetch failed` intermitente — precisa mais dados/observação pra saber se
    é rede ou código antes de decidir o fix.
+6. Timeout por chamada individual na atribuição UpZero (item 5) — mesmo
+   padrão do `upzero-sync.ts`, ainda não aplicado.

@@ -278,7 +278,19 @@ function upzeroAttributionHistoryRange(
 const UPZERO_ANALYTICS_CHUNK_MS = 12 * 60 * 60 * 1000;
 const UPZERO_ANALYTICS_MIN_SPLIT_MS = 60 * 60 * 1000;
 const UPZERO_ANALYTICS_PAGE_CAP = 500;
-const UPZERO_ANALYTICS_CONCURRENCY = 4;
+// Achado 13/08/2026: com concurrency=4 e upzeroAttributionHistoryRange()
+// sempre buscando desde 01/05 fixo (~104 dias hoje, só cresce com o tempo),
+// em janelas de 12h isso dá ~208 janelas / 52 lotes sequenciais -- mais de
+// 50s reais medidos em /api/analytics/orders-page pra QUALQUER cliente
+// UpZero, sem relacao nenhuma com o corte pra Cloud SQL (o banco em si
+// respondia rapido; o gargalo é essa chamada externa). Subir a concorrência
+// reduz o número de lotes proporcionalmente.
+const UPZERO_ANALYTICS_CONCURRENCY = 16;
+// Orçamento de parede pro fetch chunked inteiro: se estourar, para de
+// buscar mais janelas e segue com o que já foi coletado (atribuição
+// parcial) em vez de travar a página inteira. Mesmo padrão de degradação
+// graciosa já usado em upzero-sync.ts (INVENTORY_BUDGET_MS/IMAGE_BUDGET_MS).
+const UPZERO_ANALYTICS_FETCH_BUDGET_MS = 20_000;
 const PRODUCT_VIEW_EVENT_NAMES = new Set(["product_view", "product_item_impression"]);
 
 function metricDedupeKey(row: UpzeroAnalyticsMetric): string {
@@ -336,8 +348,16 @@ async function getUpzeroAnalyticsMetricsChunked(params: {
     cursor = endMs;
   }
 
+  const fetchStart = Date.now();
   const chunks: UpzeroAnalyticsMetric[][] = [];
   for (let i = 0; i < windows.length; i += UPZERO_ANALYTICS_CONCURRENCY) {
+    if (Date.now() - fetchStart >= UPZERO_ANALYTICS_FETCH_BUDGET_MS) {
+      console.warn(
+        `[upzero-analytics] metrics fetch budget (${UPZERO_ANALYTICS_FETCH_BUDGET_MS}ms) exceeded — ` +
+        `${windows.length - i} of ${windows.length} window(s) skipped, returning partial data`,
+      );
+      break;
+    }
     const batch = windows.slice(i, i + UPZERO_ANALYTICS_CONCURRENCY);
     chunks.push(...await Promise.all(batch.map(([startMs, endMs]) => fetchWindow(startMs, endMs))));
   }
@@ -367,8 +387,16 @@ async function getUpzeroAnalyticsFactsChunked(params: {
     cursor = endMs;
   }
 
+  const fetchStart = Date.now();
   const chunks: UpzeroAnalyticsMetric[][] = [];
   for (let i = 0; i < windows.length; i += UPZERO_ANALYTICS_CONCURRENCY) {
+    if (Date.now() - fetchStart >= UPZERO_ANALYTICS_FETCH_BUDGET_MS) {
+      console.warn(
+        `[upzero-analytics] facts fetch budget (${UPZERO_ANALYTICS_FETCH_BUDGET_MS}ms) exceeded — ` +
+        `${windows.length - i} of ${windows.length} window(s) skipped, returning partial data`,
+      );
+      break;
+    }
     const batch = windows.slice(i, i + UPZERO_ANALYTICS_CONCURRENCY);
     chunks.push(...await Promise.all(batch.map(([startMs, endMs]) =>
       getUpzeroAnalyticsFactsAsMetrics({
