@@ -44,6 +44,32 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
     `);
     const maxConnResult = await db.execute(sql`SHOW max_connections`);
 
+    // Checagem 13/08/2026: /api/analytics/orders-page estourando timeout de
+    // 60s pra clientes que antes eram rapidos (Phize, Kalli Fashion) --
+    // suspeita de estatistica desatualizada apos o pg_restore de ontem (sem
+    // ANALYZE, o planner pode escolher sequential scan em vez de usar o
+    // indice). Confirma aqui: quando foi o ultimo ANALYZE em orders/customers
+    // e se o indice esperado (orders_client_created_idx) existe de verdade.
+    const tableStats = await db.execute(sql`
+      SELECT
+        relname,
+        n_live_tup,
+        n_dead_tup,
+        last_analyze,
+        last_autoanalyze,
+        last_vacuum,
+        last_autovacuum
+      FROM pg_stat_user_tables
+      WHERE relname IN ('orders', 'customers', 'clients')
+      ORDER BY relname
+    `);
+    const indexCheck = await db.execute(sql`
+      SELECT tablename, indexname, indexdef
+      FROM pg_indexes
+      WHERE tablename = 'orders'
+      ORDER BY indexname
+    `);
+
     // Checagem pontual pós-corte Cloud SQL (12/08/2026): confirmar se o dado
     // bate com o baseline pré-migração e se não ficou nenhuma escrita da
     // Supabase de fora (o plano previa um dump incremental final antes do
@@ -86,6 +112,8 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
       maxConnections: (maxConnResult.rows[0] as Record<string, unknown> | undefined)?.max_connections ?? null,
       counts: counts.rows[0] ?? null,
       syncJobStats: syncJobStats.rows,
+      tableStats: tableStats.rows,
+      ordersIndexes: indexCheck.rows,
     });
   } catch (err) {
     logger.error({ err }, "[db-diagnostics] falhou");
