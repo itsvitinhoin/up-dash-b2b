@@ -63,12 +63,29 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
         (SELECT max(created_at) FROM sessions) AS sessions_max_created_at
     `);
 
+    // Checagem 13/08/2026: o scheduler de sync noturno (services/scheduler.ts)
+    // só é iniciado em src/index.ts (o server Node tradicional) -- o
+    // deploy da Vercel roda src/app.ts (serverless.mjs), que nunca chama
+    // startScheduler(). Confirma aqui se algum job com trigger='cron' já
+    // rodou de verdade, ou se é tudo manual. Remover depois de decidido.
+    const syncJobStats = await db.execute(sql`
+      SELECT
+        trigger,
+        job_type,
+        count(*) AS count,
+        max(created_at) AS last_created_at
+      FROM sync_jobs
+      GROUP BY trigger, job_type
+      ORDER BY last_created_at DESC
+    `);
+
     res.json({
       ...base,
       version: (versionResult.rows[0] as Record<string, unknown> | undefined)?.version ?? null,
       databaseSize: (sizeResult.rows[0] as Record<string, unknown> | undefined) ?? null,
       maxConnections: (maxConnResult.rows[0] as Record<string, unknown> | undefined)?.max_connections ?? null,
       counts: counts.rows[0] ?? null,
+      syncJobStats: syncJobStats.rows,
     });
   } catch (err) {
     logger.error({ err }, "[db-diagnostics] falhou");
