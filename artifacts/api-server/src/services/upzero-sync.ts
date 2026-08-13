@@ -13,6 +13,14 @@ import { stateFromPhoneDdd } from "../lib/phoneState";
 
 const UPZERO_BASE = "https://api.upzero.com.br";
 const PAGE_LIMIT = 200;
+// Achado 13/08/2026: quando resolveItems() não reconhece o envelope de
+// resposta, o único jeito de diagnosticar era ler os console.log do
+// servidor -- sem acesso à Vercel, isso é inútil na prática. Guarda o
+// diagnóstico (chaves de nível raiz + de onde os itens foram resolvidos)
+// por endpoint, pra poder anexar no result.errors do sync (visível via
+// GET /api/extractions) em vez de só no log. Resetado no início de cada
+// syncUpZeroClient().
+const lastEnvelopeDiagnostics = new Map<string, string>();
 // SYNC_DAYS governs the *incremental* rolling window used only after a full
 // historical sync has already been completed (i.e. oldest stored order is
 // older than this threshold). Full-history coverage is guaranteed by the
@@ -604,15 +612,16 @@ function resolveItems<T>(body: AnyPagedBody, path: string, page: number): T[] {
     [];
 
   if (page === 1) {
-    // Log the top-level field names on the first page so mismatches are obvious
+    // Log the top-level field names on the first page so mismatches are obvious,
+    // and also keep it in lastEnvelopeDiagnostics so it's visible via
+    // GET /api/extractions (result.errors) without needing server log access.
     const topKeys = Object.keys(body);
     const resolvedFrom = topKeys.find((k) =>
       ["data","items","results","records","orders","customers","products"].includes(k)
     ) ?? "(none matched)";
-    console.log(
-      `[upzero-sync] ${path} page 1 — top-level keys: [${topKeys.join(", ")}], ` +
-      `items resolved from: "${resolvedFrom}", count: ${items.length}`,
-    );
+    const diagnostic = `${path}: top-level keys [${topKeys.join(", ")}], resolved from "${resolvedFrom}", count ${items.length}`;
+    console.log(`[upzero-sync] ${diagnostic}`);
+    lastEnvelopeDiagnostics.set(path, diagnostic);
   }
 
   return items;
@@ -1165,6 +1174,7 @@ export async function syncUpZeroClient(
   clientId: string,
   apiKey: string,
 ): Promise<SyncResult> {
+  lastEnvelopeDiagnostics.clear();
   const result: SyncResult = {
     customersCreated: 0,
     customersUpdated: 0,
@@ -2176,11 +2186,14 @@ export async function syncUpZeroClient(
   // Surface a clear warning instead of silently succeeding with all-zeros.
   const totalFetched = upOrders.length + upCustomers.length + upProducts.length + upEvents.length;
   if (totalFetched === 0 && result.errors.length === 0) {
+    // Achado 13/08/2026: antes só mandava pro console.log (inacessível sem
+    // painel da Vercel). Agora anexa o diagnóstico capturado por
+    // resolveItems() direto no result.errors, visível via GET /api/extractions.
+    const envelopeDetails = [...lastEnvelopeDiagnostics.values()].join(" | ") || "(nenhum diagnóstico capturado)";
     result.errors.push(
-      "WARNING: All three UP Zero endpoints returned 0 records with no API error. " +
+      "WARNING: All UP Zero endpoints returned 0 records with no API error. " +
       "This usually means the response envelope field names do not match expectations. " +
-      "Check the server logs for '[upzero-sync]' lines showing the actual top-level " +
-      "keys returned by each endpoint, then update resolveItems() in upzero-sync.ts.",
+      `Envelope diagnostics: ${envelopeDetails}`,
     );
   } else {
     console.log(
