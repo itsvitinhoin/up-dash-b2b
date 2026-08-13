@@ -22,7 +22,20 @@ const INVENTORY_CONCURRENCY = 20;
 const PRODUCT_IMAGE_CONCURRENCY = 20;
 const FETCH_TIMEOUT_MS = 30_000;     // 30 s per paginated API request
 const INVENTORY_TIMEOUT_MS = 8_000;  // 8 s per individual inventory SKU call
-const INVENTORY_BUDGET_MS = 60_000;  // 60 s wall-clock budget for entire inventory phase
+// Achado 13/08/2026: esse orçamento era 60s, MAIOR que o timeout externo de
+// 45s que envolve syncUpZeroClient() inteiro (extraction-runner.ts,
+// UPZERO_TRANSACTIONAL_CLIENT_TIMEOUT_MS) -- ou seja, só a fase de estoque já
+// garantia estourar o timeout externo antes mesmo de existir orçamento pras
+// fases seguintes (imagem de produto, gravação no banco). Isso explicava por
+// que a maioria dos clientes com catálogo médio/grande (CELEB, Kalli Fashion,
+// Bela Noite, Sline Spoorte, MX Fashion) falhava por timeout quase toda
+// execução. Reduzido pra deixar espaço real pro resto do pipeline.
+const INVENTORY_BUDGET_MS = 15_000;  // 15 s wall-clock budget para a fase de estoque
+// Mesma lógica acima: a fase de imagem de produto não tinha orçamento nenhum
+// (podia rodar indefinidamente pra catálogos com muitos produtos sem imagem
+// direta no payload). Agora tem um teto explícito, com o mesmo padrão de
+// "pula o resto se estourar o orçamento" já usado na fase de estoque.
+const IMAGE_BUDGET_MS = 10_000;      // 10 s wall-clock budget para a fase de imagem
 
 /** Create a fetch signal that aborts after FETCH_TIMEOUT_MS. */
 function makeTimeoutSignal(): AbortSignal {
@@ -1320,10 +1333,19 @@ export async function syncUpZeroClient(
   }
 
   if (imageTargets.length > 0) {
+    const imageBudgetStart = Date.now();
+    let imageBudgetExceeded = false;
+    let imagesSkipped = 0;
+
     const fetchedImages = await runConcurrent(
       imageTargets,
       PRODUCT_IMAGE_CONCURRENCY,
       async (p) => {
+        if (Date.now() - imageBudgetStart >= IMAGE_BUDGET_MS) {
+          imageBudgetExceeded = true;
+          imagesSkipped++;
+          return { productExternalId: p.id, imageUrl: null };
+        }
         const ids = Array.from(
           new Set([p.product_id, p.id].filter(Boolean).map((id) => String(id))),
         );
@@ -1334,6 +1356,16 @@ export async function syncUpZeroClient(
         return { productExternalId: p.id, imageUrl: null };
       },
     );
+
+    if (imageBudgetExceeded) {
+      console.warn(
+        `[upzero-sync] image budget exceeded after ${Date.now() - imageBudgetStart}ms — skipped ${imagesSkipped} product(s)`,
+      );
+      result.errors.push(
+        `Product image fetch budget (${IMAGE_BUDGET_MS / 1000}s) exceeded — ${imagesSkipped} product(s) kept their existing image`,
+      );
+    }
+
     let imagesFound = 0;
     for (const { productExternalId, imageUrl } of fetchedImages) {
       if (!imageUrl) continue;
