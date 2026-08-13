@@ -43,11 +43,32 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
         pg_database_size(current_database()) AS size_bytes
     `);
     const maxConnResult = await db.execute(sql`SHOW max_connections`);
+
+    // Checagem pontual pós-corte Cloud SQL (12/08/2026): confirmar se o dado
+    // bate com o baseline pré-migração e se não ficou nenhuma escrita da
+    // Supabase de fora (o plano previa um dump incremental final antes do
+    // corte, que não rodou). Remover depois de confirmado.
+    const counts = await db.execute(sql`
+      SELECT
+        (SELECT count(*) FROM clients) AS clients,
+        (SELECT count(*) FROM orders) AS orders,
+        (SELECT max(created_at) FROM orders) AS orders_max_created_at,
+        (SELECT count(*) FROM customers) AS customers,
+        (SELECT max(created_at) FROM customers) AS customers_max_created_at,
+        (SELECT count(*) FROM whatsapp_messages) AS whatsapp_messages,
+        (SELECT max(created_at) FROM whatsapp_messages) AS whatsapp_messages_max_created_at,
+        (SELECT count(*) FROM notifications) AS notifications,
+        (SELECT max(created_at) FROM notifications) AS notifications_max_created_at,
+        (SELECT count(*) FROM sessions) AS sessions,
+        (SELECT max(created_at) FROM sessions) AS sessions_max_created_at
+    `);
+
     res.json({
       ...base,
       version: (versionResult.rows[0] as Record<string, unknown> | undefined)?.version ?? null,
       databaseSize: (sizeResult.rows[0] as Record<string, unknown> | undefined) ?? null,
       maxConnections: (maxConnResult.rows[0] as Record<string, unknown> | undefined)?.max_connections ?? null,
+      counts: counts.rows[0] ?? null,
     });
   } catch (err) {
     logger.error({ err }, "[db-diagnostics] falhou");
