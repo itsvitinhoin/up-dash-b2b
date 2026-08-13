@@ -132,6 +132,22 @@ esperando essa chamada terminar. **Corrigido**: adicionado
 limitar essa janela (ex.: X dias antes do período pedido) em vez de só
 tornar a busca mais rápida/resiliente.
 
+**Resultado confirmado em produção após os dois fixes** (`/api/analytics/orders-page`, range de 13 dias):
+
+| Cliente | Antes | Depois |
+|---|---|---|
+| Phize (range largo, 2000–2026) | nunca completava (>20s, provavelmente 60s+) | 27s |
+| MX Fashion | não teria completado | 11.7s |
+| CELEB | não teria completado | 16s |
+| Kalli Fashion | nunca completava (>60s, `FUNCTION_INVOCATION_TIMEOUT`) | **43s — funciona, mas ainda lento** |
+
+Kalli Fashion segue notavelmente mais lenta que os outros mesmo depois dos
+dois fixes — indício de que a API do UpZero é particularmente lenta/instável
+especificamente pros dados dessa marca (provavelmente batendo no timeout de
+10s por chamada algumas vezes antes de completar dentro do orçamento de
+20s). Não é mais uma falha total, mas vale investigar depois se quiser
+deixar rápido de verdade.
+
 ## Resumo de prioridade sugerida
 
 1. ~~Timeout estrutural (sync)~~ — feito.
