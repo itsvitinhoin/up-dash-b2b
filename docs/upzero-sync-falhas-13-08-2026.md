@@ -48,20 +48,28 @@ dias — se continuar falhando, o próximo suspeito é a fase de busca inicial
 o loop de gravação no banco por produto (sequencial, um `await` por produto,
 sem batching).
 
-## 2. `TypeError: fetch failed` intermitente — ❌ NÃO INVESTIGADO
+## 2. `TypeError: fetch failed` intermitente — ✅ PARCIALMENTE CORRIGIDO em 13/08/2026
 
 Aparece espalhado em quase todo cliente (inclusive nos que majoritariamente
 funcionam: Phize, Lipcem, CELEB, MX Fashion), não só nos problemáticos.
 Quando acontece cedo na função (na busca inicial via `Promise.all`), derruba
 o sync inteiro pro clientId="0 trabalho real" mesmo com `status: "done"`.
 
-Suspeitas a checar: falha de rede intermitente genuína do lado do UpZero,
-ou algo no nosso client HTTP (falta de retry, keep-alive, DNS). Não tem
-`try/catch` por-endpoint dentro do `Promise.all` inicial — uma falha em
-qualquer um dos 4 fetches (customers/orders/products/events) derruba os
-outros 3 junto (comportamento padrão do `Promise.all`). Candidato a virar
-`Promise.allSettled` com tratamento individual, parecido com o que já existe
-pra estoque/imagem.
+**Fix aplicado**: nova função `fetchWithNetworkRetry()` em `upzero-sync.ts`
+— faz 1 retry (com 500ms de espera) especificamente pra erros de rede
+(`TypeError`, distinto de timeout/HTTP), aplicado nos dois pontos de busca
+paginada principais (`fetchAllPages`, usado por customers/orders/events, e
+`fetchAllCursorPages`, usado por products). HTTP 401/404/5xx continuam
+propagando na primeira tentativa (retry não ajudaria nesses casos).
+
+**Ainda não corrigido**: não tem `try/catch` por-endpoint dentro do
+`Promise.all` inicial em `syncUpZeroClient` — uma falha em qualquer um dos
+4 fetches (customers/orders/products/events), mesmo depois de esgotar o
+retry, ainda derruba os outros 3 junto (comportamento padrão do
+`Promise.all`). Candidato a virar `Promise.allSettled` com tratamento
+individual, parecido com o que já existe pra estoque/imagem. Não deu pra
+confirmar se o retry sozinho já resolve a maioria dos casos ou se ainda
+precisa disso — só vamos saber observando os próximos dias de sync.
 
 ## 3. Obzee: `401 Unauthorized` em todos os endpoints — ❌ NÃO RESOLVIDO
 
@@ -71,7 +79,7 @@ pra estoque/imagem.
 Diferente dos outros: não é timeout, é autenticação. Precisa gerar uma chave
 nova com o time da Obzee e atualizar via `PATCH /api/clients/:id`.
 
-## 4. MX Fashion: formato de resposta não reconhecido — ❌ NÃO RESOLVIDO
+## 4. MX Fashion: formato de resposta não reconhecido — 🟡 DIAGNÓSTICO MELHORADO, causa raiz ainda não confirmada
 
 Aviso já existente no próprio código (`upzero-sync.ts`), disparado algumas
 vezes pra esse cliente especificamente:
@@ -85,9 +93,22 @@ vezes pra esse cliente especificamente:
 Ou seja: às vezes a API do UpZero responde 200 OK pra MX Fashion mas com um
 envelope de resposta (nomes de campo no nível raiz) diferente do que
 `resolveItems()` espera, e o parser silenciosamente conta zero registros
-sem erro nenhum. Precisa chamar a API do UpZero pra esse cliente
-especificamente (usando a `upZeroApiKey` dele) e comparar o JSON bruto
-devolvido com o que `resolveItems()` em `upzero-sync.ts` espera.
+sem erro nenhum.
+
+**Testado em 13/08/2026**: chamei `/external/v1/customers`,
+`/external/v1/orders` e `/external/v1/products` direto pra MX Fashion
+(usando a `upZeroApiKey` dela) com parâmetros básicos — os três
+devolveram `{"data": [...]}` normal, exatamente o formato que
+`resolveItems()` já reconhece. **Não reproduzi o problema** — parece
+intermitente (talvez só com certos parâmetros de data, ou uma instabilidade
+pontual da API do UpZero), não um mismatch estrutural permanente.
+
+**Fix aplicado**: em vez de continuar caçando, o código agora **captura o
+diagnóstico de verdade** (chaves de nível raiz devolvidas + de onde os
+itens foram resolvidos) e anexa no `result.errors` do job — visível via
+`GET /api/extractions?clientId=...`, sem precisar de acesso a log da
+Vercel. Da próxima vez que isso acontecer, o diagnóstico completo já vai
+estar ali, em vez de só uma instrução genérica pra "checar o log".
 
 ## 5. `/api/analytics/orders-page` lento pra QUALQUER cliente UpZero — ✅ CORRIGIDO em 13/08/2026
 

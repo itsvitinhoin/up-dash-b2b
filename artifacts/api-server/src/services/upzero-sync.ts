@@ -69,6 +69,36 @@ function wrapFetchError(err: unknown, path: string): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
+// Achado 13/08/2026: "TypeError: fetch failed" (falha de rede, distinta de
+// timeout ou erro HTTP) aparecia em quase todo cliente, inclusive nos que
+// majoritariamente funcionavam -- quando acontecia na primeira página de um
+// endpoint principal, derrubava o sync inteiro. Um retry curto pra esse
+// caso específico (rede, não HTTP nem timeout) é barato e cobre falhas
+// transitórias sem mascarar problemas reais (HTTP 401/404/5xx continuam
+// propagando na primeira tentativa).
+async function fetchWithNetworkRetry(
+  url: string,
+  init: RequestInit,
+  path: string,
+  attempts = 2,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      lastErr = err;
+      const isNetworkError = err instanceof TypeError || (err instanceof Error && err.name === "TypeError");
+      if (!isNetworkError || attempt === attempts) break;
+      console.warn(
+        `[upzero-sync] network error on ${path} (attempt ${attempt}/${attempts}), retrying: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw wrapFetchError(lastErr, path);
+}
+
 type UpZeroStatus =
   | "RESERVED"
   | "CONFIRMED"
@@ -668,15 +698,11 @@ async function fetchAllPages<T>(
       ...extraParams,
     });
     const url = `${UPZERO_BASE}${path}?${params}`;
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        headers: { "X-API-Key": apiKey },
-        signal: makeTimeoutSignal(),
-      });
-    } catch (err) {
-      throw wrapFetchError(err, path);
-    }
+    const res = await fetchWithNetworkRetry(
+      url,
+      { headers: { "X-API-Key": apiKey }, signal: makeTimeoutSignal() },
+      path,
+    );
     if (!res.ok) {
       throw new Error(
         `UP Zero API error: ${res.status} ${res.statusText} — ${path}`,
@@ -774,15 +800,11 @@ async function fetchAllCursorPages<T>(
     });
     if (cursor) params.set("cursor", cursor);
     const url = `${UPZERO_BASE}${path}?${params}`;
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        headers: { "X-API-Key": apiKey },
-        signal: makeTimeoutSignal(),
-      });
-    } catch (err) {
-      throw wrapFetchError(err, path);
-    }
+    const res = await fetchWithNetworkRetry(
+      url,
+      { headers: { "X-API-Key": apiKey }, signal: makeTimeoutSignal() },
+      path,
+    );
     if (!res.ok) {
       throw new Error(
         `UP Zero API error: ${res.status} ${res.statusText} — ${path}`,
