@@ -69,6 +69,20 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
       WHERE tablename = 'orders'
       ORDER BY indexname
     `);
+    // Suspeita nova: orders_client_created_idx existe e a tabela e pequena
+    // (9928 linhas), entao nao deveria ser sequential scan lento. maxConnections
+    // no Cloud SQL e 25 (era 60 na Supabase) -- conta quantas conexoes estao
+    // ativas agora e ha quanto tempo, pra ver se e esgotamento de conexao.
+    const connectionActivity = await db.execute(sql`
+      SELECT
+        state,
+        count(*) AS count,
+        max(EXTRACT(EPOCH FROM (now() - state_change))) AS max_seconds_in_state
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+      GROUP BY state
+      ORDER BY count DESC
+    `);
 
     // Checagem pontual pós-corte Cloud SQL (12/08/2026): confirmar se o dado
     // bate com o baseline pré-migração e se não ficou nenhuma escrita da
@@ -114,6 +128,7 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
       syncJobStats: syncJobStats.rows,
       tableStats: tableStats.rows,
       ordersIndexes: indexCheck.rows,
+      connectionActivity: connectionActivity.rows,
     });
   } catch (err) {
     logger.error({ err }, "[db-diagnostics] falhou");
