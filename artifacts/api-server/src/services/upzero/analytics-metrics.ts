@@ -396,13 +396,28 @@ export async function getUpzeroAnalyticsMetrics({
   url.searchParams.set("from", from);
   url.searchParams.set("to", to);
 
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      "X-API-Key": apiKey,
-      Accept: "application/json",
-    },
-  });
+  // Achado 13/08/2026: sem timeout aqui, uma chamada travada da UP Zero
+  // trava o Promise.all do lote inteiro em getUpzeroAnalyticsMetricsChunked
+  // -- o orçamento de tempo entre lotes nunca chega a rodar porque a função
+  // fica presa esperando essa chamada. Confirmado: Kalli Fashion continuava
+  // travando /api/analytics/orders-page mesmo depois do orçamento entre
+  // lotes ser adicionado.
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "X-API-Key": apiKey,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(`Conexão com a UP Zero (analytics/metrics) expirou após 10s.`);
+    }
+    throw err;
+  }
 
   const text = await response.text();
   let payload: unknown;

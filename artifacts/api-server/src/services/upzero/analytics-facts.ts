@@ -215,13 +215,26 @@ export async function getUpzeroAnalyticsFacts({
   if (utmMedium) url.searchParams.set("utm_medium", utmMedium);
   if (utmCampaign) url.searchParams.set("utm_campaign", utmCampaign);
 
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      "X-API-Key": apiKey,
-      Accept: "application/json",
-    },
-  });
+  // Achado 13/08/2026: mesmo problema do analytics-metrics.ts -- sem
+  // timeout, uma chamada travada prende o Promise.all do lote inteiro em
+  // getUpzeroAnalyticsFactsChunked, e o orçamento entre lotes nunca chega a
+  // rodar.
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "X-API-Key": apiKey,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(`Conexão com a UP Zero (analytics/facts) expirou após 10s.`);
+    }
+    throw err;
+  }
 
   const text = await response.text();
   let payload: unknown;

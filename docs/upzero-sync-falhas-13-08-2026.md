@@ -115,13 +115,17 @@ hoje.
   janelas e segue com a atribuição parcial já coletada, em vez de travar a
   página inteira. Mesmo padrão usado no item 1.
 
-**Não corrigido ainda:** as chamadas individuais pra API do UpZero dentro
-desse fetch (`getUpzeroAnalyticsMetrics`/`getUpzeroAnalyticsFactsAsMetrics`,
-em `services/upzero/`) não têm timeout próprio nenhum — diferente do
-`upzero-sync.ts`, que já usa `AbortSignal.timeout()`. Se uma chamada
-individual travar de verdade (não só ser lenta), o orçamento entre lotes
-não ajuda a interromper ela no meio. Vale adicionar o mesmo padrão de
-timeout por chamada usado em `upzero-sync.ts`.
+**Atualização (mesmo dia):** confirmado na prática — mesmo depois do fix
+acima, a Kalli Fashion continuava travando `/api/analytics/orders-page`
+(40s+, sem resposta) enquanto Phize e MX Fashion melhoraram bem (27s e
+11.7s). Causa: as chamadas individuais pra API do UpZero dentro desse
+fetch (`getUpzeroAnalyticsMetrics`/`getUpzeroAnalyticsFactsAsMetrics`, em
+`services/upzero/analytics-metrics.ts` e `analytics-facts.ts`) não tinham
+timeout próprio nenhum — se uma trava de verdade (não só fica lenta), o
+orçamento entre lotes nunca chega a rodar porque a função fica presa
+esperando essa chamada terminar. **Corrigido**: adicionado
+`AbortSignal.timeout(10_000)` nas duas, mesmo padrão já usado em
+`upzero-sync.ts`.
 
 **Pergunta em aberto pro produto:** por que a atribuição sempre olha desde
 01/05 fixo? Se não há razão de negócio pra isso, o fix de verdade seria
@@ -132,9 +136,8 @@ tornar a busca mais rápida/resiliente.
 
 1. ~~Timeout estrutural (sync)~~ — feito.
 2. ~~Orders-page lento (atribuição UpZero)~~ — feito.
-3. Obzee (401) — mais simples de resolver, só precisa de uma chave nova.
-4. MX Fashion (envelope) — precisa investigação ativa na API do UpZero.
-5. `fetch failed` intermitente — precisa mais dados/observação pra saber se
+3. ~~Timeout por chamada individual na atribuição UpZero~~ — feito.
+4. Obzee (401) — mais simples de resolver, só precisa de uma chave nova.
+5. MX Fashion (envelope) — precisa investigação ativa na API do UpZero.
+6. `fetch failed` intermitente — precisa mais dados/observação pra saber se
    é rede ou código antes de decidir o fix.
-6. Timeout por chamada individual na atribuição UpZero (item 5) — mesmo
-   padrão do `upzero-sync.ts`, ainda não aplicado.
