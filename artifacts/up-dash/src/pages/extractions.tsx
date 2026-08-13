@@ -57,6 +57,11 @@ const STATUS_STYLE: Record<ExtractionStatus, string> = {
   done: "border-emerald-500/30 bg-emerald-500/10 text-emerald-500",
   failed: "border-red-500/30 bg-red-500/10 text-red-500",
 };
+// "done" com result.errors preenchido -- terminou sem exceção, mas não fez
+// trabalho real (ex.: API key expirada, envelope de resposta não
+// reconhecido). Mesmo amarelo do "pending", pra chamar atenção sem parecer
+// um erro fatal.
+const WARNING_STYLE = "border-amber-500/30 bg-amber-500/10 text-amber-500";
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -78,7 +83,24 @@ function formatDuration(value: number | null) {
   return `${minutes}m ${seconds}s`;
 }
 
-function statusIcon(status: ExtractionStatus) {
+// Achado 13/08/2026: um job pode terminar com status "done" (a chamada HTTP
+// não estourou nenhuma exceção) mas ter feito zero trabalho real -- por
+// exemplo a API key da UP Zero expirada (401) ou um formato de resposta não
+// reconhecido. Esses casos ficavam escondidos: apareciam verdes, iguais a
+// um sync que funcionou de verdade, porque o aviso só existe dentro de
+// result.errors, nunca mostrado nesta tabela. Trata isso como "concluído
+// com aviso", não como sucesso puro.
+function resultWarnings(job: ExtractionJob): string[] {
+  const errors = job.result?.errors;
+  return Array.isArray(errors) ? errors.filter((e): e is string => typeof e === "string") : [];
+}
+
+function hasResultWarnings(job: ExtractionJob): boolean {
+  return job.status === "done" && resultWarnings(job).length > 0;
+}
+
+function statusIcon(status: ExtractionStatus, warning: boolean) {
+  if (warning) return AlertCircle;
   if (status === "done") return CheckCircle2;
   if (status === "failed") return XCircle;
   if (status === "running") return RefreshCw;
@@ -87,11 +109,13 @@ function statusIcon(status: ExtractionStatus) {
 
 function resultSummary(job: ExtractionJob) {
   if (job.error) return job.error;
+  const warnings = resultWarnings(job);
   const result = job.result;
-  if (!result) return "-";
+  if (!result) return warnings.join(" · ") || "-";
 
   if (job.jobType === "upzero_transactional") {
     return [
+      ...warnings,
       `Pedidos +${String(result.ordersCreated ?? 0)}/${String(result.ordersUpdated ?? 0)}`,
       `Clientes +${String(result.customersCreated ?? 0)}/${String(result.customersUpdated ?? 0)}`,
       `Produtos +${String(result.productsCreated ?? 0)}/${String(result.productsUpdated ?? 0)}`,
@@ -101,6 +125,7 @@ function resultSummary(job: ExtractionJob) {
 
   if (job.jobType === "upzero_analytics") {
     return [
+      ...warnings,
       `${String(result.totalRows ?? 0)} linhas`,
       `${String(result.totalEvents ?? 0)} eventos`,
       `${String(result.rowsWithUser ?? 0)} com usuário`,
@@ -108,6 +133,7 @@ function resultSummary(job: ExtractionJob) {
   }
 
   return [
+    ...warnings,
     `Spend ${Number(result.spend ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}`,
     `${String(result.ads ?? 0)} ads`,
     `${String(result.campaigns ?? 0)} campanhas`,
@@ -291,7 +317,8 @@ export default function ExtractionsPage() {
                 </TableHeader>
                 <TableBody>
                   {visibleRows.map((job) => {
-                    const Icon = statusIcon(job.status);
+                    const warning = hasResultWarnings(job);
+                    const Icon = statusIcon(job.status, warning);
                     return (
                       <TableRow key={job.id}>
                         <TableCell className="min-w-[190px]">
@@ -300,16 +327,16 @@ export default function ExtractionsPage() {
                         </TableCell>
                         <TableCell className="min-w-[180px]">{job.clientName}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className={STATUS_STYLE[job.status]}>
+                          <Badge variant="outline" className={warning ? WARNING_STYLE : STATUS_STYLE[job.status]}>
                             <Icon className={`mr-1 h-3 w-3 ${job.status === "running" ? "animate-spin" : ""}`} />
-                            {job.status}
+                            {warning ? "concluído c/ aviso" : job.status}
                           </Badge>
                         </TableCell>
                         <TableCell className="capitalize">{job.trigger}</TableCell>
                         <TableCell className="min-w-[150px]">{formatDate(job.startedAt ?? job.createdAt)}</TableCell>
                         <TableCell>{formatDuration(job.durationSeconds)}</TableCell>
                         <TableCell className="min-w-[360px] max-w-[520px]">
-                          <div className={job.error ? "text-red-500" : "text-muted-foreground"}>
+                          <div className={job.error || warning ? "text-red-500" : "text-muted-foreground"}>
                             {resultSummary(job)}
                           </div>
                         </TableCell>

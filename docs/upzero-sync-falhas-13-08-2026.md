@@ -169,12 +169,31 @@ especificamente pros dados dessa marca (provavelmente batendo no timeout de
 20s). Não é mais uma falha total, mas vale investigar depois se quiser
 deixar rápido de verdade.
 
+## 6. Painel `/extractions` escondia jobs "done" sem trabalho real — ✅ CORRIGIDO em 13/08/2026
+
+A página admin de extrações já existia (`artifacts/up-dash/src/pages/extractions.tsx`)
+e mostra status/erro por job — mas só lia o campo `error` de nível
+superior (preenchido quando o job falha com exceção). Os casos do dia
+(Obzee 401, MX Fashion envelope) terminam com `status: "done"` — sem
+exceção nenhuma — e o aviso real fica só dentro de `result.errors`, nunca
+lido pela tela. Na prática, esses jobs apareciam **verdes**, indistinguíveis
+de um sync que funcionou de verdade.
+
+**Fix**: a tabela agora lê `result.errors` mesmo em jobs `"done"`, mostra
+badge amarelo "concluído c/ aviso" em vez de verde, e inclui o texto do
+aviso na coluna de resultado. Sem precisar consultar a API na mão (como
+fizemos a sessão inteira hoje) pra descobrir isso.
+
 ## Resumo de prioridade sugerida
 
 1. ~~Timeout estrutural (sync)~~ — feito.
 2. ~~Orders-page lento (atribuição UpZero)~~ — feito.
 3. ~~Timeout por chamada individual na atribuição UpZero~~ — feito.
-4. Obzee (401) — mais simples de resolver, só precisa de uma chave nova.
-5. MX Fashion (envelope) — precisa investigação ativa na API do UpZero.
-6. `fetch failed` intermitente — precisa mais dados/observação pra saber se
-   é rede ou código antes de decidir o fix.
+4. ~~`fetch failed` intermitente~~ — retry aplicado, ainda sem confirmação
+   se resolve todos os casos.
+5. ~~Painel de extrações escondia avisos em jobs "done"~~ — feito.
+6. **Obzee (401)** — não dá pra corrigir por código; precisa gerar uma API
+   key nova com o time da Obzee e atualizar no cadastro do cliente.
+7. **MX Fashion (envelope)** — intermitente, não reproduzido num teste
+   direto; o diagnóstico completo agora fica salvo automaticamente da
+   próxima vez que acontecer (seção 4 acima), sem precisar caçar de novo.
