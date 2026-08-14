@@ -1477,6 +1477,44 @@ export async function syncUpZeroClient(
     skuToLocalProductId.set(row.sku, row.id);
   }
 
+  // Achado 14/08/2026: essa fase gravava um produto por vez (um await por
+  // iteração) -- com a latência real do banco (~360ms/query, ver
+  // docs/cloud-sql-regiao-errada-14-08-2026.md), um catálogo de 168
+  // produtos sozinho já passava de 60s. Substituído por 3 operações em
+  // lote (uma por "tipo" de produto: atualiza por ID externo já
+  // conhecido, atualiza por SKU legado sem ID externo, ou cria novo) em
+  // vez de uma consulta por produto. A lógica de decisão (qual dos 3
+  // grupos cada produto cai) continua idêntica, só a gravação virou lote.
+  type ProductWriteRow = {
+    internalId: string;
+    externalId: string;
+    sku: string;
+    name: string;
+    category: string | null;
+    imageUrl: string | null;
+    price: number;
+    cost: number | null;
+    stock: number | null;
+    status: "ACTIVE" | "INACTIVE" | "DISCONTINUED";
+  };
+  const updateByExtIdRows: ProductWriteRow[] = [];
+  const updateBySkuRows: ProductWriteRow[] = [];
+  const insertRows: Array<{
+    externalId: string;
+    sku: string;
+    name: string;
+    category: string | null;
+    imageUrl: string | null;
+    price: number;
+    cost: number | null;
+    stock: number;
+    status: "ACTIVE" | "INACTIVE" | "DISCONTINUED";
+  }> = [];
+  // externalId -> variant SKUs, pra popular skuToLocalProductId depois que
+  // soubermos o internalId de cada grupo (já sabido pros dois "update",
+  // só descoberto após o insert em lote pro grupo "insert").
+  const variantSkusByExternalId = new Map<string, string[]>();
+
   for (const p of upProducts) {
     try {
       const activeVariants = (p.variants ?? []).filter((v) => v.active !== false && v.sku);
@@ -1489,83 +1527,119 @@ export async function syncUpZeroClient(
       // Only update stock when at least one inventory call succeeded; if all
       // calls failed the product's existing stock value is preserved.
       const stockValue = stockByProduct.get(p.id);
-      const stockFields = stockValue !== undefined ? { stock: stockValue } : {};
       const status = mapProductStatus(p.status);
       const category = inferProductCategory(p);
       const imageUrl = imageUrlByProduct.get(p.id) ?? null;
 
+      variantSkusByExternalId.set(p.id, (p.variants ?? []).map((v) => v.sku).filter((s): s is string => Boolean(s)));
+
       if (existingProductByExtId.has(p.id)) {
-        // Row already linked to this UP Zero product — update in place.
-        const internalId = existingProductByExtId.get(p.id)!;
-        await db
-          .update(productsTable)
-          .set({ sku, name: buildProductName(p), category, imageUrl: imageUrl ?? undefined, price, cost: cost ?? undefined, ...stockFields, status })
-          .where(
-            and(
-              eq(productsTable.clientId, clientId),
-              eq(productsTable.id, internalId),
-            ),
-          );
-        result.productsUpdated++;
-        for (const v of p.variants ?? []) {
-          if (v.sku) skuToLocalProductId.set(v.sku, internalId);
-        }
+        updateByExtIdRows.push({
+          internalId: existingProductByExtId.get(p.id)!,
+          externalId: p.id,
+          sku, name: buildProductName(p), category, imageUrl, price, cost,
+          stock: stockValue ?? null, status,
+        });
       } else if (existingProductBySku.has(sku)) {
         // A row exists with the same SKU but no externalId (manual/imported).
         // Attach the externalId so future syncs follow the fast path above,
         // and avoid a (client_id, sku) unique-index violation on insert.
-        const internalId = existingProductBySku.get(sku)!;
-        await db
-          .update(productsTable)
-          .set({
-            externalId: p.id,
-            name: buildProductName(p),
-            category,
-            imageUrl: imageUrl ?? undefined,
-            price,
-            cost: cost ?? undefined,
-            ...stockFields,
-            status,
-          })
-          .where(
-            and(
-              eq(productsTable.clientId, clientId),
-              eq(productsTable.id, internalId),
-            ),
-          );
-        existingProductByExtId.set(p.id, internalId);
-        result.productsUpdated++;
-        for (const v of p.variants ?? []) {
-          if (v.sku) skuToLocalProductId.set(v.sku, internalId);
-        }
+        updateBySkuRows.push({
+          internalId: existingProductBySku.get(sku)!,
+          externalId: p.id,
+          sku, name: buildProductName(p), category, imageUrl, price, cost,
+          stock: stockValue ?? null, status,
+        });
       } else {
-        // Genuinely new product — insert with externalId as the primary key.
-        const [inserted] = await db
-          .insert(productsTable)
-          .values({
-            clientId,
-            externalId: p.id,
-            sku,
-            name: buildProductName(p),
-            category,
-            imageUrl,
-            price,
-            cost: cost ?? undefined,
-            stock: stockValue ?? 0,
-            status,
-          })
-          .returning({ id: productsTable.id });
-
-        if (inserted) {
-          result.productsCreated++;
-          existingProductByExtId.set(p.id, inserted.id);
-          for (const v of p.variants ?? []) {
-            if (v.sku) skuToLocalProductId.set(v.sku, inserted.id);
-          }
-        }
+        insertRows.push({
+          externalId: p.id, sku, name: buildProductName(p), category, imageUrl, price, cost,
+          stock: stockValue ?? 0, status,
+        });
       }
     } catch (err) {
       result.errors.push(`Product ${p.id}: ${String(err)}`);
+    }
+  }
+
+  // COALESCE(v.col, p.col) replica o comportamento original de "só
+  // sobrescreve se o valor novo não for nulo" pra image_url/cost/stock
+  // (era feito com `?? undefined` no .set() por-linha). Os outros campos
+  // sempre sobrescrevem, igual o código original.
+  if (updateByExtIdRows.length > 0) {
+    const values = sql.join(
+      updateByExtIdRows.map((r) => sql`(${r.internalId}::text, ${r.sku}::text, ${r.name}::text, ${r.category}::text, ${r.imageUrl}::text, ${r.price}::double precision, ${r.cost}::double precision, ${r.stock}::integer, ${r.status}::text)`),
+      sql`, `,
+    );
+    await db.execute(sql`
+      UPDATE products AS p
+      SET sku = v.sku, name = v.name, category = v.category,
+          image_url = COALESCE(v.image_url, p.image_url),
+          price = v.price, cost = COALESCE(v.cost, p.cost),
+          stock = COALESCE(v.stock, p.stock), status = v.status
+      FROM (VALUES ${values}) AS v(id, sku, name, category, image_url, price, cost, stock, status)
+      WHERE p.id = v.id AND p.client_id = ${clientId}
+    `);
+    result.productsUpdated += updateByExtIdRows.length;
+  }
+
+  if (updateBySkuRows.length > 0) {
+    const values = sql.join(
+      updateBySkuRows.map((r) => sql`(${r.internalId}::text, ${r.externalId}::text, ${r.name}::text, ${r.category}::text, ${r.imageUrl}::text, ${r.price}::double precision, ${r.cost}::double precision, ${r.stock}::integer, ${r.status}::text)`),
+      sql`, `,
+    );
+    await db.execute(sql`
+      UPDATE products AS p
+      SET external_id = v.external_id, name = v.name, category = v.category,
+          image_url = COALESCE(v.image_url, p.image_url),
+          price = v.price, cost = COALESCE(v.cost, p.cost),
+          stock = COALESCE(v.stock, p.stock), status = v.status
+      FROM (VALUES ${values}) AS v(id, external_id, name, category, image_url, price, cost, stock, status)
+      WHERE p.id = v.id AND p.client_id = ${clientId}
+    `);
+    result.productsUpdated += updateBySkuRows.length;
+  }
+
+  for (const r of [...updateByExtIdRows, ...updateBySkuRows]) {
+    existingProductByExtId.set(r.externalId, r.internalId);
+    for (const sku of variantSkusByExternalId.get(r.externalId) ?? []) {
+      skuToLocalProductId.set(sku, r.internalId);
+    }
+  }
+
+  if (insertRows.length > 0) {
+    const toDrizzleValues = (r: (typeof insertRows)[number]) => ({
+      clientId, externalId: r.externalId, sku: r.sku, name: r.name, category: r.category,
+      imageUrl: r.imageUrl, price: r.price, cost: r.cost ?? undefined, stock: r.stock, status: r.status,
+    });
+    let inserted: Array<{ id: string; externalId: string | null }>;
+    try {
+      // Caminho rápido: todo o lote numa única instrução. Só falha por
+      // inteiro se duas linhas NOVAS do mesmo lote colidirem entre si
+      // (ex.: mesmo SKU sintético) -- raro, mas real, por isso o fallback.
+      inserted = await db
+        .insert(productsTable)
+        .values(insertRows.map(toDrizzleValues))
+        .returning({ id: productsTable.id, externalId: productsTable.externalId });
+    } catch (err) {
+      console.warn(`[upzero-sync] bulk product insert failed, falling back to per-row: ${String(err)}`);
+      inserted = [];
+      for (const r of insertRows) {
+        try {
+          const [row] = await db.insert(productsTable).values(toDrizzleValues(r)).returning({ id: productsTable.id, externalId: productsTable.externalId });
+          if (row) inserted.push(row);
+        } catch (rowErr) {
+          result.errors.push(`Product ${r.externalId}: ${String(rowErr)}`);
+        }
+      }
+    }
+
+    result.productsCreated += inserted.length;
+    for (const row of inserted) {
+      if (!row.externalId) continue;
+      existingProductByExtId.set(row.externalId, row.id);
+      for (const sku of variantSkusByExternalId.get(row.externalId) ?? []) {
+        skuToLocalProductId.set(sku, row.id);
+      }
     }
   }
 
@@ -1653,6 +1727,34 @@ export async function syncUpZeroClient(
       }
     }
 
+    // Achado 14/08/2026: mesmo problema dos produtos -- um await por
+    // cliente. Substituído por 3 operações em lote, mesma lógica de
+    // decisão (atualiza por ID externo já conhecido, atualiza por e-mail
+    // já conhecido, ou cria/upsert novo).
+    type CustomerWriteRow = {
+      internalId: string;
+      externalId: string;
+      email: string | null;
+      name: string | null;
+      phone: string | null;
+      documentType: "CPF" | "CNPJ" | null;
+      documentHash: string | null;
+      documentLast4: string | null;
+      state: string | null;
+      city: string | null;
+      utmSource: string | null;
+      utmMedium: string | null;
+      utmCampaign: string | null;
+      utmContent: string | null;
+      utmTerm: string | null;
+      registrationStatus: "PENDING" | "APPROVED" | "REJECTED";
+      approvalDate: Date | null;
+      createdAt: Date;
+    };
+    const updateByExtIdRows: CustomerWriteRow[] = [];
+    const updateByEmailRows: CustomerWriteRow[] = [];
+    const insertRows: Array<Omit<CustomerWriteRow, "internalId"> & { email: string }> = [];
+
     for (const c of upCustomers) {
       try {
         const state = getAddressState(c) ?? stateFromPhoneDdd(c.phone);
@@ -1670,112 +1772,156 @@ export async function syncUpZeroClient(
           const entry = existingByExtId.get(c.id)!;
           const registrationStatus = apiRegistrationStatus ?? entry.status;
           const approvalDate = getApprovalDate(c, registrationStatus, entry.approvalDate ?? registrationDate);
-          const mapped = { id: entry.id, registrationDate, approvalDate, status: registrationStatus };
-          externalToInternalCustomer.set(c.id, mapped);
-          await db
-            .update(customersTable)
-            .set({
-              email: c.email ?? undefined,
-              name: buildCustomerName(c.name) ?? undefined,
-              phone: c.phone ?? undefined,
-              documentType: documentType ?? undefined,
-              documentHash: documentHash ?? undefined,
-              documentLast4: documentLast4Value ?? undefined,
-              state: state ?? undefined,
-              city: city ?? undefined,
-              ...utm,
-              registrationStatus,
-              approvalDate,
-              createdAt: registrationDate,
-            })
-            .where(
-              and(
-                eq(customersTable.clientId, clientId),
-                eq(customersTable.id, entry.id),
-              ),
-            );
-          result.customersUpdated++;
+          externalToInternalCustomer.set(c.id, { id: entry.id, registrationDate, approvalDate, status: registrationStatus });
+          updateByExtIdRows.push({
+            internalId: entry.id, externalId: c.id,
+            email: c.email ?? null, name: buildCustomerName(c.name), phone: c.phone ?? null,
+            documentType, documentHash, documentLast4: documentLast4Value, state, city,
+            ...utm, registrationStatus, approvalDate, createdAt: registrationDate,
+          });
         } else if (c.email && existingByEmail.has(c.email)) {
           const { id: internalId, status: existingStatus, approvalDate: existingApprovalDate } = existingByEmail.get(c.email)!;
           const registrationStatus = apiRegistrationStatus ?? existingStatus;
           const approvalDate = getApprovalDate(c, registrationStatus, existingApprovalDate ?? registrationDate);
           externalToInternalCustomer.set(c.id, { id: internalId, registrationDate, approvalDate, status: registrationStatus });
-          await db
-            .update(customersTable)
-            .set({
-              externalId: c.id,
-              name: buildCustomerName(c.name) ?? undefined,
-              phone: c.phone ?? undefined,
-              documentType: documentType ?? undefined,
-              documentHash: documentHash ?? undefined,
-              documentLast4: documentLast4Value ?? undefined,
-              state: state ?? undefined,
-              city: city ?? undefined,
-              ...utm,
-              registrationStatus,
-              approvalDate,
-              createdAt: registrationDate,
-            })
-            .where(
-              and(
-                eq(customersTable.clientId, clientId),
-                eq(customersTable.id, internalId),
-              ),
-            );
-          result.customersUpdated++;
+          updateByEmailRows.push({
+            internalId, externalId: c.id,
+            email: null, name: buildCustomerName(c.name), phone: c.phone ?? null,
+            documentType, documentHash, documentLast4: documentLast4Value, state, city,
+            ...utm, registrationStatus, approvalDate, createdAt: registrationDate,
+          });
         } else {
           const registrationStatus = apiRegistrationStatus ?? "PENDING";
           const approvalDate = getApprovalDate(c, registrationStatus, registrationDate);
-          const [upserted] = await db
-            .insert(customersTable)
-            .values({
-              clientId,
-              externalId: c.id,
-              email,
-              name: buildCustomerName(c.name),
-              phone: c.phone ?? null,
-              documentType,
-              documentHash,
-              documentLast4: documentLast4Value,
-              state,
-              city,
-              ...utm,
-              registrationStatus,
-              approvalDate,
-              createdAt: registrationDate,
-            })
-            .onConflictDoUpdate({
-              target: [customersTable.clientId, customersTable.externalId],
-              set: {
-                email,
-                name: buildCustomerName(c.name),
-                phone: c.phone ?? null,
-                documentType,
-                documentHash,
-                documentLast4: documentLast4Value,
-                state,
-                city,
-                ...utm,
-                registrationStatus,
-                approvalDate,
-                createdAt: registrationDate,
-              },
-            })
-            .returning({
-              id: customersTable.id,
-              wasInserted: sql<boolean>`(xmax = 0)`,
+          // Marcado aqui pra já resolver depois do insert em lote (ver abaixo).
+          externalToInternalCustomer.set(c.id, { id: "", registrationDate, approvalDate, status: registrationStatus });
+          insertRows.push({
+            externalId: c.id,
+            email, name: buildCustomerName(c.name), phone: c.phone ?? null,
+            documentType, documentHash, documentLast4: documentLast4Value, state, city,
+            ...utm, registrationStatus, approvalDate, createdAt: registrationDate,
           });
-          if (upserted) {
-            externalToInternalCustomer.set(c.id, { id: upserted.id, registrationDate, approvalDate, status: registrationStatus });
-            if (upserted.wasInserted) {
-              result.customersCreated++;
-            } else {
-              result.customersUpdated++;
-            }
-          }
         }
       } catch (err) {
         result.errors.push(`Customer ${c.id}: ${String(err)}`);
+      }
+    }
+
+    // COALESCE(v.col, p.col) replica o "só sobrescreve se não for nulo"
+    // (era `?? undefined` por-linha); UTM/status/datas sempre sobrescrevem,
+    // igual o código original.
+    if (updateByExtIdRows.length > 0) {
+      const values = sql.join(
+        updateByExtIdRows.map((r) => sql`(${r.internalId}::text, ${r.email}::text, ${r.name}::text, ${r.phone}::text, ${r.documentType}::text, ${r.documentHash}::text, ${r.documentLast4}::text, ${r.state}::text, ${r.city}::text, ${r.utmSource}::text, ${r.utmMedium}::text, ${r.utmCampaign}::text, ${r.utmContent}::text, ${r.utmTerm}::text, ${r.registrationStatus}::text, ${r.approvalDate}::timestamptz, ${r.createdAt}::timestamptz)`),
+        sql`, `,
+      );
+      await db.execute(sql`
+        UPDATE customers AS p
+        SET email = COALESCE(v.email, p.email), name = COALESCE(v.name, p.name),
+            phone = COALESCE(v.phone, p.phone), document_type = COALESCE(v.document_type, p.document_type),
+            document_hash = COALESCE(v.document_hash, p.document_hash), document_last4 = COALESCE(v.document_last4, p.document_last4),
+            state = COALESCE(v.state, p.state), city = COALESCE(v.city, p.city),
+            utm_source = v.utm_source, utm_medium = v.utm_medium, utm_campaign = v.utm_campaign,
+            utm_content = v.utm_content, utm_term = v.utm_term,
+            registration_status = v.registration_status, approval_date = v.approval_date, created_at = v.created_at
+        FROM (VALUES ${values}) AS v(id, email, name, phone, document_type, document_hash, document_last4, state, city, utm_source, utm_medium, utm_campaign, utm_content, utm_term, registration_status, approval_date, created_at)
+        WHERE p.id = v.id AND p.client_id = ${clientId}
+      `);
+      result.customersUpdated += updateByExtIdRows.length;
+    }
+
+    if (updateByEmailRows.length > 0) {
+      const values = sql.join(
+        updateByEmailRows.map((r) => sql`(${r.internalId}::text, ${r.externalId}::text, ${r.name}::text, ${r.phone}::text, ${r.documentType}::text, ${r.documentHash}::text, ${r.documentLast4}::text, ${r.state}::text, ${r.city}::text, ${r.utmSource}::text, ${r.utmMedium}::text, ${r.utmCampaign}::text, ${r.utmContent}::text, ${r.utmTerm}::text, ${r.registrationStatus}::text, ${r.approvalDate}::timestamptz, ${r.createdAt}::timestamptz)`),
+        sql`, `,
+      );
+      await db.execute(sql`
+        UPDATE customers AS p
+        SET external_id = v.external_id, name = COALESCE(v.name, p.name),
+            phone = COALESCE(v.phone, p.phone), document_type = COALESCE(v.document_type, p.document_type),
+            document_hash = COALESCE(v.document_hash, p.document_hash), document_last4 = COALESCE(v.document_last4, p.document_last4),
+            state = COALESCE(v.state, p.state), city = COALESCE(v.city, p.city),
+            utm_source = v.utm_source, utm_medium = v.utm_medium, utm_campaign = v.utm_campaign,
+            utm_content = v.utm_content, utm_term = v.utm_term,
+            registration_status = v.registration_status, approval_date = v.approval_date, created_at = v.created_at
+        FROM (VALUES ${values}) AS v(id, external_id, name, phone, document_type, document_hash, document_last4, state, city, utm_source, utm_medium, utm_campaign, utm_content, utm_term, registration_status, approval_date, created_at)
+        WHERE p.id = v.id AND p.client_id = ${clientId}
+      `);
+      result.customersUpdated += updateByEmailRows.length;
+    }
+
+    if (insertRows.length > 0) {
+      const insertOneCustomer = async (r: (typeof insertRows)[number]) => {
+        const [row] = await db
+          .insert(customersTable)
+          .values({
+            clientId, externalId: r.externalId, email: r.email, name: r.name, phone: r.phone,
+            documentType: r.documentType, documentHash: r.documentHash, documentLast4: r.documentLast4,
+            state: r.state, city: r.city,
+            utmSource: r.utmSource, utmMedium: r.utmMedium, utmCampaign: r.utmCampaign, utmContent: r.utmContent, utmTerm: r.utmTerm,
+            registrationStatus: r.registrationStatus, approvalDate: r.approvalDate, createdAt: r.createdAt,
+          })
+          .onConflictDoUpdate({
+            target: [customersTable.clientId, customersTable.externalId],
+            set: {
+              email: sql`excluded.email`, name: sql`excluded.name`, phone: sql`excluded.phone`,
+              documentType: sql`excluded.document_type`, documentHash: sql`excluded.document_hash`, documentLast4: sql`excluded.document_last4`,
+              state: sql`excluded.state`, city: sql`excluded.city`,
+              utmSource: sql`excluded.utm_source`, utmMedium: sql`excluded.utm_medium`, utmCampaign: sql`excluded.utm_campaign`,
+              utmContent: sql`excluded.utm_content`, utmTerm: sql`excluded.utm_term`,
+              registrationStatus: sql`excluded.registration_status`, approvalDate: sql`excluded.approval_date`, createdAt: sql`excluded.created_at`,
+            },
+          })
+          .returning({ id: customersTable.id, externalId: customersTable.externalId, wasInserted: sql<boolean>`(xmax = 0)` });
+        return row;
+      };
+
+      let insertedRows: Array<{ id: string; externalId: string | null; wasInserted: boolean }>;
+      try {
+        // Caminho rápido: todo o lote numa única instrução. Só falha por
+        // inteiro se duas linhas NOVAS do mesmo lote colidirem numa
+        // constraint diferente da usada no ON CONFLICT (ex.: e-mail
+        // duplicado entre dois clientes novos) -- raro, mas real.
+        insertedRows = await db
+          .insert(customersTable)
+          .values(insertRows.map((r) => ({
+            clientId, externalId: r.externalId, email: r.email, name: r.name, phone: r.phone,
+            documentType: r.documentType, documentHash: r.documentHash, documentLast4: r.documentLast4,
+            state: r.state, city: r.city,
+            utmSource: r.utmSource, utmMedium: r.utmMedium, utmCampaign: r.utmCampaign, utmContent: r.utmContent, utmTerm: r.utmTerm,
+            registrationStatus: r.registrationStatus, approvalDate: r.approvalDate, createdAt: r.createdAt,
+          })))
+          .onConflictDoUpdate({
+            target: [customersTable.clientId, customersTable.externalId],
+            set: {
+              email: sql`excluded.email`, name: sql`excluded.name`, phone: sql`excluded.phone`,
+              documentType: sql`excluded.document_type`, documentHash: sql`excluded.document_hash`, documentLast4: sql`excluded.document_last4`,
+              state: sql`excluded.state`, city: sql`excluded.city`,
+              utmSource: sql`excluded.utm_source`, utmMedium: sql`excluded.utm_medium`, utmCampaign: sql`excluded.utm_campaign`,
+              utmContent: sql`excluded.utm_content`, utmTerm: sql`excluded.utm_term`,
+              registrationStatus: sql`excluded.registration_status`, approvalDate: sql`excluded.approval_date`, createdAt: sql`excluded.created_at`,
+            },
+          })
+          .returning({ id: customersTable.id, externalId: customersTable.externalId, wasInserted: sql<boolean>`(xmax = 0)` });
+      } catch (err) {
+        console.warn(`[upzero-sync] bulk customer insert failed, falling back to per-row: ${String(err)}`);
+        insertedRows = [];
+        for (const r of insertRows) {
+          try {
+            const row = await insertOneCustomer(r);
+            if (row) insertedRows.push(row);
+          } catch (rowErr) {
+            result.errors.push(`Customer ${r.externalId}: ${String(rowErr)}`);
+          }
+        }
+      }
+
+      for (const row of insertedRows) {
+        if (!row.externalId) continue;
+        const mapped = externalToInternalCustomer.get(row.externalId);
+        if (mapped) externalToInternalCustomer.set(row.externalId, { ...mapped, id: row.id });
+        if (row.wasInserted) result.customersCreated++;
+        else result.customersUpdated++;
       }
     }
   }
