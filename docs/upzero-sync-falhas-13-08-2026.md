@@ -40,13 +40,13 @@ Evidência (jobs `status: "failed"`, `trigger: "cron"`, 12/08–13/08):
   produto, que antes não tinha limite — mesmo padrão de "pula o resto e loga
   não-fatal" já usado na fase de estoque.
 
-**Ainda não confirmado:** se isso sozinho é suficiente pros catálogos maiores
-(CELEB, Kalli Fashion) completarem dentro dos 45s. Vale acompanhar
-`/api/extractions?jobType=upzero_transactional&status=failed` nos próximos
-dias — se continuar falhando, o próximo suspeito é a fase de busca inicial
-(`Promise.all` de customers/orders/products/events, até 30s por chamada) ou
-o loop de gravação no banco por produto (sequencial, um `await` por produto,
-sem batching).
+**Atualização 14/08/2026 — confirmado insuficiente sozinho:** ver seção 7
+abaixo. Combinado com os fixes 2-4 (retry de rede, janela de eventos,
+orçamento de páginas), o sync **só passou a completar de verdade pra
+Kalli Fashion**. Phize, CELEB, Lipcem e MX Fashion continuam travando nos
+60s mesmo com todos os fixes de código aplicados — a causa raiz restante
+é a latência do banco (`docs/cloud-sql-regiao-errada-14-08-2026.md`), não
+mais um bug de código.
 
 ## 2. `TypeError: fetch failed` intermitente — ✅ PARCIALMENTE CORRIGIDO em 13/08/2026
 
@@ -184,10 +184,44 @@ badge amarelo "concluído c/ aviso" em vez de verde, e inclui o texto do
 aviso na coluna de resultado. Sem precisar consultar a API na mão (como
 fizemos a sessão inteira hoje) pra descobrir isso.
 
+## 7. Resultado real do sync (não a leitura, o backfill em si) pós-fixes — 14/08/2026
+
+**Importante — correção de um erro meu:** eu tinha marcado Phize, Lipcem,
+CELEB e Kalli Fashion como "confirmados funcionando" mais cedo hoje, mas
+essa conclusão veio de testar a *leitura* (`/api/analytics/orders-page`,
+seção 5 acima), não o *sync* em si (`POST /clients/:id/sync/upzero`, que é
+quem realmente busca dado novo na UpZero e grava no banco). São coisas
+diferentes — uma tela pode ficar rápida lendo dado já salvo enquanto o
+processo que traria dado novo continua quebrado.
+
+Testado agora, de verdade, disparando o sync manual pra cada um (depois de
+TODOS os fixes de código desta e da seção anterior já aplicados):
+
+| Cliente | Resultado |
+|---|---|
+| Kalli Fashion | ✅ Completa em 43s |
+| Phize | ❌ `FUNCTION_INVOCATION_TIMEOUT` aos 60s |
+| CELEB | ❌ `FUNCTION_INVOCATION_TIMEOUT` aos 60s |
+| Lipcem | ❌ `FUNCTION_INVOCATION_TIMEOUT` aos 60s |
+| MX Fashion | ❌ `FUNCTION_INVOCATION_TIMEOUT` aos 60s |
+
+**Conclusão real:** os bugs de código (seções 1-4) eram reais e
+necessários corrigir, mas **não são suficientes sozinhos** pra nenhum
+cliente com volume de dado maior que o da Kalli Fashion. A causa raiz que
+sobra é a latência do Cloud SQL na região errada
+(`docs/cloud-sql-regiao-errada-14-08-2026.md`) — sozinha, ela já é grande
+o bastante (~360ms por consulta) pra estourar os 60s em qualquer cliente
+com volume moderado de produtos/clientes.
+
+**Isso significa que o dado que ficou de fora durante os dias de falha
+(Phize, CELEB, Lipcem, MX Fashion) continua de fora** — não foi
+recuperado, e não vai ser até o item da região do banco ser resolvido. Só
+a Kalli Fashion está com o dado em dia.
+
 ## Resumo de prioridade sugerida
 
-1. ~~Timeout estrutural (sync)~~ — feito.
-2. ~~Orders-page lento (atribuição UpZero)~~ — feito.
+1. ~~Timeout estrutural (sync)~~ — feito, mas insuficiente sozinho (ver seção 7).
+2. ~~Orders-page lento (atribuição UpZero)~~ — feito, isso sim resolvido de verdade (é leitura, não depende tanto de volume).
 3. ~~Timeout por chamada individual na atribuição UpZero~~ — feito.
 4. ~~`fetch failed` intermitente~~ — retry aplicado, ainda sem confirmação
    se resolve todos os casos.
@@ -197,3 +231,6 @@ fizemos a sessão inteira hoje) pra descobrir isso.
 7. **MX Fashion (envelope)** — intermitente, não reproduzido num teste
    direto; o diagnóstico completo agora fica salvo automaticamente da
    próxima vez que acontecer (seção 4 acima), sem precisar caçar de novo.
+8. **Sync ainda não completa pra Phize/CELEB/Lipcem/MX Fashion** — bloqueado
+   pela região do banco (`docs/cloud-sql-regiao-errada-14-08-2026.md`), não
+   é mais bug de código. Dado desses clientes continua desatualizado até lá.
