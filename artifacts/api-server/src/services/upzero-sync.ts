@@ -1964,9 +1964,30 @@ export async function syncUpZeroClient(
     externalOrderId: string;
   }>();
 
+  // Achado 14/08/2026: mesmo problema de produtos/clientes -- até 5-6
+  // queries sequenciais por pedido (criação de cliente embutida, UTM do
+  // cliente, upsert do pedido, apagar itens antigos, inserir cada item).
+  // Confirmado que CELEB (44 pedidos) ainda travava mesmo depois do fix
+  // de produtos/clientes. Reescrito em fases em lote, preservando a mesma
+  // ordem de decisão e o mesmo "a última ocorrência processada vence" pra
+  // update de UTM do cliente (igual ao comportamento sequencial original).
+  type OrderComputed = {
+    o: UpZeroOrder;
+    activeItems: UpZeroOrderItem[];
+    status: ReturnType<typeof mapOrderStatus>;
+    requestedQuantity: number;
+    fulfilledQuantity: number;
+    amount: number;
+    fulfilledAmount: number;
+    createdAt: Date;
+    approvalDate: Date | undefined;
+    uzCustomerId: string | null;
+  };
+  const computedOrders: OrderComputed[] = [];
+  const missingCustomers = new Map<string, UpZeroCustomer>(); // externalId -> raw customer
+
   for (const o of upOrders) {
     try {
-      // Resolve status — some UP Zero API versions use "status", others "order_status"
       const rawStatus = o.order_status ?? o.status;
       const status = mapOrderStatus(rawStatus ?? ("CONFIRMED" as UpZeroStatus));
       const activeItems = (o.items ?? []).filter((item) => item.status !== "removed");
@@ -1974,42 +1995,20 @@ export async function syncUpZeroClient(
         const requested = getItemRequestedQuantity(item);
         return { requested, fulfilled: getItemFulfilledQuantity(item, requested) };
       });
-      const requestedQuantity = Math.max(
-        0,
-        Math.round(
-          firstNumber(
-            o.requested_quantity,
-            o.requested_items_qty,
-            o.total_items_qty,
-            o.total_quantity_requested,
-            o.requested_items_quantity,
-            o.items_requested_quantity,
-            o.quantity_requested,
-            o.qty_requested,
-            o.quantidade_solicitada,
-            o.qtd_solicitada,
-          ) ??
-            itemQuantities.reduce((sum, item) => sum + item.requested, 0),
-        ),
-      );
-      const fulfilledQuantity = Math.max(
-        0,
-        Math.round(
-          firstNumber(
-            o.fulfilled_quantity,
-            o.total_quantity_fulfilled,
-            o.fulfilled_items_quantity,
-            o.items_fulfilled_quantity,
-            o.quantity_fulfilled,
-            o.quantity_attended,
-            o.qty_fulfilled,
-            o.attended_quantity,
-            o.quantidade_atendida,
-            o.qtd_atendida,
-          ) ??
-            itemQuantities.reduce((sum, item) => sum + item.fulfilled, 0),
-        ),
-      );
+      const requestedQuantity = Math.max(0, Math.round(
+        firstNumber(
+          o.requested_quantity, o.requested_items_qty, o.total_items_qty, o.total_quantity_requested,
+          o.requested_items_quantity, o.items_requested_quantity, o.quantity_requested, o.qty_requested,
+          o.quantidade_solicitada, o.qtd_solicitada,
+        ) ?? itemQuantities.reduce((sum, item) => sum + item.requested, 0),
+      ));
+      const fulfilledQuantity = Math.max(0, Math.round(
+        firstNumber(
+          o.fulfilled_quantity, o.total_quantity_fulfilled, o.fulfilled_items_quantity, o.items_fulfilled_quantity,
+          o.quantity_fulfilled, o.quantity_attended, o.qty_fulfilled, o.attended_quantity,
+          o.quantidade_atendida, o.qtd_atendida,
+        ) ?? itemQuantities.reduce((sum, item) => sum + item.fulfilled, 0),
+      ));
       // `amount` is intentionally the requested value because the dashboard's
       // revenue KPIs and product sales views represent demand/solicitation.
       const amount = getOrderRequestedAmount(o);
@@ -2019,198 +2018,274 @@ export async function syncUpZeroClient(
         status === "APPROVED" || status === "SHIPPED" || status === "DELIVERED" ? createdAt : undefined;
 
       const uzCustomer = o.customer;
-      let customerId: string | null = null;
-
-      if (uzCustomer) {
-        customerId = externalToInternalCustomer.get(uzCustomer.id)?.id ?? null;
-
-        if (!customerId) {
-          const email =
-            uzCustomer.email ??
-            `upzero-${uzCustomer.id}@noemail.internal`;
-          const state = getAddressState(uzCustomer) ?? stateFromPhoneDdd(uzCustomer.phone);
-          const city = getAddressCity(uzCustomer);
-          const documentType = getDocumentType(uzCustomer);
-          const registrationStatus = mapRegistrationStatus(uzCustomer) ?? "APPROVED";
-          const registrationDate = getRegistrationDate(uzCustomer);
-          const approvalDate = getApprovalDate(uzCustomer, registrationStatus, registrationDate);
-          const utm = getCustomerUtm(uzCustomer);
-          const [upsertedCust] = await db
-            .insert(customersTable)
-            .values({
-              clientId,
-              externalId: uzCustomer.id,
-              email,
-              name: buildCustomerName(uzCustomer.name),
-              phone: uzCustomer.phone ?? null,
-              documentType,
-              state,
-              city,
-              ...utm,
-              registrationStatus,
-              approvalDate,
-              createdAt: registrationDate,
-            })
-            .onConflictDoUpdate({
-              target: [customersTable.clientId, customersTable.externalId],
-              set: {
-                name: buildCustomerName(uzCustomer.name),
-                phone: uzCustomer.phone ?? null,
-                documentType,
-                state,
-                city,
-                ...utm,
-                registrationStatus,
-                approvalDate,
-                createdAt: registrationDate,
-              },
-            })
-            .returning({
-              id: customersTable.id,
-              wasInserted: sql<boolean>`(xmax = 0)`,
-            });
-          if (upsertedCust) {
-            customerId = upsertedCust.id;
-            externalToInternalCustomer.set(uzCustomer.id, { id: upsertedCust.id, registrationDate, approvalDate, status: registrationStatus });
-            if (upsertedCust.wasInserted) {
-              result.customersCreated++;
-            } else {
-              result.customersUpdated++;
-            }
-          }
-        }
+      if (uzCustomer && !externalToInternalCustomer.has(uzCustomer.id)) {
+        missingCustomers.set(uzCustomer.id, uzCustomer);
       }
-
-      if (!customerId) {
-        // Warn but don't count as an error — orders without customers are unusual
-        // but shouldn't block all other orders from being processed.
-        result.errors.push(`Order ${o.id}: no customer linked (order skipped)`);
-        continue;
-      }
-
-      // Prefer shipping_address for order geography; fall back to the embedded
-      // customer object. The live API returns flat `state`/`city` on shipping_address,
-      // with `address_state`/`address_city` kept as legacy fallbacks.
-      const shippingAddr = o.shipping_address ?? null;
-      const customerAddr = o.customer ?? null;
-      const state =
-        shippingAddr?.state ??
-        shippingAddr?.address_state ??
-        getAddressState(customerAddr as UpZeroCustomer) ??
-        null;
-      const city =
-        shippingAddr?.city ??
-        shippingAddr?.address_city ??
-        getAddressCity(customerAddr as UpZeroCustomer) ??
-        null;
-      const orderUtm = getOrderUtm(o);
-      if (orderUtm.utmSource || orderUtm.utmMedium || orderUtm.utmCampaign || orderUtm.utmContent || orderUtm.utmTerm) {
-        await db
-          .update(customersTable)
-          .set(orderUtm)
-          .where(
-            and(
-              eq(customersTable.clientId, clientId),
-              eq(customersTable.id, customerId),
-            ),
-          );
-      }
-
-      let internalOrderId: string;
-
-      if (existingOrderByExtId.has(o.id)) {
-        internalOrderId = existingOrderByExtId.get(o.id)!;
-        await db
-          .update(ordersTable)
-          .set({ requestedQuantity, fulfilledQuantity, amount, fulfilledAmount, status, state, city })
-          .where(
-            and(
-              eq(ordersTable.clientId, clientId),
-              eq(ordersTable.id, internalOrderId),
-            ),
-          );
-        result.ordersUpdated++;
-      } else {
-        const [upsertedOrder] = await db
-          .insert(ordersTable)
-          .values({
-            clientId,
-            customerId,
-            externalId: o.id,
-            requestedQuantity,
-            fulfilledQuantity,
-            amount,
-            fulfilledAmount,
-            status,
-            approvalDate,
-            state,
-            city,
-            createdAt,
-          })
-          .onConflictDoUpdate({
-            target: [ordersTable.clientId, ordersTable.externalId],
-            set: { requestedQuantity, fulfilledQuantity, amount, fulfilledAmount, status, state, city },
-          })
-          .returning({ id: ordersTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
-        if (!upsertedOrder) continue;
-        internalOrderId = upsertedOrder.id;
-        if (upsertedOrder.wasInserted) {
-          result.ordersCreated++;
-        } else {
-          result.ordersUpdated++;
-        }
-      }
-      externalToInternalOrder.set(o.id, { id: internalOrderId, customerId, createdAt });
-
-      // Collect approved/shipped orders as PURCHASE event candidates
-      if (status === "APPROVED" || status === "SHIPPED" || status === "DELIVERED") {
-        purchaseEventCandidates.set(internalOrderId, {
-          customerId,
-          createdAt,
-          externalOrderId: o.id,
-        });
-      }
-
-      // Always delete existing items before re-inserting; handles the case where
-      // an order previously had items but all are now removed/inactive.
-      await db
-        .delete(orderItemsTable)
-        .where(eq(orderItemsTable.orderId, internalOrderId));
-
-      for (const item of activeItems) {
-        const sku = item.sku;
-        if (!sku) continue;
-        const localProductId = skuToLocalProductId.get(sku);
-        if (!localProductId) {
-          result.errors.push(
-            `Order ${o.id} item ${item.id}: SKU "${sku}" not found in synced products, skipping`,
-          );
-          continue;
-        }
-        const attrs = item.variant_id
-          ? variantAttrs.get(item.variant_id)
-          : undefined;
-        const requestedItemQuantity = getItemRequestedQuantity(item);
-        const fulfilledItemQuantity = getItemFulfilledQuantity(item, requestedItemQuantity);
-        try {
-          await db.insert(orderItemsTable).values({
-            orderId: internalOrderId,
-            productId: localProductId,
-            quantity: requestedItemQuantity,
-            fulfilledQuantity: fulfilledItemQuantity,
-            priceAtSale: firstNumber(item.unit_price) ?? 0,
-            size: attrs?.size ?? null,
-            color: attrs?.color ?? null,
-          });
-          result.orderItemsSynced++;
-        } catch (itemErr) {
-          result.errors.push(
-            `Order ${o.id} item ${item.id}: ${String(itemErr)}`,
-          );
-        }
-      }
+      computedOrders.push({
+        o, activeItems, status, requestedQuantity, fulfilledQuantity, amount, fulfilledAmount,
+        createdAt, approvalDate, uzCustomerId: uzCustomer?.id ?? null,
+      });
     } catch (err) {
       result.errors.push(`Order ${o.id}: ${String(err)}`);
+    }
+  }
+
+  // Fase 1: clientes referenciados por um pedido mas ausentes da busca
+  // principal de clientes (caso raro) -- cria/upsert em lote antes de
+  // seguir, igual ao fallback já usado na fase 2.
+  if (missingCustomers.size > 0) {
+    const rows = [...missingCustomers.values()].map((uzCustomer) => {
+      const email = uzCustomer.email ?? `upzero-${uzCustomer.id}@noemail.internal`;
+      const state = getAddressState(uzCustomer) ?? stateFromPhoneDdd(uzCustomer.phone);
+      const city = getAddressCity(uzCustomer);
+      const documentType = getDocumentType(uzCustomer);
+      const registrationStatus = mapRegistrationStatus(uzCustomer) ?? "APPROVED";
+      const registrationDate = getRegistrationDate(uzCustomer);
+      const approvalDate = getApprovalDate(uzCustomer, registrationStatus, registrationDate);
+      const utm = getCustomerUtm(uzCustomer);
+      return {
+        externalId: uzCustomer.id, email, name: buildCustomerName(uzCustomer.name), phone: uzCustomer.phone ?? null,
+        documentType, state, city, ...utm, registrationStatus, approvalDate, createdAt: registrationDate,
+      };
+    });
+    const insertOne = (r: (typeof rows)[number]) =>
+      db.insert(customersTable).values({ clientId, ...r })
+        .onConflictDoUpdate({
+          target: [customersTable.clientId, customersTable.externalId],
+          set: {
+            name: sql`excluded.name`, phone: sql`excluded.phone`, documentType: sql`excluded.document_type`,
+            state: sql`excluded.state`, city: sql`excluded.city`,
+            utmSource: sql`excluded.utm_source`, utmMedium: sql`excluded.utm_medium`, utmCampaign: sql`excluded.utm_campaign`,
+            utmContent: sql`excluded.utm_content`, utmTerm: sql`excluded.utm_term`,
+            registrationStatus: sql`excluded.registration_status`, approvalDate: sql`excluded.approval_date`, createdAt: sql`excluded.created_at`,
+          },
+        })
+        .returning({ id: customersTable.id, externalId: customersTable.externalId, wasInserted: sql<boolean>`(xmax = 0)` });
+
+    let insertedCustomers: Array<{ id: string; externalId: string | null; wasInserted: boolean }>;
+    try {
+      insertedCustomers = await db.insert(customersTable).values(rows.map((r) => ({ clientId, ...r })))
+        .onConflictDoUpdate({
+          target: [customersTable.clientId, customersTable.externalId],
+          set: {
+            name: sql`excluded.name`, phone: sql`excluded.phone`, documentType: sql`excluded.document_type`,
+            state: sql`excluded.state`, city: sql`excluded.city`,
+            utmSource: sql`excluded.utm_source`, utmMedium: sql`excluded.utm_medium`, utmCampaign: sql`excluded.utm_campaign`,
+            utmContent: sql`excluded.utm_content`, utmTerm: sql`excluded.utm_term`,
+            registrationStatus: sql`excluded.registration_status`, approvalDate: sql`excluded.approval_date`, createdAt: sql`excluded.created_at`,
+          },
+        })
+        .returning({ id: customersTable.id, externalId: customersTable.externalId, wasInserted: sql<boolean>`(xmax = 0)` });
+    } catch (err) {
+      console.warn(`[upzero-sync] bulk order-customer insert failed, falling back to per-row: ${String(err)}`);
+      insertedCustomers = [];
+      for (const r of rows) {
+        try {
+          const [row] = await insertOne(r);
+          if (row) insertedCustomers.push(row);
+        } catch (rowErr) {
+          result.errors.push(`Order customer ${r.externalId}: ${String(rowErr)}`);
+        }
+      }
+    }
+    for (const row of insertedCustomers) {
+      if (!row.externalId) continue;
+      const source = rows.find((r) => r.externalId === row.externalId);
+      if (!source) continue;
+      externalToInternalCustomer.set(row.externalId, {
+        id: row.id, registrationDate: source.createdAt, approvalDate: source.approvalDate, status: source.registrationStatus,
+      });
+      if (row.wasInserted) result.customersCreated++;
+      else result.customersUpdated++;
+    }
+  }
+
+  // Fase 2: resolve customerId de cada pedido agora que todo cliente
+  // referenciado já existe; descarta pedido sem cliente (igual ao
+  // comportamento original -- vira aviso, não erro fatal).
+  const resolvedOrders = computedOrders
+    .map((c) => ({
+      ...c,
+      customerId: c.uzCustomerId ? (externalToInternalCustomer.get(c.uzCustomerId)?.id ?? null) : null,
+    }))
+    .filter((c) => {
+      if (c.customerId) return true;
+      result.errors.push(`Order ${c.o.id}: no customer linked (order skipped)`);
+      return false;
+    });
+
+  // Fase 3: UTM do cliente por pedido -- dedupe por customerId mantendo a
+  // ÚLTIMA ocorrência (mesmo efeito líquido do loop sequencial original,
+  // onde cada `await db.update` subsequente sobrescrevia o anterior).
+  const utmByCustomerId = new Map<string, ReturnType<typeof getOrderUtm>>();
+  for (const c of resolvedOrders) {
+    const orderUtm = getOrderUtm(c.o);
+    if (orderUtm.utmSource || orderUtm.utmMedium || orderUtm.utmCampaign || orderUtm.utmContent || orderUtm.utmTerm) {
+      utmByCustomerId.set(c.customerId!, orderUtm);
+    }
+  }
+  if (utmByCustomerId.size > 0) {
+    const values = sql.join(
+      [...utmByCustomerId.entries()].map(([customerId, utm]) =>
+        sql`(${customerId}::text, ${utm.utmSource}::text, ${utm.utmMedium}::text, ${utm.utmCampaign}::text, ${utm.utmContent}::text, ${utm.utmTerm}::text)`,
+      ),
+      sql`, `,
+    );
+    await db.execute(sql`
+      UPDATE customers AS p
+      SET utm_source = v.utm_source, utm_medium = v.utm_medium, utm_campaign = v.utm_campaign,
+          utm_content = v.utm_content, utm_term = v.utm_term
+      FROM (VALUES ${values}) AS v(id, utm_source, utm_medium, utm_campaign, utm_content, utm_term)
+      WHERE p.id = v.id AND p.client_id = ${clientId}
+    `);
+  }
+
+  // Fase 4: upsert dos pedidos em lote (2 grupos: atualiza por ID externo
+  // já conhecido, ou cria novo) -- mesmo padrão de produtos/clientes.
+  // approval_date propositalmente NUNCA é tocado no grupo "atualiza",
+  // igual ao código original (só é setado na criação).
+  type OrderWriteRow = {
+    internalId?: string;
+    externalId: string;
+    customerId: string;
+    requestedQuantity: number;
+    fulfilledQuantity: number;
+    amount: number;
+    fulfilledAmount: number;
+    status: NonNullable<ReturnType<typeof mapOrderStatus>>;
+    approvalDate: Date | undefined;
+    state: string | null;
+    city: string | null;
+    createdAt: Date;
+  };
+  const orderUpdateRows: OrderWriteRow[] = [];
+  const orderInsertRows: OrderWriteRow[] = [];
+
+  for (const c of resolvedOrders) {
+    const shippingAddr = c.o.shipping_address ?? null;
+    const customerAddr = c.o.customer ?? null;
+    const state = shippingAddr?.state ?? shippingAddr?.address_state ?? getAddressState(customerAddr as UpZeroCustomer) ?? null;
+    const city = shippingAddr?.city ?? shippingAddr?.address_city ?? getAddressCity(customerAddr as UpZeroCustomer) ?? null;
+    const row: OrderWriteRow = {
+      externalId: c.o.id, customerId: c.customerId!, requestedQuantity: c.requestedQuantity,
+      fulfilledQuantity: c.fulfilledQuantity, amount: c.amount, fulfilledAmount: c.fulfilledAmount,
+      status: c.status!, approvalDate: c.approvalDate, state, city, createdAt: c.createdAt,
+    };
+    if (existingOrderByExtId.has(c.o.id)) {
+      orderUpdateRows.push({ ...row, internalId: existingOrderByExtId.get(c.o.id)! });
+    } else {
+      orderInsertRows.push(row);
+    }
+  }
+
+  const internalOrderIdByExternalId = new Map<string, string>();
+
+  if (orderUpdateRows.length > 0) {
+    const values = sql.join(
+      orderUpdateRows.map((r) => sql`(${r.internalId}::text, ${r.requestedQuantity}::integer, ${r.fulfilledQuantity}::integer, ${r.amount}::double precision, ${r.fulfilledAmount}::double precision, ${r.status}::text, ${r.state}::text, ${r.city}::text)`),
+      sql`, `,
+    );
+    await db.execute(sql`
+      UPDATE orders AS p
+      SET requested_quantity = v.requested_quantity, fulfilled_quantity = v.fulfilled_quantity,
+          amount = v.amount, fulfilled_amount = v.fulfilled_amount, status = v.status, state = v.state, city = v.city
+      FROM (VALUES ${values}) AS v(id, requested_quantity, fulfilled_quantity, amount, fulfilled_amount, status, state, city)
+      WHERE p.id = v.id AND p.client_id = ${clientId}
+    `);
+    result.ordersUpdated += orderUpdateRows.length;
+    for (const r of orderUpdateRows) internalOrderIdByExternalId.set(r.externalId, r.internalId!);
+  }
+
+  if (orderInsertRows.length > 0) {
+    const toDrizzleValues = (r: OrderWriteRow) => ({
+      clientId, customerId: r.customerId, externalId: r.externalId, requestedQuantity: r.requestedQuantity,
+      fulfilledQuantity: r.fulfilledQuantity, amount: r.amount, fulfilledAmount: r.fulfilledAmount,
+      status: r.status, approvalDate: r.approvalDate, state: r.state, city: r.city, createdAt: r.createdAt,
+    });
+    let insertedOrders: Array<{ id: string; externalId: string | null }>;
+    try {
+      insertedOrders = await db.insert(ordersTable).values(orderInsertRows.map(toDrizzleValues))
+        .onConflictDoUpdate({
+          target: [ordersTable.clientId, ordersTable.externalId],
+          set: {
+            requestedQuantity: sql`excluded.requested_quantity`, fulfilledQuantity: sql`excluded.fulfilled_quantity`,
+            amount: sql`excluded.amount`, fulfilledAmount: sql`excluded.fulfilled_amount`,
+            status: sql`excluded.status`, state: sql`excluded.state`, city: sql`excluded.city`,
+          },
+        })
+        .returning({ id: ordersTable.id, externalId: ordersTable.externalId });
+    } catch (err) {
+      console.warn(`[upzero-sync] bulk order insert failed, falling back to per-row: ${String(err)}`);
+      insertedOrders = [];
+      for (const r of orderInsertRows) {
+        try {
+          const [row] = await db.insert(ordersTable).values(toDrizzleValues(r)).returning({ id: ordersTable.id, externalId: ordersTable.externalId });
+          if (row) insertedOrders.push(row);
+        } catch (rowErr) {
+          result.errors.push(`Order ${r.externalId}: ${String(rowErr)}`);
+        }
+      }
+    }
+    result.ordersCreated += insertedOrders.length;
+    for (const row of insertedOrders) {
+      if (!row.externalId) continue;
+      internalOrderIdByExternalId.set(row.externalId, row.id);
+    }
+  }
+
+  for (const c of resolvedOrders) {
+    const internalOrderId = internalOrderIdByExternalId.get(c.o.id);
+    if (!internalOrderId) continue;
+    externalToInternalOrder.set(c.o.id, { id: internalOrderId, customerId: c.customerId!, createdAt: c.createdAt });
+    if (c.status === "APPROVED" || c.status === "SHIPPED" || c.status === "DELIVERED") {
+      purchaseEventCandidates.set(internalOrderId, { customerId: c.customerId!, createdAt: c.createdAt, externalOrderId: c.o.id });
+    }
+  }
+
+  // Fase 5: itens do pedido -- apaga tudo de todos os pedidos tocados numa
+  // query só, depois insere tudo em lote (mesma validação de SKU
+  // desconhecido de antes, item a item, só que sem await entre eles).
+  const touchedOrderIds = [...internalOrderIdByExternalId.values()];
+  if (touchedOrderIds.length > 0) {
+    await db.delete(orderItemsTable).where(inArray(orderItemsTable.orderId, touchedOrderIds));
+  }
+
+  const orderItemRows: Array<{ orderId: string; productId: string; quantity: number; fulfilledQuantity: number; priceAtSale: number; size: string | null; color: string | null }> = [];
+  for (const c of resolvedOrders) {
+    const internalOrderId = internalOrderIdByExternalId.get(c.o.id);
+    if (!internalOrderId) continue;
+    for (const item of c.activeItems) {
+      const sku = item.sku;
+      if (!sku) continue;
+      const localProductId = skuToLocalProductId.get(sku);
+      if (!localProductId) {
+        result.errors.push(`Order ${c.o.id} item ${item.id}: SKU "${sku}" not found in synced products, skipping`);
+        continue;
+      }
+      const attrs = item.variant_id ? variantAttrs.get(item.variant_id) : undefined;
+      const requestedItemQuantity = getItemRequestedQuantity(item);
+      const fulfilledItemQuantity = getItemFulfilledQuantity(item, requestedItemQuantity);
+      orderItemRows.push({
+        orderId: internalOrderId, productId: localProductId, quantity: requestedItemQuantity,
+        fulfilledQuantity: fulfilledItemQuantity, priceAtSale: firstNumber(item.unit_price) ?? 0,
+        size: attrs?.size ?? null, color: attrs?.color ?? null,
+      });
+    }
+  }
+  if (orderItemRows.length > 0) {
+    try {
+      await db.insert(orderItemsTable).values(orderItemRows);
+      result.orderItemsSynced += orderItemRows.length;
+    } catch (err) {
+      console.warn(`[upzero-sync] bulk order item insert failed, falling back to per-row: ${String(err)}`);
+      for (const r of orderItemRows) {
+        try {
+          await db.insert(orderItemsTable).values(r);
+          result.orderItemsSynced++;
+        } catch (rowErr) {
+          result.errors.push(`Order item (order ${r.orderId}): ${String(rowErr)}`);
+        }
+      }
     }
   }
 
