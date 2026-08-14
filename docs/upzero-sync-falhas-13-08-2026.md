@@ -233,15 +233,25 @@ Adicionado `budgetMs` em todos, e também no `backfillCustomersByNumericId`
 (busca cliente-por-cliente pra preencher lacuna do endpoint de lista —
 sem limite nenhum, outro gargalo escondido, achado por último).
 
-**Resultado confirmado em produção, sync real (não só leitura), nos 4
-clientes que travavam:**
+**Resultado confirmado em produção, sync real (não só leitura), nos 7
+clientes UpZero que estavam quebrados — todos passaram:**
 
 | Cliente | Antes | Depois | Resultado |
 |---|---|---|---|
+| Kalli Fashion | trava sempre (60s+) | ✅ 43s | (confirmado antes das buscas em lote) |
 | CELEB | trava sempre (60s+) | ✅ 33.6s | 216 clientes, 46 produtos, 27 pedidos, 66 itens |
 | Phize | trava sempre (60s+) | ✅ 21s | 248 clientes, 64 produtos, 80 pedidos, 236 itens |
 | Lipcem | trava sempre (60s+) | ✅ 11s, zero erro | 162 clientes, 60 produtos, 3 pedidos, 26 itens |
 | MX Fashion | trava sempre (60s+) | ✅ 33.6s | 200 clientes, 169 produtos, 10 pedidos, 169 itens |
+| Sline Spoorte | trava sempre (60s+) | ✅ 36.8s | 201 clientes, 331 produtos, 2 pedidos |
+| Bela Noite | trava sempre (60s+) | ✅ 37.5s | 202 clientes, 57 produtos, 9 pedidos, 12 itens |
+
+Bela Noite teve 1 erro isolado (colisão de e-mail genérico
+`suporte@upagencybrasil.com.br` usado como placeholder em múltiplos
+pedidos) — a rede de segurança (fallback linha-a-linha) funcionou como
+esperado: isolou só esse item, reportou o erro, resto do sync completou
+normalmente. Confirma que o mecanismo de degradação graciosa funciona na
+prática, não só na teoria.
 
 **Ressalva conhecida:** CELEB tem 4000+ clientes reais na UpZero, mas o
 orçamento de 15s só cobre uma fração por rodada (confirmado: 216 dessa
