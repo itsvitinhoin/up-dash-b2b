@@ -1303,6 +1303,48 @@ router.get("/clients/:clientId/sync/upzero/:jobId", requireAdmin, async (req, re
   });
 });
 
+// Achado 14/08/2026: quando a função da Vercel é morta no teto de 60s
+// (FUNCTION_INVOCATION_TIMEOUT), o job fica preso em "running" pra sempre
+// -- o processo nunca chega no catch pra marcar como failed. A trava de
+// stale job (15 min) do endpoint de sync acima só libera um novo teste
+// depois desse tempo. Isso deixa o job travado disponível pra encerrar
+// manualmente sem precisar esperar, só quando ele já está rodando há mais
+// de 1 minuto (evita cancelar um job que só começou de verdade).
+router.post("/clients/:clientId/sync/upzero/:jobId/force-fail", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = z.object({ clientId: z.string(), jobId: z.string() }).safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: paramParsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId, jobId } = paramParsed.data;
+
+  const [job] = await db
+    .select()
+    .from(syncJobsTable)
+    .where(and(eq(syncJobsTable.id, jobId), eq(syncJobsTable.clientId, clientId)));
+
+  if (!job) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Sync job not found", status: 404 });
+    return;
+  }
+  if (job.status !== "pending" && job.status !== "running") {
+    res.status(400).json({ error: true, code: "NOT_ACTIVE", message: `Job já está em status "${job.status}", nada a encerrar.`, status: 400 });
+    return;
+  }
+  const ageMs = Date.now() - (job.startedAt ?? job.createdAt).getTime();
+  if (ageMs < 60_000) {
+    res.status(400).json({ error: true, code: "TOO_RECENT", message: "Job começou há menos de 1 minuto, pode ainda estar rodando de verdade.", status: 400 });
+    return;
+  }
+
+  await db
+    .update(syncJobsTable)
+    .set({ status: "failed", error: "Encerrado manualmente (provável FUNCTION_INVOCATION_TIMEOUT — processo morto sem chance de marcar falha).", finishedAt: new Date() })
+    .where(eq(syncJobsTable.id, jobId));
+
+  res.json({ ok: true, jobId });
+});
+
 router.get("/clients/:clientId", async (req, res): Promise<void> => {
   const parsed = GetClientParams.safeParse(req.params);
   if (!parsed.success) {
