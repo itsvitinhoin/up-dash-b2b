@@ -44,6 +44,14 @@ const INVENTORY_BUDGET_MS = 15_000;  // 15 s wall-clock budget para a fase de es
 // direta no payload). Agora tem um teto explícito, com o mesmo padrão de
 // "pula o resto se estourar o orçamento" já usado na fase de estoque.
 const IMAGE_BUDGET_MS = 10_000;      // 10 s wall-clock budget para a fase de imagem
+// Achado 14/08/2026: mesmo com a janela de eventos limitada a 60 dias
+// (ver EVENTS_SYNC_DAYS em syncUpZeroClient), a busca em si não tinha
+// limite de páginas -- cliente ativo pode ter milhares de eventos de
+// comportamento (clique, page view) mesmo numa janela curta, exigindo
+// dezenas de páginas sequenciais sem teto de tempo nenhum. Confirmado ser
+// o gargalo restante da MX Fashion mesmo depois dos outros orçamentos já
+// corrigidos.
+const EVENTS_FETCH_BUDGET_MS = 15_000; // 15 s wall-clock budget pra paginação de eventos
 
 /** Create a fetch signal that aborts after FETCH_TIMEOUT_MS. */
 function makeTimeoutSignal(): AbortSignal {
@@ -686,12 +694,27 @@ async function fetchAllPages<T>(
   apiKey: string,
   path: string,
   extraParams: Record<string, string> = {},
+  budgetMs?: number,
 ): Promise<T[]> {
   const results: T[] = [];
   let page = 1;
   const seenPageSignatures = new Set<string>();
+  const budgetStart = Date.now();
 
   while (true) {
+    // Achado 14/08/2026: nenhuma das buscas paginadas tinha orçamento de
+    // tempo/quantidade de páginas -- só o orçamento de data (que já
+    // limitamos pra eventos). Cliente muito ativo pode ter milhares de
+    // linhas mesmo numa janela curta, exigindo dezenas de páginas
+    // sequenciais. Opcional pra não mudar comportamento de quem não passar
+    // budgetMs (orders/customers/products continuam sem limite, já são
+    // pequenos na prática).
+    if (budgetMs !== undefined && Date.now() - budgetStart >= budgetMs) {
+      console.warn(
+        `[upzero-sync] ${path} paging budget (${budgetMs}ms) exceeded on page ${page} — returning ${results.length} row(s) fetched so far`,
+      );
+      break;
+    }
     const params = new URLSearchParams({
       limit: String(PAGE_LIMIT),
       page: String(page),
@@ -753,9 +776,10 @@ async function fetchOptionalPages<T>(
   apiKey: string,
   path: string,
   extraParams: Record<string, string> = {},
+  budgetMs?: number,
 ): Promise<T[]> {
   try {
-    return await fetchAllPages<T>(apiKey, path, extraParams);
+    return await fetchAllPages<T>(apiKey, path, extraParams, budgetMs);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("404")) {
@@ -1274,7 +1298,7 @@ export async function syncUpZeroClient(
       fetchAllPages<UpZeroCustomer>(apiKey, "/external/v1/customers"),
       fetchAllPages<UpZeroOrder>(apiKey, "/external/v1/orders", orderDateParams),
       fetchAllCursorPages<UpZeroProduct>(apiKey, "/external/v1/products"),
-      fetchOptionalPages<UpZeroEvent>(apiKey, "/external/v1/events", eventsDateParams),
+      fetchOptionalPages<UpZeroEvent>(apiKey, "/external/v1/events", eventsDateParams, EVENTS_FETCH_BUDGET_MS),
     ]);
     upCustomers = await backfillCustomersByNumericId(clientId, apiKey, upCustomers);
   } catch (err) {
