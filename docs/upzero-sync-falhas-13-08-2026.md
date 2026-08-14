@@ -205,18 +205,53 @@ TODOS os fixes de código desta e da seção anterior já aplicados):
 | Lipcem | ❌ `FUNCTION_INVOCATION_TIMEOUT` aos 60s |
 | MX Fashion | ❌ `FUNCTION_INVOCATION_TIMEOUT` aos 60s |
 
-**Conclusão real:** os bugs de código (seções 1-4) eram reais e
-necessários corrigir, mas **não são suficientes sozinhos** pra nenhum
-cliente com volume de dado maior que o da Kalli Fashion. A causa raiz que
-sobra é a latência do Cloud SQL na região errada
-(`docs/cloud-sql-regiao-errada-14-08-2026.md`) — sozinha, ela já é grande
-o bastante (~360ms por consulta) pra estourar os 60s em qualquer cliente
-com volume moderado de produtos/clientes.
+**Conclusão real (14/08, ao longo do dia):** os bugs de código (seções
+1-4) eram reais e necessários corrigir, mas não eram suficientes sozinhos
+pra clientes com volume maior que o da Kalli Fashion. Em vez de mover o
+banco (decisão adiada, ver `docs/cloud-sql-regiao-errada-14-08-2026.md`),
+o caminho escolhido foi reduzir drasticamente a QUANTIDADE de idas ao
+banco, já que o custo por consulta (~360ms) é fixo mas o número de
+consultas não precisava ser um por item.
 
-**Isso significa que o dado que ficou de fora durante os dias de falha
-(Phize, CELEB, Lipcem, MX Fashion) continua de fora** — não foi
-recuperado, e não vai ser até o item da região do banco ser resolvido. Só
-a Kalli Fashion está com o dado em dia.
+## 8. Gravação e busca em lote — ✅ CORRIGIDO em 14/08/2026, confirmado nos 4 clientes
+
+Duas rodadas de fix, ambas necessárias:
+
+**Gravação em lote** (`upzero-sync.ts`): produtos, clientes e pedidos
+gravavam um item por vez (um `await` por produto/cliente/pedido — com
+CELEB tendo até ~250 operações nesse estilo). Reescrito em operações de
+lote (`UPDATE ... FROM VALUES` pros grupos de atualização, `INSERT`
+multi-linha com fallback linha-a-linha se colidir dentro do próprio
+lote) — mesma lógica de decisão, só a gravação virou lote.
+
+**Busca em lote** (orçamento de páginas): depois de corrigir a gravação,
+CELEB *ainda* travava — só aí descobrimos que ela tem **milhares de
+clientes** (confirmado: 20+ páginas de 200, contagem não terminou).
+`fetchAllPages`/`fetchAllCursorPages` não tinham limite de páginas pra
+customers/orders/products (só eventos já tinha, do fix de ontem).
+Adicionado `budgetMs` em todos, e também no `backfillCustomersByNumericId`
+(busca cliente-por-cliente pra preencher lacuna do endpoint de lista —
+sem limite nenhum, outro gargalo escondido, achado por último).
+
+**Resultado confirmado em produção, sync real (não só leitura), nos 4
+clientes que travavam:**
+
+| Cliente | Antes | Depois | Resultado |
+|---|---|---|---|
+| CELEB | trava sempre (60s+) | ✅ 33.6s | 216 clientes, 46 produtos, 27 pedidos, 66 itens |
+| Phize | trava sempre (60s+) | ✅ 21s | 248 clientes, 64 produtos, 80 pedidos, 236 itens |
+| Lipcem | trava sempre (60s+) | ✅ 11s, zero erro | 162 clientes, 60 produtos, 3 pedidos, 26 itens |
+| MX Fashion | trava sempre (60s+) | ✅ 33.6s | 200 clientes, 169 produtos, 10 pedidos, 169 itens |
+
+**Ressalva conhecida:** CELEB tem 4000+ clientes reais na UpZero, mas o
+orçamento de 15s só cobre uma fração por rodada (confirmado: 216 dessa
+vez). Como cada rodada recomeça da página 1 (sem cursor persistido entre
+execuções), não é garantido que rodadas futuras cubram clientes das
+páginas mais profundas — precisa observar ao longo de vários dias se a
+cobertura cresce ou se estabiliza numa fração fixa. Se estabilizar, vale
+uma paginação com cursor persistido entre execuções (não implementado
+ainda). Mesmo assim, é uma melhora enorme frente ao estado anterior (zero
+sync completando).
 
 ## Resumo de prioridade sugerida
 
