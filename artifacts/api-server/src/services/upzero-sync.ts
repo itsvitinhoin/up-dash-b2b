@@ -52,6 +52,15 @@ const IMAGE_BUDGET_MS = 10_000;      // 10 s wall-clock budget para a fase de im
 // o gargalo restante da MX Fashion mesmo depois dos outros orçamentos já
 // corrigidos.
 const EVENTS_FETCH_BUDGET_MS = 15_000; // 15 s wall-clock budget pra paginação de eventos
+// Achado 14/08/2026: mesma lacuna em customers/orders/products -- CELEB
+// tem MILHARES de clientes (confirmado: 20 páginas de 200, ainda sem
+// terminar), então a busca sozinha (sequencial, ~1-2s por página) já
+// passava de 20-40s antes mesmo de chegar na gravação. Como as 4 buscas
+// (customers/orders/products/events) rodam em paralelo (Promise.all), o
+// custo real dessa fase é o MAIOR orçamento entre elas, não a soma.
+const CUSTOMERS_FETCH_BUDGET_MS = 15_000; // 15 s — mesmo motivo do events
+const PRODUCTS_FETCH_BUDGET_MS = 10_000;  // 10 s — cursor-based, catálogo costuma ser bem menor
+const ORDERS_FETCH_BUDGET_MS = 15_000;    // 15 s — defensivo; pedido costuma ser pouco volume, mas não custa proteger
 
 /** Create a fetch signal that aborts after FETCH_TIMEOUT_MS. */
 function makeTimeoutSignal(): AbortSignal {
@@ -812,12 +821,20 @@ async function fetchAllCursorPages<T>(
   apiKey: string,
   path: string,
   extraParams: Record<string, string> = {},
+  budgetMs?: number,
 ): Promise<T[]> {
   const results: T[] = [];
   let cursor: string | null | undefined = undefined;
   let pageNum = 0;
+  const budgetStart = Date.now();
 
   while (true) {
+    if (budgetMs !== undefined && Date.now() - budgetStart >= budgetMs) {
+      console.warn(
+        `[upzero-sync] ${path} paging budget (${budgetMs}ms) exceeded on page ${pageNum + 1} — returning ${results.length} row(s) fetched so far`,
+      );
+      break;
+    }
     const params = new URLSearchParams({
       limit: String(PAGE_LIMIT),
       ...extraParams,
@@ -1295,9 +1312,9 @@ export async function syncUpZeroClient(
 
   try {
     [upCustomers, upOrders, upProducts, upEvents] = await Promise.all([
-      fetchAllPages<UpZeroCustomer>(apiKey, "/external/v1/customers"),
-      fetchAllPages<UpZeroOrder>(apiKey, "/external/v1/orders", orderDateParams),
-      fetchAllCursorPages<UpZeroProduct>(apiKey, "/external/v1/products"),
+      fetchAllPages<UpZeroCustomer>(apiKey, "/external/v1/customers", {}, CUSTOMERS_FETCH_BUDGET_MS),
+      fetchAllPages<UpZeroOrder>(apiKey, "/external/v1/orders", orderDateParams, ORDERS_FETCH_BUDGET_MS),
+      fetchAllCursorPages<UpZeroProduct>(apiKey, "/external/v1/products", {}, PRODUCTS_FETCH_BUDGET_MS),
       fetchOptionalPages<UpZeroEvent>(apiKey, "/external/v1/events", eventsDateParams, EVENTS_FETCH_BUDGET_MS),
     ]);
     upCustomers = await backfillCustomersByNumericId(clientId, apiKey, upCustomers);
