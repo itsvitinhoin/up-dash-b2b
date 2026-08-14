@@ -68,13 +68,44 @@ reduzem **quantas** queries/chamadas são feitas, o que ajuda
 independente da região do banco. Só não são suficientes sozinhos pra
 zerar o problema quando o cliente precisa de centenas de operações.
 
-## O que resolve de verdade
+## Opções consideradas em 14/08/2026 (conversa com o Marcelo)
 
-Recriar a instância Cloud SQL numa região próxima a São Paulo —
-`southamerica-east1` (a região do Google mais perto, fisicamente em São
-Paulo) — e migrar os dados pra lá. Na prática é repetir o processo de
-corte feito em 12-13/08 (dump/restore + trocar env vars + redeploy), só
-que apontando a nova instância pra região certa dessa vez.
+**A) Recriar a instância Cloud SQL em `southamerica-east1`** (a região do
+Google mais perto de São Paulo) e migrar os dados de novo. Resolve de vez,
+qualquer consulta em qualquer tela — inclusive problemas que ainda não
+descobrimos. Mas é repetir o processo de corte inteiro (dump/restore +
+env vars + redeploy), com o mesmo tipo de risco desta semana.
 
-**Ainda não decidido / não feito.** Fica pendente até decisão conjunta
-sobre quando e como fazer esse segundo corte.
+⚠️ **Bloqueio real descoberto:** a instância `vesti-database` **não é
+exclusiva do UpDash** — o próprio doc de migração já registrava que ela é
+"compartilhada com outros bancos (upflow, etc)", além de sobras de um
+projeto Prisma de terceiros (`prisma_migrate_shadow_db_*`). **Antes de
+qualquer plano de mover/recriar essa instância**, precisa descobrir quem
+mais usa ela, onde esses sistemas rodam, e se mudar a região ajuda ou
+atrapalha eles. Isso não é algo que dá pra decidir só olhando o código do
+UpDash — precisa perguntar pro time quem mantém o "upflow".
+
+**B) Não mexer no banco — reduzir a quantidade de queries no código.**
+Em vez de mover infraestrutura compartilhada, atacar os pontos que fazem
+muitas consultas pequenas em vez de poucas grandes (o mesmo padrão do
+fix do `/orchestrator/overview` de hoje: 45s com erro → 1,28s, só
+reescrevendo consultas em lote). O sync de pedidos UpZero tem esse mesmo
+padrão — grava produto/cliente/pedido um de cada vez; dá pra reescrever
+pra gravar em lote, reduzindo de ~300 queries pra ~15-20 por sync.
+
+**C) Mover o app inteiro (não só o banco) pra Google Cloud**, no mesmo
+projeto/região do Cloud SQL. Resolveria de vez e ainda destravaria o
+scheduler noturno que hoje nunca roda em produção (`services/scheduler.ts`,
+só funciona no entrypoint `src/index.ts`, que a Vercel não usa). Mas é um
+projeto de infraestrutura bem maior — reconstruir deploy automático,
+HTTPS/domínio, CDN, preview de branch, tudo que a Vercel hoje dá de
+graça. Não é decisão pra tomar no meio de uma resposta a incidente.
+
+## Decisão atual (14/08/2026)
+
+Seguir com a **opção B agora** (reescrever o sync UpZero pra gravação em
+lote) — não mexe em infraestrutura compartilhada, resolve o que está
+quebrado hoje (Phize, CELEB, Lipcem, MX Fashion). A **opção A** fica como
+projeto de médio prazo, condicionada a mapear antes quem mais usa a
+instância compartilhada. A **opção C** fica só registrada como ideia de
+longo prazo, sem compromisso de fazer.
