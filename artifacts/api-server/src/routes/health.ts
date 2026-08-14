@@ -119,6 +119,19 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
       ORDER BY last_created_at DESC
     `);
 
+    // Checagem 14/08/2026: suspeita de que o gargalo do sync da UP Zero seja
+    // gravação sequencial no banco (uma query por produto/cliente, sem
+    // agrupar) -- mas o pool tem max:1 por instância serverless, então
+    // "paralelizar" no app não adiantaria nada se o custo real for round-trip
+    // de rede/protocolo por query. Mede isso na prática: 30 queries triviais
+    // sequenciais, mesma conexão que o sync usaria, pra saber o custo real
+    // por chamada antes de decidir a forma do fix.
+    const queryTimingStart = Date.now();
+    for (let i = 0; i < 30; i++) {
+      await db.execute(sql`SELECT 1`);
+    }
+    const queryTimingTotalMs = Date.now() - queryTimingStart;
+
     res.json({
       ...base,
       version: (versionResult.rows[0] as Record<string, unknown> | undefined)?.version ?? null,
@@ -129,6 +142,7 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
       tableStats: tableStats.rows,
       ordersIndexes: indexCheck.rows,
       connectionActivity: connectionActivity.rows,
+      queryTiming: { queries: 30, totalMs: queryTimingTotalMs, avgMsPerQuery: queryTimingTotalMs / 30 },
     });
   } catch (err) {
     logger.error({ err }, "[db-diagnostics] falhou");
