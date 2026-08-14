@@ -61,6 +61,11 @@ const EVENTS_FETCH_BUDGET_MS = 15_000; // 15 s wall-clock budget pra paginação
 const CUSTOMERS_FETCH_BUDGET_MS = 15_000; // 15 s — mesmo motivo do events
 const PRODUCTS_FETCH_BUDGET_MS = 10_000;  // 10 s — cursor-based, catálogo costuma ser bem menor
 const ORDERS_FETCH_BUDGET_MS = 15_000;    // 15 s — defensivo; pedido costuma ser pouco volume, mas não custa proteger
+// Orçamento pequeno de propósito: essa fase (backfillCustomersByNumericId)
+// já roda DEPOIS da busca principal (soma ao tempo total, não é paralela
+// como as 4 de cima) -- é um refinamento (preenche cliente que a lista
+// não trouxe), não essencial pro sync básico funcionar.
+const CUSTOMER_BACKFILL_BUDGET_MS = 5_000; // 5 s
 
 /** Create a fetch signal that aborts after FETCH_TIMEOUT_MS. */
 function makeTimeoutSignal(): AbortSignal {
@@ -915,7 +920,19 @@ async function backfillCustomersByNumericId(
       `backfilling ${idsToFetch.length} numeric customer IDs up to ${maxId}`,
   );
 
+  // Achado 14/08/2026: esse backfill (busca cliente por cliente, um ID
+  // numérico de cada vez, pra preencher lacuna que o endpoint de lista não
+  // trouxe) não tinha orçamento de tempo nenhum -- pra CELEB (milhares de
+  // clientes), `idsToFetch` pode ter centenas/milhares de IDs, e mesmo a
+  // 25 de concorrência isso nunca termina dentro do limite da Vercel.
+  // Mesmo padrão de "pula o resto e loga" já usado em estoque/imagem.
+  const backfillBudgetStart = Date.now();
+  let backfillBudgetExceeded = false;
   const fetched = await runConcurrent(idsToFetch, 25, async (id) => {
+    if (Date.now() - backfillBudgetStart >= CUSTOMER_BACKFILL_BUDGET_MS) {
+      backfillBudgetExceeded = true;
+      return null;
+    }
     try {
       return await fetchCustomerById(apiKey, id);
     } catch (err) {
@@ -923,6 +940,9 @@ async function backfillCustomersByNumericId(
       return null;
     }
   });
+  if (backfillBudgetExceeded) {
+    console.warn(`[upzero-sync] customer backfill budget (${CUSTOMER_BACKFILL_BUDGET_MS}ms) exceeded — some IDs skipped`);
+  }
 
   let added = 0;
   for (const customer of fetched) {
