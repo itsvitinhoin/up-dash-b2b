@@ -662,6 +662,118 @@ async function clientMetrics(clientId: string, from: Date, to: Date) {
   };
 }
 
+// Achado 14/08/2026 (relato do Lucas: "IA Comercial" travando em loading
+// infinito): GET /orchestrator/overview fazia ~7 queries POR cliente B2B
+// (ensureCommercialSetup sozinho já são 5 sub-chamadas) via Promise.all --
+// mas o pool de conexão tem max:1 por instância serverless, então isso
+// vira uma fila enorme numa única conexão. Com ~50 clientes B2B, a fila
+// estourava o connectionTimeoutMillis do pool e a rota inteira falhava com
+// 500 depois de ~45s (confirmado em produção). Piora ainda mais com a
+// região errada do Cloud SQL (docs/cloud-sql-regiao-errada-14-08-2026.md).
+// Versões em lote abaixo: N queries totais (uma por fonte de dado, com
+// GROUP BY clientId) em vez de N queries por cliente. Mantém as versões
+// originais (getCommercialOperationStatus, clientMetrics) para os outros
+// endpoints que operam em UM cliente só, onde não há esse problema.
+async function getCommercialOperationStatusBulk(clientIds: string[]): Promise<Map<string, "active" | "paused">> {
+  const statusByClient = new Map<string, "active" | "paused">();
+  if (clientIds.length === 0) return statusByClient;
+  const rows = await db
+    .select({ clientId: aiCommercialOperationsTable.clientId, status: aiCommercialOperationsTable.status })
+    .from(aiCommercialOperationsTable)
+    .where(inArray(aiCommercialOperationsTable.clientId, clientIds));
+  for (const row of rows) {
+    statusByClient.set(row.clientId, row.status === "active" ? "active" : "paused");
+  }
+  return statusByClient;
+}
+
+async function webhookSecretsBulk(clientIds: string[]): Promise<Map<string, string | null>> {
+  const secretByClient = new Map<string, string | null>();
+  if (clientIds.length === 0) return secretByClient;
+  const rows = await db
+    .select({ clientId: ecommerceWebhookConfigsTable.clientId, secretHash: ecommerceWebhookConfigsTable.secretHash })
+    .from(ecommerceWebhookConfigsTable)
+    .where(inArray(ecommerceWebhookConfigsTable.clientId, clientIds));
+  for (const row of rows) {
+    secretByClient.set(row.clientId, row.secretHash);
+  }
+  return secretByClient;
+}
+
+async function clientMetricsBulk(
+  clientIds: string[],
+  from: Date,
+  to: Date,
+): Promise<Map<string, ReturnType<typeof clientMetricsDefault>>> {
+  const metricsByClient = new Map<string, ReturnType<typeof clientMetricsDefault>>();
+  for (const clientId of clientIds) metricsByClient.set(clientId, clientMetricsDefault());
+  if (clientIds.length === 0) return metricsByClient;
+
+  const [orderRows, customerRows, whatsappRows] = await Promise.all([
+    db
+      .select({
+        clientId: ordersTable.clientId,
+        orders: sql<number>`COUNT(*)::int`,
+        revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+        requestedQuantity: sql<number>`COALESCE(SUM(${ordersTable.requestedQuantity}), 0)::int`,
+      })
+      .from(ordersTable)
+      .where(and(inArray(ordersTable.clientId, clientIds), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to)))
+      .groupBy(ordersTable.clientId),
+    db
+      .select({
+        clientId: customersTable.clientId,
+        registrations: sql<number>`COUNT(*)::int`,
+        approved: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
+      })
+      .from(customersTable)
+      .where(and(inArray(customersTable.clientId, clientIds), gte(customersTable.createdAt, from), lte(customersTable.createdAt, to)))
+      .groupBy(customersTable.clientId),
+    db
+      .select({
+        clientId: whatsappConversationsTable.clientId,
+        conversations: sql<number>`COUNT(*)::int`,
+        open: sql<number>`COUNT(*) FILTER (WHERE ${whatsappConversationsTable.status} <> 'closed')::int`,
+      })
+      .from(whatsappConversationsTable)
+      .where(and(inArray(whatsappConversationsTable.clientId, clientIds), gte(whatsappConversationsTable.createdAt, from), lte(whatsappConversationsTable.createdAt, to)))
+      .groupBy(whatsappConversationsTable.clientId),
+  ]);
+
+  for (const row of orderRows) {
+    const entry = metricsByClient.get(row.clientId) ?? clientMetricsDefault();
+    entry.orders = row.orders ?? 0;
+    entry.revenue = serializeCurrency(row.revenue ?? 0);
+    entry.requestedQuantity = row.requestedQuantity ?? 0;
+    metricsByClient.set(row.clientId, entry);
+  }
+  for (const row of customerRows) {
+    const entry = metricsByClient.get(row.clientId) ?? clientMetricsDefault();
+    entry.registrations = row.registrations ?? 0;
+    entry.approvedRegistrations = row.approved ?? 0;
+    metricsByClient.set(row.clientId, entry);
+  }
+  for (const row of whatsappRows) {
+    const entry = metricsByClient.get(row.clientId) ?? clientMetricsDefault();
+    entry.conversations = row.conversations ?? 0;
+    entry.openConversations = row.open ?? 0;
+    metricsByClient.set(row.clientId, entry);
+  }
+  return metricsByClient;
+}
+
+function clientMetricsDefault() {
+  return {
+    orders: 0,
+    revenue: serializeCurrency(0),
+    requestedQuantity: 0,
+    registrations: 0,
+    approvedRegistrations: 0,
+    conversations: 0,
+    openConversations: 0,
+  };
+}
+
 async function buildCrmCards(clientId: string, from: Date, to: Date) {
   const aiRows = await db
     .select({
@@ -2414,18 +2526,27 @@ router.post("/orchestrator/clients", requireAdmin, async (req, res): Promise<voi
 router.get("/orchestrator/overview", requireAdmin, async (req, res): Promise<void> => {
   const { from, to } = dateWindow(req);
   const clients = await getB2BClients();
-  await Promise.all(clients.map((client) => ensureCommercialSetup(client.id)));
-  const brands = await Promise.all(
-    clients.map(async (client) => {
-      const aiCommercialStatus = await getCommercialOperationStatus(client.id);
-      return {
-        ...client,
-        aiCommercialStatus,
-        webhookUrl: await webhookUrlForClient(client.id),
-        ...(await clientMetrics(client.id, from, to)),
-      };
-    }),
-  );
+  const clientIds = clients.map((client) => client.id);
+
+  // Achado 14/08/2026: essa rota fazia ~7 queries POR cliente (incluindo
+  // ensureCommercialSetup, que cria linhas padrão se não existirem -- não
+  // precisa rodar em toda visualização da lista, só quando o cliente
+  // realmente configura algo, e os endpoints que fazem isso já chamam
+  // ensureCommercialSetup sozinhos). Trocado por 5 queries em lote no
+  // total, independente de quantos clientes existirem. Ver comentário
+  // acima de getCommercialOperationStatusBulk.
+  const [statusByClient, secretByClient, metricsByClient] = await Promise.all([
+    getCommercialOperationStatusBulk(clientIds),
+    webhookSecretsBulk(clientIds),
+    clientMetricsBulk(clientIds, from, to),
+  ]);
+
+  const brands = clients.map((client) => ({
+    ...client,
+    aiCommercialStatus: statusByClient.get(client.id) ?? "paused",
+    webhookUrl: publicWebhookTemplateUrl(client.id, secretByClient.get(client.id) ?? null),
+    ...(metricsByClient.get(client.id) ?? clientMetricsDefault()),
+  }));
   res.json({
     from,
     to,
