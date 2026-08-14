@@ -1234,6 +1234,24 @@ export async function syncUpZeroClient(
     ? {}
     : { start_date: fmt(syncCutoff), end_date: fmt(endDate) };
 
+  // Achado 14/08/2026: /external/v1/events reusava orderDateParams -- pra
+  // cliente novo (needsFullHistory=true, o pedido mais antigo tem menos de
+  // 90 dias), isso buscava TODO o histórico de eventos de comportamento
+  // (clique, page view, etc) sem filtro de data nenhum. Evento é muito mais
+  // numeroso que pedido (centenas por dia contra poucos por semana), e não
+  // tem o mesmo motivo de negócio pra nunca perder histórico antigo --
+  // funil de automação só usa evento recente mesmo. Isso explicava o
+  // timeout persistente da MX Fashion (cliente novo, ativo, sempre em modo
+  // full-history) mesmo depois do orçamento de estoque/imagem já corrigido.
+  // Eventos agora sempre usam uma janela rolante fixa, nunca "desde sempre".
+  const EVENTS_SYNC_DAYS = 60;
+  const eventsCutoff = new Date();
+  eventsCutoff.setDate(endDate.getDate() - EVENTS_SYNC_DAYS);
+  const eventsDateParams: Record<string, string> = {
+    start_date: fmt(eventsCutoff),
+    end_date: fmt(endDate),
+  };
+
   if (needsFullHistory) {
     console.log(
       `[upzero-sync] client ${clientId}: fetching full order history ` +
@@ -1256,7 +1274,7 @@ export async function syncUpZeroClient(
       fetchAllPages<UpZeroCustomer>(apiKey, "/external/v1/customers"),
       fetchAllPages<UpZeroOrder>(apiKey, "/external/v1/orders", orderDateParams),
       fetchAllCursorPages<UpZeroProduct>(apiKey, "/external/v1/products"),
-      fetchOptionalPages<UpZeroEvent>(apiKey, "/external/v1/events", orderDateParams),
+      fetchOptionalPages<UpZeroEvent>(apiKey, "/external/v1/events", eventsDateParams),
     ]);
     upCustomers = await backfillCustomersByNumericId(clientId, apiKey, upCustomers);
   } catch (err) {
