@@ -1,0 +1,69 @@
+# Build + deploy do Cloud Run Job de sync (UpZero/Meta Ads/Nuvemshop/métricas
+# diárias). Independente do deploy da Vercel -- só builda/atualiza o job.
+#
+# Mesmo projeto GCP do job legado (up-vesti-report, ver
+# script-vesti-nuvem/cloudbuild.yaml), mas região us-central1 (perto do
+# Cloud SQL) em vez de europe-west1 -- é exatamente essa diferença de
+# região que elimina os ~360ms/query medidos em
+# docs/cloud-sql-regiao-errada-14-08-2026.md.
+#
+# Setup manual, uma vez só (gcloud CLI, feito por quem tem acesso ao
+# projeto -- eu não tenho gcloud instalado aqui):
+#
+#   gcloud run jobs create upzero-sync-job \
+#     --project=up-vesti-report \
+#     --region=us-central1 \
+#     --image=gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job \
+#     --set-cloudsql-instances=up-vesti-report:us-central1:vesti-database \
+#     --set-env-vars=CLOUD_SQL_CONNECTION_NAME=up-vesti-report:us-central1:vesti-database \
+#     --set-secrets=DB_USER=db-user:latest,DB_PASSWORD=db-password:latest,DB_NAME=db-name:latest \
+#     --max-retries=1 \
+#     --task-timeout=30m
+#
+#   # Trigger recorrente (substitui o cron do GitHub Actions pra esta task):
+#   gcloud scheduler jobs create http upzero-sync-job-trigger \
+#     --project=up-vesti-report \
+#     --location=us-central1 \
+#     --schedule="*/15 * * * *" \
+#     --uri="https://us-central1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/up-vesti-report/jobs/upzero-sync-job:run" \
+#     --http-method=POST \
+#     --oauth-service-account-email=<service-account-com-permissao-run.jobs.run>
+#
+# Depois desse setup inicial, este cloudbuild.yaml só builda e atualiza a
+# imagem (gcloud run jobs update) -- é o que o Cloud Build Trigger (a
+# configurar, apontando pra este repo) roda a cada push na main.
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-f"
+      - "artifacts/api-server/Dockerfile.job"
+      - "-t"
+      - "gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:$SHORT_SHA"
+      - "-t"
+      - "gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:latest"
+      - "."
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job"
+      - "--all-tags"
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "jobs"
+      - "update"
+      - "upzero-sync-job"
+      - "--project=up-vesti-report"
+      - "--region=us-central1"
+      - "--image=gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:$SHORT_SHA"
+
+images:
+  - "gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:$SHORT_SHA"
+  - "gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

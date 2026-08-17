@@ -18,6 +18,10 @@ async function buildAll() {
     entryPoints: {
       index: path.resolve(artifactDir, "src/index.ts"),
       serverless: path.resolve(artifactDir, "src/app.ts"),
+      // Cloud Run Job -- roda as extracoes periodicas fora da Vercel, perto
+      // do banco (ver src/jobs/upzero-sync-job.ts). Mesmo bundling que os
+      // outros dois entry points (mesma lista de external, mesmo banner).
+      "upzero-sync-job": path.resolve(artifactDir, "src/jobs/upzero-sync-job.ts"),
     },
     platform: "node",
     bundle: true,

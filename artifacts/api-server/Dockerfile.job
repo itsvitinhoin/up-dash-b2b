@@ -1,0 +1,38 @@
+# Cloud Run Job -- roda as extracoes periodicas (UpZero, Meta Ads,
+# Nuvemshop, metricas diarias) perto do banco (us-central1), fora do
+# limite de 60s da funcao serverless da Vercel. Ver
+# docs/cloud-sql-regiao-errada-14-08-2026.md pro motivo, e
+# src/jobs/upzero-sync-job.ts pro codigo em si.
+#
+# Single-stage de proposito (nao multi-stage) -- mesmo espirito do
+# Dockerfile.job do script-vesti-nuvem: simplicidade acima de tamanho de
+# imagem, ja que roda como job periodico, nao servico web latency-sensitive.
+FROM node:22-slim
+
+WORKDIR /app
+
+# Instala pnpm -- versao fixa (pinada igual ao ambiente local, ver
+# `pnpm -v`) porque sem isso o corepack pode puxar uma versao diferente que
+# nao respeita da mesma forma o "onlyBuiltDependencies" do
+# pnpm-workspace.yaml (esbuild precisa rodar o postinstall pra baixar o
+# binario da plataforma certa; sem essa aprovacao o install falha com
+# ERR_PNPM_IGNORED_BUILDS). Copia o monorepo inteiro -- precisa da
+# estrutura de workspace completa (lib/db, lib/api-zod etc) porque o
+# api-server importa @workspace/db, que precisa ser buildado primeiro (ver
+# "typecheck:libs" no package.json raiz -- projetos TS compostos, nao roda
+# so com tsx/ts-node).
+RUN corepack enable && corepack prepare pnpm@10.22.0 --activate
+
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json tsconfig.base.json ./
+COPY artifacts ./artifacts
+COPY lib ./lib
+COPY scripts ./scripts
+
+RUN pnpm install --frozen-lockfile
+
+# Builda so o que esse job precisa: as libs compostas (lib/db, lib/api-zod
+# etc, via typecheck:libs) e o bundle do api-server -- pula o build do
+# frontend (up-dash), que essa imagem nunca usa.
+RUN pnpm run typecheck:libs && pnpm --filter @workspace/api-server run build
+
+CMD ["node", "--enable-source-maps", "artifacts/api-server/dist/upzero-sync-job.mjs"]

@@ -1,0 +1,120 @@
+/**
+ * Cloud Run Job — roda as extrações periódicas (UpZero, Meta Ads,
+ * Nuvemshop, métricas diárias) fora da Vercel, perto do banco de verdade.
+ *
+ * Por quê: a Vercel roda em São Paulo (gru1), o Cloud SQL em us-central1
+ * (Iowa) -- cada consulta paga ~360ms de latência de rede (ver
+ * docs/cloud-sql-regiao-errada-14-08-2026.md). O timeout de função
+ * serverless da Vercel (60s) some quando esse mesmo código roda como Cloud
+ * Run Job (sem limite de tempo prático) na região certa (us-central1,
+ * perto do banco) -- resolve o gargalo de vez, sem precisar de mais
+ * otimização de código.
+ *
+ * Reaproveita inteiramente a lógica já existente em services/extraction-runner.ts
+ * (a mesma usada pelas rotas /cron/extractions/* chamadas hoje pelo GitHub
+ * Actions) -- esse arquivo só troca "chamada HTTP disparada pelo GitHub
+ * Actions" por "processo que roda até terminar, disparado pelo Cloud
+ * Scheduler".
+ *
+ * Variáveis de ambiente:
+ *   TASK=upzero_transactional  -> sync de pedidos/clientes/produtos UpZero (padrão)
+ *   TASK=upzero_analytics      -> sync de eventos de comportamento UpZero
+ *   TASK=meta_ads              -> sync de métricas de anúncio Meta
+ *   TASK=nuvemshop_transactional -> sync de pedidos/clientes/produtos Nuvemshop
+ *   TASK=daily_metrics         -> recalcula métricas diárias agregadas
+ *   TASK=hourly_bundle         -> roda upzero_analytics + meta_ads juntos
+ *
+ *   TRIGGER=cron|manual   -> como fica registrado em sync_jobs (padrão: cron)
+ *   CLIENT_ID=xxx         -> restringe a um cliente só (todas as tasks exceto hourly_bundle/daily_metrics)
+ *   LIMIT=10 OFFSET=0     -> pagina os clientes processados (upzero_transactional/nuvemshop_transactional)
+ *   LOOKBACK_DAYS=3       -> só nuvemshop_transactional
+ *   SKIP_CATALOG=1        -> só nuvemshop_transactional
+ *   ALLOW_PARTIAL=1       -> só nuvemshop_transactional
+ *   DATE_FROM=YYYY-MM-DD DATE_TO=YYYY-MM-DD -> obrigatório pra daily_metrics
+ */
+import "dotenv/config";
+import { logger } from "../lib/logger";
+import {
+  runUpzeroTransactionalExtraction,
+  runUpzeroAnalyticsExtraction,
+  runMetaAdsExtraction,
+  runNuvemshopTransactionalExtraction,
+  runDailyMetricsBackfill,
+  runHourlyExtractionBundle,
+  type ExtractionTrigger,
+} from "../services/extraction-runner";
+
+function envBool(name: string): boolean {
+  return process.env[name] === "1" || process.env[name] === "true";
+}
+
+function envInt(name: string): number | undefined {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+async function main() {
+  const task = process.env.TASK ?? "upzero_transactional";
+  const trigger = (process.env.TRIGGER === "manual" ? "manual" : "cron") as ExtractionTrigger;
+  const clientId = process.env.CLIENT_ID || undefined;
+  const limit = envInt("LIMIT");
+  const offset = envInt("OFFSET");
+
+  logger.info({ task, trigger, clientId, limit, offset }, "[upzero-sync-job] starting");
+  const startedAt = Date.now();
+
+  let result: unknown;
+  switch (task) {
+    case "upzero_transactional":
+      result = await runUpzeroTransactionalExtraction(trigger, { clientId, limit, offset });
+      break;
+    case "upzero_analytics":
+      result = await runUpzeroAnalyticsExtraction(trigger);
+      break;
+    case "meta_ads":
+      result = await runMetaAdsExtraction(trigger);
+      break;
+    case "nuvemshop_transactional":
+      result = await runNuvemshopTransactionalExtraction(trigger, {
+        clientId,
+        limit,
+        offset,
+        lookbackDays: envInt("LOOKBACK_DAYS"),
+        skipCatalog: envBool("SKIP_CATALOG"),
+        allowPartial: envBool("ALLOW_PARTIAL"),
+      });
+      break;
+    case "daily_metrics": {
+      const dateFrom = process.env.DATE_FROM;
+      const dateTo = process.env.DATE_TO;
+      if (!dateFrom || !dateTo) {
+        logger.error("[upzero-sync-job] TASK=daily_metrics precisa de DATE_FROM e DATE_TO (YYYY-MM-DD)");
+        process.exit(1);
+      }
+      result = await runDailyMetricsBackfill(trigger, { clientId, dateFrom, dateTo });
+      break;
+    }
+    case "hourly_bundle":
+      result = await runHourlyExtractionBundle(trigger);
+      break;
+    default:
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle.`);
+      process.exit(1);
+  }
+
+  const durationMs = Date.now() - startedAt;
+  logger.info({ task, durationMs, result }, "[upzero-sync-job] finished");
+
+  // Segue o mesmo padrão do job Python legado (script-vesti-nuvem/scheduler_job.py):
+  // sai com código != 0 se algo falhou, pro Cloud Run/Cloud Scheduler conseguir
+  // alertar sem precisar reprocessar log manualmente.
+  const failed = (result as { failed?: number })?.failed ?? 0;
+  process.exit(failed > 0 ? 1 : 0);
+}
+
+main().catch((err) => {
+  logger.error({ err }, "[upzero-sync-job] unhandled error");
+  process.exit(1);
+});
