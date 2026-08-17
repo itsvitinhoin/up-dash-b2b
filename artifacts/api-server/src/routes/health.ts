@@ -81,6 +81,17 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
       WHERE tablename = 'whatsapp_integrations'
       ORDER BY indexname
     `);
+    // Pra achar um cliente real com 2+ WABAs conectados pra usar no teste de
+    // staging que o Victor pediu antes de mesclar codex/global-whatsapp-multi-waba.
+    const multiWabaClients = await db.execute(sql`
+      SELECT wi.client_id, c.name AS client_name, count(*) AS waba_count
+      FROM whatsapp_integrations wi
+      JOIN clients c ON c.id = wi.client_id
+      GROUP BY wi.client_id, c.name
+      HAVING count(*) > 1
+      ORDER BY waba_count DESC
+      LIMIT 10
+    `);
     // Suspeita nova: orders_client_created_idx existe e a tabela e pequena
     // (9928 linhas), entao nao deveria ser sequential scan lento. maxConnections
     // no Cloud SQL e 25 (era 60 na Supabase) -- conta quantas conexoes estao
@@ -154,6 +165,7 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
       tableStats: tableStats.rows,
       ordersIndexes: indexCheck.rows,
       whatsappIntegrationsIndexes: whatsappIndexCheck.rows,
+      multiWabaClients: multiWabaClients.rows,
       connectionActivity: connectionActivity.rows,
       queryTiming: { queries: 30, totalMs: queryTimingTotalMs, avgMsPerQuery: queryTimingTotalMs / 30 },
     });
