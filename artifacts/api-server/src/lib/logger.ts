@@ -1,9 +1,13 @@
 import pino from "pino";
+import { serializeErrorForLog } from "./safe-error";
 
 const isProduction = process.env.NODE_ENV === "production";
 
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? "info",
+  serializers: {
+    err: serializeErrorForLog,
+  },
   redact: {
     paths: [
       "req.headers.authorization",

@@ -32,7 +32,14 @@ export const whatsappIntegrationsTable = pgTable(
   },
   (table) => ({
     clientIdx: index("whatsapp_integrations_client_idx").on(table.clientId),
-    clientUnique: uniqueIndex("whatsapp_integrations_client_unique").on(table.clientId),
+    clientWabaUnique: uniqueIndex("whatsapp_integrations_client_waba_unique").on(
+      table.clientId,
+      table.wabaId,
+    ),
+    clientPhoneIdx: index("whatsapp_integrations_client_phone_idx").on(
+      table.clientId,
+      table.phoneNumberId,
+    ),
   }),
 );
 

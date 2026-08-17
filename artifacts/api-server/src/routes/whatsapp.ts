@@ -4297,7 +4297,7 @@ router.post("/whatsapp/embedded-signup", async (req, res): Promise<void> => {
         tokenExpiresAt: null,
         error: null,
       };
-  const hasSignupIdentity = parsed.data.event === "FINISH" || parsed.data.wabaId || parsed.data.phoneNumberId;
+  const hasSignupIdentity = Boolean(parsed.data.wabaId && parsed.data.phoneNumberId);
   if (!hasSignupIdentity || !token.accessToken) {
     res.status(422).json({
       error: true,
