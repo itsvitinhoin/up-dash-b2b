@@ -23,6 +23,8 @@
  *   TASK=nuvemshop_transactional -> sync de pedidos/clientes/produtos Nuvemshop
  *   TASK=daily_metrics         -> recalcula métricas diárias agregadas
  *   TASK=hourly_bundle         -> roda upzero_analytics + meta_ads juntos
+ *   TASK=whatsapp_fix_phone_waba -> corrige o waba_id de UM número em
+ *     whatsapp_phone_numbers (ver CLIENT_ID/PHONE_NUMBER_ID/WABA_ID abaixo)
  *
  *   TRIGGER=cron|manual   -> como fica registrado em sync_jobs (padrão: cron)
  *   CLIENT_ID=xxx         -> restringe a um cliente só (todas as tasks exceto hourly_bundle/daily_metrics)
@@ -31,8 +33,22 @@
  *   SKIP_CATALOG=1        -> só nuvemshop_transactional
  *   ALLOW_PARTIAL=1       -> só nuvemshop_transactional
  *   DATE_FROM=YYYY-MM-DD DATE_TO=YYYY-MM-DD -> obrigatório pra daily_metrics
+ *   PHONE_NUMBER_ID=xxx WABA_ID=xxx -> obrigatório pra whatsapp_fix_phone_waba
+ *
+ * TASK=whatsapp_fix_phone_waba existe porque /api/whatsapp/connections/sync
+ * (Vercel, gru1) estoura FUNCTION_INVOCATION_TIMEOUT em clientes com 2+ WABAs
+ * -- mesmo motivo de todas as outras migrações deste arquivo (ver
+ * docs/cloud-sql-regiao-errada-14-08-2026.md). Achado em 17/08/2026
+ * investigando bug relatado pelo Lucas (números "sumindo" da Sline
+ * Spoorte): whatsapp_phone_numbers.waba_id pode ficar desatualizado em
+ * relação a whatsapp_integrations.waba_id (fonte da verdade) quando um
+ * cliente tem múltiplos WABAs. Corrige só esse campo, sem chamar a API da
+ * Meta -- não substitui um sync completo, é a correção pontual que o sync
+ * faria pra esse número específico.
  */
 import "dotenv/config";
+import { and, eq } from "drizzle-orm";
+import { db, whatsappPhoneNumbersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import {
   runUpzeroTransactionalExtraction,
@@ -43,6 +59,24 @@ import {
   runHourlyExtractionBundle,
   type ExtractionTrigger,
 } from "../services/extraction-runner";
+
+async function fixWhatsappPhoneWaba(params: {
+  clientId: string;
+  phoneNumberId: string;
+  wabaId: string;
+}) {
+  const [updated] = await db
+    .update(whatsappPhoneNumbersTable)
+    .set({ wabaId: params.wabaId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(whatsappPhoneNumbersTable.clientId, params.clientId),
+        eq(whatsappPhoneNumbersTable.phoneNumberId, params.phoneNumberId),
+      ),
+    )
+    .returning();
+  return { updated: Boolean(updated), row: updated ?? null };
+}
 
 function envBool(name: string): boolean {
   return process.env[name] === "1" || process.env[name] === "true";
@@ -99,8 +133,18 @@ async function main() {
     case "hourly_bundle":
       result = await runHourlyExtractionBundle(trigger);
       break;
+    case "whatsapp_fix_phone_waba": {
+      const phoneNumberId = process.env.PHONE_NUMBER_ID;
+      const wabaId = process.env.WABA_ID;
+      if (!clientId || !phoneNumberId || !wabaId) {
+        logger.error("[upzero-sync-job] TASK=whatsapp_fix_phone_waba precisa de CLIENT_ID, PHONE_NUMBER_ID e WABA_ID");
+        process.exit(1);
+      }
+      result = await fixWhatsappPhoneWaba({ clientId, phoneNumberId, wabaId });
+      break;
+    }
     default:
-      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle.`);
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle, whatsapp_fix_phone_waba.`);
       process.exit(1);
   }
 

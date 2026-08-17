@@ -705,26 +705,47 @@ function getWhatsappMessageDate(timestamp?: string): Date {
 
 async function resolveWhatsappClientByPhoneNumber(phoneNumberId?: string | null) {
   if (!phoneNumberId) return null;
+
+  // Corrigido 17/08/2026: pra clientes com múltiplos WABAs (ex.: Sline
+  // Spoorte, 2 WABAs), essa função resolvia a integração só por client_id
+  // (sem considerar QUAL WABA) — .limit(1) sem ORDER BY podia pegar
+  // qualquer uma das integrações do cliente. Como o webhook usa o resultado
+  // pra regravar whatsapp_phone_numbers.waba_id a cada mensagem recebida,
+  // isso corrompia o waba_id do número de volta pro errado mesmo depois de
+  // corrigido na mão (achado investigando bug relatado pelo Lucas: números
+  // "sumindo" do card do WABA certo). Preferência agora: casar pelo
+  // phone_number_id da própria integração (preciso, aponta pra 1 WABA só),
+  // depois pelo integration_id já gravado no número, só então cai pro
+  // client_id (legado, pode escolher a integração errada em multi-WABA).
+  const [byIntegrationPhoneNumber] = await db
+    .select()
+    .from(whatsappIntegrationsTable)
+    .where(eq(whatsappIntegrationsTable.phoneNumberId, phoneNumberId))
+    .limit(1);
+  if (byIntegrationPhoneNumber) return byIntegrationPhoneNumber;
+
   const [phoneNumber] = await db
     .select()
     .from(whatsappPhoneNumbersTable)
     .where(eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId))
     .limit(1);
-  if (phoneNumber) {
-    const [integration] = await db
+  if (!phoneNumber) return null;
+
+  if (phoneNumber.integrationId) {
+    const [byIntegrationId] = await db
       .select()
       .from(whatsappIntegrationsTable)
-      .where(eq(whatsappIntegrationsTable.clientId, phoneNumber.clientId))
+      .where(eq(whatsappIntegrationsTable.id, phoneNumber.integrationId))
       .limit(1);
-    return integration ?? null;
+    if (byIntegrationId) return byIntegrationId;
   }
 
-  const [integration] = await db
+  const [byClientId] = await db
     .select()
     .from(whatsappIntegrationsTable)
-    .where(eq(whatsappIntegrationsTable.phoneNumberId, phoneNumberId))
+    .where(eq(whatsappIntegrationsTable.clientId, phoneNumber.clientId))
     .limit(1);
-  return integration ?? null;
+  return byClientId ?? null;
 }
 
 async function resolveWhatsappClientByWabaId(wabaId?: string | null) {
