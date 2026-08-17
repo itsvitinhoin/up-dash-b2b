@@ -69,6 +69,18 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
       WHERE tablename = 'orders'
       ORDER BY indexname
     `);
+    // Checagem 15/08/2026: revisando a branch codex/global-whatsapp-multi-waba
+    // -- ela assume que whatsapp_integrations ainda tem a constraint antiga
+    // (unique só em client_id), mas um comentário de dias atrás (fix do
+    // 42P10) dizia que já tinha mudado pra (client_id, waba_id) no banco
+    // real, sem isso nunca ter sido refletido no schema.ts. Confirma qual é
+    // o estado real antes de aplicar a migration da branch.
+    const whatsappIndexCheck = await db.execute(sql`
+      SELECT tablename, indexname, indexdef
+      FROM pg_indexes
+      WHERE tablename = 'whatsapp_integrations'
+      ORDER BY indexname
+    `);
     // Suspeita nova: orders_client_created_idx existe e a tabela e pequena
     // (9928 linhas), entao nao deveria ser sequential scan lento. maxConnections
     // no Cloud SQL e 25 (era 60 na Supabase) -- conta quantas conexoes estao
@@ -141,6 +153,7 @@ router.get("/admin/db-diagnostics", authenticate, requireAdmin, async (_req, res
       syncJobStats: syncJobStats.rows,
       tableStats: tableStats.rows,
       ordersIndexes: indexCheck.rows,
+      whatsappIntegrationsIndexes: whatsappIndexCheck.rows,
       connectionActivity: connectionActivity.rows,
       queryTiming: { queries: 30, totalMs: queryTimingTotalMs, avgMsPerQuery: queryTimingTotalMs / 30 },
     });
