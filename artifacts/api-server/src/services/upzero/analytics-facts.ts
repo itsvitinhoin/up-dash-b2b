@@ -263,6 +263,7 @@ export function factToAnalyticsMetric(fact: UpzeroAnalyticsFact): UpzeroAnalytic
     category: fact.category ?? null,
     user: fact.user ?? null,
     user_id: fact.user_id,
+    seller: null,
     order_id: fact.order_id,
     utm_source: fact.utm_source,
     utm_medium: fact.utm_medium,

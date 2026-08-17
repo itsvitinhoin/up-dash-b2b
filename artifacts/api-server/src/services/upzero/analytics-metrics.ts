@@ -5,11 +5,24 @@ export type GetUpzeroAnalyticsMetricsParams = {
   from: string;
   to: string;
   apiKey?: string | null;
+  limit?: number;
+  cursor?: string | null;
+  eventName?: string;
+  sellerId?: number;
+  orderId?: number;
+  periodType?: "hour" | "day" | "week" | "month";
 };
 
 export type UpzeroAnalyticsResponse = {
   data: UpzeroAnalyticsMetric[];
   total: number;
+  next_cursor: string | null;
+};
+
+export type UpzeroAnalyticsSeller = {
+  id: number;
+  name: string | null;
+  seller_slug: string | null;
 };
 
 export type UpzeroAnalyticsMetric = {
@@ -37,6 +50,7 @@ export type UpzeroAnalyticsMetric = {
     company_name: string | null;
   } | null;
   user_id: number | null;
+  seller: UpzeroAnalyticsSeller | null;
   order_id: number | null;
   utm_source: string | null;
   utm_medium: string | null;
@@ -66,6 +80,35 @@ export type UpzeroAnalyticsMetric = {
   utm_content?: string | null;
   utm_term?: string | null;
 };
+
+export type UpzeroSellerPurchaseTotal = {
+  externalSellerId: number;
+  sellerName: string | null;
+  totalOrders: number;
+  totalRevenue: number;
+};
+
+export function summarizeUpzeroSellerPurchases(
+  rows: UpzeroAnalyticsMetric[],
+): Map<number, UpzeroSellerPurchaseTotal> {
+  const totals = new Map<number, UpzeroSellerPurchaseTotal>();
+  for (const row of rows) {
+    if (row.event_name !== "purchase" || !row.seller) continue;
+    const current = totals.get(row.seller.id) ?? {
+      externalSellerId: row.seller.id,
+      sellerName: row.seller.name?.trim() || null,
+      totalOrders: 0,
+      totalRevenue: 0,
+    };
+    if (!current.sellerName && row.seller.name?.trim()) {
+      current.sellerName = row.seller.name.trim();
+    }
+    current.totalOrders += Math.max(0, row.total_events || 0);
+    current.totalRevenue += Math.max(0, row.total_value || 0);
+    totals.set(row.seller.id, current);
+  }
+  return totals;
+}
 
 export type UpzeroMetricUser = {
   id: number;
@@ -301,6 +344,18 @@ function parseUser(value: unknown): UpzeroAnalyticsMetric["user"] {
   };
 }
 
+function parseSeller(value: unknown): UpzeroAnalyticsMetric["seller"] {
+  const record = asRecord(value);
+  if (!record) return null;
+  const id = nullableNumber(record.id);
+  if (id === null) return null;
+  return {
+    id,
+    name: nullableString(record.name),
+    seller_slug: nullableString(record.seller_slug),
+  };
+}
+
 export function getMetricUser(row: UpzeroAnalyticsMetric): UpzeroMetricUser | null {
   if (row.user && typeof row.user.id === "number") {
     return {
@@ -346,6 +401,7 @@ function parseMetric(value: unknown, fallbackId: number): UpzeroAnalyticsMetric 
     category: parseCategory(row.category),
     user: parseUser(row.user),
     user_id: nullableNumber(row.user_id),
+    seller: parseSeller(row.seller),
     order_id: nullableNumber(row.order_id),
     utm_source: nullableString(row.utm_source),
     utm_medium: nullableString(row.utm_medium),
@@ -383,6 +439,7 @@ function parseAnalyticsResponse(value: unknown): UpzeroAnalyticsResponse {
   return {
     data: rawRows.map((row, index) => parseMetric(row, index + 1)).filter((row): row is UpzeroAnalyticsMetric => row !== null),
     total: requiredNumber(record?.total, rawRows.length),
+    next_cursor: nullableString(record?.next_cursor),
   };
 }
 
@@ -390,48 +447,71 @@ export async function getUpzeroAnalyticsMetrics({
   from,
   to,
   apiKey: explicitApiKey,
+  limit = 1000,
+  cursor: initialCursor,
+  eventName,
+  sellerId,
+  orderId,
+  periodType,
 }: GetUpzeroAnalyticsMetricsParams): Promise<UpzeroAnalyticsResponse> {
   const apiKey = resolveUpzeroApiKey(explicitApiKey);
-  const url = new URL(UPZERO_ANALYTICS_METRICS_URL);
-  url.searchParams.set("from", from);
-  url.searchParams.set("to", to);
+  const rows: UpzeroAnalyticsMetric[] = [];
+  const seenCursors = new Set<string>();
+  let cursor = initialCursor ?? null;
+  let total = 0;
+  if (cursor) seenCursors.add(cursor);
 
-  // Achado 13/08/2026: sem timeout aqui, uma chamada travada da UP Zero
-  // trava o Promise.all do lote inteiro em getUpzeroAnalyticsMetricsChunked
-  // -- o orçamento de tempo entre lotes nunca chega a rodar porque a função
-  // fica presa esperando essa chamada. Confirmado: Kalli Fashion continuava
-  // travando /api/analytics/orders-page mesmo depois do orçamento entre
-  // lotes ser adicionado.
-  let response: Response;
-  try {
-    response = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        "X-API-Key": apiKey,
-        Accept: "application/json",
-      },
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === "TimeoutError") {
-      throw new Error(`Conexão com a UP Zero (analytics/metrics) expirou após 10s.`);
+  for (let page = 0; page < 100; page += 1) {
+    const url = new URL(UPZERO_ANALYTICS_METRICS_URL);
+    url.searchParams.set("from", from);
+    url.searchParams.set("to", to);
+    url.searchParams.set("limit", String(Math.min(Math.max(limit, 1), 1000)));
+    if (cursor) url.searchParams.set("cursor", cursor);
+    if (eventName) url.searchParams.set("event_name", eventName);
+    if (typeof sellerId === "number") url.searchParams.set("seller_id", String(sellerId));
+    if (typeof orderId === "number") url.searchParams.set("order_id", String(orderId));
+    if (periodType) url.searchParams.set("period_type", periodType);
+
+    let response: Response;
+    try {
+      response = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          "X-API-Key": apiKey,
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === "TimeoutError") {
+        throw new Error("Conexão com a UP Zero (analytics/metrics) expirou após 10s.");
+      }
+      throw err;
     }
-    throw err;
+
+    const text = await response.text();
+    let payload: unknown;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new Error(`Resposta inválida da UP Zero: ${text}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(`Erro UP Zero ${response.status}: ${JSON.stringify(payload)}`);
+    }
+
+    const parsed = parseAnalyticsResponse(payload);
+    rows.push(...parsed.data);
+    total = Math.max(total, parsed.total, rows.length);
+    if (!parsed.next_cursor || seenCursors.has(parsed.next_cursor)) {
+      return { data: rows, total, next_cursor: null };
+    }
+    seenCursors.add(parsed.next_cursor);
+    cursor = parsed.next_cursor;
   }
 
-  const text = await response.text();
-  let payload: unknown;
-  try {
-    payload = JSON.parse(text);
-  } catch {
-    throw new Error(`Resposta inválida da UP Zero: ${text}`);
-  }
-
-  if (!response.ok) {
-    throw new Error(`Erro UP Zero ${response.status}: ${JSON.stringify(payload)}`);
-  }
-
-  return parseAnalyticsResponse(payload);
+  throw new Error("Paginação da UP Zero analytics excedeu o limite de segurança de 100 páginas.");
 }
 
 export function metricToTimelineEvent(row: UpzeroAnalyticsMetric): CustomerTimelineEvent | null {

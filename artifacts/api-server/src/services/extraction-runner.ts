@@ -1,8 +1,20 @@
 import { and, desc, eq, isNotNull, sql, type SQL } from "drizzle-orm";
-import { db, clientsTable, customersTable, syncJobsTable } from "@workspace/db";
+import {
+  db,
+  clientsTable,
+  customersTable,
+  ordersTable,
+  sellersTable,
+  syncJobsTable,
+} from "@workspace/db";
 import { fetchMetaMarketingData, upsertMetaCreatives } from "./meta-ads";
 import { syncNuvemshopClient } from "./nuvemshop-sync";
-import { getMetricUser, getUpzeroAnalyticsMetrics, type UpzeroAnalyticsMetric } from "./upzero/analytics-metrics";
+import {
+  getMetricUser,
+  getUpzeroAnalyticsMetrics,
+  summarizeUpzeroSellerPurchases,
+  type UpzeroAnalyticsMetric,
+} from "./upzero/analytics-metrics";
 import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
@@ -53,6 +65,8 @@ type ExtractionRunSummary = {
 };
 
 const UPZERO_ANALYTICS_LOOKBACK_HOURS = 24;
+const UPZERO_SELLERS_HISTORY_FROM =
+  process.env.UPZERO_SELLERS_HISTORY_FROM ?? "2026-05-01T03:00:00.000Z";
 const UPZERO_TRANSACTIONAL_CLIENT_TIMEOUT_MS = Number.parseInt(process.env.UPZERO_TRANSACTIONAL_CLIENT_TIMEOUT_MS ?? "45000", 10);
 const DAILY_METRICS_REFRESH_LOOKBACK_DAYS = Number.parseInt(process.env.DAILY_METRICS_REFRESH_LOOKBACK_DAYS ?? "7", 10);
 const NUVEMSHOP_LOOKBACK_DAYS = Number.parseInt(process.env.NUVEMSHOP_CRON_LOOKBACK_DAYS ?? "3", 10);
@@ -180,10 +194,163 @@ function summarizeUpzeroAnalytics(rows: Awaited<ReturnType<typeof getUpzeroAnaly
     totalEvents: rows.reduce((sum, row) => sum + (row.total_events ?? 0), 0),
     rowsWithUser: rows.filter((row) => getMetricUser(row)).length,
     rowsWithOrder: rows.filter((row) => row.order_id).length,
+    rowsWithSeller: rows.filter((row) => row.seller).length,
     rowsWithProduct: rows.filter((row) => row.product).length,
     rowsWithValue: rows.filter((row) => (row.total_value ?? 0) > 0).length,
     eventCounts,
   };
+}
+
+function localUpzeroSellerId(clientId: string, externalSellerId: number): string {
+  return `upzero:${clientId}:${externalSellerId}`;
+}
+
+const SELLER_ATTRIBUTION_EVENT_PRIORITY: Record<string, number> = {
+  order_approved: 50,
+  order_paid: 40,
+  purchase: 30,
+  order_created: 20,
+};
+
+async function materializeSellersFromAnalytics(
+  clientId: string,
+  rows: UpzeroAnalyticsMetric[],
+  sellerTotalRows: UpzeroAnalyticsMetric[],
+): Promise<{
+  sellersMaterialized: number;
+  orderAttributionsFound: number;
+  sellerPurchaseOrders: number;
+  sellerPurchaseRevenue: number;
+}> {
+  const sellers = new Map<number, { name: string | null }>();
+  for (const row of rows) {
+    if (!row.seller) continue;
+    const current = sellers.get(row.seller.id);
+    const name = row.seller.name?.trim() || null;
+    if (!current || (!current.name && name)) sellers.set(row.seller.id, { name });
+  }
+
+  for (const [externalSellerId, seller] of sellers) {
+    const id = localUpzeroSellerId(clientId, externalSellerId);
+    const name = seller.name ?? `Vendedora #${externalSellerId}`;
+    await db
+      .insert(sellersTable)
+      .values({ id, clientId, name })
+      .onConflictDoUpdate({
+        target: sellersTable.id,
+        set: { name },
+      });
+  }
+
+  const assignments = new Map<string, { sellerId: string; priority: number; occurredAt: number }>();
+  for (const row of rows) {
+    if (!row.seller || row.order_id === null) continue;
+    const externalOrderId = String(row.order_id);
+    const candidate = {
+      sellerId: localUpzeroSellerId(clientId, row.seller.id),
+      priority: SELLER_ATTRIBUTION_EVENT_PRIORITY[row.event_name] ?? 10,
+      occurredAt: new Date(row.period_start).getTime() || 0,
+    };
+    const current = assignments.get(externalOrderId);
+    if (
+      !current ||
+      candidate.priority > current.priority ||
+      (candidate.priority === current.priority && candidate.occurredAt > current.occurredAt)
+    ) {
+      assignments.set(externalOrderId, candidate);
+    }
+  }
+
+  const assignmentRows = [...assignments].map(([externalOrderId, value]) => ({
+    externalOrderId,
+    sellerId: value.sellerId,
+  }));
+  const batchSize = 200;
+  for (let index = 0; index < assignmentRows.length; index += batchSize) {
+    const batch = assignmentRows.slice(index, index + batchSize);
+    await db.execute(sql`
+      UPDATE orders AS target
+      SET seller_id = source.seller_id
+      FROM (
+        VALUES ${sql.join(
+          batch.map((row) => sql`(${row.externalOrderId}, ${row.sellerId})`),
+          sql`, `,
+        )}
+      ) AS source(external_id, seller_id)
+      WHERE target.client_id = ${clientId}
+        AND target.external_id = source.external_id
+    `);
+  }
+
+  await db
+    .update(sellersTable)
+    .set({ totalOrders: 0, totalRevenue: 0 })
+    .where(eq(sellersTable.clientId, clientId));
+
+  const orderTotals = await db
+    .select({
+      sellerId: ordersTable.sellerId,
+      totalOrders: sql<number>`COUNT(*)::int`,
+      totalRevenue: sql<number>`COALESCE(SUM(CASE WHEN ${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED') THEN ${ordersTable.amount} ELSE 0 END), 0)::float`,
+    })
+    .from(ordersTable)
+    .where(and(eq(ordersTable.clientId, clientId), isNotNull(ordersTable.sellerId)))
+    .groupBy(ordersTable.sellerId);
+
+  for (const total of orderTotals) {
+    if (!total.sellerId) continue;
+    await db
+      .update(sellersTable)
+      .set({
+        totalOrders: Number(total.totalOrders) || 0,
+        totalRevenue: Number(total.totalRevenue) || 0,
+      })
+      .where(and(eq(sellersTable.clientId, clientId), eq(sellersTable.id, total.sellerId)));
+  }
+
+  const sellerPurchaseTotals = summarizeUpzeroSellerPurchases(sellerTotalRows);
+  for (const total of sellerPurchaseTotals.values()) {
+    await db
+      .update(sellersTable)
+      .set({
+        totalOrders: total.totalOrders,
+        totalRevenue: total.totalRevenue,
+      })
+      .where(
+        and(
+          eq(sellersTable.clientId, clientId),
+          eq(sellersTable.id, localUpzeroSellerId(clientId, total.externalSellerId)),
+        ),
+      );
+  }
+
+  return {
+    sellersMaterialized: sellers.size,
+    orderAttributionsFound: assignments.size,
+    sellerPurchaseOrders: [...sellerPurchaseTotals.values()].reduce(
+      (sum, total) => sum + total.totalOrders,
+      0,
+    ),
+    sellerPurchaseRevenue: [...sellerPurchaseTotals.values()].reduce(
+      (sum, total) => sum + total.totalRevenue,
+      0,
+    ),
+  };
+}
+
+async function getHistoricalSellerPurchaseMetrics(
+  apiKey: string,
+  to: string,
+): Promise<UpzeroAnalyticsMetric[]> {
+  const historyFrom = new Date(UPZERO_SELLERS_HISTORY_FROM);
+  if (!Number.isFinite(historyFrom.getTime()) || historyFrom >= new Date(to)) return [];
+  const response = await getUpzeroAnalyticsMetrics({
+    from: historyFrom.toISOString(),
+    to,
+    apiKey,
+    eventName: "purchase",
+  });
+  return response.data;
 }
 
 type UpzeroCustomerDetail = {
@@ -501,6 +668,15 @@ export async function runUpzeroAnalyticsExtraction(
         to: to.toISOString(),
         apiKey: client.upZeroApiKey,
       });
+      const historicalSellerMetrics = await getHistoricalSellerPurchaseMetrics(
+        client.upZeroApiKey,
+        to.toISOString(),
+      );
+      const sellerSync = await materializeSellersFromAnalytics(
+        client.id,
+        [...historicalSellerMetrics, ...metrics.data],
+        historicalSellerMetrics,
+      );
       const customersMaterialized = await upsertCustomersFromAnalyticsRegistrations(
         client.id,
         client.upZeroApiKey,
@@ -512,6 +688,9 @@ export async function runUpzeroAnalyticsExtraction(
         from: from.toISOString(),
         to: to.toISOString(),
         apiTotal: metrics.total,
+        sellerBackfillCompleted: true,
+        historicalSellerRows: historicalSellerMetrics.length,
+        ...sellerSync,
         customersMaterialized,
         dailyMetrics,
         ...summarizeUpzeroAnalytics(metrics.data),

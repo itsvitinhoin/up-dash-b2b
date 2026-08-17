@@ -276,8 +276,6 @@ function upzeroAttributionHistoryRange(
 }
 
 const UPZERO_ANALYTICS_CHUNK_MS = 12 * 60 * 60 * 1000;
-const UPZERO_ANALYTICS_MIN_SPLIT_MS = 60 * 60 * 1000;
-const UPZERO_ANALYTICS_PAGE_CAP = 500;
 // Achado 13/08/2026: com concurrency=4 e upzeroAttributionHistoryRange()
 // sempre buscando desde 01/05 fixo (~104 dias hoje, só cresce com o tempo),
 // em janelas de 12h isso dá ~208 janelas / 52 lotes sequenciais -- mais de
@@ -326,16 +324,6 @@ async function getUpzeroAnalyticsMetricsChunked(params: {
       to: new Date(endMs).toISOString(),
       apiKey: params.apiKey,
     });
-
-    const duration = endMs - startMs;
-    if (response.data.length >= UPZERO_ANALYTICS_PAGE_CAP && duration > UPZERO_ANALYTICS_MIN_SPLIT_MS) {
-      const midMs = startMs + Math.floor(duration / 2);
-      const [left, right] = await Promise.all([
-        fetchWindow(startMs, midMs),
-        fetchWindow(midMs, endMs),
-      ]);
-      return [...left, ...right];
-    }
 
     return response.data;
   }
@@ -2250,6 +2238,7 @@ function localCustomerToCampaignMetric(customer: CampaignLocalCustomer, index: n
       company_name: null,
     },
     user_id: userId,
+    seller: null,
     order_id: null,
     utm_source: customer.utmSource,
     utm_medium: customer.utmMedium,
@@ -2308,6 +2297,7 @@ function attributionStampToCampaignMetric(
       company_name: null,
     },
     user_id: userId,
+    seller: null,
     order_id: null,
     utm_source: stamp.source,
     utm_medium: stamp.medium,
@@ -6280,6 +6270,15 @@ router.get("/analytics/sellers", async (req, res): Promise<void> => {
     avgTicket: r.totalOrders > 0 ? r.totalRevenue / r.totalOrders : 0,
   }));
 
+  console.info("[analytics:sellers] response", {
+    clientId,
+    role: req.user?.role ?? null,
+    state: state?.trim() || null,
+    sellers: enriched.length,
+    totalOrders: enriched.reduce((sum, seller) => sum + seller.totalOrders, 0),
+    totalRevenue: enriched.reduce((sum, seller) => sum + seller.totalRevenue, 0),
+  });
+
   res.json(GetSellersResponse.parse(enriched));
 });
 
@@ -9140,6 +9139,7 @@ function dimensionFromLocalCustomer(customer: CampaignLocalCustomer): UtmDimensi
     category: null,
     user: null,
     user_id: null,
+    seller: null,
     order_id: null,
     utm_source: customer.utmSource,
     utm_medium: customer.utmMedium,

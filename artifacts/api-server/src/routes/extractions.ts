@@ -6,6 +6,7 @@ import {
   runDailyMetricsBackfill,
   runHourlyExtractionBundle,
   runNuvemshopTransactionalExtraction,
+  runUpzeroAnalyticsExtraction,
   runUpzeroTransactionalExtraction,
 } from "../services/extraction-runner";
 
@@ -79,6 +80,12 @@ async function verifyCronRequest(req: Request, res: Response): Promise<boolean> 
 router.get("/cron/extractions/hourly", async (req, res): Promise<void> => {
   if (!(await verifyCronRequest(req, res))) return;
   const result = await runHourlyExtractionBundle("cron");
+  sendCronResult(res, result);
+});
+
+router.get("/cron/extractions/upzero-analytics", async (req, res): Promise<void> => {
+  if (!(await verifyCronRequest(req, res))) return;
+  const result = await runUpzeroAnalyticsExtraction("manual");
   sendCronResult(res, result);
 });
 
