@@ -5,25 +5,25 @@
   "outputDirectory": "artifacts/up-dash/dist/public",
   "functions": {
     "api/index.js": {
-      "maxDuration": 120
+      "maxDuration": 300
     },
     "api/[...path].js": {
-      "maxDuration": 120
+      "maxDuration": 300
     },
     "api/analytics/[...path].js": {
-      "maxDuration": 120
+      "maxDuration": 300
     },
     "api/auth/[...path].js": {
-      "maxDuration": 120
+      "maxDuration": 300
     },
     "api/clients/[...path].js": {
-      "maxDuration": 120
+      "maxDuration": 300
     },
     "api/notifications/[...path].js": {
-      "maxDuration": 120
+      "maxDuration": 300
     },
     "api/saved-views/[...path].js": {
-      "maxDuration": 120
+      "maxDuration": 300
     }
   },
   "rewrites": [
