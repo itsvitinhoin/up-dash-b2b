@@ -138,7 +138,13 @@ export default function WhatsappConversationsPage() {
     queryKey: ["whatsapp-conversations", clientId, phoneFilter],
     queryFn: () => customFetch<WhatsappConversationsResponse>(conversationsQuery),
     enabled: Boolean(clientId),
-    refetchInterval: 5000,
+    // Corrigido 19/08/2026: 5s era mais curto que o tempo real de resposta
+    // pra clientes com bastante mensagem (Bluebeni: 60 conversas, 5600+
+    // mensagens, ~16s de resposta) -- uma busca nova começava antes da
+    // anterior terminar, e a tela nunca saía do estado de carregamento
+    // ("carregando infinitamente", relato do Lucas). 20s dá folga
+    // confortável mesmo pros clientes mais pesados.
+    refetchInterval: 20000,
   });
 
   useEffect(() => {
