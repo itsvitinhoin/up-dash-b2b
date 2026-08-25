@@ -2770,21 +2770,29 @@ router.get("/whatsapp/connections", async (req, res): Promise<void> => {
     return;
   }
 
-  const integrations = await db
-    .select()
-    .from(whatsappIntegrationsTable)
-    .where(eq(whatsappIntegrationsTable.clientId, clientId))
-    .orderBy(desc(whatsappIntegrationsTable.updatedAt));
-  const phoneNumbers = await db
-    .select()
-    .from(whatsappPhoneNumbersTable)
-    .where(
-      and(
-        eq(whatsappPhoneNumbersTable.clientId, clientId),
-        sql`${whatsappPhoneNumbersTable.status} <> 'archived'`,
-      ),
-    )
-    .orderBy(desc(whatsappPhoneNumbersTable.updatedAt));
+  // Corrigido 25/08/2026: essas consultas são independentes entre si, mas
+  // rodavam uma esperando a outra terminar (achado investigando GET
+  // /whatsapp/connections levando 53s pra Sline, 4 WABAs, depois do merge
+  // que trouxe historySync/phoneOperationalDetails) — cada uma paga o
+  // custo de round-trip de rede até o banco, então rodar em série soma
+  // esse custo em vez de pagar só uma vez.
+  const [integrations, phoneNumbers] = await Promise.all([
+    db
+      .select()
+      .from(whatsappIntegrationsTable)
+      .where(eq(whatsappIntegrationsTable.clientId, clientId))
+      .orderBy(desc(whatsappIntegrationsTable.updatedAt)),
+    db
+      .select()
+      .from(whatsappPhoneNumbersTable)
+      .where(
+        and(
+          eq(whatsappPhoneNumbersTable.clientId, clientId),
+          sql`${whatsappPhoneNumbersTable.status} <> 'archived'`,
+        ),
+      )
+      .orderBy(desc(whatsappPhoneNumbersTable.updatedAt)),
+  ]);
 
   for (const integration of integrations) {
     if (!integration.phoneNumberId) continue;
@@ -2802,19 +2810,15 @@ router.get("/whatsapp/connections", async (req, res): Promise<void> => {
     if (phoneNumber) phoneNumbers.push(phoneNumber);
   }
 
-  const historySync = await getWhatsappHistorySyncStatus(
-    clientId,
-    integrations,
-  );
-  const phoneOperationalDetails = await getWhatsappPhoneOperationalDetails(
-    clientId,
-    phoneNumbers,
-    integrations,
-  );
-  const templateRows = await db
-    .select()
-    .from(whatsappMessageTemplatesTable)
-    .where(eq(whatsappMessageTemplatesTable.clientId, clientId));
+  const [historySync, phoneOperationalDetails, templateRows] =
+    await Promise.all([
+      getWhatsappHistorySyncStatus(clientId, integrations),
+      getWhatsappPhoneOperationalDetails(clientId, phoneNumbers, integrations),
+      db
+        .select()
+        .from(whatsappMessageTemplatesTable)
+        .where(eq(whatsappMessageTemplatesTable.clientId, clientId)),
+    ]);
   const templateSummaries = buildWhatsappTemplateSummaries(templateRows);
   const emptyTemplateSummary = emptyWhatsappTemplateSummary();
 
