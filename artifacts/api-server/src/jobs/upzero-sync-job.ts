@@ -25,6 +25,7 @@
  *   TASK=hourly_bundle         -> roda upzero_analytics + meta_ads juntos
  *   TASK=whatsapp_fix_phone_waba -> corrige o waba_id de UM número em
  *     whatsapp_phone_numbers (ver CLIENT_ID/PHONE_NUMBER_ID/WABA_ID abaixo)
+ *   TASK=run_migrations       -> aplica as migrations pendentes de lib/db/migrations
  *
  *   TRIGGER=cron|manual   -> como fica registrado em sync_jobs (padrão: cron)
  *   CLIENT_ID=xxx         -> restringe a um cliente só (todas as tasks exceto hourly_bundle/daily_metrics)
@@ -47,7 +48,9 @@
  * faria pra esse número específico.
  */
 import "dotenv/config";
+import path from "node:path";
 import { and, eq } from "drizzle-orm";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { db, whatsappPhoneNumbersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import {
@@ -59,6 +62,19 @@ import {
   runHourlyExtractionBundle,
   type ExtractionTrigger,
 } from "../services/extraction-runner";
+
+// Achado 25/08/2026: as migrations do lib/db (drizzle-kit) nunca rodam
+// sozinhas no deploy da Vercel -- alguém precisa disparar isso à mão contra
+// o banco de produção. Reaproveita a mesma conexão `db` (Cloud SQL
+// Connector) que o resto do job já usa e testou o dia inteiro, em vez de
+// precisar de um DATABASE_URL bruto separado (que exigiria montar a
+// connection string com a senha à mão).
+async function runMigrations() {
+  const migrationsFolder = path.resolve(process.cwd(), "lib/db/migrations");
+  logger.info({ migrationsFolder }, "[upzero-sync-job] aplicando migrations");
+  await migrate(db, { migrationsFolder });
+  return { ok: true };
+}
 
 async function fixWhatsappPhoneWaba(params: {
   clientId: string;
@@ -143,8 +159,11 @@ async function main() {
       result = await fixWhatsappPhoneWaba({ clientId, phoneNumberId, wabaId });
       break;
     }
+    case "run_migrations":
+      result = await runMigrations();
+      break;
     default:
-      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle, whatsapp_fix_phone_waba.`);
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle, whatsapp_fix_phone_waba, run_migrations.`);
       process.exit(1);
   }
 
