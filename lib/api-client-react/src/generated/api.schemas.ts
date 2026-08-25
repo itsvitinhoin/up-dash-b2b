@@ -565,12 +565,22 @@ export interface DashboardDailyPerformance {
   conversionRate: number;
 }
 
+export interface DashboardSalesBreakdown {
+  name: string;
+  revenue: number;
+  units: number;
+  orders: number;
+}
+
 export interface DashboardResponse {
   kpis: DashboardKpis;
   revenueOverTime: TimeSeriesPoint[];
   ordersOverTime: TimeSeriesPoint[];
   leadsOverTime: TimeSeriesPoint[];
   revenueByCategory: CategoryShare[];
+  salesByCategory: DashboardSalesBreakdown[];
+  salesByColor: DashboardSalesBreakdown[];
+  salesBySize: DashboardSalesBreakdown[];
   /** Equivalent KPI totals for the immediately preceding period of
 the same length. Only present when the request was made with
 `compare=true`.
@@ -775,17 +785,54 @@ export interface RfmCompositionPoint {
   Lost: number;
 }
 
+/**
+ * @nullable
+ */
+export type RfmCustomerRowDocumentType =
+  | (typeof RfmCustomerRowDocumentType)[keyof typeof RfmCustomerRowDocumentType]
+  | null;
+
+export const RfmCustomerRowDocumentType = {
+  CPF: "CPF",
+  CNPJ: "CNPJ",
+} as const;
+
+export interface RfmOrderSummary {
+  id: string;
+  /** @nullable */
+  externalId?: string | null;
+  status: string;
+  amount: number;
+  fulfilledAmount: number;
+  requestedQuantity: number;
+  fulfilledQuantity: number;
+  createdAt: string;
+}
+
 export interface RfmCustomerRow {
   id: string;
   /** @nullable */
   name?: string | null;
   email: string;
   /** @nullable */
+  phone?: string | null;
+  /** @nullable */
+  state?: string | null;
+  /** @nullable */
+  city?: string | null;
+  /** @nullable */
+  documentType?: RfmCustomerRowDocumentType;
+  /** @nullable */
   segment?: string | null;
   /** @nullable */
   recencyDays?: number | null;
   frequency: number;
   monetary: number;
+  /** @nullable */
+  firstPurchaseAt?: string | null;
+  /** @nullable */
+  lastPurchaseAt?: string | null;
+  latestOrders: RfmOrderSummary[];
 }
 
 export interface RfmResponse {
@@ -945,6 +992,31 @@ export const ProductMetricsLevel = {
   At_Risk: "At Risk",
 } as const;
 
+export type ProductMetricsGradeStatus =
+  (typeof ProductMetricsGradeStatus)[keyof typeof ProductMetricsGradeStatus];
+
+export const ProductMetricsGradeStatus = {
+  complete: "complete",
+  broken: "broken",
+} as const;
+
+export interface ProductVariantMetrics {
+  productId: string;
+  sku: string;
+  name: string;
+  /** @nullable */
+  color?: string | null;
+  /** @nullable */
+  size?: string | null;
+  stock: number;
+  price: number;
+  totalSold: number;
+  totalRevenue: number;
+  status: string;
+  /** @nullable */
+  imageUrl?: string | null;
+}
+
 export interface ProductMetrics {
   id: string;
   sku: string;
@@ -969,6 +1041,10 @@ export interface ProductMetrics {
   /** Performance tier derived from sell-through and stock health. */
   level: ProductMetricsLevel;
   createdAt: string;
+  gradeStatus?: ProductMetricsGradeStatus;
+  variantCount?: number;
+  availableVariantCount?: number;
+  variants?: ProductVariantMetrics[];
 }
 
 export type ProductDetailResponseProductLevel =
@@ -1363,6 +1439,44 @@ export interface MarketingAgeGroupRow {
   roas: number;
 }
 
+export type MetaCreativeMetricMediaType =
+  (typeof MetaCreativeMetricMediaType)[keyof typeof MetaCreativeMetricMediaType];
+
+export const MetaCreativeMetricMediaType = {
+  video: "video",
+  image: "image",
+  unknown: "unknown",
+} as const;
+
+export interface MetaCreativeMetric {
+  id: string;
+  name: string;
+  status: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  leads: number;
+  purchases: number;
+  cpl: number;
+  cpa: number;
+  /** @nullable */
+  previewUrl?: string | null;
+  /** @nullable */
+  thumbnailUrl?: string | null;
+  /** @nullable */
+  imageUrl?: string | null;
+  /** @nullable */
+  videoUrl?: string | null;
+  mediaType: MetaCreativeMetricMediaType;
+}
+
+export interface MetaTopCreatives {
+  ctr: MetaCreativeMetric[];
+  cpl: MetaCreativeMetric[];
+  leads: MetaCreativeMetric[];
+}
+
 export interface MarketingResponse {
   kpis: MarketingKpis;
   prevKpis: MarketingKpis;
@@ -1370,6 +1484,7 @@ export interface MarketingResponse {
   revenueOverTime: TimeSeriesPoint[];
   spendOverTime: TimeSeriesPoint[];
   creatives: CreativeMetrics[];
+  topCreatives: MetaTopCreatives;
   platformBreakdown: MarketingPlatformRow[];
   stateBreakdown: MarketingStateRow[];
   ageBreakdown: MarketingAgeGroupRow[];
@@ -1380,6 +1495,8 @@ export interface MarketingResponse {
 export interface CustomerSummaryKpis {
   totalRegistrations: number;
   approvedRegistrations: number;
+  pendingRegistrations: number;
+  rejectedRegistrations: number;
   approvalRatePct: number;
   customersWithoutPurchase: number;
   totalBuyers: number;
@@ -1599,6 +1716,28 @@ export type StockSkuRowByColorItem = {
   unitsSold: number;
 };
 
+export type StockSkuRowGradeStatus =
+  (typeof StockSkuRowGradeStatus)[keyof typeof StockSkuRowGradeStatus];
+
+export const StockSkuRowGradeStatus = {
+  complete: "complete",
+  broken: "broken",
+} as const;
+
+export interface StockVariantRow {
+  productId: string;
+  sku: string;
+  name: string;
+  /** @nullable */
+  color?: string | null;
+  /** @nullable */
+  size?: string | null;
+  stock: number;
+  unitsSold: number;
+  /** @nullable */
+  imageUrl?: string | null;
+}
+
 export interface StockSkuRow {
   productId: string;
   sku: string;
@@ -1625,6 +1764,10 @@ export interface StockSkuRow {
   bySize: StockSkuRowBySizeItem[];
   /** Per-product units sold breakdown by color in the selected period. */
   byColor: StockSkuRowByColorItem[];
+  gradeStatus?: StockSkuRowGradeStatus;
+  variantCount?: number;
+  availableVariantCount?: number;
+  variants?: StockVariantRow[];
 }
 
 export interface CategoryStockRow {
@@ -1758,6 +1901,8 @@ export type GetSiteVisitsParams = {
 
 export type GetCustomersParams = {
   clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
   rfmSegment?: string;
   state?: string;
   /**
@@ -1769,9 +1914,59 @@ export type GetCustomersParams = {
    */
   utmMedium?: string;
   search?: string;
+  documentType?: GetCustomersDocumentType;
+  registrationStatus?: GetCustomersRegistrationStatus;
+  purchaseStatus?: GetCustomersPurchaseStatus;
+  sortBy?: GetCustomersSortBy;
+  sortDir?: GetCustomersSortDir;
   page?: number;
   limit?: number;
 };
+
+export type GetCustomersDocumentType =
+  (typeof GetCustomersDocumentType)[keyof typeof GetCustomersDocumentType];
+
+export const GetCustomersDocumentType = {
+  CPF: "CPF",
+  CNPJ: "CNPJ",
+} as const;
+
+export type GetCustomersRegistrationStatus =
+  (typeof GetCustomersRegistrationStatus)[keyof typeof GetCustomersRegistrationStatus];
+
+export const GetCustomersRegistrationStatus = {
+  PENDING: "PENDING",
+  APPROVED: "APPROVED",
+  REJECTED: "REJECTED",
+} as const;
+
+export type GetCustomersPurchaseStatus =
+  (typeof GetCustomersPurchaseStatus)[keyof typeof GetCustomersPurchaseStatus];
+
+export const GetCustomersPurchaseStatus = {
+  buyers: "buyers",
+  non_buyers: "non_buyers",
+} as const;
+
+export type GetCustomersSortBy =
+  (typeof GetCustomersSortBy)[keyof typeof GetCustomersSortBy];
+
+export const GetCustomersSortBy = {
+  totalSpent: "totalSpent",
+  totalOrders: "totalOrders",
+  createdAt: "createdAt",
+  firstPurchaseAt: "firstPurchaseAt",
+  lastPurchaseAt: "lastPurchaseAt",
+  name: "name",
+} as const;
+
+export type GetCustomersSortDir =
+  (typeof GetCustomersSortDir)[keyof typeof GetCustomersSortDir];
+
+export const GetCustomersSortDir = {
+  asc: "asc",
+  desc: "desc",
+} as const;
 
 export type GetCustomerSummaryParams = {
   clientId?: string;
@@ -1791,6 +1986,8 @@ export type GetCustomerDetailParams = {
 
 export type GetProductsParams = {
   clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
   sort?: GetProductsSort;
   limit?: number;
   /**
@@ -1994,6 +2191,10 @@ export type GetRfmParams = {
    * Restrict RFM analysis to customers who purchased this product (name or SKU match).
    */
   product?: string;
+  /**
+   * Restrict RFM metrics to orders with the selected commercial status.
+   */
+  orderStatus?: GetRfmOrderStatus;
 };
 
 export type GetRfmSortBy = (typeof GetRfmSortBy)[keyof typeof GetRfmSortBy];
@@ -2011,6 +2212,16 @@ export type GetRfmSortDir = (typeof GetRfmSortDir)[keyof typeof GetRfmSortDir];
 export const GetRfmSortDir = {
   asc: "asc",
   desc: "desc",
+} as const;
+
+export type GetRfmOrderStatus =
+  (typeof GetRfmOrderStatus)[keyof typeof GetRfmOrderStatus];
+
+export const GetRfmOrderStatus = {
+  all: "all",
+  approved: "approved",
+  pending: "pending",
+  rejected: "rejected",
 } as const;
 
 export type GetGeographyParams = {
@@ -2125,6 +2336,10 @@ export type GetAlertsParams = {
 export type GetAdminOverviewParams = {
   dateFrom?: string;
   dateTo?: string;
+  /**
+   * Comma-separated client IDs included in the platform aggregation.
+   */
+  clientIds?: string;
 };
 
 export type GetMarketingParams = {

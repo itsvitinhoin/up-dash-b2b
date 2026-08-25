@@ -851,6 +851,30 @@ export const GetDashboardResponse = zod.object({
       orders: zod.number(),
     }),
   ),
+  salesByCategory: zod.array(
+    zod.object({
+      name: zod.string(),
+      revenue: zod.number(),
+      units: zod.number(),
+      orders: zod.number(),
+    }),
+  ),
+  salesByColor: zod.array(
+    zod.object({
+      name: zod.string(),
+      revenue: zod.number(),
+      units: zod.number(),
+      orders: zod.number(),
+    }),
+  ),
+  salesBySize: zod.array(
+    zod.object({
+      name: zod.string(),
+      revenue: zod.number(),
+      units: zod.number(),
+      orders: zod.number(),
+    }),
+  ),
   prevKpis: zod
     .object({
       revenue: zod.number(),
@@ -1082,11 +1106,15 @@ export const UpsertSiteVisitsResponse = zod.object({
 /**
  * @summary Paginated customers with RFM segmentation
  */
+export const getCustomersQuerySortByDefault = `totalSpent`;
+export const getCustomersQuerySortDirDefault = `desc`;
 export const getCustomersQueryPageDefault = 1;
 export const getCustomersQueryLimitDefault = 20;
 
 export const GetCustomersQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
   rfmSegment: zod.coerce.string().optional(),
   state: zod.coerce.string().optional(),
   utmSource: zod.coerce
@@ -1098,6 +1126,20 @@ export const GetCustomersQueryParams = zod.object({
     .optional()
     .describe("Filter customers by UTM medium."),
   search: zod.coerce.string().optional(),
+  documentType: zod.enum(["CPF", "CNPJ"]).optional(),
+  registrationStatus: zod.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
+  purchaseStatus: zod.enum(["buyers", "non_buyers"]).optional(),
+  sortBy: zod
+    .enum([
+      "totalSpent",
+      "totalOrders",
+      "createdAt",
+      "firstPurchaseAt",
+      "lastPurchaseAt",
+      "name",
+    ])
+    .default(getCustomersQuerySortByDefault),
+  sortDir: zod.enum(["asc", "desc"]).default(getCustomersQuerySortDirDefault),
   page: zod.coerce.number().default(getCustomersQueryPageDefault),
   limit: zod.coerce.number().default(getCustomersQueryLimitDefault),
 });
@@ -1168,6 +1210,8 @@ export const GetCustomerSummaryResponse = zod.object({
   kpis: zod.object({
     totalRegistrations: zod.number(),
     approvedRegistrations: zod.number(),
+    pendingRegistrations: zod.number(),
+    rejectedRegistrations: zod.number(),
     approvalRatePct: zod.number(),
     customersWithoutPurchase: zod.number(),
     totalBuyers: zod.number(),
@@ -1178,6 +1222,8 @@ export const GetCustomerSummaryResponse = zod.object({
     .object({
       totalRegistrations: zod.number(),
       approvedRegistrations: zod.number(),
+      pendingRegistrations: zod.number(),
+      rejectedRegistrations: zod.number(),
       approvalRatePct: zod.number(),
       customersWithoutPurchase: zod.number(),
       totalBuyers: zod.number(),
@@ -1314,6 +1360,8 @@ export const getProductsQueryLimitDefault = 50;
 
 export const GetProductsQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
+  dateFrom: zod.date().optional(),
+  dateTo: zod.date().optional(),
   sort: zod
     .enum(["revenue", "units", "created"])
     .default(getProductsQuerySortDefault),
@@ -1374,6 +1422,26 @@ export const GetProductsResponseItem = zod.object({
     .enum(["High Conversion", "Standard", "Low", "At Risk"])
     .describe("Performance tier derived from sell-through and stock health."),
   createdAt: zod.coerce.date(),
+  gradeStatus: zod.enum(["complete", "broken"]).optional(),
+  variantCount: zod.number().optional(),
+  availableVariantCount: zod.number().optional(),
+  variants: zod
+    .array(
+      zod.object({
+        productId: zod.string(),
+        sku: zod.string(),
+        name: zod.string(),
+        color: zod.string().nullish(),
+        size: zod.string().nullish(),
+        stock: zod.number(),
+        price: zod.number(),
+        totalSold: zod.number(),
+        totalRevenue: zod.number(),
+        status: zod.string(),
+        imageUrl: zod.string().nullish(),
+      }),
+    )
+    .optional(),
 });
 export const GetProductsResponse = zod.array(GetProductsResponseItem);
 
@@ -1823,6 +1891,23 @@ export const GetStockResponse = zod.object({
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
+      gradeStatus: zod.enum(["complete", "broken"]).optional(),
+      variantCount: zod.number().optional(),
+      availableVariantCount: zod.number().optional(),
+      variants: zod
+        .array(
+          zod.object({
+            productId: zod.string(),
+            sku: zod.string(),
+            name: zod.string(),
+            color: zod.string().nullish(),
+            size: zod.string().nullish(),
+            stock: zod.number(),
+            unitsSold: zod.number(),
+            imageUrl: zod.string().nullish(),
+          }),
+        )
+        .optional(),
     }),
   ),
   overstockRisk: zod.array(
@@ -1866,6 +1951,23 @@ export const GetStockResponse = zod.object({
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
+      gradeStatus: zod.enum(["complete", "broken"]).optional(),
+      variantCount: zod.number().optional(),
+      availableVariantCount: zod.number().optional(),
+      variants: zod
+        .array(
+          zod.object({
+            productId: zod.string(),
+            sku: zod.string(),
+            name: zod.string(),
+            color: zod.string().nullish(),
+            size: zod.string().nullish(),
+            stock: zod.number(),
+            unitsSold: zod.number(),
+            imageUrl: zod.string().nullish(),
+          }),
+        )
+        .optional(),
     }),
   ),
   highTurnover: zod.array(
@@ -1909,6 +2011,23 @@ export const GetStockResponse = zod.object({
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
+      gradeStatus: zod.enum(["complete", "broken"]).optional(),
+      variantCount: zod.number().optional(),
+      availableVariantCount: zod.number().optional(),
+      variants: zod
+        .array(
+          zod.object({
+            productId: zod.string(),
+            sku: zod.string(),
+            name: zod.string(),
+            color: zod.string().nullish(),
+            size: zod.string().nullish(),
+            stock: zod.number(),
+            unitsSold: zod.number(),
+            imageUrl: zod.string().nullish(),
+          }),
+        )
+        .optional(),
     }),
   ),
   categoryBreakdown: zod.array(
@@ -1974,6 +2093,23 @@ export const GetStockResponse = zod.object({
         .describe(
           "Per-product units sold breakdown by color in the selected period.",
         ),
+      gradeStatus: zod.enum(["complete", "broken"]).optional(),
+      variantCount: zod.number().optional(),
+      availableVariantCount: zod.number().optional(),
+      variants: zod
+        .array(
+          zod.object({
+            productId: zod.string(),
+            sku: zod.string(),
+            name: zod.string(),
+            color: zod.string().nullish(),
+            size: zod.string().nullish(),
+            stock: zod.number(),
+            unitsSold: zod.number(),
+            imageUrl: zod.string().nullish(),
+          }),
+        )
+        .optional(),
     }),
   ),
   total: zod.number(),
@@ -2077,6 +2213,7 @@ export const getRfmQueryPageDefault = 1;
 export const getRfmQueryLimitDefault = 25;
 export const getRfmQuerySortByDefault = `monetary`;
 export const getRfmQuerySortDirDefault = `desc`;
+export const getRfmQueryOrderStatusDefault = `all`;
 
 export const GetRfmQueryParams = zod.object({
   clientId: zod.coerce.string().optional(),
@@ -2111,6 +2248,12 @@ export const GetRfmQueryParams = zod.object({
     .describe(
       "Restrict RFM analysis to customers who purchased this product (name or SKU match).",
     ),
+  orderStatus: zod
+    .enum(["all", "approved", "pending", "rejected"])
+    .default(getRfmQueryOrderStatusDefault)
+    .describe(
+      "Restrict RFM metrics to orders with the selected commercial status.",
+    ),
 });
 
 export const GetRfmResponse = zod.object({
@@ -2138,10 +2281,30 @@ export const GetRfmResponse = zod.object({
       id: zod.string(),
       name: zod.string().nullish(),
       email: zod.string(),
+      phone: zod.string().nullish(),
+      state: zod.string().nullish(),
+      city: zod.string().nullish(),
+      documentType: zod
+        .union([zod.literal("CPF"), zod.literal("CNPJ"), zod.literal(null)])
+        .nullish(),
       segment: zod.string().nullish(),
       recencyDays: zod.number().nullish(),
       frequency: zod.number(),
       monetary: zod.number(),
+      firstPurchaseAt: zod.coerce.date().nullish(),
+      lastPurchaseAt: zod.coerce.date().nullish(),
+      latestOrders: zod.array(
+        zod.object({
+          id: zod.string(),
+          externalId: zod.string().nullish(),
+          status: zod.string(),
+          amount: zod.number(),
+          fulfilledAmount: zod.number(),
+          requestedQuantity: zod.number(),
+          fulfilledQuantity: zod.number(),
+          createdAt: zod.coerce.date(),
+        }),
+      ),
     }),
   ),
   total: zod.number(),
@@ -2440,6 +2603,12 @@ bottom growth). Restricted to ADMIN users.
 export const GetAdminOverviewQueryParams = zod.object({
   dateFrom: zod.date().optional(),
   dateTo: zod.date().optional(),
+  clientIds: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Comma-separated client IDs included in the platform aggregation.",
+    ),
 });
 
 export const GetAdminOverviewResponse = zod.object({
@@ -2716,6 +2885,68 @@ export const GetMarketingResponse = zod.object({
       cpa: zod.number(),
     }),
   ),
+  topCreatives: zod.object({
+    ctr: zod.array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        status: zod.string(),
+        spend: zod.number(),
+        impressions: zod.number(),
+        clicks: zod.number(),
+        ctr: zod.number(),
+        leads: zod.number(),
+        purchases: zod.number(),
+        cpl: zod.number(),
+        cpa: zod.number(),
+        previewUrl: zod.string().nullish(),
+        thumbnailUrl: zod.string().nullish(),
+        imageUrl: zod.string().nullish(),
+        videoUrl: zod.string().nullish(),
+        mediaType: zod.enum(["video", "image", "unknown"]),
+      }),
+    ),
+    cpl: zod.array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        status: zod.string(),
+        spend: zod.number(),
+        impressions: zod.number(),
+        clicks: zod.number(),
+        ctr: zod.number(),
+        leads: zod.number(),
+        purchases: zod.number(),
+        cpl: zod.number(),
+        cpa: zod.number(),
+        previewUrl: zod.string().nullish(),
+        thumbnailUrl: zod.string().nullish(),
+        imageUrl: zod.string().nullish(),
+        videoUrl: zod.string().nullish(),
+        mediaType: zod.enum(["video", "image", "unknown"]),
+      }),
+    ),
+    leads: zod.array(
+      zod.object({
+        id: zod.string(),
+        name: zod.string(),
+        status: zod.string(),
+        spend: zod.number(),
+        impressions: zod.number(),
+        clicks: zod.number(),
+        ctr: zod.number(),
+        leads: zod.number(),
+        purchases: zod.number(),
+        cpl: zod.number(),
+        cpa: zod.number(),
+        previewUrl: zod.string().nullish(),
+        thumbnailUrl: zod.string().nullish(),
+        imageUrl: zod.string().nullish(),
+        videoUrl: zod.string().nullish(),
+        mediaType: zod.enum(["video", "image", "unknown"]),
+      }),
+    ),
+  }),
   platformBreakdown: zod.array(
     zod.object({
       platform: zod.string(),

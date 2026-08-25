@@ -5,9 +5,16 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { GetCustomersDocumentType } from "./getCustomersDocumentType";
+import type { GetCustomersPurchaseStatus } from "./getCustomersPurchaseStatus";
+import type { GetCustomersRegistrationStatus } from "./getCustomersRegistrationStatus";
+import type { GetCustomersSortBy } from "./getCustomersSortBy";
+import type { GetCustomersSortDir } from "./getCustomersSortDir";
 
 export type GetCustomersParams = {
   clientId?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
   rfmSegment?: string;
   state?: string;
   /**
@@ -19,6 +26,11 @@ export type GetCustomersParams = {
    */
   utmMedium?: string;
   search?: string;
+  documentType?: GetCustomersDocumentType;
+  registrationStatus?: GetCustomersRegistrationStatus;
+  purchaseStatus?: GetCustomersPurchaseStatus;
+  sortBy?: GetCustomersSortBy;
+  sortDir?: GetCustomersSortDir;
   page?: number;
   limit?: number;
 };

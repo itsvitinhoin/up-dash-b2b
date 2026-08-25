@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   AlertTriangle,
+  Bell,
   Bot,
   FileText,
   Lightbulb,
@@ -23,12 +24,14 @@ import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatNumber, formatPercentage } from "@/lib/formatters";
 import { queryOpts } from "@/lib/query-opts";
@@ -213,6 +216,7 @@ type OrchestratorAgentsResponse = {
 
 type OrchestratorAutomationRule = {
   id: string;
+  audience: "customer" | "internal_seller";
   eventType: string;
   sequence: number;
   name: string;
@@ -222,6 +226,9 @@ type OrchestratorAutomationRule = {
   templateName: string | null;
   templateLanguage: string | null;
   delayMinutes: number;
+  cooldownHours: number;
+  maxSendsPerCustomerMonth: number;
+  sendOncePerCart: boolean;
   channel: string;
   approval: string;
   updatedAt: string;
@@ -234,6 +241,7 @@ type OrchestratorAutomationTemplate = {
   language: string;
   status: string;
   category: string | null;
+  wabaId: string | null;
 };
 
 type OrchestratorAutomationEventOption = {
@@ -247,6 +255,12 @@ type OrchestratorAutomationsResponse = {
   client?: { id: string; name: string };
   eventOptions: Array<string | OrchestratorAutomationEventOption>;
   templates: OrchestratorAutomationTemplate[];
+  defaultSender: {
+    phoneNumberId: string;
+    displayPhoneNumber: string | null;
+    verifiedName: string | null;
+    wabaId: string | null;
+  } | null;
   jobStats: {
     scheduled: number;
     sent: number;
@@ -256,6 +270,7 @@ type OrchestratorAutomationsResponse = {
 };
 
 type OrchestratorAutomationRulePatch = {
+  audience?: "customer" | "internal_seller";
   eventType?: string;
   isEnabled?: boolean;
   templateId?: string | null;
@@ -263,6 +278,9 @@ type OrchestratorAutomationRulePatch = {
   templateLanguage?: string | null;
   templateCategory?: string | null;
   delayMinutes?: number;
+  cooldownHours?: number;
+  maxSendsPerCustomerMonth?: number;
+  sendOncePerCart?: boolean;
 };
 
 type OrchestratorClientSummaryResponse = {
@@ -755,11 +773,16 @@ function RegistrationsPage({ clientId }: { clientId?: string }) {
 
 function AutomationsPage({ clientId }: { clientId?: string }) {
   const queryClient = useQueryClient();
+  const [automationAudience, setAutomationAudience] = useState<"customer" | "internal_seller">("customer");
   const [isCreatingRule, setIsCreatingRule] = useState(false);
   const [newRule, setNewRule] = useState({
+    audience: "customer" as "customer" | "internal_seller",
     eventType: "cart_abandoned",
     templateValue: "",
     delayMinutes: 1440,
+    cooldownHours: 24,
+    maxSendsPerCustomerMonth: 4,
+    sendOncePerCart: true,
     isEnabled: false,
   });
   const automationsQuery = useQuery<OrchestratorAutomationsResponse>({
@@ -784,12 +807,16 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
   const createRule = useMutation({
     mutationFn: () => {
       const [templateName, templateLanguage] = newRule.templateValue.split("||");
-      const template = templates.find((item) => item.name === templateName && item.language === templateLanguage);
+      const templateOptions = newRule.audience === "internal_seller"
+        ? internalTemplates
+        : customerTemplates;
+      const template = templateOptions.find((item) => item.name === templateName && item.language === templateLanguage);
       return customFetch<{ rule: OrchestratorAutomationRule }>("/api/orchestrator/automations", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           clientId,
+          audience: newRule.audience,
           eventType: newRule.eventType,
           isEnabled: newRule.isEnabled,
           templateId: template?.templateId ?? template?.id ?? null,
@@ -797,12 +824,24 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
           templateLanguage: template?.language ?? null,
           templateCategory: template?.category ?? null,
           delayMinutes: newRule.delayMinutes,
+          cooldownHours: newRule.cooldownHours,
+          maxSendsPerCustomerMonth: newRule.maxSendsPerCustomerMonth,
+          sendOncePerCart: newRule.sendOncePerCart,
         }),
       });
     },
     onSuccess: () => {
       setIsCreatingRule(false);
-      setNewRule({ eventType: "cart_abandoned", templateValue: "", delayMinutes: 1440, isEnabled: false });
+      setNewRule({
+        audience: automationAudience,
+        eventType: automationAudience === "internal_seller" ? "customer.created" : "cart_abandoned",
+        templateValue: "",
+        delayMinutes: automationAudience === "internal_seller" ? 0 : 1440,
+        cooldownHours: 24,
+        maxSendsPerCustomerMonth: 4,
+        sendOncePerCart: true,
+        isEnabled: false,
+      });
       void queryClient.invalidateQueries({ queryKey: ["orchestrator-automations", clientId] });
       toast.success("Nova etapa da automação criada.");
     },
@@ -821,6 +860,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
   });
 
   const rules = automationsQuery.data?.rules ?? [];
+  const visibleRules = rules.filter((rule) => rule.audience === automationAudience);
   const eventOptions = useMemo<OrchestratorAutomationEventOption[]>(() => {
     const map = new Map<string, OrchestratorAutomationEventOption>();
     for (const option of automationsQuery.data?.eventOptions ?? []) {
@@ -840,6 +880,29 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
     return new Map(eventOptions.map((option) => [option.value, option.label]));
   }, [eventOptions]);
   const templates = automationsQuery.data?.templates ?? [];
+  const defaultSender = automationsQuery.data?.defaultSender ?? null;
+  const customerTemplates = useMemo(() => {
+    const unique = new Map<string, OrchestratorAutomationTemplate>();
+    for (const template of templates) {
+      const key = `${template.name}||${template.language}`;
+      if (!unique.has(key) || template.status === "APPROVED") unique.set(key, template);
+    }
+    return Array.from(unique.values());
+  }, [templates]);
+  const internalTemplates = useMemo(() => {
+    if (!defaultSender?.wabaId) return [];
+    const unique = new Map<string, OrchestratorAutomationTemplate>();
+    for (const template of templates) {
+      if (template.wabaId !== defaultSender.wabaId) continue;
+      if (template.status.toUpperCase() !== "APPROVED") continue;
+      const key = `${template.name}||${template.language}`;
+      if (!unique.has(key)) unique.set(key, template);
+    }
+    return Array.from(unique.values());
+  }, [defaultSender?.wabaId, templates]);
+  const availableTemplates = automationAudience === "internal_seller"
+    ? internalTemplates
+    : customerTemplates;
 
   if (!clientId) {
     return (
@@ -852,13 +915,72 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
   }
 
   return (
-    <div className="space-y-4">
+    <Tabs
+      value={automationAudience}
+      onValueChange={(value) => {
+        const audience = value === "internal_seller" ? "internal_seller" : "customer";
+        setAutomationAudience(audience);
+        setIsCreatingRule(false);
+        setNewRule({
+          audience,
+          eventType: audience === "internal_seller" ? "customer.created" : "cart_abandoned",
+          templateValue: "",
+          delayMinutes: audience === "internal_seller" ? 0 : 1440,
+          cooldownHours: 24,
+          maxSendsPerCustomerMonth: 4,
+          sendOncePerCart: true,
+          isEnabled: false,
+        });
+      }}
+      className="space-y-4"
+    >
+        <TabsList className="grid h-auto w-full grid-cols-2 lg:w-[560px]">
+          <TabsTrigger value="customer" className="gap-2">
+            <MessageCircle className="h-4 w-4" />
+            Mensagens aos clientes
+          </TabsTrigger>
+          <TabsTrigger value="internal_seller" className="gap-2">
+            <Bell className="h-4 w-4" />
+            Notificações internas
+          </TabsTrigger>
+        </TabsList>
+
+        {automationAudience === "internal_seller" && (
+          <Card>
+            <CardContent className="grid gap-3 p-4 text-sm md:grid-cols-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Número emissor</p>
+                <p className="mt-1 font-medium">
+                  {defaultSender?.verifiedName ?? defaultSender?.displayPhoneNumber ?? "Número padrão não configurado"}
+                </p>
+                {defaultSender?.verifiedName && defaultSender.displayPhoneNumber && (
+                  <p className="text-xs text-muted-foreground">{defaultSender.displayPhoneNumber}</p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Destinatário</p>
+                <p className="mt-1 font-medium">Vendedora atribuída</p>
+                <p className="text-xs text-muted-foreground">Campo seller_phone do webhook</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Proteção</p>
+                <p className="mt-1 font-medium">Uma notificação por cadastro</p>
+                <p className="text-xs text-muted-foreground">Sem fallback para o telefone do cliente</p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardContent className="flex flex-col gap-3 p-4 text-sm text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="font-medium text-foreground">Automações por evento recebido</p>
+              <p className="font-medium text-foreground">
+                {automationAudience === "internal_seller" ? "Notificações internas por evento" : "Automações por evento recebido"}
+              </p>
               <p className="mt-1">
-                Selecione o evento do webhook, o template do WhatsApp e o delay em minutos. O envio acontece pela WhatsApp Cloud API oficial quando o job vencer.
+                {automationAudience === "internal_seller"
+                  ? "O WhatsApp principal da marca avisa a vendedora atribuída usando seller_phone do webhook."
+                  : "Selecione o evento do webhook, o template do WhatsApp e o delay em minutos. O envio acontece pela WhatsApp Cloud API oficial quando o job vencer."}
               </p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -867,9 +989,21 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                 <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{automationsQuery.data?.jobStats.sent ?? 0}</p><p>envios</p></div>
                 <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{automationsQuery.data?.jobStats.failed ?? 0}</p><p>falhas</p></div>
               </div>
-              <Button size="sm" onClick={() => setIsCreatingRule(true)} disabled={isCreatingRule}>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setNewRule((current) => ({
+                    ...current,
+                    audience: automationAudience,
+                    eventType: automationAudience === "internal_seller" ? "customer.created" : current.eventType,
+                    delayMinutes: automationAudience === "internal_seller" ? 0 : current.delayMinutes,
+                  }));
+                  setIsCreatingRule(true);
+                }}
+                disabled={isCreatingRule}
+              >
                 <Plus />
-                Nova automação
+                {automationAudience === "internal_seller" ? "Nova notificação" : "Nova automação"}
               </Button>
               <Button variant="outline" size="sm" onClick={() => processDue.mutate()} disabled={processDue.isPending}>
                 {processDue.isPending ? "Processando..." : "Processar envios vencidos"}
@@ -886,7 +1020,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
           <Card className="border-primary/60">
             <CardHeader>
               <CardTitle className="flex items-center justify-between text-base">
-                <span>Nova automação</span>
+                <span>{automationAudience === "internal_seller" ? "Nova notificação interna" : "Nova automação"}</span>
                 <Button
                   type="button"
                   variant="ghost"
@@ -899,7 +1033,9 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                 </Button>
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                O mesmo evento pode ter várias etapas com templates e delays diferentes.
+                {automationAudience === "internal_seller"
+                  ? "O número principal enviará o template para a vendedora atribuída no webhook."
+                  : "O mesmo evento pode ter várias etapas com templates e delays diferentes."}
               </p>
             </CardHeader>
             <CardContent className="grid gap-4 xl:grid-cols-[1fr_1fr_150px_190px]">
@@ -927,7 +1063,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                 >
                   <SelectTrigger><SelectValue placeholder="Selecione um template" /></SelectTrigger>
                   <SelectContent>
-                    {templates.map((template) => (
+                    {availableTemplates.map((template) => (
                       <SelectItem key={`${template.id}-${template.language}`} value={`${template.name}||${template.language}`}>
                         {template.name} · {template.language} · {template.status}
                       </SelectItem>
@@ -963,14 +1099,47 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                   disabled={createRule.isPending || !newRule.eventType || !newRule.templateValue}
                 >
                   <Plus />
-                  {createRule.isPending ? "Criando..." : "Criar etapa"}
-                </Button>
+                  {createRule.isPending
+                    ? "Criando..."
+                    : automationAudience === "internal_seller"
+                      ? "Criar notificação"
+                      : "Criar etapa"}
+                  </Button>
               </div>
+              {automationAudience === "internal_seller" && availableTemplates.length === 0 && (
+                <p className="text-xs text-amber-600 xl:col-span-4 dark:text-amber-400">
+                  Defina um número padrão e sincronize os templates aprovados da WABA dele em WhatsApp &gt; Templates.
+                </p>
+              )}
+              {newRule.audience === "customer" && ["cart_created", "cart_abandoned"].includes(newRule.eventType) && (
+                <div className="grid gap-4 rounded-md border border-border p-4 xl:col-span-4 md:grid-cols-3">
+                  <label className="flex items-start gap-3 text-sm">
+                    <Checkbox
+                      checked={newRule.sendOncePerCart}
+                      onCheckedChange={(checked) => setNewRule((current) => ({
+                        ...current,
+                        sendOncePerCart: checked === true,
+                      }))}
+                    />
+                    <span><strong className="block font-medium">Enviar apenas 1x por carrinho</strong><span className="text-xs text-muted-foreground">Impede repetir esta etapa para o mesmo carrinho.</span></span>
+                  </label>
+                  <div className="space-y-2">
+                    <Label>Intervalo mínimo por cliente</Label>
+                    <Input type="number" min={1} max={720} value={newRule.cooldownHours} onChange={(event) => setNewRule((current) => ({ ...current, cooldownHours: Number(event.target.value || 1) }))} />
+                    <p className="text-xs text-muted-foreground">horas entre envios desta etapa</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Limite em 30 dias</Label>
+                    <Input type="number" min={1} max={100} value={newRule.maxSendsPerCustomerMonth} onChange={(event) => setNewRule((current) => ({ ...current, maxSendsPerCustomerMonth: Number(event.target.value || 1) }))} />
+                    <p className="text-xs text-muted-foreground">máximo por cliente nesta etapa</p>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
 
-        {rules.map((rule) => {
+        {visibleRules.map((rule) => {
           const selectedTemplateValue = rule.templateName && rule.templateLanguage
             ? `${rule.templateName}||${rule.templateLanguage}`
             : "";
@@ -1017,7 +1186,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                     value={selectedTemplateValue}
                     onValueChange={(value) => {
                       const [templateName, templateLanguage] = value.split("||");
-                      const template = templates.find((item) => item.name === templateName && item.language === templateLanguage);
+                      const template = availableTemplates.find((item) => item.name === templateName && item.language === templateLanguage);
                       updateRule.mutate({
                         ruleId: rule.id,
                         patch: {
@@ -1031,15 +1200,19 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                   >
                     <SelectTrigger><SelectValue placeholder="Selecione um template" /></SelectTrigger>
                     <SelectContent>
-                      {templates.map((template) => (
+                      {availableTemplates.map((template) => (
                         <SelectItem key={`${template.id}-${template.language}`} value={`${template.name}||${template.language}`}>
                           {template.name} · {template.language} · {template.status}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  {templates.length === 0 && (
-                    <p className="text-xs text-muted-foreground">Sincronize templates em WhatsApp &gt; Templates para aparecer aqui.</p>
+                  {availableTemplates.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {rule.audience === "internal_seller"
+                        ? "Sincronize os templates da WABA do número padrão em WhatsApp > Templates."
+                        : "Sincronize templates em WhatsApp > Templates para aparecer aqui."}
+                    </p>
                   )}
                 </div>
                 <div className="space-y-2">
@@ -1057,15 +1230,49 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                   <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{rule.enabled ? "ON" : "OFF"}</p><p className="text-muted-foreground">status</p></div>
                   <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{rule.approval === "automatic_after_delay" ? "Auto" : "Review"}</p><p className="text-muted-foreground">envio</p></div>
                 </div>
+                {rule.audience === "internal_seller" && (
+                  <div className="grid gap-3 rounded-md border border-border bg-muted/20 p-3 text-xs xl:col-span-4 md:grid-cols-3">
+                    <div><span className="text-muted-foreground">Emissor</span><p className="mt-1 font-medium">{defaultSender?.verifiedName ?? "Número padrão da marca"}</p></div>
+                    <div><span className="text-muted-foreground">Destinatário</span><p className="mt-1 font-medium">seller_phone</p></div>
+                    <div><span className="text-muted-foreground">Duplicidade</span><p className="mt-1 font-medium">Uma vez por cadastro</p></div>
+                  </div>
+                )}
+                {rule.audience === "customer" && ["cart_created", "cart_abandoned"].includes(rule.eventType) && (
+                  <div className="grid gap-4 rounded-md border border-border p-4 xl:col-span-4 md:grid-cols-3">
+                    <label className="flex items-start gap-3 text-sm">
+                      <Checkbox
+                        checked={rule.sendOncePerCart}
+                        onCheckedChange={(checked) => updateRule.mutate({ ruleId: rule.id, patch: { sendOncePerCart: checked === true } })}
+                      />
+                      <span><strong className="block font-medium">Enviar apenas 1x por carrinho</strong><span className="text-xs text-muted-foreground">Evita repetir esta etapa quando o mesmo carrinho for atualizado.</span></span>
+                    </label>
+                    <div className="space-y-2">
+                      <Label>Intervalo mínimo por cliente</Label>
+                      <Input type="number" min={1} max={720} value={rule.cooldownHours} onChange={(event) => updateRule.mutate({ ruleId: rule.id, patch: { cooldownHours: Number(event.target.value || 1) } })} />
+                      <p className="text-xs text-muted-foreground">horas entre envios desta etapa</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Limite em 30 dias</Label>
+                      <Input type="number" min={1} max={100} value={rule.maxSendsPerCustomerMonth} onChange={(event) => updateRule.mutate({ ruleId: rule.id, patch: { maxSendsPerCustomerMonth: Number(event.target.value || 1) } })} />
+                      <p className="text-xs text-muted-foreground">máximo por cliente nesta etapa</p>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           );
         })}
 
-        {!automationsQuery.isLoading && rules.length === 0 && (
-          <Card><CardContent className="p-4 text-sm text-muted-foreground">Nenhuma regra encontrada para esta marca.</CardContent></Card>
+        {!automationsQuery.isLoading && visibleRules.length === 0 && (
+          <Card>
+            <CardContent className="p-4 text-sm text-muted-foreground">
+              {automationAudience === "internal_seller"
+                ? "Nenhuma notificação interna configurada para esta marca."
+                : "Nenhuma regra encontrada para esta marca."}
+            </CardContent>
+          </Card>
         )}
-      </div>
+      </Tabs>
   );
 }
 
@@ -1382,6 +1589,16 @@ function LogsPage({ clientId }: { clientId?: string }) {
                   </summary>
                   <pre className="max-h-72 overflow-auto border-t border-border/70 p-3 text-xs leading-relaxed">
                     {prettyJson(log.normalizedPayload)}
+                  </pre>
+                </details>
+              ) : null}
+              {log.action.startsWith("automation_") && log.metadata ? (
+                <details className="mt-2 rounded-md border border-border/70 bg-muted/10">
+                  <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground">
+                    Diagnóstico técnico do envio
+                  </summary>
+                  <pre className="max-h-72 overflow-auto border-t border-border/70 p-3 text-xs leading-relaxed">
+                    {prettyJson(log.metadata)}
                   </pre>
                 </details>
               ) : null}

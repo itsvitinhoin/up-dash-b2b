@@ -1,6 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Clock3, Copy, FileText, Plus, RefreshCw, Save, Trash2, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronRight,
+  Clock3,
+  Copy,
+  FileText,
+  MessageCircle,
+  Plus,
+  RefreshCw,
+  Save,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 import { customFetch } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -16,7 +28,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 
@@ -32,6 +51,15 @@ type WhatsappConnectionsResponse = {
     displayPhoneNumber: string | null;
     verifiedName: string | null;
     isDefault: boolean;
+    operationalStatus?: "healthy" | "warning" | "error";
+    operationalMessage?: string;
+    templateSummary: {
+      approved: number;
+      pending: number;
+      rejected: number;
+      total: number;
+      lastSyncedAt: string | null;
+    };
   }>;
 };
 
@@ -42,7 +70,11 @@ type WhatsappTemplate = {
   status: string;
   category: string | null;
   components: unknown;
-  variableMapping: Array<{ placeholder: string; variableKey: string | null; example: string | null }>;
+  variableMapping: Array<{
+    placeholder: string;
+    variableKey: string | null;
+    example: string | null;
+  }>;
   lastSyncedAt: string | null;
 };
 
@@ -50,7 +82,9 @@ type WhatsappTemplatesResponse = {
   total: number;
   data: WhatsappTemplate[];
   variableOptions?: {
-    raw: Array<string | { key: string; sample: string | null; eventTypes?: string[] }>;
+    raw: Array<
+      string | { key: string; sample: string | null; eventTypes?: string[] }
+    >;
   };
 };
 
@@ -88,7 +122,9 @@ const TEMPLATE_BUTTON_TYPE_LABEL: Record<TemplateButtonType, string> = {
   PHONE_NUMBER: "Telefone",
 };
 
-function phoneLabel(phone: WhatsappConnectionsResponse["phoneNumbers"][number]) {
+function phoneLabel(
+  phone: WhatsappConnectionsResponse["phoneNumbers"][number],
+) {
   return phone.verifiedName ?? phone.displayPhoneNumber ?? phone.phoneNumberId;
 }
 
@@ -111,7 +147,10 @@ function statusBadge(status: string) {
     );
   }
   return (
-    <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-500">
+    <Badge
+      variant="outline"
+      className="gap-1 border-amber-500/40 text-amber-500"
+    >
       <Clock3 className="h-3 w-3" />
       Pendente
     </Badge>
@@ -134,7 +173,10 @@ function getTemplateBodyText(components: unknown) {
   if (!Array.isArray(components)) return "";
   const body = components.find((component) => {
     if (!component || typeof component !== "object") return false;
-    return String((component as { type?: unknown }).type ?? "").toUpperCase() === "BODY";
+    return (
+      String((component as { type?: unknown }).type ?? "").toUpperCase() ===
+      "BODY"
+    );
   }) as { text?: unknown } | undefined;
   return typeof body?.text === "string" ? body.text : "";
 }
@@ -148,17 +190,29 @@ function getPlaceholdersFromText(text: string) {
 }
 
 function mappingToState(mapping: WhatsappTemplate["variableMapping"]) {
-  return mapping.reduce<Record<string, { key: string; example: string }>>((acc, item) => {
-    acc[item.placeholder] = {
-      key: item.variableKey ?? "",
-      example: item.example ?? "",
-    };
-    return acc;
-  }, {});
+  return mapping.reduce<Record<string, { key: string; example: string }>>(
+    (acc, item) => {
+      acc[item.placeholder] = {
+        key: item.variableKey ?? "",
+        example: item.example ?? "",
+      };
+      return acc;
+    },
+    {},
+  );
 }
 
-function normalizePayloadVariableOption(option: string | { key: string; sample: string | null; eventTypes?: string[] }) {
-  if (typeof option === "string") return { key: option, sample: null as string | null, eventTypes: [] as string[] };
+function normalizePayloadVariableOption(
+  option:
+    | string
+    | { key: string; sample: string | null; eventTypes?: string[] },
+) {
+  if (typeof option === "string")
+    return {
+      key: option,
+      sample: null as string | null,
+      eventTypes: [] as string[],
+    };
   return {
     ...option,
     eventTypes: option.eventTypes ?? [],
@@ -169,11 +223,16 @@ export default function WhatsappTemplatesPage() {
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
-  const [phoneNumberId, setPhoneNumberId] = useState(() => new URLSearchParams(window.location.search).get("waPhone") ?? "");
+  const [phoneNumberId, setPhoneNumberId] = useState(
+    () => new URLSearchParams(window.location.search).get("waPhone") ?? "",
+  );
   const [statusFilter, setStatusFilter] = useState(ALL);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [templateMappings, setTemplateMappings] = useState<Record<string, Record<string, { key: string; example: string }>>>({});
+  const autoSyncedPhoneRef = useRef<string | null>(null);
+  const [templateMappings, setTemplateMappings] = useState<
+    Record<string, Record<string, { key: string; example: string }>>
+  >({});
   const [form, setForm] = useState({
     name: "",
     language: "pt_BR",
@@ -188,16 +247,30 @@ export default function WhatsappTemplatesPage() {
 
   const connectionsQuery = useMemo(() => {
     const params = new URLSearchParams();
-    if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
+    if (user?.role === "ADMIN" && selectedClientId)
+      params.set("clientId", selectedClientId);
     const query = params.toString();
     return `/api/whatsapp/connections${query ? `?${query}` : ""}`;
   }, [selectedClientId, user?.role]);
 
-  const { data: connections } = useQuery<WhatsappConnectionsResponse>({
+  const {
+    data: connections,
+    isLoading: isLoadingConnections,
+    isError: connectionsFailed,
+  } = useQuery<WhatsappConnectionsResponse>({
     queryKey: ["whatsapp-template-connections", clientId],
     queryFn: () => customFetch<WhatsappConnectionsResponse>(connectionsQuery),
     enabled: Boolean(clientId),
   });
+
+  const selectedPhone = useMemo(
+    () =>
+      (connections?.phoneNumbers ?? []).find(
+        (phone) => phone.phoneNumberId === phoneNumberId,
+      ) ?? null,
+    [connections?.phoneNumbers, phoneNumberId],
+  );
+  const scopedPhoneNumberId = selectedPhone?.phoneNumberId ?? "";
 
   useEffect(() => {
     if (!connections) return;
@@ -208,56 +281,85 @@ export default function WhatsappTemplatesPage() {
       return;
     }
 
-    const selectedPhoneStillExists = phoneNumbers.some((phone) => phone.phoneNumberId === phoneNumberId);
+    const selectedPhoneStillExists = phoneNumbers.some(
+      (phone) => phone.phoneNumberId === phoneNumberId,
+    );
     if (selectedPhoneStillExists) return;
-
-    const defaultPhone = phoneNumbers.find((phone) => phone.isDefault) ?? phoneNumbers[0];
-    setPhoneNumberId(defaultPhone?.phoneNumberId ?? "");
+    setPhoneNumberId("");
   }, [connections?.phoneNumbers, phoneNumberId]);
 
   const templatesQuery = useMemo(() => {
     const params = new URLSearchParams();
-    if (user?.role === "ADMIN" && selectedClientId) params.set("clientId", selectedClientId);
-    if (phoneNumberId) params.set("phoneNumberId", phoneNumberId);
+    if (user?.role === "ADMIN" && selectedClientId)
+      params.set("clientId", selectedClientId);
+    if (scopedPhoneNumberId) params.set("phoneNumberId", scopedPhoneNumberId);
     const query = params.toString();
     return `/api/whatsapp/templates${query ? `?${query}` : ""}`;
-  }, [phoneNumberId, selectedClientId, user?.role]);
+  }, [scopedPhoneNumberId, selectedClientId, user?.role]);
 
   const templatesKey = useMemo(
-    () => ["whatsapp-templates", clientId, phoneNumberId],
-    [clientId, phoneNumberId],
+    () => ["whatsapp-templates", clientId, scopedPhoneNumberId],
+    [clientId, scopedPhoneNumberId],
   );
 
   const { data: templates, isLoading } = useQuery<WhatsappTemplatesResponse>({
     queryKey: templatesKey,
     queryFn: () => customFetch<WhatsappTemplatesResponse>(templatesQuery),
-    enabled: Boolean(clientId),
+    enabled: Boolean(clientId && scopedPhoneNumberId),
   });
 
   const syncTemplates = useMutation({
-    mutationFn: () =>
+    mutationFn: (targetPhoneNumberId: string) =>
       customFetch<SyncTemplatesResponse>("/api/whatsapp/templates/sync", {
         method: "POST",
         body: JSON.stringify({
           clientId,
-          phoneNumberId,
+          phoneNumberId: targetPhoneNumberId,
         }),
       }),
-    onSuccess: (payload) => {
+    onSuccess: (payload, targetPhoneNumberId) => {
       const diagnostic = payload.diagnostics?.[0];
-      const emptySyncMessage = diagnostic?.matchedPhone === false
-        ? "A Meta não confirmou o número selecionado em nenhum WABA acessível por este token. Reconecte o número ou revise o acesso do aplicativo à conta do WhatsApp."
-        : "A Meta confirmou o número, mas retornou 0 templates para o WABA dele. Confirme no Gerenciador do WhatsApp se os modelos aprovados pertencem a essa mesma conta.";
-      const syncError = payload.errors[0] ?? (payload.synced === 0 ? emptySyncMessage : null);
+      const emptySyncMessage =
+        diagnostic?.matchedPhone === false
+          ? "A Meta não confirmou o número selecionado em nenhum WABA acessível por este token. Reconecte o número ou revise o acesso do aplicativo à conta do WhatsApp."
+          : "A Meta confirmou o número, mas retornou 0 templates para o WABA dele. Confirme no Gerenciador do WhatsApp se os modelos aprovados pertencem a essa mesma conta.";
+      const syncError =
+        payload.errors[0] ?? (payload.synced === 0 ? emptySyncMessage : null);
       setError(syncError);
-      setSuccessMessage(syncError ? null : `Sincronização concluída: ${payload.synced} template(s).`);
-      void queryClient.invalidateQueries({ queryKey: templatesKey });
+      setSuccessMessage(
+        syncError
+          ? null
+          : `Sincronização concluída: ${payload.synced} template(s).`,
+      );
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-templates", clientId, targetPhoneNumberId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-template-connections", clientId],
+      });
     },
     onError: (err) => {
       setSuccessMessage(null);
-      setError(err instanceof Error ? err.message : "Não foi possível sincronizar os templates.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível sincronizar os templates.",
+      );
     },
   });
+
+  useEffect(() => {
+    if (!scopedPhoneNumberId) {
+      autoSyncedPhoneRef.current = null;
+      return;
+    }
+    if (autoSyncedPhoneRef.current === scopedPhoneNumberId) return;
+
+    autoSyncedPhoneRef.current = scopedPhoneNumberId;
+    setError(null);
+    setSuccessMessage(null);
+    syncTemplates.mutate(scopedPhoneNumberId);
+  }, [scopedPhoneNumberId]);
 
   const createTemplate = useMutation({
     mutationFn: () =>
@@ -265,7 +367,7 @@ export default function WhatsappTemplatesPage() {
         method: "POST",
         body: JSON.stringify({
           clientId,
-          phoneNumberId,
+          phoneNumberId: scopedPhoneNumberId,
           name: form.name.trim(),
           language: form.language.trim(),
           category: form.category,
@@ -278,7 +380,10 @@ export default function WhatsappTemplatesPage() {
                 value: button.value.trim() || null,
               }))
             : [],
-          bodyExamples: bodyPlaceholders.map((placeholder) => form.variableMapping[placeholder]?.example?.trim() || "Exemplo"),
+          bodyExamples: bodyPlaceholders.map(
+            (placeholder) =>
+              form.variableMapping[placeholder]?.example?.trim() || "Exemplo",
+          ),
           variableMapping: bodyPlaceholders.map((placeholder) => ({
             placeholder,
             variableKey: form.variableMapping[placeholder]?.key || null,
@@ -303,58 +408,86 @@ export default function WhatsappTemplatesPage() {
     },
     onError: (err) => {
       setSuccessMessage(null);
-      setError(err instanceof Error ? err.message : "Não foi possível criar o template.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível criar o template.",
+      );
     },
   });
 
   const saveTemplateMapping = useMutation({
     mutationFn: (template: WhatsappTemplate) => {
-      const templateState = templateMappings[template.id] ?? mappingToState(template.variableMapping);
-      const placeholders = getPlaceholdersFromText(getTemplateBodyText(template.components));
-      return customFetch<{ ok: boolean; template: WhatsappTemplate | null }>(`/api/whatsapp/templates/${template.id}/mapping`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          clientId,
-          variableMapping: placeholders.map((placeholder) => ({
-            placeholder,
-            variableKey: templateState[placeholder]?.key || null,
-            example: templateState[placeholder]?.example?.trim() || null,
-          })),
-        }),
-      });
+      const templateState =
+        templateMappings[template.id] ??
+        mappingToState(template.variableMapping);
+      const placeholders = getPlaceholdersFromText(
+        getTemplateBodyText(template.components),
+      );
+      return customFetch<{ ok: boolean; template: WhatsappTemplate | null }>(
+        `/api/whatsapp/templates/${template.id}/mapping`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            clientId,
+            variableMapping: placeholders.map((placeholder) => ({
+              placeholder,
+              variableKey: templateState[placeholder]?.key || null,
+              example: templateState[placeholder]?.example?.trim() || null,
+            })),
+          }),
+        },
+      );
     },
     onSuccess: () => {
       setError(null);
-      setSuccessMessage("Mapeamento do template salvo. As automações vão usar essas variáveis na ordem definida.");
+      setSuccessMessage(
+        "Mapeamento do template salvo. As automações vão usar essas variáveis na ordem definida.",
+      );
       void queryClient.invalidateQueries({ queryKey: templatesKey });
     },
     onError: (err) => {
       setSuccessMessage(null);
-      setError(err instanceof Error ? err.message : "Não foi possível salvar o mapeamento do template.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível salvar o mapeamento do template.",
+      );
     },
   });
 
   const filteredTemplates = useMemo(() => {
     const rows = templates?.data ?? [];
     if (statusFilter === ALL) return rows;
-    return rows.filter((template) => template.status.toUpperCase() === statusFilter);
+    return rows.filter(
+      (template) => template.status.toUpperCase() === statusFilter,
+    );
   }, [statusFilter, templates?.data]);
 
   const templateVariableOptions = useMemo(() => {
-    const rawOptions = (templates?.variableOptions?.raw ?? []).map(normalizePayloadVariableOption).map((option) => ({
-      key: option.key,
-      label: [
-        option.key,
-        option.sample ? `— ${option.sample}` : null,
-        option.eventTypes.length ? `· ${option.eventTypes.join(", ")}` : null,
-      ].filter(Boolean).join(" "),
-      groupTitle: "Payload UP Zero",
-    }));
+    const rawOptions = (templates?.variableOptions?.raw ?? [])
+      .map(normalizePayloadVariableOption)
+      .map((option) => ({
+        key: option.key,
+        label: [
+          option.key,
+          option.sample ? `— ${option.sample}` : null,
+          option.eventTypes.length ? `· ${option.eventTypes.join(", ")}` : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
+        groupTitle: "Payload UP Zero",
+      }));
     const selectedKeys = (templates?.data ?? []).flatMap((template) =>
-      template.variableMapping.map((mapping) => mapping.variableKey).filter((key): key is string => Boolean(key)),
+      template.variableMapping
+        .map((mapping) => mapping.variableKey)
+        .filter((key): key is string => Boolean(key)),
     );
 
-    const map = new Map<string, { key: string; label: string; groupTitle: string }>();
+    const map = new Map<
+      string,
+      { key: string; label: string; groupTitle: string }
+    >();
     for (const option of rawOptions) {
       if (!map.has(option.key)) map.set(option.key, option);
     }
@@ -370,15 +503,6 @@ export default function WhatsappTemplatesPage() {
     return Array.from(map.values());
   }, [templates?.data, templates?.variableOptions?.raw]);
 
-  const statusCounts = useMemo(() => {
-    const rows = templates?.data ?? [];
-    return {
-      approved: rows.filter((template) => template.status.toUpperCase() === "APPROVED").length,
-      pending: rows.filter((template) => !["APPROVED", "REJECTED"].includes(template.status.toUpperCase())).length,
-      rejected: rows.filter((template) => template.status.toUpperCase() === "REJECTED").length,
-    };
-  }, [templates?.data]);
-
   const bodyPlaceholders = useMemo(() => {
     const placeholders = new Set<string>();
     for (const match of form.bodyText.matchAll(VARIABLE_PATTERN)) {
@@ -389,19 +513,29 @@ export default function WhatsappTemplatesPage() {
 
   const hasNamedVariableInBody = NAMED_VARIABLE_PATTERN.test(form.bodyText);
   const activeButtons = form.buttonsEnabled ? form.buttons : [];
-  const buttonCounts = useMemo(() => ({
-    total: activeButtons.length,
-    quickReply: activeButtons.filter((button) => button.type === "QUICK_REPLY").length,
-    url: activeButtons.filter((button) => button.type === "URL").length,
-    phone: activeButtons.filter((button) => button.type === "PHONE_NUMBER").length,
-  }), [activeButtons]);
+  const buttonCounts = useMemo(
+    () => ({
+      total: activeButtons.length,
+      quickReply: activeButtons.filter(
+        (button) => button.type === "QUICK_REPLY",
+      ).length,
+      url: activeButtons.filter((button) => button.type === "URL").length,
+      phone: activeButtons.filter((button) => button.type === "PHONE_NUMBER")
+        .length,
+    }),
+    [activeButtons],
+  );
   const hasInvalidButtons = activeButtons.some((button) => {
     if (!button.text.trim()) return true;
     if (button.type === "QUICK_REPLY") return false;
     return !button.value.trim();
   });
 
-  const updateMapping = (placeholder: string, field: "key" | "example", value: string) => {
+  const updateMapping = (
+    placeholder: string,
+    field: "key" | "example",
+    value: string,
+  ) => {
     setForm((current) => ({
       ...current,
       variableMapping: {
@@ -415,9 +549,15 @@ export default function WhatsappTemplatesPage() {
     }));
   };
 
-  const updateTemplateMapping = (template: WhatsappTemplate, placeholder: string, field: "key" | "example", value: string) => {
+  const updateTemplateMapping = (
+    template: WhatsappTemplate,
+    placeholder: string,
+    field: "key" | "example",
+    value: string,
+  ) => {
     setTemplateMappings((current) => {
-      const templateState = current[template.id] ?? mappingToState(template.variableMapping);
+      const templateState =
+        current[template.id] ?? mappingToState(template.variableMapping);
       return {
         ...current,
         [template.id]: {
@@ -433,11 +573,15 @@ export default function WhatsappTemplatesPage() {
   };
 
   const insertTemplatePlaceholder = () => {
-    const nextIndex = bodyPlaceholders.length ? Math.max(...bodyPlaceholders.map(Number)) + 1 : 1;
+    const nextIndex = bodyPlaceholders.length
+      ? Math.max(...bodyPlaceholders.map(Number)) + 1
+      : 1;
     const placeholder = `{{${nextIndex}}}`;
     setForm((current) => ({
       ...current,
-      bodyText: current.bodyText ? `${current.bodyText} ${placeholder}` : placeholder,
+      bodyText: current.bodyText
+        ? `${current.bodyText} ${placeholder}`
+        : placeholder,
     }));
   };
 
@@ -448,12 +592,18 @@ export default function WhatsappTemplatesPage() {
     return buttonCounts.quickReply < 10;
   };
 
-  const canChangeButtonType = (currentButton: TemplateButtonForm, nextType: TemplateButtonType) => {
+  const canChangeButtonType = (
+    currentButton: TemplateButtonForm,
+    nextType: TemplateButtonType,
+  ) => {
     if (currentButton.type === nextType) return true;
     const counts = {
       url: buttonCounts.url - (currentButton.type === "URL" ? 1 : 0),
-      phone: buttonCounts.phone - (currentButton.type === "PHONE_NUMBER" ? 1 : 0),
-      quickReply: buttonCounts.quickReply - (currentButton.type === "QUICK_REPLY" ? 1 : 0),
+      phone:
+        buttonCounts.phone - (currentButton.type === "PHONE_NUMBER" ? 1 : 0),
+      quickReply:
+        buttonCounts.quickReply -
+        (currentButton.type === "QUICK_REPLY" ? 1 : 0),
     };
     if (nextType === "URL") return counts.url < 2;
     if (nextType === "PHONE_NUMBER") return counts.phone < 1;
@@ -480,7 +630,9 @@ export default function WhatsappTemplatesPage() {
   const updateButton = (id: string, patch: Partial<TemplateButtonForm>) => {
     setForm((current) => ({
       ...current,
-      buttons: current.buttons.map((button) => (button.id === id ? { ...button, ...patch } : button)),
+      buttons: current.buttons.map((button) =>
+        button.id === id ? { ...button, ...patch } : button,
+      ),
     }));
   };
 
@@ -502,86 +654,219 @@ export default function WhatsappTemplatesPage() {
     }
   };
 
+  const openPhoneTemplates = (targetPhoneNumberId: string) => {
+    setError(null);
+    setSuccessMessage(null);
+    setTemplateMappings({});
+    setStatusFilter(ALL);
+
+    if (targetPhoneNumberId === scopedPhoneNumberId) {
+      syncTemplates.mutate(targetPhoneNumberId);
+      return;
+    }
+
+    setPhoneNumberId(targetPhoneNumberId);
+  };
+
   return (
     <div className="space-y-4" data-testid="page-whatsapp-templates">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+      <section className="space-y-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-semibold">
             <FileText className="h-4 w-4 text-primary" />
-            Templates WhatsApp
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Crie templates de texto e acompanhe os modelos aprovados, pendentes ou recusados pela Meta.
+            Templates por número
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Abra um número para sincronizar e gerenciar os templates do WABA
+            correspondente.
           </p>
-        </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px_180px]">
-          <div className="space-y-2">
-            <Label>Número / perfil WhatsApp</Label>
-            <Select value={phoneNumberId} onValueChange={setPhoneNumberId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione o número" />
-              </SelectTrigger>
-              <SelectContent>
-                {(connections?.phoneNumbers ?? []).map((phone) => (
-                  <SelectItem key={phone.id} value={phone.phoneNumberId}>
-                    {phoneLabel(phone)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Status</Label>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger>
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>Todos</SelectItem>
-                <SelectItem value="APPROVED">Aprovados</SelectItem>
-                <SelectItem value="PENDING">Pendentes</SelectItem>
-                <SelectItem value="REJECTED">Recusados</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-end">
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => syncTemplates.mutate()}
-              disabled={!phoneNumberId || syncTemplates.isPending}
-            >
-              <RefreshCw className={`mr-2 h-4 w-4 ${syncTemplates.isPending ? "animate-spin" : ""}`} />
-              Sincronizar
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Aprovados</p>
-            <p className="mt-2 text-2xl font-semibold text-emerald-500">{statusCounts.approved}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Pendentes</p>
-            <p className="mt-2 text-2xl font-semibold text-amber-500">{statusCounts.pending}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Recusados</p>
-            <p className="mt-2 text-2xl font-semibold text-red-500">{statusCounts.rejected}</p>
-          </CardContent>
-        </Card>
-      </div>
+        {isLoadingConnections ? (
+          <div className="flex h-28 items-center justify-center rounded-md border border-border text-sm text-muted-foreground">
+            <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+            Carregando números conectados...
+          </div>
+        ) : connectionsFailed ? (
+          <Alert variant="destructive">
+            <XCircle className="h-4 w-4" />
+            <AlertTitle>Não foi possível carregar as conexões</AlertTitle>
+            <AlertDescription>
+              Atualize a página ou confira a conexão do cliente selecionado.
+            </AlertDescription>
+          </Alert>
+        ) : (connections?.phoneNumbers ?? []).length === 0 ? (
+          <Alert>
+            <MessageCircle className="h-4 w-4" />
+            <AlertTitle>Nenhum número conectado</AlertTitle>
+            <AlertDescription>
+              Conecte um WhatsApp em WhatsApp &gt; Conexões para gerenciar seus
+              templates.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {(connections?.phoneNumbers ?? []).map((phone) => {
+              const summary = phone.templateSummary ?? {
+                approved: 0,
+                pending: 0,
+                rejected: 0,
+                total: 0,
+                lastSyncedAt: null,
+              };
+              const isSelected = phone.phoneNumberId === scopedPhoneNumberId;
+              const isSyncing =
+                syncTemplates.isPending &&
+                syncTemplates.variables === phone.phoneNumberId;
+              const healthBorder =
+                phone.operationalStatus === "error"
+                  ? "border-red-500/60"
+                  : phone.operationalStatus === "warning"
+                    ? "border-amber-500/50"
+                    : "border-border";
+
+              return (
+                <button
+                  key={phone.id}
+                  type="button"
+                  className={`group min-h-44 rounded-md border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-70 ${healthBorder} ${
+                    isSelected ? "ring-1 ring-primary" : ""
+                  }`}
+                  onClick={() => openPhoneTemplates(phone.phoneNumberId)}
+                  disabled={syncTemplates.isPending}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                          <MessageCircle className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">
+                            {phoneLabel(phone)}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {phone.displayPhoneNumber ?? phone.phoneNumberId}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    {isSyncing ? (
+                      <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-primary" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                    )}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-3 gap-3 border-y border-border/70 py-3">
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground">
+                        Aprovados
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-emerald-500">
+                        {summary.approved}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground">
+                        Pendentes
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-amber-500">
+                        {summary.pending}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground">
+                        Recusados
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-red-500">
+                        {summary.rejected}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                    <span className="truncate font-mono">
+                      WABA: {phone.wabaId ?? "não identificado"}
+                    </span>
+                    <span className="shrink-0">
+                      {isSyncing
+                        ? "Sincronizando..."
+                        : `${summary.total} no total`}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Último sync: {formatSyncDate(summary.lastSyncedAt)}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {!selectedPhone ? (
+        !isLoadingConnections &&
+        !connectionsFailed &&
+        (connections?.phoneNumbers ?? []).length > 0 ? (
+          <Alert>
+            <FileText className="h-4 w-4" />
+            <AlertTitle>Selecione um número</AlertTitle>
+            <AlertDescription>
+              Clique em um card acima para abrir a criação e a lista de
+              templates daquele número.
+            </AlertDescription>
+          </Alert>
+        ) : null
+      ) : (
+        <>
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+                <div>
+                  <CardTitle className="text-base">
+                    {phoneLabel(selectedPhone)}
+                  </CardTitle>
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    WABA: {selectedPhone.wabaId ?? "não identificado"}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-full sm:w-48">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todos os status</SelectItem>
+                      <SelectItem value="APPROVED">Aprovados</SelectItem>
+                      <SelectItem value="PENDING">Pendentes</SelectItem>
+                      <SelectItem value="REJECTED">Recusados</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="outline"
+                    onClick={() => syncTemplates.mutate(scopedPhoneNumberId)}
+                    disabled={!scopedPhoneNumberId || syncTemplates.isPending}
+                  >
+                    <RefreshCw
+                      className={`mr-2 h-4 w-4 ${syncTemplates.isPending ? "animate-spin" : ""}`}
+                    />
+                    {syncTemplates.isPending
+                      ? "Sincronizando"
+                      : "Sincronizar agora"}
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+          </Card>
 
       {(successMessage || error) && (
         <Alert variant={error ? "destructive" : "default"}>
-          {error ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+          {error ? (
+            <XCircle className="h-4 w-4" />
+          ) : (
+            <CheckCircle2 className="h-4 w-4" />
+          )}
           <AlertTitle>{error ? "Ação não concluída" : "Pronto"}</AlertTitle>
           <AlertDescription>{error ?? successMessage}</AlertDescription>
         </Alert>
@@ -589,16 +874,21 @@ export default function WhatsappTemplatesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Variaveis para templates e automacoes</CardTitle>
+          <CardTitle className="text-base">
+            Variaveis para templates e automacoes
+          </CardTitle>
           <p className="text-xs text-muted-foreground">
-            No texto enviado para a Meta use sempre placeholders numericos, como {"{{1}}"} e {"{{2}}"}. Depois vincule
-            cada numero a uma variavel real do webhook no formulario de criacao.
+            No texto enviado para a Meta use sempre placeholders numericos, como{" "}
+            {"{{1}}"} e {"{{2}}"}. Depois vincule cada numero a uma variavel
+            real do webhook no formulario de criacao.
           </p>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-primary">
-            Exemplo: escreva <span className="font-mono">Olá {"{{1}}"}</span> no corpo do template e mapeie a variavel{" "}
-            <span className="font-mono">{"{{1}}"}</span> para <span className="font-mono">contact_name</span>.
+            Exemplo: escreva <span className="font-mono">Olá {"{{1}}"}</span> no
+            corpo do template e mapeie a variavel{" "}
+            <span className="font-mono">{"{{1}}"}</span> para{" "}
+            <span className="font-mono">contact_name</span>.
           </div>
           <details className="rounded-lg border border-border/70">
             <summary className="flex cursor-pointer items-center justify-between gap-3 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -610,28 +900,37 @@ export default function WhatsappTemplatesPage() {
             <div className="border-t border-border/70 p-3">
               {(templates?.variableOptions?.raw?.length ?? 0) > 0 ? (
                 <div className="flex max-h-72 flex-wrap gap-2 overflow-y-auto pr-1">
-                  {(templates?.variableOptions?.raw ?? []).map(normalizePayloadVariableOption).map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-left text-xs transition-colors hover:border-primary/50 hover:bg-primary/10"
-                      onClick={() => void copyVariable(option.key)}
-                      title={`Copiar ${option.key}`}
-                    >
-                      <Copy className="h-3 w-3 shrink-0 text-muted-foreground" />
-                      <span className="font-mono text-foreground">{option.key}</span>
-                      {option.sample ? <span className="max-w-48 truncate text-muted-foreground">{option.sample}</span> : null}
-                      {option.eventTypes.length ? (
-                        <span className="max-w-48 truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          {option.eventTypes.join(", ")}
+                  {(templates?.variableOptions?.raw ?? [])
+                    .map(normalizePayloadVariableOption)
+                    .map((option) => (
+                      <button
+                        key={option.key}
+                        type="button"
+                        className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-left text-xs transition-colors hover:border-primary/50 hover:bg-primary/10"
+                        onClick={() => void copyVariable(option.key)}
+                        title={`Copiar ${option.key}`}
+                      >
+                        <Copy className="h-3 w-3 shrink-0 text-muted-foreground" />
+                        <span className="font-mono text-foreground">
+                          {option.key}
                         </span>
-                      ) : null}
-                    </button>
-                  ))}
+                        {option.sample ? (
+                          <span className="max-w-48 truncate text-muted-foreground">
+                            {option.sample}
+                          </span>
+                        ) : null}
+                        {option.eventTypes.length ? (
+                          <span className="max-w-48 truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            {option.eventTypes.join(", ")}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
                 </div>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  Nenhum payload real recebido ainda para esta marca. Assim que o UP Zero disparar eventos, os campos aparecem aqui.
+                  Nenhum payload real recebido ainda para esta marca. Assim que
+                  o UP Zero disparar eventos, os campos aparecem aqui.
                 </p>
               )}
             </div>
@@ -643,7 +942,8 @@ export default function WhatsappTemplatesPage() {
         <CardHeader>
           <CardTitle className="text-base">Criar template</CardTitle>
           <p className="text-xs text-muted-foreground">
-            O modelo entra em análise na Meta. Depois de aprovado, ele fica disponível em Envios.
+            O modelo entra em análise na Meta. Depois de aprovado, ele fica
+            disponível em Envios.
           </p>
         </CardHeader>
         <CardContent className="grid gap-4 lg:grid-cols-[minmax(0,0.45fr)_minmax(0,0.55fr)]">
@@ -652,16 +952,28 @@ export default function WhatsappTemplatesPage() {
               <Label>Nome do template</Label>
               <Input
                 value={form.name}
-                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value.toLowerCase() }))}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    name: event.target.value.toLowerCase(),
+                  }))
+                }
                 placeholder="ex: boas_vindas_celeb"
               />
-              <p className="text-xs text-muted-foreground">Use letras minúsculas, números e underscore.</p>
+              <p className="text-xs text-muted-foreground">
+                Use letras minúsculas, números e underscore.
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Idioma</Label>
               <Input
                 value={form.language}
-                onChange={(event) => setForm((current) => ({ ...current, language: event.target.value }))}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    language: event.target.value,
+                  }))
+                }
                 placeholder="pt_BR"
               />
             </div>
@@ -669,7 +981,9 @@ export default function WhatsappTemplatesPage() {
               <Label>Categoria</Label>
               <Select
                 value={form.category}
-                onValueChange={(value) => setForm((current) => ({ ...current, category: value }))}
+                onValueChange={(value) =>
+                  setForm((current) => ({ ...current, category: value }))
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -688,16 +1002,27 @@ export default function WhatsappTemplatesPage() {
               <Label>Texto do corpo</Label>
               <Textarea
                 value={form.bodyText}
-                onChange={(event) => setForm((current) => ({ ...current, bodyText: event.target.value }))}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    bodyText: event.target.value,
+                  }))
+                }
                 placeholder="Olá {{1}}, seu atendimento foi iniciado pela equipe."
                 className="min-h-28"
               />
               <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={insertTemplatePlaceholder}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={insertTemplatePlaceholder}
+                >
                   + Inserir variavel
                 </Button>
                 <p className="text-xs text-muted-foreground">
-                  Use apenas {"{{1}}"}, {"{{2}}"}, {"{{3}}"} no texto do template oficial.
+                  Use apenas {"{{1}}"}, {"{{2}}"}, {"{{3}}"} no texto do
+                  template oficial.
                 </p>
               </div>
               {hasNamedVariableInBody && (
@@ -705,7 +1030,8 @@ export default function WhatsappTemplatesPage() {
                   <XCircle className="h-4 w-4" />
                   <AlertTitle>Formato invalido para a Meta</AlertTitle>
                   <AlertDescription>
-                    Nao use variaveis nomeadas no corpo, como {"{{contact_name}}"}. Troque por {"{{1}}"} e selecione
+                    Nao use variaveis nomeadas no corpo, como{" "}
+                    {"{{contact_name}}"}. Troque por {"{{1}}"} e selecione
                     contact_name no mapeamento abaixo.
                   </AlertDescription>
                 </Alert>
@@ -715,30 +1041,46 @@ export default function WhatsappTemplatesPage() {
             {bodyPlaceholders.length > 0 && (
               <div className="space-y-3 rounded-lg border border-border/70 p-3">
                 <div>
-                  <p className="text-sm font-medium">Mapeamento das variaveis</p>
+                  <p className="text-sm font-medium">
+                    Mapeamento das variaveis
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    Defina qual campo do webhook alimenta cada placeholder e informe um exemplo para aprovacao da Meta.
+                    Defina qual campo do webhook alimenta cada placeholder e
+                    informe um exemplo para aprovacao da Meta.
                   </p>
                 </div>
                 <div className="space-y-3">
                   {bodyPlaceholders.map((placeholder) => (
-                    <div key={placeholder} className="grid gap-3 rounded-md bg-muted/30 p-3 md:grid-cols-[110px_1fr_1fr]">
+                    <div
+                      key={placeholder}
+                      className="grid gap-3 rounded-md bg-muted/30 p-3 md:grid-cols-[110px_1fr_1fr]"
+                    >
                       <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">Placeholder</p>
+                        <p className="text-xs text-muted-foreground">
+                          Placeholder
+                        </p>
                         <p className="font-mono text-sm font-semibold">{`{{${placeholder}}}`}</p>
                       </div>
                       <div className="space-y-2">
                         <Label>Variavel do webhook</Label>
                         <Select
                           value={form.variableMapping[placeholder]?.key ?? ""}
-                          onValueChange={(value) => updateMapping(placeholder, "key", value)}
+                          onValueChange={(value) =>
+                            updateMapping(placeholder, "key", value)
+                          }
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Selecione a variavel" />
                           </SelectTrigger>
-                          <SelectContent position="item-aligned" className="max-h-80 w-[var(--radix-select-trigger-width)] overflow-y-auto">
+                          <SelectContent
+                            position="item-aligned"
+                            className="max-h-80 w-[var(--radix-select-trigger-width)] overflow-y-auto"
+                          >
                             {templateVariableOptions.map((variable) => (
-                              <SelectItem key={`${placeholder}-${variable.key}`} value={variable.key}>
+                              <SelectItem
+                                key={`${placeholder}-${variable.key}`}
+                                value={variable.key}
+                              >
                                 {variable.groupTitle} - {variable.label}
                               </SelectItem>
                             ))}
@@ -748,9 +1090,20 @@ export default function WhatsappTemplatesPage() {
                       <div className="space-y-2">
                         <Label>Exemplo para a Meta</Label>
                         <Input
-                          value={form.variableMapping[placeholder]?.example ?? ""}
-                          onChange={(event) => updateMapping(placeholder, "example", event.target.value)}
-                          placeholder={form.variableMapping[placeholder]?.key || "Exemplo de conteudo"}
+                          value={
+                            form.variableMapping[placeholder]?.example ?? ""
+                          }
+                          onChange={(event) =>
+                            updateMapping(
+                              placeholder,
+                              "example",
+                              event.target.value,
+                            )
+                          }
+                          placeholder={
+                            form.variableMapping[placeholder]?.key ||
+                            "Exemplo de conteudo"
+                          }
                         />
                       </div>
                     </div>
@@ -763,7 +1116,12 @@ export default function WhatsappTemplatesPage() {
               <Label>Rodapé opcional</Label>
               <Input
                 value={form.footerText}
-                onChange={(event) => setForm((current) => ({ ...current, footerText: event.target.value }))}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    footerText: event.target.value,
+                  }))
+                }
                 placeholder="Equipe UP Dash"
               />
             </div>
@@ -780,11 +1138,13 @@ export default function WhatsappTemplatesPage() {
                   <span>{form.buttonsEnabled ? "Ativo" : "Inativo"}</span>
                   <Switch
                     checked={form.buttonsEnabled}
-                    onCheckedChange={(checked) => setForm((current) => ({
-                      ...current,
-                      buttonsEnabled: checked,
-                      buttons: checked ? current.buttons : [],
-                    }))}
+                    onCheckedChange={(checked) =>
+                      setForm((current) => ({
+                        ...current,
+                        buttonsEnabled: checked,
+                        buttons: checked ? current.buttons : [],
+                      }))
+                    }
                     aria-label="Adicionar botões ao template"
                   />
                 </div>
@@ -793,12 +1153,18 @@ export default function WhatsappTemplatesPage() {
               {form.buttonsEnabled && (
                 <div className="space-y-3">
                   <div className="rounded-md bg-muted/30 p-3 text-xs text-muted-foreground">
-                    Limites da Meta: até 10 botões no total, até 10 respostas rápidas, até 2 links e até 1 telefone.
+                    Limites da Meta: até 10 botões no total, até 10 respostas
+                    rápidas, até 2 links e até 1 telefone.
                   </div>
                   <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                     <Select
                       value={form.buttonTypeToAdd}
-                      onValueChange={(value) => setForm((current) => ({ ...current, buttonTypeToAdd: value as TemplateButtonType }))}
+                      onValueChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          buttonTypeToAdd: value as TemplateButtonType,
+                        }))
+                      }
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -806,10 +1172,17 @@ export default function WhatsappTemplatesPage() {
                       <SelectContent>
                         <SelectItem value="URL">Link</SelectItem>
                         <SelectItem value="PHONE_NUMBER">Telefone</SelectItem>
-                        <SelectItem value="QUICK_REPLY">Resposta rápida</SelectItem>
+                        <SelectItem value="QUICK_REPLY">
+                          Resposta rápida
+                        </SelectItem>
                       </SelectContent>
                     </Select>
-                    <Button type="button" variant="outline" onClick={addButton} disabled={!canAddButtonType(form.buttonTypeToAdd)}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={addButton}
+                      disabled={!canAddButtonType(form.buttonTypeToAdd)}
+                    >
                       <Plus className="mr-2 h-4 w-4" />
                       Adicionar botão
                     </Button>
@@ -817,23 +1190,54 @@ export default function WhatsappTemplatesPage() {
 
                   <div className="space-y-2">
                     {activeButtons.map((button) => (
-                      <div key={button.id} className="grid gap-2 rounded-md border border-border p-3 lg:grid-cols-[170px_1fr_1fr_auto]">
+                      <div
+                        key={button.id}
+                        className="grid gap-2 rounded-md border border-border p-3 lg:grid-cols-[170px_1fr_1fr_auto]"
+                      >
                         <Select
                           value={button.type}
-                          onValueChange={(value) => updateButton(button.id, { type: value as TemplateButtonType, value: "" })}
+                          onValueChange={(value) =>
+                            updateButton(button.id, {
+                              type: value as TemplateButtonType,
+                              value: "",
+                            })
+                          }
                         >
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="URL" disabled={!canChangeButtonType(button, "URL")}>Link</SelectItem>
-                            <SelectItem value="PHONE_NUMBER" disabled={!canChangeButtonType(button, "PHONE_NUMBER")}>Telefone</SelectItem>
-                            <SelectItem value="QUICK_REPLY" disabled={!canChangeButtonType(button, "QUICK_REPLY")}>Resposta rápida</SelectItem>
+                            <SelectItem
+                              value="URL"
+                              disabled={!canChangeButtonType(button, "URL")}
+                            >
+                              Link
+                            </SelectItem>
+                            <SelectItem
+                              value="PHONE_NUMBER"
+                              disabled={
+                                !canChangeButtonType(button, "PHONE_NUMBER")
+                              }
+                            >
+                              Telefone
+                            </SelectItem>
+                            <SelectItem
+                              value="QUICK_REPLY"
+                              disabled={
+                                !canChangeButtonType(button, "QUICK_REPLY")
+                              }
+                            >
+                              Resposta rápida
+                            </SelectItem>
                           </SelectContent>
                         </Select>
                         <Input
                           value={button.text}
-                          onChange={(event) => updateButton(button.id, { text: event.target.value })}
+                          onChange={(event) =>
+                            updateButton(button.id, {
+                              text: event.target.value,
+                            })
+                          }
                           maxLength={25}
                           placeholder="Texto do botão"
                         />
@@ -844,11 +1248,25 @@ export default function WhatsappTemplatesPage() {
                         ) : (
                           <Input
                             value={button.value}
-                            onChange={(event) => updateButton(button.id, { value: event.target.value })}
-                            placeholder={button.type === "URL" ? "https://exemplo.com" : "+5511999999999"}
+                            onChange={(event) =>
+                              updateButton(button.id, {
+                                value: event.target.value,
+                              })
+                            }
+                            placeholder={
+                              button.type === "URL"
+                                ? "https://exemplo.com"
+                                : "+5511999999999"
+                            }
                           />
                         )}
-                        <Button type="button" variant="destructive" size="icon" onClick={() => removeButton(button.id)} aria-label="Remover botão">
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="icon"
+                          onClick={() => removeButton(button.id)}
+                          aria-label="Remover botão"
+                        >
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
@@ -900,13 +1318,19 @@ export default function WhatsappTemplatesPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                  <TableCell
+                    colSpan={6}
+                    className="py-8 text-center text-muted-foreground"
+                  >
                     Carregando templates...
                   </TableCell>
                 </TableRow>
               ) : filteredTemplates.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                  <TableCell
+                    colSpan={6}
+                    className="py-8 text-center text-muted-foreground"
+                  >
                     Nenhum template encontrado para este filtro.
                   </TableCell>
                 </TableRow>
@@ -914,8 +1338,12 @@ export default function WhatsappTemplatesPage() {
                 filteredTemplates.map((template) => {
                   const templateBody = getTemplateBodyText(template.components);
                   const placeholders = getPlaceholdersFromText(templateBody);
-                  const templateState = templateMappings[template.id] ?? mappingToState(template.variableMapping);
-                  const missingMapping = placeholders.some((placeholder) => !templateState[placeholder]?.key);
+                  const templateState =
+                    templateMappings[template.id] ??
+                    mappingToState(template.variableMapping);
+                  const missingMapping = placeholders.some(
+                    (placeholder) => !templateState[placeholder]?.key,
+                  );
 
                   return (
                     <TableRow key={template.id}>
@@ -927,56 +1355,97 @@ export default function WhatsappTemplatesPage() {
                           </p>
                         )}
                       </TableCell>
-                      <TableCell className="align-top">{template.category ?? "-"}</TableCell>
-                      <TableCell className="align-top">{template.language}</TableCell>
-                      <TableCell className="align-top">{statusBadge(template.status)}</TableCell>
+                      <TableCell className="align-top">
+                        {template.category ?? "-"}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        {template.language}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        {statusBadge(template.status)}
+                      </TableCell>
                       <TableCell className="min-w-[360px] align-top">
                         {placeholders.length === 0 ? (
-                          <span className="text-xs text-muted-foreground">Sem variáveis</span>
+                          <span className="text-xs text-muted-foreground">
+                            Sem variáveis
+                          </span>
                         ) : (
                           <div className="space-y-3">
                             <div className="rounded-md border border-border/70 bg-muted/20 p-2 text-xs text-muted-foreground">
-                              Este mapeamento define exatamente o valor enviado para cada placeholder da Meta.
+                              Este mapeamento define exatamente o valor enviado
+                              para cada placeholder da Meta.
                             </div>
                             {placeholders.map((placeholder) => (
-                              <div key={`${template.id}-${placeholder}`} className="grid gap-2 rounded-md border border-border/70 p-2 lg:grid-cols-[70px_1fr_1fr]">
+                              <div
+                                key={`${template.id}-${placeholder}`}
+                                className="grid gap-2 rounded-md border border-border/70 p-2 lg:grid-cols-[70px_1fr_1fr]"
+                              >
                                 <div>
-                                  <p className="text-[10px] uppercase text-muted-foreground">Campo</p>
+                                  <p className="text-[10px] uppercase text-muted-foreground">
+                                    Campo
+                                  </p>
                                   <p className="font-mono text-sm font-semibold">{`{{${placeholder}}}`}</p>
                                 </div>
                                 <Select
                                   value={templateState[placeholder]?.key ?? ""}
-                                  onValueChange={(value) => updateTemplateMapping(template, placeholder, "key", value)}
+                                  onValueChange={(value) =>
+                                    updateTemplateMapping(
+                                      template,
+                                      placeholder,
+                                      "key",
+                                      value,
+                                    )
+                                  }
                                 >
                                   <SelectTrigger>
                                     <SelectValue placeholder="Variável do webhook" />
                                   </SelectTrigger>
-                                  <SelectContent position="item-aligned" className="max-h-80 w-[var(--radix-select-trigger-width)] overflow-y-auto">
+                                  <SelectContent
+                                    position="item-aligned"
+                                    className="max-h-80 w-[var(--radix-select-trigger-width)] overflow-y-auto"
+                                  >
                                     {templateVariableOptions.map((variable) => (
-                                      <SelectItem key={`${template.id}-${placeholder}-${variable.key}`} value={variable.key}>
+                                      <SelectItem
+                                        key={`${template.id}-${placeholder}-${variable.key}`}
+                                        value={variable.key}
+                                      >
                                         {variable.groupTitle} - {variable.label}
                                       </SelectItem>
                                     ))}
                                   </SelectContent>
                                 </Select>
                                 <Input
-                                  value={templateState[placeholder]?.example ?? ""}
-                                  onChange={(event) => updateTemplateMapping(template, placeholder, "example", event.target.value)}
+                                  value={
+                                    templateState[placeholder]?.example ?? ""
+                                  }
+                                  onChange={(event) =>
+                                    updateTemplateMapping(
+                                      template,
+                                      placeholder,
+                                      "example",
+                                      event.target.value,
+                                    )
+                                  }
                                   placeholder="Exemplo para aprovação"
                                 />
                               </div>
                             ))}
                             {missingMapping && (
                               <p className="text-xs text-amber-500">
-                                Defina todas as variáveis para evitar envio com dado incorreto.
+                                Defina todas as variáveis para evitar envio com
+                                dado incorreto.
                               </p>
                             )}
                             <Button
                               type="button"
                               size="sm"
                               variant="outline"
-                              onClick={() => saveTemplateMapping.mutate(template)}
-                              disabled={saveTemplateMapping.isPending || missingMapping}
+                              onClick={() =>
+                                saveTemplateMapping.mutate(template)
+                              }
+                              disabled={
+                                saveTemplateMapping.isPending || missingMapping
+                              }
                             >
                               <Save className="mr-2 h-4 w-4" />
                               Salvar mapeamento
@@ -984,7 +1453,9 @@ export default function WhatsappTemplatesPage() {
                           </div>
                         )}
                       </TableCell>
-                      <TableCell className="align-top">{formatSyncDate(template.lastSyncedAt)}</TableCell>
+                      <TableCell className="align-top">
+                        {formatSyncDate(template.lastSyncedAt)}
+                      </TableCell>
                     </TableRow>
                   );
                 })
@@ -993,6 +1464,8 @@ export default function WhatsappTemplatesPage() {
           </Table>
         </CardContent>
       </Card>
+        </>
+      )}
     </div>
   );
 }

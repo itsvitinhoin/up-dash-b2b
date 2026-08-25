@@ -753,6 +753,7 @@ export async function fetchErpOrdersPage(
   limit: number,
   search?: string,
   status?: string,
+  options?: { customerDocument?: string; allTime?: boolean },
 ): Promise<ErpOrdersPage> {
   const pedidos = vestiTable(dataset, "pedidos_erp");
   const clientes = vestiTable(dataset, "clientes_erp");
@@ -793,7 +794,7 @@ export async function fetchErpOrdersPage(
           item_valor_liquido AS net_amount
         ) ORDER BY item_descricao, item_cor, item_tamanho) AS items
       FROM ${pedidos}
-      WHERE DATE(data_criado) BETWEEN @dateFrom AND @dateTo
+      WHERE ${options?.allTime ? "TRUE" : "DATE(data_criado) BETWEEN @dateFrom AND @dateTo"}
       GROUP BY pedido_id
     ),
     base AS (
@@ -815,12 +816,24 @@ export async function fetchErpOrdersPage(
       "(LOWER(customer_name) LIKE @search OR LOWER(document) LIKE @search OR CAST(pedido_id AS STRING) LIKE @search)",
     );
   if (status) conditions.push("status = @status");
+  if (options?.customerDocument) {
+    conditions.push(
+      "REGEXP_REPLACE(COALESCE(document, customer_id), r'[^0-9]', '') = @customerDocument",
+    );
+  }
   const whereClause = conditions.length
     ? `WHERE ${conditions.join(" AND ")}`
     : "";
-  const params: Record<string, unknown> = { dateFrom, dateTo, limit, offset };
+  const params: Record<string, unknown> = { limit, offset };
+  if (!options?.allTime) {
+    params.dateFrom = dateFrom;
+    params.dateTo = dateTo;
+  }
   if (search) params.search = `%${search.toLowerCase()}%`;
   if (status) params.status = status;
+  if (options?.customerDocument) {
+    params.customerDocument = options.customerDocument.replace(/\D/g, "");
+  }
 
   const [[listRows], [countRows]] = await Promise.all([
     bigquery.query({

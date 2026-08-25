@@ -1194,6 +1194,110 @@ export function AppLayout({ children }: AppLayoutProps) {
     </>
   );
 
+  const renderClientPicker = (mobile = false) => (
+    <Select
+      value={
+        location === "/overview"
+          ? PLATFORM_PICK
+          : (selectedClientId ?? undefined)
+      }
+      onValueChange={(val) => {
+        if (val === PLATFORM_PICK) {
+          setSelectedClientId(null);
+          navigate("/overview");
+          return;
+        }
+        setSelectedClientId(val);
+        if (location === "/overview") navigate("/dashboard");
+      }}
+    >
+      <SelectTrigger
+        data-testid={mobile ? "mobile-client-picker" : "client-picker"}
+        aria-label={t("top.selectClient", "Select a client")}
+        className="h-9 bg-card border-border"
+      >
+        <SelectValue
+          placeholder={t("top.selectClient", "Select a client")}
+        />
+      </SelectTrigger>
+      <SelectContent
+        className="max-h-[min(70vh,28rem)]"
+        viewportClassName="h-auto max-h-[min(64vh,25rem)] overflow-y-auto overscroll-contain touch-pan-y"
+      >
+        <SelectItem
+          value={PLATFORM_PICK}
+          data-testid="client-picker-platform"
+        >
+          <span className="flex items-center gap-2">
+            <Globe2 className="h-3.5 w-3.5 text-primary" />
+            {t("top.allClients", "All Clients · Platform")}
+          </span>
+        </SelectItem>
+        {adminClients.length > 0 && <div className="my-1 h-px bg-border" />}
+        {adminClients.map((client) => (
+          <SelectItem key={client.id} value={client.id}>
+            <span className="flex w-full items-center justify-between gap-2">
+              <span className="truncate">{client.name}</span>
+              {client.commercePlatform && (
+                <Badge
+                  variant={client.commercePlatform === "VESTI" ? "default" : "secondary"}
+                  className="shrink-0 px-1.5 py-0 text-[10px] font-normal"
+                >
+                  {client.commercePlatform}
+                </Badge>
+              )}
+            </span>
+          </SelectItem>
+        ))}
+        {!LOCAL_UI_PREVIEW && isLoadingClients && (
+          <div className="px-2 py-2 text-xs text-muted-foreground">
+            {t("top.loadingClients", "Carregando clientes...")}
+          </div>
+        )}
+        {!LOCAL_UI_PREVIEW &&
+          !isLoadingClients &&
+          isClientsError &&
+          adminClients.length === 0 && (
+            <div className="space-y-2 px-2 py-2 text-xs text-destructive">
+              <p>
+                {t(
+                  "top.clientsError",
+                  "Não foi possível carregar os clientes.",
+                )}
+              </p>
+              <button
+                type="button"
+                className="text-primary underline underline-offset-2"
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => void refetchClients()}
+              >
+                {t("top.retryClients", "Tentar novamente")}
+              </button>
+            </div>
+          )}
+        {!LOCAL_UI_PREVIEW && isClientsError && adminClients.length > 0 && (
+          <div className="px-2 py-2 text-xs text-amber-600 dark:text-amber-400">
+            {t(
+              "top.cachedClients",
+              "Exibindo a última lista salva enquanto reconectamos.",
+            )}
+          </div>
+        )}
+        {!LOCAL_UI_PREVIEW &&
+          !isLoadingClients &&
+          !isClientsError &&
+          adminClients.length === 0 && (
+            <div className="px-2 py-2 text-xs text-muted-foreground">
+              {t(
+                "top.noClientsForMode",
+                "Nenhum cliente disponível neste modo.",
+              )}
+            </div>
+          )}
+      </SelectContent>
+    </Select>
+  );
+
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <aside className="hidden w-60 flex-col border-r border-border bg-sidebar md:flex no-print">
@@ -1201,7 +1305,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       </aside>
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-16 shrink-0 items-center gap-4 border-b border-border bg-background px-4 sm:px-6 no-print">
+        <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-x-2 gap-y-2 border-b border-border bg-background px-4 py-2 sm:h-16 sm:flex-nowrap sm:gap-4 sm:px-6 sm:py-0 no-print">
           <Sheet>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" className="md:hidden">
@@ -1296,104 +1400,7 @@ export function AppLayout({ children }: AppLayoutProps) {
 
             {user?.role === "ADMIN" && (
               <div className="hidden sm:block w-52">
-                <Select
-                  // On the platform overview page no individual client is
-                  // active, so render the picker as the platform entry.
-                  value={
-                    location === "/overview"
-                      ? PLATFORM_PICK
-                      : (selectedClientId ?? undefined)
-                  }
-                  onValueChange={(val) => {
-                    if (val === PLATFORM_PICK) {
-                      setSelectedClientId(null);
-                      navigate("/overview");
-                      return;
-                    }
-                    setSelectedClientId(val);
-                    // Leaving the platform view back to a brand should land
-                    // on the per-brand dashboard, not strand the user on
-                    // /overview with a brand selected.
-                    if (location === "/overview") navigate("/dashboard");
-                  }}
-                >
-                  <SelectTrigger
-                    data-testid="client-picker"
-                    className="h-9 bg-card border-border"
-                  >
-                    <SelectValue
-                      placeholder={t("top.selectClient", "Select a client")}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem
-                      value={PLATFORM_PICK}
-                      data-testid="client-picker-platform"
-                    >
-                      <span className="flex items-center gap-2">
-                        <Globe2 className="h-3.5 w-3.5 text-primary" />
-                        {t("top.allClients", "All Clients · Platform")}
-                      </span>
-                    </SelectItem>
-                    {adminClients.length > 0 && (
-                      <div className="my-1 h-px bg-border" />
-                    )}
-                    {adminClients.map((client) => (
-                      <SelectItem key={client.id} value={client.id}>
-                        <span className="flex w-full items-center justify-between gap-2">
-                          <span className="truncate">{client.name}</span>
-                          {client.commercePlatform && (
-                            <Badge
-                              variant={client.commercePlatform === "VESTI" ? "default" : "secondary"}
-                              className="shrink-0 px-1.5 py-0 text-[10px] font-normal"
-                            >
-                              {client.commercePlatform}
-                            </Badge>
-                          )}
-                        </span>
-                      </SelectItem>
-                    ))}
-                    {!LOCAL_UI_PREVIEW && isLoadingClients && (
-                      <div className="px-2 py-2 text-xs text-muted-foreground">
-                        {t("top.loadingClients", "Carregando clientes...")}
-                      </div>
-                    )}
-                    {!LOCAL_UI_PREVIEW &&
-                      !isLoadingClients &&
-                      isClientsError &&
-                      adminClients.length === 0 && (
-                      <div className="space-y-2 px-2 py-2 text-xs text-destructive">
-                        <p>{t("top.clientsError", "Não foi possível carregar os clientes.")}</p>
-                        <button
-                          type="button"
-                          className="text-primary underline underline-offset-2"
-                          onPointerDown={(event) => event.preventDefault()}
-                          onClick={() => void refetchClients()}
-                        >
-                          {t("top.retryClients", "Tentar novamente")}
-                        </button>
-                      </div>
-                    )}
-                    {!LOCAL_UI_PREVIEW &&
-                      isClientsError &&
-                      adminClients.length > 0 && (
-                        <div className="px-2 py-2 text-xs text-amber-600 dark:text-amber-400">
-                          {t(
-                            "top.cachedClients",
-                            "Exibindo a última lista salva enquanto reconectamos.",
-                          )}
-                        </div>
-                      )}
-                    {!LOCAL_UI_PREVIEW &&
-                      !isLoadingClients &&
-                      !isClientsError &&
-                      adminClients.length === 0 && (
-                        <div className="px-2 py-2 text-xs text-muted-foreground">
-                          {t("top.noClientsForMode", "Nenhum cliente disponível neste modo.")}
-                        </div>
-                      )}
-                  </SelectContent>
-                </Select>
+                {renderClientPicker()}
               </div>
             )}
 
@@ -1498,6 +1505,12 @@ export function AppLayout({ children }: AppLayoutProps) {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+
+          {user?.role === "ADMIN" && (
+            <div className="order-last w-full sm:hidden">
+              {renderClientPicker(true)}
+            </div>
+          )}
         </header>
 
         {meta.hasFilterBar && <FilterBar />}

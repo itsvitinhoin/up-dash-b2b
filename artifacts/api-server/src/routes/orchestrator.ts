@@ -27,8 +27,16 @@ import {
 } from "@workspace/db";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { normalizeAutomationRuleSteps } from "../services/automation-rule-steps";
-import { selectAutomationSenderPhone } from "../services/automation-sender";
 import {
+  buildAutomationWabaCandidates,
+  getAutomationAudience,
+  hasAssignedSellerSenderMismatch,
+  resolveAutomationDeliveryRouting,
+  selectAutomationTemplateByWaba,
+  selectAutomationSenderPhone,
+} from "../services/automation-sender";
+import {
+  getCartAutomationDedupeKey,
   getCartAutomationIdentity,
   getWebhookCustomerIdentity,
   getWebhookOrderIdentity,
@@ -41,6 +49,13 @@ import {
   normalizeWhatsappRecipient,
   validateWhatsappRecipient,
 } from "../services/whatsapp-recipient";
+import { describeWhatsappDeliveryError } from "../services/whatsapp-delivery-error";
+import { fetchWhatsappTemplateCatalog } from "../services/whatsapp-template-catalog";
+import {
+  addWhatsappWabaVerification,
+  discoverWhatsappWabaForPhone,
+  getVerifiedWhatsappWabaId,
+} from "../services/whatsapp-waba-discovery";
 
 const router: IRouter = Router();
 
@@ -201,6 +216,7 @@ const CreateAgentBody = z.object({
 });
 
 const UpdateAutomationRuleBody = z.object({
+  audience: z.enum(["customer", "internal_seller"]).optional(),
   eventType: z.string().trim().min(1).optional(),
   isEnabled: z.boolean().optional(),
   templateId: z.string().trim().nullable().optional(),
@@ -208,10 +224,14 @@ const UpdateAutomationRuleBody = z.object({
   templateLanguage: z.string().trim().nullable().optional(),
   templateCategory: z.string().trim().nullable().optional(),
   delayMinutes: z.coerce.number().int().min(0).max(10080).optional(),
+  cooldownHours: z.coerce.number().int().min(1).max(720).optional(),
+  maxSendsPerCustomerMonth: z.coerce.number().int().min(1).max(100).optional(),
+  sendOncePerCart: z.boolean().optional(),
 });
 
 const CreateAutomationRuleBody = z.object({
   clientId: z.string().trim().min(1),
+  audience: z.enum(["customer", "internal_seller"]).optional().default("customer"),
   eventType: z.string().trim().min(1),
   isEnabled: z.boolean().optional().default(false),
   templateId: z.string().trim().nullable().optional(),
@@ -219,6 +239,9 @@ const CreateAutomationRuleBody = z.object({
   templateLanguage: z.string().trim().nullable().optional(),
   templateCategory: z.string().trim().nullable().optional(),
   delayMinutes: z.coerce.number().int().min(0).max(10080).default(0),
+  cooldownHours: z.coerce.number().int().min(1).max(720).default(24),
+  maxSendsPerCustomerMonth: z.coerce.number().int().min(1).max(100).default(4),
+  sendOncePerCart: z.boolean().optional().default(true),
 });
 
 const UpdateCommercialOperationBody = z.object({
@@ -1094,6 +1117,9 @@ async function buildAutomationRules(clientId: string) {
       templateName: commercialAutomationRulesTable.templateName,
       templateLanguage: commercialAutomationRulesTable.templateLanguage,
       delayMinutes: commercialAutomationRulesTable.delayMinutes,
+      cooldownHours: commercialAutomationRulesTable.cooldownHours,
+      maxSendsPerCustomerMonth: commercialAutomationRulesTable.maxSendsPerCustomerMonth,
+      conditions: commercialAutomationRulesTable.conditions,
       createdAt: commercialAutomationRulesTable.createdAt,
       updatedAt: commercialAutomationRulesTable.updatedAt,
     })
@@ -1104,7 +1130,13 @@ async function buildAutomationRules(clientId: string) {
       commercialAutomationRulesTable.delayMinutes,
       commercialAutomationRulesTable.createdAt,
     );
-  return normalizeAutomationRuleSteps(rows, normalizeAutomationEventType);
+  return normalizeAutomationRuleSteps(rows, normalizeAutomationEventType).map((rule) => ({
+    ...rule,
+    audience: getAutomationAudience(rule.conditions),
+    sendOncePerCart: !rule.conditions
+      || typeof rule.conditions !== "object"
+      || (rule.conditions as Record<string, unknown>).sendOncePerCart !== false,
+  }));
 }
 
 async function buildAutomationEventOptions(clientId: string) {
@@ -1157,6 +1189,7 @@ async function buildWhatsappTemplateOptions(clientId: string) {
       language: whatsappMessageTemplatesTable.language,
       status: whatsappMessageTemplatesTable.status,
       category: whatsappMessageTemplatesTable.category,
+      wabaId: whatsappMessageTemplatesTable.wabaId,
     })
     .from(whatsappMessageTemplatesTable)
     .where(eq(whatsappMessageTemplatesTable.clientId, clientId))
@@ -1169,7 +1202,7 @@ async function buildAutomationTemplateBodyParams(params: {
   templateId: string | null;
   templateName: string | null;
   templateLanguage: string | null;
-  wabaId?: string | null;
+  wabaIds?: string[];
   payload: Record<string, unknown>;
 }) {
   if (!params.templateId && !params.templateName) return [];
@@ -1178,26 +1211,28 @@ async function buildAutomationTemplateBodyParams(params: {
     eq(whatsappMessageTemplatesTable.clientId, params.clientId),
     eq(whatsappMessageTemplatesTable.status, "APPROVED"),
   ];
-  if (params.templateId) {
-    templateConditions.push(eq(whatsappMessageTemplatesTable.templateId, params.templateId));
-  } else if (params.templateName) {
+  // A template name/language is shared by every sender in the same WABA.
+  // Rule template IDs are local records and may point to an older sync.
+  if (params.templateName) {
     templateConditions.push(eq(whatsappMessageTemplatesTable.name, params.templateName));
+  } else if (params.templateId) {
+    templateConditions.push(eq(whatsappMessageTemplatesTable.templateId, params.templateId));
   }
   if (params.templateLanguage) {
     templateConditions.push(eq(whatsappMessageTemplatesTable.language, params.templateLanguage));
   }
-  if (params.wabaId) {
-    templateConditions.push(eq(whatsappMessageTemplatesTable.wabaId, params.wabaId));
-  }
-
-  const [template] = await db
+  const templates = await db
     .select({
+      wabaId: whatsappMessageTemplatesTable.wabaId,
       components: whatsappMessageTemplatesTable.components,
       rawPayload: whatsappMessageTemplatesTable.rawPayload,
     })
     .from(whatsappMessageTemplatesTable)
-    .where(and(...templateConditions))
-    .limit(1);
+    .where(and(...templateConditions));
+  const template = selectAutomationTemplateByWaba(
+    templates,
+    params.wabaIds ?? [],
+  );
 
   const normalized = normalizeWebhookPayload(params.payload);
   const payloadOrder = asRecord(params.payload.order) ?? {};
@@ -1300,7 +1335,11 @@ async function buildAutomationTemplateBodyParams(params: {
   return Array.from({ length: placeholderCount }, (_, index) => mappedValues.get(String(index + 1)) ?? "-");
 }
 
-async function resolveAutomationSender(clientId: string, payload?: Record<string, unknown>) {
+async function resolveAutomationSender(
+  clientId: string,
+  payload?: Record<string, unknown>,
+  senderStrategy: "assigned_seller" | "default_phone" = "assigned_seller",
+) {
   const sellerPhone = firstText(
     payload?.seller_phone,
     payload?.assigned_seller_phone,
@@ -1326,19 +1365,191 @@ async function resolveAutomationSender(clientId: string, payload?: Record<string
     .from(whatsappPhoneNumbersTable)
     .where(and(eq(whatsappPhoneNumbersTable.clientId, clientId), eq(whatsappPhoneNumbersTable.status, "active")))
     .orderBy(desc(whatsappPhoneNumbersTable.updatedAt));
-  const selection = selectAutomationSenderPhone(phones, sellerPhone);
+  const selection = selectAutomationSenderPhone(
+    phones,
+    senderStrategy === "assigned_seller" ? sellerPhone : null,
+  );
   const phone = selection.phone;
+  let integrationWabaId: string | null = phone?.wabaId ?? null;
+
+  if (phone?.integrationId) {
+    const [integration] = await db
+      .select({ wabaId: whatsappIntegrationsTable.wabaId })
+      .from(whatsappIntegrationsTable)
+      .where(
+        and(
+          eq(whatsappIntegrationsTable.id, phone.integrationId),
+          eq(whatsappIntegrationsTable.clientId, clientId),
+        ),
+      )
+      .limit(1);
+    integrationWabaId = integration?.wabaId ?? null;
+  }
+
+  if (!integrationWabaId && phone?.phoneNumberId) {
+    const [integration] = await db
+      .select({ wabaId: whatsappIntegrationsTable.wabaId })
+      .from(whatsappIntegrationsTable)
+      .where(
+        and(
+          eq(whatsappIntegrationsTable.clientId, clientId),
+          eq(whatsappIntegrationsTable.phoneNumberId, phone.phoneNumberId),
+        ),
+      )
+      .limit(1);
+    integrationWabaId = integration?.wabaId ?? null;
+  }
+
+  // The selected phone is the WABA boundary. Never borrow an integration from
+  // another WABA belonging to the same client.
+  const wabaIds = buildAutomationWabaCandidates(phone?.wabaId, integrationWabaId);
 
   return {
     phoneNumberId: phone?.phoneNumberId ?? null,
     source: selection.source,
+    strategy: senderStrategy,
     sellerPhone,
     sellerName,
     displayPhoneNumber: phone?.displayPhoneNumber ?? null,
     verifiedName: phone?.verifiedName ?? null,
     integrationId: phone?.integrationId ?? null,
-    wabaId: phone?.wabaId ?? null,
+    wabaId: wabaIds[0] ?? null,
+    wabaIds,
     blockedReason: selection.blockedReason,
+  };
+}
+
+async function findApprovedAutomationTemplate(params: {
+  clientId: string;
+  templateName: string;
+  languageCode: string;
+  wabaIds: string[];
+}) {
+  const conditions = [
+    eq(whatsappMessageTemplatesTable.clientId, params.clientId),
+    eq(whatsappMessageTemplatesTable.name, params.templateName),
+    eq(whatsappMessageTemplatesTable.language, params.languageCode),
+    eq(whatsappMessageTemplatesTable.status, "APPROVED"),
+  ];
+  if (params.wabaIds.length) {
+    conditions.push(inArray(whatsappMessageTemplatesTable.wabaId, params.wabaIds));
+  }
+
+  const [template] = await db
+    .select({ id: whatsappMessageTemplatesTable.id })
+    .from(whatsappMessageTemplatesTable)
+    .where(and(...conditions))
+    .limit(1);
+
+  return template ?? null;
+}
+
+async function refreshAutomationTemplateCatalog(params: {
+  clientId: string;
+  integrationId: string;
+  accessToken: string;
+  wabaIds: string[];
+}) {
+  const existingTemplates = await db
+    .select({
+      wabaId: whatsappMessageTemplatesTable.wabaId,
+      name: whatsappMessageTemplatesTable.name,
+      language: whatsappMessageTemplatesTable.language,
+      rawPayload: whatsappMessageTemplatesTable.rawPayload,
+    })
+    .from(whatsappMessageTemplatesTable)
+    .where(eq(whatsappMessageTemplatesTable.clientId, params.clientId));
+  const exactPayloads = new Map<string, Record<string, unknown>>();
+  const sharedPayloads = new Map<string, Record<string, unknown>>();
+
+  for (const template of existingTemplates) {
+    const rawPayload = asRecord(template.rawPayload) ?? {};
+    const templateKey = `${template.name}\u0000${template.language}`;
+    const exactKey = `${template.wabaId}\u0000${templateKey}`;
+    exactPayloads.set(exactKey, rawPayload);
+    const currentShared = sharedPayloads.get(templateKey);
+    if (!currentShared || rawPayload.upDashVariableMapping) {
+      sharedPayloads.set(templateKey, rawPayload);
+    }
+  }
+
+  const syncedWabaIds: string[] = [];
+  const errors: Array<{ wabaId: string; message: string }> = [];
+  let syncedTemplates = 0;
+
+  for (const wabaId of params.wabaIds) {
+    const result = await fetchWhatsappTemplateCatalog({
+      wabaId,
+      accessToken: params.accessToken,
+      graphApiVersion: process.env.META_GRAPH_API_VERSION ?? "v23.0",
+    });
+
+    if (result.error) {
+      errors.push({ wabaId, message: result.error });
+      continue;
+    }
+
+    syncedWabaIds.push(wabaId);
+    const now = new Date();
+    for (const template of result.templates) {
+      const templateKey = `${template.name}\u0000${template.language}`;
+      const existingRawPayload = exactPayloads.get(`${wabaId}\u0000${templateKey}`)
+        ?? sharedPayloads.get(templateKey)
+        ?? {};
+      const rawPayload = {
+        ...template.rawPayload,
+        ...(existingRawPayload.upDashVariableMapping
+          ? { upDashVariableMapping: existingRawPayload.upDashVariableMapping }
+          : {}),
+        ...(existingRawPayload.upDashButtons
+          ? { upDashButtons: existingRawPayload.upDashButtons }
+          : {}),
+        ...(existingRawPayload.upDashTemplateScope
+          ? { upDashTemplateScope: existingRawPayload.upDashTemplateScope }
+          : {}),
+      };
+
+      await db
+        .insert(whatsappMessageTemplatesTable)
+        .values({
+          clientId: params.clientId,
+          integrationId: params.integrationId,
+          wabaId,
+          templateId: template.id,
+          name: template.name,
+          language: template.language,
+          status: template.status,
+          category: template.category,
+          components: template.components,
+          rawPayload,
+          lastSyncedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            whatsappMessageTemplatesTable.clientId,
+            whatsappMessageTemplatesTable.wabaId,
+            whatsappMessageTemplatesTable.name,
+            whatsappMessageTemplatesTable.language,
+          ],
+          set: {
+            integrationId: params.integrationId,
+            templateId: template.id,
+            status: template.status,
+            category: template.category,
+            components: template.components,
+            rawPayload,
+            lastSyncedAt: now,
+            updatedAt: now,
+          },
+        });
+      syncedTemplates += 1;
+    }
+  }
+
+  return {
+    syncedTemplates,
+    syncedWabaIds,
+    errors,
   };
 }
 
@@ -1376,6 +1587,9 @@ async function scheduleAutomationJobsForEvent(params: {
       templateLanguage: commercialAutomationRulesTable.templateLanguage,
       templateCategory: commercialAutomationRulesTable.templateCategory,
       delayMinutes: commercialAutomationRulesTable.delayMinutes,
+      cooldownHours: commercialAutomationRulesTable.cooldownHours,
+      maxSendsPerCustomerMonth: commercialAutomationRulesTable.maxSendsPerCustomerMonth,
+      conditions: commercialAutomationRulesTable.conditions,
       isEnabled: commercialAutomationRulesTable.isEnabled,
     })
     .from(commercialAutomationRulesTable)
@@ -1390,11 +1604,29 @@ async function scheduleAutomationJobsForEvent(params: {
   const rules = normalizeAutomationRuleSteps(rawRules, normalizeAutomationEventType);
 
   const scheduled: Array<{ ruleId: string; jobId: string | null; status: string; reason?: string }> = [];
-  const to = normalizeWhatsappRecipient(params.customerPhone);
-  const sender = await resolveAutomationSender(params.clientId, params.payload);
-  const phoneNumberId = sender.phoneNumberId;
-  const duplicateWindowStart = new Date(Date.now() - 10 * 60 * 1000);
+  const customerRecipient = normalizeWhatsappRecipient(params.customerPhone);
+  const sellerPhone = firstText(
+    params.payload.seller_phone,
+    params.payload.assigned_seller_phone,
+    getNestedValue(params.payload, "seller.phone"),
+    getNestedValue(params.payload, "assigned_seller.phone"),
+  );
+  const hasCustomerAutomation = rules.some(
+    (rule) => getAutomationAudience(rule.conditions) === "customer",
+  );
+  const hasInternalSellerNotification = rules.some(
+    (rule) => getAutomationAudience(rule.conditions) === "internal_seller",
+  );
+  const assignedSellerSender = hasCustomerAutomation
+    ? await resolveAutomationSender(params.clientId, params.payload, "assigned_seller")
+    : null;
+  const defaultSender = hasInternalSellerNotification
+    ? await resolveAutomationSender(params.clientId, params.payload, "default_phone")
+    : null;
   const cartAutomationIdentity = getCartAutomationIdentity(params.eventType, params.payload);
+  const isCartAutomationEvent = ["cart_created", "cart_abandoned"].includes(
+    (normalizeAutomationEventType(params.eventType) ?? params.eventType).toLowerCase(),
+  );
   const eventOrderIdentity = firstText(
     params.payload.order_number,
     getNestedValue(params.payload, "order.number"),
@@ -1403,6 +1635,35 @@ async function scheduleAutomationJobsForEvent(params: {
   );
 
   for (const rule of rules) {
+    const routing = resolveAutomationDeliveryRouting({
+      conditions: rule.conditions,
+      customerPhone: customerRecipient,
+      sellerPhone,
+    });
+    const to = normalizeWhatsappRecipient(routing.recipientPhone);
+    const sender = routing.senderStrategy === "default_phone"
+      ? defaultSender
+      : assignedSellerSender;
+    const phoneNumberId = sender?.phoneNumberId ?? null;
+    const notificationSubjectId = routing.audience === "internal_seller"
+      ? firstText(
+          params.customerId,
+          getWebhookCustomerIdentity(params.eventType, params.payload),
+          getNestedValue(params.payload, "customer.document"),
+          params.payload.document,
+          getNestedValue(params.payload, "customer.email"),
+          params.payload.email,
+          params.customerPhone,
+        )
+      : null;
+    const sendOncePerCart = !rule.conditions
+      || typeof rule.conditions !== "object"
+      || (rule.conditions as Record<string, unknown>).sendOncePerCart !== false;
+    const dedupeKey = getCartAutomationDedupeKey({
+      eventType: params.eventType,
+      payload: params.payload,
+      recipient: to,
+    });
     const [existingJob] = await db
       .select({ id: commercialAutomationJobsTable.id })
       .from(commercialAutomationJobsTable)
@@ -1422,18 +1683,31 @@ async function scheduleAutomationJobsForEvent(params: {
         sql`${commercialAutomationJobsTable.renderedPayload}->>'to' = ${to}`,
         sql`${commercialAutomationJobsTable.renderedPayload}->>'templateName' = ${rule.templateName}`,
       ];
-      if (cartAutomationIdentity) {
-        duplicateConditions.push(sql`COALESCE(
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cartId',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'id',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'external_id',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cart_id',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cartId',
-          ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'id'
-        ) = ${cartAutomationIdentity}`);
+      if (routing.audience === "internal_seller" && notificationSubjectId) {
+        duplicateConditions.push(
+          sql`${commercialAutomationJobsTable.renderedPayload}->>'notificationSubjectId' = ${notificationSubjectId}`,
+        );
+      } else if (cartAutomationIdentity && sendOncePerCart) {
+        duplicateConditions.push(sql`(
+          COALESCE(
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cartId',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'id',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'external_id',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cart_id',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cartId',
+            ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'id'
+          ) = ${cartAutomationIdentity}
+          OR ${commercialAutomationJobsTable.createdAt} >= ${new Date(Date.now() - Math.max(rule.cooldownHours ?? 24, 1) * 60 * 60 * 1000)}
+        )`);
       } else {
-        duplicateConditions.push(gte(commercialAutomationJobsTable.createdAt, duplicateWindowStart));
+        const duplicateWindowMinutes = isCartAutomationEvent
+          ? Math.max(rule.cooldownHours ?? 24, 1) * 60
+          : 10;
+        duplicateConditions.push(gte(
+          commercialAutomationJobsTable.createdAt,
+          new Date(Date.now() - duplicateWindowMinutes * 60 * 1000),
+        ));
       }
       if (!cartAutomationIdentity && eventOrderIdentity) {
         duplicateConditions.push(sql`COALESCE(
@@ -1470,24 +1744,34 @@ async function scheduleAutomationJobsForEvent(params: {
     }
 
     if (!to) {
+      const missingRecipientMessage = routing.audience === "internal_seller"
+        ? `Automação ${rule.name} não foi agendada porque o evento não trouxe seller_phone da vendedora atribuída.`
+        : `Automação ${rule.name} não foi agendada porque o evento não trouxe telefone.`;
       await db.insert(commercialAutomationLogsTable).values({
         clientId: params.clientId,
         ruleId: rule.id,
         eventType: params.eventType,
         action: "automation_not_scheduled",
         status: "blocked",
-        message: `Automação ${rule.name} não foi agendada porque o evento não trouxe telefone.`,
-        metadata: { eventRecordId: params.eventRecordId },
+        message: missingRecipientMessage,
+        metadata: { eventRecordId: params.eventRecordId, routing },
       });
-      scheduled.push({ ruleId: rule.id, jobId: null, status: "blocked", reason: "phone_missing" });
+      scheduled.push({
+        ruleId: rule.id,
+        jobId: null,
+        status: "blocked",
+        reason: routing.audience === "internal_seller" ? "seller_phone_missing" : "phone_missing",
+      });
       continue;
     }
 
     if (!phoneNumberId) {
-      const sellerIdentification = sender.sellerName || sender.sellerPhone;
-      const message = sender.blockedReason === "seller_phone_not_matched"
-        ? `Automação ${rule.name} não foi agendada porque o WhatsApp da vendedora${sellerIdentification ? ` (${sellerIdentification})` : ""} não corresponde a nenhum número ativo conectado.`
-        : `Automação ${rule.name} não foi agendada porque a marca não possui um número padrão ativo.`;
+      const sellerIdentification = sender?.sellerName || sender?.sellerPhone;
+      const message = routing.senderStrategy === "default_phone"
+        ? `Automação ${rule.name} não foi agendada porque a marca não possui um número padrão ativo para notificações internas.`
+        : sender?.blockedReason === "seller_phone_not_matched"
+          ? `Automação ${rule.name} não foi agendada porque o WhatsApp da vendedora${sellerIdentification ? ` (${sellerIdentification})` : ""} não corresponde a nenhum número ativo conectado.`
+          : `Automação ${rule.name} não foi agendada porque a marca não possui um número padrão ativo.`;
       await db.insert(commercialAutomationLogsTable).values({
         clientId: params.clientId,
         ruleId: rule.id,
@@ -1504,7 +1788,7 @@ async function scheduleAutomationJobsForEvent(params: {
         ruleId: rule.id,
         jobId: null,
         status: "blocked",
-        reason: sender.blockedReason ?? "sender_phone_missing",
+        reason: sender?.blockedReason ?? "sender_phone_missing",
       });
       continue;
     }
@@ -1515,34 +1799,165 @@ async function scheduleAutomationJobsForEvent(params: {
       templateId: rule.templateId,
       templateName: rule.templateName,
       templateLanguage: rule.templateLanguage,
-      wabaId: sender.wabaId,
+      wabaIds: sender?.wabaIds ?? [],
       payload: params.payload,
     });
-    const [job] = await db
-      .insert(commercialAutomationJobsTable)
-      .values({
+    const jobValues = {
+      clientId: params.clientId,
+      ruleId: rule.id,
+      eventId: params.eventRecordId,
+      customerId: params.customerId,
+      status: "scheduled",
+      scheduledAt,
+      renderedPayload: {
+        to,
+        phoneNumberId,
+        templateName: rule.templateName,
+        languageCode: rule.templateLanguage,
+        bodyParams,
+        sourceEvent: params.payload,
+        sender,
+        routing,
+        audience: routing.audience,
+        notificationSubjectId,
+      },
+    };
+
+    const insertedJobs = routing.audience === "internal_seller" && notificationSubjectId
+      ? await db.transaction(async (tx) => {
+        const lockKey = `internal-notification:${params.clientId}:${rule.id}:${notificationSubjectId}`;
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+        const [duplicate] = await tx
+          .select({ id: commercialAutomationJobsTable.id })
+          .from(commercialAutomationJobsTable)
+          .where(and(
+            eq(commercialAutomationJobsTable.clientId, params.clientId),
+            eq(commercialAutomationJobsTable.ruleId, rule.id),
+            sql`${commercialAutomationJobsTable.status} IN ('scheduled', 'processing', 'sent')`,
+            sql`${commercialAutomationJobsTable.renderedPayload}->>'notificationSubjectId' = ${notificationSubjectId}`,
+          ))
+          .limit(1);
+        if (duplicate) {
+          return { jobs: [], reason: "same_internal_notification_subject" };
+        }
+        const jobs = await tx
+          .insert(commercialAutomationJobsTable)
+          .values(jobValues)
+          .returning({ id: commercialAutomationJobsTable.id });
+        return { jobs, reason: null };
+      })
+      : isCartAutomationEvent && dedupeKey
+      ? await db.transaction(async (tx) => {
+        const lockKey = `cart-automation:${params.clientId}:${rule.id}:recipient:${to}`;
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+
+        const finalDuplicateConditions = [
+          eq(commercialAutomationJobsTable.clientId, params.clientId),
+          eq(commercialAutomationJobsTable.ruleId, rule.id),
+          sql`${commercialAutomationJobsTable.status} IN ('scheduled', 'processing', 'sent')`,
+          sql`${commercialAutomationJobsTable.renderedPayload}->>'to' = ${to}`,
+          sql`${commercialAutomationJobsTable.renderedPayload}->>'templateName' = ${rule.templateName}`,
+        ];
+        if (cartAutomationIdentity && sendOncePerCart) {
+          finalDuplicateConditions.push(sql`(
+            COALESCE(
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cart_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->>'cartId',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'cart'->>'external_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cart_id',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'cartId',
+              ${commercialAutomationJobsTable.renderedPayload}->'sourceEvent'->'data'->>'id'
+            ) = ${cartAutomationIdentity}
+            OR ${commercialAutomationJobsTable.createdAt} >= ${new Date(Date.now() - Math.max(rule.cooldownHours ?? 24, 1) * 60 * 60 * 1000)}
+          )`);
+        } else {
+          finalDuplicateConditions.push(gte(
+            commercialAutomationJobsTable.createdAt,
+            new Date(Date.now() - Math.max(rule.cooldownHours ?? 24, 1) * 60 * 60 * 1000),
+          ));
+        }
+
+        const [monthlyUsage] = await tx
+          .select({ total: sql<number>`COUNT(*)::int` })
+          .from(commercialAutomationJobsTable)
+          .where(and(
+            eq(commercialAutomationJobsTable.clientId, params.clientId),
+            eq(commercialAutomationJobsTable.ruleId, rule.id),
+            sql`${commercialAutomationJobsTable.status} IN ('scheduled', 'processing', 'sent')`,
+            sql`${commercialAutomationJobsTable.renderedPayload}->>'to' = ${to}`,
+            gte(commercialAutomationJobsTable.createdAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+          ));
+        if ((monthlyUsage?.total ?? 0) >= Math.max(rule.maxSendsPerCustomerMonth ?? 4, 1)) {
+          return { jobs: [], reason: "customer_30_day_limit" };
+        }
+
+        const [concurrentDuplicate] = await tx
+          .select({ id: commercialAutomationJobsTable.id })
+          .from(commercialAutomationJobsTable)
+          .where(and(...finalDuplicateConditions))
+          .limit(1);
+        if (concurrentDuplicate) {
+          return {
+            jobs: [],
+            reason: cartAutomationIdentity && sendOncePerCart
+              ? "same_cart_or_cooldown"
+              : "cooldown_active",
+          };
+        }
+
+        const jobs = await tx
+          .insert(commercialAutomationJobsTable)
+          .values(jobValues)
+          .returning({ id: commercialAutomationJobsTable.id });
+        return { jobs, reason: null };
+      })
+      : {
+          jobs: await db
+            .insert(commercialAutomationJobsTable)
+            .values(jobValues)
+            .returning({ id: commercialAutomationJobsTable.id }),
+          reason: null,
+        };
+    const [job] = insertedJobs.jobs;
+
+    if (!job) {
+      await db.insert(commercialAutomationLogsTable).values({
         clientId: params.clientId,
         ruleId: rule.id,
-        eventId: params.eventRecordId,
-        customerId: params.customerId,
-        status: "scheduled",
-        scheduledAt,
-        renderedPayload: {
-          to,
-          phoneNumberId,
-          templateName: rule.templateName,
-          languageCode: rule.templateLanguage,
-          bodyParams,
-          sourceEvent: params.payload,
-          sender,
+        eventType: params.eventType,
+        action: "automation_duplicate_skipped",
+        status: "info",
+        message: insertedJobs.reason === "same_internal_notification_subject"
+          ? `Automação ${rule.name} ignorada: esta vendedora já recebeu a notificação deste cadastro.`
+          : insertedJobs.reason === "customer_30_day_limit"
+          ? `Automação ${rule.name} ignorada: o cliente atingiu o limite de ${rule.maxSendsPerCustomerMonth ?? 4} envio(s) desta etapa em 30 dias.`
+          : `Automação ${rule.name} ignorada: este carrinho já recebeu a etapa ou o intervalo mínimo de ${rule.cooldownHours ?? 24} hora(s) ainda está ativo.`,
+        metadata: {
+          eventRecordId: params.eventRecordId,
+          dedupeKey,
+          recipient: maskWhatsappRecipient(to),
+          reason: insertedJobs.reason,
+          sendOncePerCart,
+          cooldownHours: rule.cooldownHours,
+          maxSendsPerCustomerMonth: rule.maxSendsPerCustomerMonth,
+          routing,
+          notificationSubjectId,
         },
-      })
-      .returning({ id: commercialAutomationJobsTable.id });
+      });
+      scheduled.push({
+        ruleId: rule.id,
+        jobId: null,
+        status: "duplicate",
+        reason: insertedJobs.reason ?? "cart_automation_idempotency",
+      });
+      continue;
+    }
 
     await db.insert(commercialAutomationLogsTable).values({
       clientId: params.clientId,
       ruleId: rule.id,
-      jobId: job?.id ?? null,
+      jobId: job.id,
       eventType: params.eventType,
       action: "automation_scheduled",
       status: "info",
@@ -1553,10 +1968,12 @@ async function scheduleAutomationJobsForEvent(params: {
         templateName: rule.templateName,
         phoneNumberId,
         sender,
+        routing,
+        notificationSubjectId,
       },
     });
 
-    scheduled.push({ ruleId: rule.id, jobId: job?.id ?? null, status: "scheduled" });
+    scheduled.push({ ruleId: rule.id, jobId: job.id, status: "scheduled" });
   }
 
   return scheduled;
@@ -1801,13 +2218,17 @@ async function processDueAutomationJobs(limit = 25) {
     const recipient = validateWhatsappRecipient(firstText(rendered.to));
     const to = recipient.normalized;
     const sender = asRecord(rendered.sender);
+    const routing = asRecord(rendered.routing);
+    const audience = firstText(rendered.audience, routing?.audience) === "internal_seller"
+      ? "internal_seller"
+      : "customer";
     const sellerPhone = firstText(sender?.sellerPhone);
     const senderSource = firstText(sender?.source);
     const phoneNumberId = firstText(rendered.phoneNumberId) ?? await findAutomationPhoneNumberId(job.clientId);
     const templateName = firstText(rendered.templateName, job.templateName);
     const languageCode = firstText(rendered.languageCode, job.templateLanguage) ?? "pt_BR";
     const bodyParamsValue = Array.isArray(rendered.bodyParams) ? rendered.bodyParams : [];
-    const bodyParams = bodyParamsValue
+    let bodyParams = bodyParamsValue
       .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
       .map((text) => ({ type: "text", text: text.trim() }));
 
@@ -1842,7 +2263,7 @@ async function processDueAutomationJobs(limit = 25) {
       continue;
     }
 
-    if (sellerPhone && senderSource !== "seller_phone") {
+    if (hasAssignedSellerSenderMismatch({ audience, sellerPhone, senderSource })) {
       const message = `Job bloqueado: o WhatsApp da vendedora (${sellerPhone}) não corresponde a um número ativo conectado.`;
       await db
         .update(commercialAutomationJobsTable)
@@ -1868,7 +2289,12 @@ async function processDueAutomationJobs(limit = 25) {
     }
 
     if (!to || !phoneNumberId || !templateName) {
-      const message = "Job sem telefone, número conectado ou template configurado.";
+      const missingFields = [
+        !to ? "telefone do destinatário" : null,
+        !phoneNumberId ? "número emissor conectado" : null,
+        !templateName ? "template" : null,
+      ].filter((value): value is string => Boolean(value));
+      const message = `Job bloqueado por configuração incompleta: ${missingFields.join(", ")}.`;
       await db
         .update(commercialAutomationJobsTable)
         .set({
@@ -1896,6 +2322,7 @@ async function processDueAutomationJobs(limit = 25) {
       .select({
         integrationId: whatsappPhoneNumbersTable.integrationId,
         wabaId: whatsappPhoneNumbersTable.wabaId,
+        rawPayload: whatsappPhoneNumbersTable.rawPayload,
       })
       .from(whatsappPhoneNumbersTable)
       .where(
@@ -1918,9 +2345,11 @@ async function processDueAutomationJobs(limit = 25) {
       )
       .limit(1);
 
-    let sendIntegration = exactIntegration;
+    const isSenderWabaCompatible = (integration: typeof whatsappIntegrationsTable.$inferSelect | undefined) =>
+      Boolean(integration && (!senderPhone?.wabaId || integration.wabaId === senderPhone.wabaId));
+    let sendIntegration = isSenderWabaCompatible(exactIntegration) ? exactIntegration : undefined;
     if (!sendIntegration && senderPhone?.integrationId) {
-      [sendIntegration] = await db
+      const [boundIntegration] = await db
         .select()
         .from(whatsappIntegrationsTable)
         .where(
@@ -1930,6 +2359,7 @@ async function processDueAutomationJobs(limit = 25) {
           ),
         )
         .limit(1);
+      sendIntegration = isSenderWabaCompatible(boundIntegration) ? boundIntegration : undefined;
     }
     if (!sendIntegration && senderPhone?.wabaId) {
       [sendIntegration] = await db
@@ -1945,7 +2375,8 @@ async function processDueAutomationJobs(limit = 25) {
     }
 
     if (!sendIntegration?.accessToken) {
-      const message = "O número emissor não possui uma integração WhatsApp válida vinculada a este cliente.";
+      const senderLabel = firstText(sender?.verifiedName, sender?.sellerName, sender?.displayPhoneNumber);
+      const message = `O número emissor${senderLabel ? ` (${senderLabel})` : ""} não possui uma integração WhatsApp válida vinculada a este cliente.`;
       await db
         .update(commercialAutomationJobsTable)
         .set({
@@ -1969,24 +2400,39 @@ async function processDueAutomationJobs(limit = 25) {
       continue;
     }
 
-    const templateConditions = [
-      eq(whatsappMessageTemplatesTable.clientId, job.clientId),
-      eq(whatsappMessageTemplatesTable.name, templateName),
-      eq(whatsappMessageTemplatesTable.language, languageCode),
-      eq(whatsappMessageTemplatesTable.status, "APPROVED"),
-    ];
-    const senderWabaId = senderPhone?.wabaId ?? sendIntegration.wabaId;
-    if (senderWabaId) {
-      templateConditions.push(eq(whatsappMessageTemplatesTable.wabaId, senderWabaId));
-    }
-    const [approvedTemplate] = await db
-      .select({ id: whatsappMessageTemplatesTable.id })
-      .from(whatsappMessageTemplatesTable)
-      .where(and(...templateConditions))
-      .limit(1);
+    const verifiedSenderWabaId = getVerifiedWhatsappWabaId(
+      senderPhone?.rawPayload,
+      senderPhone?.wabaId,
+    );
+    const senderWabaDiscovery = verifiedSenderWabaId
+      ? {
+          wabaId: verifiedSenderWabaId,
+          checkedWabaIds: [verifiedSenderWabaId],
+          matchedPhone: true,
+          errors: [],
+        }
+      : await discoverWhatsappWabaForPhone({
+          integration: sendIntegration,
+          phoneNumberId,
+          graphApiVersion: process.env.META_GRAPH_API_VERSION ?? "v23.0",
+          candidateWabaIds: [
+            senderPhone?.wabaId,
+            sendIntegration.wabaId,
+            ...(Array.isArray(sender?.wabaIds)
+              ? sender.wabaIds.filter((value): value is string => typeof value === "string")
+              : []),
+          ],
+        });
+    const senderWabaId = senderWabaDiscovery.matchedPhone
+      ? senderWabaDiscovery.wabaId
+      : null;
 
-    if (!approvedTemplate) {
-      const message = `O template ${templateName} (${languageCode}) não está aprovado no WABA do número emissor.`;
+    if (!senderWabaId) {
+      const senderLabel = firstText(sender?.verifiedName, sender?.sellerName, sender?.displayPhoneNumber);
+      const discoveryDetails = senderWabaDiscovery.errors.length
+        ? ` A Meta retornou: ${senderWabaDiscovery.errors.join("; ")}`
+        : "";
+      const message = `Não foi possível confirmar a WABA do número emissor${senderLabel ? ` (${senderLabel})` : ""}.${discoveryDetails}`;
       await db
         .update(commercialAutomationJobsTable)
         .set({
@@ -2004,10 +2450,159 @@ async function processDueAutomationJobs(limit = 25) {
         action: "automation_send_failed",
         status: "blocked",
         message,
-        metadata: { eventId: job.eventId, to, phoneNumberId, templateName, languageCode, senderWabaId, sender },
+        metadata: {
+          eventId: job.eventId,
+          to,
+          phoneNumberId,
+          templateName,
+          sender,
+          wabaDiscovery: senderWabaDiscovery,
+        },
       });
       results.push({ jobId: job.id, status: "failed", message });
       continue;
+    }
+
+    if (!verifiedSenderWabaId) {
+      const verifiedAt = new Date();
+      await db
+        .update(whatsappPhoneNumbersTable)
+        .set({
+          wabaId: senderWabaId,
+          rawPayload: addWhatsappWabaVerification(senderPhone?.rawPayload, {
+            wabaId: senderWabaId,
+            verifiedAt: verifiedAt.toISOString(),
+          }),
+          lastSyncedAt: verifiedAt,
+          updatedAt: verifiedAt,
+        })
+        .where(
+          and(
+            eq(whatsappPhoneNumbersTable.clientId, job.clientId),
+            eq(whatsappPhoneNumbersTable.phoneNumberId, phoneNumberId),
+          ),
+        );
+
+      if (senderPhone?.wabaId !== senderWabaId) {
+        await db.insert(commercialAutomationLogsTable).values({
+          clientId: job.clientId,
+          ruleId: job.ruleId,
+          jobId: job.id,
+          eventType: job.eventType ?? "automation",
+          action: "automation_sender_waba_reconciled",
+          status: "info",
+          message: `WABA do número emissor atualizada para ${senderWabaId} antes do envio.`,
+          metadata: {
+            eventId: job.eventId,
+            phoneNumberId,
+            previousWabaId: senderPhone?.wabaId ?? null,
+            senderWabaId,
+            wabaDiscovery: senderWabaDiscovery,
+          },
+        });
+      }
+    }
+
+    const senderWabaIds = [senderWabaId];
+    let approvedTemplate = await findApprovedAutomationTemplate({
+      clientId: job.clientId,
+      templateName,
+      languageCode,
+      wabaIds: senderWabaIds,
+    });
+    let templateRefresh: Awaited<ReturnType<typeof refreshAutomationTemplateCatalog>> | null = null;
+
+    if (!approvedTemplate && senderWabaIds.length) {
+      templateRefresh = await refreshAutomationTemplateCatalog({
+        clientId: job.clientId,
+        integrationId: sendIntegration.id,
+        accessToken: sendIntegration.accessToken,
+        wabaIds: senderWabaIds,
+      });
+      approvedTemplate = await findApprovedAutomationTemplate({
+        clientId: job.clientId,
+        templateName,
+        languageCode,
+        wabaIds: senderWabaIds,
+      });
+
+      if (templateRefresh.syncedTemplates > 0) {
+        await db.insert(commercialAutomationLogsTable).values({
+          clientId: job.clientId,
+          ruleId: job.ruleId,
+          jobId: job.id,
+          eventType: job.eventType ?? "automation",
+          action: "automation_templates_refreshed",
+          status: "info",
+          message: `${templateRefresh.syncedTemplates} template(s) sincronizado(s) automaticamente antes do envio.`,
+          metadata: {
+            eventId: job.eventId,
+            phoneNumberId,
+            senderWabaIds,
+            syncedWabaIds: templateRefresh.syncedWabaIds,
+            wabaDiscovery: senderWabaDiscovery,
+          },
+        });
+      }
+    }
+
+    if (!approvedTemplate) {
+      const refreshErrors = templateRefresh?.errors
+        .map((error) => `${error.wabaId}: ${error.message}`)
+        .join("; ");
+      const senderLabel = firstText(sender?.verifiedName, sender?.sellerName, sender?.displayPhoneNumber);
+      const message = [
+        `O template ${templateName} (${languageCode}) não está aprovado no WABA do número emissor${senderLabel ? ` (${senderLabel})` : ""}.`,
+        refreshErrors ? `A sincronização com a Meta retornou: ${refreshErrors}` : null,
+      ].filter(Boolean).join(" ");
+      await db
+        .update(commercialAutomationJobsTable)
+        .set({
+          status: "failed",
+          processedAt: new Date(),
+          errorMessage: message,
+          updatedAt: new Date(),
+        })
+        .where(eq(commercialAutomationJobsTable.id, job.id));
+      await db.insert(commercialAutomationLogsTable).values({
+        clientId: job.clientId,
+        ruleId: job.ruleId,
+        jobId: job.id,
+        eventType: job.eventType ?? "automation",
+        action: "automation_send_failed",
+        status: "blocked",
+        message,
+        metadata: {
+          eventId: job.eventId,
+          to,
+          phoneNumberId,
+          templateName,
+          languageCode,
+          senderWabaIds,
+          templateRefresh,
+          sender,
+          wabaDiscovery: senderWabaDiscovery,
+        },
+      });
+      results.push({ jobId: job.id, status: "failed", message });
+      continue;
+    }
+
+    if (bodyParams.length === 0) {
+      const sourceEvent = asRecord(rendered.sourceEvent);
+      if (sourceEvent) {
+        const rebuiltBodyParams = await buildAutomationTemplateBodyParams({
+          clientId: job.clientId,
+          templateId: null,
+          templateName,
+          templateLanguage: languageCode,
+          wabaIds: senderWabaIds,
+          payload: sourceEvent,
+        });
+        bodyParams = rebuiltBodyParams
+          .filter((value) => value.trim().length > 0)
+          .map((text) => ({ type: "text", text: text.trim() }));
+      }
     }
 
     const components = bodyParams.length
@@ -2031,10 +2626,21 @@ async function processDueAutomationJobs(limit = 25) {
         },
       }),
     });
-    const metaPayload = await response.json() as { messages?: Array<{ id?: string }>; error?: { message?: string } };
+    const metaPayload = await response.json() as {
+      messages?: Array<{ id?: string }>;
+      error?: {
+        code?: number;
+        message?: string;
+        title?: string;
+        error_data?: { details?: string };
+      };
+    };
 
     if (!response.ok) {
-      const message = metaPayload.error?.message ?? `Meta recusou o envio do template (${response.status}).`;
+      const describedError = describeWhatsappDeliveryError(metaPayload.error);
+      const message = metaPayload.error
+        ? describedError
+        : `Meta recusou o envio do template (HTTP ${response.status}).`;
       await db
         .update(commercialAutomationJobsTable)
         .set({
@@ -2052,7 +2658,17 @@ async function processDueAutomationJobs(limit = 25) {
         action: "automation_send_failed",
         status: "blocked",
         message,
-        metadata: { eventId: job.eventId, to, phoneNumberId, templateName, sender, meta: metaPayload },
+        metadata: {
+          eventId: job.eventId,
+          to,
+          phoneNumberId,
+          senderWabaId,
+          templateName,
+          languageCode,
+          sender,
+          wabaDiscovery: senderWabaDiscovery,
+          meta: metaPayload,
+        },
       });
       results.push({ jobId: job.id, status: "failed", message });
       continue;
@@ -2082,6 +2698,7 @@ async function processDueAutomationJobs(limit = 25) {
         jobId: job.id,
         ruleId: job.ruleId,
         sender,
+        senderWabaId,
         templateName,
         languageCode,
         meta: metaPayload,
@@ -2096,7 +2713,16 @@ async function processDueAutomationJobs(limit = 25) {
       action: "automation_template_sent",
       status: "ok",
       message: `Template ${templateName} aceito pela Meta; aguardando confirmação de entrega.`,
-      metadata: { eventId: job.eventId, to, phoneNumberId, templateName, sender, messageIds },
+      metadata: {
+        eventId: job.eventId,
+        to,
+        phoneNumberId,
+        senderWabaId,
+        templateName,
+        languageCode,
+        sender,
+        messageIds,
+      },
     });
     results.push({ jobId: job.id, status: "sent", message: `Template ${templateName} aceito pela Meta.` });
   }
@@ -2733,6 +3359,14 @@ router.post("/orchestrator/automations", requireAdmin, async (req, res): Promise
       templateLanguage: parsed.data.templateLanguage || null,
       templateCategory: parsed.data.templateCategory || null,
       delayMinutes: parsed.data.delayMinutes,
+      cooldownHours: parsed.data.cooldownHours,
+      maxSendsPerCustomerMonth: parsed.data.maxSendsPerCustomerMonth,
+      conditions: {
+        audience: parsed.data.audience,
+        senderStrategy: parsed.data.audience === "internal_seller" ? "default_phone" : "assigned_seller",
+        recipientStrategy: parsed.data.audience === "internal_seller" ? "assigned_seller" : "event_customer",
+        sendOncePerCart: parsed.data.sendOncePerCart,
+      },
     })
     .returning();
 
@@ -2748,12 +3382,17 @@ router.post("/orchestrator/automations", requireAdmin, async (req, res): Promise
       isEnabled: created.isEnabled,
       templateName: created.templateName,
       delayMinutes: created.delayMinutes,
+      cooldownHours: created.cooldownHours,
+      maxSendsPerCustomerMonth: created.maxSendsPerCustomerMonth,
+      sendOncePerCart: parsed.data.sendOncePerCart,
+      audience: parsed.data.audience,
     },
   });
 
   res.status(201).json({
     rule: {
       ...created,
+      audience: getAutomationAudience(created.conditions),
       enabled: created.isEnabled,
       channel: "whatsapp_template",
       approval: "automatic_after_delay",
@@ -2769,6 +3408,7 @@ router.get("/orchestrator/automations", requireAdmin, async (req, res): Promise<
     const rules = await buildAutomationRules(client.id);
     const templates = await buildWhatsappTemplateOptions(client.id);
     const eventOptions = await buildAutomationEventOptions(client.id);
+    const defaultSender = await resolveAutomationSender(client.id, undefined, "default_phone");
     const [jobStats] = await db
       .select({
         scheduled: sql<number>`COUNT(*) FILTER (WHERE ${commercialAutomationJobsTable.status} = 'scheduled')::int`,
@@ -2782,6 +3422,14 @@ router.get("/orchestrator/automations", requireAdmin, async (req, res): Promise<
       client,
       eventOptions,
       templates,
+      defaultSender: defaultSender.phoneNumberId
+        ? {
+            phoneNumberId: defaultSender.phoneNumberId,
+            displayPhoneNumber: defaultSender.displayPhoneNumber,
+            verifiedName: defaultSender.verifiedName,
+            wabaId: defaultSender.wabaId,
+          }
+        : null,
       jobStats: jobStats ?? { scheduled: 0, sent: 0, failed: 0 },
       rules: rules.map((rule) => ({
         ...rule,
@@ -2820,6 +3468,7 @@ router.patch("/orchestrator/automations/:ruleId", requireAdmin, async (req, res)
       id: commercialAutomationRulesTable.id,
       clientId: commercialAutomationRulesTable.clientId,
       eventType: commercialAutomationRulesTable.eventType,
+      conditions: commercialAutomationRulesTable.conditions,
     })
     .from(commercialAutomationRulesTable)
     .where(eq(commercialAutomationRulesTable.id, ruleId))
@@ -2861,6 +3510,29 @@ router.patch("/orchestrator/automations/:ruleId", requireAdmin, async (req, res)
       ...(patch.templateLanguage !== undefined ? { templateLanguage: patch.templateLanguage || null } : {}),
       ...(patch.templateCategory !== undefined ? { templateCategory: patch.templateCategory || null } : {}),
       ...(patch.delayMinutes !== undefined ? { delayMinutes: patch.delayMinutes } : {}),
+      ...(patch.cooldownHours !== undefined ? { cooldownHours: patch.cooldownHours } : {}),
+      ...(patch.maxSendsPerCustomerMonth !== undefined
+        ? { maxSendsPerCustomerMonth: patch.maxSendsPerCustomerMonth }
+        : {}),
+      ...(patch.sendOncePerCart !== undefined || patch.audience !== undefined
+        ? {
+            conditions: {
+              ...(rule.conditions && typeof rule.conditions === "object"
+                ? rule.conditions as Record<string, unknown>
+                : {}),
+              ...(patch.sendOncePerCart !== undefined
+                ? { sendOncePerCart: patch.sendOncePerCart }
+                : {}),
+              ...(patch.audience !== undefined
+                ? {
+                    audience: patch.audience,
+                    senderStrategy: patch.audience === "internal_seller" ? "default_phone" : "assigned_seller",
+                    recipientStrategy: patch.audience === "internal_seller" ? "assigned_seller" : "event_customer",
+                  }
+                : {}),
+            },
+          }
+        : {}),
       updatedAt: new Date(),
     })
     .where(eq(commercialAutomationRulesTable.id, rule.id))
@@ -2877,10 +3549,21 @@ router.patch("/orchestrator/automations/:ruleId", requireAdmin, async (req, res)
       isEnabled: updated.isEnabled,
       templateName: updated.templateName,
       delayMinutes: updated.delayMinutes,
+      cooldownHours: updated.cooldownHours,
+      maxSendsPerCustomerMonth: updated.maxSendsPerCustomerMonth,
+      sendOncePerCart: updated.conditions && typeof updated.conditions === "object"
+        ? (updated.conditions as Record<string, unknown>).sendOncePerCart !== false
+        : true,
+      audience: getAutomationAudience(updated.conditions),
     },
   });
 
-  res.json({ rule: updated });
+  res.json({
+    rule: {
+      ...updated,
+      audience: getAutomationAudience(updated.conditions),
+    },
+  });
 });
 
 router.post("/orchestrator/automations/process-due", requireAdmin, async (_req, res): Promise<void> => {

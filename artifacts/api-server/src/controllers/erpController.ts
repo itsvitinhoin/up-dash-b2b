@@ -86,6 +86,8 @@ const GetErpOrdersQueryParams = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
   search: z.coerce.string().trim().optional(),
   status: z.coerce.string().trim().optional(),
+  customerDocument: z.coerce.string().trim().optional(),
+  allTime: z.enum(["true", "false"]).optional(),
 });
 
 export async function getOrders(req: Request, res: Response): Promise<void> {
@@ -114,9 +116,11 @@ export async function getOrders(req: Request, res: Response): Promise<void> {
   );
   const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
   const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
-  const { page, limit, search, status } = queryParsed.data;
+  const { page, limit, search, status, customerDocument, allTime } =
+    queryParsed.data;
+  const useAllTime = allTime === "true";
 
-  const cacheKey = `erp:orders:${ctx.dataset}:${dateFromOnly}:${dateToOnly}:${page}:${limit}:${search ?? ""}:${status ?? ""}`;
+  const cacheKey = `erp:orders:${ctx.dataset}:${dateFromOnly}:${dateToOnly}:${page}:${limit}:${search ?? ""}:${status ?? ""}:${customerDocument ?? ""}:${useAllTime}`;
   const result = await cached(cacheKey, ERP_CACHE_TTL_MS, () =>
     fetchErpOrdersPage(
       ctx.clientId,
@@ -127,6 +131,7 @@ export async function getOrders(req: Request, res: Response): Promise<void> {
       limit,
       search,
       status,
+      { customerDocument, allTime: useAllTime },
     ),
   );
 

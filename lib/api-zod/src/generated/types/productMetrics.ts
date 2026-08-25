@@ -5,7 +5,9 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { ProductMetricsGradeStatus } from "./productMetricsGradeStatus";
 import type { ProductMetricsLevel } from "./productMetricsLevel";
+import type { ProductVariantMetrics } from "./productVariantMetrics";
 
 export interface ProductMetrics {
   id: string;
@@ -31,4 +33,8 @@ export interface ProductMetrics {
   /** Performance tier derived from sell-through and stock health. */
   level: ProductMetricsLevel;
   createdAt: Date;
+  gradeStatus?: ProductMetricsGradeStatus;
+  variantCount?: number;
+  availableVariantCount?: number;
+  variants?: ProductVariantMetrics[];
 }
