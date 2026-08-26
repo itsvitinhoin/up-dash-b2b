@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { addDays, differenceInDays, format, subDays } from "date-fns";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
+import { useI18n } from "@/lib/i18n";
 import { queryOpts } from "@/lib/query-opts";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
@@ -205,6 +206,14 @@ const CHART_METRICS = [
 ] as const;
 
 type ChartMetric = (typeof CHART_METRICS)[number]["id"];
+
+const CHART_METRIC_LABEL_KEYS: Record<ChartMetric, string> = {
+  revenue: "dashboard.chart.metric.revenue",
+  orders: "dashboard.chart.metric.orders",
+  avgTicket: "dashboard.chart.metric.avgTicket",
+  sessions: "dashboard.chart.metric.sessions",
+  conversionRate: "dashboard.chart.metric.conversionRate",
+};
 
 type CampaignCustomerRow = {
   customerId: string | null;
@@ -1594,6 +1603,7 @@ function B2COrdersPanel({
 }
 
 export default function DashboardPage() {
+  const { t } = useI18n();
   const { selectedClientId, user, selectedDashboardMode } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const queryClient = useQueryClient();
@@ -1623,6 +1633,32 @@ export default function DashboardPage() {
     },
     { query: queryOpts({ enabled, placeholderData: (previous) => previous }) },
   );
+
+  // Achado 26/08/2026: função serverless "dormindo" (cold start) faz a
+  // primeira chamada falhar mesmo depois das 3 retentativas padrão do
+  // react-query (~3,5s de espera no total -- pouco pro servidor acordar de
+  // verdade). Em vez de mostrar erro assustador logo de cara, insiste
+  // automaticamente por mais tempo (até COLD_START_MAX_ATTEMPTS vezes, com
+  // pausa fixa entre elas) mostrando o mesmo card de carregamento -- só
+  // exibe o alerta de erro depois de esgotar essa janela mais generosa.
+  const COLD_START_MAX_ATTEMPTS = 6;
+  const COLD_START_RETRY_DELAY_MS = 4000;
+  const [coldStartAttempts, setColdStartAttempts] = useState(0);
+
+  useEffect(() => {
+    if (!isError) {
+      if (coldStartAttempts !== 0) setColdStartAttempts(0);
+      return;
+    }
+    if (coldStartAttempts >= COLD_START_MAX_ATTEMPTS) return;
+    const timer = setTimeout(() => {
+      setColdStartAttempts((prev) => prev + 1);
+      refetch();
+    }, COLD_START_RETRY_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [isError, coldStartAttempts, refetch]);
+
+  const isColdStarting = isError && !data && coldStartAttempts < COLD_START_MAX_ATTEMPTS;
 
   const inclusiveDays = Math.max(1, differenceInDays(dateRange.to, dateRange.from) + 1);
   const prevPeriodTo = useMemo(() => subDays(dateRange.from, 1), [dateRange.from]);
@@ -1838,12 +1874,12 @@ export default function DashboardPage() {
     }
   }, [chartMetric, isB2C]);
 
-  if (isLoading && !data) {
+  if ((isLoading || isColdStarting) && !data) {
     return (
       <DashLoadingCard
         className="min-h-[520px]"
-        label="Carregando Dashboard"
-        description="Consolidando pedidos, sessões, mídia, produtos e indicadores do período."
+        label={t("dashboard.loading.title")}
+        description={isColdStarting ? t("dashboard.loading.reconnecting") : t("dashboard.loading.description")}
       />
     );
   }
@@ -1852,11 +1888,11 @@ export default function DashboardPage() {
     return (
       <Alert variant="destructive" data-testid="page-dashboard">
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Error</AlertTitle>
+        <AlertTitle>{t("dashboard.error.title")}</AlertTitle>
         <AlertDescription className="flex items-center justify-between">
-          Failed to load dashboard data.
+          {t("dashboard.error.body")}
           <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="mr-2 h-4 w-4" /> Retry
+            <RefreshCw className="mr-2 h-4 w-4" /> {t("dashboard.error.retry")}
           </Button>
         </AlertDescription>
       </Alert>
@@ -1911,20 +1947,20 @@ export default function DashboardPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Live · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            {t("dashboard.live")} · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
             <span className="ml-2 text-muted-foreground/70">
-              vs. {format(prevPeriodFrom, "MMM d")} → {format(prevPeriodTo, "MMM d")}
+              {t("dashboard.vs")} {format(prevPeriodFrom, "MMM d")} → {format(prevPeriodTo, "MMM d")}
             </span>
           </span>
         </motion.div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={handleExportSummary} data-testid="dashboard-export-csv">
             <Download className="h-4 w-4 mr-1.5" />
-            Export CSV
+            {t("dashboard.exportCsv")}
           </Button>
           <Button variant="outline" size="sm" onClick={handlePrint} data-testid="dashboard-export-pdf">
             <FileText className="h-4 w-4 mr-1.5" />
-            Print / PDF
+            {t("dashboard.printPdf")}
           </Button>
         </div>
       </div>
@@ -1939,17 +1975,17 @@ export default function DashboardPage() {
           testId="kpi-revenue"
           icon={DollarSign}
           iconClass="bg-blue-500/15 text-blue-400"
-          label={isB2C ? "Valor pago" : "Total revenue"}
+          label={isB2C ? t("dashboard.kpi.totalRevenue.b2c") : t("dashboard.kpi.totalRevenue.b2b")}
           value={data?.kpis.revenue ?? 0}
           format={(v) => formatCurrencySmart(v)}
           unit="BRL"
           change={revenueChange}
-          changeLabel="vs. previous period"
+          changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkRevenue}
           sparkColor="#60a5fa"
           sub={[
-            { label: "Avg ticket", value: data ? formatCurrency(data.kpis.avgTicket) : "—" },
-            { label: "Customers", value: data ? formatNumber(data.kpis.customers) : "—" },
+            { label: t("dashboard.kpi.avgTicket"), value: data ? formatCurrency(data.kpis.avgTicket) : "—" },
+            { label: t("dashboard.kpi.customers"), value: data ? formatNumber(data.kpis.customers) : "—" },
           ]}
           isLoading={isLoading}
           valueAccent
@@ -1958,17 +1994,17 @@ export default function DashboardPage() {
           testId="kpi-orders"
           icon={Package}
           iconClass="bg-violet-500/15 text-violet-400"
-          label="Orders"
+          label={t("dashboard.kpi.orders")}
           value={data?.kpis.orders ?? 0}
           format={(v) => formatNumber(v)}
           unit={inclusiveDays + "d"}
           change={ordersChange}
-          changeLabel="vs. previous period"
+          changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkOrders}
           sparkColor="#a78bfa"
           sub={[
-            { label: isB2C ? "Sessões" : "Leads", value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
-            { label: isB2C ? "Pedidos" : "Approved leads", value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.approvedLeads) : "—" },
+            { label: isB2C ? t("dashboard.kpi.sessions") : t("dashboard.kpi.leads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
+            { label: isB2C ? t("dashboard.kpi.orders") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.approvedLeads) : "—" },
           ]}
           isLoading={isLoading}
         />
@@ -1976,17 +2012,17 @@ export default function DashboardPage() {
           testId="kpi-avgTicket"
           icon={Wallet}
           iconClass="bg-emerald-500/15 text-emerald-400"
-          label="Avg ticket"
+          label={t("dashboard.kpi.avgTicket")}
           value={data?.kpis.avgTicket ?? 0}
           format={(v) => formatCurrencySmart(v)}
           unit="BRL"
           change={avgTicketChange}
-          changeLabel="vs. previous period"
+          changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkLeads}
           sparkColor="#34d399"
           sub={[
-            { label: "Repeat customers", value: data ? formatNumber(data.kpis.repeatCustomers) : "—" },
-            { label: isB2C ? "Paid rate" : "Approval rate", value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
+            { label: t("dashboard.kpi.repeatCustomers"), value: data ? formatNumber(data.kpis.repeatCustomers) : "—" },
+            { label: isB2C ? t("dashboard.kpi.paidRate") : t("dashboard.kpi.approvalRate"), value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
           ]}
           isLoading={isLoading}
         />
@@ -1994,16 +2030,16 @@ export default function DashboardPage() {
           testId="kpi-conversionRate"
           icon={Target}
           iconClass="bg-sky-500/15 text-sky-400"
-          label="Conversion rate"
+          label={t("dashboard.kpi.conversionRate")}
           value={data?.kpis.conversionRate ?? 0}
           format={(v) => formatPercentage(v)}
           change={conversionChange}
-          changeLabel="vs. previous period"
+          changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkConv}
           sparkColor="#38bdf8"
           sub={[
-            { label: isB2C ? "Sessões" : "Approved leads", value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
-            { label: isB2C ? "Pedidos" : "Orders", value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
+            { label: isB2C ? t("dashboard.kpi.sessions") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
+            { label: isB2C ? t("dashboard.kpi.orders") : t("dashboard.kpi.orders"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
           ]}
           isLoading={isLoading}
           ringValue={data?.kpis.conversionRate ?? 0}
@@ -2026,7 +2062,7 @@ export default function DashboardPage() {
             </div>
             <div className="min-w-0">
               <p className="text-xs text-muted-foreground leading-none">
-                {isB2C ? "Valor faturado" : "Requested revenue"}
+                {isB2C ? t("dashboard.kpi.invoicedValue") : t("dashboard.kpi.requestedRevenue")}
               </p>
               {isLoading ? (
                 <Skeleton className="h-6 w-24 mt-1" />
@@ -2042,7 +2078,7 @@ export default function DashboardPage() {
           ) : (
             <>
               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                <span>{isB2C ? "Pago" : "Approved"}</span>
+                <span>{isB2C ? t("dashboard.kpi.paid") : t("dashboard.kpi.approved")}</span>
                 <span className="font-medium text-foreground tabular-nums">
                   {formatCurrency(data?.kpis.revenue ?? 0)}
                 </span>
@@ -2059,8 +2095,8 @@ export default function DashboardPage() {
               </div>
               <p className="text-[11px] text-muted-foreground mt-1">
                 {(data?.kpis.requestedRevenue ?? 0) > 0
-                  ? `${(((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100).toFixed(1)}% ${isB2C ? "paid rate" : "fulfillment rate"}`
-                  : isB2C ? "No invoiced revenue" : "No requested revenue"}
+                  ? `${(((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100).toFixed(1)}% ${isB2C ? t("dashboard.kpi.paidRateSuffix") : t("dashboard.kpi.fulfillmentRate")}`
+                  : isB2C ? t("dashboard.kpi.noInvoicedRevenue") : t("dashboard.kpi.noRequestedRevenue")}
               </p>
             </>
           )}
@@ -2073,7 +2109,7 @@ export default function DashboardPage() {
               <Users className="h-4 w-4 text-emerald-400" />
             </div>
             <div className="min-w-0">
-              <p className="text-xs text-muted-foreground leading-none">Buyers this period</p>
+              <p className="text-xs text-muted-foreground leading-none">{t("dashboard.kpi.buyersThisPeriod")}</p>
               {isLoading ? (
                 <Skeleton className="h-6 w-24 mt-1" />
               ) : (
@@ -2133,14 +2169,14 @@ export default function DashboardPage() {
               <div className="flex gap-3 text-xs">
                 <div className="flex-1 flex items-center gap-1.5">
                   <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="text-muted-foreground">New</span>
+                  <span className="text-muted-foreground">{t("dashboard.kpi.new")}</span>
                   <span className="ml-auto font-semibold tabular-nums">
                     {formatNumber(data?.kpis.newBuyers ?? 0)}
                   </span>
                 </div>
                 <div className="flex-1 flex items-center gap-1.5">
                   <span className="inline-block h-2 w-2 rounded-full bg-blue-400 shrink-0" />
-                  <span className="text-muted-foreground">Returning</span>
+                  <span className="text-muted-foreground">{t("dashboard.kpi.returning")}</span>
                   <span className="ml-auto font-semibold tabular-nums">
                     {formatNumber(data?.kpis.returningBuyers ?? 0)}
                   </span>
@@ -2155,16 +2191,16 @@ export default function DashboardPage() {
           testId="kpi-retention"
           icon={TrendingUp}
           iconClass="bg-violet-500/15 text-violet-400"
-          label="Buyer retention"
+          label={t("dashboard.kpi.buyerRetention")}
           value={data?.kpis.retentionPct ?? 0}
           format={(v) => formatPercentage(v)}
           change={retentionChange}
-          changeLabel="vs. previous period"
+          changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkReturning}
           sparkColor="#a78bfa"
           sub={[
-            { label: "New buyers", value: data ? formatNumber(data.kpis.newBuyers) : "—" },
-            { label: "Returning", value: data ? formatNumber(data.kpis.returningBuyers) : "—" },
+            { label: t("dashboard.kpi.newBuyers"), value: data ? formatNumber(data.kpis.newBuyers) : "—" },
+            { label: t("dashboard.kpi.returning"), value: data ? formatNumber(data.kpis.returningBuyers) : "—" },
           ]}
           isLoading={isLoading}
         />
@@ -2200,11 +2236,11 @@ export default function DashboardPage() {
         <Card className="lg:col-span-2 p-5 bg-card border-border">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
             <div>
-              <h2 className="text-base font-semibold leading-tight">Daily performance</h2>
+              <h2 className="text-base font-semibold leading-tight">{t("dashboard.chart.title")}</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {isB2C
-                  ? `Por dia: receita, pedidos, sessões e conversão${data?.traffic?.source === "ga4" ? " via GA4" : ""}`
-                  : `Last ${inclusiveDays} days vs. previous period · click any anomaly to drill in`}
+                  ? `${t("dashboard.chart.subtitle.b2c")}${data?.traffic?.source === "ga4" ? t("dashboard.chart.subtitle.b2cGa4") : ""}`
+                  : t("dashboard.chart.subtitle.b2b").replace("{days}", String(inclusiveDays))}
               </p>
             </div>
             <div className="inline-flex items-center bg-muted/40 border border-border rounded-md p-0.5">
@@ -2219,7 +2255,7 @@ export default function DashboardPage() {
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {metric.label}
+                  {t(CHART_METRIC_LABEL_KEYS[metric.id])}
                 </button>
               ))}
             </div>
@@ -2270,7 +2306,7 @@ export default function DashboardPage() {
                   <Tooltip
                     formatter={(value: number, name) => [
                       chartFormatter(value),
-                      name === "current" ? "Current" : "Previous",
+                      name === "current" ? t("dashboard.chart.current") : t("dashboard.chart.previous"),
                     ]}
                     labelFormatter={(label) => format(new Date(label), "MMM d, yyyy")}
                     contentStyle={{
@@ -2320,16 +2356,16 @@ export default function DashboardPage() {
           <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
             <span className="flex items-center gap-1.5">
               <CircleDot className="h-3 w-3 text-primary" />
-              Current
+              {t("dashboard.chart.current")}
             </span>
             <span className="flex items-center gap-1.5">
               <span className="inline-block w-3 border-t border-dashed border-muted-foreground" />
-              Previous
+              {t("dashboard.chart.previous")}
             </span>
             {anomalies.length > 0 && (
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2.5 w-2.5 rounded-full ring-2 ring-amber-400/80 bg-background" />
-                {anomalies.length} anomaly{anomalies.length === 1 ? "" : "ies"} detected
+                {anomalies.length} {t(anomalies.length === 1 ? "dashboard.chart.anomaly.singular" : "dashboard.chart.anomaly.plural")}
               </span>
             )}
           </div>
@@ -2350,13 +2386,13 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between mb-3">
                 <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
                   <Sparkles className="h-3 w-3" />
-                  UP Insight · {insight?.source === "ai" ? "AI" : "Auto"}
+                  UP Insight · {insight?.source === "ai" ? t("dashboard.insight.badge.ai") : t("dashboard.insight.badge.auto")}
                 </span>
                 <button
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Dismiss insight"
+                  aria-label={t("dashboard.insight.dismiss")}
                   data-testid="insight-dismiss"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -2393,10 +2429,10 @@ export default function DashboardPage() {
                   data-testid="insight-regenerate"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${regenerateInsight.isPending ? "animate-spin" : ""}`} />
-                  {regenerateInsight.isPending ? "Regenerating" : "Regenerate"}
+                  {regenerateInsight.isPending ? t("dashboard.insight.regenerating") : t("dashboard.insight.regenerate")}
                 </Button>
                 {insight?.cached && (
-                  <span className="text-[11px] text-muted-foreground">Cached · refreshes hourly</span>
+                  <span className="text-[11px] text-muted-foreground">{t("dashboard.insight.cached")}</span>
                 )}
               </div>
             </div>
@@ -2413,30 +2449,30 @@ export default function DashboardPage() {
           data-testid="b2c-sales-breakdowns"
         >
           <B2CSalesBreakdownCard
-            title="Vendas por categoria"
-            subtitle="Faturamento aprovado da Nuvemshop"
+            title={t("dashboard.b2c.byCategory.title")}
+            subtitle={t("dashboard.b2c.byCategory.subtitle")}
             rows={b2cSalesByCategory}
             icon={Package}
             isLoading={isLoading}
-            emptyText="Nenhuma venda por categoria neste período."
+            emptyText={t("dashboard.b2c.byCategory.empty")}
             testId="b2c-sales-by-category"
           />
           <B2CSalesBreakdownCard
-            title="Vendas por cor"
-            subtitle="Cores mais vendidas no período"
+            title={t("dashboard.b2c.byColor.title")}
+            subtitle={t("dashboard.b2c.byColor.subtitle")}
             rows={b2cSalesByColor}
             icon={Tag}
             isLoading={isLoading}
-            emptyText="Nenhuma venda com cor neste período."
+            emptyText={t("dashboard.b2c.byColor.empty")}
             testId="b2c-sales-by-color"
           />
           <B2CSalesBreakdownCard
-            title="Vendas por tamanho"
-            subtitle="Tamanhos mais vendidos no período"
+            title={t("dashboard.b2c.bySize.title")}
+            subtitle={t("dashboard.b2c.bySize.subtitle")}
             rows={b2cSalesBySize}
             icon={BarChart3}
             isLoading={isLoading}
-            emptyText="Nenhuma venda com tamanho neste período."
+            emptyText={t("dashboard.b2c.bySize.empty")}
             testId="b2c-sales-by-size"
           />
         </motion.div>
@@ -2455,8 +2491,8 @@ export default function DashboardPage() {
                 <BarChart3 className="h-4 w-4 text-sky-400" />
               </div>
               <div>
-                <h2 className="text-base font-semibold leading-tight">Business signals</h2>
-                <p className="text-xs text-muted-foreground">Computed insights for this period</p>
+                <h2 className="text-base font-semibold leading-tight">{t("dashboard.signals.title")}</h2>
+                <p className="text-xs text-muted-foreground">{t("dashboard.signals.subtitle")}</p>
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2499,10 +2535,10 @@ export default function DashboardPage() {
           <div>
             <h2 className="text-base font-semibold leading-tight flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-amber-400" />
-              Alerts
+              {t("dashboard.alerts.title")}
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              SKUs below restock threshold and predicted stockouts in the next 14 days
+              {t("dashboard.alerts.subtitle")}
             </p>
           </div>
           {alertsData && alertsData.counts.total > 0 && (
@@ -2512,7 +2548,7 @@ export default function DashboardPage() {
                   className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-red-500/15 text-red-400"
                   data-testid="alerts-count-critical"
                 >
-                  {alertsData.counts.critical} critical
+                  {alertsData.counts.critical} {t("dashboard.alerts.critical")}
                 </span>
               )}
               {alertsData.counts.warning > 0 && (
@@ -2520,7 +2556,7 @@ export default function DashboardPage() {
                   className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-amber-500/15 text-amber-400"
                   data-testid="alerts-count-warning"
                 >
-                  {alertsData.counts.warning} warning
+                  {alertsData.counts.warning} {t("dashboard.alerts.warning")}
                 </span>
               )}
             </div>
@@ -2538,18 +2574,18 @@ export default function DashboardPage() {
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400 mb-3">
               <Package className="h-5 w-5" />
             </div>
-            <p className="text-sm font-medium">All inventory is healthy</p>
+            <p className="text-sm font-medium">{t("dashboard.alerts.empty.title")}</p>
             <p className="text-xs text-muted-foreground mt-1">
-              No SKUs below restock threshold or projected to stock out soon.
+              {t("dashboard.alerts.empty.body")}
             </p>
           </div>
         ) : (
           <div>
             <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
-              <div className="col-span-5">Product</div>
-              <div className="col-span-2 text-right">Stock</div>
-              <div className="col-span-2 text-right">Threshold</div>
-              <div className="col-span-2 text-right">Days of cover</div>
+              <div className="col-span-5">{t("dashboard.alerts.col.product")}</div>
+              <div className="col-span-2 text-right">{t("dashboard.alerts.col.stock")}</div>
+              <div className="col-span-2 text-right">{t("dashboard.alerts.col.threshold")}</div>
+              <div className="col-span-2 text-right">{t("dashboard.alerts.col.daysOfCover")}</div>
               <div className="col-span-1" />
             </div>
             <div className="divide-y divide-border">
@@ -2566,10 +2602,10 @@ export default function DashboardPage() {
                   : "bg-amber-500/15 text-amber-400";
                 const typeLabel =
                   alert.type === "OUT_OF_STOCK"
-                    ? "Out of stock"
+                    ? t("dashboard.alerts.type.outOfStock")
                     : alert.type === "PREDICTED_STOCKOUT"
-                      ? "Predicted stockout"
-                      : "Low stock";
+                      ? t("dashboard.alerts.type.predictedStockout")
+                      : t("dashboard.alerts.type.lowStock");
                 const productHref = `/products?sku=${encodeURIComponent(alert.sku)}${
                   alert.category ? `&category=${encodeURIComponent(alert.category)}` : ""
                 }`;
@@ -2626,7 +2662,7 @@ export default function DashboardPage() {
                         data-testid={`alert-link-${alert.sku}`}
                         aria-label={`View ${alert.sku} in products`}
                       >
-                        View <ChevronRight className="h-3 w-3" />
+                        {t("dashboard.common.view")} <ChevronRight className="h-3 w-3" />
                       </Link>
                     </div>
                   </div>
@@ -2642,13 +2678,13 @@ export default function DashboardPage() {
         <Card className="p-5 bg-card border-border">
           <div className="flex items-start justify-between mb-4">
             <div>
-              <h2 className="text-base font-semibold leading-tight">Top categories</h2>
+              <h2 className="text-base font-semibold leading-tight">{t("dashboard.categories.title")}</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Share of revenue across the catalog
+                {t("dashboard.categories.subtitle")}
               </p>
             </div>
             <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-              See all <ChevronRight className="h-3 w-3" />
+              {t("dashboard.common.seeAll")} <ChevronRight className="h-3 w-3" />
             </button>
           </div>
 
@@ -2660,15 +2696,15 @@ export default function DashboardPage() {
             </div>
           ) : topCategories.length === 0 ? (
             <p className="text-sm text-muted-foreground py-8 text-center">
-              No category data for this period.
+              {t("dashboard.categories.empty")}
             </p>
           ) : (
             <div>
               <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
-                <div className="col-span-5">Category</div>
-                <div className="col-span-3 text-right">Revenue</div>
-                <div className="col-span-2 text-right">Orders</div>
-                <div className="col-span-2 text-right">Share</div>
+                <div className="col-span-5">{t("dashboard.categories.col.category")}</div>
+                <div className="col-span-3 text-right">{t("dashboard.common.revenue")}</div>
+                <div className="col-span-2 text-right">{t("dashboard.kpi.orders")}</div>
+                <div className="col-span-2 text-right">{t("dashboard.common.share")}</div>
               </div>
               <div className="divide-y divide-border">
                 {topCategories.map((cat) => {
@@ -2712,16 +2748,16 @@ export default function DashboardPage() {
         <Card className="p-5 bg-card border-border">
           <div className="flex items-start justify-between mb-4">
             <div>
-              <h2 className="text-base font-semibold leading-tight">Top sellers</h2>
+              <h2 className="text-base font-semibold leading-tight">{t("dashboard.sellers.title")}</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Ranked by lifetime revenue
+                {t("dashboard.sellers.subtitle")}
               </p>
             </div>
             <Link
               href="/sellers"
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              See all <ChevronRight className="h-3 w-3" />
+              {t("dashboard.common.seeAll")} <ChevronRight className="h-3 w-3" />
             </Link>
           </div>
 
@@ -2734,9 +2770,9 @@ export default function DashboardPage() {
           ) : (
             <div>
               <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
-                <div className="col-span-5">Seller</div>
-                <div className="col-span-3 text-right">Revenue</div>
-                <div className="col-span-2 text-right">Orders</div>
+                <div className="col-span-5">{t("dashboard.sellers.col.seller")}</div>
+                <div className="col-span-3 text-right">{t("dashboard.common.revenue")}</div>
+                <div className="col-span-2 text-right">{t("dashboard.kpi.orders")}</div>
                 <div className="col-span-2 text-right"></div>
               </div>
               <div className="divide-y divide-border">
@@ -2766,7 +2802,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="col-span-2 text-right">
                       <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
-                        View <ChevronRight className="h-3 w-3" />
+                        {t("dashboard.common.view")} <ChevronRight className="h-3 w-3" />
                       </span>
                     </div>
                   </Link>
