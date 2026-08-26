@@ -192,6 +192,17 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
       ordersOverTime: vestiCurrent.dailyOrders,
       leadsOverTime: vestiCurrent.dailyLeads,
       revenueByCategory: vestiCurrent.revenueByCategory,
+      // Achado 26/08/2026: GetDashboardResponse passou a exigir esses 3
+      // campos (breakdown de vendas por categoria/cor/tamanho, usado só no
+      // card B2C/Nuvemshop do dashboard.tsx), mas esse controller (Vesti/
+      // BigQuery) nunca foi atualizado pra mandar -- Zod.parse() rejeitava
+      // toda resposta, quebrando o dashboard inteiro com 500 pra TODOS os
+      // clientes Vesti. Vesti não tem esse dado (não é integração
+      // Nuvemshop), então array vazio é o valor correto, não um
+      // placeholder temporário.
+      salesByCategory: [],
+      salesByColor: [],
+      salesBySize: [],
       newBuyersOverTime: vestiCurrent.dailyNewBuyers,
       returningBuyersOverTime: vestiCurrent.dailyReturningBuyers,
       traffic: { sessions: 0, orders: vestiCurrent.kpis.orders, source: "none" },
