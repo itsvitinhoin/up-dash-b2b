@@ -391,6 +391,39 @@
     color: black !important;
   }
 
+  /* Achado 26/08/2026 (ClickUp Vogabox item 1.3): o Dashboard e a Escala
+     usam .dashboard-printable sem nenhuma das proteções de paginação que
+     o Diário (.print-daily) já tinha -- cards cortados ao meio na quebra
+     de página, cores de badge desaparecendo (Chrome não imprime
+     background por padrão sem print-color-adjust), e a grade de 4
+     colunas da tela (só larga o bastante em telas xl:) nunca cabia numa
+     página A4/Letter, forçando quebra estranha no meio da linha. */
+  body.print-dashboard .dashboard-printable [class*="bg-card"],
+  body.print-dashboard .dashboard-printable table,
+  body.print-dashboard .dashboard-printable tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body.print-dashboard .dashboard-printable * {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  /* As grades de KPI (4 e 3 colunas) só ganham essas colunas a partir dos
+     breakpoints sm:/xl:, que não disparam numa página de impressão
+     estreita -- sem isso, empilhavam num único card por linha. Não mexe
+     nas tabelas de 12 colunas (Alertas/Categorias/Vendedoras), que não
+     usam esses breakpoints. */
+  body.print-dashboard .dashboard-printable [class*="xl:grid-cols-4"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  body.print-dashboard .dashboard-printable [class*="sm:grid-cols-3"],
+  body.print-dashboard .dashboard-printable [class*="lg:grid-cols-3"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
   body.print-dashboard.print-daily,
   body.print-dashboard.print-daily #root,
   body.print-dashboard.print-daily > #root > div,
