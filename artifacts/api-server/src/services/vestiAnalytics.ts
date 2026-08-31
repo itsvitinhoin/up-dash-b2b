@@ -115,11 +115,16 @@ function buildFilterClause(alias: string, view: string, produtos: string, filter
     params.channel = filters.channel;
   }
   if (filters.category) {
+    // Achado 26/08/2026: a mesma categoria aparece com grafia
+    // inconsistente no catálogo de alguns clientes (ex.: "CALÇA" e
+    // "Calça" como valores distintos pro mesmo tipo de produto).
+    // Comparação por UPPER() evita perder produtos só por causa da
+    // caixa da letra.
     parts.push(`${alias}.pedido_id IN (
       SELECT DISTINCT v2.pedido_id
       FROM ${view} v2
       JOIN ${produtos} p2 ON p2.id = v2.produto_id
-      WHERE ARRAY_LENGTH(p2.categories) > 0 AND p2.categories[SAFE_OFFSET(0)].name = @category
+      WHERE ARRAY_LENGTH(p2.categories) > 0 AND UPPER(p2.categories[SAFE_OFFSET(0)].name) = UPPER(@category)
     )`);
     params.category = filters.category;
   }

@@ -7,6 +7,7 @@ import {
   useDeleteSavedView,
   getListSavedViewsQueryKey,
   useGetSellers,
+  useGetProducts,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -31,15 +32,6 @@ import {
 } from "@/components/ui/popover";
 import { Bookmark, BookmarkPlus, X, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-const CATEGORY_OPTIONS = [
-  { value: "Tops", label: "Tops" },
-  { value: "Bottoms", label: "Bottoms" },
-  { value: "Dresses", label: "Dresses" },
-  { value: "Outerwear", label: "Outerwear" },
-  { value: "Footwear", label: "Footwear" },
-  { value: "Accessories", label: "Accessories" },
-];
 
 const CHANNEL_OPTIONS = [
   { value: "instagram", label: "Instagram" },
@@ -150,6 +142,29 @@ export function FilterBar() {
     [sellers],
   );
 
+  // Achado 26/08/2026 (ClickUp Vogabox item 1.1): o filtro de categoria
+  // usava uma lista fixa em inglês (Tops/Bottoms/Dresses...) que nunca
+  // batia com o catálogo real de nenhuma marca -- cada cliente Vesti tem
+  // seu próprio nome de categoria (ex.: Vogabox usa "BLAZER"/"VESTIDO"/
+  // "CALÇA" em português, maiúsculo). Selecionar qualquer opção zerava o
+  // dashboard porque a comparação no BigQuery nunca encontrava nada.
+  // Mesmo padrão já usado em products.tsx: busca uma amostra do catálogo
+  // real e deriva as categorias de lá, em vez de uma lista inventada.
+  const { data: catalogSample } = useGetProducts(
+    { clientId, limit: 200 },
+    { query: queryOpts({ enabled, staleTime: 60_000 }) },
+  );
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of catalogSample ?? []) {
+      const c = (p.category ?? "").trim();
+      if (c) set.add(c);
+    }
+    return Array.from(set)
+      .sort((a, b) => a.localeCompare(b))
+      .map((c) => ({ value: c, label: c }));
+  }, [catalogSample]);
+
   const createView = useCreateSavedView({
     mutation: {
       onSuccess: () => {
@@ -199,7 +214,7 @@ export function FilterBar() {
   const activeChips = useMemo(() => {
     const chips: { key: keyof DashboardFilters; label: string; value: string }[] = [];
     if (filters.category)
-      chips.push({ key: "category", label: "Category", value: labelFor(CATEGORY_OPTIONS, filters.category) });
+      chips.push({ key: "category", label: "Category", value: labelFor(categoryOptions, filters.category) });
     if (filters.channel)
       chips.push({ key: "channel", label: "Channel", value: labelFor(CHANNEL_OPTIONS, filters.channel) });
     if (filters.segment)
@@ -225,7 +240,7 @@ export function FilterBar() {
     if (filters.creative)
       chips.push({ key: "creative", label: "Creative", value: filters.creative });
     return chips;
-  }, [filters, selectedDashboardMode, sellerOptions]);
+  }, [filters, selectedDashboardMode, sellerOptions, categoryOptions]);
 
   const extraActiveCount = useMemo(() => {
     const extraKeys: (keyof DashboardFilters)[] = selectedDashboardMode === "B2B"
@@ -260,7 +275,7 @@ export function FilterBar() {
       <FilterSelect
         placeholder="Category"
         value={filters.category}
-        options={CATEGORY_OPTIONS}
+        options={categoryOptions}
         onChange={(v) => setFilter("category", v)}
         testId="filter-category"
       />
