@@ -121,4 +121,11 @@ requested period. Only present on enriched /clients responses.
    * @nullable
    */
   periodApprovalRate?: number | null;
+  /**
+   * Sidebar nav item keys hidden for this client (per-client tab
+visibility control). `null`/omitted means nothing is hidden.
+
+   * @nullable
+   */
+  hiddenNavItems?: string[] | null;
 }

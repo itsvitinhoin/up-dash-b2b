@@ -11,6 +11,7 @@ import type { DashboardKpis } from "./dashboardKpis";
 import type { DashboardSalesBreakdown } from "./dashboardSalesBreakdown";
 import type { DashboardSignal } from "./dashboardSignal";
 import type { DashboardTraffic } from "./dashboardTraffic";
+import type { OrderStatusBreakdown } from "./orderStatusBreakdown";
 import type { TimeSeriesPoint } from "./timeSeriesPoint";
 
 export interface DashboardResponse {
@@ -45,4 +46,11 @@ Only present when the request was made with `compare=true`.
   dailyPerformance?: DashboardDailyPerformance[];
   /** Computed business signals for the current period. */
   signals: DashboardSignal[];
+  /** Order counts by lifecycle status (total/paid/separated/waiting/
+cancelled), for platforms with granular order-status tracking
+(Vesti). Optional and omitted on platforms without an
+equivalent status model (e.g. UpZero) -- never required, so
+omitting it never breaks response validation.
+ */
+  orderStatusBreakdown?: OrderStatusBreakdown;
 }

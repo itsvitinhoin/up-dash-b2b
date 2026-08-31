@@ -2050,10 +2050,20 @@ export default function DashboardPage() {
           changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkConv}
           sparkColor="#38bdf8"
-          sub={[
-            { label: isB2C ? t("dashboard.kpi.sessions") : isVesti ? t("dashboard.kpi.paidOrdersVesti") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
-            { label: isB2C ? t("dashboard.kpi.orders") : t("dashboard.kpi.orders"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
-          ]}
+          sub={
+            isVesti && data?.orderStatusBreakdown
+              ? [
+                  { label: t("dashboard.orderStatus.total"), value: formatNumber(data.orderStatusBreakdown.total) },
+                  { label: t("dashboard.orderStatus.paid"), value: formatNumber(data.orderStatusBreakdown.paid) },
+                  { label: t("dashboard.orderStatus.separated"), value: formatNumber(data.orderStatusBreakdown.separated) },
+                  { label: t("dashboard.orderStatus.waiting"), value: formatNumber(data.orderStatusBreakdown.waiting) },
+                  { label: t("dashboard.orderStatus.cancelled"), value: formatNumber(data.orderStatusBreakdown.cancelled) },
+                ]
+              : [
+                  { label: isB2C ? t("dashboard.kpi.sessions") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
+                  { label: isB2C ? t("dashboard.kpi.orders") : t("dashboard.kpi.orders"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
+                ]
+          }
           isLoading={isLoading}
           ringValue={data?.kpis.conversionRate ?? 0}
           ringColor="hsl(var(--chart-1))"

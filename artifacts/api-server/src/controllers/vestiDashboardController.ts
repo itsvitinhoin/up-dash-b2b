@@ -10,6 +10,7 @@ import {
   resolveVestiDataset,
   computeVestiWindow,
   computeVestiStateRevenue,
+  fetchVestiOrderStatusBreakdown,
   fetchVestiAttributedCustomers,
   fetchVestiFunnel,
   fetchVestiDailyBreakdown,
@@ -153,12 +154,17 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
   const wkStart = new Date(wkEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
   const pwkEnd = new Date(wkStart.getTime() - 1);
   const pwkStart = new Date(pwkEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const [currStates, prevStates] = await Promise.all([
+  const [currStates, prevStates, orderStatusBreakdown] = await Promise.all([
     cached(`vesti:states:${dataset}:${saoPauloDateOnly(wkStart)}:${saoPauloDateOnly(wkEnd)}`, VESTI_CACHE_TTL_MS, () =>
       computeVestiStateRevenue(dataset, saoPauloDateOnly(wkStart), saoPauloDateOnly(wkEnd)),
     ),
     cached(`vesti:states:${dataset}:${saoPauloDateOnly(pwkStart)}:${saoPauloDateOnly(pwkEnd)}`, VESTI_CACHE_TTL_MS, () =>
       computeVestiStateRevenue(dataset, saoPauloDateOnly(pwkStart), saoPauloDateOnly(pwkEnd)),
+    ),
+    // ClickUp Vogabox item 1.5: breakdown de status pro card "Conversion
+    // rate" -- ver comentário em fetchVestiOrderStatusBreakdown.
+    cached(`vesti:orderStatus:${dataset}:${dateFromOnly}:${dateToOnly}:${filterKey}`, VESTI_CACHE_TTL_MS, () =>
+      fetchVestiOrderStatusBreakdown(dataset, dateFromOnly, dateToOnly, vestiFilters),
     ),
   ]);
   const prevStateMap = new Map(prevStates.map((r) => [r.state, r.revenue]));
@@ -214,6 +220,7 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
         conversionRate: 0,
       })),
       signals: vestiSignals,
+      orderStatusBreakdown,
       ...(vestiPrev
         ? {
             prevKpis: vestiPrev.kpis,

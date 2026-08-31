@@ -121,12 +121,6 @@ export const ListClientsResponse = zod.object({
         .describe(
           "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
         ),
-      hiddenNavItems: zod
-        .array(zod.string())
-        .nullish()
-        .describe(
-          "Sidebar nav item hrefs manually hidden for this client (e.g. \"\/erp\"). Null\/empty means everything applicable is shown.",
-        ),
       nuvemshopStoreId: zod
         .string()
         .nullish()
@@ -225,6 +219,12 @@ export const ListClientsResponse = zod.object({
         .describe(
           "Optional. Lead approval rate (approvedLeads \/ totalLeads × 100).\n`null` when there are zero leads. Only present on enriched \/clients responses.\n",
         ),
+      hiddenNavItems: zod
+        .array(zod.string())
+        .nullish()
+        .describe(
+          "Sidebar nav item keys hidden for this client (per-client tab\nvisibility control). `null`\/omitted means nothing is hidden.\n",
+        ),
     }),
   ),
   total: zod.number(),
@@ -266,12 +266,6 @@ export const CreateClientBody = zod.object({
     .optional()
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI.",
-    ),
-  hiddenNavItems: zod
-    .array(zod.string())
-    .optional()
-    .describe(
-      "Sidebar nav item hrefs to hide for this client (e.g. \"\/erp\").",
     ),
   nuvemshopStoreId: zod
     .string()
@@ -400,12 +394,6 @@ export const GetClientResponse = zod.object({
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
     ),
-  hiddenNavItems: zod
-    .array(zod.string())
-    .nullish()
-    .describe(
-      "Sidebar nav item hrefs manually hidden for this client (e.g. \"\/erp\"). Null\/empty means everything applicable is shown.",
-    ),
   nuvemshopStoreId: zod
     .string()
     .nullish()
@@ -499,6 +487,12 @@ export const GetClientResponse = zod.object({
     .nullish()
     .describe(
       "Optional. Lead approval rate (approvedLeads \/ totalLeads × 100).\n`null` when there are zero leads. Only present on enriched \/clients responses.\n",
+    ),
+  hiddenNavItems: zod
+    .array(zod.string())
+    .nullish()
+    .describe(
+      "Sidebar nav item keys hidden for this client (per-client tab\nvisibility control). `null`\/omitted means nothing is hidden.\n",
     ),
 });
 
@@ -537,12 +531,6 @@ export const UpdateClientBody = zod
       .describe(
         "BigQuery dataset (project up-vesti-report) this client reads analytics from. Pass null to clear it.",
       ),
-    hiddenNavItems: zod
-      .array(zod.string())
-      .nullish()
-      .describe(
-        "Sidebar nav item hrefs manually hidden for this client. Pass null\/empty to show everything applicable again.",
-      ),
     nuvemshopStoreId: zod
       .string()
       .nullish()
@@ -563,6 +551,12 @@ export const UpdateClientBody = zod
       .string()
       .nullish()
       .describe("GA4 API secret. Pass null to clear it."),
+    hiddenNavItems: zod
+      .array(zod.string())
+      .nullish()
+      .describe(
+        "Sidebar nav item keys to hide for this client. Pass null or an empty array to clear.",
+      ),
   })
   .describe(
     "Fields that can be updated on an existing client. All fields are optional.",
@@ -589,12 +583,6 @@ export const UpdateClientResponse = zod.object({
     .nullish()
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
-    ),
-  hiddenNavItems: zod
-    .array(zod.string())
-    .nullish()
-    .describe(
-      "Sidebar nav item hrefs manually hidden for this client (e.g. \"\/erp\"). Null\/empty means everything applicable is shown.",
     ),
   nuvemshopStoreId: zod
     .string()
@@ -689,6 +677,12 @@ export const UpdateClientResponse = zod.object({
     .nullish()
     .describe(
       "Optional. Lead approval rate (approvedLeads \/ totalLeads × 100).\n`null` when there are zero leads. Only present on enriched \/clients responses.\n",
+    ),
+  hiddenNavItems: zod
+    .array(zod.string())
+    .nullish()
+    .describe(
+      "Sidebar nav item keys hidden for this client (per-client tab\nvisibility control). `null`\/omitted means nothing is hidden.\n",
     ),
 });
 
@@ -983,6 +977,22 @@ export const GetDashboardResponse = zod.object({
       }),
     )
     .describe("Computed business signals for the current period."),
+  orderStatusBreakdown: zod
+    .object({
+      total: zod.number(),
+      paid: zod.number().describe("status = PAID"),
+      separated: zod.number().describe("status = SEPARATED"),
+      waiting: zod
+        .number()
+        .describe(
+          'status IN (WAITING, ANALYSING) -- both are \"not resolved yet\", merged for display.',
+        ),
+      cancelled: zod.number().describe("status = CANCELADO"),
+    })
+    .optional()
+    .describe(
+      "Order counts by lifecycle status (total\/paid\/separated\/waiting\/\ncancelled), for platforms with granular order-status tracking\n(Vesti). Optional and omitted on platforms without an\nequivalent status model (e.g. UpZero) -- never required, so\nomitting it never breaks response validation.\n",
+    ),
 });
 
 /**

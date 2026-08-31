@@ -61,4 +61,9 @@ export interface UpdateClientRequest {
    * @nullable
    */
   ga4ApiSecret?: string | null;
+  /**
+   * Sidebar nav item keys to hide for this client. Pass null or an empty array to clear.
+   * @nullable
+   */
+  hiddenNavItems?: string[] | null;
 }

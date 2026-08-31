@@ -132,6 +132,7 @@ export * from "./notificationsResponse";
 export * from "./notificationType";
 export * from "./orderDrillRow";
 export * from "./ordersByDateResponse";
+export * from "./orderStatusBreakdown";
 export * from "./paginatedClients";
 export * from "./paginatedCustomers";
 export * from "./paginatedCustomersSegmentCountsItem";

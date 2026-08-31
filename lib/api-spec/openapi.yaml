@@ -1942,6 +1942,13 @@ components:
           description: |
             Optional. Lead approval rate (approvedLeads / totalLeads × 100).
             `null` when there are zero leads. Only present on enriched /clients responses.
+        hiddenNavItems:
+          type: ["array", "null"]
+          items:
+            type: string
+          description: |
+            Sidebar nav item keys hidden for this client (per-client tab
+            visibility control). `null`/omitted means nothing is hidden.
       required:
         - id
         - name
@@ -2068,6 +2075,11 @@ components:
         ga4ApiSecret:
           type: ["string", "null"]
           description: GA4 API secret. Pass null to clear it.
+        hiddenNavItems:
+          type: ["array", "null"]
+          items:
+            type: string
+          description: Sidebar nav item keys to hide for this client. Pass null or an empty array to clear.
 
     UpZeroSyncResponse:
       type: object
@@ -2390,6 +2402,14 @@ components:
           items:
             $ref: "#/components/schemas/DashboardSignal"
           description: Computed business signals for the current period.
+        orderStatusBreakdown:
+          $ref: "#/components/schemas/OrderStatusBreakdown"
+          description: |
+            Order counts by lifecycle status (total/paid/separated/waiting/
+            cancelled), for platforms with granular order-status tracking
+            (Vesti). Optional and omitted on platforms without an
+            equivalent status model (e.g. UpZero) -- never required, so
+            omitting it never breaks response validation.
       required:
         - kpis
         - revenueOverTime
@@ -2402,6 +2422,25 @@ components:
         - newBuyersOverTime
         - returningBuyersOverTime
         - signals
+
+    OrderStatusBreakdown:
+      type: object
+      properties:
+        total:
+          type: integer
+        paid:
+          type: integer
+          description: status = PAID
+        separated:
+          type: integer
+          description: status = SEPARATED
+        waiting:
+          type: integer
+          description: status IN (WAITING, ANALYSING) -- both are "not resolved yet", merged for display.
+        cancelled:
+          type: integer
+          description: status = CANCELADO
+      required: [total, paid, separated, waiting, cancelled]
 
     PlatformKpis:
       type: object

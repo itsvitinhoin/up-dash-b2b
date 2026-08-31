@@ -358,6 +358,50 @@ export async function computeVestiWindow(
   };
 }
 
+export type VestiOrderStatusBreakdown = {
+  total: number;
+  paid: number;
+  separated: number;
+  waiting: number;
+  cancelled: number;
+};
+
+// Achado 26/08/2026 (ClickUp Vogabox item 1.5): o card "Conversion rate"
+// do dashboard mostrava "Approved leads"/"Orders" pro lado B2B -- pouco
+// útil pra Vesti, que já tem status de pedido de verdade
+// (`status_pedido`). WAITING e ANALYSING contam juntos como "aguardando"
+// (decisão do Marcelo, 26/08) -- ambos são pedido ainda não resolvido,
+// só o motivo difere.
+export async function fetchVestiOrderStatusBreakdown(
+  dataset: string,
+  dateFrom: string,
+  dateTo: string,
+  filters: VestiFilters = {},
+): Promise<VestiOrderStatusBreakdown> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const produtos = vestiTable(dataset, "produtos_vesti");
+  const filter = buildFilterClause("v", view, produtos, filters);
+  const query = `
+    SELECT
+      COUNT(DISTINCT v.pedido_id) AS total,
+      COUNT(DISTINCT IF(v.status_pedido = 'PAID', v.pedido_id, NULL)) AS paid,
+      COUNT(DISTINCT IF(v.status_pedido = 'SEPARATED', v.pedido_id, NULL)) AS separated,
+      COUNT(DISTINCT IF(v.status_pedido IN ('WAITING', 'ANALYSING'), v.pedido_id, NULL)) AS waiting,
+      COUNT(DISTINCT IF(v.status_pedido = 'CANCELADO', v.pedido_id, NULL)) AS cancelled
+    FROM ${view} v
+    WHERE v.data_ref BETWEEN @dateFrom AND @dateTo ${filter.clause}
+  `;
+  const [rows] = await bigquery.query({ query, params: { dateFrom, dateTo, ...filter.params } });
+  const row = rows[0] as Record<string, number> | undefined;
+  return {
+    total: Number(row?.total) || 0,
+    paid: Number(row?.paid) || 0,
+    separated: Number(row?.separated) || 0,
+    waiting: Number(row?.waiting) || 0,
+    cancelled: Number(row?.cancelled) || 0,
+  };
+}
+
 /** Receita por estado numa janela — usado só pro signal de regiões em alta. */
 export async function computeVestiStateRevenue(
   dataset: string,
@@ -408,46 +452,95 @@ export async function fetchVestiAttributedCustomers(
   dateTo: string,
 ): Promise<VestiAttributedCustomer[]> {
   const clientes = vestiTable(dataset, "clientes_atribuidos_consolidados");
-  const pedidos = vestiTable(dataset, "pedidos_atribuidos_consolidados");
+  const clientesVesti = vestiTable(dataset, "clientes_vesti");
   const view = vestiTable(dataset, "dashboard_vendas_view");
 
+  // Achado 26/08/2026 (ClickUp Vogabox item 1.6, confirmado pelo Marcelo:
+  // é o mesmo filtro `onlyAttributed` do dashboard legado,
+  // dashboardPerformanceService.ts). O legado considera "atribuído à
+  // Agência UP" quem bate com QUALQUER UMA de duas fontes:
+  //   1) `clientes_vesti` com utm_source contendo "up_agency" -- cadastro
+  //      direto via link/campanha da agência (sem toque de anúncio
+  //      registrado em stape_logs).
+  //   2) `clientes_atribuidos_consolidados` -- cliente tocado por anúncio
+  //      da agência (evento getUpAgency/fbc em stape_logs), já
+  //      consolidado por um job separado com classificação Novo
+  //      Lead/Re-impacto pronta.
+  // Esta função usava só a fonte 2 -- pra Vogabox isso deixava de fora
+  // ~1.100 clientes reais da fonte 1 (confirmado direto no BigQuery).
+  // Junta as duas, com dedup por documento (não email -- é a mesma chave
+  // que o legado usa pra combinar as fontes) priorizando a classificação
+  // da fonte 2 quando o cliente aparece nas duas. Pedidos/receita de
+  // TODOS os clientes atribuídos (das duas fontes) vêm direto de
+  // dashboard_vendas_view por documento, igual o legado -- não só da
+  // fonte 2 como antes.
   const query = `
-    WITH attributed_orders AS (
-      SELECT po.email, po.pedido_id, po.purchase_ts
-      FROM ${pedidos} po
-      WHERE po.data_ref BETWEEN @dateFrom AND @dateTo
-    ),
-    order_revenue AS (
-      SELECT DISTINCT v.pedido_id, v.valor_reservado, v.valor_solicitado
-      FROM ${view} v
-      WHERE v.pedido_id IN (SELECT pedido_id FROM attributed_orders)
-    ),
-    per_customer_orders AS (
+    WITH utm_customers AS (
       SELECT
-        ao.email,
-        COUNT(DISTINCT ao.pedido_id) AS purchase_count,
-        COALESCE(SUM(orv.valor_reservado), 0) AS total_purchase_value,
-        COALESCE(SUM(orv.valor_solicitado), 0) AS total_requested_value,
-        MAX(ao.purchase_ts) AS last_purchase_ts
-      FROM attributed_orders ao
-      LEFT JOIN order_revenue orv ON orv.pedido_id = ao.pedido_id
-      GROUP BY ao.email
+        TRIM(REGEXP_REPLACE(CAST(cv.document AS STRING), r'\\D', '')) AS doc_key,
+        cv.email,
+        cv.name,
+        cv.document AS cnpj,
+        cv.profile.name AS profile,
+        'UTM Agência' AS attribution_type,
+        cv.created_at AS registered_at,
+        CAST(NULL AS TIMESTAMP) AS first_touch_at,
+        2 AS source_priority
+      FROM ${clientesVesti} cv
+      WHERE cv.utm_source LIKE '%up_agency%'
+        AND cv.document IS NOT NULL
+        AND TRIM(REGEXP_REPLACE(CAST(cv.document AS STRING), r'\\D', '')) != ''
+    ),
+    consolidated_customers AS (
+      SELECT
+        TRIM(REGEXP_REPLACE(CAST(c.cnpj AS STRING), r'\\D', '')) AS doc_key,
+        c.email,
+        c.nome AS name,
+        c.cnpj,
+        c.profile,
+        c.tipo_atribuicao AS attribution_type,
+        CAST(c.data_cadastro AS TIMESTAMP) AS registered_at,
+        c.primeiro_toque_agencia AS first_touch_at,
+        1 AS source_priority
+      FROM ${clientes} c
+      WHERE c.cnpj IS NOT NULL
+        AND TRIM(REGEXP_REPLACE(CAST(c.cnpj AS STRING), r'\\D', '')) != ''
+    ),
+    deduped_customers AS (
+      SELECT * EXCEPT(source_priority)
+      FROM (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY doc_key ORDER BY source_priority ASC) AS rn
+        FROM (SELECT * FROM utm_customers UNION ALL SELECT * FROM consolidated_customers)
+      )
+      WHERE rn = 1
+    ),
+    orders_by_doc AS (
+      SELECT
+        TRIM(REGEXP_REPLACE(CAST(v.documento_cliente AS STRING), r'\\D', '')) AS doc_key,
+        COUNT(DISTINCT v.pedido_id) AS purchase_count,
+        COALESCE(SUM(v.valor_reservado), 0) AS total_purchase_value,
+        COALESCE(SUM(v.valor_solicitado), 0) AS total_requested_value,
+        MAX(v.data_ref) AS last_purchase_ts
+      FROM ${view} v
+      WHERE v.data_ref BETWEEN @dateFrom AND @dateTo
+        AND v.documento_cliente IS NOT NULL
+      GROUP BY doc_key
     )
     SELECT
-      c.email,
-      c.nome AS name,
-      c.cnpj,
-      c.profile,
-      c.tipo_atribuicao AS attribution_type,
-      c.data_cadastro AS registered_at,
-      c.primeiro_toque_agencia AS first_touch_at,
-      COALESCE(pco.purchase_count, 0) AS purchase_count,
-      COALESCE(pco.total_purchase_value, 0) AS total_purchase_value,
-      COALESCE(pco.total_requested_value, 0) AS total_requested_value,
-      pco.last_purchase_ts AS last_purchase_at
-    FROM ${clientes} c
-    LEFT JOIN per_customer_orders pco ON pco.email = c.email
-    WHERE (c.data_cadastro BETWEEN @dateFrom AND @dateTo) OR pco.email IS NOT NULL
+      dc.email,
+      dc.name,
+      dc.cnpj,
+      dc.profile,
+      dc.attribution_type,
+      dc.registered_at,
+      dc.first_touch_at,
+      COALESCE(obd.purchase_count, 0) AS purchase_count,
+      COALESCE(obd.total_purchase_value, 0) AS total_purchase_value,
+      COALESCE(obd.total_requested_value, 0) AS total_requested_value,
+      obd.last_purchase_ts AS last_purchase_at
+    FROM deduped_customers dc
+    LEFT JOIN orders_by_doc obd ON obd.doc_key = dc.doc_key
+    WHERE (dc.registered_at BETWEEN @dateFrom AND @dateTo) OR obd.doc_key IS NOT NULL
     ORDER BY total_purchase_value DESC
     LIMIT 500
   `;

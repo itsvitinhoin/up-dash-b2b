@@ -132,11 +132,6 @@ export interface Client {
    */
   bigqueryDataset?: string | null;
   /**
-   * Sidebar nav item hrefs manually hidden for this client (e.g. "/erp"). Null/empty means everything applicable is shown.
-   * @nullable
-   */
-  hiddenNavItems?: string[] | null;
-  /**
    * Nuvemshop store id for B2C data ingestion.
    * @nullable
    */
@@ -230,6 +225,13 @@ requested period. Only present on enriched /clients responses.
    * @nullable
    */
   periodApprovalRate?: number | null;
+  /**
+   * Sidebar nav item keys hidden for this client (per-client tab
+visibility control). `null`/omitted means nothing is hidden.
+
+   * @nullable
+   */
+  hiddenNavItems?: string[] | null;
 }
 
 export interface PaginatedClients {
@@ -279,8 +281,6 @@ export interface CreateClientRequest {
   commercePlatform?: CreateClientRequestCommercePlatform;
   /** BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI. */
   bigqueryDataset?: string;
-  /** Sidebar nav item hrefs to hide for this client (e.g. "/erp"). */
-  hiddenNavItems?: string[];
   /** Optional Nuvemshop store id for B2C clients. */
   nuvemshopStoreId?: string;
   /** Optional Nuvemshop access token for B2C clients. Stored server-side and never returned. */
@@ -350,11 +350,6 @@ export interface UpdateClientRequest {
    */
   bigqueryDataset?: string | null;
   /**
-   * Sidebar nav item hrefs manually hidden for this client. Pass null/empty to show everything applicable again.
-   * @nullable
-   */
-  hiddenNavItems?: string[] | null;
-  /**
    * Nuvemshop store id. Pass null to clear it.
    * @nullable
    */
@@ -379,6 +374,11 @@ export interface UpdateClientRequest {
    * @nullable
    */
   ga4ApiSecret?: string | null;
+  /**
+   * Sidebar nav item keys to hide for this client. Pass null or an empty array to clear.
+   * @nullable
+   */
+  hiddenNavItems?: string[] | null;
 }
 
 export interface UpZeroSyncResponse {
@@ -572,6 +572,18 @@ export interface DashboardSalesBreakdown {
   orders: number;
 }
 
+export interface OrderStatusBreakdown {
+  total: number;
+  /** status = PAID */
+  paid: number;
+  /** status = SEPARATED */
+  separated: number;
+  /** status IN (WAITING, ANALYSING) -- both are "not resolved yet", merged for display. */
+  waiting: number;
+  /** status = CANCELADO */
+  cancelled: number;
+}
+
 export interface DashboardResponse {
   kpis: DashboardKpis;
   revenueOverTime: TimeSeriesPoint[];
@@ -604,6 +616,13 @@ Only present when the request was made with `compare=true`.
   dailyPerformance?: DashboardDailyPerformance[];
   /** Computed business signals for the current period. */
   signals: DashboardSignal[];
+  /** Order counts by lifecycle status (total/paid/separated/waiting/
+cancelled), for platforms with granular order-status tracking
+(Vesti). Optional and omitted on platforms without an
+equivalent status model (e.g. UpZero) -- never required, so
+omitting it never breaks response validation.
+ */
+  orderStatusBreakdown?: OrderStatusBreakdown;
 }
 
 export interface PlatformKpis {
