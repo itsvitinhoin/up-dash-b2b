@@ -14,6 +14,7 @@ import {
   getGetInsightQueryKey,
   useGetAlerts,
   useGetSellers,
+  useGetClient,
 } from "@workspace/api-client-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
@@ -1617,6 +1618,18 @@ export default function DashboardPage() {
     user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
   const isB2C = selectedDashboardMode === "B2C";
 
+  // Achado 26/08/2026 (ClickUp Vogabox): "Leads"/"Approved leads" fazem
+  // sentido pra clientes UpZero B2B (cadastro/aprovação de atacadista é um
+  // funil real, separado do pedido) -- mas pra clientes Vesti (venda por
+  // vendedora, sem cadastro self-service) esse número já É o pedido
+  // solicitado/pago, só o rótulo que ficou errado. Busca o client só pra
+  // saber a plataforma e trocar o texto nesse caso específico.
+  const { data: clientDetail } = useGetClient(
+    selectedClientId ?? "",
+    { query: queryOpts({ enabled: !!selectedClientId }) },
+  );
+  const isVesti = clientDetail?.commercePlatform === "VESTI";
+
   const { data, isLoading, isError, isFetching, refetch } = useGetDashboard(
     {
       clientId,
@@ -2003,8 +2016,8 @@ export default function DashboardPage() {
           sparkValues={sparkOrders}
           sparkColor="#a78bfa"
           sub={[
-            { label: isB2C ? t("dashboard.kpi.sessions") : t("dashboard.kpi.leads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
-            { label: isB2C ? t("dashboard.kpi.orders") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.approvedLeads) : "—" },
+            { label: isB2C ? t("dashboard.kpi.sessions") : isVesti ? t("dashboard.kpi.requestedOrdersVesti") : t("dashboard.kpi.leads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
+            { label: isB2C ? t("dashboard.kpi.orders") : isVesti ? t("dashboard.kpi.paidOrdersVesti") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.approvedLeads) : "—" },
           ]}
           isLoading={isLoading}
         />
@@ -2038,7 +2051,7 @@ export default function DashboardPage() {
           sparkValues={sparkConv}
           sparkColor="#38bdf8"
           sub={[
-            { label: isB2C ? t("dashboard.kpi.sessions") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
+            { label: isB2C ? t("dashboard.kpi.sessions") : isVesti ? t("dashboard.kpi.paidOrdersVesti") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
             { label: isB2C ? t("dashboard.kpi.orders") : t("dashboard.kpi.orders"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
           ]}
           isLoading={isLoading}
