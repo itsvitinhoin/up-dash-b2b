@@ -561,6 +561,7 @@ function BreakdownCard({
               tickLine={false}
               axisLine={false}
               tick={{ fontSize: 11 }}
+              interval={0}
             />
             <ChartTooltip
               content={
@@ -931,7 +932,7 @@ function ErpOrdersView() {
         buildUrl("/api/analytics/erp/orders", {
           ...params,
           page: 1,
-          limit: 100,
+          limit: 5000,
         }),
       );
       exportRowsAsCsv(`pedidos-erp-${dateFrom}-${dateTo}.csv`, result.rows, [
@@ -1383,7 +1384,7 @@ function ErpCustomersView() {
         buildUrl("/api/analytics/erp/customers", {
           ...params,
           page: 1,
-          limit: 100,
+          limit: 5000,
         }),
       );
       exportRowsAsCsv(`clientes-erp-${dateFrom}-${dateTo}.csv`, result.rows, [
@@ -1855,7 +1856,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
         buildUrl("/api/analytics/erp/products", {
           ...params,
           page: 1,
-          limit: 200,
+          limit: 5000,
         }),
       );
       const rows = result.rows.flatMap((p) =>
