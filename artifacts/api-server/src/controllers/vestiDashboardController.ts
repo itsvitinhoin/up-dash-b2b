@@ -117,12 +117,13 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
   const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
-  const { category, sellerId, channel, compare } = parsed.data;
+  const { category, sellerId, channel, color, compare } = parsed.data;
 
   const vestiFilters: VestiFilters = {
     category: category || undefined,
     sellerId: sellerId || undefined,
     channel: channel || undefined,
+    color: color || undefined,
   };
   const filterKey = JSON.stringify(vestiFilters);
 

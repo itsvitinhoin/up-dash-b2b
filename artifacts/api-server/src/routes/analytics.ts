@@ -1121,7 +1121,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
   const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
-  const { category, sellerId, channel, segment, compare, utmSource: utmSourceFilter, utmMedium: utmMediumFilter, utmCampaign: utmCampaignFilter } = parsed.data;
+  const { category, sellerId, channel, color, segment, compare, utmSource: utmSourceFilter, utmMedium: utmMediumFilter, utmCampaign: utmCampaignFilter } = parsed.data;
   const [clientConfig] = await db
     .select({
       dashboardType: clientsTable.dashboardType,
@@ -1206,6 +1206,28 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       categoryOrderIds = rows.map((r) => r.id);
     }
 
+    // Achado 31/08/2026 (ClickUp Vogabox): mesmo bug de lista fixa
+    // inventada que Categoria/Channel tinham -- "color" chegava até a
+    // API mas nunca era usado pra filtrar nada. Mesmo padrão de
+    // categoryOrderIds acima, reaproveitando o filtro por cor que já
+    // existia (e funcionava) em /analytics/products.
+    let colorOrderIds: string[] | null = null;
+    if (color) {
+      const rows = await db
+        .selectDistinct({ id: ordersTable.id })
+        .from(ordersTable)
+        .innerJoin(orderItemsTable, eq(orderItemsTable.orderId, ordersTable.id))
+        .where(
+          and(
+            eq(ordersTable.clientId, clientId),
+            gte(ordersTable.createdAt, winFrom),
+            lte(ordersTable.createdAt, winTo),
+            ilike(orderItemsTable.color, color),
+          ),
+        );
+      colorOrderIds = rows.map((r) => r.id);
+    }
+
     const orderConds: SQL[] = [
       eq(ordersTable.clientId, clientId),
       gte(ordersTable.createdAt, winFrom),
@@ -1231,6 +1253,15 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       orderConds.push(
         sql`${ordersTable.id} IN (${sql.join(
           categoryOrderIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+      );
+    }
+    if (colorOrderIds !== null) {
+      if (colorOrderIds.length === 0) return emptyWindow;
+      orderConds.push(
+        sql`${ordersTable.id} IN (${sql.join(
+          colorOrderIds.map((id) => sql`${id}`),
           sql`, `,
         )})`,
       );

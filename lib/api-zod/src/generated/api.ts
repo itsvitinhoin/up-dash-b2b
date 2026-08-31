@@ -758,6 +758,12 @@ export const GetDashboardQueryParams = zod.object({
     .describe(
       "Restrict to orders from customers acquired via a UTM source (e.g. instagram, google).",
     ),
+  color: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict revenue\/order metrics to orders containing this product color\/variant.",
+    ),
   segment: zod.coerce
     .string()
     .optional()

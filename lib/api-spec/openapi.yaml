@@ -426,6 +426,11 @@ paths:
             type: string
           description: Restrict to orders from customers acquired via a UTM source (e.g. instagram, google).
         - in: query
+          name: color
+          schema:
+            type: string
+          description: Restrict revenue/order metrics to orders containing this product color/variant.
+        - in: query
           name: segment
           schema:
             type: string

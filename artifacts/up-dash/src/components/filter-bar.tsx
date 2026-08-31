@@ -8,6 +8,7 @@ import {
   getListSavedViewsQueryKey,
   useGetSellers,
   useGetProducts,
+  useGetClient,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -39,6 +40,22 @@ const CHANNEL_OPTIONS = [
   { value: "tiktok", label: "TikTok" },
   { value: "facebook", label: "Facebook" },
   { value: "youtube", label: "YouTube" },
+];
+
+// Achado 26/08/2026: pra UpZero, "channel" filtra por utm_source (os
+// valores acima fazem sentido de verdade). Pra Vesti, o mesmo filtro
+// mapeia pro campo `origin` no BigQuery (canal de VENDA, não de
+// marketing) -- um vocabulário fixo da própria plataforma Vesti
+// (confirmado igual em dois clientes diferentes, Vogabox e Milalai),
+// nada a ver com rede social. Selecionar qualquer opção da lista de
+// cima sempre dava zero pedidos pra cliente Vesti.
+const VESTI_CHANNEL_OPTIONS = [
+  { value: "Site", label: "Site" },
+  { value: "Link", label: "Link" },
+  { value: "VestiShop", label: "VestiShop" },
+  { value: "Aplicativo", label: "Aplicativo" },
+  { value: "Erp", label: "ERP" },
+  { value: "Showroom", label: "Showroom" },
 ];
 
 const SEGMENT_OPTIONS = [
@@ -93,19 +110,6 @@ const SIZE_OPTIONS = [
   { value: "46", label: "46" },
 ];
 
-const COLOR_OPTIONS = [
-  { value: "preto", label: "Preto" },
-  { value: "branco", label: "Branco" },
-  { value: "azul", label: "Azul" },
-  { value: "vermelho", label: "Vermelho" },
-  { value: "verde", label: "Verde" },
-  { value: "amarelo", label: "Amarelo" },
-  { value: "rosa", label: "Rosa" },
-  { value: "bege", label: "Bege" },
-  { value: "cinza", label: "Cinza" },
-  { value: "laranja", label: "Laranja" },
-];
-
 const EXTRA_FILTER_LABELS: Partial<Record<keyof DashboardFilters, string>> = {
   utmSource: "UTM Source",
   utmMedium: "UTM Medium",
@@ -127,6 +131,13 @@ export function FilterBar() {
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+
+  const { data: clientDetail } = useGetClient(
+    selectedClientId ?? "",
+    { query: queryOpts({ enabled: !!selectedClientId }) },
+  );
+  const isVesti = clientDetail?.commercePlatform === "VESTI";
+  const channelOptions = isVesti ? VESTI_CHANNEL_OPTIONS : CHANNEL_OPTIONS;
 
   const { data: views } = useListSavedViews(
     { clientId },
@@ -159,6 +170,23 @@ export function FilterBar() {
     for (const p of catalogSample ?? []) {
       const c = (p.category ?? "").trim();
       if (c) set.add(c);
+    }
+    return Array.from(set)
+      .sort((a, b) => a.localeCompare(b))
+      .map((c) => ({ value: c, label: c }));
+  }, [catalogSample]);
+
+  // Achado 31/08/2026 (ClickUp Vogabox): mesmo bug de lista fixa inventada
+  // que Categoria tinha -- as cores reais do catálogo variam por cliente
+  // (ex.: "Militar", "Xadrez Preto", "azul"/"Azul" com grafia diferente),
+  // então a lista tem que vir da amostra real do catálogo, igual Categoria.
+  const colorOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of catalogSample ?? []) {
+      for (const v of p.variants ?? []) {
+        const c = (v.color ?? "").trim();
+        if (c) set.add(c);
+      }
     }
     return Array.from(set)
       .sort((a, b) => a.localeCompare(b))
@@ -216,7 +244,7 @@ export function FilterBar() {
     if (filters.category)
       chips.push({ key: "category", label: "Category", value: labelFor(categoryOptions, filters.category) });
     if (filters.channel)
-      chips.push({ key: "channel", label: "Channel", value: labelFor(CHANNEL_OPTIONS, filters.channel) });
+      chips.push({ key: "channel", label: "Channel", value: labelFor(channelOptions, filters.channel) });
     if (filters.segment)
       chips.push({ key: "segment", label: "Segment", value: labelFor(SEGMENT_OPTIONS, filters.segment) });
     if (selectedDashboardMode === "B2B" && filters.sellerId)
@@ -236,11 +264,11 @@ export function FilterBar() {
     if (filters.size)
       chips.push({ key: "size", label: "Size", value: labelFor(SIZE_OPTIONS, filters.size) });
     if (filters.color)
-      chips.push({ key: "color", label: "Color", value: labelFor(COLOR_OPTIONS, filters.color) });
+      chips.push({ key: "color", label: "Color", value: labelFor(colorOptions, filters.color) });
     if (filters.creative)
       chips.push({ key: "creative", label: "Creative", value: filters.creative });
     return chips;
-  }, [filters, selectedDashboardMode, sellerOptions, categoryOptions]);
+  }, [filters, selectedDashboardMode, sellerOptions, categoryOptions, channelOptions, colorOptions]);
 
   const extraActiveCount = useMemo(() => {
     const extraKeys: (keyof DashboardFilters)[] = selectedDashboardMode === "B2B"
@@ -282,7 +310,7 @@ export function FilterBar() {
       <FilterSelect
         placeholder="Channel"
         value={filters.channel}
-        options={CHANNEL_OPTIONS}
+        options={channelOptions}
         onChange={(v) => setFilter("channel", v)}
         testId="filter-channel"
       />
@@ -419,7 +447,7 @@ export function FilterBar() {
                 <FilterSelect
                   placeholder="Color"
                   value={filters.color}
-                  options={COLOR_OPTIONS}
+                  options={colorOptions}
                   onChange={(v) => setFilter("color", v)}
                   testId="filter-color"
                   fullWidth

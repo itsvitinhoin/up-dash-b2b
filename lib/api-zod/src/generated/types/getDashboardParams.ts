@@ -23,6 +23,10 @@ export type GetDashboardParams = {
    */
   channel?: string;
   /**
+   * Restrict revenue/order metrics to orders containing this product color/variant.
+   */
+  color?: string;
+  /**
    * Restrict to orders from customers in a specific RFM segment (VIP, Loyal, etc.).
    */
   segment?: string;

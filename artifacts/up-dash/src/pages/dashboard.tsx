@@ -1638,6 +1638,7 @@ export default function DashboardPage() {
       category: filters.category ?? undefined,
       sellerId: filters.sellerId ?? undefined,
       channel: filters.channel ?? undefined,
+      color: filters.color ?? undefined,
       segment: filters.segment ?? undefined,
       utmSource: filters.utmSource || undefined,
       utmMedium: filters.utmMedium || undefined,

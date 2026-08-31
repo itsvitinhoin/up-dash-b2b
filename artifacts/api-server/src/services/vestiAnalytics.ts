@@ -47,6 +47,7 @@ export type VestiFilters = {
   category?: string;
   sellerId?: string;
   channel?: string;
+  color?: string;
 };
 
 export type VestiKpis = {
@@ -127,6 +128,18 @@ function buildFilterClause(alias: string, view: string, produtos: string, filter
       WHERE ARRAY_LENGTH(p2.categories) > 0 AND UPPER(p2.categories[SAFE_OFFSET(0)].name) = UPPER(@category)
     )`);
     params.category = filters.category;
+  }
+  if (filters.color) {
+    // Mesmo padrão da categoria: cor vem do array `colors` do catálogo
+    // (produtos_vesti), comparada com UPPER() pela mesma inconsistência
+    // de grafia (ex.: "azul" vs "Azul").
+    parts.push(`${alias}.pedido_id IN (
+      SELECT DISTINCT v3.pedido_id
+      FROM ${view} v3
+      JOIN ${produtos} p3 ON p3.id = v3.produto_id
+      WHERE ARRAY_LENGTH(p3.colors) > 0 AND UPPER(p3.colors[SAFE_OFFSET(0)].name) = UPPER(@color)
+    )`);
+    params.color = filters.color;
   }
   return { clause: parts.length ? `AND ${parts.join(" AND ")}` : "", params };
 }
