@@ -76,6 +76,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { exportRowsAsCsv } from "@/lib/csv-export";
+import { exportRowsAsXlsx } from "@/lib/xlsx-export";
 import {
   formatCurrency,
   formatCurrencySmart,
@@ -935,7 +936,7 @@ function ErpOrdersView() {
           limit: 5000,
         }),
       );
-      exportRowsAsCsv(`pedidos-erp-${dateFrom}-${dateTo}.csv`, result.rows, [
+      exportRowsAsXlsx(`pedidos-erp-${dateFrom}-${dateTo}.xlsx`, "Pedidos", result.rows, [
         { header: "Pedido", accessor: (r) => r.id },
         { header: "Data", accessor: (r) => r.createdAt },
         { header: "Cliente", accessor: (r) => r.customerName },
@@ -1387,7 +1388,7 @@ function ErpCustomersView() {
           limit: 5000,
         }),
       );
-      exportRowsAsCsv(`clientes-erp-${dateFrom}-${dateTo}.csv`, result.rows, [
+      exportRowsAsXlsx(`clientes-erp-${dateFrom}-${dateTo}.xlsx`, "Clientes", result.rows, [
         { header: "Cliente", accessor: (r) => r.name },
         { header: "Documento", accessor: (r) => r.document },
         { header: "E-mail", accessor: (r) => r.email },
@@ -1862,8 +1863,9 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
       const rows = result.rows.flatMap((p) =>
         p.variants.map((v) => ({ p, v })),
       );
-      exportRowsAsCsv(
-        `${stockMode ? "estoque" : "produtos"}-erp-${dateFrom}-${dateTo}.csv`,
+      exportRowsAsXlsx(
+        `${stockMode ? "estoque" : "produtos"}-erp-${dateFrom}-${dateTo}.xlsx`,
+        stockMode ? "Estoque" : "Produtos",
         rows,
         [
           { header: "Produto ID", accessor: (r) => r.p.id },
