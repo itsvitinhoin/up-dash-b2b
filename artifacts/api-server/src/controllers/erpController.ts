@@ -83,7 +83,12 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
 
 const GetErpOrdersQueryParams = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(25),
+  // Achado 26/08/2026 (ClickUp Vogabox item 4.2): tela mostrava 300+
+  // pedidos, mas o export CSV pedia limit=100 (o teto da API) -- exportava
+  // só a 1ª página sem avisar. Teto subiu de 100 pra 5000 pra caber um
+  // export de verdade; a paginação da TELA continua em 25/página (default
+  // não mudou).
+  limit: z.coerce.number().int().min(1).max(5000).default(25),
   search: z.coerce.string().trim().optional(),
   status: z.coerce.string().trim().optional(),
   customerDocument: z.coerce.string().trim().optional(),
@@ -146,7 +151,8 @@ export async function getOrders(req: Request, res: Response): Promise<void> {
 
 const GetErpCustomersQueryParams = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+  // Mesmo achado do item acima (orders) -- teto pro export de verdade.
+  limit: z.coerce.number().int().min(1).max(5000).default(20),
   search: z.coerce.string().trim().optional(),
   buyerType: z.enum(["NEW", "RETURNING"]).optional(),
   seller: z.coerce.string().trim().optional(),
@@ -206,7 +212,9 @@ export async function getCustomers(req: Request, res: Response): Promise<void> {
 
 const GetErpProductsQueryParams = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+  // Mesmo achado do item 4.2 (orders/customers) -- teto pro export de
+  // verdade. Vogabox sozinha tem 3500+ produtos, bem acima do teto antigo.
+  limit: z.coerce.number().int().min(1).max(5000).default(50),
   search: z.coerce.string().trim().optional(),
   category: z.coerce.string().trim().optional(),
   stockStatus: z.enum(["in_stock", "out_of_stock", "negative"]).optional(),

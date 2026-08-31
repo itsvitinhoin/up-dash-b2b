@@ -355,6 +355,15 @@ export async function fetchErpDashboard(
   const clientes = vestiTable(dataset, "clientes_erp");
   const cancelledList = ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ");
 
+  // Achado 26/08/2026 (ClickUp Vogabox item 4.3): "novo"/"recorrente"
+  // aqui usava "total de pedidos na vida toda <= 1", contado até HOJE
+  // (não até o fim da janela) -- diferente da tabela "Base de
+  // compradores" (fetchErpCustomersPage), que usa "a primeira compra
+  // dessa pessoa caiu dentro do período filtrado". As duas contagens
+  // divergiam bastante (9/112 vs 46/75 pra junho/2026, confirmado
+  // direto no BigQuery). Unifica pra usar a mesma definição da tabela
+  // -- é o conceito mais estável (não muda retroativamente quando a
+  // pessoa compra de novo depois).
   const [dailyRows] = await bigquery.query({
     query: `
       WITH all_orders AS (
@@ -382,7 +391,7 @@ export async function fetchErpDashboard(
         WHERE date BETWEEN @dateFrom AND @dateTo
       ),
       customer_history AS (
-        SELECT o.customer_id, COUNT(*) AS total_orders
+        SELECT o.customer_id, MIN(o.date) AS first_order_date
         FROM all_orders o
         JOIN customer_documents c
           ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
@@ -400,8 +409,8 @@ export async function fetchErpDashboard(
         COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.returned_quantity)), 0) AS returned_quantity,
         COUNTIF(o.status IN (${cancelledList})) AS cancelled_orders,
         COALESCE(SUM(IF(o.status IN (${cancelledList}), o.net_amount, 0)), 0) AS cancelled_amount,
-        COUNT(DISTINCT IF(o.status NOT IN (${cancelledList}) AND ch.total_orders <= 1, o.customer_id, NULL)) AS new_customers,
-        COUNT(DISTINCT IF(o.status NOT IN (${cancelledList}) AND ch.total_orders > 1, o.customer_id, NULL)) AS returning_customers
+        COUNT(DISTINCT IF(o.status NOT IN (${cancelledList}) AND ch.first_order_date >= @dateFrom, o.customer_id, NULL)) AS new_customers,
+        COUNT(DISTINCT IF(o.status NOT IN (${cancelledList}) AND ch.first_order_date < @dateFrom, o.customer_id, NULL)) AS returning_customers
       FROM orders o
       LEFT JOIN customer_history ch ON ch.customer_id = o.customer_id
       GROUP BY o.date
@@ -441,7 +450,7 @@ export async function fetchErpDashboard(
         WHERE documento IS NOT NULL
       ),
       customer_history AS (
-        SELECT o.customer_id, COUNT(*) AS total_orders
+        SELECT o.customer_id, MIN(o.date) AS first_order_date
         FROM all_orders o
         JOIN customer_documents c
           ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
@@ -459,8 +468,8 @@ export async function fetchErpDashboard(
       )
       SELECT
         COUNT(*) AS unique_customers,
-        COUNTIF(ch.total_orders <= 1) AS new_customers,
-        COUNTIF(ch.total_orders > 1) AS returning_customers
+        COUNTIF(ch.first_order_date >= @dateFrom) AS new_customers,
+        COUNTIF(ch.first_order_date < @dateFrom) AS returning_customers
       FROM period_buyers pb
       JOIN customer_history ch USING (customer_id)
     `,
@@ -1293,7 +1302,20 @@ export async function fetchErpProductsPage(
         COALESCE(v.units, 0) AS units, COALESCE(v.revenue, 0) AS revenue,
         COALESCE(v.cost_amount, 0) AS cost_amount,
         COALESCE(e.stock, 0) AS stock,
-        GREATEST(COALESCE(e.stock, 0), 0) * GREATEST(p.catalog_price, 0) AS sales_power
+        -- Achado 26/08/2026 (ClickUp Vogabox item 4.4.1): pra ~58% dos SKUs
+        -- da Vogabox, o Miredata nunca trouxe preço de venda (preco_online/
+        -- preco_varejo/promocao_*) -- só preco_custo, que é preço de COMPRA,
+        -- não de venda (usar ele aqui inflaria o "poder de venda" com o
+        -- valor errado). Isso inclui justamente os produtos mais vendidos,
+        -- que apareciam sempre com R$0,00. Fallback: quando não tem preço
+        -- de catálogo mas o produto TEM venda no período, usa o preço médio
+        -- de venda real (revenue/units) em vez de zerar -- não mascara o
+        -- gap de dado (catalog_price em si continua 0 na resposta), só
+        -- evita um "poder de venda" inutilmente zerado pra item que
+        -- claramente vende.
+        GREATEST(COALESCE(e.stock, 0), 0)
+          * GREATEST(COALESCE(NULLIF(p.catalog_price, 0), IF(COALESCE(v.units, 0) > 0, v.revenue / v.units, 0)), 0)
+          AS sales_power
       FROM catalog p
       LEFT JOIN vendas v ON v.sku_id = p.sku_id
       LEFT JOIN estoque_agg e ON e.sku_id = p.sku_id
