@@ -10,6 +10,7 @@ import {
 } from "@workspace/db";
 import { documentLast4, hashDocument } from "./upzero/customers";
 import { stateFromPhoneDdd } from "../lib/phoneState";
+import { invalidateDailyClientMetrics, toDateOnly } from "./daily-client-metrics";
 
 const UPZERO_BASE = "https://api.upzero.com.br";
 const PAGE_LIMIT = 200;
@@ -2268,6 +2269,19 @@ export async function syncUpZeroClient(
       if (!row.externalId) continue;
       internalOrderIdByExternalId.set(row.externalId, row.id);
     }
+  }
+
+  // Achado 02/09/2026 (MX Fashion): o resumo diário do Dashboard
+  // (daily_client_metrics) travava desatualizado pra sempre assim que
+  // um pedido mudava de status DEPOIS do dia em que foi criado -- muito
+  // comum no fluxo B2B ("Em análise" -> "Enviado" dias depois). Apaga o
+  // resumo do dia de todo pedido tocado nesta sincronização (criado ou
+  // atualizado); a próxima leitura do Dashboard recalcula sozinha.
+  if (resolvedOrders.length > 0) {
+    const touchedDates = resolvedOrders.map((c) => toDateOnly(c.createdAt));
+    await invalidateDailyClientMetrics({ clientId, dates: touchedDates }).catch((err) => {
+      result.errors.push(`daily_client_metrics invalidation failed: ${String(err)}`);
+    });
   }
 
   for (const c of resolvedOrders) {

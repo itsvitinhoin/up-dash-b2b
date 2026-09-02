@@ -1,4 +1,4 @@
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   customersTable,
@@ -43,7 +43,7 @@ export function dateOnlyRange(from: string, to: string): string[] {
   return dates;
 }
 
-function toDateOnly(value: Date): string {
+export function toDateOnly(value: Date): string {
   return new Date(value.getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
@@ -241,6 +241,29 @@ export async function refreshDailyClientMetrics(params: {
   }
 
   return { days: values.length };
+}
+
+// Achado 02/09/2026 (MX Fashion): "complete" acima só verifica se a
+// linha do dia EXISTE, não se ela ainda está certa. Um pedido criado
+// num dia já resumido, mas que muda de status DEPOIS (ex.: "Em análise"
+// -> "Enviado", comum no fluxo B2B), nunca provoca recálculo -- o
+// resumo fica errado pra sempre. Chamada pelo sync sempre que um
+// pedido é tocado, apagando o resumo do(s) dia(s) afetado(s) pra forçar
+// o recálculo automático na próxima leitura do Dashboard.
+export async function invalidateDailyClientMetrics(params: {
+  clientId: string;
+  dates: string[];
+}): Promise<void> {
+  const uniqueDates = [...new Set(params.dates)];
+  if (uniqueDates.length === 0) return;
+  await db
+    .delete(dailyClientMetricsTable)
+    .where(
+      and(
+        eq(dailyClientMetricsTable.clientId, params.clientId),
+        inArray(dailyClientMetricsTable.metricDate, uniqueDates),
+      ),
+    );
 }
 
 export async function readDailyClientMetrics(params: {
