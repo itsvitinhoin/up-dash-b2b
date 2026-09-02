@@ -1175,6 +1175,10 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     traffic: DashboardTraffic;
     dailyPerformance: DashboardDailyPerformance[];
     metricRows?: DailyMetricRow[];
+    // TEMP debug 02/09/2026 -- achado MX Fashion: 1 pedido some do
+    // Dashboard mas aparece certo em /orders-page. Ver comentário na
+    // query abaixo. Remover depois de confirmar a causa.
+    debugOrders?: { id: string; externalId: string | null; status: string; amount: number; createdAt: Date }[];
   };
 
   // The prior window only needs the data the client renders for comparison
@@ -1346,6 +1350,27 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
         .from(customersTable)
         .where(and(...customerRegistrationConds)),
     ]);
+
+    // TEMP debug 02/09/2026 -- achado MX Fashion (Aug 1-25/2026): pedido
+    // 2005 (SHIPPED, dentro da janela) some do kpis.orders/revenue mas
+    // aparece certo em /orders-page. orderAgg e requestedRow leem a MESMA
+    // baseOrderWhere, diferindo só pelo filtro de status -- então isso
+    // dumpa toda linha que bate em baseOrderWhere (sem filtro de status)
+    // pra comparar id/status/amount reais contra o que orderAgg contou.
+    // Ativado só com ?debugOrders=1. Remover depois de confirmar a causa.
+    let debugOrders: WindowAggregates["debugOrders"];
+    if (rawQuery.debugOrders === "1") {
+      debugOrders = await db
+        .select({
+          id: ordersTable.id,
+          externalId: ordersTable.externalId,
+          status: ordersTable.status,
+          amount: ordersTable.amount,
+          createdAt: ordersTable.createdAt,
+        })
+        .from(ordersTable)
+        .where(baseOrderWhere);
+    }
 
     let customerAgg: { total: number; repeat: number } = { total: 0, repeat: 0 };
     let newBuyers = 0;
@@ -1598,6 +1623,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       salesBySize,
       traffic: { sessions: visits, orders, source: trafficSource },
       dailyPerformance,
+      debugOrders,
     };
   };
 
@@ -1913,29 +1939,34 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
 
   const signals = await computeSignals();
 
+  const dashboardResponseBody = GetDashboardResponse.parse({
+    kpis: current.kpis,
+    revenueOverTime: current.dailyRevenue,
+    ordersOverTime: current.dailyOrders,
+    leadsOverTime: current.dailyLeads,
+    revenueByCategory: current.revenueByCategory,
+    salesByCategory: current.salesByCategory,
+    salesByColor: current.salesByColor,
+    salesBySize: current.salesBySize,
+    newBuyersOverTime: current.dailyNewBuyers,
+    returningBuyersOverTime: current.dailyReturningBuyers,
+    traffic: current.traffic,
+    dailyPerformance: current.dailyPerformance,
+    signals,
+    ...(prev
+      ? {
+          prevKpis: prev.kpis,
+          prevRevenueOverTime: prev.dailyRevenue,
+          prevOrdersOverTime: prev.dailyOrders,
+        }
+      : {}),
+  });
+  // TEMP debug 02/09/2026 -- ver comentário acima de `debugOrders`. Fora
+  // do .parse() de propósito (Zod descartaria o campo). Remover depois.
   res.json(
-    GetDashboardResponse.parse({
-      kpis: current.kpis,
-      revenueOverTime: current.dailyRevenue,
-      ordersOverTime: current.dailyOrders,
-      leadsOverTime: current.dailyLeads,
-      revenueByCategory: current.revenueByCategory,
-      salesByCategory: current.salesByCategory,
-      salesByColor: current.salesByColor,
-      salesBySize: current.salesBySize,
-      newBuyersOverTime: current.dailyNewBuyers,
-      returningBuyersOverTime: current.dailyReturningBuyers,
-      traffic: current.traffic,
-      dailyPerformance: current.dailyPerformance,
-      signals,
-      ...(prev
-        ? {
-            prevKpis: prev.kpis,
-            prevRevenueOverTime: prev.dailyRevenue,
-            prevOrdersOverTime: prev.dailyOrders,
-          }
-        : {}),
-    }),
+    rawQuery.debugOrders === "1" && current.debugOrders
+      ? { ...dashboardResponseBody, _debugOrders: current.debugOrders }
+      : dashboardResponseBody,
   );
 });
 
