@@ -253,6 +253,13 @@
       "when": 1786478401000,
       "tag": "0035_whatsapp_multi_waba_integrations",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1788460433603,
+      "tag": "0036_paid_touchpoints",
+      "breakpoints": true
     }
   ]
 }

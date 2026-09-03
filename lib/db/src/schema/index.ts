@@ -15,3 +15,4 @@ export * from "./whatsapp";
 export * from "./campaignAttributionStamps";
 export * from "./commercialAi";
 export * from "./dailyAnalytics";
+export * from "./paidTouchpoints";

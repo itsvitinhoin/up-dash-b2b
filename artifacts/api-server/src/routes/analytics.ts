@@ -82,6 +82,7 @@ import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
 import { normalizeCampaignText, isPaidCampaignSignal, latestCampaignEvidenceBefore } from "../services/campaign-attribution";
+import { syncPaidTouchpointsForCustomer } from "../services/paid-touchpoints";
 import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
 
 const router: IRouter = Router();
@@ -4677,6 +4678,65 @@ router.get("/analytics/customers/:customerId/timeline", async (req, res): Promis
     }
     const message = err instanceof Error ? err.message : String(err);
     res.status(502).json({ error: true, code: "UPZERO_ANALYTICS_FAILED", message, status: 502 });
+  }
+});
+
+// Criado 03/09/2026 -- dispara a captura de paid_touchpoints (evidência de
+// clique de mídia paga, decodificada do cookie `fbc` real da Meta) pra um
+// cliente específico, sob demanda. Ver services/paid-touchpoints.ts pro
+// porquê disso ser necessário: o endpoint agregado da UpZero
+// (`/analytics/metrics`) não confiavelmente mostra clique real por
+// cliente -- o bruto (`/analytics/facts?user_id=`) sim.
+router.post("/analytics/customers/:customerId/paid-touchpoints/sync", requireAdmin, async (req, res): Promise<void> => {
+  const pathParsed = GetCustomerDetailParams.safeParse(req.params);
+  if (!pathParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: pathParsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = resolveClientId(req) ?? (req.query.clientId as string | undefined);
+  if (!clientId) {
+    res.status(400).json({ error: true, code: "CLIENT_REQUIRED", message: "clientId is required for admin users", status: 400 });
+    return;
+  }
+  const { customerId } = pathParsed.data;
+  const from = typeof req.query.from === "string" ? req.query.from : undefined;
+  const to = typeof req.query.to === "string" ? req.query.to : undefined;
+
+  const [customer] = await db
+    .select({ id: customersTable.id, externalId: customersTable.externalId, createdAt: customersTable.createdAt })
+    .from(customersTable)
+    .where(and(eq(customersTable.id, customerId), eq(customersTable.clientId, clientId)));
+  if (!customer) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Customer not found", status: 404 });
+    return;
+  }
+  const externalUserId = Number.parseInt(customer.externalId ?? "", 10);
+  if (!Number.isFinite(externalUserId) || externalUserId <= 0) {
+    res.status(400).json({ error: true, code: "NO_EXTERNAL_ID", message: "Customer has no UpZero user id", status: 400 });
+    return;
+  }
+
+  const [client] = await db
+    .select({ upZeroApiKey: clientsTable.upZeroApiKey })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (!client?.upZeroApiKey) {
+    res.status(400).json({ error: true, code: "NO_API_KEY", message: "Client has no UpZero API key", status: 400 });
+    return;
+  }
+
+  try {
+    const result = await syncPaidTouchpointsForCustomer({
+      apiKey: client.upZeroApiKey,
+      clientId,
+      customerId,
+      externalUserId,
+      from: from ?? customer.createdAt.toISOString(),
+      to: to ?? new Date().toISOString(),
+    });
+    res.json({ customerId, externalUserId, ...result });
+  } catch (err) {
+    res.status(502).json({ error: true, code: "UPZERO_FETCH_FAILED", message: err instanceof Error ? err.message : String(err), status: 502 });
   }
 });
 

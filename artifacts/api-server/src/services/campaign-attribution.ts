@@ -10,7 +10,23 @@ export function normalizeCampaignText(value: string | null | undefined): string 
   return value?.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() ?? "";
 }
 
-export function isPaidCampaignSignal(row: UpzeroAnalyticsMetric): boolean {
+// Campos m\u00ednimos pra decidir se um evento \u00e9 evid\u00eancia paga. `/analytics/metrics`
+// (agregado por hora) e `/analytics/facts` (log bruto por evento) da UpZero t\u00eam
+// nomes de campo id\u00eanticos pra tudo isso, s\u00f3 divergem no envelope ao redor
+// (period_start vs occurred_at, presen\u00e7a de contadores agregados, etc) --
+// aceitar s\u00f3 o subconjunto necess\u00e1rio deixa a fun\u00e7\u00e3o utiliz\u00e1vel nos dois casos.
+export type PaidSignalFields = {
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  source: string | null;
+  channel: string | null;
+  fbc?: string | null;
+  fbclid?: string | null;
+  gclid?: string | null;
+};
+
+export function isPaidCampaignSignal(row: PaidSignalFields): boolean {
   const source = normalizeCampaignText(row.utm_source);
   const medium = normalizeCampaignText(row.utm_medium);
   const campaign = normalizeCampaignText(row.utm_campaign);
