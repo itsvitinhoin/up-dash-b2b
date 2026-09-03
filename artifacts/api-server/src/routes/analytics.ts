@@ -84,6 +84,7 @@ import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow 
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
 import { normalizeCampaignText, isPaidCampaignSignal, latestCampaignEvidenceBefore } from "../services/campaign-attribution";
 import { syncPaidTouchpointsForCustomer } from "../services/paid-touchpoints";
+import { computeErpPaidAttribution } from "../services/erp-attribution";
 import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
 
 const router: IRouter = Router();
@@ -9831,6 +9832,54 @@ router.get("/analytics/erp/products", async (req, res): Promise<void> => {
 });
 router.get("/analytics/performance", async (req, res): Promise<void> => {
   await erpController.getPerformance(req, res);
+});
+
+// Criado 03/09/2026 -- reproduz o relatório "quanto a mídia paga
+// influenciou o faturamento do ERP" (ver services/erp-attribution.ts):
+// junta pedido do ERP + identidade por documento + touchpoint pago real,
+// pra saber pedido a pedido se teve clique antes da compra.
+router.get("/analytics/erp/attribution", requireAdmin, async (req, res): Promise<void> => {
+  const clientId = resolveClientId(req) ?? (req.query.clientId as string | undefined);
+  if (!clientId) {
+    res.status(400).json({ error: true, code: "CLIENT_REQUIRED", message: "clientId is required for admin users", status: 400 });
+    return;
+  }
+  const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom : undefined;
+  const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo : undefined;
+  if (!dateFrom || !dateTo) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "dateFrom and dateTo are required (YYYY-MM-DD)", status: 400 });
+    return;
+  }
+  const lookbackDays = Number.parseInt(typeof req.query.lookbackDays === "string" ? req.query.lookbackDays : "90", 10) || 90;
+
+  const [client] = await db
+    .select({ bigqueryDataset: clientsTable.bigqueryDataset, upZeroApiKey: clientsTable.upZeroApiKey })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (!client?.bigqueryDataset) {
+    res.status(400).json({ error: true, code: "NO_ERP_DATASET", message: "Client has no ERP dataset configured", status: 400 });
+    return;
+  }
+  if (!client.upZeroApiKey) {
+    res.status(400).json({ error: true, code: "NO_API_KEY", message: "Client has no UpZero API key", status: 400 });
+    return;
+  }
+
+  const touchpointLookbackFrom = new Date(new Date(dateFrom).getTime() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    const result = await computeErpPaidAttribution({
+      clientId,
+      dataset: client.bigqueryDataset,
+      upZeroApiKey: client.upZeroApiKey,
+      dateFrom,
+      dateTo,
+      touchpointLookbackFrom,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: true, code: "ATTRIBUTION_FAILED", message: err instanceof Error ? err.message : String(err), status: 502 });
+  }
 });
 
 export default router;
