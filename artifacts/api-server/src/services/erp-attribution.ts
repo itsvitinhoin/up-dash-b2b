@@ -1,30 +1,44 @@
 // Criado 03/09/2026 -- reproduz o relatório do PDF de atribuição da MX
 // Fashion ("Quanto a UP influenciou o faturamento"), mas com dado
 // verificado ponta a ponta em vez de investigação manual:
-//   1. Pedidos do ERP (BigQuery) -- já sabíamos ler isso.
-//   2. Identidade: liga cliente do ERP (customer_id = CNPJ/CPF cru) com
-//      cliente da UpZero (documentHash = sha256 do mesmo documento) --
-//      reaproveita `hashDocument`, já usado no sync da UpZero, então o
-//      hash bate sem precisar reimplementar nada.
+//   1. Pedidos, de DUAS fontes: ERP (BigQuery, loja física + parte do
+//      site) e online (Postgres `orders`, o pedido nativo da UpZero) --
+//      o PDF separa em jornadas "-> ERP direto" e "-> site"; pra cobrir
+//      as duas, olhamos as duas fontes.
+//   2. Identidade: pedido do ERP só tem o CNPJ/CPF cru (`customer_id`);
+//      liga com o cliente da UpZero comparando hash do documento
+//      (`hashDocument`, já usado no sync da UpZero). Pedido online já
+//      nasce ligado ao cliente certo (customerId direto), não precisa
+//      de identidade nenhuma.
 //   3. Touchpoints pagos: paid-touchpoints.ts, criado hoje mais cedo.
 //   4. Decisão por pedido: `latestTouchpointBefore` -- se existe
 //      touchpoint pago antes da data do pedido, o pedido é influenciado.
+//      Busca o touchpoint uma vez por cliente, reaproveitada pros
+//      pedidos das duas fontes desse mesmo cliente.
 import { bigquery, vestiTable } from "../lib/bigquery";
-import { db, customersTable } from "@workspace/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { db, customersTable, ordersTable } from "@workspace/db";
+import { and, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import { hashDocument } from "./upzero/customers";
 import { fetchPaidTouchpointsForUser, savePaidTouchpoints, latestTouchpointBefore, type TouchpointCandidate } from "./paid-touchpoints";
 
-type ErpOrderRow = {
-  pedido_id: string;
-  customer_id: string;
+type OrderChannel = "erp" | "site";
+
+type OrderCandidate = {
+  orderId: string;
+  channel: OrderChannel;
   valor: number;
-  data_criado: string;
+  dataCriado: string; // ISO
+};
+
+type ResolvedCustomer = {
+  upzeroCustomerId: string;
+  externalUserId: number;
+  name: string | null;
 };
 
 export type ErpAttributedOrder = {
-  pedidoId: string;
-  customerId: string;
+  orderId: string;
+  channel: OrderChannel;
   customerName: string | null;
   upzeroCustomerId: string;
   externalUserId: number;
@@ -39,6 +53,8 @@ export type ErpAttributedOrder = {
 export type ErpAttributionResult = {
   totalErpRevenue: number;
   totalErpOrders: number;
+  totalSiteRevenue: number;
+  totalSiteOrders: number;
   distinctErpCustomers: number;
   matchedUpzeroCustomers: number;
   influencedOrders: ErpAttributedOrder[];
@@ -49,7 +65,7 @@ export type ErpAttributionResult = {
   // um bug real (a UpZero rejeitava um `to` sem horário) e fez o relatório
   // inteiro voltar "ninguém influenciado" sem avisar nada de errado.
   // Agora todo erro por cliente fica visível aqui em vez de sumir.
-  fetchErrors: Array<{ customerId: string; upzeroCustomerId: string; message: string }>;
+  fetchErrors: Array<{ upzeroCustomerId: string; message: string }>;
 };
 
 export async function computeErpPaidAttribution(params: {
@@ -60,8 +76,9 @@ export async function computeErpPaidAttribution(params: {
   dateTo: string; // YYYY-MM-DD, exclusivo
   touchpointLookbackFrom: string; // ISO -- janela ampla pra achar clique bem antes do pedido
 }): Promise<ErpAttributionResult> {
+  // ── Fonte 1: pedidos do ERP (BigQuery), identidade por CNPJ/CPF ──────
   const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
-  const [rawRows] = await bigquery.query({
+  const [rawErpRows] = await bigquery.query({
     query: `
       SELECT pedido_id, customer_id, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
       FROM ${pedidosTable}
@@ -70,107 +87,121 @@ export async function computeErpPaidAttribution(params: {
     `,
     params: { dateFrom: params.dateFrom, dateTo: params.dateTo },
   });
-  const orders: ErpOrderRow[] = (rawRows as Array<Record<string, unknown>>).map((r) => ({
-    pedido_id: String(r.pedido_id),
-    customer_id: String(r.customer_id ?? ""),
-    valor: Number(r.valor) || 0,
-    data_criado: toIsoString(r.data_criado),
-  }));
+  const erpRows = rawErpRows as Array<Record<string, unknown>>;
+  const totalErpRevenue = erpRows.reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
+  const erpCustomerIds = [...new Set(erpRows.map((r) => String(r.customer_id ?? "")).filter(Boolean))];
 
-  const totalErpRevenue = orders.reduce((sum, o) => sum + o.valor, 0);
-  const distinctCustomerIds = [...new Set(orders.map((o) => o.customer_id).filter(Boolean))];
-
-  // Identidade: hash de cada CNPJ/CPF do ERP, pra bater contra
-  // customers.documentHash da UpZero (mesma função de hash usada no sync).
   const cnpjToHash = new Map<string, string>();
-  for (const cnpj of distinctCustomerIds) {
+  for (const cnpj of erpCustomerIds) {
     const hash = hashDocument(cnpj);
     if (hash) cnpjToHash.set(cnpj, hash);
   }
   const hashes = [...new Set(cnpjToHash.values())];
-
-  const matches = hashes.length
+  const hashMatches = hashes.length
     ? await db
-        .select({
-          id: customersTable.id,
-          externalId: customersTable.externalId,
-          documentHash: customersTable.documentHash,
-          name: customersTable.name,
-        })
+        .select({ id: customersTable.id, externalId: customersTable.externalId, documentHash: customersTable.documentHash, name: customersTable.name })
         .from(customersTable)
         .where(and(eq(customersTable.clientId, params.clientId), inArray(customersTable.documentHash, hashes)))
     : [];
-  const hashToCustomer = new Map(matches.map((m) => [m.documentHash, m]));
+  const hashToCustomer = new Map(hashMatches.map((m) => [m.documentHash, m]));
 
-  const ordersByCnpj = new Map<string, ErpOrderRow[]>();
-  for (const order of orders) {
-    const list = ordersByCnpj.get(order.customer_id) ?? [];
-    list.push(order);
-    ordersByCnpj.set(order.customer_id, list);
+  // ── Fonte 2: pedidos online (Postgres `orders`), já ligados ao cliente ──
+  const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000Z`);
+  const dateToDate = new Date(`${params.dateTo}T00:00:00.000Z`);
+  const siteOrderRows = await db
+    .select({
+      id: ordersTable.id,
+      customerId: ordersTable.customerId,
+      amount: ordersTable.amount,
+      createdAt: ordersTable.createdAt,
+    })
+    .from(ordersTable)
+    .where(and(eq(ordersTable.clientId, params.clientId), gte(ordersTable.createdAt, dateFromDate), lt(ordersTable.createdAt, dateToDate), ne(ordersTable.status, "REJECTED")));
+  const totalSiteRevenue = siteOrderRows.reduce((sum, r) => sum + r.amount, 0);
+
+  const siteCustomerIds = [...new Set(siteOrderRows.map((r) => r.customerId).filter((v): v is string => Boolean(v)))];
+  const siteCustomers = siteCustomerIds.length
+    ? await db
+        .select({ id: customersTable.id, externalId: customersTable.externalId, name: customersTable.name })
+        .from(customersTable)
+        .where(and(eq(customersTable.clientId, params.clientId), inArray(customersTable.id, siteCustomerIds)))
+    : [];
+  const siteCustomerById = new Map(siteCustomers.map((c) => [c.id, c]));
+
+  // ── Unifica pedido -> cliente resolvido, das duas fontes ─────────────
+  const ordersByCustomer = new Map<string, { customer: ResolvedCustomer; orders: OrderCandidate[] }>();
+  const registerOrder = (customer: ResolvedCustomer | null, order: OrderCandidate) => {
+    if (!customer) return;
+    const entry = ordersByCustomer.get(customer.upzeroCustomerId) ?? { customer, orders: [] };
+    entry.orders.push(order);
+    ordersByCustomer.set(customer.upzeroCustomerId, entry);
+  };
+
+  for (const r of erpRows) {
+    const cnpj = String(r.customer_id ?? "");
+    const hash = cnpjToHash.get(cnpj);
+    const match = hash ? hashToCustomer.get(hash) : undefined;
+    const externalUserId = match ? Number.parseInt(match.externalId ?? "", 10) : NaN;
+    if (!match || !Number.isFinite(externalUserId) || externalUserId <= 0) continue;
+    registerOrder(
+      { upzeroCustomerId: match.id, externalUserId, name: match.name },
+      { orderId: String(r.pedido_id), channel: "erp", valor: Number(r.valor) || 0, dataCriado: toIsoString(r.data_criado) },
+    );
+  }
+  for (const r of siteOrderRows) {
+    const match = r.customerId ? siteCustomerById.get(r.customerId) : undefined;
+    const externalUserId = match ? Number.parseInt(match.externalId ?? "", 10) : NaN;
+    if (!match || !Number.isFinite(externalUserId) || externalUserId <= 0) continue;
+    registerOrder(
+      { upzeroCustomerId: match.id, externalUserId, name: match.name },
+      { orderId: r.id, channel: "site", valor: r.amount, dataCriado: r.createdAt.toISOString() },
+    );
   }
 
   // A UpZero exige ISO 8601 completo (com horário) pros parâmetros
   // from/to de /analytics/facts -- rejeita "2026-09-01" puro com 400.
-  // `dateTo` chega como YYYY-MM-DD; normaliza pro fim daquele dia em UTC.
   const touchpointLookbackTo = new Date(`${params.dateTo}T23:59:59.999Z`).toISOString();
 
   const influencedOrders: ErpAttributedOrder[] = [];
   const fetchErrors: ErpAttributionResult["fetchErrors"] = [];
-  let matchedUpzeroCustomers = 0;
   const influencedCustomerIds = new Set<string>();
 
-  for (const [cnpj, cnpjOrders] of ordersByCnpj) {
-    const hash = cnpjToHash.get(cnpj);
-    const upzeroCustomer = hash ? hashToCustomer.get(hash) : undefined;
-    if (!upzeroCustomer) continue;
-    const externalUserId = Number.parseInt(upzeroCustomer.externalId ?? "", 10);
-    if (!Number.isFinite(externalUserId) || externalUserId <= 0) continue;
-    matchedUpzeroCustomers++;
-
+  for (const [upzeroCustomerId, { customer, orders }] of ordersByCustomer) {
     let touchpoints: TouchpointCandidate[];
     try {
       touchpoints = await fetchPaidTouchpointsForUser({
         apiKey: params.upZeroApiKey,
-        userId: externalUserId,
+        userId: customer.externalUserId,
         from: params.touchpointLookbackFrom,
         to: touchpointLookbackTo,
       });
     } catch (err) {
-      fetchErrors.push({
-        customerId: cnpj,
-        upzeroCustomerId: upzeroCustomer.id,
-        message: err instanceof Error ? err.message : String(err),
-      });
+      fetchErrors.push({ upzeroCustomerId, message: err instanceof Error ? err.message : String(err) });
       continue; // Cliente com erro de busca não trava o relatório inteiro.
     }
     if (touchpoints.length > 0) {
-      await savePaidTouchpoints({
-        clientId: params.clientId,
-        customerId: upzeroCustomer.id,
-        externalUserId,
-        touchpoints,
-      }).catch(() => {});
+      await savePaidTouchpoints({ clientId: params.clientId, customerId: upzeroCustomerId, externalUserId: customer.externalUserId, touchpoints }).catch(() => {});
     }
     if (touchpoints.length === 0) continue;
 
-    for (const order of cnpjOrders) {
-      const evidence = latestTouchpointBefore(touchpoints, new Date(order.data_criado));
+    for (const order of orders) {
+      const evidence = latestTouchpointBefore(touchpoints, new Date(order.dataCriado));
       if (!evidence) continue;
       const full = touchpoints.find((t) => t.occurredAt.getTime() === evidence.occurredAt.getTime());
       influencedOrders.push({
-        pedidoId: order.pedido_id,
-        customerId: order.customer_id,
-        customerName: upzeroCustomer.name,
-        upzeroCustomerId: upzeroCustomer.id,
-        externalUserId,
+        orderId: order.orderId,
+        channel: order.channel,
+        customerName: customer.name,
+        upzeroCustomerId,
+        externalUserId: customer.externalUserId,
         valor: order.valor,
-        dataCriado: order.data_criado,
+        dataCriado: order.dataCriado,
         touchpointAt: evidence.occurredAt.toISOString(),
         touchpointSource: full?.source ?? null,
         touchpointMedium: full?.medium ?? null,
         touchpointCampaign: full?.campaign ?? null,
       });
-      influencedCustomerIds.add(order.customer_id);
+      influencedCustomerIds.add(upzeroCustomerId);
     }
   }
 
@@ -178,13 +209,15 @@ export async function computeErpPaidAttribution(params: {
 
   return {
     totalErpRevenue,
-    totalErpOrders: orders.length,
-    distinctErpCustomers: distinctCustomerIds.length,
-    matchedUpzeroCustomers,
+    totalErpOrders: erpRows.length,
+    totalSiteRevenue,
+    totalSiteOrders: siteOrderRows.length,
+    distinctErpCustomers: erpCustomerIds.length,
+    matchedUpzeroCustomers: ordersByCustomer.size,
     influencedOrders,
     influencedTotal,
     influencedCustomers: influencedCustomerIds.size,
-    unmatchedCustomerCount: distinctCustomerIds.length - matchedUpzeroCustomers,
+    unmatchedCustomerCount: erpCustomerIds.length - hashMatches.length,
     fetchErrors,
   };
 }
