@@ -14,6 +14,7 @@ import {
   creativesTable,
   siteVisitsTable,
   campaignAttributionStampsTable,
+  paidTouchpointsTable,
 } from "@workspace/db";
 import {
   GetDashboardQueryParams,
@@ -4738,6 +4739,36 @@ router.post("/analytics/customers/:customerId/paid-touchpoints/sync", requireAdm
   } catch (err) {
     res.status(502).json({ error: true, code: "UPZERO_FETCH_FAILED", message: err instanceof Error ? err.message : String(err), status: 502 });
   }
+});
+
+router.get("/analytics/customers/:customerId/paid-touchpoints", requireAdmin, async (req, res): Promise<void> => {
+  const pathParsed = GetCustomerDetailParams.safeParse(req.params);
+  if (!pathParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: pathParsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = resolveClientId(req) ?? (req.query.clientId as string | undefined);
+  if (!clientId) {
+    res.status(400).json({ error: true, code: "CLIENT_REQUIRED", message: "clientId is required for admin users", status: 400 });
+    return;
+  }
+  const rows = await db
+    .select({
+      id: paidTouchpointsTable.id,
+      occurredAt: paidTouchpointsTable.occurredAt,
+      eventName: paidTouchpointsTable.eventName,
+      source: paidTouchpointsTable.source,
+      medium: paidTouchpointsTable.medium,
+      campaign: paidTouchpointsTable.campaign,
+      fbc: paidTouchpointsTable.fbc,
+      fbclid: paidTouchpointsTable.fbclid,
+      gclid: paidTouchpointsTable.gclid,
+      evidenceKey: paidTouchpointsTable.evidenceKey,
+    })
+    .from(paidTouchpointsTable)
+    .where(and(eq(paidTouchpointsTable.clientId, clientId), eq(paidTouchpointsTable.customerId, pathParsed.data.customerId)))
+    .orderBy(paidTouchpointsTable.occurredAt);
+  res.json({ data: rows });
 });
 
 router.get("/analytics/customers/:customerId", async (req, res): Promise<void> => {
