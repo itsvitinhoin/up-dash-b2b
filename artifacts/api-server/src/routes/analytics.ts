@@ -81,6 +81,7 @@ import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-f
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
+import { normalizeCampaignText, isPaidCampaignSignal, latestCampaignEvidenceBefore } from "../services/campaign-attribution";
 import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
 
 const router: IRouter = Router();
@@ -1938,64 +1939,6 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     }),
   );
 });
-
-function normalizeCampaignText(value: string | null | undefined): string {
-  return value?.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() ?? "";
-}
-
-function isPaidCampaignSignal(row: UpzeroAnalyticsMetric): boolean {
-  const source = normalizeCampaignText(row.utm_source);
-  const medium = normalizeCampaignText(row.utm_medium);
-  const campaign = normalizeCampaignText(row.utm_campaign);
-  const channel = normalizeCampaignText(row.channel);
-  const rawSource = normalizeCampaignText(row.source);
-
-  const isLinktreeOnly =
-    source === "instagram" &&
-    medium === "linktree" &&
-    campaign === "linktree";
-
-  if (isLinktreeOnly) return false;
-
-  const hasClickIdentifier = Boolean(row.fbc || row.fbclid || row.gclid);
-  const hasNamedCampaign = campaign.length > 0 && campaign !== "linktree";
-  const hasMetaSource = ["fb", "facebook", "ig", "instagram", "meta"].includes(source);
-  const hasGoogleSource = ["google", "google_ads", "googleads", "gads", "gc"].includes(source);
-  const hasPaidMedium =
-    medium.includes("paid") ||
-    medium.includes("cpc") ||
-    medium.includes("ppc") ||
-    medium.includes("pmax");
-  const hasMetaPlacement =
-    medium.includes("facebook_mobile_feed") ||
-    medium.includes("facebook_desktop_feed") ||
-    medium.includes("facebook_stories") ||
-    medium.includes("instagram_feed") ||
-    medium.includes("instagram_stories") ||
-    medium.includes("instagram_reels");
-  const hasUpCampaign =
-    campaign.includes("up.") ||
-    campaign.includes("upzero") ||
-    campaign.includes("up zero") ||
-    campaign.includes("rmkt") ||
-    campaign.includes("remarketing") ||
-    campaign.includes("frio") ||
-    campaign.includes("cadastro");
-  const hasNumericMetaCampaign = hasMetaSource && /^[0-9]{8,}$/.test(campaign);
-  const hasPaidChannel = channel.includes("paid") || channel.includes("ads") || rawSource.includes("ads");
-
-  return (
-    hasClickIdentifier ||
-    hasNamedCampaign ||
-    hasPaidMedium ||
-    hasMetaPlacement ||
-    hasUpCampaign ||
-    hasNumericMetaCampaign ||
-    hasPaidChannel ||
-    (hasMetaSource && campaign.length > 0 && campaign !== "linktree") ||
-    (hasGoogleSource && campaign.length > 0)
-  );
-}
 
 function normalizeCampaignSource(row: UpzeroAnalyticsMetric): string {
   const source = normalizeCampaignText(row.utm_source);
@@ -9308,23 +9251,6 @@ function latestTouchBefore(
     const occurredAt = new Date(touch.occurredAt).getTime();
     if (!Number.isFinite(occurredAt) || occurredAt > limit || occurredAt < selectedAt) continue;
     selected = touch.dimension;
-    selectedAt = occurredAt;
-  }
-  return selected;
-}
-
-function latestCampaignEvidenceBefore(
-  rows: UpzeroAnalyticsMetric[],
-  date: Date,
-): UpzeroAnalyticsMetric | null {
-  const limit = date.getTime();
-  let selected: UpzeroAnalyticsMetric | null = null;
-  let selectedAt = -Infinity;
-  for (const row of rows) {
-    if (!isPaidCampaignSignal(row)) continue;
-    const occurredAt = new Date(row.period_start).getTime();
-    if (!Number.isFinite(occurredAt) || occurredAt > limit || occurredAt < selectedAt) continue;
-    selected = row;
     selectedAt = occurredAt;
   }
   return selected;
