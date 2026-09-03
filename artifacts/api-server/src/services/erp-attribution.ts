@@ -45,6 +45,11 @@ export type ErpAttributionResult = {
   influencedTotal: number;
   influencedCustomers: number;
   unmatchedCustomerCount: number;
+  // Achado 03/09/2026: um erro silencioso (`catch { continue }`) escondeu
+  // um bug real (a UpZero rejeitava um `to` sem horário) e fez o relatório
+  // inteiro voltar "ninguém influenciado" sem avisar nada de errado.
+  // Agora todo erro por cliente fica visível aqui em vez de sumir.
+  fetchErrors: Array<{ customerId: string; upzeroCustomerId: string; message: string }>;
 };
 
 export async function computeErpPaidAttribution(params: {
@@ -104,7 +109,13 @@ export async function computeErpPaidAttribution(params: {
     ordersByCnpj.set(order.customer_id, list);
   }
 
+  // A UpZero exige ISO 8601 completo (com horário) pros parâmetros
+  // from/to de /analytics/facts -- rejeita "2026-09-01" puro com 400.
+  // `dateTo` chega como YYYY-MM-DD; normaliza pro fim daquele dia em UTC.
+  const touchpointLookbackTo = new Date(`${params.dateTo}T23:59:59.999Z`).toISOString();
+
   const influencedOrders: ErpAttributedOrder[] = [];
+  const fetchErrors: ErpAttributionResult["fetchErrors"] = [];
   let matchedUpzeroCustomers = 0;
   const influencedCustomerIds = new Set<string>();
 
@@ -122,9 +133,14 @@ export async function computeErpPaidAttribution(params: {
         apiKey: params.upZeroApiKey,
         userId: externalUserId,
         from: params.touchpointLookbackFrom,
-        to: params.dateTo,
+        to: touchpointLookbackTo,
       });
-    } catch {
+    } catch (err) {
+      fetchErrors.push({
+        customerId: cnpj,
+        upzeroCustomerId: upzeroCustomer.id,
+        message: err instanceof Error ? err.message : String(err),
+      });
       continue; // Cliente com erro de busca não trava o relatório inteiro.
     }
     if (touchpoints.length > 0) {
@@ -169,6 +185,7 @@ export async function computeErpPaidAttribution(params: {
     influencedTotal,
     influencedCustomers: influencedCustomerIds.size,
     unmatchedCustomerCount: distinctCustomerIds.length - matchedUpzeroCustomers,
+    fetchErrors,
   };
 }
 
