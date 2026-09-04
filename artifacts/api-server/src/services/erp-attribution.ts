@@ -26,7 +26,8 @@ type OrderChannel = "erp" | "site";
 type OrderCandidate = {
   orderId: string;
   channel: OrderChannel;
-  valor: number;
+  valor: number; // faturamento gerado (solicitado/comercial)
+  valorPago: number; // faturamento pago (concluído/atendido)
   dataCriado: string; // ISO
 };
 
@@ -43,11 +44,35 @@ export type ErpAttributedOrder = {
   upzeroCustomerId: string;
   externalUserId: number;
   valor: number;
+  valorPago: number;
   dataCriado: string;
   touchpointAt: string;
   touchpointSource: string | null;
   touchpointMedium: string | null;
   touchpointCampaign: string | null;
+};
+
+// Cohort igual ao PDF (pág. 4): olha a última compra CONCLUÍDA do cliente
+// antes da primeira compra influenciada dele no período -- sem compra
+// anterior = novo; até 90 dias = recorrente; acima = reativado.
+export type CohortLabel = "novo" | "recorrente" | "reativado";
+
+export type CustomerCohort = {
+  upzeroCustomerId: string;
+  customerName: string | null;
+  cohort: CohortLabel;
+  firstInfluencedOrderAt: string;
+  lastOrderBeforeAt: string | null; // null quando "novo" (sem compra anterior)
+  daysSinceLastOrder: number | null;
+};
+
+export type CohortSummary = {
+  cohort: CohortLabel;
+  clientes: number;
+  pedidos: number;
+  faturamentoGerado: number;
+  faturamentoPago: number;
+  ticketMedio: number; // faturamentoGerado / pedidos
 };
 
 export type ErpAttributionResult = {
@@ -61,6 +86,8 @@ export type ErpAttributionResult = {
   influencedTotal: number;
   influencedCustomers: number;
   unmatchedCustomerCount: number;
+  customerCohorts: CustomerCohort[];
+  cohortSummary: CohortSummary[];
   // Achado 03/09/2026: um erro silencioso (`catch { continue }`) escondeu
   // um bug real (a UpZero rejeitava um `to` sem horário) e fez o relatório
   // inteiro voltar "ninguém influenciado" sem avisar nada de errado.
@@ -113,6 +140,7 @@ export async function computeErpPaidAttribution(params: {
       id: ordersTable.id,
       customerId: ordersTable.customerId,
       amount: ordersTable.amount,
+      fulfilledAmount: ordersTable.fulfilledAmount,
       createdAt: ordersTable.createdAt,
     })
     .from(ordersTable)
@@ -137,6 +165,10 @@ export async function computeErpPaidAttribution(params: {
     ordersByCustomer.set(customer.upzeroCustomerId, entry);
   };
 
+  // CNPJ(s) cru por cliente resolvido -- precisa pra buscar o histórico de
+  // pedidos ANTERIOR (sem filtro de data) na hora de classificar o cohort.
+  const customerCnpjs = new Map<string, Set<string>>();
+
   for (const r of erpRows) {
     const cnpj = String(r.customer_id ?? "");
     const hash = cnpjToHash.get(cnpj);
@@ -145,8 +177,11 @@ export async function computeErpPaidAttribution(params: {
     if (!match || !Number.isFinite(externalUserId) || externalUserId <= 0) continue;
     registerOrder(
       { upzeroCustomerId: match.id, externalUserId, name: match.name },
-      { orderId: String(r.pedido_id), channel: "erp", valor: Number(r.valor) || 0, dataCriado: toIsoString(r.data_criado) },
+      { orderId: String(r.pedido_id), channel: "erp", valor: Number(r.valor) || 0, valorPago: Number(r.valor) || 0, dataCriado: toIsoString(r.data_criado) },
     );
+    const cnpjSet = customerCnpjs.get(match.id) ?? new Set<string>();
+    cnpjSet.add(cnpj);
+    customerCnpjs.set(match.id, cnpjSet);
   }
   for (const r of siteOrderRows) {
     const match = r.customerId ? siteCustomerById.get(r.customerId) : undefined;
@@ -154,7 +189,7 @@ export async function computeErpPaidAttribution(params: {
     if (!match || !Number.isFinite(externalUserId) || externalUserId <= 0) continue;
     registerOrder(
       { upzeroCustomerId: match.id, externalUserId, name: match.name },
-      { orderId: r.id, channel: "site", valor: r.amount, dataCriado: r.createdAt.toISOString() },
+      { orderId: r.id, channel: "site", valor: r.amount, valorPago: r.fulfilledAmount || 0, dataCriado: r.createdAt.toISOString() },
     );
   }
 
@@ -195,6 +230,7 @@ export async function computeErpPaidAttribution(params: {
         upzeroCustomerId,
         externalUserId: customer.externalUserId,
         valor: order.valor,
+        valorPago: order.valorPago,
         dataCriado: order.dataCriado,
         touchpointAt: evidence.occurredAt.toISOString(),
         touchpointSource: full?.source ?? null,
@@ -207,6 +243,13 @@ export async function computeErpPaidAttribution(params: {
 
   const influencedTotal = influencedOrders.reduce((sum, o) => sum + o.valor, 0);
 
+  const { customerCohorts, cohortSummary } = await classifyCohorts({
+    dataset: params.dataset,
+    clientId: params.clientId,
+    influencedOrders,
+    customerCnpjs,
+  });
+
   return {
     totalErpRevenue,
     totalErpOrders: erpRows.length,
@@ -218,8 +261,118 @@ export async function computeErpPaidAttribution(params: {
     influencedTotal,
     influencedCustomers: influencedCustomerIds.size,
     unmatchedCustomerCount: erpCustomerIds.length - hashMatches.length,
+    customerCohorts,
+    cohortSummary,
     fetchErrors,
   };
+}
+
+// ── Cohort novo/recorrente/reativado (PDF pág. 4) ──────────────────────────
+// Pra cada cliente influenciado: acha a compra CONCLUÍDA mais recente antes
+// da primeira compra influenciada dele (sem limite de data pra trás -- pode
+// ser de meses atrás). Sem nenhuma: novo. Até 90 dias: recorrente. Acima: reativado.
+async function classifyCohorts(params: {
+  dataset: string;
+  clientId: string;
+  influencedOrders: ErpAttributedOrder[];
+  customerCnpjs: Map<string, Set<string>>;
+}): Promise<{ customerCohorts: CustomerCohort[]; cohortSummary: CohortSummary[] }> {
+  const { influencedOrders, customerCnpjs } = params;
+  if (influencedOrders.length === 0) return { customerCohorts: [], cohortSummary: [] };
+
+  // Primeira compra influenciada por cliente.
+  const firstInfluencedAt = new Map<string, Date>();
+  for (const o of influencedOrders) {
+    const at = new Date(o.dataCriado);
+    const current = firstInfluencedAt.get(o.upzeroCustomerId);
+    if (!current || at.getTime() < current.getTime()) firstInfluencedAt.set(o.upzeroCustomerId, at);
+  }
+  const customerIds = [...firstInfluencedAt.keys()];
+
+  // Histórico ERP (qualquer data, status concluído) só dos clientes influenciados.
+  const allCnpjs = [...new Set(customerIds.flatMap((id) => [...(customerCnpjs.get(id) ?? [])]))];
+  const erpHistoryByCustomer = new Map<string, Date[]>();
+  if (allCnpjs.length > 0) {
+    const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
+    const [rawHistoryRows] = await bigquery.query({
+      query: `
+        SELECT customer_id, data_criado
+        FROM ${pedidosTable}
+        WHERE customer_id IN UNNEST(@cnpjs) AND status = 'CONCLUIDO'
+        GROUP BY pedido_id, customer_id, data_criado
+      `,
+      params: { cnpjs: allCnpjs },
+    });
+    const cnpjToUpzeroId = new Map<string, string>();
+    for (const [upzeroId, cnpjs] of customerCnpjs) for (const cnpj of cnpjs) cnpjToUpzeroId.set(cnpj, upzeroId);
+    for (const r of rawHistoryRows as Array<Record<string, unknown>>) {
+      const upzeroId = cnpjToUpzeroId.get(String(r.customer_id ?? ""));
+      if (!upzeroId) continue;
+      const dates = erpHistoryByCustomer.get(upzeroId) ?? [];
+      dates.push(new Date(toIsoString(r.data_criado)));
+      erpHistoryByCustomer.set(upzeroId, dates);
+    }
+  }
+
+  // Histórico site (qualquer data, não rejeitado) só dos clientes influenciados.
+  const siteHistoryRows = await db
+    .select({ customerId: ordersTable.customerId, createdAt: ordersTable.createdAt })
+    .from(ordersTable)
+    .where(and(eq(ordersTable.clientId, params.clientId), inArray(ordersTable.customerId, customerIds), ne(ordersTable.status, "REJECTED")));
+  const siteHistoryByCustomer = new Map<string, Date[]>();
+  for (const r of siteHistoryRows) {
+    const dates = siteHistoryByCustomer.get(r.customerId) ?? [];
+    dates.push(r.createdAt);
+    siteHistoryByCustomer.set(r.customerId, dates);
+  }
+
+  const customerCohorts: CustomerCohort[] = [];
+  for (const upzeroCustomerId of customerIds) {
+    const cutoff = firstInfluencedAt.get(upzeroCustomerId)!;
+    const priorDates = [...(erpHistoryByCustomer.get(upzeroCustomerId) ?? []), ...(siteHistoryByCustomer.get(upzeroCustomerId) ?? [])].filter(
+      (d) => d.getTime() < cutoff.getTime(),
+    );
+    const lastOrderBefore = priorDates.length ? new Date(Math.max(...priorDates.map((d) => d.getTime()))) : null;
+    const daysSinceLastOrder = lastOrderBefore ? Math.round((cutoff.getTime() - lastOrderBefore.getTime()) / 86_400_000) : null;
+    const cohort: CohortLabel = daysSinceLastOrder === null ? "novo" : daysSinceLastOrder <= 90 ? "recorrente" : "reativado";
+    const anyOrder = influencedOrders.find((o) => o.upzeroCustomerId === upzeroCustomerId)!;
+    customerCohorts.push({
+      upzeroCustomerId,
+      customerName: anyOrder.customerName,
+      cohort,
+      firstInfluencedOrderAt: cutoff.toISOString(),
+      lastOrderBeforeAt: lastOrderBefore ? lastOrderBefore.toISOString() : null,
+      daysSinceLastOrder,
+    });
+  }
+
+  const cohortByCustomer = new Map(customerCohorts.map((c) => [c.upzeroCustomerId, c.cohort]));
+  const summaryMap = new Map<CohortLabel, { clientes: Set<string>; pedidos: number; faturamentoGerado: number; faturamentoPago: number }>();
+  for (const o of influencedOrders) {
+    const cohort = cohortByCustomer.get(o.upzeroCustomerId);
+    if (!cohort) continue;
+    const entry = summaryMap.get(cohort) ?? { clientes: new Set<string>(), pedidos: 0, faturamentoGerado: 0, faturamentoPago: 0 };
+    entry.clientes.add(o.upzeroCustomerId);
+    entry.pedidos += 1;
+    entry.faturamentoGerado += o.valor;
+    entry.faturamentoPago += o.valorPago;
+    summaryMap.set(cohort, entry);
+  }
+  const cohortSummary: CohortSummary[] = (["novo", "recorrente", "reativado"] as const)
+    .filter((c) => summaryMap.has(c))
+    .map((cohort) => {
+      const entry = summaryMap.get(cohort)!;
+      return {
+        cohort,
+        clientes: entry.clientes.size,
+        pedidos: entry.pedidos,
+        faturamentoGerado: entry.faturamentoGerado,
+        faturamentoPago: entry.faturamentoPago,
+        ticketMedio: entry.pedidos > 0 ? entry.faturamentoGerado / entry.pedidos : 0,
+      };
+    });
+
+  return { customerCohorts, cohortSummary };
 }
 
 function toIsoString(value: unknown): string {
