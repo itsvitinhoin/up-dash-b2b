@@ -59,6 +59,7 @@ import {
 } from "@/components/ui/table";
 import { useAuth } from "@/lib/auth";
 import { exportRowsAsCsv } from "@/lib/csv-export";
+import { exportRowsAsXlsx } from "@/lib/xlsx-export";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
   formatCurrency,
@@ -252,6 +253,7 @@ type CohortSummary = {
   cohort: CohortLabel;
   clientes: number;
   pedidos: number;
+  pedidosPagos: number;
   faturamentoGerado: number;
   faturamentoPago: number;
   ticketMedio: number;
@@ -266,20 +268,26 @@ type CustomerCohort = {
   daysSinceLastOrder: number | null;
 };
 
-type ErpAttributedOrder = {
+// Todo pedido do período (não só os influenciados) -- `attributed`/`cohort`
+// vêm null/false quando o pedido não foi conciliado com nenhuma evidência
+// de mídia paga antes dele.
+type ErpOrderRow = {
   orderId: string;
   channel: "erp" | "site";
   customerName: string | null;
-  upzeroCustomerId: string;
+  document: string | null;
+  upzeroCustomerId: string | null;
   valor: number;
   valorPago: number;
   dataCriado: string;
-  touchpointAt: string;
+  attributed: boolean;
+  cohort: CohortLabel | null;
+  touchpointAt: string | null;
   touchpointSource: string | null;
 };
 
 type ErpAttributionResponse = {
-  influencedOrders: ErpAttributedOrder[];
+  allOrders: ErpOrderRow[];
   influencedTotal: number;
   influencedCustomers: number;
   cohortSummary: CohortSummary[];
@@ -628,23 +636,36 @@ export default function PerformancePage() {
     refetchOnWindowFocus: false,
     retry: 1,
   });
-  const cohortByCustomer = useMemo(
-    () =>
-      new Map(
-        (attributionQuery.data?.customerCohorts ?? []).map((c) => [
-          c.upzeroCustomerId,
-          c.cohort,
-        ]),
-      ),
-    [attributionQuery.data],
-  );
-  const filteredInfluencedOrders = useMemo(() => {
-    const orders = attributionQuery.data?.influencedOrders ?? [];
+  const filteredOrders = useMemo(() => {
+    const orders = attributionQuery.data?.allOrders ?? [];
     if (cohortFilter === "all") return orders;
-    return orders.filter(
-      (order) => cohortByCustomer.get(order.upzeroCustomerId) === cohortFilter,
-    );
-  }, [attributionQuery.data, cohortByCustomer, cohortFilter]);
+    return orders.filter((order) => order.cohort === cohortFilter);
+  }, [attributionQuery.data, cohortFilter]);
+  const filteredStats = useMemo(() => {
+    let attributedOrders = 0;
+    let attributedCustomers = new Set<string>();
+    let receitaAtribuida = 0;
+    let faturamentoPago = 0;
+    for (const order of filteredOrders) {
+      if (!order.attributed) continue;
+      attributedOrders += 1;
+      if (order.upzeroCustomerId) attributedCustomers.add(order.upzeroCustomerId);
+      receitaAtribuida += order.valor;
+      faturamentoPago += order.valorPago;
+    }
+    return {
+      pedidosNoPeriodo: filteredOrders.length,
+      pedidosAtribuidos: attributedOrders,
+      clientesAtribuidos: attributedCustomers.size,
+      receitaAtribuida,
+      faturamentoPago,
+    };
+  }, [filteredOrders]);
+  const pagedOrders = useMemo(
+    () => filteredOrders.slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE),
+    [filteredOrders, ordersPage],
+  );
+  useEffect(() => setOrdersPage(1), [cohortFilter]);
 
   const k = data?.kpis;
   const financialMetrics = [
@@ -864,39 +885,25 @@ export default function PerformancePage() {
     campaignsPage * PAGE_SIZE,
   );
 
-  const exportOrders = async () => {
-    setExporting("orders");
-    try {
-      const result = await customFetch<PerformanceResponse>(
-        buildUrl("/api/analytics/performance", {
-          ...commonParams,
-          page: 1,
-          limit: 50,
-        }),
-      );
-      exportRowsAsCsv(
-        `performance-pedidos-${dateFrom}-${dateTo}.csv`,
-        result.orders.rows,
-        [
-          { header: "Pedido", accessor: (row) => row.id },
-          { header: "Data", accessor: (row) => row.createdAt },
-          {
-            header: "Cliente",
-            accessor: (row) => row.customerName ?? row.company,
-          },
-          { header: "Documento", accessor: (row) => row.document },
-          { header: "Tipo", accessor: (row) => row.buyerType },
-          { header: "Origem", accessor: (row) => row.utmSource },
-          { header: "Mídia", accessor: (row) => row.utmMedium },
-          { header: "Campanha", accessor: (row) => row.utmCampaign },
-          { header: "Atribuição", accessor: (row) => row.attribution },
-          { header: "Peças", accessor: (row) => row.requestedQuantity },
-          { header: "Valor", accessor: (row) => row.netAmount },
-        ],
-      );
-    } finally {
-      setExporting(null);
-    }
+  const exportCampaignOrders = () => {
+    exportRowsAsXlsx(
+      `performance-pedidos-campanha-${dateFrom}-${dateTo}.xlsx`,
+      "Pedidos",
+      filteredOrders,
+      [
+        { header: "Pedido", accessor: (row) => row.orderId },
+        { header: "Data", accessor: (row) => row.dataCriado },
+        { header: "Cliente", accessor: (row) => row.customerName },
+        { header: "Documento", accessor: (row) => row.document },
+        { header: "Canal", accessor: (row) => (row.channel === "erp" ? "ERP" : "Site") },
+        { header: "Coorte", accessor: (row) => (row.cohort ? COHORT_LABEL[row.cohort] : "") },
+        { header: "Atribuição", accessor: (row) => (row.attributed ? "Atribuído" : "Sem origem") },
+        { header: "Touchpoint", accessor: (row) => row.touchpointAt },
+        { header: "Origem do clique", accessor: (row) => row.touchpointSource },
+        { header: "Valor", accessor: (row) => row.valor },
+        { header: "Valor pago", accessor: (row) => row.valorPago },
+      ],
+    );
   };
 
   const exportCustomers = async () => {
@@ -1540,131 +1547,152 @@ export default function PerformancePage() {
         <CardContent className="p-5">
           <SectionHeader
             title="Pedidos e evidências de campanha"
-            description="A origem acompanha o comprador conciliado pelo documento; cada pedido ERP aparece uma única vez."
+            description="Pedido é atribuído quando existe clique pago do mesmo cliente antes da compra (ERP + site). A origem acompanha o comprador conciliado pelo documento."
             action={
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={exporting === "orders"}
-                onClick={exportOrders}
-              >
-                <Download className="mr-2 h-4 w-4" />
-                Exportar CSV
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Select
+                  value={cohortFilter}
+                  onValueChange={(value) => setCohortFilter(value as CohortLabel | "all")}
+                >
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="novo">Novos</SelectItem>
+                    <SelectItem value="recorrente">Recorrentes</SelectItem>
+                    <SelectItem value="reativado">Reativados</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" onClick={exportCampaignOrders}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Exportar Excel
+                </Button>
+              </div>
             }
           />
-          <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-4">
-            <div className="bg-card px-4 py-3">
-              <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                Pedidos no período
-              </p>
-              <p className="mt-1 text-lg font-semibold">
-                {formatNumber(k?.orders ?? 0)}
-              </p>
-            </div>
-            <div className="bg-card px-4 py-3">
-              <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                Peças vendidas
-              </p>
-              <p className="mt-1 text-lg font-semibold">
-                {formatNumber(k?.totalQuantity ?? 0)}
-              </p>
-            </div>
-            <div className="bg-card px-4 py-3">
-              <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                Receita atribuída
-              </p>
-              <p className="mt-1 text-lg font-semibold">
-                {formatCurrency(k?.attributedRevenue ?? 0)}
-              </p>
-            </div>
-            <div className="bg-card px-4 py-3">
-              <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                Faturamento ERP
-              </p>
-              <p className="mt-1 text-lg font-semibold text-primary">
-                {formatCurrency(k?.netRevenue ?? 0)}
-              </p>
-            </div>
-          </div>
-          <div className="mt-4 overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Pedido</TableHead>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Origem</TableHead>
-                  <TableHead>Campanha</TableHead>
-                  <TableHead>Atribuição</TableHead>
-                  <TableHead className="text-right">Peças</TableHead>
-                  <TableHead className="text-right">Valor</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(data?.orders.rows ?? []).map((order) => (
-                  <TableRow key={order.id}>
-                    <TableCell>
-                      <p className="font-medium">#{order.id}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(order.createdAt).toLocaleString("pt-BR")}
-                      </p>
-                    </TableCell>
-                    <TableCell>
-                      <p className="font-medium">
-                        {order.customerName ??
-                          order.company ??
-                          "Cliente não identificado"}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {order.document ?? "Documento não localizado"}
-                      </p>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">
-                        {order.buyerType === "RETURNING"
-                          ? "Recorrente"
-                          : order.buyerType === "NEW"
-                            ? "Novo"
-                            : "Não identificado"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <p className="text-sm">
-                        {order.utmSource ?? "Direto / não identificado"}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {order.utmMedium ?? "Sem mídia"}
-                      </p>
-                    </TableCell>
-                    <TableCell className="max-w-[260px]">
-                      <p
-                        className="truncate text-sm"
-                        title={order.utmCampaign ?? undefined}
-                      >
-                        {order.utmCampaign ?? "Não identificada"}
-                      </p>
-                    </TableCell>
-                    <TableCell>
-                      <AttributionBadge state={order.attribution} />
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatNumber(order.requestedQuantity)}
-                    </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">
-                      {formatCurrency(order.netAmount)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          <Pagination
-            page={ordersPage}
-            total={data?.orders.total ?? 0}
-            loading={isFetching}
-            onPage={setOrdersPage}
-          />
+          {attributionQuery.isLoading ? (
+            <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
+          ) : attributionQuery.isError ? (
+            <Alert variant="destructive" className="mt-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Não foi possível carregar a atribuição</AlertTitle>
+              <AlertDescription>Tente novamente em alguns instantes.</AlertDescription>
+            </Alert>
+          ) : (
+            <>
+              {attributionQuery.data && attributionQuery.data.fetchErrors.length > 0 && (
+                <Alert variant="destructive" className="mt-4">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>
+                    {attributionQuery.data.fetchErrors.length} cliente(s) não puderam ser verificados
+                  </AlertTitle>
+                  <AlertDescription>
+                    O restante do relatório está completo; esses clientes específicos falharam ao buscar touchpoints.
+                  </AlertDescription>
+                </Alert>
+              )}
+              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-4">
+                <div className="bg-card px-4 py-3">
+                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
+                    Pedidos no período
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {formatNumber(filteredStats.pedidosNoPeriodo)}
+                  </p>
+                </div>
+                <div className="bg-card px-4 py-3">
+                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
+                    Pedidos atribuídos
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {formatNumber(filteredStats.pedidosAtribuidos)}
+                  </p>
+                </div>
+                <div className="bg-card px-4 py-3">
+                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
+                    Receita atribuída
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {formatCurrency(filteredStats.receitaAtribuida)}
+                  </p>
+                </div>
+                <div className="bg-card px-4 py-3">
+                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
+                    Faturamento pago atribuído
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-primary">
+                    {formatCurrency(filteredStats.faturamentoPago)}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Pedido</TableHead>
+                      <TableHead>Cliente</TableHead>
+                      <TableHead>Coorte</TableHead>
+                      <TableHead>Origem</TableHead>
+                      <TableHead>Atribuição</TableHead>
+                      <TableHead className="text-right">Valor</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pagedOrders.map((order) => (
+                      <TableRow key={`${order.channel}-${order.orderId}`}>
+                        <TableCell>
+                          <p className="font-medium">#{order.orderId}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(order.dataCriado).toLocaleString("pt-BR")}
+                          </p>
+                        </TableCell>
+                        <TableCell>
+                          <p className="font-medium">
+                            {order.customerName ?? "Cliente não identificado"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {order.document ?? "Documento não localizado"}
+                          </p>
+                        </TableCell>
+                        <TableCell>
+                          {order.cohort ? (
+                            <Badge variant="outline" className={COHORT_BADGE_CLASS[order.cohort]}>
+                              {COHORT_LABEL[order.cohort]}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline">Não identificado</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <p className="text-sm">
+                            {order.touchpointSource ?? "Direto / não identificado"}
+                          </p>
+                          {order.touchpointAt && (
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(order.touchpointAt).toLocaleString("pt-BR")}
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <AttributionBadge state={order.attributed ? "ATRIBUIDO" : "SEM_ORIGEM"} />
+                        </TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">
+                          {formatCurrency(order.valor)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <Pagination
+                page={ordersPage}
+                total={filteredOrders.length}
+                loading={attributionQuery.isFetching}
+                onPage={setOrdersPage}
+              />
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -1686,17 +1714,6 @@ export default function PerformancePage() {
             </Alert>
           ) : (
             <>
-              {attributionQuery.data && attributionQuery.data.fetchErrors.length > 0 && (
-                <Alert variant="destructive" className="mt-4">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>
-                    {attributionQuery.data.fetchErrors.length} cliente(s) não puderam ser verificados
-                  </AlertTitle>
-                  <AlertDescription>
-                    O restante do relatório está completo; esses clientes específicos falharam ao buscar touchpoints.
-                  </AlertDescription>
-                </Alert>
-              )}
               <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-3">
                 {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
                   const summary = attributionQuery.data?.cohortSummary.find(
@@ -1729,6 +1746,7 @@ export default function PerformancePage() {
                       <TableHead>Coorte</TableHead>
                       <TableHead className="text-right">Clientes</TableHead>
                       <TableHead className="text-right">Pedidos</TableHead>
+                      <TableHead className="text-right">Pedidos pagos</TableHead>
                       <TableHead className="text-right">Fat. gerado</TableHead>
                       <TableHead className="text-right">Fat. pago</TableHead>
                       <TableHead className="text-right">Ticket médio</TableHead>
@@ -1756,6 +1774,9 @@ export default function PerformancePage() {
                             {formatNumber(summary?.pedidos ?? 0)}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
+                            {formatNumber(summary?.pedidosPagos ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
                             {formatCurrency(summary?.faturamentoGerado ?? 0)}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
@@ -1767,114 +1788,36 @@ export default function PerformancePage() {
                         </TableRow>
                       );
                     })}
-                    <TableRow className="bg-muted/30 font-semibold">
-                      <TableCell>Total</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatNumber(attributionQuery.data?.influencedCustomers ?? 0)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatNumber(attributionQuery.data?.influencedOrders.length ?? 0)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatCurrency(attributionQuery.data?.influencedTotal ?? 0)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatCurrency(
-                          (attributionQuery.data?.influencedOrders ?? []).reduce(
-                            (sum, o) => sum + o.valorPago,
-                            0,
-                          ),
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatCurrency(
-                          attributionQuery.data && attributionQuery.data.influencedOrders.length > 0
-                            ? attributionQuery.data.influencedTotal /
-                                attributionQuery.data.influencedOrders.length
-                            : 0,
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div className="mt-6 flex items-center justify-between gap-3">
-                <p className="text-xs font-medium text-muted-foreground">
-                  Pedidos influenciados
-                </p>
-                <Select
-                  value={cohortFilter}
-                  onValueChange={(value) =>
-                    setCohortFilter(value as CohortLabel | "all")
-                  }
-                >
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos</SelectItem>
-                    <SelectItem value="novo">Novos</SelectItem>
-                    <SelectItem value="recorrente">Recorrentes</SelectItem>
-                    <SelectItem value="reativado">Reativados</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="mt-3 overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Pedido</TableHead>
-                      <TableHead>Cliente</TableHead>
-                      <TableHead>Canal</TableHead>
-                      <TableHead>Coorte</TableHead>
-                      <TableHead>Touchpoint</TableHead>
-                      <TableHead className="text-right">Valor</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredInfluencedOrders.map((order) => {
-                      const cohort = cohortByCustomer.get(order.upzeroCustomerId);
+                    {(() => {
+                      const rows = attributionQuery.data?.cohortSummary ?? [];
+                      const totalPedidos = rows.reduce((s, r) => s + r.pedidos, 0);
+                      const totalPedidosPagos = rows.reduce((s, r) => s + r.pedidosPagos, 0);
+                      const totalFatPago = rows.reduce((s, r) => s + r.faturamentoPago, 0);
+                      const totalFatGerado = attributionQuery.data?.influencedTotal ?? 0;
                       return (
-                        <TableRow key={`${order.channel}-${order.orderId}`}>
-                          <TableCell>
-                            <p className="font-medium">#{order.orderId}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {new Date(order.dataCriado).toLocaleDateString("pt-BR")}
-                            </p>
+                        <TableRow className="bg-muted/30 font-semibold">
+                          <TableCell>Total</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(attributionQuery.data?.influencedCustomers ?? 0)}
                           </TableCell>
-                          <TableCell>
-                            {order.customerName ?? "Cliente não identificado"}
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(totalPedidos)}
                           </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">
-                              {order.channel === "erp" ? "ERP" : "Site"}
-                            </Badge>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(totalPedidosPagos)}
                           </TableCell>
-                          <TableCell>
-                            {cohort && (
-                              <Badge
-                                variant="outline"
-                                className={COHORT_BADGE_CLASS[cohort]}
-                              >
-                                {COHORT_LABEL[cohort]}
-                              </Badge>
-                            )}
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(totalFatGerado)}
                           </TableCell>
-                          <TableCell>
-                            <p className="text-sm">
-                              {new Date(order.touchpointAt).toLocaleString("pt-BR")}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {order.touchpointSource ?? "Sem origem"}
-                            </p>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(totalFatPago)}
                           </TableCell>
-                          <TableCell className="text-right font-medium tabular-nums">
-                            {formatCurrency(order.valor)}
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(totalPedidos > 0 ? totalFatGerado / totalPedidos : 0)}
                           </TableCell>
                         </TableRow>
                       );
-                    })}
+                    })()}
                   </TableBody>
                 </Table>
               </div>

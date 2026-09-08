@@ -52,6 +52,27 @@ export type ErpAttributedOrder = {
   touchpointCampaign: string | null;
 };
 
+// Achado 08/09/2026 (pedido do Marcelo): a tela precisa mostrar TODO
+// pedido do período, não só os influenciados -- igual a tabela antiga
+// fazia (47 pedidos, a maioria "Sem origem", só alguns "Atribuído").
+// Mesma ideia, dado e critério corretos por baixo.
+export type ErpOrderRow = {
+  orderId: string;
+  channel: OrderChannel;
+  customerName: string | null;
+  document: string | null; // mascarado, ex: "CNPJ **.***.***/****-78"
+  upzeroCustomerId: string | null; // null quando não deu pra conciliar identidade
+  valor: number;
+  valorPago: number;
+  dataCriado: string;
+  attributed: boolean;
+  cohort: CohortLabel | null; // só quando attributed
+  touchpointAt: string | null;
+  touchpointSource: string | null;
+  touchpointMedium: string | null;
+  touchpointCampaign: string | null;
+};
+
 // Cohort igual ao PDF (pág. 4): olha a última compra CONCLUÍDA do cliente
 // antes da primeira compra influenciada dele no período -- sem compra
 // anterior = novo; até 90 dias = recorrente; acima = reativado.
@@ -70,6 +91,10 @@ export type CohortSummary = {
   cohort: CohortLabel;
   clientes: number;
   pedidos: number;
+  // Achado 08/09/2026 (pedido do Santiago no Slack): quantos desses
+  // pedidos têm valor efetivamente pago/concluído (valorPago > 0), não só
+  // o total de pedidos gerados/solicitados.
+  pedidosPagos: number;
   faturamentoGerado: number;
   faturamentoPago: number;
   ticketMedio: number; // faturamentoGerado / pedidos
@@ -82,6 +107,7 @@ export type ErpAttributionResult = {
   totalSiteOrders: number;
   distinctErpCustomers: number;
   matchedUpzeroCustomers: number;
+  allOrders: ErpOrderRow[];
   influencedOrders: ErpAttributedOrder[];
   influencedTotal: number;
   influencedCustomers: number;
@@ -113,12 +139,21 @@ export async function computeErpPaidAttribution(params: {
 
   // ── Fonte 1: pedidos do ERP (BigQuery), identidade por CNPJ/CPF ──────
   const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
+  // JOIN com clientes_erp pra nome/documento -- mesmo padrão de
+  // fetchErpOrdersPage (erpAnalytics.ts), pra mostrar cliente/documento
+  // mesmo quando não deu match com a UpZero (ex: "Sem origem" na tela).
+  const clientesTable = vestiTable(params.dataset, "clientes_erp");
   const [rawErpRows] = await bigquery.query({
     query: `
-      SELECT pedido_id, customer_id, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
-      FROM ${pedidosTable}
-      WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND status = 'CONCLUIDO'
-      GROUP BY pedido_id, customer_id
+      WITH orders AS (
+        SELECT pedido_id, customer_id, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
+        FROM ${pedidosTable}
+        WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND status = 'CONCLUIDO'
+        GROUP BY pedido_id, customer_id
+      )
+      SELECT o.*, c.nome AS customer_name, c.documento AS document
+      FROM orders o
+      LEFT JOIN ${clientesTable} c ON c.documento = o.customer_id
     `,
     params: { dateFrom: params.dateFrom, dateToExclusive: dateToExclusiveIso.toISOString() },
   });
@@ -176,27 +211,75 @@ export async function computeErpPaidAttribution(params: {
   // pedidos ANTERIOR (sem filtro de data) na hora de classificar o cohort.
   const customerCnpjs = new Map<string, Set<string>>();
 
+  // Todo pedido do período, matched ou não -- pra tela mostrar "Sem
+  // origem"/cliente não identificado igual a tabela antiga fazia, em vez
+  // de só listar os influenciados. `attributed`/`cohort`/`touchpoint*`
+  // são preenchidos depois, quando já sabemos quem foi influenciado.
+  const allOrders: ErpOrderRow[] = [];
+
   for (const r of erpRows) {
     const cnpj = String(r.customer_id ?? "");
     const hash = cnpjToHash.get(cnpj);
     const match = hash ? hashToCustomer.get(hash) : undefined;
     const externalUserId = match ? Number.parseInt(match.externalId ?? "", 10) : NaN;
-    if (!match || !Number.isFinite(externalUserId) || externalUserId <= 0) continue;
+    const isMatched = Boolean(match) && Number.isFinite(externalUserId) && externalUserId > 0;
+    const orderId = String(r.pedido_id);
+    const valor = Number(r.valor) || 0;
+    const dataCriado = toIsoString(r.data_criado);
+
+    allOrders.push({
+      orderId,
+      channel: "erp",
+      customerName: (r.customer_name as string) || match?.name || null,
+      document: maskDocument((r.document as string) || cnpj),
+      upzeroCustomerId: isMatched ? match!.id : null,
+      valor,
+      valorPago: valor,
+      dataCriado,
+      attributed: false,
+      cohort: null,
+      touchpointAt: null,
+      touchpointSource: null,
+      touchpointMedium: null,
+      touchpointCampaign: null,
+    });
+
+    if (!isMatched) continue;
     registerOrder(
-      { upzeroCustomerId: match.id, externalUserId, name: match.name },
-      { orderId: String(r.pedido_id), channel: "erp", valor: Number(r.valor) || 0, valorPago: Number(r.valor) || 0, dataCriado: toIsoString(r.data_criado) },
+      { upzeroCustomerId: match!.id, externalUserId, name: match!.name },
+      { orderId, channel: "erp", valor, valorPago: valor, dataCriado },
     );
-    const cnpjSet = customerCnpjs.get(match.id) ?? new Set<string>();
+    const cnpjSet = customerCnpjs.get(match!.id) ?? new Set<string>();
     cnpjSet.add(cnpj);
-    customerCnpjs.set(match.id, cnpjSet);
+    customerCnpjs.set(match!.id, cnpjSet);
   }
   for (const r of siteOrderRows) {
     const match = r.customerId ? siteCustomerById.get(r.customerId) : undefined;
     const externalUserId = match ? Number.parseInt(match.externalId ?? "", 10) : NaN;
-    if (!match || !Number.isFinite(externalUserId) || externalUserId <= 0) continue;
+    const isMatched = Boolean(match) && Number.isFinite(externalUserId) && externalUserId > 0;
+    const dataCriadoIso = r.createdAt.toISOString();
+
+    allOrders.push({
+      orderId: r.id,
+      channel: "site",
+      customerName: match?.name ?? null,
+      document: null,
+      upzeroCustomerId: match ? match.id : null,
+      valor: r.amount,
+      valorPago: r.fulfilledAmount || 0,
+      dataCriado: dataCriadoIso,
+      attributed: false,
+      cohort: null,
+      touchpointAt: null,
+      touchpointSource: null,
+      touchpointMedium: null,
+      touchpointCampaign: null,
+    });
+
+    if (!isMatched) continue;
     registerOrder(
-      { upzeroCustomerId: match.id, externalUserId, name: match.name },
-      { orderId: r.id, channel: "site", valor: r.amount, valorPago: r.fulfilledAmount || 0, dataCriado: r.createdAt.toISOString() },
+      { upzeroCustomerId: match!.id, externalUserId, name: match!.name },
+      { orderId: r.id, channel: "site", valor: r.amount, valorPago: r.fulfilledAmount || 0, dataCriado: dataCriadoIso },
     );
   }
 
@@ -289,6 +372,24 @@ export async function computeErpPaidAttribution(params: {
     customerCnpjs,
   });
 
+  // Enriquece allOrders com o que só sabemos agora: quais foram
+  // influenciados (evidência de touchpoint) e a coorte do cliente.
+  const influencedByKey = new Map(influencedOrders.map((o) => [`${o.channel}:${o.orderId}`, o]));
+  const cohortByCustomerId = new Map(customerCohorts.map((c) => [c.upzeroCustomerId, c.cohort]));
+  for (const row of allOrders) {
+    const influenced = influencedByKey.get(`${row.channel}:${row.orderId}`);
+    if (influenced) {
+      row.attributed = true;
+      row.touchpointAt = influenced.touchpointAt;
+      row.touchpointSource = influenced.touchpointSource;
+      row.touchpointMedium = influenced.touchpointMedium;
+      row.touchpointCampaign = influenced.touchpointCampaign;
+    }
+    if (row.upzeroCustomerId) {
+      row.cohort = cohortByCustomerId.get(row.upzeroCustomerId) ?? null;
+    }
+  }
+
   return {
     totalErpRevenue,
     totalErpOrders: erpRows.length,
@@ -296,6 +397,7 @@ export async function computeErpPaidAttribution(params: {
     totalSiteOrders: siteOrderRows.length,
     distinctErpCustomers: erpCustomerIds.length,
     matchedUpzeroCustomers: ordersByCustomer.size,
+    allOrders,
     influencedOrders,
     influencedTotal,
     influencedCustomers: influencedCustomerIds.size,
@@ -304,6 +406,14 @@ export async function computeErpPaidAttribution(params: {
     cohortSummary,
     fetchErrors,
   };
+}
+
+function maskDocument(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 14) return `CNPJ **.***.***/****-${digits.slice(-2)}`;
+  if (digits.length === 11) return `CPF ***.***.***-${digits.slice(-2)}`;
+  return digits ? `***${digits.slice(-4)}` : null;
 }
 
 // ── Cohort novo/recorrente/reativado (PDF pág. 4) ──────────────────────────
@@ -386,13 +496,17 @@ async function classifyCohorts(params: {
   }
 
   const cohortByCustomer = new Map(customerCohorts.map((c) => [c.upzeroCustomerId, c.cohort]));
-  const summaryMap = new Map<CohortLabel, { clientes: Set<string>; pedidos: number; faturamentoGerado: number; faturamentoPago: number }>();
+  const summaryMap = new Map<
+    CohortLabel,
+    { clientes: Set<string>; pedidos: number; pedidosPagos: number; faturamentoGerado: number; faturamentoPago: number }
+  >();
   for (const o of influencedOrders) {
     const cohort = cohortByCustomer.get(o.upzeroCustomerId);
     if (!cohort) continue;
-    const entry = summaryMap.get(cohort) ?? { clientes: new Set<string>(), pedidos: 0, faturamentoGerado: 0, faturamentoPago: 0 };
+    const entry = summaryMap.get(cohort) ?? { clientes: new Set<string>(), pedidos: 0, pedidosPagos: 0, faturamentoGerado: 0, faturamentoPago: 0 };
     entry.clientes.add(o.upzeroCustomerId);
     entry.pedidos += 1;
+    if (o.valorPago > 0) entry.pedidosPagos += 1;
     entry.faturamentoGerado += o.valor;
     entry.faturamentoPago += o.valorPago;
     summaryMap.set(cohort, entry);
@@ -405,6 +519,7 @@ async function classifyCohorts(params: {
         cohort,
         clientes: entry.clientes.size,
         pedidos: entry.pedidos,
+        pedidosPagos: entry.pedidosPagos,
         faturamentoGerado: entry.faturamentoGerado,
         faturamentoPago: entry.faturamentoPago,
         ticketMedio: entry.pedidos > 0 ? entry.faturamentoGerado / entry.pedidos : 0,
