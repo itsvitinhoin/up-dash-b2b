@@ -211,11 +211,14 @@ export async function computeErpPaidAttribution(params: {
   // Achado 08/09/2026: cada cliente custa ~2s numa ida-e-volta na UpZero,
   // e é teto do LADO DELES -- paralelizar aqui (testado com concurrency 8
   // e 20, e com pool de verdade em vez de lote fixo) não mudou o tempo
-  // total. O que resolve de verdade: `getTouchpointsForCustomerCached`
-  // (paid-touchpoints.ts) só bate na UpZero se a janela pedida ainda não
-  // foi sincronizada -- reconsulta do mesmo período (ex: o Santiago
-  // reabrindo a tela) fica instantânea, lendo do Postgres.
-  const CONCURRENCY = 20;
+  // total, e 20 chamadas simultâneas causou 14 timeouts numa rodada real
+  // (provável throttling do lado da UpZero pra tanta requisição de uma vez).
+  // Volta pra 8, que nunca deu erro em nenhum teste. O que resolve a
+  // demora de verdade: `getTouchpointsForCustomerCached` (paid-touchpoints.ts)
+  // só bate na UpZero se a janela pedida ainda não foi sincronizada --
+  // reconsulta do mesmo período (ex: o Santiago reabrindo a tela) fica
+  // instantânea, lendo do Postgres.
+  const CONCURRENCY = 8;
   const entries = [...ordersByCustomer.entries()];
   type BatchResult = {
     upzeroCustomerId: string;
