@@ -17,7 +17,7 @@
 //      pedidos das duas fontes desse mesmo cliente.
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { db, customersTable, ordersTable } from "@workspace/db";
-import { and, eq, gte, inArray, lt, ne } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, lt, ne } from "drizzle-orm";
 import { hashDocument } from "./upzero/customers";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, type TouchpointCandidate } from "./paid-touchpoints";
 import { ERP_CANCELLED_STATUSES } from "./erpAnalytics";
@@ -170,6 +170,12 @@ export async function computeErpPaidAttribution(params: {
           FROM ${pedidosTable}
           WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${ERP_STATUS_FILTER}
           GROUP BY pedido_id, customer_id
+          -- Achado 08/09/2026: pedido totalmente devolvido fica com status
+          -- CONCLUIDO mas valor_total zerado (a devolução vira negativo no
+          -- valor_liquido, não no total) -- PDF teste 7 pede excluir pedido
+          -- zerado da receita; sem isso ele ainda contava como "pedido"
+          -- (inflava contagem e podia até virar a "1ª compra influenciada").
+          HAVING valor > 0
         )
         SELECT o.*, c.nome AS customer_name, c.documento AS document
         FROM orders o
@@ -206,7 +212,15 @@ export async function computeErpPaidAttribution(params: {
       createdAt: ordersTable.createdAt,
     })
     .from(ordersTable)
-    .where(and(eq(ordersTable.clientId, params.clientId), gte(ordersTable.createdAt, dateFromDate), lt(ordersTable.createdAt, dateToExclusiveIso), ne(ordersTable.status, "REJECTED")));
+    .where(
+      and(
+        eq(ordersTable.clientId, params.clientId),
+        gte(ordersTable.createdAt, dateFromDate),
+        lt(ordersTable.createdAt, dateToExclusiveIso),
+        ne(ordersTable.status, "REJECTED"),
+        gt(ordersTable.amount, 0), // mesmo motivo do HAVING valor > 0 do ERP acima
+      ),
+    );
   const totalSiteRevenue = siteOrderRows.reduce((sum, r) => sum + r.amount, 0);
 
   const siteCustomerIds = [...new Set(siteOrderRows.map((r) => r.customerId).filter((v): v is string => Boolean(v)))];
@@ -310,6 +324,22 @@ export async function computeErpPaidAttribution(params: {
   const influencedOrders: ErpAttributedOrder[] = [];
   const fetchErrors: ErpAttributionResult["fetchErrors"] = [];
   const influencedCustomerIds = new Set<string>();
+
+  // Achado 08/09/2026 (PDF teste 5): mesma venda pode em tese aparecer nas
+  // duas fontes (ERP e site) pro mesmo cliente. Não achamos evidência disso
+  // acontecendo pra MX Fashion hoje (checado manualmente), mas trava aqui
+  // como segurança: mesmo cliente + mesmo dia + mesmo valor = mesma venda,
+  // mantém só a primeira (ERP é registrado antes do site em registerOrder
+  // acima, então "primeira" == ERP quando as duas fontes colidem).
+  for (const entry of ordersByCustomer.values()) {
+    const seen = new Set<string>();
+    entry.orders = entry.orders.filter((order) => {
+      const key = `${order.dataCriado.slice(0, 10)}:${order.valor.toFixed(2)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
 
   // Achado 08/09/2026: cada cliente custa ~2s numa ida-e-volta na UpZero,
   // e é teto do LADO DELES -- paralelizar aqui (testado com concurrency 8
@@ -468,10 +498,11 @@ async function classifyCohorts(params: {
     const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
     const [rawHistoryRows] = await bigquery.query({
       query: `
-        SELECT customer_id, data_criado
+        SELECT customer_id, data_criado, ANY_VALUE(valor_total) AS valor
         FROM ${pedidosTable}
         WHERE customer_id IN UNNEST(@cnpjs) AND ${ERP_STATUS_FILTER}
         GROUP BY pedido_id, customer_id, data_criado
+        HAVING valor > 0
       `,
       params: { cnpjs: allCnpjs },
     });
@@ -490,7 +521,14 @@ async function classifyCohorts(params: {
   const siteHistoryRows = await db
     .select({ customerId: ordersTable.customerId, createdAt: ordersTable.createdAt })
     .from(ordersTable)
-    .where(and(eq(ordersTable.clientId, params.clientId), inArray(ordersTable.customerId, customerIds), ne(ordersTable.status, "REJECTED")));
+    .where(
+      and(
+        eq(ordersTable.clientId, params.clientId),
+        inArray(ordersTable.customerId, customerIds),
+        ne(ordersTable.status, "REJECTED"),
+        gt(ordersTable.amount, 0),
+      ),
+    );
   const siteHistoryByCustomer = new Map<string, Date[]>();
   for (const r of siteHistoryRows) {
     const dates = siteHistoryByCustomer.get(r.customerId) ?? [];
