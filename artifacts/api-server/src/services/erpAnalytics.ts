@@ -343,7 +343,13 @@ export type ErpDashboard = {
   };
 };
 
-const ERP_CANCELLED_STATUSES = ["CANCELADO", "EXCLUIDO"];
+// Exportado 08/09/2026 pra erp-attribution.ts reaproveitar -- pedido
+// "válido" é definido como "não cancelado/excluído" em todo o app, nunca
+// por um valor de status específico. O Manse (MX Fashion) só produz
+// "CONCLUIDO" pra tudo, então um filtro `= 'CONCLUIDO'` parecia certo lá,
+// mas quebra pro Miredata (Obzee/Vogabox), que usa FATURADO/FINALIZADO/
+// ESPERA/CANCELADO/EXCLUIDO -- só essa negação generaliza pros dois.
+export const ERP_CANCELLED_STATUSES = ["CANCELADO", "EXCLUIDO"];
 
 export async function fetchErpDashboard(
   clientId: string,

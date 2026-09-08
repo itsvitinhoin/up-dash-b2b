@@ -20,6 +20,14 @@ import { db, customersTable, ordersTable } from "@workspace/db";
 import { and, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import { hashDocument } from "./upzero/customers";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, type TouchpointCandidate } from "./paid-touchpoints";
+import { ERP_CANCELLED_STATUSES } from "./erpAnalytics";
+
+// Achado 08/09/2026: o Manse (MX Fashion) só produz status "CONCLUIDO"
+// pra tudo, então um filtro `= 'CONCLUIDO'` parecia certo -- mas quebra o
+// Miredata (Obzee/Vogabox), que usa FATURADO/FINALIZADO/ESPERA/CANCELADO/
+// EXCLUIDO. Reaproveita a mesma negação já usada em erpAnalytics.ts (só
+// exclui cancelado/excluído) pra generalizar pros dois sincronizadores.
+const ERP_STATUS_FILTER = `status NOT IN (${ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ")})`;
 
 type OrderChannel = "erp" | "site";
 
@@ -148,7 +156,7 @@ export async function computeErpPaidAttribution(params: {
       WITH orders AS (
         SELECT pedido_id, customer_id, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
         FROM ${pedidosTable}
-        WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND status = 'CONCLUIDO'
+        WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${ERP_STATUS_FILTER}
         GROUP BY pedido_id, customer_id
       )
       SELECT o.*, c.nome AS customer_name, c.documento AS document
@@ -447,7 +455,7 @@ async function classifyCohorts(params: {
       query: `
         SELECT customer_id, data_criado
         FROM ${pedidosTable}
-        WHERE customer_id IN UNNEST(@cnpjs) AND status = 'CONCLUIDO'
+        WHERE customer_id IN UNNEST(@cnpjs) AND ${ERP_STATUS_FILTER}
         GROUP BY pedido_id, customer_id, data_criado
       `,
       params: { cnpjs: allCnpjs },
