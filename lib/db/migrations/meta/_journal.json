@@ -260,6 +260,13 @@
       "when": 1788460433603,
       "tag": "0036_paid_touchpoints",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1788862800000,
+      "tag": "0037_paid_touchpoints_sync",
+      "breakpoints": true
     }
   ]
 }

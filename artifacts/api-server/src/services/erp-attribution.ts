@@ -19,7 +19,7 @@ import { bigquery, vestiTable } from "../lib/bigquery";
 import { db, customersTable, ordersTable } from "@workspace/db";
 import { and, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import { hashDocument } from "./upzero/customers";
-import { fetchPaidTouchpointsForUser, savePaidTouchpoints, latestTouchpointBefore, type TouchpointCandidate } from "./paid-touchpoints";
+import { getTouchpointsForCustomerCached, latestTouchpointBefore, type TouchpointCandidate } from "./paid-touchpoints";
 
 type OrderChannel = "erp" | "site";
 
@@ -208,14 +208,13 @@ export async function computeErpPaidAttribution(params: {
   const fetchErrors: ErpAttributionResult["fetchErrors"] = [];
   const influencedCustomerIds = new Set<string>();
 
-  // Achado 08/09/2026: essa busca por cliente rodava uma a uma -- pra MX
-  // Fashion (~70+ clientes casados) isso significava 70+ ida-e-voltas
-  // sequenciais na API da UpZero, deixando o relatório bem lento. É pool
-  // de verdade (worker pega o próximo item assim que termina o seu, não
-  // espera o lote inteiro), não lotes fixos como o runConcurrent do
-  // upzero-sync.ts. Medido: ~2s por cliente (fetch+save), sem erro nem
-  // sinal de rate limit em /analytics/facts em teste isolado -- concurrency
-  // 20 (mesmo valor já usado pro inventário no upzero-sync.ts) em vez de 8.
+  // Achado 08/09/2026: cada cliente custa ~2s numa ida-e-volta na UpZero,
+  // e é teto do LADO DELES -- paralelizar aqui (testado com concurrency 8
+  // e 20, e com pool de verdade em vez de lote fixo) não mudou o tempo
+  // total. O que resolve de verdade: `getTouchpointsForCustomerCached`
+  // (paid-touchpoints.ts) só bate na UpZero se a janela pedida ainda não
+  // foi sincronizada -- reconsulta do mesmo período (ex: o Santiago
+  // reabrindo a tela) fica instantânea, lendo do Postgres.
   const CONCURRENCY = 20;
   const entries = [...ordersByCustomer.entries()];
   type BatchResult = {
@@ -232,15 +231,14 @@ export async function computeErpPaidAttribution(params: {
       const i = nextIndex++;
       const [upzeroCustomerId, { customer, orders }] = entries[i];
       try {
-        const touchpoints = await fetchPaidTouchpointsForUser({
+        const touchpoints = await getTouchpointsForCustomerCached({
           apiKey: params.upZeroApiKey,
-          userId: customer.externalUserId,
+          clientId: params.clientId,
+          customerId: upzeroCustomerId,
+          externalUserId: customer.externalUserId,
           from: params.touchpointLookbackFrom,
           to: touchpointLookbackTo,
         });
-        if (touchpoints.length > 0) {
-          await savePaidTouchpoints({ clientId: params.clientId, customerId: upzeroCustomerId, externalUserId: customer.externalUserId, touchpoints }).catch(() => {});
-        }
         results[i] = { upzeroCustomerId, customer, orders, touchpoints, error: null };
       } catch (err) {
         results[i] = { upzeroCustomerId, customer, orders, touchpoints: null, error: err instanceof Error ? err.message : String(err) };

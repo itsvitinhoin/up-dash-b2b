@@ -16,3 +16,4 @@ export * from "./campaignAttributionStamps";
 export * from "./commercialAi";
 export * from "./dailyAnalytics";
 export * from "./paidTouchpoints";
+export * from "./paidTouchpointsSync";

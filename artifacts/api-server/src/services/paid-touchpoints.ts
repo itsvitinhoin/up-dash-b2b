@@ -5,7 +5,8 @@
 // comprovado, o endpoint agregado simplesmente não devolvia o evento
 // (nem em 500 registros escaneados), mas o endpoint bruto com filtro por
 // `user_id` sempre devolveu certo.
-import { db, paidTouchpointsTable } from "@workspace/db";
+import { db, paidTouchpointsTable, paidTouchpointsSyncTable } from "@workspace/db";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { isPaidCampaignSignal } from "./campaign-attribution";
 
 const UPZERO_BASE = "https://api.upzero.com.br";
@@ -202,7 +203,107 @@ export async function syncPaidTouchpointsForCustomer(params: {
     externalUserId: params.externalUserId,
     touchpoints,
   });
+  await markSynced({ clientId: params.clientId, customerId: params.customerId, from: new Date(params.from), to: new Date(params.to) });
   return { found: touchpoints.length, saved };
+}
+
+function rowToTouchpointCandidate(row: {
+  occurredAt: Date;
+  eventName: string | null;
+  source: string | null;
+  medium: string | null;
+  campaign: string | null;
+  fbc: string | null;
+  fbclid: string | null;
+  gclid: string | null;
+  evidenceKey: string;
+  rawEvent: unknown;
+}): TouchpointCandidate {
+  return {
+    occurredAt: row.occurredAt,
+    eventName: row.eventName ?? "",
+    source: row.source,
+    medium: row.medium,
+    campaign: row.campaign,
+    fbc: row.fbc,
+    fbclid: row.fbclid,
+    gclid: row.gclid,
+    evidenceKey: row.evidenceKey,
+    rawEvent: row.rawEvent as UpzeroFact,
+  };
+}
+
+// Registra a janela [from, to] como sincronizada com sucesso pra esse
+// cliente -- guarda a UNIÃO com o que já estava sincronizado (nunca
+// encolhe a cobertura conhecida).
+async function markSynced(params: { clientId: string; customerId: string; from: Date; to: Date }): Promise<void> {
+  await db
+    .insert(paidTouchpointsSyncTable)
+    .values({ clientId: params.clientId, customerId: params.customerId, syncedFrom: params.from, syncedTo: params.to })
+    .onConflictDoUpdate({
+      target: [paidTouchpointsSyncTable.clientId, paidTouchpointsSyncTable.customerId],
+      set: {
+        syncedFrom: sql`LEAST(${paidTouchpointsSyncTable.syncedFrom}, EXCLUDED.synced_from)`,
+        syncedTo: sql`GREATEST(${paidTouchpointsSyncTable.syncedTo}, EXCLUDED.synced_to)`,
+        syncedAt: new Date(),
+      },
+    });
+}
+
+// Achado 08/09/2026: relatório de atribuição pra ~70 clientes levava ~35s
+// porque cada cliente custa ~2s numa ida-e-roda na UpZero -- o teto é do
+// lado deles (paralelizar do nosso lado não mudou nada em teste real),
+// então a saída é não bater lá de novo quando já sabemos a resposta.
+// Se [from, to] já está inteiramente dentro do que foi sincronizado antes
+// (e essa sincronização é confiável -- janela fechada há mais de 24h, ou
+// sincronizada há menos de 6h), lê direto do Postgres. Senão, busca na
+// UpZero, salva, e amplia a janela sincronizada.
+export async function getTouchpointsForCustomerCached(params: {
+  apiKey: string;
+  clientId: string;
+  customerId: string;
+  externalUserId: number;
+  from: string; // ISO
+  to: string; // ISO
+}): Promise<TouchpointCandidate[]> {
+  const fromDate = new Date(params.from);
+  const toDate = new Date(params.to);
+
+  const [syncState] = await db
+    .select()
+    .from(paidTouchpointsSyncTable)
+    .where(and(eq(paidTouchpointsSyncTable.clientId, params.clientId), eq(paidTouchpointsSyncTable.customerId, params.customerId)));
+
+  const covered = Boolean(syncState) && syncState!.syncedFrom.getTime() <= fromDate.getTime() && syncState!.syncedTo.getTime() >= toDate.getTime();
+  const windowClosedLongAgo = toDate.getTime() < Date.now() - 24 * 60 * 60 * 1000;
+  const syncedRecently = Boolean(syncState) && Date.now() - syncState!.syncedAt.getTime() < 6 * 60 * 60 * 1000;
+
+  if (covered && (windowClosedLongAgo || syncedRecently)) {
+    const rows = await db
+      .select()
+      .from(paidTouchpointsTable)
+      .where(
+        and(
+          eq(paidTouchpointsTable.clientId, params.clientId),
+          eq(paidTouchpointsTable.customerId, params.customerId),
+          gte(paidTouchpointsTable.occurredAt, fromDate),
+          lte(paidTouchpointsTable.occurredAt, toDate),
+        ),
+      );
+    return rows.map(rowToTouchpointCandidate);
+  }
+
+  const touchpoints = await fetchPaidTouchpointsForUser({
+    apiKey: params.apiKey,
+    userId: params.externalUserId,
+    from: params.from,
+    to: params.to,
+  });
+  if (touchpoints.length > 0) {
+    await savePaidTouchpoints({ clientId: params.clientId, customerId: params.customerId, externalUserId: params.externalUserId, touchpoints });
+  }
+  await markSynced({ clientId: params.clientId, customerId: params.customerId, from: fromDate, to: toDate });
+  return touchpoints;
 }
 
 // Achado 03/09/2026: `latestCampaignEvidenceBefore` (campaign-attribution.ts)
