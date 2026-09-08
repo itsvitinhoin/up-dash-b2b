@@ -644,9 +644,11 @@ export default function PerformancePage() {
   const filteredStats = useMemo(() => {
     let attributedOrders = 0;
     let attributedCustomers = new Set<string>();
+    let valorTotal = 0;
     let receitaAtribuida = 0;
     let faturamentoPago = 0;
     for (const order of filteredOrders) {
+      valorTotal += order.valor;
       if (!order.attributed) continue;
       attributedOrders += 1;
       if (order.upzeroCustomerId) attributedCustomers.add(order.upzeroCustomerId);
@@ -657,6 +659,7 @@ export default function PerformancePage() {
       pedidosNoPeriodo: filteredOrders.length,
       pedidosAtribuidos: attributedOrders,
       clientesAtribuidos: attributedCustomers.size,
+      valorTotal,
       receitaAtribuida,
       faturamentoPago,
     };
@@ -1592,13 +1595,21 @@ export default function PerformancePage() {
                   </AlertDescription>
                 </Alert>
               )}
-              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-4">
+              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-5">
                 <div className="bg-card px-4 py-3">
                   <p className="text-[10px] font-mono uppercase text-muted-foreground">
                     Pedidos no período
                   </p>
                   <p className="mt-1 text-lg font-semibold">
                     {formatNumber(filteredStats.pedidosNoPeriodo)}
+                  </p>
+                </div>
+                <div className="bg-card px-4 py-3">
+                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
+                    Valor total
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {formatCurrency(filteredStats.valorTotal)}
                   </p>
                 </div>
                 <div className="bg-card px-4 py-3">
@@ -1614,7 +1625,14 @@ export default function PerformancePage() {
                     Receita atribuída
                   </p>
                   <p className="mt-1 text-lg font-semibold">
-                    {formatCurrency(filteredStats.receitaAtribuida)}
+                    {formatCurrency(filteredStats.receitaAtribuida)}{" "}
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {formatPercentage(
+                        filteredStats.valorTotal > 0
+                          ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100
+                          : 0,
+                      )}
+                    </span>
                   </p>
                 </div>
                 <div className="bg-card px-4 py-3">
