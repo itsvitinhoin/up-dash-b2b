@@ -210,14 +210,13 @@ export async function computeErpPaidAttribution(params: {
 
   // Achado 08/09/2026: essa busca por cliente rodava uma a uma -- pra MX
   // Fashion (~70+ clientes casados) isso significava 70+ ida-e-voltas
-  // sequenciais na API da UpZero, deixando o relatório bem lento. Testado:
-  // um cliente com paginação funda (evento demais em 90+ dias) sozinho
-  // segura o relatório todo se for lote fixo (Promise.all de 8 espera o
-  // MAIS LENTO do lote antes de liberar o próximo) -- por isso é pool de
-  // verdade (worker pega o próximo item assim que termina o seu, não
+  // sequenciais na API da UpZero, deixando o relatório bem lento. É pool
+  // de verdade (worker pega o próximo item assim que termina o seu, não
   // espera o lote inteiro), não lotes fixos como o runConcurrent do
-  // upzero-sync.ts. Sem limite documentado de rate limit pra /analytics/facts.
-  const CONCURRENCY = 8;
+  // upzero-sync.ts. Medido: ~2s por cliente (fetch+save), sem erro nem
+  // sinal de rate limit em /analytics/facts em teste isolado -- concurrency
+  // 20 (mesmo valor já usado pro inventário no upzero-sync.ts) em vez de 8.
+  const CONCURRENCY = 20;
   const entries = [...ordersByCustomer.entries()];
   type BatchResult = {
     upzeroCustomerId: string;
