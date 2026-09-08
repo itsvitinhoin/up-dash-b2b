@@ -246,6 +246,59 @@ type ErpProductsResponse = {
   limit: number;
 };
 
+type CohortLabel = "novo" | "recorrente" | "reativado";
+
+type CohortSummary = {
+  cohort: CohortLabel;
+  clientes: number;
+  pedidos: number;
+  faturamentoGerado: number;
+  faturamentoPago: number;
+  ticketMedio: number;
+};
+
+type CustomerCohort = {
+  upzeroCustomerId: string;
+  customerName: string | null;
+  cohort: CohortLabel;
+  firstInfluencedOrderAt: string;
+  lastOrderBeforeAt: string | null;
+  daysSinceLastOrder: number | null;
+};
+
+type ErpAttributedOrder = {
+  orderId: string;
+  channel: "erp" | "site";
+  customerName: string | null;
+  upzeroCustomerId: string;
+  valor: number;
+  valorPago: number;
+  dataCriado: string;
+  touchpointAt: string;
+  touchpointSource: string | null;
+};
+
+type ErpAttributionResponse = {
+  influencedOrders: ErpAttributedOrder[];
+  influencedTotal: number;
+  influencedCustomers: number;
+  cohortSummary: CohortSummary[];
+  customerCohorts: CustomerCohort[];
+  fetchErrors: Array<{ upzeroCustomerId: string; message: string }>;
+};
+
+const COHORT_LABEL: Record<CohortLabel, string> = {
+  novo: "Novo",
+  recorrente: "Recorrente",
+  reativado: "Reativado",
+};
+
+const COHORT_BADGE_CLASS: Record<CohortLabel, string> = {
+  novo: "border-blue-500/30 bg-blue-500/10 text-blue-400",
+  recorrente: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  reativado: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+};
+
 const trendConfig = {
   revenue: { label: "Faturamento ERP", color: "#3b82f6" },
   attributedRevenue: { label: "Receita atribuída", color: "#8b5cf6" },
@@ -561,6 +614,37 @@ export default function PerformancePage() {
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
+
+  const [cohortFilter, setCohortFilter] = useState<CohortLabel | "all">("all");
+
+  const attributionQuery = useQuery<ErpAttributionResponse>({
+    queryKey: ["performance-attribution", clientId, dateFrom, dateTo],
+    queryFn: () =>
+      customFetch<ErpAttributionResponse>(
+        buildUrl("/api/analytics/erp/attribution", commonParams),
+      ),
+    enabled,
+    staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+  const cohortByCustomer = useMemo(
+    () =>
+      new Map(
+        (attributionQuery.data?.customerCohorts ?? []).map((c) => [
+          c.upzeroCustomerId,
+          c.cohort,
+        ]),
+      ),
+    [attributionQuery.data],
+  );
+  const filteredInfluencedOrders = useMemo(() => {
+    const orders = attributionQuery.data?.influencedOrders ?? [];
+    if (cohortFilter === "all") return orders;
+    return orders.filter(
+      (order) => cohortByCustomer.get(order.upzeroCustomerId) === cohortFilter,
+    );
+  }, [attributionQuery.data, cohortByCustomer, cohortFilter]);
 
   const k = data?.kpis;
   const financialMetrics = [
@@ -1581,6 +1665,219 @@ export default function PerformancePage() {
             loading={isFetching}
             onPage={setOrdersPage}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-5">
+          <SectionHeader
+            title="Novos, recorrentes e reativados"
+            description="Coorte pela última compra concluída antes da 1ª compra que a mídia influenciou. Sem compra anterior = novo · até 90 dias = recorrente · acima = reativado."
+          />
+          {attributionQuery.isError ? (
+            <Alert variant="destructive" className="mt-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Não foi possível carregar a atribuição</AlertTitle>
+              <AlertDescription>
+                Tente novamente em alguns instantes.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <>
+              {attributionQuery.data && attributionQuery.data.fetchErrors.length > 0 && (
+                <Alert variant="destructive" className="mt-4">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>
+                    {attributionQuery.data.fetchErrors.length} cliente(s) não puderam ser verificados
+                  </AlertTitle>
+                  <AlertDescription>
+                    O restante do relatório está completo; esses clientes específicos falharam ao buscar touchpoints.
+                  </AlertDescription>
+                </Alert>
+              )}
+              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-3">
+                {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
+                  const summary = attributionQuery.data?.cohortSummary.find(
+                    (c) => c.cohort === cohort,
+                  );
+                  const totalClientes = attributionQuery.data?.influencedCustomers ?? 0;
+                  const pct =
+                    totalClientes > 0 && summary
+                      ? (summary.clientes / totalClientes) * 100
+                      : 0;
+                  return (
+                    <div key={cohort} className="bg-card px-4 py-3">
+                      <p className="text-[10px] font-mono uppercase text-muted-foreground">
+                        {COHORT_LABEL[cohort]}
+                      </p>
+                      <p className="mt-1 text-lg font-semibold">
+                        {formatNumber(summary?.clientes ?? 0)}{" "}
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {formatPercentage(pct)}
+                        </span>
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Coorte</TableHead>
+                      <TableHead className="text-right">Clientes</TableHead>
+                      <TableHead className="text-right">Pedidos</TableHead>
+                      <TableHead className="text-right">Fat. gerado</TableHead>
+                      <TableHead className="text-right">Fat. pago</TableHead>
+                      <TableHead className="text-right">Ticket médio</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
+                      const summary = attributionQuery.data?.cohortSummary.find(
+                        (c) => c.cohort === cohort,
+                      );
+                      return (
+                        <TableRow key={cohort}>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={COHORT_BADGE_CLASS[cohort]}
+                            >
+                              {COHORT_LABEL[cohort]}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(summary?.clientes ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(summary?.pedidos ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(summary?.faturamentoGerado ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(summary?.faturamentoPago ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(summary?.ticketMedio ?? 0)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    <TableRow className="bg-muted/30 font-semibold">
+                      <TableCell>Total</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumber(attributionQuery.data?.influencedCustomers ?? 0)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumber(attributionQuery.data?.influencedOrders.length ?? 0)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatCurrency(attributionQuery.data?.influencedTotal ?? 0)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatCurrency(
+                          (attributionQuery.data?.influencedOrders ?? []).reduce(
+                            (sum, o) => sum + o.valorPago,
+                            0,
+                          ),
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatCurrency(
+                          attributionQuery.data && attributionQuery.data.influencedOrders.length > 0
+                            ? attributionQuery.data.influencedTotal /
+                                attributionQuery.data.influencedOrders.length
+                            : 0,
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="mt-6 flex items-center justify-between gap-3">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Pedidos influenciados
+                </p>
+                <Select
+                  value={cohortFilter}
+                  onValueChange={(value) =>
+                    setCohortFilter(value as CohortLabel | "all")
+                  }
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="novo">Novos</SelectItem>
+                    <SelectItem value="recorrente">Recorrentes</SelectItem>
+                    <SelectItem value="reativado">Reativados</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="mt-3 overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Pedido</TableHead>
+                      <TableHead>Cliente</TableHead>
+                      <TableHead>Canal</TableHead>
+                      <TableHead>Coorte</TableHead>
+                      <TableHead>Touchpoint</TableHead>
+                      <TableHead className="text-right">Valor</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredInfluencedOrders.map((order) => {
+                      const cohort = cohortByCustomer.get(order.upzeroCustomerId);
+                      return (
+                        <TableRow key={`${order.channel}-${order.orderId}`}>
+                          <TableCell>
+                            <p className="font-medium">#{order.orderId}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(order.dataCriado).toLocaleDateString("pt-BR")}
+                            </p>
+                          </TableCell>
+                          <TableCell>
+                            {order.customerName ?? "Cliente não identificado"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {order.channel === "erp" ? "ERP" : "Site"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {cohort && (
+                              <Badge
+                                variant="outline"
+                                className={COHORT_BADGE_CLASS[cohort]}
+                              >
+                                {COHORT_LABEL[cohort]}
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <p className="text-sm">
+                              {new Date(order.touchpointAt).toLocaleString("pt-BR")}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {order.touchpointSource ?? "Sem origem"}
+                            </p>
+                          </TableCell>
+                          <TableCell className="text-right font-medium tabular-nums">
+                            {formatCurrency(order.valor)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>
