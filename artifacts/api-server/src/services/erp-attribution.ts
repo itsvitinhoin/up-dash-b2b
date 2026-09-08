@@ -208,43 +208,64 @@ export async function computeErpPaidAttribution(params: {
   const fetchErrors: ErpAttributionResult["fetchErrors"] = [];
   const influencedCustomerIds = new Set<string>();
 
-  for (const [upzeroCustomerId, { customer, orders }] of ordersByCustomer) {
-    let touchpoints: TouchpointCandidate[];
-    try {
-      touchpoints = await fetchPaidTouchpointsForUser({
-        apiKey: params.upZeroApiKey,
-        userId: customer.externalUserId,
-        from: params.touchpointLookbackFrom,
-        to: touchpointLookbackTo,
-      });
-    } catch (err) {
-      fetchErrors.push({ upzeroCustomerId, message: err instanceof Error ? err.message : String(err) });
-      continue; // Cliente com erro de busca não trava o relatório inteiro.
-    }
-    if (touchpoints.length > 0) {
-      await savePaidTouchpoints({ clientId: params.clientId, customerId: upzeroCustomerId, externalUserId: customer.externalUserId, touchpoints }).catch(() => {});
-    }
-    if (touchpoints.length === 0) continue;
+  // Achado 08/09/2026: essa busca por cliente rodava uma a uma -- pra MX
+  // Fashion (~70+ clientes casados) isso significava 70+ ida-e-voltas
+  // sequenciais na API da UpZero, deixando o relatório bem lento. Sem
+  // limite documentado de rate limit pra /analytics/facts (diferente do
+  // Manse), paraleliza em lotes de CONCURRENCY, igual ao runConcurrent já
+  // usado pra inventário no upzero-sync.ts.
+  const CONCURRENCY = 8;
+  const entries = [...ordersByCustomer.entries()];
+  for (let i = 0; i < entries.length; i += CONCURRENCY) {
+    const batch = entries.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async ([upzeroCustomerId, { customer, orders }]) => {
+        let touchpoints: TouchpointCandidate[];
+        try {
+          touchpoints = await fetchPaidTouchpointsForUser({
+            apiKey: params.upZeroApiKey,
+            userId: customer.externalUserId,
+            from: params.touchpointLookbackFrom,
+            to: touchpointLookbackTo,
+          });
+        } catch (err) {
+          return { upzeroCustomerId, customer, orders, touchpoints: null, error: err instanceof Error ? err.message : String(err) };
+        }
+        if (touchpoints.length > 0) {
+          await savePaidTouchpoints({ clientId: params.clientId, customerId: upzeroCustomerId, externalUserId: customer.externalUserId, touchpoints }).catch(() => {});
+        }
+        return { upzeroCustomerId, customer, orders, touchpoints, error: null as string | null };
+      }),
+    );
 
-    for (const order of orders) {
-      const evidence = latestTouchpointBefore(touchpoints, new Date(order.dataCriado));
-      if (!evidence) continue;
-      const full = touchpoints.find((t) => t.occurredAt.getTime() === evidence.occurredAt.getTime());
-      influencedOrders.push({
-        orderId: order.orderId,
-        channel: order.channel,
-        customerName: customer.name,
-        upzeroCustomerId,
-        externalUserId: customer.externalUserId,
-        valor: order.valor,
-        valorPago: order.valorPago,
-        dataCriado: order.dataCriado,
-        touchpointAt: evidence.occurredAt.toISOString(),
-        touchpointSource: full?.source ?? null,
-        touchpointMedium: full?.medium ?? null,
-        touchpointCampaign: full?.campaign ?? null,
-      });
-      influencedCustomerIds.add(upzeroCustomerId);
+    for (const result of batchResults) {
+      if (result.error) {
+        fetchErrors.push({ upzeroCustomerId: result.upzeroCustomerId, message: result.error });
+        continue; // Cliente com erro de busca não trava o relatório inteiro.
+      }
+      const touchpoints = result.touchpoints!;
+      if (touchpoints.length === 0) continue;
+
+      for (const order of result.orders) {
+        const evidence = latestTouchpointBefore(touchpoints, new Date(order.dataCriado));
+        if (!evidence) continue;
+        const full = touchpoints.find((t) => t.occurredAt.getTime() === evidence.occurredAt.getTime());
+        influencedOrders.push({
+          orderId: order.orderId,
+          channel: order.channel,
+          customerName: result.customer.name,
+          upzeroCustomerId: result.upzeroCustomerId,
+          externalUserId: result.customer.externalUserId,
+          valor: order.valor,
+          valorPago: order.valorPago,
+          dataCriado: order.dataCriado,
+          touchpointAt: evidence.occurredAt.toISOString(),
+          touchpointSource: full?.source ?? null,
+          touchpointMedium: full?.medium ?? null,
+          touchpointCampaign: full?.campaign ?? null,
+        });
+        influencedCustomerIds.add(result.upzeroCustomerId);
+      }
     }
   }
 
