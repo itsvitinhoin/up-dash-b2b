@@ -100,19 +100,27 @@ export async function computeErpPaidAttribution(params: {
   dataset: string;
   upZeroApiKey: string;
   dateFrom: string; // YYYY-MM-DD
-  dateTo: string; // YYYY-MM-DD, exclusivo
+  dateTo: string; // YYYY-MM-DD, INCLUSIVO -- mesma convenção do resto do app (erpAnalytics.ts usa BETWEEN)
   touchpointLookbackFrom: string; // ISO -- janela ampla pra achar clique bem antes do pedido
 }): Promise<ErpAttributionResult> {
+  // Achado 08/09/2026: a query original comparava `data_criado < @dateTo`
+  // com "2026-08-31" cru -- o BigQuery/Postgres tratam isso como meia-noite
+  // do dia 31, excluindo o dia inteiro. O resto do app manda dateTo como o
+  // ÚLTIMO dia incluído (convenção BETWEEN); aqui calculamos o corte
+  // exclusivo certo (dia seguinte) só internamente, sem mudar o contrato.
+  const dateToExclusiveIso = new Date(`${params.dateTo}T00:00:00.000Z`);
+  dateToExclusiveIso.setUTCDate(dateToExclusiveIso.getUTCDate() + 1);
+
   // ── Fonte 1: pedidos do ERP (BigQuery), identidade por CNPJ/CPF ──────
   const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
   const [rawErpRows] = await bigquery.query({
     query: `
       SELECT pedido_id, customer_id, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
       FROM ${pedidosTable}
-      WHERE data_criado >= @dateFrom AND data_criado < @dateTo AND status = 'CONCLUIDO'
+      WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND status = 'CONCLUIDO'
       GROUP BY pedido_id, customer_id
     `,
-    params: { dateFrom: params.dateFrom, dateTo: params.dateTo },
+    params: { dateFrom: params.dateFrom, dateToExclusive: dateToExclusiveIso.toISOString() },
   });
   const erpRows = rawErpRows as Array<Record<string, unknown>>;
   const totalErpRevenue = erpRows.reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
@@ -134,7 +142,6 @@ export async function computeErpPaidAttribution(params: {
 
   // ── Fonte 2: pedidos online (Postgres `orders`), já ligados ao cliente ──
   const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000Z`);
-  const dateToDate = new Date(`${params.dateTo}T00:00:00.000Z`);
   const siteOrderRows = await db
     .select({
       id: ordersTable.id,
@@ -144,7 +151,7 @@ export async function computeErpPaidAttribution(params: {
       createdAt: ordersTable.createdAt,
     })
     .from(ordersTable)
-    .where(and(eq(ordersTable.clientId, params.clientId), gte(ordersTable.createdAt, dateFromDate), lt(ordersTable.createdAt, dateToDate), ne(ordersTable.status, "REJECTED")));
+    .where(and(eq(ordersTable.clientId, params.clientId), gte(ordersTable.createdAt, dateFromDate), lt(ordersTable.createdAt, dateToExclusiveIso), ne(ordersTable.status, "REJECTED")));
   const totalSiteRevenue = siteOrderRows.reduce((sum, r) => sum + r.amount, 0);
 
   const siteCustomerIds = [...new Set(siteOrderRows.map((r) => r.customerId).filter((v): v is string => Boolean(v)))];

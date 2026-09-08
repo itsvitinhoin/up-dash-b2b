@@ -1674,7 +1674,9 @@ export default function PerformancePage() {
             title="Novos, recorrentes e reativados"
             description="Coorte pela última compra concluída antes da 1ª compra que a mídia influenciou. Sem compra anterior = novo · até 90 dias = recorrente · acima = reativado."
           />
-          {attributionQuery.isError ? (
+          {attributionQuery.isLoading ? (
+            <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
+          ) : attributionQuery.isError ? (
             <Alert variant="destructive" className="mt-4">
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>Não foi possível carregar a atribuição</AlertTitle>
