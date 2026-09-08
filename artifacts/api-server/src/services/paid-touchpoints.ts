@@ -60,7 +60,15 @@ async function fetchUpzeroFactsPage(params: {
   url.searchParams.set("user_id", String(params.userId));
   url.searchParams.set("limit", "500");
   if (params.cursor) url.searchParams.set("cursor", params.cursor);
-  const res = await fetch(url.toString(), { headers: { "X-API-Key": params.apiKey } });
+  // Achado 08/09/2026: sem timeout, um cliente com histórico grande de
+  // eventos (até 20 páginas, MAX_PAGES) podia sozinho dominar o tempo do
+  // relatório inteiro -- o resto dos clientes já rodava em paralelo, mas
+  // esse aqui não tinha teto. 10s por página é generoso pro caso normal e
+  // vira erro isolado (fetchErrors) em vez de travar o relatório.
+  const res = await fetch(url.toString(), {
+    headers: { "X-API-Key": params.apiKey },
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!res.ok) {
     throw new Error(`UpZero /analytics/facts falhou (${res.status}): ${await res.text()}`);
   }

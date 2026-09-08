@@ -210,62 +210,73 @@ export async function computeErpPaidAttribution(params: {
 
   // Achado 08/09/2026: essa busca por cliente rodava uma a uma -- pra MX
   // Fashion (~70+ clientes casados) isso significava 70+ ida-e-voltas
-  // sequenciais na API da UpZero, deixando o relatório bem lento. Sem
-  // limite documentado de rate limit pra /analytics/facts (diferente do
-  // Manse), paraleliza em lotes de CONCURRENCY, igual ao runConcurrent já
-  // usado pra inventário no upzero-sync.ts.
+  // sequenciais na API da UpZero, deixando o relatório bem lento. Testado:
+  // um cliente com paginação funda (evento demais em 90+ dias) sozinho
+  // segura o relatório todo se for lote fixo (Promise.all de 8 espera o
+  // MAIS LENTO do lote antes de liberar o próximo) -- por isso é pool de
+  // verdade (worker pega o próximo item assim que termina o seu, não
+  // espera o lote inteiro), não lotes fixos como o runConcurrent do
+  // upzero-sync.ts. Sem limite documentado de rate limit pra /analytics/facts.
   const CONCURRENCY = 8;
   const entries = [...ordersByCustomer.entries()];
-  for (let i = 0; i < entries.length; i += CONCURRENCY) {
-    const batch = entries.slice(i, i + CONCURRENCY);
-    const batchResults = await Promise.all(
-      batch.map(async ([upzeroCustomerId, { customer, orders }]) => {
-        let touchpoints: TouchpointCandidate[];
-        try {
-          touchpoints = await fetchPaidTouchpointsForUser({
-            apiKey: params.upZeroApiKey,
-            userId: customer.externalUserId,
-            from: params.touchpointLookbackFrom,
-            to: touchpointLookbackTo,
-          });
-        } catch (err) {
-          return { upzeroCustomerId, customer, orders, touchpoints: null, error: err instanceof Error ? err.message : String(err) };
-        }
+  type BatchResult = {
+    upzeroCustomerId: string;
+    customer: ResolvedCustomer;
+    orders: OrderCandidate[];
+    touchpoints: TouchpointCandidate[] | null;
+    error: string | null;
+  };
+  const results: BatchResult[] = new Array(entries.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < entries.length) {
+      const i = nextIndex++;
+      const [upzeroCustomerId, { customer, orders }] = entries[i];
+      try {
+        const touchpoints = await fetchPaidTouchpointsForUser({
+          apiKey: params.upZeroApiKey,
+          userId: customer.externalUserId,
+          from: params.touchpointLookbackFrom,
+          to: touchpointLookbackTo,
+        });
         if (touchpoints.length > 0) {
           await savePaidTouchpoints({ clientId: params.clientId, customerId: upzeroCustomerId, externalUserId: customer.externalUserId, touchpoints }).catch(() => {});
         }
-        return { upzeroCustomerId, customer, orders, touchpoints, error: null as string | null };
-      }),
-    );
-
-    for (const result of batchResults) {
-      if (result.error) {
-        fetchErrors.push({ upzeroCustomerId: result.upzeroCustomerId, message: result.error });
-        continue; // Cliente com erro de busca não trava o relatório inteiro.
+        results[i] = { upzeroCustomerId, customer, orders, touchpoints, error: null };
+      } catch (err) {
+        results[i] = { upzeroCustomerId, customer, orders, touchpoints: null, error: err instanceof Error ? err.message : String(err) };
       }
-      const touchpoints = result.touchpoints!;
-      if (touchpoints.length === 0) continue;
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, entries.length) }, () => worker()));
 
-      for (const order of result.orders) {
-        const evidence = latestTouchpointBefore(touchpoints, new Date(order.dataCriado));
-        if (!evidence) continue;
-        const full = touchpoints.find((t) => t.occurredAt.getTime() === evidence.occurredAt.getTime());
-        influencedOrders.push({
-          orderId: order.orderId,
-          channel: order.channel,
-          customerName: result.customer.name,
-          upzeroCustomerId: result.upzeroCustomerId,
-          externalUserId: result.customer.externalUserId,
-          valor: order.valor,
-          valorPago: order.valorPago,
-          dataCriado: order.dataCriado,
-          touchpointAt: evidence.occurredAt.toISOString(),
-          touchpointSource: full?.source ?? null,
-          touchpointMedium: full?.medium ?? null,
-          touchpointCampaign: full?.campaign ?? null,
-        });
-        influencedCustomerIds.add(result.upzeroCustomerId);
-      }
+  for (const result of results) {
+    if (result.error) {
+      fetchErrors.push({ upzeroCustomerId: result.upzeroCustomerId, message: result.error });
+      continue; // Cliente com erro de busca não trava o relatório inteiro.
+    }
+    const touchpoints = result.touchpoints!;
+    if (touchpoints.length === 0) continue;
+
+    for (const order of result.orders) {
+      const evidence = latestTouchpointBefore(touchpoints, new Date(order.dataCriado));
+      if (!evidence) continue;
+      const full = touchpoints.find((t) => t.occurredAt.getTime() === evidence.occurredAt.getTime());
+      influencedOrders.push({
+        orderId: order.orderId,
+        channel: order.channel,
+        customerName: result.customer.name,
+        upzeroCustomerId: result.upzeroCustomerId,
+        externalUserId: result.customer.externalUserId,
+        valor: order.valor,
+        valorPago: order.valorPago,
+        dataCriado: order.dataCriado,
+        touchpointAt: evidence.occurredAt.toISOString(),
+        touchpointSource: full?.source ?? null,
+        touchpointMedium: full?.medium ?? null,
+        touchpointCampaign: full?.campaign ?? null,
+      });
+      influencedCustomerIds.add(result.upzeroCustomerId);
     }
   }
 
