@@ -623,7 +623,7 @@ export default function PerformancePage() {
     refetchOnWindowFocus: false,
   });
 
-  const [cohortFilter, setCohortFilter] = useState<CohortLabel | "all">("all");
+  const [cohortFilter, setCohortFilter] = useState<CohortLabel | "all" | "attributed">("all");
 
   const attributionQuery = useQuery<ErpAttributionResponse>({
     queryKey: ["performance-attribution", clientId, dateFrom, dateTo],
@@ -639,6 +639,7 @@ export default function PerformancePage() {
   const filteredOrders = useMemo(() => {
     const orders = attributionQuery.data?.allOrders ?? [];
     if (cohortFilter === "all") return orders;
+    if (cohortFilter === "attributed") return orders.filter((order) => order.attributed);
     return orders.filter((order) => order.cohort === cohortFilter);
   }, [attributionQuery.data, cohortFilter]);
   const filteredStats = useMemo(() => {
@@ -1555,13 +1556,14 @@ export default function PerformancePage() {
               <div className="flex flex-wrap items-center gap-2">
                 <Select
                   value={cohortFilter}
-                  onValueChange={(value) => setCohortFilter(value as CohortLabel | "all")}
+                  onValueChange={(value) => setCohortFilter(value as CohortLabel | "all" | "attributed")}
                 >
                   <SelectTrigger className="w-[160px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="attributed">Atribuídos</SelectItem>
                     <SelectItem value="novo">Novos</SelectItem>
                     <SelectItem value="recorrente">Recorrentes</SelectItem>
                     <SelectItem value="reativado">Reativados</SelectItem>
