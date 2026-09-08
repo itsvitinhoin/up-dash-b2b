@@ -226,11 +226,16 @@ export async function computeErpPaidAttribution(params: {
     error: string | null;
   };
   const results: BatchResult[] = new Array(entries.length);
+  // DIAGNÓSTICO TEMPORÁRIO 08/09/2026 -- descobrir se o tempo total (~35s
+  // pra 74 clientes, igual com concurrency 8 ou 20) é 1 cliente lento
+  // dominando ou uma soma real de N clientes de ~2s cada. Remover depois.
+  const debugTimings: Array<{ upzeroCustomerId: string; ms: number; found: number }> = [];
   let nextIndex = 0;
   async function worker() {
     while (nextIndex < entries.length) {
       const i = nextIndex++;
       const [upzeroCustomerId, { customer, orders }] = entries[i];
+      const startedAt = Date.now();
       try {
         const touchpoints = await fetchPaidTouchpointsForUser({
           apiKey: params.upZeroApiKey,
@@ -241,8 +246,10 @@ export async function computeErpPaidAttribution(params: {
         if (touchpoints.length > 0) {
           await savePaidTouchpoints({ clientId: params.clientId, customerId: upzeroCustomerId, externalUserId: customer.externalUserId, touchpoints }).catch(() => {});
         }
+        debugTimings.push({ upzeroCustomerId, ms: Date.now() - startedAt, found: touchpoints.length });
         results[i] = { upzeroCustomerId, customer, orders, touchpoints, error: null };
       } catch (err) {
+        debugTimings.push({ upzeroCustomerId, ms: Date.now() - startedAt, found: -1 });
         results[i] = { upzeroCustomerId, customer, orders, touchpoints: null, error: err instanceof Error ? err.message : String(err) };
       }
     }
@@ -302,7 +309,8 @@ export async function computeErpPaidAttribution(params: {
     customerCohorts,
     cohortSummary,
     fetchErrors,
-  };
+    debugTimings: debugTimings.sort((a, b) => b.ms - a.ms).slice(0, 10),
+  } as ErpAttributionResult & { debugTimings: typeof debugTimings };
 }
 
 // ── Cohort novo/recorrente/reativado (PDF pág. 4) ──────────────────────────
