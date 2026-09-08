@@ -43,7 +43,14 @@ type ResolvedCustomer = {
   upzeroCustomerId: string;
   externalUserId: number;
   name: string | null;
+  createdAt: Date | null; // data de cadastro -- usado pra distinguir PAID_ORIGIN de PAID_ASSISTED
 };
+
+// PDF pág. 6, "Regra de atribuição recomendada": PAID_ORIGIN quando o
+// touchpoint pago aconteceu no cadastro ou antes dele (mídia trouxe o
+// cadastro); PAID_ASSISTED quando o cadastro já existia (era orgânico) e
+// o touchpoint veio depois, assistindo uma compra posterior.
+export type AttributionState = "PAID_ORIGIN" | "PAID_ASSISTED";
 
 export type ErpAttributedOrder = {
   orderId: string;
@@ -58,6 +65,7 @@ export type ErpAttributedOrder = {
   touchpointSource: string | null;
   touchpointMedium: string | null;
   touchpointCampaign: string | null;
+  attributionState: AttributionState;
 };
 
 // Achado 08/09/2026 (pedido do Marcelo): a tela precisa mostrar TODO
@@ -74,6 +82,7 @@ export type ErpOrderRow = {
   valorPago: number;
   dataCriado: string;
   attributed: boolean;
+  attributionState: AttributionState | null; // só quando attributed
   cohort: CohortLabel | null; // só quando attributed
   touchpointAt: string | null;
   touchpointSource: string | null;
@@ -154,7 +163,7 @@ export async function computeErpPaidAttribution(params: {
   let totalErpRevenue = 0;
   let erpCustomerIds: string[] = [];
   let cnpjToHash = new Map<string, string>();
-  let hashMatches: Array<{ id: string; externalId: string | null; documentHash: string | null; name: string | null }> = [];
+  let hashMatches: Array<{ id: string; externalId: string | null; documentHash: string | null; name: string | null; createdAt: Date }> = [];
   let hashToCustomer = new Map<string | null, (typeof hashMatches)[number]>();
 
   if (params.dataset) {
@@ -194,7 +203,7 @@ export async function computeErpPaidAttribution(params: {
     const hashes = [...new Set(cnpjToHash.values())];
     hashMatches = hashes.length
       ? await db
-          .select({ id: customersTable.id, externalId: customersTable.externalId, documentHash: customersTable.documentHash, name: customersTable.name })
+          .select({ id: customersTable.id, externalId: customersTable.externalId, documentHash: customersTable.documentHash, name: customersTable.name, createdAt: customersTable.createdAt })
           .from(customersTable)
           .where(and(eq(customersTable.clientId, params.clientId), inArray(customersTable.documentHash, hashes)))
       : [];
@@ -226,7 +235,7 @@ export async function computeErpPaidAttribution(params: {
   const siteCustomerIds = [...new Set(siteOrderRows.map((r) => r.customerId).filter((v): v is string => Boolean(v)))];
   const siteCustomers = siteCustomerIds.length
     ? await db
-        .select({ id: customersTable.id, externalId: customersTable.externalId, name: customersTable.name })
+        .select({ id: customersTable.id, externalId: customersTable.externalId, name: customersTable.name, createdAt: customersTable.createdAt })
         .from(customersTable)
         .where(and(eq(customersTable.clientId, params.clientId), inArray(customersTable.id, siteCustomerIds)))
     : [];
@@ -271,6 +280,7 @@ export async function computeErpPaidAttribution(params: {
       valorPago: valor,
       dataCriado,
       attributed: false,
+      attributionState: null,
       cohort: null,
       touchpointAt: null,
       touchpointSource: null,
@@ -280,7 +290,7 @@ export async function computeErpPaidAttribution(params: {
 
     if (!isMatched) continue;
     registerOrder(
-      { upzeroCustomerId: match!.id, externalUserId, name: match!.name },
+      { upzeroCustomerId: match!.id, externalUserId, name: match!.name, createdAt: match!.createdAt },
       { orderId, channel: "erp", valor, valorPago: valor, dataCriado },
     );
     const cnpjSet = customerCnpjs.get(match!.id) ?? new Set<string>();
@@ -303,6 +313,7 @@ export async function computeErpPaidAttribution(params: {
       valorPago: r.fulfilledAmount || 0,
       dataCriado: dataCriadoIso,
       attributed: false,
+      attributionState: null,
       cohort: null,
       touchpointAt: null,
       touchpointSource: null,
@@ -312,7 +323,7 @@ export async function computeErpPaidAttribution(params: {
 
     if (!isMatched) continue;
     registerOrder(
-      { upzeroCustomerId: match!.id, externalUserId, name: match!.name },
+      { upzeroCustomerId: match!.id, externalUserId, name: match!.name, createdAt: match!.createdAt },
       { orderId: r.id, channel: "site", valor: r.amount, valorPago: r.fulfilledAmount || 0, dataCriado: dataCriadoIso },
     );
   }
@@ -395,6 +406,13 @@ export async function computeErpPaidAttribution(params: {
       const evidence = latestTouchpointBefore(touchpoints, new Date(order.dataCriado));
       if (!evidence) continue;
       const full = touchpoints.find((t) => t.occurredAt.getTime() === evidence.occurredAt.getTime());
+      // PDF pág. 6: touchpoint no cadastro ou antes dele = a mídia trouxe
+      // esse cadastro (PAID_ORIGIN); touchpoint depois de um cadastro que
+      // já existia = mídia assistiu uma compra de base orgânica (PAID_ASSISTED).
+      const attributionState: AttributionState =
+        result.customer.createdAt && evidence.occurredAt.getTime() <= result.customer.createdAt.getTime()
+          ? "PAID_ORIGIN"
+          : "PAID_ASSISTED";
       influencedOrders.push({
         orderId: order.orderId,
         channel: order.channel,
@@ -408,6 +426,7 @@ export async function computeErpPaidAttribution(params: {
         touchpointSource: full?.source ?? null,
         touchpointMedium: full?.medium ?? null,
         touchpointCampaign: full?.campaign ?? null,
+        attributionState,
       });
       influencedCustomerIds.add(result.upzeroCustomerId);
     }
@@ -430,6 +449,7 @@ export async function computeErpPaidAttribution(params: {
     const influenced = influencedByKey.get(`${row.channel}:${row.orderId}`);
     if (influenced) {
       row.attributed = true;
+      row.attributionState = influenced.attributionState;
       row.touchpointAt = influenced.touchpointAt;
       row.touchpointSource = influenced.touchpointSource;
       row.touchpointMedium = influenced.touchpointMedium;

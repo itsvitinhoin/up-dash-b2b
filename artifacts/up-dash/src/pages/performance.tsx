@@ -271,6 +271,8 @@ type CustomerCohort = {
 // Todo pedido do período (não só os influenciados) -- `attributed`/`cohort`
 // vêm null/false quando o pedido não foi conciliado com nenhuma evidência
 // de mídia paga antes dele.
+type PaidAttributionState = "PAID_ORIGIN" | "PAID_ASSISTED";
+
 type ErpOrderRow = {
   orderId: string;
   channel: "erp" | "site";
@@ -281,9 +283,15 @@ type ErpOrderRow = {
   valorPago: number;
   dataCriado: string;
   attributed: boolean;
+  attributionState: PaidAttributionState | null;
   cohort: CohortLabel | null;
   touchpointAt: string | null;
   touchpointSource: string | null;
+};
+
+const ATTRIBUTION_STATE_LABEL: Record<PaidAttributionState, string> = {
+  PAID_ORIGIN: "Origem paga",
+  PAID_ASSISTED: "Assistido",
 };
 
 type ErpAttributionResponse = {
@@ -902,6 +910,7 @@ export default function PerformancePage() {
         { header: "Canal", accessor: (row) => (row.channel === "erp" ? "ERP" : "Site") },
         { header: "Coorte", accessor: (row) => (row.cohort ? COHORT_LABEL[row.cohort] : "") },
         { header: "Atribuição", accessor: (row) => (row.attributed ? "Atribuído" : "Sem origem") },
+        { header: "Tipo", accessor: (row) => (row.attributionState ? ATTRIBUTION_STATE_LABEL[row.attributionState] : "") },
         { header: "Touchpoint", accessor: (row) => row.touchpointAt },
         { header: "Origem do clique", accessor: (row) => row.touchpointSource },
         { header: "Valor", accessor: (row) => row.valor },
@@ -1696,6 +1705,11 @@ export default function PerformancePage() {
                         </TableCell>
                         <TableCell>
                           <AttributionBadge state={order.attributed ? "ATRIBUIDO" : "SEM_ORIGEM"} />
+                          {order.attributionState && (
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {ATTRIBUTION_STATE_LABEL[order.attributionState]}
+                            </p>
+                          )}
                         </TableCell>
                         <TableCell className="text-right font-medium tabular-nums">
                           {formatCurrency(order.valor)}
