@@ -9856,14 +9856,15 @@ router.get("/analytics/erp/attribution", requireAdmin, async (req, res): Promise
     .select({ bigqueryDataset: clientsTable.bigqueryDataset, upZeroApiKey: clientsTable.upZeroApiKey })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
-  if (!client?.bigqueryDataset) {
-    res.status(400).json({ error: true, code: "NO_ERP_DATASET", message: "Client has no ERP dataset configured", status: 400 });
-    return;
-  }
-  if (!client.upZeroApiKey) {
+  if (!client?.upZeroApiKey) {
     res.status(400).json({ error: true, code: "NO_API_KEY", message: "Client has no UpZero API key", status: 400 });
     return;
   }
+  // Achado 08/09/2026: bigqueryDataset era exigido sempre, mas só serve
+  // pra achar a metade ERP do relatório -- o lado do site (Postgres
+  // `orders`) não depende disso. Isso travava todo cliente UpZero sem ERP
+  // (6 de 8 hoje) mesmo tendo tudo que precisa pra ver o lado do site.
+  // Sem dataset, roda só a atribuição de pedidos do site.
 
   const touchpointLookbackFrom = new Date(new Date(dateFrom).getTime() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 

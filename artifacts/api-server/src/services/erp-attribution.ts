@@ -131,7 +131,11 @@ export type ErpAttributionResult = {
 
 export async function computeErpPaidAttribution(params: {
   clientId: string;
-  dataset: string;
+  // Achado 08/09/2026: dataset agora é opcional -- 6 dos 8 clientes UpZero
+  // com chave configurada não têm ERP nenhum, e a metade "site" do
+  // relatório (pedido nativo, Postgres) não depende de BigQuery. Sem
+  // dataset, pula a Fonte 1 inteira e roda só com pedido do site.
+  dataset: string | null;
   upZeroApiKey: string;
   dateFrom: string; // YYYY-MM-DD
   dateTo: string; // YYYY-MM-DD, INCLUSIVO -- mesma convenção do resto do app (erpAnalytics.ts usa BETWEEN)
@@ -146,42 +150,50 @@ export async function computeErpPaidAttribution(params: {
   dateToExclusiveIso.setUTCDate(dateToExclusiveIso.getUTCDate() + 1);
 
   // ── Fonte 1: pedidos do ERP (BigQuery), identidade por CNPJ/CPF ──────
-  const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
-  // JOIN com clientes_erp pra nome/documento -- mesmo padrão de
-  // fetchErpOrdersPage (erpAnalytics.ts), pra mostrar cliente/documento
-  // mesmo quando não deu match com a UpZero (ex: "Sem origem" na tela).
-  const clientesTable = vestiTable(params.dataset, "clientes_erp");
-  const [rawErpRows] = await bigquery.query({
-    query: `
-      WITH orders AS (
-        SELECT pedido_id, customer_id, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
-        FROM ${pedidosTable}
-        WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${ERP_STATUS_FILTER}
-        GROUP BY pedido_id, customer_id
-      )
-      SELECT o.*, c.nome AS customer_name, c.documento AS document
-      FROM orders o
-      LEFT JOIN ${clientesTable} c ON c.documento = o.customer_id
-    `,
-    params: { dateFrom: params.dateFrom, dateToExclusive: dateToExclusiveIso.toISOString() },
-  });
-  const erpRows = rawErpRows as Array<Record<string, unknown>>;
-  const totalErpRevenue = erpRows.reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
-  const erpCustomerIds = [...new Set(erpRows.map((r) => String(r.customer_id ?? "")).filter(Boolean))];
+  let erpRows: Array<Record<string, unknown>> = [];
+  let totalErpRevenue = 0;
+  let erpCustomerIds: string[] = [];
+  let cnpjToHash = new Map<string, string>();
+  let hashMatches: Array<{ id: string; externalId: string | null; documentHash: string | null; name: string | null }> = [];
+  let hashToCustomer = new Map<string | null, (typeof hashMatches)[number]>();
 
-  const cnpjToHash = new Map<string, string>();
-  for (const cnpj of erpCustomerIds) {
-    const hash = hashDocument(cnpj);
-    if (hash) cnpjToHash.set(cnpj, hash);
+  if (params.dataset) {
+    const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
+    // JOIN com clientes_erp pra nome/documento -- mesmo padrão de
+    // fetchErpOrdersPage (erpAnalytics.ts), pra mostrar cliente/documento
+    // mesmo quando não deu match com a UpZero (ex: "Sem origem" na tela).
+    const clientesTable = vestiTable(params.dataset, "clientes_erp");
+    const [rawErpRows] = await bigquery.query({
+      query: `
+        WITH orders AS (
+          SELECT pedido_id, customer_id, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
+          FROM ${pedidosTable}
+          WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${ERP_STATUS_FILTER}
+          GROUP BY pedido_id, customer_id
+        )
+        SELECT o.*, c.nome AS customer_name, c.documento AS document
+        FROM orders o
+        LEFT JOIN ${clientesTable} c ON c.documento = o.customer_id
+      `,
+      params: { dateFrom: params.dateFrom, dateToExclusive: dateToExclusiveIso.toISOString() },
+    });
+    erpRows = rawErpRows as Array<Record<string, unknown>>;
+    totalErpRevenue = erpRows.reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
+    erpCustomerIds = [...new Set(erpRows.map((r) => String(r.customer_id ?? "")).filter(Boolean))];
+
+    for (const cnpj of erpCustomerIds) {
+      const hash = hashDocument(cnpj);
+      if (hash) cnpjToHash.set(cnpj, hash);
+    }
+    const hashes = [...new Set(cnpjToHash.values())];
+    hashMatches = hashes.length
+      ? await db
+          .select({ id: customersTable.id, externalId: customersTable.externalId, documentHash: customersTable.documentHash, name: customersTable.name })
+          .from(customersTable)
+          .where(and(eq(customersTable.clientId, params.clientId), inArray(customersTable.documentHash, hashes)))
+      : [];
+    hashToCustomer = new Map(hashMatches.map((m) => [m.documentHash, m]));
   }
-  const hashes = [...new Set(cnpjToHash.values())];
-  const hashMatches = hashes.length
-    ? await db
-        .select({ id: customersTable.id, externalId: customersTable.externalId, documentHash: customersTable.documentHash, name: customersTable.name })
-        .from(customersTable)
-        .where(and(eq(customersTable.clientId, params.clientId), inArray(customersTable.documentHash, hashes)))
-    : [];
-  const hashToCustomer = new Map(hashMatches.map((m) => [m.documentHash, m]));
 
   // ── Fonte 2: pedidos online (Postgres `orders`), já ligados ao cliente ──
   const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000Z`);
@@ -429,7 +441,10 @@ function maskDocument(value: string | null | undefined): string | null {
 // da primeira compra influenciada dele (sem limite de data pra trás -- pode
 // ser de meses atrás). Sem nenhuma: novo. Até 90 dias: recorrente. Acima: reativado.
 async function classifyCohorts(params: {
-  dataset: string;
+  // string | null: só é usado quando allCnpjs.length > 0 abaixo, o que só
+  // acontece se a Fonte 1 (ERP) rodou lá em cima -- ou seja, nunca null
+  // na prática quando de fato precisa dele.
+  dataset: string | null;
   clientId: string;
   influencedOrders: ErpAttributedOrder[];
   customerCnpjs: Map<string, Set<string>>;
@@ -449,7 +464,7 @@ async function classifyCohorts(params: {
   // Histórico ERP (qualquer data, status concluído) só dos clientes influenciados.
   const allCnpjs = [...new Set(customerIds.flatMap((id) => [...(customerCnpjs.get(id) ?? [])]))];
   const erpHistoryByCustomer = new Map<string, Date[]>();
-  if (allCnpjs.length > 0) {
+  if (allCnpjs.length > 0 && params.dataset) {
     const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
     const [rawHistoryRows] = await bigquery.query({
       query: `
