@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/lib/auth";
 import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -760,7 +761,7 @@ function RegistrationsPage({ clientId }: { clientId?: string }) {
             {!registrationsQuery.isLoading && rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                  {clientId ? "Nenhum cadastro real encontrado para esta marca." : "Abra uma marca para analisar cadastros reais."}
+                  {clientId ? "Nenhum cadastro real encontrado para esta marca." : "Selecione uma marca no topo da página ou abra uma marca na Visão Geral do Orquestrador para analisar cadastros reais."}
                 </TableCell>
               </TableRow>
             )}
@@ -908,7 +909,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
     return (
       <Card>
         <CardContent className="p-6 text-sm text-muted-foreground">
-          Abra uma marca no Orquestrador para configurar automações reais por evento.
+          Selecione uma marca no topo da página ou abra uma marca na Visão Geral do Orquestrador para configurar automações reais por evento.
         </CardContent>
       </Card>
     );
@@ -1768,6 +1769,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
 
 export default function OrchestratorPage() {
   const [location] = useLocation();
+  const { selectedClientId } = useAuth();
   const [, clientSectionMatch] = useRoute<{ clientId: string; section: string }>("/orquestrador/clientes/:clientId/:section");
   const [, clientSummaryMatch] = useRoute<{ clientId: string }>("/orquestrador/clientes/:clientId");
   const clientMatch = clientSectionMatch
@@ -1776,6 +1778,12 @@ export default function OrchestratorPage() {
       ? { clientId: clientSummaryMatch.clientId, section: "resumo" }
       : null;
   const current = activeSection(location);
+  // Fora de /orquestrador/clientes/:clientId, a URL não carrega marca nenhuma.
+  // Cadastros e Automações precisam de uma marca específica pra mostrar dados reais,
+  // então aproveitamos o seletor de cliente do topo (o mesmo que Dashboard/ERP/Performance
+  // usam) em vez de deixar a tela travada no aviso genérico quando já existe uma marca
+  // selecionada ali.
+  const fallbackClientId = selectedClientId ?? undefined;
 
   return (
     <div className="space-y-5">
@@ -1788,8 +1796,8 @@ export default function OrchestratorPage() {
         <>
           {current === "overview" && <OverviewPage />}
           {current === "crm" && <CrmPage />}
-          {current === "cadastros" && <RegistrationsPage />}
-          {current === "automacoes" && <AutomationsPage />}
+          {current === "cadastros" && <RegistrationsPage clientId={fallbackClientId} />}
+          {current === "automacoes" && <AutomationsPage clientId={fallbackClientId} />}
           {current === "configuracoes" && <SettingsPage />}
           {current === "simulador" && <SimulatorPage />}
           {current === "logs" && <LogsPage />}
