@@ -642,8 +642,14 @@ export default function PerformancePage() {
     enabled,
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: false,
-    retry: 1,
+    // Achado 09/09/2026: cliente Vesti nativo nunca tem chave da UpZero,
+    // então NO_API_KEY é permanente, não vale re-tentar (só gastaria
+    // request à toa contra um erro que nunca muda).
+    retry: (failureCount, err) =>
+      (err as { data?: { code?: string } })?.data?.code !== "NO_API_KEY" && failureCount < 1,
   });
+  const attributionErrorCode = (attributionQuery.error as { data?: { code?: string } } | undefined)?.data?.code;
+  const isVestiWithoutUpZero = attributionErrorCode === "NO_API_KEY";
   const filteredOrders = useMemo(() => {
     const orders = attributionQuery.data?.allOrders ?? [];
     if (cohortFilter === "all") return orders;
@@ -1587,6 +1593,14 @@ export default function PerformancePage() {
           />
           {attributionQuery.isLoading ? (
             <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
+          ) : isVestiWithoutUpZero ? (
+            <Alert className="mt-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Não disponível para este cliente</AlertTitle>
+              <AlertDescription>
+                Essa seção usa dados de clique da UpZero, que este cliente (Vesti nativo) não tem configurado.
+              </AlertDescription>
+            </Alert>
           ) : attributionQuery.isError ? (
             <Alert variant="destructive" className="mt-4">
               <AlertCircle className="h-4 w-4" />
@@ -1738,6 +1752,14 @@ export default function PerformancePage() {
           />
           {attributionQuery.isLoading ? (
             <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
+          ) : isVestiWithoutUpZero ? (
+            <Alert className="mt-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Não disponível para este cliente</AlertTitle>
+              <AlertDescription>
+                Essa seção usa dados de clique da UpZero, que este cliente (Vesti nativo) não tem configurado.
+              </AlertDescription>
+            </Alert>
           ) : attributionQuery.isError ? (
             <Alert variant="destructive" className="mt-4">
               <AlertCircle className="h-4 w-4" />
