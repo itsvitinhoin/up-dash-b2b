@@ -1022,6 +1022,19 @@ async function ensureUpzeroIntegration(clientId: string, apiKey?: string | null)
 }
 
 async function ensureAutomationRules(clientId: string, operationId?: string) {
+  // Achado 09/09/2026: essa função é chamada em toda carga da tela de
+  // automações (e ela mesma é chamada 2x por request, de ensureCommercialSetup
+  // direto na rota E de novo dentro de buildAutomationRules) -- pra cliente
+  // já configurado (o caso comum), o loop abaixo fazia 1 SELECT sequencial
+  // por regra padrão só pra confirmar "já existe, pula", travando a tela
+  // de Automações por mais de 2 minutos (relatado pelo Lucas, Bela Noite).
+  // Um COUNT só resolve o caso comum sem tocar no loop item a item.
+  const [rowCount] = await db
+    .select({ count: sql<number>`COUNT(*)::int` })
+    .from(commercialAutomationRulesTable)
+    .where(eq(commercialAutomationRulesTable.clientId, clientId));
+  if ((rowCount?.count ?? 0) >= AUTOMATION_RULES.length) return;
+
   const resolvedOperationId = operationId ?? await ensureCommercialOperation(clientId);
   for (const rule of AUTOMATION_RULES) {
     const [existing] = await db
@@ -1070,6 +1083,14 @@ async function nextAutomationRuleSequence(clientId: string, eventType: string) {
 }
 
 async function ensureAgentConfigs(clientId: string, operationId: string) {
+  // Mesmo achado de ensureAutomationRules acima -- COUNT único evita 1
+  // SELECT por agente padrão pra cliente já configurado.
+  const [rowCount] = await db
+    .select({ count: sql<number>`COUNT(*)::int` })
+    .from(aiAgentConfigsTable)
+    .where(eq(aiAgentConfigsTable.clientId, clientId));
+  if ((rowCount?.count ?? 0) >= DEFAULT_AGENT_CONFIGS.length) return;
+
   for (const agent of DEFAULT_AGENT_CONFIGS) {
     const [existing] = await db
       .select({ id: aiAgentConfigsTable.id })
