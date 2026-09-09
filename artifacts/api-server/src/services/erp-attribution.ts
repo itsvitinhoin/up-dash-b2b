@@ -186,7 +186,8 @@ export async function computeErpPaidAttribution(params: {
           -- (inflava contagem e podia até virar a "1ª compra influenciada").
           HAVING valor > 0
         )
-        SELECT o.*, c.nome AS customer_name, c.documento AS document
+        SELECT o.*, c.nome AS customer_name, c.documento AS document,
+          c.email AS erp_email, c.ddd AS erp_ddd, c.celular AS erp_celular, c.telefone AS erp_telefone
         FROM orders o
         LEFT JOIN ${clientesTable} c ON c.documento = o.customer_id
       `,
@@ -208,6 +209,57 @@ export async function computeErpPaidAttribution(params: {
           .where(and(eq(customersTable.clientId, params.clientId), inArray(customersTable.documentHash, hashes)))
       : [];
     hashToCustomer = new Map(hashMatches.map((m) => [m.documentHash, m]));
+
+    // Achado 09/09/2026: só CNPJ/CPF deixava MX Fashion com 198/268
+    // clientes do ERP sem match, e o Obzee com 165/166 -- e-mail e
+    // telefone (aqui em texto puro no Postgres, sem hash, diferente do
+    // documento) já resolvem boa parte disso como reforço, sem precisar
+    // de nova tabela. Só entra em jogo pra quem o CNPJ não resolveu.
+    const cnpjMatchedSet = new Set(
+      erpCustomerIds.filter((cnpj) => {
+        const hash = cnpjToHash.get(cnpj);
+        return Boolean(hash && hashToCustomer.get(hash));
+      }),
+    );
+    const unmatchedCnpjs = erpCustomerIds.filter((cnpj) => !cnpjMatchedSet.has(cnpj));
+    if (unmatchedCnpjs.length > 0) {
+      const allClientCustomers = await db
+        .select({
+          id: customersTable.id,
+          externalId: customersTable.externalId,
+          documentHash: customersTable.documentHash,
+          name: customersTable.name,
+          createdAt: customersTable.createdAt,
+          email: customersTable.email,
+          phone: customersTable.phone,
+        })
+        .from(customersTable)
+        .where(eq(customersTable.clientId, params.clientId));
+      const byEmail = new Map<string, (typeof allClientCustomers)[number]>();
+      const byPhone = new Map<string, (typeof allClientCustomers)[number]>();
+      for (const c of allClientCustomers) {
+        const email = normalizeEmail(c.email);
+        if (email && !byEmail.has(email)) byEmail.set(email, c);
+        const phone = normalizePhoneLast10(null, c.phone);
+        if (phone && !byPhone.has(phone)) byPhone.set(phone, c);
+      }
+
+      const unmatchedSet = new Set(unmatchedCnpjs);
+      for (const r of erpRows) {
+        const cnpj = String(r.customer_id ?? "");
+        if (!unmatchedSet.has(cnpj)) continue;
+        const email = normalizeEmail(r.erp_email as string | null);
+        const phone = normalizePhoneLast10(r.erp_ddd as string | null, (r.erp_celular as string | null) ?? (r.erp_telefone as string | null));
+        const match = (email && byEmail.get(email)) || (phone && byPhone.get(phone)) || null;
+        if (!match) continue;
+        // Chave sintética só pra reaproveitar hashToCustomer sem duplicar
+        // toda a lógica de resolução que já existe abaixo dela.
+        const syntheticKey = `email-or-phone:${match.id}`;
+        cnpjToHash.set(cnpj, syntheticKey);
+        if (!hashToCustomer.has(syntheticKey)) hashToCustomer.set(syntheticKey, match);
+        unmatchedSet.delete(cnpj);
+      }
+    }
   }
 
   // ── Fonte 2: pedidos online (Postgres `orders`), já ligados ao cliente ──
@@ -460,6 +512,14 @@ export async function computeErpPaidAttribution(params: {
     }
   }
 
+  // Conta quem de fato resolveu pra algum cliente da UpZero -- por CNPJ
+  // (hashMatches) ou pelo reforço de e-mail/telefone (chave sintética
+  // "email-or-phone:" em hashToCustomer), não só o hash direto.
+  const matchedErpCustomerCount = erpCustomerIds.filter((cnpj) => {
+    const hash = cnpjToHash.get(cnpj);
+    return Boolean(hash && hashToCustomer.get(hash));
+  }).length;
+
   return {
     totalErpRevenue,
     totalErpOrders: erpRows.length,
@@ -471,7 +531,7 @@ export async function computeErpPaidAttribution(params: {
     influencedOrders,
     influencedTotal,
     influencedCustomers: influencedCustomerIds.size,
-    unmatchedCustomerCount: erpCustomerIds.length - hashMatches.length,
+    unmatchedCustomerCount: erpCustomerIds.length - matchedErpCustomerCount,
     customerCohorts,
     cohortSummary,
     fetchErrors,
@@ -484,6 +544,23 @@ function maskDocument(value: string | null | undefined): string | null {
   if (digits.length === 14) return `CNPJ **.***.***/****-${digits.slice(-2)}`;
   if (digits.length === 11) return `CPF ***.***.***-${digits.slice(-2)}`;
   return digits ? `***${digits.slice(-4)}` : null;
+}
+
+// customersTable.email/phone são texto puro (não hasheados, diferente do
+// documento) -- comparação direta depois de normalizar.
+function normalizeEmail(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.includes("@") ? trimmed : null;
+}
+
+// Compara só os últimos 10 dígitos (DDD + número, sem DDI/zero na frente)
+// -- ERP e UpZero podem guardar o telefone em formato diferente (com/sem
+// +55, com/sem 9º dígito de celular antigo), os últimos 10 dígitos são o
+// que sobra igual nos dois casos na maioria da vez.
+function normalizePhoneLast10(ddd: string | null | undefined, phone: string | null | undefined): string | null {
+  const digits = `${ddd ?? ""}${phone ?? ""}`.replace(/\D/g, "");
+  return digits.length >= 8 ? digits.slice(-10) : null;
 }
 
 // ── Cohort novo/recorrente/reativado (PDF pág. 4) ──────────────────────────
