@@ -9850,7 +9850,19 @@ router.get("/analytics/erp/attribution", requireAdmin, async (req, res): Promise
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "dateFrom and dateTo are required (YYYY-MM-DD)", status: 400 });
     return;
   }
-  const lookbackDays = Number.parseInt(typeof req.query.lookbackDays === "string" ? req.query.lookbackDays : "90", 10) || 90;
+  // Achado 10/09/2026 (pedido do Santiago/time, confirmado no Slack): os 90
+  // dias eram usados em DOIS lugares sem relação -- aqui, limitando até
+  // onde a gente busca touchpoint pago antes do pedido, e em
+  // erp-attribution.ts classificando a coorte (novo/recorrente/reativado).
+  // O time decidiu manter os 90 dias só pra coorte e tirar o teto daqui:
+  // touchpoint velho de meses (ou anos) antes do pedido continua contando,
+  // igual já era o comportamento do lado Vesti. Sem teto de verdade pro
+  // lado da UpZero, então usa uma janela bem generosa (10 anos) em vez de
+  // remover o parâmetro -- a API da UpZero exige um `from` concreto, não
+  // aceita "sem limite" -- e mantém `lookbackDays` como query param pra
+  // quem precisar de uma janela menor em teste.
+  const DEFAULT_LOOKBACK_DAYS = 3650;
+  const lookbackDays = Number.parseInt(typeof req.query.lookbackDays === "string" ? req.query.lookbackDays : String(DEFAULT_LOOKBACK_DAYS), 10) || DEFAULT_LOOKBACK_DAYS;
 
   const [client] = await db
     .select({ bigqueryDataset: clientsTable.bigqueryDataset, upZeroApiKey: clientsTable.upZeroApiKey })
