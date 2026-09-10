@@ -892,8 +892,8 @@ async function buildOperationPayload(clientId: string, from: Date, to: Date) {
   await ensureCommercialSetup(clientId);
   const aiCommercialStatus = await getCommercialOperationStatus(clientId);
   const metrics = await clientMetrics(clientId, from, to);
-  const rules = await buildAutomationRules(clientId);
-  const agents = await buildAgentConfigs(clientId);
+  const rules = await buildAutomationRules(clientId, { skipEnsure: true });
+  const agents = await buildAgentConfigs(clientId, { skipEnsure: true });
   const [phoneCount] = await db
     .select({ total: sql<number>`COUNT(*)::int` })
     .from(whatsappPhoneNumbersTable)
@@ -1125,8 +1125,16 @@ async function ensureCommercialSetup(clientId: string, apiKey?: string | null) {
   return operationId;
 }
 
-async function buildAutomationRules(clientId: string) {
-  await ensureCommercialSetup(clientId);
+// Achado 10/09/2026: `buildOperationPayload` chama `ensureCommercialSetup`
+// direto E de novo aqui dentro E de novo em `buildAgentConfigs` -- 3x por
+// carregamento da Visão Geral, cada uma fazendo os mesmos SELECTs/UPDATEs
+// (ensureWebhookConfig/ensureUpzeroIntegration não têm o atalho de COUNT
+// que ensureAutomationRules/ensureAgentConfigs já têm, escrevem sempre).
+// `skipEnsure` deixa quem já garantiu antes (buildOperationPayload) pular
+// -- default `false` mantém o comportamento de sempre pra quem chama sem
+// ensureCommercialSetup prévio (ex: GET /orchestrator/clients/:id/agents).
+async function buildAutomationRules(clientId: string, options: { skipEnsure?: boolean } = {}) {
+  if (!options.skipEnsure) await ensureCommercialSetup(clientId);
   const rows = await db
     .select({
       id: commercialAutomationRulesTable.id,
@@ -2754,8 +2762,8 @@ async function processDueAutomationJobs(limit = 25) {
   };
 }
 
-async function buildAgentConfigs(clientId: string) {
-  await ensureCommercialSetup(clientId);
+async function buildAgentConfigs(clientId: string, options: { skipEnsure?: boolean } = {}) {
+  if (!options.skipEnsure) await ensureCommercialSetup(clientId);
   return db
     .select({
       id: aiAgentConfigsTable.id,
