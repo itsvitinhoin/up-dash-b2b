@@ -985,10 +985,19 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
               </p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{automationsQuery.data?.jobStats.scheduled ?? 0}</p><p>agend.</p></div>
-                <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{automationsQuery.data?.jobStats.sent ?? 0}</p><p>envios</p></div>
-                <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{automationsQuery.data?.jobStats.failed ?? 0}</p><p>falhas</p></div>
+              <div className="flex flex-wrap gap-2 text-center text-xs">
+                <div className="min-w-[72px] rounded-md border border-border px-3 py-2 whitespace-nowrap">
+                  <p className="font-semibold text-foreground">{formatNumber(automationsQuery.data?.jobStats.scheduled ?? 0)}</p>
+                  <p>agendados</p>
+                </div>
+                <div className="min-w-[72px] rounded-md border border-border px-3 py-2 whitespace-nowrap">
+                  <p className="font-semibold text-foreground">{formatNumber(automationsQuery.data?.jobStats.sent ?? 0)}</p>
+                  <p>envios</p>
+                </div>
+                <div className="min-w-[72px] rounded-md border border-border px-3 py-2 whitespace-nowrap">
+                  <p className="font-semibold text-foreground">{formatNumber(automationsQuery.data?.jobStats.failed ?? 0)}</p>
+                  <p>falhas</p>
+                </div>
               </div>
               <Button
                 size="sm"
