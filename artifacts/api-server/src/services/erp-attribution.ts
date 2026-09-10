@@ -27,7 +27,10 @@ import { ERP_CANCELLED_STATUSES } from "./erpAnalytics";
 // Miredata (Obzee/Vogabox), que usa FATURADO/FINALIZADO/ESPERA/CANCELADO/
 // EXCLUIDO. Reaproveita a mesma negação já usada em erpAnalytics.ts (só
 // exclui cancelado/excluído) pra generalizar pros dois sincronizadores.
-const ERP_STATUS_FILTER = `status NOT IN (${ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ")})`;
+// Exportado 10/09/2026 pro job agendado de sync de touchpoint
+// (extraction-runner.ts) reaproveitar o mesmo filtro pra achar quais
+// clientes/customers tiveram pedido ERP recente.
+export const ERP_STATUS_FILTER = `status NOT IN (${ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ")})`;
 
 type OrderChannel = "erp" | "site";
 

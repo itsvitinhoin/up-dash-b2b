@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import {
   db,
   clientsTable,
@@ -18,13 +18,17 @@ import {
 import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
+import { bigquery, vestiTable } from "../lib/bigquery";
+import { syncPaidTouchpointsForCustomer } from "./paid-touchpoints";
+import { ERP_STATUS_FILTER } from "./erp-attribution";
 
 export type ExtractionJobType =
   | "upzero_transactional"
   | "upzero_analytics"
   | "meta_ads"
   | "nuvemshop_transactional"
-  | "daily_metrics";
+  | "daily_metrics"
+  | "paid_touchpoints";
 
 export type ExtractionTrigger = "manual" | "cron";
 
@@ -963,6 +967,196 @@ export async function runHourlyExtractionBundle(
     trigger,
     analytics,
     meta,
+    startedAt: startedAt.toISOString(),
+    finishedAt: new Date().toISOString(),
+  };
+}
+
+// Achado 10/09/2026: o sync de touchpoint pago (paid-touchpoints.ts) só
+// rodava sob demanda, quando alguém abria o relatório de atribuição -- o
+// primeiro carregamento de um cliente nunca visto ficava lento (~26-38s
+// nos testes, um cliente inteiro). Job agendado pré-aquece o cache antes
+// de alguém precisar, reaproveitando a mesma infra dos outros TASK= já em
+// produção (Cloud Run Job + Cloud Scheduler, sem Vercel/timeout de
+// serverless no meio).
+const PAID_TOUCHPOINTS_RECENT_ORDER_DAYS = Number.parseInt(process.env.PAID_TOUCHPOINTS_RECENT_ORDER_DAYS ?? "90", 10);
+// Mesma janela "sem teto" que o relatório usa por padrão hoje (ver
+// routes/analytics.ts, DEFAULT_LOOKBACK_DAYS) -- pré-aquece com a mesma
+// amplitude que vai ser pedida de verdade.
+const PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS = Number.parseInt(process.env.PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS ?? "3650", 10);
+// Teto GLOBAL (não por cliente) -- 20 já causou throttling real da UpZero,
+// documentado em erp-attribution.ts. A fila abaixo junta (cliente,
+// customer) de TODOS os clientes antes de disparar qualquer worker, pra
+// não multiplicar esse teto por cliente rodando em paralelo.
+const PAID_TOUCHPOINTS_CONCURRENCY = 8;
+const PAID_TOUCHPOINTS_CUSTOMER_TIMEOUT_MS = Number.parseInt(process.env.PAID_TOUCHPOINTS_CUSTOMER_TIMEOUT_MS ?? "60000", 10);
+
+type PaidTouchpointsCandidate = { id: string; externalUserId: number };
+
+// Quais customers vale a pena pré-aquecer pra esse cliente: quem teve
+// pedido recente no site (Postgres `orders`, barato) OU no ERP (BigQuery
+// `pedidos_erp`, casando por hash de documento -- mesmo mecanismo
+// primário que erp-attribution.ts usa, sem replicar o reforço de
+// e-mail/telefone dela, que é mais caro e só entra quando o hash não
+// bate). Não cobre 100% dos casos que o relatório ao vivo cobre -- só
+// precisa cobrir o caso comum pra tirar a lentidão do primeiro
+// carregamento; quem escapar ainda funciona, só não vem pré-aquecido.
+async function findCustomersToWarmTouchpoints(
+  client: { id: string; bigqueryDataset: string | null },
+  cutoff: Date,
+): Promise<PaidTouchpointsCandidate[]> {
+  const byId = new Map<string, number>();
+
+  const addRow = (row: { id: string; externalId: string | null }) => {
+    const externalUserId = Number.parseInt(row.externalId ?? "", 10);
+    if (Number.isFinite(externalUserId) && externalUserId > 0) byId.set(row.id, externalUserId);
+  };
+
+  const siteRows = await db
+    .select({ id: customersTable.id, externalId: customersTable.externalId })
+    .from(customersTable)
+    .innerJoin(ordersTable, eq(ordersTable.customerId, customersTable.id))
+    .where(and(eq(customersTable.clientId, client.id), gte(ordersTable.createdAt, cutoff)))
+    .groupBy(customersTable.id, customersTable.externalId);
+  siteRows.forEach(addRow);
+
+  if (client.bigqueryDataset) {
+    try {
+      const pedidos = vestiTable(client.bigqueryDataset, "pedidos_erp");
+      const [rows] = await bigquery.query({
+        query: `
+          SELECT DISTINCT customer_id
+          FROM ${pedidos}
+          WHERE data_criado >= @cutoff AND ${ERP_STATUS_FILTER}
+        `,
+        params: { cutoff: isoDate(cutoff) },
+      });
+      const hashes = (rows as Array<{ customer_id: string | null }>)
+        .map((r) => (r.customer_id ? hashDocument(r.customer_id) : null))
+        .filter((h): h is string => Boolean(h));
+      if (hashes.length > 0) {
+        const erpRows = await db
+          .select({ id: customersTable.id, externalId: customersTable.externalId })
+          .from(customersTable)
+          .where(and(eq(customersTable.clientId, client.id), inArray(customersTable.documentHash, hashes)));
+        erpRows.forEach(addRow);
+      }
+    } catch (err) {
+      console.warn("[paid-touchpoints-sync] busca de pedido ERP recente falhou, seguindo só com o lado do site", {
+        clientId: client.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return Array.from(byId.entries()).map(([id, externalUserId]) => ({ id, externalUserId }));
+}
+
+export async function runPaidTouchpointsSync(
+  trigger: ExtractionTrigger,
+  options: { clientId?: string } = {},
+): Promise<ExtractionRunSummary> {
+  const startedAt = new Date();
+  const allClients = await clientsWith(isNotNull(clientsTable.upZeroApiKey));
+  const filteredClients = options.clientId ? allClients.filter((client) => client.id === options.clientId) : allClients;
+
+  const datasetRows = filteredClients.length > 0
+    ? await db
+        .select({ id: clientsTable.id, bigqueryDataset: clientsTable.bigqueryDataset })
+        .from(clientsTable)
+        .where(inArray(clientsTable.id, filteredClients.map((client) => client.id)))
+    : [];
+  const datasetByClient = new Map(datasetRows.map((row) => [row.id, row.bigqueryDataset]));
+
+  const cutoff = new Date(Date.now() - PAID_TOUCHPOINTS_RECENT_ORDER_DAYS * 24 * 60 * 60 * 1000);
+  const from = new Date(Date.now() - PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const to = new Date().toISOString();
+
+  const jobIdByClient = new Map<string, string>();
+  const queue: Array<{ client: ExtractionClient; customer: PaidTouchpointsCandidate }> = [];
+  let skipped = 0;
+
+  for (const client of filteredClients) {
+    if (!client.upZeroApiKey) {
+      skipped++;
+      continue;
+    }
+    const jobId = await createJob(client.id, "paid_touchpoints", trigger);
+    try {
+      const customers = await findCustomersToWarmTouchpoints(
+        { id: client.id, bigqueryDataset: datasetByClient.get(client.id) ?? null },
+        cutoff,
+      );
+      if (customers.length === 0) {
+        await completeJob(jobId, { clientName: client.name, customersConsidered: 0, synced: 0, failed: 0 });
+        continue;
+      }
+      jobIdByClient.set(client.id, jobId);
+      for (const customer of customers) queue.push({ client, customer });
+    } catch (err) {
+      console.error("[paid-touchpoints-sync] falha buscando customers pra pré-aquecer", {
+        clientId: client.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await failJob(jobId, err);
+    }
+  }
+
+  const statsByClient = new Map<string, { synced: number; failed: number }>();
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < queue.length) {
+      const { client, customer } = queue[nextIndex++];
+      const stats = statsByClient.get(client.id) ?? { synced: 0, failed: 0 };
+      try {
+        await withTimeout(
+          syncPaidTouchpointsForCustomer({
+            apiKey: client.upZeroApiKey!,
+            clientId: client.id,
+            customerId: customer.id,
+            externalUserId: customer.externalUserId,
+            from,
+            to,
+          }),
+          PAID_TOUCHPOINTS_CUSTOMER_TIMEOUT_MS,
+          `Sync de touchpoint travou depois de ${PAID_TOUCHPOINTS_CUSTOMER_TIMEOUT_MS}ms.`,
+        );
+        stats.synced++;
+      } catch (err) {
+        stats.failed++;
+        console.error("[paid-touchpoints-sync] customer da fila falhou", {
+          clientId: client.id,
+          customerId: customer.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      statsByClient.set(client.id, stats);
+    }
+  };
+  await Promise.all(Array.from({ length: PAID_TOUCHPOINTS_CONCURRENCY }, () => worker()));
+
+  let done = 0;
+  let failed = 0;
+  for (const [clientId, jobId] of jobIdByClient) {
+    const client = filteredClients.find((c) => c.id === clientId);
+    const stats = statsByClient.get(clientId) ?? { synced: 0, failed: 0 };
+    await completeJob(jobId, {
+      clientName: client?.name,
+      customersConsidered: stats.synced + stats.failed,
+      ...stats,
+    });
+    if (stats.failed > 0 && stats.synced === 0) failed++;
+    else done++;
+  }
+
+  return {
+    jobType: "paid_touchpoints",
+    trigger,
+    clients: filteredClients.length,
+    totalClients: allClients.length,
+    done,
+    failed,
+    skipped,
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
   };
