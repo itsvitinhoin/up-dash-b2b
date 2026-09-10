@@ -989,7 +989,13 @@ const PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS = Number.parseInt(process.env.PAID_TOUCH
 // customer) de TODOS os clientes antes de disparar qualquer worker, pra
 // não multiplicar esse teto por cliente rodando em paralelo.
 const PAID_TOUCHPOINTS_CONCURRENCY = 8;
-const PAID_TOUCHPOINTS_CUSTOMER_TIMEOUT_MS = Number.parseInt(process.env.PAID_TOUCHPOINTS_CUSTOMER_TIMEOUT_MS ?? "60000", 10);
+// Achado 10/09/2026 (1ª execução real em produção): 60s estourava pra
+// clientes com bastante histórico -- fetchPaidTouchpointsForUser pagina
+// até MAX_PAGES=20 páginas, 10s de timeout cada (paid-touchpoints.ts),
+// ou seja, até ~200s no pior caso legítimo (não é trava, é paginação
+// real). 12 customers de 1 cliente só ficaram sem sincronizar por causa
+// disso na primeira rodada. Sobe pra 220s, com folga sobre o pior caso.
+const PAID_TOUCHPOINTS_CUSTOMER_TIMEOUT_MS = Number.parseInt(process.env.PAID_TOUCHPOINTS_CUSTOMER_TIMEOUT_MS ?? "220000", 10);
 
 type PaidTouchpointsCandidate = { id: string; externalUserId: number };
 
