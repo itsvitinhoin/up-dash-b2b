@@ -165,7 +165,7 @@ export async function getCustomerTimeline(req: Request, res: Response): Promise<
     attribution: {
       firstTouch: timeline.firstTouch,
       lastTouch: timeline.lastTouch,
-      lastReturn: { source: null, medium: null, campaign: null, occurredAt: null },
+      lastReturn: timeline.lastReturn,
     },
     summary: {
       totalEvents: timeline.summary.totalEvents,

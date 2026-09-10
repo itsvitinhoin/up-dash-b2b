@@ -1,3 +1,5 @@
+import { isPaidCampaignSignal } from "../campaign-attribution";
+
 const UPZERO_ANALYTICS_METRICS_URL =
   "https://api.upzero.com.br/external/v1/analytics/metrics";
 
@@ -585,8 +587,28 @@ function touchFromEvent(event: CustomerTimelineEvent): TimelineTouch {
   };
 }
 
-function campaignKey(event: Pick<CustomerTimelineEvent, "utmSource" | "utmMedium" | "utmCampaign">): string | null {
+// Achado 10/09/2026: sem o gate de sinal pago, qualquer UTM (inclusive
+// bio-link/orgânico) contava como "toque de campanha" -- como a maioria
+// dos clientes só carrega UTM num único touch da jornada toda, isso fazia
+// `lastTouch` colapsar sempre no mesmo valor de `firstTouch`, e a condição
+// de `lastReturn` (3º campaign key distinto) nunca ter chance real de
+// disparar. Reaproveita `isPaidCampaignSignal`, já usado em todo outro
+// lugar de atribuição do arquivo de rotas.
+function campaignKey(
+  event: Pick<CustomerTimelineEvent, "utmSource" | "utmMedium" | "utmCampaign" | "fbc" | "fbclid" | "gclid">,
+): string | null {
   if (!event.utmCampaign) return null;
+  const isPaid = isPaidCampaignSignal({
+    utm_source: event.utmSource,
+    utm_medium: event.utmMedium,
+    utm_campaign: event.utmCampaign,
+    source: null,
+    channel: null,
+    fbc: event.fbc,
+    fbclid: event.fbclid,
+    gclid: event.gclid,
+  });
+  if (!isPaid) return null;
   return [event.utmSource ?? "", event.utmMedium ?? "", event.utmCampaign].join("::").toLowerCase();
 }
 

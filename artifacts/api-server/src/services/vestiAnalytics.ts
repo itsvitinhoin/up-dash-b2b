@@ -4,6 +4,7 @@ import { bigquery, vestiTable } from "../lib/bigquery";
 import { stateFromPhoneDdd } from "../lib/phoneState";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { addDaysToDateOnly } from "../lib/httpQuery";
+import { isPaidCampaignSignal } from "./campaign-attribution";
 
 /**
  * Se o client for Vesti e tiver dataset configurado, devolve o dataset.
@@ -1237,6 +1238,7 @@ export type VestiCustomerTimeline = {
   };
   firstTouch: VestiTouch;
   lastTouch: VestiTouch;
+  lastReturn: VestiTouch;
   timeline: VestiTimelineEvent[];
 };
 
@@ -1338,10 +1340,28 @@ export async function fetchVestiCustomerTimeline(
 
   const countRaw = (name: string) => raw.filter((r) => r.event_name === name).length;
   const timestamps = withUtm.map((e) => e.occurredAt).filter(Boolean);
-  const touchesWithUtm = withUtm.filter((e) => e.utm.source || e.utm.campaign);
+  // Achado 10/09/2026: filtro antigo (`e.utm.source || e.utm.campaign`)
+  // aceitava qualquer UTM, inclusive orgânico/bio-link -- trocado por
+  // isPaidCampaignSignal, igual todo outro lugar de atribuição. lastReturn
+  // nunca existia aqui (hardcoded vazio no controller) -- agora computado
+  // de verdade: primeiro touque pago depois do firstTouch com
+  // source+medium+campaign diferente dele.
+  const touchesWithUtm = withUtm.filter((e) =>
+    isPaidCampaignSignal({
+      utm_source: e.utm.source,
+      utm_medium: e.utm.medium,
+      utm_campaign: e.utm.campaign,
+      source: null,
+      channel: null,
+    }),
+  );
   const firstTouchRaw = touchesWithUtm[0];
   const lastTouchRaw = touchesWithUtm[touchesWithUtm.length - 1];
-  const toTouch = (t: typeof firstTouchRaw): VestiTouch =>
+  const touchSignature = (t: typeof firstTouchRaw) => `${t.utm.source ?? ""}::${t.utm.medium ?? ""}::${t.utm.campaign ?? ""}`;
+  const lastReturnRaw = firstTouchRaw
+    ? touchesWithUtm.slice(1).find((t) => touchSignature(t) !== touchSignature(firstTouchRaw))
+    : undefined;
+  const toTouch = (t: typeof firstTouchRaw | undefined): VestiTouch =>
     t ? { source: t.utm.source, medium: t.utm.medium, campaign: t.utm.campaign, occurredAt: t.occurredAt } : { source: null, medium: null, campaign: null, occurredAt: null };
 
   return {
@@ -1357,6 +1377,7 @@ export async function fetchVestiCustomerTimeline(
     },
     firstTouch: toTouch(firstTouchRaw),
     lastTouch: toTouch(lastTouchRaw),
+    lastReturn: toTouch(lastReturnRaw),
     timeline,
   };
 }

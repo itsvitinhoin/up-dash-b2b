@@ -4499,21 +4499,35 @@ async function buildLocalCustomerTimelineResponse(params: {
     return localTimelinePriority(a.eventName) - localTimelinePriority(b.eventName);
   });
 
-  const firstTouch = timeline.find((event) => event.utmCampaign || event.utmSource || event.utmMedium);
-  const touch = firstTouch
-    ? {
-        source: firstTouch.utmSource,
-        medium: firstTouch.utmMedium,
-        campaign: firstTouch.utmCampaign,
-        occurredAt: firstTouch.occurredAt,
-      }
-    : { source: null, medium: null, campaign: null, occurredAt: null };
+  // Achado 10/09/2026: (1) o filtro aceitava qualquer UTM truthy, inclusive
+  // bio-link/orgânico -- trocado por isPaidCampaignSignal, igual todo outro
+  // lugar de atribuição do arquivo. (2) firstTouch/lastTouch reusavam a
+  // mesma variável (bug real de cópia). Dito isso, esse caminho (fallback
+  // local, usado quando a UpZero não devolve nada pro cliente) não tem UTM
+  // por evento -- todo evento aqui carrega o mesmo snapshot único de
+  // customer.utmSource/Medium/Campaign (capturado 1x no cadastro), então
+  // firstTouch e lastTouch vão bater na prática mesmo com o fix (é o único
+  // touch conhecido) e lastReturn continua vazio -- limite real de dado
+  // desse caminho, não bug residual.
+  const paidTouches = timeline.filter((event) =>
+    isPaidCampaignSignal({
+      utm_source: event.utmSource,
+      utm_medium: event.utmMedium,
+      utm_campaign: event.utmCampaign,
+      source: null,
+      channel: null,
+    }),
+  );
+  const toTouch = (event: (typeof paidTouches)[number] | undefined) =>
+    event
+      ? { source: event.utmSource, medium: event.utmMedium, campaign: event.utmCampaign, occurredAt: event.occurredAt }
+      : { source: null, medium: null, campaign: null, occurredAt: null };
 
   return {
     userId: params.userId,
     attribution: {
-      firstTouch: touch,
-      lastTouch: touch,
+      firstTouch: toTouch(paidTouches[0]),
+      lastTouch: toTouch(paidTouches[paidTouches.length - 1]),
       lastReturn: { source: null, medium: null, campaign: null, occurredAt: null },
     },
     summary: summarizeLocalTimeline(timeline),
