@@ -16,8 +16,8 @@
 //      Busca o touchpoint uma vez por cliente, reaproveitada pros
 //      pedidos das duas fontes desse mesmo cliente.
 import { bigquery, vestiTable } from "../lib/bigquery";
-import { db, customersTable, ordersTable } from "@workspace/db";
-import { and, eq, gt, gte, inArray, lt, ne } from "drizzle-orm";
+import { db, customersTable, ordersTable, customerIdentityLinksTable, orderAttributionsTable } from "@workspace/db";
+import { and, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { hashDocument } from "./upzero/customers";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, type TouchpointCandidate } from "./paid-touchpoints";
 import { ERP_CANCELLED_STATUSES } from "./erpAnalytics";
@@ -31,6 +31,13 @@ import { ERP_CANCELLED_STATUSES } from "./erpAnalytics";
 // (extraction-runner.ts) reaproveitar o mesmo filtro pra achar quais
 // clientes/customers tiveram pedido ERP recente.
 export const ERP_STATUS_FILTER = `status NOT IN (${ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ")})`;
+
+// Criado 10/09/2026 -- versão da regra de atribuição, gravada junto de
+// cada `order_attributions`. Sobe manualmente quando a lógica mudar (ex:
+// já subiu quando o teto de 90 dias do lookback saiu) -- toda linha
+// gravada com versão antiga fica "stale" e é recalculada na próxima vez
+// que o relatório rodar pra aquele pedido, sem precisar de migration.
+export const ATTRIBUTION_RULE_VERSION = "2026-09-10-no-lookback-cap";
 
 type OrderChannel = "erp" | "site";
 
@@ -205,13 +212,44 @@ export async function computeErpPaidAttribution(params: {
       if (hash) cnpjToHash.set(cnpj, hash);
     }
     const hashes = [...new Set(cnpjToHash.values())];
-    hashMatches = hashes.length
+
+    // Achado 10/09/2026: identidade já resolvida (por hash OU por
+    // reforço de e-mail/telefone) fica persistida em
+    // `customer_identity_links` -- quem já tem link não precisa mais do
+    // reforço caro abaixo (full-scan de customers do cliente pra montar
+    // os mapas de e-mail/telefone). Só cai nesse full-scan quem nunca
+    // foi resolvido antes nessa conta.
+    const newIdentityLinks: Array<{ clientId: string; erpDocumentHash: string; customerId: string; matchMethod: "document_hash" | "email" | "phone" }> = [];
+    const linkedRows = hashes.length
+      ? await db
+          .select({
+            erpDocumentHash: customerIdentityLinksTable.erpDocumentHash,
+            id: customersTable.id,
+            externalId: customersTable.externalId,
+            documentHash: customersTable.documentHash,
+            name: customersTable.name,
+            createdAt: customersTable.createdAt,
+          })
+          .from(customerIdentityLinksTable)
+          .innerJoin(customersTable, eq(customersTable.id, customerIdentityLinksTable.customerId))
+          .where(and(eq(customerIdentityLinksTable.clientId, params.clientId), inArray(customerIdentityLinksTable.erpDocumentHash, hashes)))
+      : [];
+    for (const row of linkedRows) {
+      hashToCustomer.set(row.erpDocumentHash, { id: row.id, externalId: row.externalId, documentHash: row.documentHash, name: row.name, createdAt: row.createdAt });
+    }
+
+    const unlinkedHashes = hashes.filter((h) => !hashToCustomer.has(h));
+    hashMatches = unlinkedHashes.length
       ? await db
           .select({ id: customersTable.id, externalId: customersTable.externalId, documentHash: customersTable.documentHash, name: customersTable.name, createdAt: customersTable.createdAt })
           .from(customersTable)
-          .where(and(eq(customersTable.clientId, params.clientId), inArray(customersTable.documentHash, hashes)))
+          .where(and(eq(customersTable.clientId, params.clientId), inArray(customersTable.documentHash, unlinkedHashes)))
       : [];
-    hashToCustomer = new Map(hashMatches.map((m) => [m.documentHash, m]));
+    for (const m of hashMatches) {
+      if (!m.documentHash) continue;
+      hashToCustomer.set(m.documentHash, m);
+      newIdentityLinks.push({ clientId: params.clientId, erpDocumentHash: m.documentHash, customerId: m.id, matchMethod: "document_hash" });
+    }
 
     // Achado 09/09/2026: só CNPJ/CPF deixava MX Fashion com 198/268
     // clientes do ERP sem match, e o Obzee com 165/166 -- e-mail e
@@ -253,15 +291,35 @@ export async function computeErpPaidAttribution(params: {
         if (!unmatchedSet.has(cnpj)) continue;
         const email = normalizeEmail(r.erp_email as string | null);
         const phone = normalizePhoneLast10(r.erp_ddd as string | null, (r.erp_celular as string | null) ?? (r.erp_telefone as string | null));
-        const match = (email && byEmail.get(email)) || (phone && byPhone.get(phone)) || null;
+        const matchedByEmail = email ? byEmail.get(email) : undefined;
+        const match = matchedByEmail || (phone && byPhone.get(phone)) || null;
         if (!match) continue;
         // Chave sintética só pra reaproveitar hashToCustomer sem duplicar
         // toda a lógica de resolução que já existe abaixo dela.
         const syntheticKey = `email-or-phone:${match.id}`;
         cnpjToHash.set(cnpj, syntheticKey);
-        if (!hashToCustomer.has(syntheticKey)) hashToCustomer.set(syntheticKey, match);
+        if (!hashToCustomer.has(syntheticKey)) {
+          hashToCustomer.set(syntheticKey, match);
+          newIdentityLinks.push({
+            clientId: params.clientId,
+            erpDocumentHash: syntheticKey,
+            customerId: match.id,
+            matchMethod: matchedByEmail ? "email" : "phone",
+          });
+        }
         unmatchedSet.delete(cnpj);
       }
+    }
+
+    // Grava os matches novos dessa rodada (hash direto + e-mail/telefone)
+    // pra próxima vez não precisar re-resolver. onConflictDoNothing: se
+    // duas requisições concorrentes resolverem o mesmo hash, a primeira
+    // que gravar vence -- link é estável, não precisa de "última escrita
+    // vence" aqui.
+    if (newIdentityLinks.length > 0) {
+      await db.insert(customerIdentityLinksTable).values(newIdentityLinks).onConflictDoNothing({
+        target: [customerIdentityLinksTable.clientId, customerIdentityLinksTable.erpDocumentHash],
+      });
     }
   }
 
@@ -513,6 +571,55 @@ export async function computeErpPaidAttribution(params: {
     if (row.upzeroCustomerId) {
       row.cohort = cohortByCustomerId.get(row.upzeroCustomerId) ?? null;
     }
+  }
+
+  // Achado 10/09/2026: grava um snapshot da decisão por pedido -- não
+  // troca a query ao vivo acima (a tela precisa do pedido/valor/status
+  // ATUAL, sempre), é só histórico/auditoria: sobrevive a mudança de
+  // regra (ATTRIBUTION_RULE_VERSION) e permite responder "como esse
+  // pedido foi classificado da última vez que calculamos" sem re-rodar
+  // tudo. onConflictDoUpdate: cada cálculo novo substitui o snapshot
+  // anterior desse pedido (não é log histórico, é o estado mais recente).
+  if (allOrders.length > 0) {
+    await db
+      .insert(orderAttributionsTable)
+      .values(
+        allOrders.map((row) => ({
+          clientId: params.clientId,
+          channel: row.channel,
+          orderId: row.orderId,
+          customerId: row.upzeroCustomerId,
+          attributionState: row.attributionState,
+          touchpointAt: row.touchpointAt ? new Date(row.touchpointAt) : null,
+          touchpointSource: row.touchpointSource,
+          touchpointMedium: row.touchpointMedium,
+          touchpointCampaign: row.touchpointCampaign,
+          cohort: row.cohort,
+          ruleVersion: ATTRIBUTION_RULE_VERSION,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [orderAttributionsTable.clientId, orderAttributionsTable.channel, orderAttributionsTable.orderId],
+        set: {
+          customerId: sql`excluded.customer_id`,
+          attributionState: sql`excluded.attribution_state`,
+          touchpointAt: sql`excluded.touchpoint_at`,
+          touchpointSource: sql`excluded.touchpoint_source`,
+          touchpointMedium: sql`excluded.touchpoint_medium`,
+          touchpointCampaign: sql`excluded.touchpoint_campaign`,
+          cohort: sql`excluded.cohort`,
+          ruleVersion: sql`excluded.rule_version`,
+          computedAt: sql`now()`,
+        },
+      })
+      .catch((err) => {
+        // Grava-se em best-effort -- se isso falhar, não deve derrubar o
+        // relatório (que já rodou e computou tudo certo em memória).
+        console.error("[erp-attribution] falha gravando order_attributions", {
+          clientId: params.clientId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
   }
 
   // Conta quem de fato resolveu pra algum cliente da UpZero -- por CNPJ

@@ -17,3 +17,5 @@ export * from "./commercialAi";
 export * from "./dailyAnalytics";
 export * from "./paidTouchpoints";
 export * from "./paidTouchpointsSync";
+export * from "./customerIdentityLinks";
+export * from "./orderAttributions";
