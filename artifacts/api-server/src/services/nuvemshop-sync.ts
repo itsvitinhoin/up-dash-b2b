@@ -547,9 +547,14 @@ async function syncProductCatalog(params: {
             status: "ACTIVE",
           })
           .onConflictDoUpdate({
-            target: [productsTable.clientId, productsTable.sku],
+            // externalId (product_id:variant_id da Nuvemshop) e o identificador
+            // estavel -- o sku pode ser reatribuido pelo lojista ao longo do
+            // tempo. Resolver conflito por sku deixava o upsert tentar um INSERT
+            // puro quando o sku mudava, colidindo na constraint de externalId
+            // em vez de atualizar a linha certa (ver investigacao 2026-09-17).
+            target: [productsTable.clientId, productsTable.externalId],
             set: {
-              externalId: row.externalId,
+              sku,
               name: row.name,
               category,
               price: row.price,
@@ -763,9 +768,11 @@ export async function syncNuvemshopClient(params: {
             imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
           })
           .onConflictDoUpdate({
-            target: [productsTable.clientId, productsTable.sku],
+            // mesmo motivo do upsert em syncProductCatalog: externalId e o
+            // identificador estavel, sku pode mudar.
+            target: [productsTable.clientId, productsTable.externalId],
             set: {
-              externalId: productExternalId,
+              sku,
               name: productName,
               category,
               price: productPrice,
