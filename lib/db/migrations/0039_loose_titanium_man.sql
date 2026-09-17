@@ -1,0 +1,1 @@
+ALTER TABLE "orders" ADD COLUMN "refund_status_unverified_reason" text;

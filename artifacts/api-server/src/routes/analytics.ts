@@ -6728,6 +6728,7 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
         customerUtmCampaign: customersTable.utmCampaign,
         state: ordersTable.state,
         city: ordersTable.city,
+        refundStatusUnverified: ordersTable.refundStatusUnverified,
       })
       .from(ordersTable)
       .leftJoin(customersTable, eq(ordersTable.customerId, customersTable.id))

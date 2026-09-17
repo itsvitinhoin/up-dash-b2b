@@ -126,6 +126,17 @@ type NuvemshopProductDetails = {
   variants?: NuvemshopVariant[] | null;
 };
 
+type NuvemshopMoney = {
+  value?: string | number | null;
+  currency?: string | null;
+} | null;
+
+type NuvemshopTransaction = {
+  id?: number | string | null;
+  status?: string | null;
+  refunded_amount?: NuvemshopMoney;
+};
+
 const PROVINCE_TO_STATE: Record<string, string> = {
   acre: "AC",
   alagoas: "AL",
@@ -228,11 +239,18 @@ function normalizeState(province?: string | null): string | null {
   return PROVINCE_TO_STATE[value.toLowerCase()] ?? null;
 }
 
-function orderStatus(order: NuvemshopOrder): LocalOrderStatus {
+const PAID_LIKE_PAYMENT_STATUSES = new Set(["paid", "partially_refunded", "refunded"]);
+const REFUNDED_PAYMENT_STATUSES = new Set(["refunded", "partially_refunded"]);
+
+function isPaidLike(order: NuvemshopOrder): boolean {
+  return PAID_LIKE_PAYMENT_STATUSES.has(order.payment_status ?? "");
+}
+
+function orderStatus(order: NuvemshopOrder, paid: boolean): LocalOrderStatus {
   if (order.status === "cancelled") return "REJECTED";
-  if (order.status === "closed") return "DELIVERED";
+  if (order.status === "closed" && paid) return "DELIVERED";
   if (order.shipping_status === "shipped") return "SHIPPED";
-  if (order.payment_status === "paid") return "APPROVED";
+  if (paid) return "APPROVED";
   return "PENDING";
 }
 
@@ -387,6 +405,24 @@ async function fetchNuvemshopObject<T>(
   return body && typeof body === "object" ? body as T : null;
 }
 
+async function fetchOrderRefundedAmount(
+  storeId: string,
+  accessToken: string,
+  orderId: string,
+): Promise<number> {
+  try {
+    const transactions = await fetchNuvemshopPage<NuvemshopTransaction>(
+      storeId,
+      accessToken,
+      `/orders/${orderId}/transactions`,
+      {},
+    );
+    return transactions.reduce((sum, tx) => sum + asNumber(tx.refunded_amount?.value), 0);
+  } catch {
+    return 0;
+  }
+}
+
 async function fetchOrders(
   storeId: string,
   accessToken: string,
@@ -404,7 +440,7 @@ async function fetchOrders(
     const rows = await fetchNuvemshopPage<NuvemshopOrder>(storeId, accessToken, "/orders", {
       page,
       per_page: 200,
-      ...(since ? { created_at_min: since.toISOString() } : {}),
+      ...(since ? { updated_at_min: since.toISOString() } : {}),
     });
     pagesFetched++;
     orders.push(...rows);
@@ -577,9 +613,9 @@ export async function syncNuvemshopClient(params: {
     try {
       const externalOrderId = String(order.id);
       const createdAt = asDate(order.created_at);
-      const status = orderStatus(order);
+      const paid = isPaidLike(order);
+      const status = orderStatus(order, paid);
       const cancelled = status === "REJECTED";
-      const paid = order.payment_status === "paid";
       const total = asNumber(order.total);
       const subtotal = asNumber(order.subtotal);
       const discount = Math.max(
@@ -587,10 +623,21 @@ export async function syncNuvemshopClient(params: {
         asNumber(order.discount_coupon) + asNumber(order.promotional_discount),
       );
       const shipping = asNumber(order.shipping_cost_customer) || asNumber(order.shipping_cost_owner);
-      const refundedAmount = 0;
+      const hasRefundStatus = !cancelled && REFUNDED_PAYMENT_STATUSES.has(order.payment_status ?? "");
+      const refundedAmount = hasRefundStatus
+        ? await fetchOrderRefundedAmount(params.storeId, params.accessToken, externalOrderId)
+        : 0;
+      // A API da Nuvemshop confirma que houve reembolso via payment_status, mas nao expoe o
+      // valor em nenhum endpoint testado (GET /orders/{id}/transactions volta [] mesmo pra
+      // pedidos partially_refunded/refunded, nas duas versoes da API) -- ver reconciliacao
+      // Nuvemshop de 2026-09. Guardamos isso pra sinalizar o pedido como "valor pode estar
+      // incompleto" em vez de mostrar o total cheio silenciosamente como certo.
+      const refundStatusUnverified = hasRefundStatus && refundedAmount === 0
+        ? `Nuvemshop reporta payment_status="${order.payment_status}" mas nao informa o valor reembolsado via API; valor exibido pode nao descontar o reembolso.`
+        : null;
       const cancelledAmount = cancelled ? total : 0;
-      const invoicedAmount = cancelled ? 0 : total;
-      const paidAmount = paid && !cancelled ? asNumber(order.total_paid) || total : 0;
+      const invoicedAmount = cancelled ? 0 : Math.max(0, total - refundedAmount);
+      const paidAmount = paid && !cancelled ? Math.max(0, (asNumber(order.total_paid) || total) - refundedAmount) : 0;
       const items = order.products ?? [];
       const requestedQuantity = items.reduce((sum, item) => sum + Math.max(1, Math.round(asNumber(item.quantity) || 1)), 0);
       const customer = order.customer ?? {};
@@ -645,6 +692,7 @@ export async function syncNuvemshopClient(params: {
           discountAmount: discount,
           shippingAmount: shipping,
           refundedAmount,
+          refundStatusUnverified,
           cancelledAmount,
           status,
           approvalDate: paid ? asDate(order.paid_at) : null,
@@ -664,6 +712,7 @@ export async function syncNuvemshopClient(params: {
             discountAmount: discount,
             shippingAmount: shipping,
             refundedAmount,
+            refundStatusUnverified,
             cancelledAmount,
             status,
             approvalDate: paid ? asDate(order.paid_at) : null,

@@ -7,6 +7,7 @@ import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { queryOpts } from "@/lib/query-opts";
 import { useI18n } from "@/lib/i18n";
 import { formatCurrency, formatCurrencySmart, formatNumber, formatPercentage } from "@/lib/formatters";
+import { exportRowsAsXlsx } from "@/lib/xlsx-export";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,7 @@ import {
   ArrowLeft,
   ArrowRight,
   BadgeCheck,
+  Download,
   Eye,
   Package,
   ReceiptText,
@@ -76,6 +78,7 @@ type OrdersPageRow = {
   state: string | null;
   city: string | null;
   origin: OrderOrigin;
+  refundStatusUnverified: string | null;
 };
 
 type OrdersPageResponse = {
@@ -195,6 +198,7 @@ export default function OrdersPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<OrdersPageRow | null>(null);
+  const [exporting, setExporting] = useState(false);
   const limit = 10;
 
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
@@ -220,6 +224,36 @@ export default function OrdersPage() {
     queryKey: ["orders-page", queryString],
     queryFn: () => customFetch<OrdersPageResponse>(`/api/analytics/orders-page?${queryString}`),
   });
+
+  const exportXlsx = async () => {
+    setExporting(true);
+    try {
+      const exportParams = new URLSearchParams({
+        dateFrom,
+        dateTo,
+        page: "1",
+        limit: "5000",
+      });
+      if (clientId) exportParams.set("clientId", clientId);
+      if (search.trim()) exportParams.set("search", search.trim());
+      const result = await customFetch<OrdersPageResponse>(`/api/analytics/orders-page?${exportParams.toString()}`);
+      exportRowsAsXlsx(`pedidos-${dateFrom}-${dateTo}.xlsx`, "Pedidos", result.rows, [
+        { header: "Pedido", accessor: (r) => r.externalId ?? r.id },
+        { header: "Data", accessor: (r) => formatDateTime(r.createdAt) },
+        { header: "Cliente", accessor: (r) => r.customerName },
+        { header: "Documento", accessor: (r) => r.document },
+        { header: isB2C ? "Qtd faturada" : "Qtd solicitada", accessor: (r) => r.requestedQuantity },
+        { header: isB2C ? "Qtd paga" : "Qtd atendida", accessor: (r) => r.fulfilledQuantity },
+        { header: isB2C ? "Valor faturado" : "Valor solicitado", accessor: (r) => r.amount },
+        { header: isB2C ? "Valor pago" : "Valor atendido", accessor: (r) => r.fulfilledAmount },
+        { header: "Origem", accessor: (r) => r.origin.label },
+        { header: "Status", accessor: (r) => r.status },
+        { header: "Aviso", accessor: (r) => r.refundStatusUnverified ?? "" },
+      ]);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const detailsParams = useMemo(() => {
     const params = new URLSearchParams();
@@ -431,17 +465,23 @@ export default function OrdersPage() {
                 {t("orders.list.description", "Pedidos do período com quantidades, valores, documento e origem de aquisição.")}
               </p>
             </div>
-            <div className="relative w-full lg:w-80">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(event) => {
-                  setPage(1);
-                  setSearch(event.target.value);
-                }}
-                placeholder={t("orders.search.placeholder", "Buscar pedido, cliente ou documento")}
-                className="pl-9"
-              />
+            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center lg:w-auto">
+              <div className="relative w-full lg:w-80">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(event) => {
+                    setPage(1);
+                    setSearch(event.target.value);
+                  }}
+                  placeholder={t("orders.search.placeholder", "Buscar pedido, cliente ou documento")}
+                  className="pl-9"
+                />
+              </div>
+              <Button variant="outline" size="sm" onClick={exportXlsx} disabled={exporting}>
+                <Download className="mr-2 h-4 w-4" />
+                {exporting ? "Exportando..." : "Exportar"}
+              </Button>
             </div>
           </div>
 

@@ -35,6 +35,7 @@ export const ordersTable = pgTable(
     discountAmount: doublePrecision("discount_amount").notNull().default(0),
     shippingAmount: doublePrecision("shipping_amount").notNull().default(0),
     refundedAmount: doublePrecision("refunded_amount").notNull().default(0),
+    refundStatusUnverified: text("refund_status_unverified_reason"),
     cancelledAmount: doublePrecision("cancelled_amount").notNull().default(0),
     status: text("status", {
       enum: ["PENDING", "APPROVED", "REJECTED", "SHIPPED", "DELIVERED"],
