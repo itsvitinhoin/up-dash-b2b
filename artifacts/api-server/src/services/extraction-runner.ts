@@ -795,8 +795,12 @@ export async function runNuvemshopTransactionalExtraction(
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
   const requestedLookbackDays = options.lookbackDays ?? NUVEMSHOP_LOOKBACK_DAYS;
+  // Teto de 200 dias (cobre backfill de 6 meses com folga) -- era 30, travava
+  // recuperar historico mais antigo depois do fix de updated_at_min (ver
+  // reconciliacao Nuvemshop de 2026-09). Uso normal (cron incremental) passa
+  // poucos dias, entao isso so importa pra backfill manual via LOOKBACK_DAYS.
   const lookbackDays = Number.isFinite(requestedLookbackDays) && requestedLookbackDays > 0
-    ? Math.min(30, Math.max(1, requestedLookbackDays))
+    ? Math.min(200, Math.max(1, requestedLookbackDays))
     : 3;
   const maxPages = Number.isFinite(NUVEMSHOP_MAX_PAGES) && NUVEMSHOP_MAX_PAGES > 0
     ? NUVEMSHOP_MAX_PAGES
