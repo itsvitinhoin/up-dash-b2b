@@ -533,27 +533,12 @@ async function syncProductCatalog(params: {
       }
 
       for (const [sku, row] of variantsBySku.entries()) {
-        const [upserted] = await db
-          .insert(productsTable)
-          .values({
-            clientId: params.clientId,
-            externalId: row.externalId,
-            sku,
-            name: row.name,
-            category,
-            price: row.price,
-            stock: row.stock,
-            imageUrl: row.imageUrl,
-            status: "ACTIVE",
-          })
-          .onConflictDoUpdate({
-            // externalId (product_id:variant_id da Nuvemshop) e o identificador
-            // estavel -- o sku pode ser reatribuido pelo lojista ao longo do
-            // tempo. Resolver conflito por sku deixava o upsert tentar um INSERT
-            // puro quando o sku mudava, colidindo na constraint de externalId
-            // em vez de atualizar a linha certa (ver investigacao 2026-09-17).
-            target: [productsTable.clientId, productsTable.externalId],
-            set: {
+        try {
+          const [upserted] = await db
+            .insert(productsTable)
+            .values({
+              clientId: params.clientId,
+              externalId: row.externalId,
               sku,
               name: row.name,
               category,
@@ -561,11 +546,36 @@ async function syncProductCatalog(params: {
               stock: row.stock,
               imageUrl: row.imageUrl,
               status: "ACTIVE",
-            },
-          })
-          .returning({ wasInserted: sql<boolean>`(xmax = 0)` });
-        if (upserted?.wasInserted) params.result.productsCreated++;
-        else params.result.productsUpdated++;
+            })
+            .onConflictDoUpdate({
+              // externalId (product_id:variant_id da Nuvemshop) e o identificador
+              // estavel -- o sku pode ser reatribuido pelo lojista ao longo do
+              // tempo. Resolver conflito por sku deixava o upsert tentar um INSERT
+              // puro quando o sku mudava, colidindo na constraint de externalId
+              // em vez de atualizar a linha certa. Mesmo assim, alguns catalogos
+              // tem sku duplicado entre produtos diferentes de verdade -- por
+              // isso o try/catch: uma variante com dado inconsistente nao pode
+              // abortar as outras variantes do mesmo produto (ver investigacao
+              // 2026-09-17).
+              target: [productsTable.clientId, productsTable.externalId],
+              set: {
+                sku,
+                name: row.name,
+                category,
+                price: row.price,
+                stock: row.stock,
+                imageUrl: row.imageUrl,
+                status: "ACTIVE",
+              },
+            })
+            .returning({ wasInserted: sql<boolean>`(xmax = 0)` });
+          if (upserted?.wasInserted) params.result.productsCreated++;
+          else params.result.productsUpdated++;
+        } catch (variantError) {
+          params.result.errors.push(
+            `Product ${product.id ?? "unknown"} variant ${sku}: ${variantError instanceof Error ? variantError.message : String(variantError)}`,
+          );
+        }
       }
     } catch (error) {
       params.result.errors.push(`Product ${product.id ?? "unknown"}: ${error instanceof Error ? error.message : String(error)}`);
@@ -756,46 +766,56 @@ export async function syncNuvemshopClient(params: {
         const itemDiscount = itemGrossTotal > 0 ? discount * (itemGross / itemGrossTotal) : 0;
         const netUnitPrice = Math.max(0, (itemGross - itemDiscount) / quantity);
 
-        const [product] = await db
-          .insert(productsTable)
-          .values({
-            clientId: params.clientId,
-            externalId: productExternalId,
-            sku,
-            name: productName,
-            category,
-            price: productPrice,
-            imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
-          })
-          .onConflictDoUpdate({
-            // mesmo motivo do upsert em syncProductCatalog: externalId e o
-            // identificador estavel, sku pode mudar.
-            target: [productsTable.clientId, productsTable.externalId],
-            set: {
+        try {
+          const [product] = await db
+            .insert(productsTable)
+            .values({
+              clientId: params.clientId,
+              externalId: productExternalId,
               sku,
               name: productName,
               category,
               price: productPrice,
               imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
-            },
-          })
-          .returning({ id: productsTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
-        if (!product) continue;
-        if (product.wasInserted) result.productsCreated++;
-        else result.productsUpdated++;
+            })
+            .onConflictDoUpdate({
+              // mesmo motivo do upsert em syncProductCatalog: externalId e o
+              // identificador estavel, sku pode mudar. Mesmo assim, alguns
+              // catalogos (ex: Hot Pink) tem sku duplicado entre produtos
+              // diferentes de verdade -- por isso o try/catch em volta: um
+              // item com dado de catalogo inconsistente nao pode abortar o
+              // resto dos itens desse pedido (ver investigacao 2026-09-17).
+              target: [productsTable.clientId, productsTable.externalId],
+              set: {
+                sku,
+                name: productName,
+                category,
+                price: productPrice,
+                imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
+              },
+            })
+            .returning({ id: productsTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
+          if (!product) continue;
+          if (product.wasInserted) result.productsCreated++;
+          else result.productsUpdated++;
 
-        await db.insert(orderItemsTable).values({
-          orderId: upsertedOrder.id,
-          productId: product.id,
-          quantity,
-          fulfilledQuantity: paid ? quantity : 0,
-          priceAtSale: netUnitPrice,
-          grossPriceAtSale: grossUnitPrice,
-          discountAmount: itemDiscount,
-          color: variantAttrs.color,
-          size: variantAttrs.size,
-        });
-        result.orderItemsSynced++;
+          await db.insert(orderItemsTable).values({
+            orderId: upsertedOrder.id,
+            productId: product.id,
+            quantity,
+            fulfilledQuantity: paid ? quantity : 0,
+            priceAtSale: netUnitPrice,
+            grossPriceAtSale: grossUnitPrice,
+            discountAmount: itemDiscount,
+            color: variantAttrs.color,
+            size: variantAttrs.size,
+          });
+          result.orderItemsSynced++;
+        } catch (itemError) {
+          result.errors.push(
+            `Order ${order.id} item ${sku}: ${itemError instanceof Error ? itemError.message : String(itemError)}`,
+          );
+        }
       }
 
       if (paid && !cancelled) {
