@@ -976,6 +976,12 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
         attributedRevenue: p.attributedRevenue,
         roas: 0,
       })),
+      // Achado 23/09/2026 (fora do escopo da Fase 4, bug já existente antes
+      // dela): faltava esse campo aqui, exigido pelo schema compartilhado
+      // com o caminho UpZero (analytics.ts) -- quebrava Marketing pra
+      // QUALQUER client Vesti. Mesmo default usado lá quando não tem Meta
+      // Ads conectado.
+      topCreatives: metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] },
       stateBreakdown: [],
       ageBreakdown: [],
       creativesTotal: filteredAds.length,
