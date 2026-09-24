@@ -14,6 +14,7 @@ import {
   calculateErpStockTurnoverPct,
   hasPaidErpCampaignSignal,
 } from "./erpMetrics";
+import { fetchVestiAttributionSets, isOnlyAttributed } from "./vesti-attribution";
 
 /**
  * Se o client tiver um dataset de ERP configurado (independente de
@@ -140,69 +141,81 @@ export async function matchErpDocumentsWithUpzero(
   return byDocument;
 }
 
+export type VestiErpAttributionMatcher = {
+  match(document: string | null | undefined, orderDate: Date | string): ErpDocumentMatch | null;
+};
+
 // Fallback pra client Vesti nativo (05/08/2026): `matchErpDocumentsWithUpzero`
 // acima só encontra alguma coisa se o comprador tiver um registro na tabela
 // `customers` do Postgres (rastreamento UpZero). Client Vesti não passa por
-// ali — o cadastro dele vive inteiro no BigQuery (`clientes_atribuidos_consolidados`,
-// que já tem CNPJ). Sem isso, Performance mostra Receita Atribuída/Cobertura
-// sempre em 0% pra qualquer client Vesti, mesmo com atribuição real
-// disponível. Mesma fonte já usada em fetchVestiAttributedCustomers
-// (services/vestiAnalytics.ts) — aqui só casa por documento em vez de e-mail,
-// já que é isso que `pedidos_erp.customer_id` guarda.
-export async function matchErpDocumentsWithVestiAttribution(
-  dataset: string,
-  documents: Array<string | null | undefined>,
-): Promise<Map<string, ErpDocumentMatch>> {
-  const normalizedDocuments = new Set(
-    documents
-      .map((doc) => (doc ? String(doc).replace(/[^0-9]/g, "") : null))
-      .filter((doc): doc is string => !!doc),
-  );
-  if (normalizedDocuments.size === 0) return new Map();
-
+// ali — o cadastro dele vive inteiro no BigQuery. Sem isso, Performance
+// mostra Receita Atribuída/Cobertura sempre em 0% pra qualquer client
+// Vesti, mesmo com atribuição real disponível.
+//
+// Fase 4 (23/09/2026): passou a usar a regra `onlyAttributed` completa
+// (./vesti-attribution, mesma da Recompra) em vez de só
+// `clientes_atribuidos_consolidados` sem barreira de data. Um documento
+// pode ter pedido antes E depois da data de início da marca -- por isso a
+// assinatura trocou de Map (chaveado só por documento) pra uma função
+// `match(document, orderDate)`, decidida por `isOnlyAttributed`. Quando o
+// pedido só é atribuído pela fonte `up_agency` (sem linha em
+// clientes_atribuidos_consolidados, logo sem origem_vesti/
+// primeiro_toque_agencia reais), sintetiza `utmSource: "UP Agency"` com
+// `evidenceType: "vesti_up_agency_utm"` (distinto do "vesti_attribution"
+// já usado), pra quem for depurar depois distinguir a origem do match.
+export async function matchErpDocumentsWithVestiAttribution(dataset: string): Promise<VestiErpAttributionMatcher> {
   const clientes = vestiTable(dataset, "clientes_atribuidos_consolidados");
-  let rows: Array<Record<string, unknown>>;
+  const consolidatedMeta = new Map<string, { utmSource: string; evidenceAt: Date | null }>();
   try {
-    const [result] = await bigquery.query({
+    const [rows] = await bigquery.query({
       query: `
         SELECT
           REGEXP_REPLACE(CAST(cnpj AS STRING), r'[^0-9]', '') AS document,
-          tipo_atribuicao,
           origem_vesti,
           primeiro_toque_agencia
         FROM ${clientes}
-        WHERE cnpj IS NOT NULL
-          AND REGEXP_REPLACE(CAST(cnpj AS STRING), r'[^0-9]', '') IN UNNEST(@documents)
+        WHERE cnpj IS NOT NULL AND REGEXP_REPLACE(CAST(cnpj AS STRING), r'[^0-9]', '') != ''
       `,
-      params: { documents: Array.from(normalizedDocuments) },
     });
-    rows = result as Array<Record<string, unknown>>;
-  } catch (err) {
-    // Client sem tabela de atribuição Vesti nesse dataset (ex: ERP puro,
-    // sem o pipeline de tracking da agência) — não é erro, só não tem
-    // como enriquecer, comportamento igual a não achar nenhum match.
-    console.warn("[erp] Vesti attribution fallback indisponível:", err instanceof Error ? err.message : err);
-    return new Map();
-  }
-
-  const byDocument = new Map<string, ErpDocumentMatch>();
-  for (const r of rows) {
-    const document = r.document as string;
-    if (!document || byDocument.has(document)) continue;
-    byDocument.set(document, {
-      customerId: document,
-      attribution: {
+    for (const r of rows as Array<Record<string, unknown>>) {
+      const document = r.document as string;
+      if (!document || consolidatedMeta.has(document)) continue;
+      consolidatedMeta.set(document, {
         utmSource: (r.origem_vesti as string) || "UP Agency",
-        utmMedium: null,
-        utmCampaign: null,
-        evidenceType: "vesti_attribution",
         evidenceAt: r.primeiro_toque_agencia
           ? new Date(String((r.primeiro_toque_agencia as { value?: string })?.value ?? r.primeiro_toque_agencia))
           : null,
-      },
-    });
+      });
+    }
+  } catch (err) {
+    // Client sem tabela de atribuição Vesti nesse dataset (ex: ERP puro,
+    // sem o pipeline de tracking da agência) — não é erro, só não tem
+    // metadado do lado "consolidado"; a fonte up_agency abaixo continua
+    // funcionando normalmente.
+    console.warn("[erp] Vesti attribution fallback (consolidado) indisponível:", err instanceof Error ? err.message : err);
   }
-  return byDocument;
+
+  const sets = await fetchVestiAttributionSets(dataset);
+
+  return {
+    match(documentRaw, orderDate) {
+      const document = documentRaw ? String(documentRaw).replace(/[^0-9]/g, "") : "";
+      if (!document || !isOnlyAttributed(document, orderDate, sets)) return null;
+      const dateStr = typeof orderDate === "string" ? orderDate.slice(0, 10) : orderDate.toISOString().slice(0, 10);
+      const meta = consolidatedMeta.get(document);
+      const consolidatedActive = !!meta && sets.consolidatedDocs.has(document) && (sets.startDate === null || dateStr >= sets.startDate);
+      if (consolidatedActive && meta) {
+        return {
+          customerId: document,
+          attribution: { utmSource: meta.utmSource, utmMedium: null, utmCampaign: null, evidenceType: "vesti_attribution", evidenceAt: meta.evidenceAt },
+        };
+      }
+      return {
+        customerId: document,
+        attribution: { utmSource: "UP Agency", utmMedium: null, utmCampaign: null, evidenceType: "vesti_up_agency_utm", evidenceAt: null },
+      };
+    },
+  };
 }
 
 // Fallback pro "Funil consolidado" do Performance (05/08/2026): as etapas
@@ -871,28 +884,25 @@ export async function fetchErpOrdersPage(
   // mostrava TODO pedido como "SEM_ORIGEM" pra client Vesti nativo, mesmo
   // com os cards do topo já contando atribuição de verdade (inconsistência
   // real: o card dizia "130 atribuídos", a lista de pedidos não mostrava
-  // nenhum). Só preenche o que a UpZero não achou.
-  const unmatchedOrderDocuments = orderDocuments.filter((doc) => doc && !attribution.has(doc));
-  if (unmatchedOrderDocuments.length > 0) {
-    const vestiMatches = await matchErpDocumentsWithVestiAttribution(dataset, unmatchedOrderDocuments);
-    for (const doc of unmatchedOrderDocuments) {
-      if (!doc) continue;
-      const normalized = doc.replace(/[^0-9]/g, "");
-      const vestiMatch = vestiMatches.get(normalized);
-      if (vestiMatch?.attribution) attribution.set(doc, vestiMatch.attribution);
-    }
-  }
+  // nenhum). Só preenche o que a UpZero não achou. Fase 4 (23/09/2026): o
+  // match Vesti agora depende da DATA do pedido (barreira de início da
+  // marca), não só do documento -- por isso vira um matcher chamado por
+  // linha, em vez de um Map pré-preenchido em lote.
+  const hasUnmatchedOrderDocuments = orderDocuments.some((doc) => doc && !attribution.has(doc));
+  const vestiMatcher = hasUnmatchedOrderDocuments ? await matchErpDocumentsWithVestiAttribution(dataset) : null;
 
   const rows: ErpOrderRow[] = rawRows.map((r) => {
     const customerId = (r.customer_id as string) || null;
     const document = (r.document as string) || null;
     const attributionDocument = document ?? customerId;
-    const match = attributionDocument
-      ? attribution.get(attributionDocument)
-      : undefined;
+    const createdAt = toDateOnly(r.created_at);
+    let match = attributionDocument ? attribution.get(attributionDocument) : undefined;
+    if (!match && attributionDocument && vestiMatcher) {
+      match = vestiMatcher.match(attributionDocument, createdAt)?.attribution ?? undefined;
+    }
     return {
       id: String(r.pedido_id),
-      createdAt: toDateOnly(r.created_at),
+      createdAt,
       customerId,
       customerName: (r.customer_name as string) || null,
       company: (r.company as string) || null,

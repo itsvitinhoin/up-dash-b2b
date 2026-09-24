@@ -5,6 +5,7 @@ import { stateFromPhoneDdd } from "../lib/phoneState";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { addDaysToDateOnly } from "../lib/httpQuery";
 import { isPaidCampaignSignal } from "./campaign-attribution";
+import { fetchVestiAttributionSets, isOnlyAttributed, resolveAttributionStartDate } from "./vesti-attribution";
 
 /**
  * Se o client for Vesti e tiver dataset configurado, devolve o dataset.
@@ -488,6 +489,20 @@ export async function fetchVestiAttributedCustomers(
   // TODOS os clientes atribuídos (das duas fontes) vêm direto de
   // dashboard_vendas_view por documento, igual o legado -- não só da
   // fonte 2 como antes.
+  //
+  // Fase 4 (23/09/2026): a agregação de pedidos passou a usar a mesma
+  // barreira de data da Recompra (isOnlyAttributed, ./vesti-attribution) --
+  // antes contava QUALQUER pedido do período pro cliente, sem checar se a
+  // agência já tinha começado a atuar na marca naquela data. A
+  // VISIBILIDADE do cliente (aparecer na lista) continua sem gate --
+  // pertencer a `deduped_customers` já é a definição de "é um cliente
+  // atribuído"; a data de início é barreira de PEDIDO, não de IDENTIDADE.
+  // Um cliente consolidado com só compra antiga no período aparece com 0
+  // pedidos, não some. A view é por ITEM (valor_reservado/valor_solicitado
+  // esparsos por pedido, só uma linha carrega o total -- por isso SUM, não
+  // ANY_VALUE), então o BigQuery já agrega por pedido_id antes de trazer
+  // pro Node; a agregação POR CLIENTE (que precisa do gate por pedido) é
+  // feita em JS.
   const query = `
     WITH utm_customers AS (
       SELECT
@@ -528,53 +543,67 @@ export async function fetchVestiAttributedCustomers(
       )
       WHERE rn = 1
     ),
-    orders_by_doc AS (
-      SELECT
-        TRIM(REGEXP_REPLACE(CAST(v.documento_cliente AS STRING), r'\\D', '')) AS doc_key,
-        COUNT(DISTINCT v.pedido_id) AS purchase_count,
-        COALESCE(SUM(v.valor_reservado), 0) AS total_purchase_value,
-        COALESCE(SUM(v.valor_solicitado), 0) AS total_requested_value,
-        MAX(v.data_ref) AS last_purchase_ts
+    active_docs_in_period AS (
+      SELECT DISTINCT TRIM(REGEXP_REPLACE(CAST(v.documento_cliente AS STRING), r'\\D', '')) AS doc_key
       FROM ${view} v
-      WHERE v.data_ref BETWEEN @dateFrom AND @dateTo
-        AND v.documento_cliente IS NOT NULL
-      GROUP BY doc_key
+      WHERE v.data_ref BETWEEN @dateFrom AND @dateTo AND v.documento_cliente IS NOT NULL
     )
-    SELECT
-      dc.email,
-      dc.name,
-      dc.cnpj,
-      dc.profile,
-      dc.attribution_type,
-      dc.registered_at,
-      dc.first_touch_at,
-      COALESCE(obd.purchase_count, 0) AS purchase_count,
-      COALESCE(obd.total_purchase_value, 0) AS total_purchase_value,
-      COALESCE(obd.total_requested_value, 0) AS total_requested_value,
-      obd.last_purchase_ts AS last_purchase_at
+    SELECT dc.email, dc.name, dc.cnpj, dc.profile, dc.attribution_type, dc.registered_at, dc.first_touch_at, dc.doc_key
     FROM deduped_customers dc
-    LEFT JOIN orders_by_doc obd ON obd.doc_key = dc.doc_key
-    WHERE (dc.registered_at BETWEEN @dateFrom AND @dateTo) OR obd.doc_key IS NOT NULL
-    ORDER BY total_purchase_value DESC
-    LIMIT 500
+    WHERE (dc.registered_at BETWEEN @dateFrom AND @dateTo)
+      OR dc.doc_key IN (SELECT doc_key FROM active_docs_in_period)
   `;
 
-  const [rows] = await bigquery.query({ query, params: { dateFrom, dateTo } });
-  return (rows as Array<Record<string, unknown>>).map((r) => ({
-    email: String(r.email),
-    name: (r.name as string) ?? null,
-    cnpj: (r.cnpj as string) || null,
-    profile: (r.profile as string) ?? null,
-    attributionType: (r.attribution_type as string) ?? null,
-    registeredAt: r.registered_at ? toDateOnly(r.registered_at) : null,
-    firstTouchAt: r.first_touch_at ? String((r.first_touch_at as { value?: string })?.value ?? r.first_touch_at) : null,
-    purchaseCount: Number(r.purchase_count) || 0,
-    totalPurchaseValue: Number(r.total_purchase_value) || 0,
-    totalRequestedValue: Number(r.total_requested_value) || 0,
-    lastPurchaseAt: r.last_purchase_at
-      ? String((r.last_purchase_at as { value?: string })?.value ?? r.last_purchase_at)
-      : null,
-  }));
+  const ordersQuery = `
+    SELECT
+      TRIM(REGEXP_REPLACE(CAST(v.documento_cliente AS STRING), r'\\D', '')) AS doc_key,
+      v.pedido_id,
+      ANY_VALUE(v.data_ref) AS requested_at,
+      COALESCE(SUM(v.valor_reservado), 0) AS purchase_value,
+      COALESCE(SUM(v.valor_solicitado), 0) AS requested_value
+    FROM ${view} v
+    WHERE v.data_ref BETWEEN @dateFrom AND @dateTo AND v.documento_cliente IS NOT NULL
+    GROUP BY doc_key, v.pedido_id
+  `;
+
+  const [[customerRows], [orderRows], attribution] = await Promise.all([
+    bigquery.query({ query, params: { dateFrom, dateTo } }),
+    bigquery.query({ query: ordersQuery, params: { dateFrom, dateTo } }),
+    fetchVestiAttributionSets(dataset),
+  ]);
+
+  type OrderAgg = { purchaseCount: number; totalPurchaseValue: number; totalRequestedValue: number; lastPurchaseAt: string | null };
+  const ordersByDoc = new Map<string, OrderAgg>();
+  for (const r of orderRows as Array<Record<string, unknown>>) {
+    const docKey = String(r.doc_key ?? "");
+    if (!docKey) continue;
+    const requestedAt = toDateOnly(r.requested_at);
+    if (!isOnlyAttributed(docKey, requestedAt, attribution)) continue;
+    const agg = ordersByDoc.get(docKey) ?? { purchaseCount: 0, totalPurchaseValue: 0, totalRequestedValue: 0, lastPurchaseAt: null };
+    agg.purchaseCount += 1;
+    agg.totalPurchaseValue += Number(r.purchase_value) || 0;
+    agg.totalRequestedValue += Number(r.requested_value) || 0;
+    if (!agg.lastPurchaseAt || requestedAt > agg.lastPurchaseAt) agg.lastPurchaseAt = requestedAt;
+    ordersByDoc.set(docKey, agg);
+  }
+
+  const customers = (customerRows as Array<Record<string, unknown>>).map((r) => {
+    const agg = ordersByDoc.get(String(r.doc_key ?? ""));
+    return {
+      email: String(r.email),
+      name: (r.name as string) ?? null,
+      cnpj: (r.cnpj as string) || null,
+      profile: (r.profile as string) ?? null,
+      attributionType: (r.attribution_type as string) ?? null,
+      registeredAt: r.registered_at ? toDateOnly(r.registered_at) : null,
+      firstTouchAt: r.first_touch_at ? String((r.first_touch_at as { value?: string })?.value ?? r.first_touch_at) : null,
+      purchaseCount: agg?.purchaseCount ?? 0,
+      totalPurchaseValue: agg?.totalPurchaseValue ?? 0,
+      totalRequestedValue: agg?.totalRequestedValue ?? 0,
+      lastPurchaseAt: agg?.lastPurchaseAt ?? null,
+    };
+  });
+  return customers.sort((a, b) => b.totalPurchaseValue - a.totalPurchaseValue).slice(0, 500);
 }
 
 // ───────── Página de pedidos ─────────
@@ -3193,10 +3222,51 @@ export type VestiMarketingData = {
   platformBreakdown: VestiMarketingChannelRow[];
 };
 
+// Fase 4 (23/09/2026): pedidos atribuídos passaram a vir das DUAS fontes da
+// regra `onlyAttributed` (./vesti-attribution), não só de
+// pedidos_atribuidos_consolidados -- antes não incluía a fonte
+// utm_source=up_agency (pedido de cliente cadastrado via link da agência,
+// sem toque rastreado em stape_logs) nem tinha barreira de data (pedido de
+// cliente "consolidado" ANTES da agência começar a atuar na marca não
+// deveria contar). Sem prova de que as duas fontes sejam mutuamente
+// exclusivas -- trata como possível sobreposição: UNION das duas listas de
+// pedido_id, dedup por pedido_id (chave exata), priorizando a origem
+// consolidada (tem `origem_vesti` de canal real) quando o pedido aparecer
+// nas duas; o up_agency usa o rótulo "UTM Agência" (mesmo já usado em
+// fetchVestiAttributedCustomers). `leadsRows`/`leadsSeriesRows` (cadastro,
+// não pedido) ficam como estavam -- a barreira de data da regra é sobre
+// PEDIDO, não sobre identidade (mesmo critério de fetchVestiAttributedCustomers).
 export async function fetchVestiMarketingData(dataset: string, dateFrom: string, dateTo: string): Promise<VestiMarketingData> {
   const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
   const pedidosAtribuidos = vestiTable(dataset, "pedidos_atribuidos_consolidados");
+  const clientesVesti = vestiTable(dataset, "clientes_vesti");
   const view = vestiTable(dataset, "dashboard_vendas_view");
+
+  const startDate = resolveAttributionStartDate(dataset);
+  const startDateClause = startDate ? "AND pa.data_ref >= @startDate" : "";
+  const attributedParams = startDate ? { dateFrom, dateTo, startDate } : { dateFrom, dateTo };
+  const pedidosAttrCte = `
+    consolidated_orders AS (
+      SELECT pa.pedido_id, COALESCE(NULLIF(ca.origem_vesti, ''), 'Não identificado') AS platform, 1 AS source_priority
+      FROM ${pedidosAtribuidos} pa
+      JOIN ${clientesAtribuidos} ca ON LOWER(ca.email) = LOWER(pa.email)
+      WHERE pa.data_ref BETWEEN @dateFrom AND @dateTo ${startDateClause}
+    ),
+    up_agency_orders AS (
+      SELECT CAST(v.pedido_id AS STRING) AS pedido_id, 'UTM Agência' AS platform, 2 AS source_priority
+      FROM ${view} v
+      JOIN ${clientesVesti} cv ON TRIM(REGEXP_REPLACE(CAST(v.documento_cliente AS STRING), r'\\D', '')) = TRIM(REGEXP_REPLACE(CAST(cv.document AS STRING), r'\\D', ''))
+      WHERE cv.utm_source LIKE '%up_agency%' AND v.data_ref BETWEEN @dateFrom AND @dateTo
+      GROUP BY v.pedido_id
+    ),
+    pedidos_attr AS (
+      SELECT pedido_id, platform FROM (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY pedido_id ORDER BY source_priority ASC) AS rn
+        FROM (SELECT * FROM consolidated_orders UNION ALL SELECT * FROM up_agency_orders)
+      )
+      WHERE rn = 1
+    )
+  `;
 
   const [[leadsRows], [leadsSeriesRows], [revenueRows], [revenueSeriesRows]] = await Promise.all([
     bigquery.query({
@@ -3215,19 +3285,14 @@ export async function fetchVestiMarketingData(dataset: string, dateFrom: string,
     }),
     bigquery.query({
       query: `
-        WITH pedidos_attr AS (
-          SELECT pa.pedido_id, ca.origem_vesti
-          FROM ${pedidosAtribuidos} pa
-          JOIN ${clientesAtribuidos} ca ON LOWER(ca.email) = LOWER(pa.email)
-          WHERE pa.data_ref BETWEEN @dateFrom AND @dateTo
-        ),
+        WITH ${pedidosAttrCte},
         orders_rev AS (
           SELECT CAST(pedido_id AS STRING) AS pedido_id, COALESCE(SUM(valor_reservado), 0) AS revenue
           FROM ${view}
           WHERE data_ref BETWEEN @dateFrom AND @dateTo AND pago
           GROUP BY pedido_id
         )
-        SELECT COALESCE(NULLIF(pa.origem_vesti, ''), 'Não identificado') AS platform,
+        SELECT pa.platform AS platform,
           COUNT(DISTINCT pa.pedido_id) AS leads,
           COALESCE(SUM(o.revenue), 0) AS revenue
         FROM pedidos_attr pa
@@ -3235,15 +3300,11 @@ export async function fetchVestiMarketingData(dataset: string, dateFrom: string,
         GROUP BY platform
         ORDER BY revenue DESC
       `,
-      params: { dateFrom, dateTo },
+      params: attributedParams,
     }),
     bigquery.query({
       query: `
-        WITH pedidos_attr AS (
-          SELECT DISTINCT pa.pedido_id
-          FROM ${pedidosAtribuidos} pa
-          WHERE pa.data_ref BETWEEN @dateFrom AND @dateTo
-        )
+        WITH ${pedidosAttrCte}
         SELECT v.data_ref AS date, COALESCE(SUM(v.valor_reservado), 0) AS value
         FROM ${view} v
         JOIN pedidos_attr pa ON CAST(v.pedido_id AS STRING) = pa.pedido_id
@@ -3251,7 +3312,7 @@ export async function fetchVestiMarketingData(dataset: string, dateFrom: string,
         GROUP BY date
         ORDER BY date
       `,
-      params: { dateFrom, dateTo },
+      params: attributedParams,
     }),
   ]);
 
@@ -3300,19 +3361,43 @@ export type VestiUtmData = {
   rows: VestiUtmRow[];
 };
 
+// Fase 4 (23/09/2026): mesma extensão de fonte + barreira de data de
+// fetchVestiMarketingData (ver comentário lá) -- aqui a chave de dedup do
+// UNION carrega também `email`, já que `buyers` conta COUNT(DISTINCT
+// email). Pra pedido vindo da fonte up_agency, o email é o de
+// clientes_vesti (mesmo cliente, resolvido por documento).
 export async function fetchVestiUtmData(dataset: string, dateFrom: string, dateTo: string): Promise<VestiUtmData> {
   const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
   const pedidosAtribuidos = vestiTable(dataset, "pedidos_atribuidos_consolidados");
+  const clientesVesti = vestiTable(dataset, "clientes_vesti");
   const view = vestiTable(dataset, "dashboard_vendas_view");
+
+  const startDate = resolveAttributionStartDate(dataset);
+  const startDateClause = startDate ? "AND pa.data_ref >= @startDate" : "";
+  const attributedParams = startDate ? { dateFrom, dateTo, startDate } : { dateFrom, dateTo };
 
   const [[rows], [sessionsRows]] = await Promise.all([
     bigquery.query({
       query: `
-        WITH pedidos_attr AS (
-          SELECT pa.pedido_id, pa.email, ca.origem_vesti
+        WITH consolidated_orders AS (
+          SELECT pa.pedido_id, pa.email, COALESCE(NULLIF(ca.origem_vesti, ''), 'Não identificado') AS source, 1 AS source_priority
           FROM ${pedidosAtribuidos} pa
           JOIN ${clientesAtribuidos} ca ON LOWER(ca.email) = LOWER(pa.email)
-          WHERE pa.data_ref BETWEEN @dateFrom AND @dateTo
+          WHERE pa.data_ref BETWEEN @dateFrom AND @dateTo ${startDateClause}
+        ),
+        up_agency_orders AS (
+          SELECT CAST(v.pedido_id AS STRING) AS pedido_id, ANY_VALUE(cv.email) AS email, 'UTM Agência' AS source, 2 AS source_priority
+          FROM ${view} v
+          JOIN ${clientesVesti} cv ON TRIM(REGEXP_REPLACE(CAST(v.documento_cliente AS STRING), r'\\D', '')) = TRIM(REGEXP_REPLACE(CAST(cv.document AS STRING), r'\\D', ''))
+          WHERE cv.utm_source LIKE '%up_agency%' AND v.data_ref BETWEEN @dateFrom AND @dateTo
+          GROUP BY v.pedido_id
+        ),
+        pedidos_attr AS (
+          SELECT pedido_id, email, source FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY pedido_id ORDER BY source_priority ASC) AS rn
+            FROM (SELECT * FROM consolidated_orders UNION ALL SELECT * FROM up_agency_orders)
+          )
+          WHERE rn = 1
         ),
         orders_rev AS (
           SELECT CAST(pedido_id AS STRING) AS pedido_id, COALESCE(SUM(valor_reservado), 0) AS revenue
@@ -3327,7 +3412,7 @@ export async function fetchVestiUtmData(dataset: string, dateFrom: string, dateT
           GROUP BY source
         ),
         buyers AS (
-          SELECT COALESCE(NULLIF(pa.origem_vesti, ''), 'Não identificado') AS source,
+          SELECT pa.source,
             COUNT(DISTINCT pa.email) AS buyers,
             COALESCE(SUM(o.revenue), 0) AS revenue
           FROM pedidos_attr pa
@@ -3343,7 +3428,7 @@ export async function fetchVestiUtmData(dataset: string, dateFrom: string, dateT
         FULL OUTER JOIN buyers b ON b.source = r.source
         ORDER BY revenue DESC
       `,
-      params: { dateFrom, dateTo },
+      params: attributedParams,
     }),
     bigquery.query({
       query: `SELECT COUNT(*) AS visits FROM \`up-vesti-report.stape_logs.EventsLogsTratado\` WHERE client = @dataset AND event_name = 'PageView' AND DATE(event_ts) BETWEEN @dateFrom AND @dateTo`,

@@ -372,19 +372,16 @@ export async function fetchPerformanceDashboard(
   const matches = await matchErpDocumentsWithUpzero(clientId, documents);
   // Client Vesti nativo não tem comprador nenhum rastreado no Postgres (ver
   // matchErpDocumentsWithVestiAttribution) — preenche só o que a UpZero não
-  // achou, sem sobrescrever um match que já veio de lá.
-  const unmatchedDocuments = documents.filter((doc) => {
+  // achou, sem sobrescrever um match que já veio de lá. Fase 4 (23/09/2026):
+  // o match Vesti agora depende da DATA do pedido (barreira de início da
+  // marca), não só do documento -- por isso vira um matcher chamado por
+  // linha dentro do loop de customerDays abaixo, em vez de um Map
+  // pré-preenchido em lote.
+  const hasUnmatchedDocuments = documents.some((doc) => {
     const normalized = doc ? String(doc).replace(/[^0-9]/g, "") : null;
     return normalized && !matches.has(String(doc));
   });
-  if (unmatchedDocuments.length > 0) {
-    const vestiMatches = await matchErpDocumentsWithVestiAttribution(dataset, unmatchedDocuments);
-    for (const doc of unmatchedDocuments) {
-      const normalized = String(doc).replace(/[^0-9]/g, "");
-      const vestiMatch = vestiMatches.get(normalized);
-      if (vestiMatch) matches.set(String(doc), vestiMatch);
-    }
-  }
+  const vestiMatcher = hasUnmatchedDocuments ? await matchErpDocumentsWithVestiAttribution(dataset) : null;
   const client = clientRows[0];
   const token = getMetaAccessToken(client?.metaAdsApiKey);
 
@@ -500,7 +497,7 @@ export async function fetchPerformanceDashboard(
     const orders = Number(row.orders) || 0;
     const revenue = Number(row.net_revenue) || 0;
     const day = dateOnly(row.date);
-    const match = document ? matches.get(document) : undefined;
+    const match = document ? (matches.get(document) ?? vestiMatcher?.match(document, day) ?? undefined) : undefined;
     const historicalOrders = Number(row.historical_orders) || 0;
 
     if (row.is_identified && document) {
