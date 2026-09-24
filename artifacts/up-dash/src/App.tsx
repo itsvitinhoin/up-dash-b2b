@@ -62,6 +62,7 @@ import OrchestratorPage from "@/pages/orchestrator";
 import SalesAgentPage from "@/pages/sales-agent";
 import ErpPage from "@/pages/erp";
 import PerformancePage from "@/pages/performance";
+import PerformanceRecompraPage from "@/pages/performance-recompra";
 
 function ApiErrorBoundary({ children }: { children: React.ReactNode }) {
   const { logout } = useAuth();
@@ -393,6 +394,16 @@ function Router() {
             <AppLayout>
               <PageTransition routeKey="performance">
                 <PerformancePage />
+              </PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/performance/recompra">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="performance-recompra">
+                <PerformanceRecompraPage />
               </PageTransition>
             </AppLayout>
           </AuthGuard>

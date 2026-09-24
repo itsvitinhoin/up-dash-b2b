@@ -30,6 +30,19 @@ export function authenticate(
     return;
   }
   const token = header.slice(7);
+
+  // Achado 21/09/2026: bypass só-dev pro token fake que o front usa em
+  // LOCAL_UI_PREVIEW (auth.tsx) -- sem isso, todo preview local com login
+  // "fingido" no front toma 401 aqui, e a tela sempre mostra dado vazio/
+  // R$0,00 mesmo apontando pro banco real. Só ativa com
+  // NODE_ENV=development E o token literal exato -- nunca entra em
+  // produção (lá NODE_ENV=production).
+  if (process.env.NODE_ENV === "development" && token === "local-ui-preview") {
+    req.user = { sub: "local-preview-admin", email: "admin@updash.com", role: "ADMIN", clientId: null };
+    next();
+    return;
+  }
+
   try {
     const payload = verifyAccessToken(token);
     req.user = payload;

@@ -72,6 +72,7 @@ import * as vestiCustomersController from "../controllers/vestiCustomersControll
 import * as vestiProductsController from "../controllers/vestiProductsController";
 import * as vestiSellersController from "../controllers/vestiSellersController";
 import * as erpController from "../controllers/erpController";
+import * as recompraController from "../controllers/recompraController";
 import {
   buildCustomerTimelineResponse,
   getMetricUser,
@@ -9844,6 +9845,27 @@ router.get("/analytics/erp/customers", async (req, res): Promise<void> => {
 });
 router.get("/analytics/erp/products", async (req, res): Promise<void> => {
   await erpController.getProducts(req, res);
+});
+// ─── Recompra (Performance > Recompra) ──────────────────────────────────────
+// Fase 1 -- ver plano salvo em
+// C:\Users\MarceloH\.claude\plans\delegated-cooking-pelican.md. Só Blocos
+// 1-4 e Detalhamento, universo Tipo=ERP, Status=Pago, sem P2 ainda.
+router.get("/analytics/recompra/dashboard", async (req, res): Promise<void> => {
+  await recompraController.getDashboard(req, res);
+});
+router.get("/analytics/recompra/detail", async (req, res): Promise<void> => {
+  await recompraController.getDetail(req, res);
+});
+router.get("/analytics/recompra/sellers", async (req, res): Promise<void> => {
+  await recompraController.getSellers(req, res);
+});
+// Fase 5 -- gráficos mensais (janela fixa de 12 meses, sem P2) e Coorte +
+// Funil de retenção (visão geral, sem filtros da página).
+router.get("/analytics/recompra/monthly-trend", async (req, res): Promise<void> => {
+  await recompraController.getMonthlyTrend(req, res);
+});
+router.get("/analytics/recompra/history-insights", async (req, res): Promise<void> => {
+  await recompraController.getHistoryInsights(req, res);
 });
 router.get("/analytics/performance", async (req, res): Promise<void> => {
   await erpController.getPerformance(req, res);

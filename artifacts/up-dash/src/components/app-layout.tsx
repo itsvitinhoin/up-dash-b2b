@@ -59,6 +59,7 @@ import {
   Sparkles,
   Scale,
   Gauge,
+  RefreshCw,
 } from "lucide-react";
 import {
   useListClients,
@@ -269,6 +270,18 @@ const pageMeta: Record<string, PageMeta> = {
   "/performance": {
     title: "Performance",
     subtitle: "Mídia, ERP e e-commerce em uma visão consolidada",
+    hasDateRange: true,
+    hasFilterBar: false,
+    requiresClient: true,
+  },
+  // Achado 11/09/2026: primeiro submenu da nova arquitetura de Performance
+  // (Visão Geral > Funil de Conversão > Novos Clientes > Recompra >
+  // Cadastros > Anúncios > Origem de Resultados > Escala, ver PDF de
+  // especificação) -- convive com o /performance atual (atribuição paga)
+  // por enquanto, sem substituir nada ainda.
+  "/performance/recompra": {
+    title: "Performance",
+    subtitle: "Recompra — recorrência, reativação e ciclo de retorno da base",
     hasDateRange: true,
     hasFilterBar: false,
     requiresClient: true,
@@ -904,6 +917,18 @@ export function AppLayout({ children }: AppLayoutProps) {
       name: t("nav.performance", "Performance"),
       href: "/performance",
       icon: Gauge,
+      // Achado 11/09/2026: primeiro submenu da nova arquitetura de
+      // Performance (ver pageMeta["/performance/recompra"]) -- clicar em
+      // "Performance" continua indo direto pro /performance de hoje
+      // (NavItem sempre linka pro item.href do pai); o filho só aparece
+      // quando o usuário já está em /performance ou /performance/recompra.
+      children: [
+        {
+          name: t("nav.performance.recompra", "Recompra"),
+          href: "/performance/recompra",
+          icon: RefreshCw,
+        },
+      ],
     },
     {
       name: t("nav.marketing", "Marketing"),

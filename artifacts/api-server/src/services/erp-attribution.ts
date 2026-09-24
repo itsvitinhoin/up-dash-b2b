@@ -18,9 +18,9 @@
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { db, customersTable, ordersTable, customerIdentityLinksTable, orderAttributionsTable } from "@workspace/db";
 import { and, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
-import { hashDocument } from "./upzero/customers";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, type TouchpointCandidate } from "./paid-touchpoints";
 import { ERP_CANCELLED_STATUSES } from "./erpAnalytics";
+import { resolveErpCustomerIdentities, type ErpContactInfo, type ResolvedErpCustomer } from "./erp-identity";
 
 // Achado 08/09/2026: o Manse (MX Fashion) só produz status "CONCLUIDO"
 // pra tudo, então um filtro `= 'CONCLUIDO'` parecia certo -- mas quebra o
@@ -173,8 +173,7 @@ export async function computeErpPaidAttribution(params: {
   let totalErpRevenue = 0;
   let erpCustomerIds: string[] = [];
   let cnpjToHash = new Map<string, string>();
-  let hashMatches: Array<{ id: string; externalId: string | null; documentHash: string | null; name: string | null; createdAt: Date }> = [];
-  let hashToCustomer = new Map<string | null, (typeof hashMatches)[number]>();
+  let hashToCustomer = new Map<string, ResolvedErpCustomer>();
 
   if (params.dataset) {
     const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
@@ -207,120 +206,28 @@ export async function computeErpPaidAttribution(params: {
     totalErpRevenue = erpRows.reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
     erpCustomerIds = [...new Set(erpRows.map((r) => String(r.customer_id ?? "")).filter(Boolean))];
 
-    for (const cnpj of erpCustomerIds) {
-      const hash = hashDocument(cnpj);
-      if (hash) cnpjToHash.set(cnpj, hash);
-    }
-    const hashes = [...new Set(cnpjToHash.values())];
-
-    // Achado 10/09/2026: identidade já resolvida (por hash OU por
-    // reforço de e-mail/telefone) fica persistida em
-    // `customer_identity_links` -- quem já tem link não precisa mais do
-    // reforço caro abaixo (full-scan de customers do cliente pra montar
-    // os mapas de e-mail/telefone). Só cai nesse full-scan quem nunca
-    // foi resolvido antes nessa conta.
-    const newIdentityLinks: Array<{ clientId: string; erpDocumentHash: string; customerId: string; matchMethod: "document_hash" | "email" | "phone" }> = [];
-    const linkedRows = hashes.length
-      ? await db
-          .select({
-            erpDocumentHash: customerIdentityLinksTable.erpDocumentHash,
-            id: customersTable.id,
-            externalId: customersTable.externalId,
-            documentHash: customersTable.documentHash,
-            name: customersTable.name,
-            createdAt: customersTable.createdAt,
-          })
-          .from(customerIdentityLinksTable)
-          .innerJoin(customersTable, eq(customersTable.id, customerIdentityLinksTable.customerId))
-          .where(and(eq(customerIdentityLinksTable.clientId, params.clientId), inArray(customerIdentityLinksTable.erpDocumentHash, hashes)))
-      : [];
-    for (const row of linkedRows) {
-      hashToCustomer.set(row.erpDocumentHash, { id: row.id, externalId: row.externalId, documentHash: row.documentHash, name: row.name, createdAt: row.createdAt });
-    }
-
-    const unlinkedHashes = hashes.filter((h) => !hashToCustomer.has(h));
-    hashMatches = unlinkedHashes.length
-      ? await db
-          .select({ id: customersTable.id, externalId: customersTable.externalId, documentHash: customersTable.documentHash, name: customersTable.name, createdAt: customersTable.createdAt })
-          .from(customersTable)
-          .where(and(eq(customersTable.clientId, params.clientId), inArray(customersTable.documentHash, unlinkedHashes)))
-      : [];
-    for (const m of hashMatches) {
-      if (!m.documentHash) continue;
-      hashToCustomer.set(m.documentHash, m);
-      newIdentityLinks.push({ clientId: params.clientId, erpDocumentHash: m.documentHash, customerId: m.id, matchMethod: "document_hash" });
-    }
-
-    // Achado 09/09/2026: só CNPJ/CPF deixava MX Fashion com 198/268
-    // clientes do ERP sem match, e o Obzee com 165/166 -- e-mail e
-    // telefone (aqui em texto puro no Postgres, sem hash, diferente do
-    // documento) já resolvem boa parte disso como reforço, sem precisar
-    // de nova tabela. Só entra em jogo pra quem o CNPJ não resolveu.
-    const cnpjMatchedSet = new Set(
-      erpCustomerIds.filter((cnpj) => {
-        const hash = cnpjToHash.get(cnpj);
-        return Boolean(hash && hashToCustomer.get(hash));
-      }),
-    );
-    const unmatchedCnpjs = erpCustomerIds.filter((cnpj) => !cnpjMatchedSet.has(cnpj));
-    if (unmatchedCnpjs.length > 0) {
-      const allClientCustomers = await db
-        .select({
-          id: customersTable.id,
-          externalId: customersTable.externalId,
-          documentHash: customersTable.documentHash,
-          name: customersTable.name,
-          createdAt: customersTable.createdAt,
-          email: customersTable.email,
-          phone: customersTable.phone,
-        })
-        .from(customersTable)
-        .where(eq(customersTable.clientId, params.clientId));
-      const byEmail = new Map<string, (typeof allClientCustomers)[number]>();
-      const byPhone = new Map<string, (typeof allClientCustomers)[number]>();
-      for (const c of allClientCustomers) {
-        const email = normalizeEmail(c.email);
-        if (email && !byEmail.has(email)) byEmail.set(email, c);
-        const phone = normalizePhoneLast10(null, c.phone);
-        if (phone && !byPhone.has(phone)) byPhone.set(phone, c);
-      }
-
-      const unmatchedSet = new Set(unmatchedCnpjs);
-      for (const r of erpRows) {
-        const cnpj = String(r.customer_id ?? "");
-        if (!unmatchedSet.has(cnpj)) continue;
-        const email = normalizeEmail(r.erp_email as string | null);
-        const phone = normalizePhoneLast10(r.erp_ddd as string | null, (r.erp_celular as string | null) ?? (r.erp_telefone as string | null));
-        const matchedByEmail = email ? byEmail.get(email) : undefined;
-        const match = matchedByEmail || (phone && byPhone.get(phone)) || null;
-        if (!match) continue;
-        // Chave sintética só pra reaproveitar hashToCustomer sem duplicar
-        // toda a lógica de resolução que já existe abaixo dela.
-        const syntheticKey = `email-or-phone:${match.id}`;
-        cnpjToHash.set(cnpj, syntheticKey);
-        if (!hashToCustomer.has(syntheticKey)) {
-          hashToCustomer.set(syntheticKey, match);
-          newIdentityLinks.push({
-            clientId: params.clientId,
-            erpDocumentHash: syntheticKey,
-            customerId: match.id,
-            matchMethod: matchedByEmail ? "email" : "phone",
-          });
-        }
-        unmatchedSet.delete(cnpj);
-      }
-    }
-
-    // Grava os matches novos dessa rodada (hash direto + e-mail/telefone)
-    // pra próxima vez não precisar re-resolver. onConflictDoNothing: se
-    // duas requisições concorrentes resolverem o mesmo hash, a primeira
-    // que gravar vence -- link é estável, não precisa de "última escrita
-    // vence" aqui.
-    if (newIdentityLinks.length > 0) {
-      await db.insert(customerIdentityLinksTable).values(newIdentityLinks).onConflictDoNothing({
-        target: [customerIdentityLinksTable.clientId, customerIdentityLinksTable.erpDocumentHash],
+    // Achado 21/09/2026: resolução de identidade (cache em
+    // customer_identity_links -> hash de documento -> fallback
+    // e-mail/telefone) extraída pra erp-identity.ts, reaproveitada aqui e
+    // em recompra-analytics.ts -- mesmo comportamento de antes.
+    const contactByDocument = new Map<string, ErpContactInfo>();
+    for (const r of erpRows) {
+      const cnpj = String(r.customer_id ?? "");
+      if (!cnpj || contactByDocument.has(cnpj)) continue;
+      contactByDocument.set(cnpj, {
+        email: (r.erp_email as string | null) ?? null,
+        ddd: (r.erp_ddd as string | null) ?? null,
+        celular: (r.erp_celular as string | null) ?? null,
+        telefone: (r.erp_telefone as string | null) ?? null,
       });
     }
+    const resolved = await resolveErpCustomerIdentities({
+      clientId: params.clientId,
+      erpCustomerIds,
+      contactByDocument,
+    });
+    cnpjToHash = resolved.cnpjToHash;
+    hashToCustomer = resolved.hashToCustomer;
   }
 
   // ── Fonte 2: pedidos online (Postgres `orders`), já ligados ao cliente ──
@@ -654,23 +561,6 @@ function maskDocument(value: string | null | undefined): string | null {
   if (digits.length === 14) return `CNPJ **.***.***/****-${digits.slice(-2)}`;
   if (digits.length === 11) return `CPF ***.***.***-${digits.slice(-2)}`;
   return digits ? `***${digits.slice(-4)}` : null;
-}
-
-// customersTable.email/phone são texto puro (não hasheados, diferente do
-// documento) -- comparação direta depois de normalizar.
-function normalizeEmail(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const trimmed = value.trim().toLowerCase();
-  return trimmed.includes("@") ? trimmed : null;
-}
-
-// Compara só os últimos 10 dígitos (DDD + número, sem DDI/zero na frente)
-// -- ERP e UpZero podem guardar o telefone em formato diferente (com/sem
-// +55, com/sem 9º dígito de celular antigo), os últimos 10 dígitos são o
-// que sobra igual nos dois casos na maioria da vez.
-function normalizePhoneLast10(ddd: string | null | undefined, phone: string | null | undefined): string | null {
-  const digits = `${ddd ?? ""}${phone ?? ""}`.replace(/\D/g, "");
-  return digits.length >= 8 ? digits.slice(-10) : null;
 }
 
 // ── Cohort novo/recorrente/reativado (PDF pág. 4) ──────────────────────────

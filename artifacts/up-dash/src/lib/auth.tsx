@@ -19,6 +19,11 @@ const CLIENT_KEY = "updash.clientId";
 const DASHBOARD_MODE_KEY = "updash.dashboardMode";
 const LOCAL_UI_PREVIEW =
   import.meta.env.DEV && import.meta.env.VITE_UI_PREVIEW === "1";
+// Achado 21/09/2026: id fixo "preview-celeb" não existe de verdade --
+// configurável via .env.local (VITE_UI_PREVIEW_CLIENT_ID) pra poder
+// apontar o preview local pra um cliente real (ex: MX Fashion) sem
+// hardcodar id de cliente real no código-fonte.
+const LOCAL_UI_PREVIEW_CLIENT_ID = import.meta.env.VITE_UI_PREVIEW_CLIENT_ID || "preview-celeb";
 
 async function performRefresh(refresh: string): Promise<{
   accessToken: string;
@@ -80,16 +85,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (LOCAL_UI_PREVIEW) {
-      setToken("local-ui-preview");
-      setUser({
+      const previewUser: AuthUser = {
         id: "local-preview-admin",
         email: "admin@updash.com",
         firstName: "Grupo",
         lastName: "UP",
         role: "ADMIN",
         clientId: null,
-      });
-      setSelectedClientId("preview-celeb");
+      };
+      // Achado 21/09/2026: setar só o estado do React não bastava -- o
+      // getAuthToken usado pelo customFetch (initApiClient acima) lê do
+      // localStorage, não do estado. Sem gravar aqui, toda chamada saía
+      // sem token válido e a tela sempre mostrava dado vazio/R$0,00, mesmo
+      // com o backend local funcionando -- travou toda tentativa de ver
+      // dado real no preview local até agora.
+      localStorage.setItem(TOKEN_KEY, "local-ui-preview");
+      localStorage.setItem(USER_KEY, JSON.stringify(previewUser));
+      localStorage.setItem(CLIENT_KEY, LOCAL_UI_PREVIEW_CLIENT_ID);
+      localStorage.setItem(DASHBOARD_MODE_KEY, "B2B");
+      setToken("local-ui-preview");
+      setUser(previewUser);
+      setSelectedClientId(LOCAL_UI_PREVIEW_CLIENT_ID);
       setSelectedDashboardModeState("B2B");
       setIsLoading(false);
       return;
