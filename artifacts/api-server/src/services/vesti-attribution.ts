@@ -91,7 +91,16 @@ export async function fetchVestiAttributionSets(vestiDataset: string): Promise<V
           WHERE doc IS NOT NULL AND doc != ''
         `,
       })
-      .then(([rows]) => rows as Array<{ doc: string }>),
+      .then(([rows]) => rows as Array<{ doc: string }>)
+      .catch((err: unknown) => {
+        // Achado 25/09/2026: cliente ERP puro (ex: MX Fashion) não tem a
+        // tabela clientes_vesti nesse dataset -- só validado ao vivo antes
+        // com Le Ricard/Vogabox (que têm Vesti). Sem este catch, o erro do
+        // BigQuery ("table not found") derrubava o Promise.all inteiro e
+        // quebrava a tela de Performance com 500 pra qualquer client ERP.
+        console.warn("[vesti-attribution] clientes_vesti indisponível:", err instanceof Error ? err.message : err);
+        return [] as Array<{ doc: string }>;
+      }),
     bigquery
       .query({
         query: `
