@@ -170,6 +170,54 @@ async function failJob(jobId: string, err: unknown) {
     .where(eq(syncJobsTable.id, jobId));
 }
 
+// Lê o watermark de uma sincronização incremental direto do histórico que já
+// existe em sync_jobs.result (sem precisar de tabela nova) -- mesma ideia do
+// paidTouchpointsSyncTable em paid-touchpoints.ts, só que reaproveitando o
+// que já é gravado em completeJob() em vez de manter estado em duplicado.
+async function getLastSuccessfulSyncField(
+  clientId: string,
+  jobType: ExtractionJobType,
+  resultKey: string,
+): Promise<Date | null> {
+  const [row] = await db
+    .select({ value: sql<string | null>`${syncJobsTable.result}->>${resultKey}` })
+    .from(syncJobsTable)
+    .where(and(eq(syncJobsTable.clientId, clientId), eq(syncJobsTable.jobType, jobType), eq(syncJobsTable.status, "done")))
+    .orderBy(desc(syncJobsTable.finishedAt))
+    .limit(1);
+  const parsed = row?.value ? new Date(row.value) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+}
+
+// Achado 25/09/2026: runUpzeroAnalyticsExtraction batia na UpZero toda hora
+// com uma janela fixa (24h, e separadamente todo o histórico de vendedores
+// desde UPZERO_SELLERS_HISTORY_FROM) -- redigerindo o mesmo período repetido
+// a cada run. Isso sobrecarregava o lado da UpZero (relatado pelo Victor via
+// gráfico do GCP). Essa função generaliza o cálculo de janela pra ser
+// incremental: só busca o que ainda não foi sincronizado, com uma margem de
+// segurança e um teto pra não estourar em caso de outage prolongado.
+const UPZERO_ANALYTICS_MAX_LOOKBACK_HOURS = Number.parseInt(process.env.UPZERO_ANALYTICS_MAX_LOOKBACK_HOURS ?? "72", 10);
+const UPZERO_ANALYTICS_OVERLAP_MINUTES = Number.parseInt(process.env.UPZERO_ANALYTICS_OVERLAP_MINUTES ?? "30", 10);
+
+export function computeIncrementalWindow(
+  watermark: Date | null,
+  to: Date,
+  fallbackFrom: Date,
+): { from: Date; watermark: Date | null; cappedGapHours: number | null } {
+  if (!watermark) {
+    // Primeira sincronização dessa rotina pra esse cliente: mesmo
+    // comportamento de hoje (sem teto) -- não é regressão, é o que já
+    // acontece em TODO run atual; só passa a acontecer uma vez.
+    return { from: fallbackFrom, watermark: null, cappedGapHours: null };
+  }
+  const desiredFrom = new Date(watermark.getTime() - UPZERO_ANALYTICS_OVERLAP_MINUTES * 60_000);
+  const ceiling = new Date(to.getTime() - UPZERO_ANALYTICS_MAX_LOOKBACK_HOURS * 3_600_000);
+  if (desiredFrom.getTime() < ceiling.getTime()) {
+    return { from: ceiling, watermark, cappedGapHours: (ceiling.getTime() - desiredFrom.getTime()) / 3_600_000 };
+  }
+  return { from: desiredFrom, watermark, cappedGapHours: null };
+}
+
 async function clientsWith(where: SQL | undefined): Promise<ExtractionClient[]> {
   return db
     .select({
@@ -345,11 +393,11 @@ async function materializeSellersFromAnalytics(
 async function getHistoricalSellerPurchaseMetrics(
   apiKey: string,
   to: string,
+  from: Date = new Date(UPZERO_SELLERS_HISTORY_FROM),
 ): Promise<UpzeroAnalyticsMetric[]> {
-  const historyFrom = new Date(UPZERO_SELLERS_HISTORY_FROM);
-  if (!Number.isFinite(historyFrom.getTime()) || historyFrom >= new Date(to)) return [];
+  if (!Number.isFinite(from.getTime()) || from >= new Date(to)) return [];
   const response = await getUpzeroAnalyticsMetrics({
-    from: historyFrom.toISOString(),
+    from: from.toISOString(),
     to,
     apiKey,
     eventName: "purchase",
@@ -655,11 +703,14 @@ export async function runUpzeroTransactionalExtraction(
 
 export async function runUpzeroAnalyticsExtraction(
   trigger: ExtractionTrigger,
+  options: { clientId?: string } = {},
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
-  const clients = await clientsWith(isNotNull(clientsTable.upZeroApiKey));
+  const allClients = await clientsWith(isNotNull(clientsTable.upZeroApiKey));
+  const clients = options.clientId
+    ? allClients.filter((client) => client.id === options.clientId)
+    : allClients;
   const to = new Date();
-  const from = new Date(to.getTime() - UPZERO_ANALYTICS_LOOKBACK_HOURS * 60 * 60 * 1000);
   let done = 0;
   let failed = 0;
 
@@ -667,6 +718,19 @@ export async function runUpzeroAnalyticsExtraction(
     if (!client.upZeroApiKey) continue;
     const jobId = await createJob(client.id, "upzero_analytics", trigger);
     try {
+      const watermark = await getLastSuccessfulSyncField(client.id, "upzero_analytics", "to");
+      const { from, cappedGapHours } = computeIncrementalWindow(
+        watermark,
+        to,
+        new Date(to.getTime() - UPZERO_ANALYTICS_LOOKBACK_HOURS * 60 * 60 * 1000),
+      );
+      const sellerWatermark = await getLastSuccessfulSyncField(client.id, "upzero_analytics", "sellerHistorySyncedTo");
+      const { from: sellerFrom, cappedGapHours: sellerCappedGapHours } = computeIncrementalWindow(
+        sellerWatermark,
+        to,
+        new Date(UPZERO_SELLERS_HISTORY_FROM),
+      );
+
       const metrics = await getUpzeroAnalyticsMetrics({
         from: from.toISOString(),
         to: to.toISOString(),
@@ -675,6 +739,7 @@ export async function runUpzeroAnalyticsExtraction(
       const historicalSellerMetrics = await getHistoricalSellerPurchaseMetrics(
         client.upZeroApiKey,
         to.toISOString(),
+        sellerFrom,
       );
       const sellerSync = await materializeSellersFromAnalytics(
         client.id,
@@ -686,11 +751,16 @@ export async function runUpzeroAnalyticsExtraction(
         client.upZeroApiKey,
         metrics.data,
       );
-      const dailyMetrics = await refreshDailyClientMetrics({ clientId: client.id, from, to });
+      const dailyMetrics = await refreshRecentDailyMetrics(client.id, to);
       await completeJob(jobId, {
         clientName: client.name,
         from: from.toISOString(),
         to: to.toISOString(),
+        isFirstSync: watermark === null,
+        cappedGapHours,
+        sellerHistorySyncedTo: to.toISOString(),
+        sellerHistoryFrom: sellerFrom.toISOString(),
+        sellerCappedGapHours,
         apiTotal: metrics.total,
         sellerBackfillCompleted: true,
         historicalSellerRows: historicalSellerMetrics.length,

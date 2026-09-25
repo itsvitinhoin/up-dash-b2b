@@ -124,7 +124,7 @@ async function main() {
       result = await runUpzeroTransactionalExtraction(trigger, { clientId, limit, offset });
       break;
     case "upzero_analytics":
-      result = await runUpzeroAnalyticsExtraction(trigger);
+      result = await runUpzeroAnalyticsExtraction(trigger, { clientId });
       break;
     case "meta_ads":
       result = await runMetaAdsExtraction(trigger);
