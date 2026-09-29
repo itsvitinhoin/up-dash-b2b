@@ -703,14 +703,21 @@ export async function runUpzeroTransactionalExtraction(
 
 export async function runUpzeroAnalyticsExtraction(
   trigger: ExtractionTrigger,
-  options: { clientId?: string } = {},
+  options: { clientId?: string; to?: Date } = {},
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
   const allClients = await clientsWith(isNotNull(clientsTable.upZeroApiKey));
   const clients = options.clientId
     ? allClients.filter((client) => client.id === options.clientId)
     : allClients;
-  const to = new Date();
+  // `options.to` existe só pra recuperação manual em pedaços (backfill de um
+  // watermark muito atrasado -- achado 29/09/2026 com o Obzee: o teto de
+  // UPZERO_ANALYTICS_MAX_LOOKBACK_HOURS sempre ancora em "agora", então
+  // rodar de novo com um teto menor não avança pelo passado, só refaz o
+  // mesmo trecho recente. Passando `to` fixo, dá pra encadear várias
+  // execuções cobrindo o passado em fatias, cada uma pequena o bastante pra
+  // não estourar o limite de paginação da UpZero.
+  const to = options.to ?? new Date();
   let done = 0;
   let failed = 0;
 

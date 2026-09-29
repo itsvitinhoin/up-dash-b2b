@@ -31,6 +31,13 @@
  *
  *   TRIGGER=cron|manual   -> como fica registrado em sync_jobs (padrão: cron)
  *   CLIENT_ID=xxx         -> restringe a um cliente só (todas as tasks exceto hourly_bundle/daily_metrics)
+ *   BACKFILL_TO=ISO_TIMESTAMP -> só upzero_analytics, exige CLIENT_ID junto.
+ *     Recuperação manual de um watermark muito atrasado (achado 29/09/2026
+ *     com o Obzee, ~2 meses parado por API key vencida): fixa o "até quando"
+ *     da busca em vez de usar "agora", pra dar pra encadear várias
+ *     execuções cobrindo o passado em fatias (o teto normal de
+ *     UPZERO_ANALYTICS_MAX_LOOKBACK_HOURS sempre ancora em "agora", não
+ *     avança sozinho por um passado distante).
  *   LIMIT=10 OFFSET=0     -> pagina os clientes processados (upzero_transactional/nuvemshop_transactional)
  *   LOOKBACK_DAYS=3       -> só nuvemshop_transactional
  *   SKIP_CATALOG=1        -> só nuvemshop_transactional
@@ -108,6 +115,13 @@ function envInt(name: string): number | undefined {
   return Number.isFinite(value) ? value : undefined;
 }
 
+function envDate(name: string): Date | undefined {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  const value = new Date(raw);
+  return Number.isNaN(value.getTime()) ? undefined : value;
+}
+
 async function main() {
   const task = process.env.TASK ?? "upzero_transactional";
   const trigger = (process.env.TRIGGER === "manual" ? "manual" : "cron") as ExtractionTrigger;
@@ -123,9 +137,15 @@ async function main() {
     case "upzero_transactional":
       result = await runUpzeroTransactionalExtraction(trigger, { clientId, limit, offset });
       break;
-    case "upzero_analytics":
-      result = await runUpzeroAnalyticsExtraction(trigger, { clientId });
+    case "upzero_analytics": {
+      const backfillTo = envDate("BACKFILL_TO");
+      if (backfillTo && !clientId) {
+        logger.error("[upzero-sync-job] BACKFILL_TO exige CLIENT_ID (não roda pra todo mundo de uma vez).");
+        process.exit(1);
+      }
+      result = await runUpzeroAnalyticsExtraction(trigger, { clientId, to: backfillTo });
       break;
+    }
     case "meta_ads":
       result = await runMetaAdsExtraction(trigger);
       break;
