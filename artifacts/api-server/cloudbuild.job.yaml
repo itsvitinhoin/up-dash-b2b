@@ -29,9 +29,43 @@
 #     --http-method=POST \
 #     --oauth-service-account-email=<service-account-com-permissao-run.jobs.run>
 #
+# Achado 29/09/2026 (Fase 6, plano greedy-fluttering-cupcake.md): TASK=
+# paid_touchpoints (pré-aquece o cache de touchpoint pago, evita relatório
+# de atribuição lento/com falha na primeira carga de um período novo -- ver
+# services/extraction-runner.ts) JÁ RODA em produção como um recurso Cloud
+# Run Job separado, `upzero-sync-job-paid-touchpoints`, com trigger próprio
+# (`upzero-sync-job-paid-touchpoints-schedule`, a cada 6h, criado em
+# 10/09/2026) -- confirmado via `gcloud scheduler jobs describe` nesse dia,
+# nenhum dos dois documentado aqui até agora. O sintoma que motivou essa
+# investigação (relatório de MX Fashion lento/com falha) NÃO era falta de
+# agendamento -- era o caminho ao vivo (erp-attribution.ts) pedindo uma
+# janela de touchpoint ancorada em `dateFrom`/`dateTo` do relatório (muda
+# todo dia), que nunca batia com a janela que o lote grava (ancorada em
+# "agora") -- corrigido no código (standardTouchpointWindow(), ver
+# paid-touchpoints.ts), não na infra.
+#
+#   gcloud run jobs create upzero-sync-job-paid-touchpoints \
+#     --project=up-vesti-report \
+#     --region=us-central1 \
+#     --image=gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job \
+#     --set-cloudsql-instances=up-vesti-report:us-central1:vesti-database \
+#     --set-env-vars=CLOUD_SQL_CONNECTION_NAME=up-vesti-report:us-central1:vesti-database,TASK=paid_touchpoints \
+#     --set-secrets=DB_USER=db-user:latest,DB_PASSWORD=db-password:latest,DB_NAME=db-name:latest \
+#     --max-retries=1 \
+#     --task-timeout=30m
+#
+#   gcloud scheduler jobs create http upzero-sync-job-paid-touchpoints-schedule \
+#     --project=up-vesti-report \
+#     --location=us-central1 \
+#     --schedule="0 */6 * * *" \
+#     --uri="https://us-central1-run.googleapis.com/v2/projects/up-vesti-report/locations/us-central1/jobs/upzero-sync-job-paid-touchpoints:run" \
+#     --http-method=POST \
+#     --oauth-service-account-email=<service-account-com-permissao-run.jobs.run>
+#
 # Depois desse setup inicial, este cloudbuild.yaml só builda e atualiza a
-# imagem (gcloud run jobs update) -- é o que o Cloud Build Trigger (a
-# configurar, apontando pra este repo) roda a cada push na main.
+# imagem dos DOIS recursos (gcloud run jobs update) -- é o que o Cloud
+# Build Trigger (a configurar, apontando pra este repo) roda a cada push
+# na main.
 steps:
   - name: "gcr.io/cloud-builders/docker"
     args:
@@ -57,6 +91,20 @@ steps:
       - "jobs"
       - "update"
       - "upzero-sync-job"
+      - "--project=up-vesti-report"
+      - "--region=us-central1"
+      - "--image=gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:$SHORT_SHA"
+
+  # Segundo recurso (Fase 6, 29/09/2026) -- mesma imagem, TASK=paid_touchpoints
+  # fixo desde a criação (ver comentário de setup acima). Só atualiza a
+  # imagem aqui; não toca env vars/secrets já configurados no recurso.
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "jobs"
+      - "update"
+      - "upzero-sync-job-paid-touchpoints"
       - "--project=up-vesti-report"
       - "--region=us-central1"
       - "--image=gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:$SHORT_SHA"

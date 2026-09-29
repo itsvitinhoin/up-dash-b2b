@@ -11,6 +11,30 @@ import { isPaidCampaignSignal } from "./campaign-attribution";
 
 const UPZERO_BASE = "https://api.upzero.com.br";
 
+// Sem teto real de lookback pra achar touchpoint -- 10 anos é "sem limite"
+// na prática, e a API da UpZero exige um `from` concreto. Exportada porque
+// recompra-analytics.ts também usa como "desde sempre" fora do contexto de
+// touchpoint (fetchAllPositiveEventsForClient).
+export const TOUCHPOINT_LOOKBACK_DAYS = 3650;
+
+// Extraída de recompra-analytics.ts em 29/09/2026 (Fase 6) -- era usada só
+// lá, mas erp-attribution.ts tinha o mesmo problema que motivou essa
+// função em 23/09/2026: ancorar a janela em `dateFrom`/`dateTo` do
+// relatório (que muda todo dia pra quem usa "últimos N dias") faz o
+// `covered` de paidTouchpointsSyncTable nunca fechar, mesmo com o cache
+// pré-aquecido em lote -- o lote ancora em "agora", o relatório ancorava
+// em datas do filtro, as duas janelas nunca coincidem. Ancorar em "agora"
+// (arredondado pra hora) faz TODO CONSUMIDOR pedir a mesma janela, o que é
+// exatamente o que permite o cache convergir. Não piora a atribuição:
+// janela mais larga nunca perde touchpoint (`latestTouchpointBefore` já
+// filtra "anterior ao pedido" por evento).
+export function standardTouchpointWindow(): { lookbackFrom: string; lookbackTo: string } {
+  const now = new Date();
+  now.setUTCMinutes(0, 0, 0);
+  const lookbackFrom = new Date(now.getTime() - TOUCHPOINT_LOOKBACK_DAYS * 86_400_000);
+  return { lookbackFrom: lookbackFrom.toISOString(), lookbackTo: now.toISOString() };
+}
+
 export type UpzeroFact = {
   id: number;
   occurred_at: string;

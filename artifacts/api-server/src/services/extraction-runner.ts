@@ -1051,8 +1051,11 @@ const PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS = Number.parseInt(process.env.PAID_TOUCH
 // Teto GLOBAL (não por cliente) -- 20 já causou throttling real da UpZero,
 // documentado em erp-attribution.ts. A fila abaixo junta (cliente,
 // customer) de TODOS os clientes antes de disparar qualquer worker, pra
-// não multiplicar esse teto por cliente rodando em paralelo.
-const PAID_TOUCHPOINTS_CONCURRENCY = 8;
+// não multiplicar esse teto por cliente rodando em paralelo. Env-configurável
+// (29/09/2026, Fase 6) pra ficar consistente com as constantes irmãs acima
+// e dar pra ajustar sem redeploy se o comportamento de throttling da UpZero
+// mudar rodando em agenda de verdade.
+const PAID_TOUCHPOINTS_CONCURRENCY = Number.parseInt(process.env.PAID_TOUCHPOINTS_CONCURRENCY ?? "8", 10);
 // Achado 10/09/2026 (1ª execução real em produção): 60s estourava pra
 // clientes com bastante histórico -- fetchPaidTouchpointsForUser pagina
 // até MAX_PAGES=20 páginas, 10s de timeout cada (paid-touchpoints.ts),

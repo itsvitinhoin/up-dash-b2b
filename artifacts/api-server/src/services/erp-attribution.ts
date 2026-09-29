@@ -18,7 +18,7 @@
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { db, customersTable, ordersTable, customerIdentityLinksTable, orderAttributionsTable } from "@workspace/db";
 import { and, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
-import { getTouchpointsForCustomerCached, latestTouchpointBefore, type TouchpointCandidate } from "./paid-touchpoints";
+import { getTouchpointsForCustomerCached, latestTouchpointBefore, standardTouchpointWindow, type TouchpointCandidate } from "./paid-touchpoints";
 import { ERP_CANCELLED_STATUSES } from "./erpAnalytics";
 import { resolveErpCustomerIdentities, type ErpContactInfo, type ResolvedErpCustomer } from "./erp-identity";
 
@@ -158,7 +158,6 @@ export async function computeErpPaidAttribution(params: {
   upZeroApiKey: string;
   dateFrom: string; // YYYY-MM-DD
   dateTo: string; // YYYY-MM-DD, INCLUSIVO -- mesma convenção do resto do app (erpAnalytics.ts usa BETWEEN)
-  touchpointLookbackFrom: string; // ISO -- janela ampla pra achar clique bem antes do pedido
 }): Promise<ErpAttributionResult> {
   // Achado 08/09/2026: a query original comparava `data_criado < @dateTo`
   // com "2026-08-31" cru -- o BigQuery/Postgres tratam isso como meia-noite
@@ -348,9 +347,20 @@ export async function computeErpPaidAttribution(params: {
     );
   }
 
-  // A UpZero exige ISO 8601 completo (com horário) pros parâmetros
-  // from/to de /analytics/facts -- rejeita "2026-09-01" puro com 400.
-  const touchpointLookbackTo = new Date(`${params.dateTo}T23:59:59.999Z`).toISOString();
+  // Achado 29/09/2026 (Fase 6): a janela de busca de touchpoint ANTES era
+  // ancorada em `dateFrom`/`dateTo` deste relatório -- que muda todo dia
+  // pra quem usa "últimos 30 dias" -- então nunca coincidia com a janela
+  // que o job de pré-aquecimento em lote grava (`extraction-runner.ts`,
+  // ancorada em "agora"), e o `covered` de paidTouchpointsSyncTable nunca
+  // fechava mesmo com o cache já quente. Mesmo ajuste já feito em
+  // recompra-analytics.ts em 23/09/2026 (ver standardTouchpointWindow):
+  // ancorar em "agora" (arredondado pra hora) faz todo consumidor pedir a
+  // MESMA janela, o que é o que permite o cache convergir. `dateFrom`/
+  // `dateTo` continuam controlando quais PEDIDOS entram no relatório --
+  // só a busca de touchpoint muda de âncora (janela mais larga nunca perde
+  // touchpoint válido, `latestTouchpointBefore` já filtra "anterior ao
+  // pedido" por evento).
+  const { lookbackFrom: touchpointLookbackFrom, lookbackTo: touchpointLookbackTo } = standardTouchpointWindow();
 
   const influencedOrders: ErpAttributedOrder[] = [];
   const fetchErrors: ErpAttributionResult["fetchErrors"] = [];
@@ -403,7 +413,7 @@ export async function computeErpPaidAttribution(params: {
           clientId: params.clientId,
           customerId: upzeroCustomerId,
           externalUserId: customer.externalUserId,
-          from: params.touchpointLookbackFrom,
+          from: touchpointLookbackFrom,
           to: touchpointLookbackTo,
         });
         results[i] = { upzeroCustomerId, customer, orders, touchpoints, error: null };

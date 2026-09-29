@@ -163,7 +163,7 @@ router.use("/extractions", authenticate);
 const ListExtractionsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
   status: z.enum(["pending", "running", "done", "failed"]).optional(),
-  jobType: z.enum(["upzero_transactional", "upzero_analytics", "meta_ads", "nuvemshop_transactional", "daily_metrics"]).optional(),
+  jobType: z.enum(["upzero_transactional", "upzero_analytics", "meta_ads", "nuvemshop_transactional", "daily_metrics", "paid_touchpoints"]).optional(),
   trigger: z.enum(["manual", "cron"]).optional(),
   clientId: z.coerce.string().optional(),
 });

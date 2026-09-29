@@ -84,14 +84,10 @@ import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { db, ordersTable, sellersTable, customersTable } from "@workspace/db";
 import { resolveErpCustomerIdentities, type ErpContactInfo } from "./erp-identity";
-import { getTouchpointsForCustomerCached, latestTouchpointBefore, type TouchpointCandidate } from "./paid-touchpoints";
+import { getTouchpointsForCustomerCached, latestTouchpointBefore, standardTouchpointWindow, TOUCHPOINT_LOOKBACK_DAYS, type TouchpointCandidate } from "./paid-touchpoints";
 import { fetchVestiAttributionSets, isOnlyAttributed, type VestiAttributionSets } from "./vesti-attribution";
 
 const RECORRENTE_THRESHOLD_DAYS = 90;
-// Mesma decisão já tomada (e documentada) em erp-attribution.ts: sem teto
-// real de lookback pra achar touchpoint -- 10 anos é "sem limite" na
-// prática, e a API da UpZero exige um `from` concreto.
-const TOUCHPOINT_LOOKBACK_DAYS = 3650;
 const TOUCHPOINT_CONCURRENCY = 8;
 // Teto conservador só pra classifyRecompraMonthly (Fase 5, carga nova) --
 // ver comentário em fetchTouchpointsForCandidates.
@@ -730,34 +726,10 @@ async function fetchTouchpointsForCandidates(params: {
   return touchpointsByCustomer;
 }
 
-// Achado 23/09/2026 (Fase 5, validando ao vivo): `classifyRecompra` e
-// `classifyRecompraMonthly` calculavam `lookbackFrom` RELATIVO ao próprio
-// `dateFrom` de cada chamada -- como as duas têm `dateFrom` diferente (P1
-// escolhido pelo usuário vs sempre 12 meses fixos), a janela de touchpoint
-// nunca batia entre as duas, e o cache por cliente do Postgres
-// (`paid-touchpoints.ts`, `paidTouchpointsSyncTable`) não conseguia
-// reaproveitar nada entre elas -- medido: MX Fashion, Tipo=Anúncios,
-// primeira carga da página batia a API da UpZero DUAS VEZES em paralelo
-// (Blocos + gráfico mensal), ~90-180s cada, um sobre o outro. Como
-// TOUCHPOINT_LOOKBACK_DAYS já é "sem teto real" (mesma decisão de
-// erp-attribution.ts), não tem motivo pra ancorar em `dateFrom` -- ancorar
-// em "agora" faz TODAS as chamadas desse arquivo pedirem exatamente a
-// mesma janela, e uma janela mais larga nunca piora a atribuição
-// (`latestTouchpointBefore` já filtra só o que é anterior a cada evento).
-// Arredondado pra hora cheia (UTC) -- sem isso, duas chamadas concorrentes
-// (ex: /dashboard e /monthly-trend, cada uma com seu próprio `new Date()`)
-// gerariam strings de `to` diferentes por alguns milissegundos, quebrando
-// tanto o `covered` de paidTouchpointsSyncTable quanto a chave de
-// `getTouchpointsForCustomerDeduped` acima -- os dois dependem de bater a
-// string exata. Arredondar não piora a atribuição (mesmo raciocínio da
-// janela larga: só corta uma fatia de minutos no fim, irrelevante pra
-// achar touchpoint anterior a um pedido histórico).
-function standardTouchpointWindow(): { lookbackFrom: string; lookbackTo: string } {
-  const now = new Date();
-  now.setUTCMinutes(0, 0, 0);
-  const lookbackFrom = new Date(now.getTime() - TOUCHPOINT_LOOKBACK_DAYS * 86_400_000);
-  return { lookbackFrom: lookbackFrom.toISOString(), lookbackTo: now.toISOString() };
-}
+// `standardTouchpointWindow()` (janela de touchpoint ancorada em "agora",
+// não em `dateFrom`) mudou de morada em 29/09/2026 (Fase 6) -- agora vive
+// em paid-touchpoints.ts, porque erp-attribution.ts precisava do mesmo
+// tratamento (ver comentário lá pro histórico completo do porquê).
 
 // ───────── Tipo=Anúncios pra cliente Vesti: regra `onlyAttributed` ─────────
 //
