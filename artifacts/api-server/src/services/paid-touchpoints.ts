@@ -28,9 +28,23 @@ export const TOUCHPOINT_LOOKBACK_DAYS = 3650;
 // exatamente o que permite o cache convergir. Não piora a atribuição:
 // janela mais larga nunca perde touchpoint (`latestTouchpointBefore` já
 // filtra "anterior ao pedido" por evento).
+// Achado 29/09/2026, mesmo dia, testando MX Fashion ao vivo: arredondar só
+// pra hora cheia não bastava -- o lote de pré-aquecimento roda a cada 6h
+// (Cloud Scheduler "0 */6 * * *", ver cloudbuild.job.yaml), então `covered`
+// só ficava verdadeiro na 1a hora depois de cada rodada (~1 de 6h); no
+// resto do ciclo o `to` arredondado pra hora ficava sempre à frente do
+// `syncedTo` da última rodada, caindo no fallback ao vivo de novo (piorou
+// de 31 pra 58 clientes falhando, testado longe de uma rodada do lote).
+// Arredondar pro mesmo bloco de 6h do Scheduler (00h/06h/12h/18h UTC) faz
+// o `to` ficar FIXO durante as 6h inteiras entre uma rodada e a próxima.
+// Acoplado à cadência do Scheduler de propósito -- se o intervalo do
+// trigger mudar, este "6" precisa mudar junto.
+const SYNC_BLOCK_HOURS = 6;
+
 export function standardTouchpointWindow(): { lookbackFrom: string; lookbackTo: string } {
   const now = new Date();
-  now.setUTCMinutes(0, 0, 0);
+  const blockStartHour = Math.floor(now.getUTCHours() / SYNC_BLOCK_HOURS) * SYNC_BLOCK_HOURS;
+  now.setUTCHours(blockStartHour, 0, 0, 0);
   const lookbackFrom = new Date(now.getTime() - TOUCHPOINT_LOOKBACK_DAYS * 86_400_000);
   return { lookbackFrom: lookbackFrom.toISOString(), lookbackTo: now.toISOString() };
 }
