@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeIncrementalWindow } from "../src/services/extraction-runner";
 
-// Defaults de produção hoje (UPZERO_ANALYTICS_MAX_LOOKBACK_HOURS=72,
-// UPZERO_ANALYTICS_OVERLAP_MINUTES=30) -- nenhum Cloud Run Job sobrescreve
-// essas env vars (conferido via `gcloud run jobs describe` em 25/09/2026).
+// Espelha os defaults (72h / 30min) usados em produção.
 const HOUR_MS = 60 * 60 * 1000;
 const MIN_MS = 60 * 1000;
 

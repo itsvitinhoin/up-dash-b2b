@@ -32,12 +32,9 @@
  *   TRIGGER=cron|manual   -> como fica registrado em sync_jobs (padrão: cron)
  *   CLIENT_ID=xxx         -> restringe a um cliente só (todas as tasks exceto hourly_bundle/daily_metrics)
  *   BACKFILL_TO=ISO_TIMESTAMP -> só upzero_analytics, exige CLIENT_ID junto.
- *     Recuperação manual de um watermark muito atrasado (achado 29/09/2026
- *     com o Obzee, ~2 meses parado por API key vencida): fixa o "até quando"
- *     da busca em vez de usar "agora", pra dar pra encadear várias
- *     execuções cobrindo o passado em fatias (o teto normal de
- *     UPZERO_ANALYTICS_MAX_LOOKBACK_HOURS sempre ancora em "agora", não
- *     avança sozinho por um passado distante).
+ *     Fixa o fim da janela pra recuperar um watermark muito atrasado em
+ *     fatias, encadeando várias execuções (o teto normal de lookback
+ *     ancora em "agora", não avança sozinho por um passado distante).
  *   LIMIT=10 OFFSET=0     -> pagina os clientes processados (upzero_transactional/nuvemshop_transactional)
  *   LOOKBACK_DAYS=3       -> só nuvemshop_transactional
  *   SKIP_CATALOG=1        -> só nuvemshop_transactional

@@ -170,10 +170,7 @@ async function failJob(jobId: string, err: unknown) {
     .where(eq(syncJobsTable.id, jobId));
 }
 
-// Lê o watermark de uma sincronização incremental direto do histórico que já
-// existe em sync_jobs.result (sem precisar de tabela nova) -- mesma ideia do
-// paidTouchpointsSyncTable em paid-touchpoints.ts, só que reaproveitando o
-// que já é gravado em completeJob() em vez de manter estado em duplicado.
+// Watermark vem do próprio sync_jobs.result, sem tabela extra.
 async function getLastSuccessfulSyncField(
   clientId: string,
   jobType: ExtractionJobType,
@@ -189,13 +186,6 @@ async function getLastSuccessfulSyncField(
   return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
 }
 
-// Achado 25/09/2026: runUpzeroAnalyticsExtraction batia na UpZero toda hora
-// com uma janela fixa (24h, e separadamente todo o histórico de vendedores
-// desde UPZERO_SELLERS_HISTORY_FROM) -- redigerindo o mesmo período repetido
-// a cada run. Isso sobrecarregava o lado da UpZero (relatado pelo Victor via
-// gráfico do GCP). Essa função generaliza o cálculo de janela pra ser
-// incremental: só busca o que ainda não foi sincronizado, com uma margem de
-// segurança e um teto pra não estourar em caso de outage prolongado.
 const UPZERO_ANALYTICS_MAX_LOOKBACK_HOURS = Number.parseInt(process.env.UPZERO_ANALYTICS_MAX_LOOKBACK_HOURS ?? "72", 10);
 const UPZERO_ANALYTICS_OVERLAP_MINUTES = Number.parseInt(process.env.UPZERO_ANALYTICS_OVERLAP_MINUTES ?? "30", 10);
 
@@ -205,9 +195,7 @@ export function computeIncrementalWindow(
   fallbackFrom: Date,
 ): { from: Date; watermark: Date | null; cappedGapHours: number | null } {
   if (!watermark) {
-    // Primeira sincronização dessa rotina pra esse cliente: mesmo
-    // comportamento de hoje (sem teto) -- não é regressão, é o que já
-    // acontece em TODO run atual; só passa a acontecer uma vez.
+    // Primeira sincronização desse cliente: sem teto.
     return { from: fallbackFrom, watermark: null, cappedGapHours: null };
   }
   const desiredFrom = new Date(watermark.getTime() - UPZERO_ANALYTICS_OVERLAP_MINUTES * 60_000);
@@ -710,13 +698,8 @@ export async function runUpzeroAnalyticsExtraction(
   const clients = options.clientId
     ? allClients.filter((client) => client.id === options.clientId)
     : allClients;
-  // `options.to` existe só pra recuperação manual em pedaços (backfill de um
-  // watermark muito atrasado -- achado 29/09/2026 com o Obzee: o teto de
-  // UPZERO_ANALYTICS_MAX_LOOKBACK_HOURS sempre ancora em "agora", então
-  // rodar de novo com um teto menor não avança pelo passado, só refaz o
-  // mesmo trecho recente. Passando `to` fixo, dá pra encadear várias
-  // execuções cobrindo o passado em fatias, cada uma pequena o bastante pra
-  // não estourar o limite de paginação da UpZero.
+  // `options.to` permite fixar o fim da janela pra backfill manual em
+  // fatias (o teto de lookback sempre ancora em "agora" senão).
   const to = options.to ?? new Date();
   let done = 0;
   let failed = 0;
