@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1426,7 +1427,7 @@ export default function AutomaticReportsPage() {
                                     <SelectLabel>{label}</SelectLabel>
                                     {REPORT_VARIABLES.filter((variable) => variable.category === category).map((variable) => (
                                       <SelectItem key={variable.id} value={variable.id}>
-                                        {variable.id} · {variable.label}
+                                        {variable.id} · {displayLabel(variable.label)}
                                       </SelectItem>
                                     ))}
                                   </SelectGroup>
@@ -1479,7 +1480,7 @@ export default function AutomaticReportsPage() {
                           <div key={variable.id} className="rounded-lg border border-border bg-muted/20 p-3">
                             <div className="flex items-start justify-between gap-3">
                               <div>
-                                <p className="text-sm font-medium">{variable.label}</p>
+                                <p className="text-sm font-medium">{displayLabel(variable.label)}</p>
                                 <p className="font-mono text-xs text-primary">{variable.id}</p>
                               </div>
                               <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
@@ -1488,7 +1489,7 @@ export default function AutomaticReportsPage() {
                             </div>
                             <p className="mt-2 text-xs text-muted-foreground">{variable.description}</p>
                             <div className="mt-2 rounded-md bg-background/60 px-2 py-1 text-xs">
-                              <span className="text-muted-foreground">Preview: </span>
+                              <span className="text-muted-foreground">Prévia: </span>
                               <span className="font-medium">{variableValues[variable.id] ?? variable.sample}</span>
                             </div>
                           </div>
@@ -1516,7 +1517,7 @@ export default function AutomaticReportsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Template</TableHead>
+                      <TableHead>Modelo</TableHead>
                       <TableHead>Categoria</TableHead>
                       <TableHead>Idioma</TableHead>
                       <TableHead>Status</TableHead>
@@ -1608,7 +1609,7 @@ export default function AutomaticReportsPage() {
                     <TableRow>
                       <TableHead>Cliente</TableHead>
                       <TableHead>Destinatário</TableHead>
-                      <TableHead>Template</TableHead>
+                      <TableHead>Modelo</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Gerado em</TableHead>
                       <TableHead className="text-right">Link</TableHead>

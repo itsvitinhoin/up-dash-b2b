@@ -361,6 +361,7 @@ const server = createServer(async (req, res) => {
     );
   if (path === "/api/analytics/products/summary")
     return send({
+      availableStockSalesValue: products.reduce((sum, p) => sum + Math.max(0, p.stock) * p.price, 0),
       salesPower: 860.45,
       prevSalesPower: 744.8,
       salesPowerChangePct: 15.52,

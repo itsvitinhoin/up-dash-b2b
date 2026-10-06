@@ -86,7 +86,7 @@ import { calculateDashboardConversionRate } from "../services/dashboard-metrics"
 import { normalizeCampaignText, isPaidCampaignSignal, latestCampaignEvidenceBefore } from "../services/campaign-attribution";
 import { syncPaidTouchpointsForCustomer } from "../services/paid-touchpoints";
 import { computeErpPaidAttribution } from "../services/erp-attribution";
-import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
+import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiAvailableStockSalesValue, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
 
 const router: IRouter = Router();
 
@@ -5451,13 +5451,15 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
 
   const vestiDataset = await resolveVestiDataset(clientId);
   if (vestiDataset) {
-    const [current, prev] = await Promise.all([
+    const [current, prev, availableStockSalesValue] = await Promise.all([
       fetchVestiProductsSummary(vestiDataset, saoPauloDateOnly(dateFrom), saoPauloDateOnly(dateTo)),
       fetchVestiProductsSummary(vestiDataset, saoPauloDateOnly(prevFrom), saoPauloDateOnly(prevTo)),
+      fetchVestiAvailableStockSalesValue(vestiDataset),
     ]);
     const salesPower = current.activeSkus > 0 ? current.totalRevenue / current.activeSkus / periodDays : 0;
     const prevSalesPower = prev.activeSkus > 0 ? prev.totalRevenue / prev.activeSkus / periodDays : 0;
     res.json({
+      availableStockSalesValue,
       salesPower,
       prevSalesPower,
       salesPowerChangePct: prevSalesPower > 0 ? ((salesPower - prevSalesPower) / prevSalesPower) * 100 : null,
@@ -5467,7 +5469,7 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
     return;
   }
 
-  const [currentRows, prevRows] = await Promise.all([
+  const [currentRows, prevRows, stockRows] = await Promise.all([
     db
       .select({
         productId: orderItemsTable.productId,
@@ -5498,6 +5500,8 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
         ),
       )
       .groupBy(orderItemsTable.productId),
+    db.select({ value: sql<number>`COALESCE(SUM(GREATEST(${productsTable.stock}, 0) * GREATEST(${productsTable.price}, 0)), 0)` })
+      .from(productsTable).where(and(eq(productsTable.clientId, clientId), eq(productsTable.status, "ACTIVE"))),
   ]);
 
   const activeSkus = currentRows.length;
@@ -5512,7 +5516,7 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
     ? ((salesPower - prevSalesPower) / prevSalesPower) * 100
     : null;
 
-  res.json({ salesPower, prevSalesPower, salesPowerChangePct, activeSkus, periodDays });
+  res.json({ availableStockSalesValue: Number(stockRows[0]?.value ?? 0), salesPower, prevSalesPower, salesPowerChangePct, activeSkus, periodDays });
 });
 
 router.get("/analytics/products/:productId/customers", async (req, res): Promise<void> => {

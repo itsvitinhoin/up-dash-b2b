@@ -27,7 +27,7 @@ const compact = (text) => text.replace(/\s+/g, " ").trim();
 for (const file of fs
   .readdirSync(dir)
   .filter((f) => f.endsWith(".tsx"))
-  .sort()) {
+  .sort().concat(["../components/purchase-insights.tsx", "../components/acquisition-funnel.tsx"])) {
   const source = fs.readFileSync(path.join(dir, file), "utf8"),
     ast = ts.createSourceFile(
       file,
@@ -101,7 +101,7 @@ for (const file of fs
                 : "Painel";
         rows.push({
           id: `UP-${String(rows.length + 1).padStart(3, "0")}`,
-          file: `artifacts/up-dash/src/pages/${file}`,
+          file: path.posix.normalize(`artifacts/up-dash/src/pages/${file}`),
           line: ast.getLineAndCharacterOfPosition(n.getStart(ast)).line + 1,
           component: customSurface ? "Superfície UP Glass" : component,
           family,
@@ -128,7 +128,7 @@ for (const file of fs
       )
         rows.push({
           id: `UP-${String(rows.length + 1).padStart(3, "0")}`,
-          file: `artifacts/up-dash/src/pages/${file}`,
+          file: path.posix.normalize(`artifacts/up-dash/src/pages/${file}`),
           line: ast.getLineAndCharacterOfPosition(n.getStart(ast)).line + 1,
           component: "Configuração de KPI",
           family: "Métrica configurada",
@@ -181,7 +181,7 @@ fs.writeFileSync(
 );
 const escape = (text) =>
   String(text).replaceAll("|", "\\|").replaceAll("`", "");
-let md = `# Mapeamento card por card · UP Glass\n\n${rows.length} pontos de uso/configuração encontrados nas ${new Set(rows.map((r) => r.file)).size} páginas com cards. Cada linha identifica a posição no código, o título ou expressão dinâmica e o componente final. Modelos dentro de loops são registrados na sua declaração; a quantidade de cards em execução depende dos dados. As configurações de KPI também são listadas para identificar as métricas que alimentam um modelo compartilhado.\n\nReferência única de métricas: **DashboardKpiCard**, o componente de Visão Geral. **GlassMetricCard** adapta os valores já formatados para esse mesmo componente; não consulta nem recalcula dados. Painéis, gráficos, listas e detalhes usam Card e os tokens UP Glass. O CSV contém as expressões de valor e as consultas da página.\n\n`;
+let md = `# Mapeamento card por card · UP Glass\n\n${rows.length} pontos de uso/configuração encontrados nas ${new Set(rows.map((r) => r.file)).size} arquivos com cards (páginas e componentes compartilhados). Cada linha identifica a posição no código, o título ou expressão dinâmica e o componente final. Modelos dentro de loops são registrados na sua declaração; a quantidade de cards em execução depende dos dados. As configurações de KPI também são listadas para identificar as métricas que alimentam um modelo compartilhado.\n\nReferência única de métricas: **DashboardKpiCard**, o componente de Visão Geral. **GlassMetricCard** adapta os valores já formatados para esse mesmo componente; não consulta nem recalcula dados. Painéis, gráficos, listas e detalhes usam Card e os tokens UP Glass. O CSV contém as expressões de valor e as consultas da página.\n\n`;
 for (const file of [...new Set(rows.map((r) => r.file))]) {
   md += `## ${path.basename(file, ".tsx")}\n\n| ID | Linha | Título / label | Componente | Família |\n|---|---:|---|---|---|\n`;
   for (const r of rows.filter((r) => r.file === file))

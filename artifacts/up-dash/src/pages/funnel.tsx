@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo } from "react";
 import { format } from "date-fns";
@@ -18,7 +19,8 @@ import {
   Legend,
 } from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
-import { FunnelChart, PatternLines, type FunnelStage } from "@/components/ui/funnel-chart";
+import type { FunnelStage } from "@/components/ui/funnel-chart";
+import { AcquisitionFunnel } from "@/components/acquisition-funnel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -226,7 +228,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Live · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            Atualizado · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
           </span>
         </motion.div>
         <Button
@@ -237,7 +239,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
           data-testid="funnel-export"
         >
           <Download className="h-4 w-4 mr-1.5" />
-          Export CSV
+          Exportar CSV
         </Button>
       </div>
 
@@ -245,11 +247,11 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
+          <AlertTitle>Erro</AlertTitle>
           <AlertDescription className="flex items-center justify-between">
-            Failed to load funnel data.
+            Não foi possível carregar o funil.
             <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Retry
+              <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
             </Button>
           </AlertDescription>
         </Alert>
@@ -291,14 +293,13 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                 <div className="flex flex-col justify-center">
                   <span className="inline-flex items-center gap-1.5 self-start rounded-full border border-border/60 bg-card/60 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground backdrop-blur">
                     <Activity className="h-3 w-3 text-primary" />
-                    Conversion funnel
+                    Funil de conversão
                   </span>
                   <h2 className="mt-2 text-3xl sm:text-4xl font-bold tracking-tight">
-                    {visitStepHidden ? "Leads → Purchases" : "Visitors → Purchases"}
+                    {visitStepHidden ? "Leads → Compras" : "Visitantes → Compras"}
                   </h2>
                   <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                    From registered leads to approved purchases over the selected period.
-                    Hover any stage below to see counts, conversion, and drop-off.
+                    Dos leads cadastrados às compras aprovadas no período selecionado. Consulte cada etapa para ver volumes, conversões e perdas.
                   </p>
 
                   <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -312,7 +313,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     />
                     <MiniStat
                       icon={ShoppingCart}
-                      label="Purchases"
+                      label="Compras"
                       value={visibleSteps[visibleSteps.length - 1]?.count ?? 0}
                       color="hsl(var(--chart-3))"
                       delay={0.12}
@@ -320,7 +321,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     />
                     <MiniStat
                       icon={TrendingUp}
-                      label={biggestDrop ? `Drop @ ${biggestDrop.to.label}` : "Biggest drop"}
+                      label={biggestDrop ? `Perda em ${biggestDrop.to.label}` : "Maior perda"}
                       value={biggestDrop?.dropPct ?? 0}
                       format={(v) => `${v.toFixed(1)}%`}
                       tone="warn"
@@ -329,7 +330,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     />
                     <MiniStat
                       icon={Zap}
-                      label="Avg events before purchase"
+                      label="Média de eventos antes da compra"
                       value={data.avgEventsBeforePurchase ?? 0}
                       format={(v) => v.toFixed(1)}
                       color="hsl(var(--chart-4))"
@@ -361,10 +362,10 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   <div className="mb-4 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <TrendingUp className="h-3.5 w-3.5 text-primary" />
-                      Daily site visits &amp; conversion rate
+                      Visitas diárias ao site e taxa de conversão
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {visitsData.totalVisits.toLocaleString()} total visits
+                      {visitsData.totalVisits.toLocaleString()} visitas no total
                     </span>
                   </div>
                   {(() => {
@@ -428,7 +429,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                                 };
                                 return (
                                   <div className="rounded-lg border border-border/60 bg-card px-3 py-2 shadow-md text-xs space-y-1">
-                                    <p className="font-semibold text-foreground">{d.label}</p>
+                                    <p className="font-semibold text-foreground">{displayLabel(d.label)}</p>
                                     <p className="text-muted-foreground">
                                       <span className="font-mono text-primary">{d.visits.toLocaleString()}</span>{" "}
                                       visits
@@ -452,7 +453,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                               fill="hsl(var(--chart-1))"
                               radius={[3, 3, 0, 0]}
                               maxBarSize={32}
-                              name="Visits"
+                              name="Visitas"
                             />
                             {hasConversionData && (
                               <Line
@@ -463,7 +464,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                                 strokeWidth={2}
                                 dot={false}
                                 activeDot={{ r: 4, fill: "hsl(var(--chart-3))" }}
-                                name="Conv. rate %"
+                                name="Taxa de conversão %"
                                 connectNulls
                               />
                             )}
@@ -499,62 +500,15 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   <div className="mb-2 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                      Stage-by-stage flow
+                      Fluxo por etapa
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {visibleSteps.length} stages
+                      {visibleSteps.length} etapas
                     </span>
                   </div>
                   {funnelChartData.length > 0 && funnelChartData[0].value > 0 ? (
                     <div className="space-y-5">
-                      <div className="hidden md:block" data-testid="funnel-chart-horizontal">
-                        <FunnelChart
-                          data={funnelChartData}
-                          edges="curved"
-                          gap={6}
-                          grid={{
-                            bands: true,
-                            bandColor: "hsl(var(--muted) / 0.25)",
-                            lines: true,
-                            lineColor: "hsl(var(--border))",
-                            lineOpacity: 0.55,
-                          }}
-                          labelAlign="center"
-                          labelLayout="spread"
-                          layers={4}
-                          formatPercentage={formatPercentage}
-                          formatValue={formatNumber}
-                          renderPattern={(id, color) => (
-                            <PatternLines
-                              id={id}
-                              stroke={color}
-                              strokeWidth={1.2}
-                              width={8}
-                              height={8}
-                              orientation={["diagonal"]}
-                            />
-                          )}
-                        />
-                      </div>
-                      <div className="md:hidden" data-testid="funnel-chart-vertical">
-                        <FunnelChart
-                          data={funnelChartData}
-                          orientation="vertical"
-                          edges="curved"
-                          gap={6}
-                          grid={{
-                            bands: true,
-                            bandColor: "hsl(var(--muted) / 0.25)",
-                            lines: true,
-                            lineColor: "hsl(var(--border))",
-                            lineOpacity: 0.55,
-                          }}
-                          labelLayout="spread"
-                          layers={4}
-                          formatPercentage={formatPercentage}
-                          formatValue={formatNumber}
-                        />
-                      </div>
+                      <AcquisitionFunnel title="Etapas de conversão" stages={funnelChartData.map((step, index) => ({ label: step.label, value: step.value, connector: funnelChartData[index+1] && step.value > 0 ? `${formatPercentage(funnelChartData[index+1].value / step.value * 100)} seguem para a próxima etapa` : undefined }))} />
                       <div className="grid gap-2 sm:grid-cols-2">
                         {visibleSteps.map((step, index) => (
                           <div key={step.step} className="rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -565,7 +519,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                                     className="h-2 w-2 rounded-full"
                                     style={{ backgroundColor: STAGE_PALETTE[index % STAGE_PALETTE.length] }}
                                   />
-                                  <p className="truncate text-sm font-medium">{step.label}</p>
+                                  <p className="truncate text-sm font-medium">{displayLabel(step.label)}</p>
                                 </div>
                                 <p className="mt-1 text-xs text-muted-foreground">
                                   {formatPercentage(step.conversionRate)} conversão · {formatPercentage(step.dropOffRate)} queda
@@ -598,7 +552,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     <Lightbulb className="h-4 w-4 text-amber-500" />
                     <span aria-hidden className="absolute inset-0 rounded-full bg-amber-400/30 blur-md -z-10" />
                   </span>
-                  Key insights
+                  Principais análises
                 </h3>
               </motion.div>
               {data.insights.length > 0 ? (
@@ -628,7 +582,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
               ) : (
                 <Card>
                   <CardContent className="p-6 text-center text-muted-foreground text-sm">
-                    Not enough data to generate insights for this period.
+                    Dados insuficientes para gerar análises neste período.
                   </CardContent>
                 </Card>
               )}
@@ -643,7 +597,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   <div className="rounded-lg border border-border/60 bg-card p-4">
                     <p className="font-semibold text-sm flex items-center gap-1.5 mb-3">
                       <ArrowRight className="h-3.5 w-3.5 text-primary" />
-                      Common paths to purchase
+                      Caminhos mais comuns até a compra
                     </p>
                     <div className="space-y-2">
                       {data.topPaths.slice(0, 3).map((path, i) => (
@@ -666,7 +620,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     {selectedDashboardMode !== "B2C" && (
                       <Link href="/journey">
                         <Button variant="ghost" size="sm" className="mt-3 text-[11px] text-primary flex items-center gap-1 hover:underline">
-                          Full journey analysis <ChevronRight className="h-3 w-3" />
+                          Análise completa da jornada <ChevronRight className="h-3 w-3" />
                         </Button>
                       </Link>
                     )}
@@ -706,12 +660,10 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                 className="rounded-lg border border-dashed border-border/60 bg-muted/30 p-4 text-xs text-muted-foreground"
               >
                 <p className="font-semibold text-foreground/80 mb-1.5 flex items-center gap-1.5">
-                  <Activity className="h-3 w-3" /> How to read
+                  <Activity className="h-3 w-3" /> Como interpretar
                 </p>
                 <p className="leading-relaxed">
-                  Each stage shows the count entering it, the conversion vs. the
-                  prior stage, and where users drop off. Optimize the largest red
-                  drop first — that's where you'll move the needle fastest.
+                  Cada etapa mostra o volume de entrada, a conversão em relação à etapa anterior e as perdas. Priorize as etapas com maior perda de usuários.
                 </p>
               </motion.div>
 
@@ -724,11 +676,10 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4 text-xs"
                 >
                   <p className="font-semibold text-foreground/80 mb-1.5 flex items-center gap-1.5">
-                    <Info className="h-3 w-3 text-blue-500" /> About this data
+                    <Info className="h-3 w-3 text-blue-500" /> Sobre estes dados
                   </p>
                   <p className="leading-relaxed text-muted-foreground">
-                    UP Zero tracks <strong className="text-foreground/80">registered leads, cart activity, and purchases</strong> — the funnel starts at your first available data point.
-                    Website visit tracking requires a separate web analytics integration (e.g. Google Analytics or a pixel).
+                    UP Zero tracks <strong className="text-foreground/80">leads cadastrados, atividade de carrinho e compras</strong> — o funil começa na primeira etapa com dados disponíveis. O acompanhamento de visitas exige uma integração de análise de tráfego, como Google Analytics ou um pixel.
                   </p>
                 </motion.div>
               )}
@@ -799,7 +750,7 @@ export function ActivationAnalysisCard({ activation }: { activation: FunnelActiv
                 Ativação B2B
               </span>
               <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${toneClasses(activation.performance.tone)}`}>
-                {activation.performance.label}
+                {displayLabel(activation.performance.label)}
               </span>
             </div>
             <h3 className="mt-2 text-xl font-semibold tracking-tight">
@@ -834,7 +785,7 @@ export function ActivationAnalysisCard({ activation }: { activation: FunnelActiv
                   : "border-border/60 bg-muted/20"
               }`}
             >
-              <p className="text-xs text-muted-foreground">{window.label}</p>
+              <p className="text-xs text-muted-foreground">{displayLabel(window.label)}</p>
               <div className="mt-2 flex items-end justify-between gap-3">
                 <p className="text-lg font-semibold tabular-nums">{formatPercentage(window.activationRate)}</p>
                 <p className="text-xs text-muted-foreground tabular-nums">
@@ -857,7 +808,7 @@ export function ActivationAnalysisCard({ activation }: { activation: FunnelActiv
               {postApprovalSteps.map((step) => (
                 <div key={step.label}>
                   <div className="mb-1 flex items-center justify-between gap-3 text-xs">
-                    <span className={step.muted ? "text-muted-foreground" : "text-foreground/90"}>{step.label}</span>
+                    <span className={step.muted ? "text-muted-foreground" : "text-foreground/90"}>{displayLabel(step.label)}</span>
                     <span className="font-mono text-muted-foreground">
                       {step.count == null ? "Sem dados" : `${formatNumber(step.count)} · ${formatNullablePercent(step.rate)}`}
                     </span>
@@ -991,7 +942,7 @@ function ConversionRing({ pct, reduced }: { pct: number; reduced: boolean }) {
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-          Overall
+          Geral
         </span>
         <CountUp
           value={clamped}
@@ -999,7 +950,7 @@ function ConversionRing({ pct, reduced }: { pct: number; reduced: boolean }) {
           duration={1200}
           className="text-4xl font-bold tracking-tight tabular-nums bg-gradient-to-br from-foreground to-primary bg-clip-text text-transparent"
         />
-        <span className="mt-0.5 text-[11px] text-muted-foreground">conversion</span>
+        <span className="mt-0.5 text-[11px] text-muted-foreground">conversão</span>
       </div>
     </div>
   );

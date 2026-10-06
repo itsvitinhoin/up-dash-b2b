@@ -153,7 +153,7 @@ function DailyLoadingState() {
       data-testid="daily-loading"
     >
       <DashLoadingCard
-        label="Carregando Daily"
+        label="Carregando relatório diário"
         description="Buscando vendas, mídia, produtos e insights do período selecionado."
       />
 
@@ -312,7 +312,7 @@ export default function DailyPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Daily · {periodLabel}
+            Diário · {periodLabel}
             {data?.client.name && <span className="ml-2 text-muted-foreground/70">{data.client.name}</span>}
           </span>
         </motion.div>
@@ -372,7 +372,7 @@ export default function DailyPage() {
               icon={Receipt}
               iconClass="bg-emerald-500/15 text-emerald-400"
               sparkValues={sparkValues.avgTicket}
-              sparkColor="#34d399"
+              sparkColor="#87adff"
             />
             <DailyKpiCard
               label="Custo por compra"
@@ -383,7 +383,7 @@ export default function DailyPage() {
               icon={Tags}
               iconClass="bg-amber-500/15 text-amber-400"
               sparkValues={sparkValues.costPerPurchase}
-              sparkColor="#f5b94a"
+              sparkColor="#0458fe"
               inverse
             />
             <DailyKpiCard
@@ -429,7 +429,7 @@ export default function DailyPage() {
                 <GlassMetricCard  label="Análise geral" value={<>Leitura do período</>}  />
                 <span className="inline-flex items-center gap-1.5 rounded-md bg-primary/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
                   <Sparkles className="h-3 w-3" />
-                  Insights
+                  Análises
                 </span>
               </div>
               <p className="text-sm leading-relaxed text-foreground/85">{data.analysis.generalAnalysis}</p>

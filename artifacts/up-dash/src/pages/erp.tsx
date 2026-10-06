@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { Fragment, useDeferredValue, useMemo, useState } from "react";
 import { useLocation } from "wouter";
@@ -648,7 +649,7 @@ function ErpOverview() {
       format: formatNumber,
       icon: Users,
       iconClass: "bg-emerald-500/10 text-emerald-500",
-      sparkColor: "#34d399",
+      sparkColor: "#87adff",
       subLabel: "Recorrentes",
       subValue: formatNumber(k?.returningCustomers ?? 0),
     },
@@ -658,7 +659,7 @@ function ErpOverview() {
       format: formatPercentage,
       icon: TrendingUp,
       iconClass: "bg-pink-500/10 text-pink-500",
-      sparkColor: "#ff6275",
+      sparkColor: "#b3caff",
       subLabel: "Novos",
       subValue: formatNumber(k?.newCustomers ?? 0),
       ringValue: k?.retentionPct ?? 0,
@@ -669,7 +670,7 @@ function ErpOverview() {
       format: formatNumber,
       icon: Boxes,
       iconClass: "bg-amber-500/10 text-amber-500",
-      sparkColor: "#f5b94a",
+      sparkColor: "#0458fe",
       subLabel: "Média / pedido",
       subValue: (k?.avgItemsPerOrder ?? 0).toFixed(1),
     },
@@ -689,7 +690,7 @@ function ErpOverview() {
       format: formatCurrencySmart,
       icon: AlertCircle,
       iconClass: "bg-orange-500/10 text-orange-500",
-      sparkColor: "#f5b94a",
+      sparkColor: "#0458fe",
       subLabel: "% do bruto",
       subValue: formatPercentage(k?.returnRatePct ?? 0),
     },
@@ -699,7 +700,7 @@ function ErpOverview() {
       format: formatNumber,
       icon: AlertCircle,
       iconClass: "bg-red-500/10 text-red-500",
-      sparkColor: "#ff6275",
+      sparkColor: "#b3caff",
       subLabel: "Valor",
       subValue: formatCurrency(k?.cancelledAmount ?? 0),
     },
@@ -752,7 +753,7 @@ function ErpOverview() {
                   stroke="var(--color-revenue)"
                   fill="url(#erp-fill)"
                   strokeWidth={2}
-                />
+                 name="Faturamento" />
               </AreaChart>
             </ChartContainer>
           </CardContent>
@@ -986,7 +987,7 @@ function ErpOrdersView() {
       format: formatNumber,
       icon: Boxes,
       iconClass: "bg-amber-500/10 text-amber-500",
-      sparkColor: "#f5b94a",
+      sparkColor: "#0458fe",
       subLabel: "Média / pedido",
       subValue: (k?.avgItemsPerOrder ?? 0).toFixed(1),
     },
@@ -996,7 +997,7 @@ function ErpOrdersView() {
       format: formatNumber,
       icon: AlertCircle,
       iconClass: "bg-red-500/10 text-red-500",
-      sparkColor: "#ff6275",
+      sparkColor: "#b3caff",
       subLabel: "Valor",
       subValue: formatCurrency(k?.cancelledAmount ?? 0),
     },
@@ -1408,7 +1409,7 @@ function ErpCustomersView() {
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-emerald-500/10 text-emerald-500",
-      sparkColor: "#34d399",
+      sparkColor: "#87adff",
       subLabel: "Regra",
       subValue: "Primeira compra histórica",
     },
@@ -1428,7 +1429,7 @@ function ErpCustomersView() {
       format: formatPercentage,
       icon: TrendingUp,
       iconClass: "bg-pink-500/10 text-pink-500",
-      sparkColor: "#ff6275",
+      sparkColor: "#b3caff",
       subLabel: "Cálculo",
       subValue: "Recorrentes / compradores",
       ringValue: k?.retentionPct ?? 0,
@@ -1534,7 +1535,7 @@ function ErpCustomersView() {
                         {c.buyerType === "NEW" ? "Novo" : "Recorrente"}
                       </Badge>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {c.segment}
+                        {displayLabel(c.segment)}
                       </p>
                     </TableCell>
                     <TableCell>{c.seller ?? "—"}</TableCell>
@@ -1906,7 +1907,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatCurrencySmart,
           icon: CircleDollarSign,
           iconClass: "bg-emerald-500/10 text-emerald-500",
-          sparkColor: "#34d399",
+          sparkColor: "#87adff",
           subLabel: "Base",
           subValue: "Estoque × preço atual",
         },
@@ -1926,7 +1927,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatNumber,
           icon: AlertCircle,
           iconClass: "bg-red-500/10 text-red-500",
-          sparkColor: "#ff6275",
+          sparkColor: "#b3caff",
           subLabel: "Negativos",
           subValue: formatNumber(data?.negativeStockCount ?? 0),
         },
@@ -1948,7 +1949,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatCurrencySmart,
           icon: CircleDollarSign,
           iconClass: "bg-emerald-500/10 text-emerald-500",
-          sparkColor: "#34d399",
+          sparkColor: "#87adff",
           subLabel: "Margem",
           subValue: formatPercentage(data?.grossMarginPct ?? 0),
         },
@@ -2169,7 +2170,7 @@ function ErpSellersView() {
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-emerald-500/10 text-emerald-500",
-      sparkColor: "#34d399",
+      sparkColor: "#87adff",
       subLabel: "Pedidos",
       subValue: formatNumber(totalOrders),
     },
@@ -2189,7 +2190,7 @@ function ErpSellersView() {
       format: formatNumber,
       icon: Users,
       iconClass: "bg-amber-500/10 text-amber-500",
-      sparkColor: "#f5b94a",
+      sparkColor: "#0458fe",
       subLabel: "Base",
       subValue: "Soma por vendedor",
     },
@@ -2234,7 +2235,7 @@ function ErpSellersView() {
               <TableBody>
                 {sellers.map((s) => (
                   <TableRow key={s.label}>
-                    <TableCell className="font-medium">{s.label}</TableCell>
+                    <TableCell className="font-medium">{displayLabel(s.label)}</TableCell>
                     <TableCell className="text-right">{s.orders}</TableCell>
                     <TableCell className="text-right">
                       {s.customers ?? 0}
@@ -2299,7 +2300,7 @@ export function ErpGeographyView() {
       <div className="mt-5 overflow-x-auto"><Table><TableHeader><TableRow>
         <TableHead>Estado</TableHead><TableHead className="text-right">Pedidos</TableHead><TableHead className="text-right">Faturamento</TableHead>
       </TableRow></TableHeader><TableBody>{states.map(state => <TableRow key={state.label}>
-        <TableCell>{state.label}</TableCell><TableCell className="text-right">{formatNumber(state.orders)}</TableCell><TableCell className="text-right">{formatCurrency(state.revenue)}</TableCell>
+        <TableCell>{displayLabel(state.label)}</TableCell><TableCell className="text-right">{formatNumber(state.orders)}</TableCell><TableCell className="text-right">{formatCurrency(state.revenue)}</TableCell>
       </TableRow>)}{!states.length && <EmptyRow colSpan={3} loading={isLoading} />}</TableBody></Table></div>
     </CardContent></Card>
   </div>;

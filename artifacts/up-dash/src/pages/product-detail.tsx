@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
@@ -86,8 +87,8 @@ function BreakdownChart({ data, title }: {
     return (
       <EmptyState
         icon={BarChart2}
-        title="No data available"
-        description="No breakdown data for this period."
+        title="Sem dados disponíveis"
+        description="Sem detalhamento neste período."
         className="h-40 border-0 bg-transparent"
       />
     );
@@ -124,7 +125,7 @@ function BreakdownChart({ data, title }: {
               name === "revenue" ? [formatCurrency(value), "Revenue"] : [formatNumber(value), "Units"]
             }
           />
-          <Bar dataKey="units" fill="hsl(var(--primary))" radius={[0, 3, 3, 0]} />
+          <Bar dataKey="units" fill="hsl(var(--primary))" radius={[0, 3, 3, 0]}  name="Unidades" />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -187,9 +188,9 @@ export default function ProductDetailPage() {
     return (
       <EmptyState
         icon={Package}
-        title="Product not found"
-        description="This product doesn't exist or you don't have access to it."
-        action={{ label: "Back to Products", onClick: () => setLocation("/products") }}
+        title="Produto não encontrado"
+        description="Este produto não existe ou seu acesso não está disponível."
+        action={{ label: "Voltar para Produtos", onClick: () => setLocation("/products") }}
         className="py-20"
       />
     );
@@ -212,7 +213,7 @@ export default function ProductDetailPage() {
           data-testid="product-detail-back"
         >
           <ArrowLeft className="h-4 w-4" />
-          Products
+          Produtos
         </Button>
       </div>
 
@@ -235,10 +236,10 @@ export default function ProductDetailPage() {
                   <div className="flex flex-wrap items-start gap-2">
                     <h2 className="text-2xl font-bold truncate flex-1 min-w-0">{product.name}</h2>
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${LEVEL_STYLES[product.level] ?? ""}`}>
-                      {product.level}
+                      {displayLabel(product.level)}
                     </span>
                     <Badge variant={product.status === "ACTIVE" ? "default" : "secondary"} className="text-xs">
-                      {product.status}
+                      {displayLabel(product.status)}
                     </Badge>
                   </div>
                   <p className="text-sm text-muted-foreground mt-0.5">{product.sku}</p>
@@ -247,11 +248,11 @@ export default function ProductDetailPage() {
                   )}
                   <div className="flex flex-wrap gap-4 mt-3 text-sm">
                     {product.category && (
-                      <span className="text-muted-foreground">Category: <strong className="text-foreground">{product.category}</strong></span>
+                      <span className="text-muted-foreground">Categoria: <strong className="text-foreground">{product.category}</strong></span>
                     )}
-                    <span className="text-muted-foreground">Price: <strong className="text-foreground">{formatCurrency(product.price)}</strong></span>
-                    <span className="text-muted-foreground">Stock: <strong className="text-foreground">{formatNumber(product.stock)}</strong></span>
-                    <span className="text-muted-foreground">Added: <strong className="text-foreground">{format(new Date(product.createdAt), "MMM d, yyyy")}</strong></span>
+                    <span className="text-muted-foreground">Preço: <strong className="text-foreground">{formatCurrency(product.price)}</strong></span>
+                    <span className="text-muted-foreground">Estoque: <strong className="text-foreground">{formatNumber(product.stock)}</strong></span>
+                    <span className="text-muted-foreground">Adicionado: <strong className="text-foreground">{format(new Date(product.createdAt), "MMM d, yyyy")}</strong></span>
                   </div>
                 </div>
               </div>
@@ -270,9 +271,9 @@ export default function ProductDetailPage() {
           ))
         ) : kpis ? (
           <>
-            <KpiTile label="Revenue (lifetime)" value={formatCurrency(kpis.totalRevenue)} />
-            <KpiTile label="Units sold" value={formatNumber(kpis.totalUnitsSold)} />
-            <KpiTile label="Avg ticket" value={formatCurrency(kpis.avgTicket)} />
+            <KpiTile label="Faturamento histórico" value={formatCurrency(kpis.totalRevenue)} />
+            <KpiTile label="Unidades vendidas" value={formatNumber(kpis.totalUnitsSold)} />
+            <KpiTile label="Ticket médio" value={formatCurrency(kpis.avgTicket)} />
             <KpiTile
               label="Sell-through"
               value={`${Math.round((product?.percentSold ?? 0) * 100)}%`}
@@ -287,7 +288,7 @@ export default function ProductDetailPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Revenue over time
+              Evolução do faturamento
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -296,8 +297,8 @@ export default function ProductDetailPage() {
             ) : mergedChart.length === 0 ? (
               <EmptyState
                 icon={TrendingUp}
-                title="No sales data for this period"
-                description="Adjust the date range or check back once orders are placed."
+                title="Sem dados de vendas neste período"
+                description="Ajuste o período ou consulte novamente quando houver pedidos."
                 className="h-48 border-0 bg-transparent"
               />
             ) : (
@@ -338,7 +339,7 @@ export default function ProductDetailPage() {
                     stroke="hsl(var(--primary))"
                     strokeWidth={2}
                     dot={false}
-                    name="revenue"
+                    name="Faturamento"
                   />
                   {mergedChart.some((d) => d.prevRevenue !== undefined) && (
                     <Line
@@ -348,7 +349,7 @@ export default function ProductDetailPage() {
                       strokeWidth={1.5}
                       strokeDasharray="4 4"
                       dot={false}
-                      name="prevRevenue"
+                      name="Faturamento anterior"
                     />
                   )}
                 </LineChart>
@@ -385,7 +386,7 @@ export default function ProductDetailPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
               <Users className="h-4 w-4" />
-              Top Buyers
+              Principais compradores
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -393,11 +394,11 @@ export default function ProductDetailPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Customer</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Segment</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Units</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Cliente</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Segmento</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Unidades</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Spent</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Last Purchase</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Última compra</TableHead>
                     <TableHead className="w-6" />
                   </TableRow>
                 </TableHeader>
@@ -418,8 +419,8 @@ export default function ProductDetailPage() {
                       <TableCell colSpan={6} className="p-0">
                         <EmptyState
                           icon={ShoppingCart}
-                          title="No purchases recorded yet"
-                          description="Buyers will appear here once they purchase this product."
+                          title="Nenhuma compra registrada"
+                          description="Os compradores aparecerão aqui quando comprarem este produto."
                           className="py-12 border-0 bg-transparent"
                         />
                       </TableCell>
@@ -438,7 +439,7 @@ export default function ProductDetailPage() {
                         </TableCell>
                         <TableCell>
                           {buyer.rfmSegment ? (
-                            <Badge variant="outline" className="text-[10px]">{buyer.rfmSegment}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{displayLabel(buyer.rfmSegment)}</Badge>
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
@@ -459,7 +460,7 @@ export default function ProductDetailPage() {
             </div>
             {(buyersData?.total ?? 0) > 10 && (
               <div className="px-4 py-3 border-t border-border text-xs text-muted-foreground">
-                Showing 10 of {formatNumber(buyersData!.total)} buyers
+                Exibindo 10 de {formatNumber(buyersData!.total)} buyers
               </div>
             )}
           </CardContent>

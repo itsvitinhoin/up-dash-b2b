@@ -108,7 +108,7 @@ export default function LoginPage() {
     const seed = tick;
     return [
       {
-        label: "Revenue today",
+        label: "Faturamento hoje",
         value: 184230 + seed * 137,
         delta: 12.4,
         icon: TrendingUp,
@@ -117,7 +117,7 @@ export default function LoginPage() {
         series: buildSeries(40, 1.4, 4),
       },
       {
-        label: "Live orders",
+        label: "Pedidos atualizados",
         value: 1284 + seed * 3,
         delta: 8.1,
         icon: ShoppingBag,
@@ -126,7 +126,7 @@ export default function LoginPage() {
         series: buildSeries(20, 0.9, 3),
       },
       {
-        label: "Conversion",
+        label: "Conversão",
         value: 3.42 + (seed % 5) * 0.04,
         delta: 0.8,
         icon: Zap,
@@ -135,7 +135,7 @@ export default function LoginPage() {
         series: SEED_SERIES,
       },
       {
-        label: "Active users",
+        label: "Usuários ativos",
         value: 8743 + seed * 11,
         delta: 4.6,
         icon: Users,
@@ -241,7 +241,7 @@ export default function LoginPage() {
           rel="noreferrer"
           className="hidden sm:inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white transition-colors"
         >
-          About UP Dash <ArrowUpRight className="h-3.5 w-3.5" />
+          Sobre o UP Dash <ArrowUpRight className="h-3.5 w-3.5" />
         </motion.a>
       </div>
 
@@ -375,7 +375,7 @@ export default function LoginPage() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-white/80 text-xs uppercase tracking-wider font-medium">
-                          Work email
+                          E-mail profissional
                         </FormLabel>
                         <FormControl>
                           <Input
@@ -396,7 +396,7 @@ export default function LoginPage() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-white/80 text-xs uppercase tracking-wider font-medium">
-                          Password
+                          Senha
                         </FormLabel>
                         <FormControl>
                           <div className="relative">
@@ -412,7 +412,7 @@ export default function LoginPage() {
                               type="button"
                               onClick={() => setShowPassword((s) => !s)}
                               className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-white/50 hover:text-white"
-                              aria-label={showPassword ? "Hide password" : "Show password"}
+                              aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
                               tabIndex={-1}
                             >
                               {showPassword ? (

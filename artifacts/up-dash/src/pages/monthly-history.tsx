@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { Fragment, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { endOfMonth, format } from "date-fns";
@@ -300,7 +301,7 @@ export default function MonthlyHistoryPage() {
                 {group.rows.map((row) => (
                   <TableRow key={row.label}>
                     <TableCell className="whitespace-nowrap font-medium">
-                      {row.label}
+                      {displayLabel(row.label)}
                     </TableCell>
                     {months.map((month, index) => (
                       <TableCell

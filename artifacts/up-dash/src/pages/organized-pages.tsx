@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { BarChart3 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
@@ -9,7 +10,8 @@ import {
   OrganizationHeading,
 } from "@/components/metric-section";
 import { useOrganizationData } from "@/lib/organization-data";
-import { FunnelChart, PatternLines } from "@/components/ui/funnel-chart";
+import { AcquisitionFunnel } from "@/components/acquisition-funnel";
+import { usePurchaseInsights } from "@/lib/purchase-insights";
 import { formatCurrency, formatNumber } from "@/lib/formatters";
 import DashboardPage from "@/pages/dashboard";
 import FunnelPage from "@/pages/funnel";
@@ -86,6 +88,9 @@ function AcquisitionPage() {
 }
 function PerformanceFunnelPage() {
   const { pick, measures, funnel, dashboard } = useOrganizationData();
+  const insights = usePurchaseInsights();
+  const acquisitionLeads = measures.registrations.value;
+  const acquisitionApproved = measures.approved.value;
   const steps = funnel.data?.steps ?? [];
   const count = (...keys: string[]) =>
     steps.find((step) => keys.includes(step.step))?.count;
@@ -141,42 +146,14 @@ function PerformanceFunnelPage() {
           )}
         />
       </MetricSection>
-      <Card>
-        <CardHeader>
-          <CardTitle>Funil de Conversão</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div data-testid="organized-funnel-chart" className="h-[640px]">
-            <FunnelChart
-              data={stages
-                .slice(0, 8)
-                .filter((stage) => stage.value != null)
-                .map((stage, index) => ({
-                  label: stage.label,
-                  value: stage.value ?? 0,
-                  displayValue:
-                    stage.value == null ? "—" : formatNumber(stage.value),
-                  color: `hsl(var(--chart-${(index % 5) + 1}))`,
-                }))}
-              orientation="vertical"
-              edges="curved"
-              gap={6}
-              labelLayout="spread"
-              layers={4}
-              showPercentage={false}
-              formatValue={formatNumber}
-              renderPattern={(id, color) => (
-                <PatternLines
-                  id={id}
-                  stroke={color}
-                  strokeWidth={1.2}
-                  width={8}
-                  height={8}
-                  orientation={["diagonal"]}
-                />
-              )}
-            />
-          </div>
+      <AcquisitionFunnel description="Visão geral do período, em todas as origens. Recorrentes contam apenas os clientes novos do período; as taxas comparam os totais de cada etapa." stages={[
+        { label: "Investimento", value: measures.spend.value, currency: true, connector: acquisitionLeads && measures.spend.value != null ? `${formatCurrency(measures.spend.value / acquisitionLeads)} por lead` : "Sem custo por lead disponível" },
+        { label: "Leads", value: acquisitionLeads, connector: acquisitionLeads && acquisitionApproved != null ? `${(acquisitionApproved / acquisitionLeads * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% aprovados` : "Sem taxa de aprovação disponível" },
+        { label: "Leads aprovados", value: acquisitionApproved, connector: acquisitionApproved && insights.data?.baseEvolution ? `${(insights.data.baseEvolution[0].customers / acquisitionApproved * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% novos / aprovados` : "Sem taxa de primeiro pedido disponível" },
+        { label: "Clientes novos", value: insights.data?.baseEvolution?.[0]?.customers, connector: insights.data?.baseEvolution?.[1]?.continuationPct == null ? "Sem taxa de recompra disponível" : `${insights.data.baseEvolution[1].continuationPct.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% voltaram a comprar` },
+        { label: "Clientes recorrentes", value: insights.data?.baseEvolution?.[1]?.customers },
+      ]} />
+      <Card><CardHeader><CardTitle>Etapas operacionais</CardTitle></CardHeader><CardContent>
           <div className="up-funnel-stages">
             {stages.map((stage, index) => {
               const indicator = measures[indicators[index]];
@@ -184,7 +161,7 @@ function PerformanceFunnelPage() {
                 value={stage.value == null ? "—" : stage.currency ? formatCurrency(stage.value) : formatNumber(stage.value)}
                 testId={`performance-stage-${index}`}
                 footer={indicator ? <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span className="text-muted-foreground">{indicator.label}</span>
+                  <span className="text-muted-foreground">{displayLabel(indicator.label)}</span>
                   <span className="font-medium tabular-nums">{indicator.value == null ? "—" : indicator.format === "currency" ? formatCurrency(indicator.value) : `${indicator.value.toFixed(1)}%`}</span>
                 </div> : undefined} />;
             })}

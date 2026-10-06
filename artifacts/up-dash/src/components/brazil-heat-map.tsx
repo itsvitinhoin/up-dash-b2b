@@ -235,9 +235,9 @@ export function BrazilHeatMap({
           {/* Heat blob gradients per top state */}
           {top3.map((t, i) => {
             const colors = [
-              { c: "hsl(0 84% 60%)" }, // hot red
-              { c: "hsl(30 95% 55%)" }, // orange
-              { c: "hsl(48 96% 55%)" }, // amber
+              { c: "hsl(var(--chart-1))" }, // hot red
+              { c: "hsl(var(--chart-2))" }, // orange
+              { c: "hsl(var(--chart-3))" }, // amber
             ];
             return (
               <radialGradient key={t.state} id={`heat-${i}`}>
@@ -292,7 +292,7 @@ export function BrazilHeatMap({
                   cy={t.y}
                   r={r * 0.45}
                   fill="none"
-                  stroke={i === 0 ? "hsl(0 84% 60%)" : i === 1 ? "hsl(30 95% 55%)" : "hsl(48 96% 55%)"}
+                  stroke={i === 0 ? "hsl(var(--chart-1))" : i === 1 ? "hsl(var(--chart-2))" : "hsl(var(--chart-3))"}
                   strokeWidth="1.5"
                   strokeOpacity="0.4"
                   initial={{ scale: 0.6, opacity: 0.6 }}
@@ -374,8 +374,8 @@ export function BrazilHeatMap({
                 r={r}
                 fill={
                   isTop
-                    ? `hsl(${Math.max(0, 30 - top3.findIndex((t) => t.state === m.state) * 18)} 85% 55%)`
-                    : `hsla(${200 - m.intensity * 200}, 80%, 55%, 0.85)`
+                    ? `hsl(220 95% ${55 + top3.findIndex(t => t.state === m.state)*10}%)`
+                    : `hsl(220 95% ${82 - m.intensity * 32}% / .85)`
                 }
                 stroke="white"
                 strokeWidth="1.5"
@@ -470,7 +470,7 @@ export function BrazilHeatMap({
           className="h-1.5 w-40 rounded-full"
           style={{
             background:
-              "linear-gradient(90deg, hsl(200 80% 55%), hsl(140 70% 55%), hsl(48 96% 55%), hsl(30 95% 55%), hsl(0 84% 60%))",
+              "linear-gradient(90deg, hsl(220 95% 88%), hsl(220 95% 75%), hsl(var(--chart-3)), hsl(var(--chart-2)), hsl(var(--chart-1)))",
           }}
         />
         <span>{highLabel}</span>

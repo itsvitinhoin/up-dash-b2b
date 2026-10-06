@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -106,11 +107,11 @@ const CHART_TOOLTIP_STYLE = {
 const FUNNEL_COLORS = [
   "#5b8dff",
   "#afc4ff",
-  "#34d399",
-  "#34d399",
-  "#f5b94a",
+  "#87adff",
+  "#87adff",
+  "#0458fe",
   "#5b8dff",
-  "#ff6275",
+  "#b3caff",
 ];
 
 const KPI_INFO: Record<string, string> = {
@@ -539,7 +540,7 @@ export default function WhatsappPage() {
                 <YAxis tick={{ fontSize: 12 }} />
                 <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} />
                 <Line type="monotone" dataKey="recebidas" stroke="#5b8dff" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="enviadas" stroke="#34d399" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="enviadas" stroke="#87adff" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -603,7 +604,7 @@ export default function WhatsappPage() {
               <div key={row.stage} className="space-y-1.5">
                 <div className="flex items-center justify-between gap-3 text-sm">
                   <span className="flex items-center gap-1.5 text-muted-foreground">
-                    {row.label}
+                    {displayLabel(row.label)}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button variant="ghost" size="sm"
@@ -639,7 +640,7 @@ export default function WhatsappPage() {
               <XAxis dataKey="profile" tick={{ fontSize: 12 }} />
               <YAxis tickFormatter={(value) => `${value}m`} tick={{ fontSize: 12 }} />
               <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatMinutes(Number(value))} />
-              <Bar dataKey="avgResponse" fill="#f5b94a" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="avgResponse" fill="#0458fe" radius={[4, 4, 0, 0]} />
             </RechartsBarChart>
           </ResponsiveContainer>
         </CardContent>

@@ -133,7 +133,7 @@ export default function GeographyPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Live · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            Atualizado · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
           </span>
         </motion.div>
         <Button
@@ -144,18 +144,18 @@ export default function GeographyPage() {
           data-testid="geography-export"
         >
           <Download className="h-4 w-4 mr-1.5" />
-          Export CSV
+          Exportar CSV
         </Button>
       </div>
 
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
+          <AlertTitle>Erro</AlertTitle>
           <AlertDescription className="flex items-center justify-between">
-            Failed to load geography data.
+            Não foi possível carregar os dados geográficos.
             <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Retry
+              <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
             </Button>
           </AlertDescription>
         </Alert>
@@ -192,24 +192,22 @@ export default function GeographyPage() {
                   <div>
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground backdrop-blur">
                       <Globe2 className="h-3 w-3 text-primary" />
-                      Geographic intelligence
+                      Inteligência geográfica
                     </span>
                     <h2 className="mt-2 text-3xl sm:text-4xl font-bold tracking-tight">
-                      Where your customers are{" "}
+                      Onde estão seus clientes{" "}
                       <span className="bg-gradient-to-r from-primary via-chart-1 to-chart-3 bg-clip-text text-transparent">
                         buying
                       </span>
                     </h2>
                     <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                      A live heat map of revenue concentration across Brazil. Bubble size
-                      reflects customer count; color shows revenue intensity. Top markets
-                      pulse in red.
+                      Mapa do faturamento no Brasil. O tamanho das bolhas indica o número de clientes e os tons de azul indicam a intensidade do faturamento.
                     </p>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 lg:max-w-2xl">
                     <HeroStat
                       icon={TrendingUp}
-                      label="Total revenue"
+                      label="Faturamento total"
                       value={totalRevenue}
                       format={(v) => formatCurrencySmart(v)}
                       color="hsl(var(--chart-1))"
@@ -226,7 +224,7 @@ export default function GeographyPage() {
                     />
                     <HeroStat
                       icon={Building2}
-                      label="Cities"
+                      label="Cidades"
                       value={cities.length}
                       color="hsl(var(--chart-4))"
                       delay={0.19}
@@ -234,7 +232,7 @@ export default function GeographyPage() {
                     />
                     <HeroStat
                       icon={Trophy}
-                      label={topState ? `Top · ${topState.state}` : "Top market"}
+                      label={topState ? `Top · ${topState.state}` : "Principal mercado"}
                       value={topState?.revenue ?? 0}
                       format={(v) => formatCurrencySmart(v)}
                       tone="hot"
@@ -260,10 +258,10 @@ export default function GeographyPage() {
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                      Brazil revenue heat map
+                      Mapa de faturamento no Brasil
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {states.length} states · {cities.length} cities
+                      {states.length} estados · {cities.length} cities
                     </span>
                   </div>
                   {isLoading ? (
@@ -271,8 +269,8 @@ export default function GeographyPage() {
                   ) : states.length === 0 ? (
                     <EmptyState
                       icon={MapPin}
-                      title="No regional sales yet"
-                      description="Once orders ship to customers, you'll see a state-by-state heat map here."
+                      title="Sem vendas por região"
+                      description="Quando os pedidos forem enviados, o mapa por estado aparecerá aqui."
                     />
                   ) : (
                     <BrazilHeatMap states={states} cities={cities} reduced={reduced} />
@@ -288,7 +286,7 @@ export default function GeographyPage() {
                   <div className="mb-4 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <Flame className="h-4 w-4 text-amber-500" />
-                      Hot markets
+                      Mercados em destaque
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                       Top {Math.min(8, sortedStates.length)}
@@ -302,7 +300,7 @@ export default function GeographyPage() {
                     </div>
                   ) : sortedStates.length === 0 ? (
                     <p className="text-sm text-muted-foreground py-8 text-center">
-                      No data for this period.
+                      Sem dados neste período.
                     </p>
                   ) : (
                     <ol className="space-y-2.5" data-testid="geo-leaderboard">
@@ -353,7 +351,7 @@ export default function GeographyPage() {
                                   </span>
                                 </div>
                                 <div className="text-[11px] text-muted-foreground">
-                                  {formatNumber(s.customers)} customers · {formatNumber(s.orders)} orders
+                                  {formatNumber(s.customers)} clientes · {formatNumber(s.orders)} orders
                                 </div>
                               </div>
                             </div>
@@ -371,7 +369,7 @@ export default function GeographyPage() {
                       className="mt-4 rounded-md border border-dashed border-border/60 bg-muted/30 p-3"
                     >
                       <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
-                        <Activity className="h-3 w-3" /> Hottest city
+                        <Activity className="h-3 w-3" /> Cidade em destaque
                       </p>
                       <div className="flex items-center justify-between gap-2">
                         <div>
@@ -403,7 +401,7 @@ export default function GeographyPage() {
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                    {view === "state" ? "All states" : "All cities"}
+                    {view === "state" ? "Todos os estados" : "Todas as cidades"}
                   </h3>
                   <div className="inline-flex rounded-md border border-border bg-card/60 p-0.5 text-[11px] font-mono uppercase tracking-wider">
                     <Button variant="ghost" size="sm"
@@ -428,7 +426,7 @@ export default function GeographyPage() {
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      City
+                      Cidade
                     </Button>
                   </div>
                 </div>
@@ -439,9 +437,9 @@ export default function GeographyPage() {
                       <TableHeader className="sticky top-0 bg-card z-10">
                         <TableRow>
                           <TableHead>State</TableHead>
-                          <TableHead className="text-right">Customers</TableHead>
-                          <TableHead className="text-right">Orders</TableHead>
-                          <TableHead className="text-right">Revenue</TableHead>
+                          <TableHead className="text-right">Clientes</TableHead>
+                          <TableHead className="text-right">Pedidos</TableHead>
+                          <TableHead className="text-right">Faturamento</TableHead>
                           <TableHead className="text-right">Share</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -461,8 +459,8 @@ export default function GeographyPage() {
                             <TableCell colSpan={5} className="p-0">
                               <EmptyState
                                 icon={MapPin}
-                                title="No regional sales yet"
-                                description="Once orders ship to customers, you'll see a state-by-state breakdown here."
+                                title="Sem vendas por região"
+                                description="Quando os pedidos forem enviados, o detalhamento por estado aparecerá aqui."
                                 className="m-4 border-0 bg-transparent"
                               />
                             </TableCell>
@@ -487,10 +485,10 @@ export default function GeographyPage() {
                     <Table>
                       <TableHeader className="sticky top-0 bg-card z-10">
                         <TableRow>
-                          <TableHead>City</TableHead>
+                          <TableHead>Cidade</TableHead>
                           <TableHead>State</TableHead>
-                          <TableHead className="text-right">Orders</TableHead>
-                          <TableHead className="text-right">Revenue</TableHead>
+                          <TableHead className="text-right">Pedidos</TableHead>
+                          <TableHead className="text-right">Faturamento</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -508,8 +506,8 @@ export default function GeographyPage() {
                             <TableCell colSpan={4} className="p-0">
                               <EmptyState
                                 icon={MapPin}
-                                title="No city-level data yet"
-                                description="Once orders are placed, your top-performing cities will appear here."
+                                title="Sem dados de cidades"
+                                description="Quando houver pedidos, as cidades com melhor desempenho aparecerão aqui."
                                 className="m-4 border-0 bg-transparent"
                               />
                             </TableCell>
@@ -531,7 +529,7 @@ export default function GeographyPage() {
 
                 {!isLoading && (totalCustomers > 0) && (
                   <p className="mt-3 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
-                    {formatNumber(totalCustomers)} unique customers across {states.length} states
+                    {formatNumber(totalCustomers)} clientes únicos entre {states.length} states
                   </p>
                 )}
               </CardContent>
@@ -564,6 +562,6 @@ function HeroStat({
   delay: number;
   reduced: boolean;
 }) {
-  const accent = tone === "hot" ? "hsl(0 84% 60%)" : color;
+  const accent = tone === "hot" ? "hsl(var(--chart-1))" : color;
   return (<GlassMetricCard label={label} value={value} icon={Icon} format={format ?? formatNumber} />);
 }

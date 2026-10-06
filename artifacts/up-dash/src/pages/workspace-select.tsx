@@ -12,14 +12,14 @@ const options: Array<{
 }> = [
   {
     mode: "B2B",
-    title: "Dashboard B2B",
+    title: "Painel B2B",
     description: "Clientes com UP Zero, sellers, WhatsApp e atribuição por campanhas.",
     icon: Building2,
     bullets: ["UP Zero", "Sellers", "WhatsApp", "UTM"],
   },
   {
     mode: "B2C",
-    title: "Dashboard B2C",
+    title: "Painel B2C",
     description: "Clientes Nuvemshop, com faturamento, pedidos pagos e eventos de ecommerce.",
     icon: Store,
     bullets: ["Nuvemshop", "Meta", "GA4", "E-commerce"],

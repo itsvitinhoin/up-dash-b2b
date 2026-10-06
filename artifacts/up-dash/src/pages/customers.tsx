@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { MetricSection } from "@/components/metric-section";
 import { RegistrationConversionCard } from "@/components/registration-conversion-card";
@@ -74,7 +75,7 @@ const STATUS_DOT: Record<string, string> = {
   REJECTED: "bg-red-500",
 };
 
-const SOURCE_COLORS = ["#5b8dff", "#afc4ff", "#f5b94a", "#34d399", "#ff6275", "#5b8dff", "#ff6275", "#34d399"];
+const SOURCE_COLORS = ["#5b8dff", "#afc4ff", "#0458fe", "#87adff", "#b3caff", "#5b8dff", "#b3caff", "#87adff"];
 
 function readQueryParam(search: string, key: string): string {
   const trimmed = search.startsWith("?") ? search.slice(1) : search;
@@ -320,9 +321,9 @@ export default function CustomersPage({organization}: {organization?: "registrat
   const totalRegistrationStates = registrationStates.reduce((acc, row) => acc + row.customers, 0);
 
   const CHART_TABS: { key: ChartTab; label: string; icon: React.ElementType }[] = [
-    { key: "timeline", label: "Registrations", icon: TrendingUp },
-    { key: "state", label: "By State", icon: BarChart2 },
-    { key: "source", label: "By Source", icon: Globe },
+    { key: "timeline", label: "Cadastros", icon: TrendingUp },
+    { key: "state", label: "Por estado", icon: BarChart2 },
+    { key: "source", label: "Por origem", icon: Globe },
   ];
 
   return (
@@ -347,16 +348,16 @@ export default function CustomersPage({organization}: {organization?: "registrat
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Live ·{" "}
+            Atualizado ·{" "}
             <span className="text-foreground font-semibold tabular-nums">
               <CountUp value={totalCount} format={(v) => formatNumber(Math.round(v))} />
             </span>{" "}
-            Customers
+            Clientes
             <span className="ml-2 text-muted-foreground/70">
               · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
             </span>
             {segmentCount > 0 && (
-              <span className="ml-2 text-muted-foreground/70">· {segmentCount} Segments</span>
+              <span className="ml-2 text-muted-foreground/70">· {segmentCount} Segmentos</span>
             )}
           </span>
         </div>
@@ -368,34 +369,34 @@ export default function CustomersPage({organization}: {organization?: "registrat
           data-testid="customers-export"
         >
           <Download className="h-4 w-4 mr-1.5" />
-          Export CSV
+          Exportar CSV
         </Button>
       </div>
 
       {/* KPI strip */}
       {organization === "registrations" ? (<div className="space-y-6"><MetricSection title="CADASTROS" columns={4}><SummaryKpiCard
-            label="Registrations"
+            label="Cadastros"
             value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.totalRegistrations) : undefined}
             deltaRaw={delta(kpis?.totalRegistrations, prevKpis?.totalRegistrations)}
             icon={Users}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Approved"
+            label="Aprovado"
             value={kpis ? formatNumber(kpis.approvedRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.approvedRegistrations) : undefined}
             deltaRaw={delta(kpis?.approvedRegistrations, prevKpis?.approvedRegistrations)}
             icon={UserCheck}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Approval Rate"
+            label="Taxa de aprovação"
             value={kpis ? `${kpis.approvalRatePct.toFixed(1)}%` : "—"}
             prevValue={prevKpis ? `${prevKpis.approvalRatePct.toFixed(1)}%` : undefined}
             deltaRaw={delta(kpis?.approvalRatePct, prevKpis?.approvalRatePct)}
             icon={TrendingUp}
             loading={summaryLoading}
           /><RegistrationConversionCard /></MetricSection><MetricSection title="BASE DE CLIENTES" columns={5}><SummaryKpiCard
-            label="Pending"
+            label="Pendente"
             value={kpis ? formatNumber(kpis.pendingRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.pendingRegistrations) : undefined}
             deltaRaw={delta(kpis?.pendingRegistrations, prevKpis?.pendingRegistrations)}
@@ -409,21 +410,21 @@ export default function CustomersPage({organization}: {organization?: "registrat
             icon={UserX}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Total Buyers"
+            label="Total de compradores"
             value={kpis ? formatNumber(kpis.totalBuyers) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.totalBuyers) : undefined}
             deltaRaw={delta(kpis?.totalBuyers, prevKpis?.totalBuyers)}
             icon={Users}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Approved No Purchase"
+            label="Aprovados sem compra"
             value={kpis ? formatNumber(kpis.customersWithoutPurchase) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.customersWithoutPurchase) : undefined}
             deltaRaw={delta(kpis?.customersWithoutPurchase, prevKpis?.customersWithoutPurchase)}
             icon={UserX}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Avg Days to 1st"
+            label="Dias médios até a primeira compra"
             value={kpis?.avgTimeToFirstPurchaseDays != null ? `${kpis.avgTimeToFirstPurchaseDays}d` : "—"}
             prevValue={prevKpis?.avgTimeToFirstPurchaseDays != null ? `${prevKpis.avgTimeToFirstPurchaseDays}d` : undefined}
             deltaRaw={delta(kpis?.avgTimeToFirstPurchaseDays ?? null, prevKpis?.avgTimeToFirstPurchaseDays ?? null)}
@@ -432,7 +433,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
           /></MetricSection></div>) : (<motion.div variants={cardVariants}>
         <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
           <SummaryKpiCard
-            label="Registrations"
+            label="Cadastros"
             value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.totalRegistrations) : undefined}
             deltaRaw={delta(kpis?.totalRegistrations, prevKpis?.totalRegistrations)}
@@ -440,7 +441,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Approved"
+            label="Aprovado"
             value={kpis ? formatNumber(kpis.approvedRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.approvedRegistrations) : undefined}
             deltaRaw={delta(kpis?.approvedRegistrations, prevKpis?.approvedRegistrations)}
@@ -448,7 +449,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Pending"
+            label="Pendente"
             value={kpis ? formatNumber(kpis.pendingRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.pendingRegistrations) : undefined}
             deltaRaw={delta(kpis?.pendingRegistrations, prevKpis?.pendingRegistrations)}
@@ -464,7 +465,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Approval Rate"
+            label="Taxa de aprovação"
             value={kpis ? `${kpis.approvalRatePct.toFixed(1)}%` : "—"}
             prevValue={prevKpis ? `${prevKpis.approvalRatePct.toFixed(1)}%` : undefined}
             deltaRaw={delta(kpis?.approvalRatePct, prevKpis?.approvalRatePct)}
@@ -472,7 +473,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Total Buyers"
+            label="Total de compradores"
             value={kpis ? formatNumber(kpis.totalBuyers) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.totalBuyers) : undefined}
             deltaRaw={delta(kpis?.totalBuyers, prevKpis?.totalBuyers)}
@@ -480,7 +481,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Approved No Purchase"
+            label="Aprovados sem compra"
             value={kpis ? formatNumber(kpis.customersWithoutPurchase) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.customersWithoutPurchase) : undefined}
             deltaRaw={delta(kpis?.customersWithoutPurchase, prevKpis?.customersWithoutPurchase)}
@@ -488,7 +489,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Avg Days to 1st"
+            label="Dias médios até a primeira compra"
             value={kpis?.avgTimeToFirstPurchaseDays != null ? `${kpis.avgTimeToFirstPurchaseDays}d` : "—"}
             prevValue={prevKpis?.avgTimeToFirstPurchaseDays != null ? `${prevKpis.avgTimeToFirstPurchaseDays}d` : undefined}
             deltaRaw={delta(kpis?.avgTimeToFirstPurchaseDays ?? null, prevKpis?.avgTimeToFirstPurchaseDays ?? null)}
@@ -503,7 +504,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-semibold">Registration Analytics</CardTitle>
+              <CardTitle className="text-sm font-semibold">Análise de cadastros</CardTitle>
               <div className="flex gap-1 bg-muted/60 p-1 rounded-lg">
                 {CHART_TABS.map((t) => (
                   <Button variant="ghost" size="sm"
@@ -516,7 +517,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     }`}
                   >
                     <t.icon className="h-3.5 w-3.5" />
-                    {t.label}
+                    {displayLabel(t.label)}
                   </Button>
                 ))}
               </div>
@@ -535,8 +536,8 @@ export default function CustomersPage({organization}: {organization?: "registrat
                         <stop offset="95%" stopColor="#5b8dff" stopOpacity={0} />
                       </linearGradient>
                       <linearGradient id="appGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#34d399" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
+                        <stop offset="5%" stopColor="#87adff" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#87adff" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
@@ -559,7 +560,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     <Area
                       type="monotone"
                       dataKey="registrations"
-                      name="Registrations"
+                      name="Cadastros"
                       stroke="#5b8dff"
                       fill="url(#regGrad)"
                       strokeWidth={2}
@@ -568,8 +569,8 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     <Area
                       type="monotone"
                       dataKey="approved"
-                      name="Approved"
-                      stroke="#34d399"
+                      name="Aprovado"
+                      stroke="#87adff"
                       fill="url(#appGrad)"
                       strokeWidth={2}
                       dot={false}
@@ -593,7 +594,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                         fontSize: "12px",
                       }}
                     />
-                    <Bar dataKey="count" name="Customers" fill="#5b8dff" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="count" name="Clientes" fill="#5b8dff" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -657,7 +658,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                 </p>
               </div>
               <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                {registrationStates.length} states · {formatNumber(totalRegistrationStates)} registrations
+                {registrationStates.length} estados · {formatNumber(totalRegistrationStates)} registrations
               </span>
             </div>
             {summaryLoading ? (
@@ -665,8 +666,8 @@ export default function CustomersPage({organization}: {organization?: "registrat
             ) : registrationStates.length === 0 ? (
               <EmptyState
                 icon={Globe}
-                title="No state data yet"
-                description="Once customer states are available, you'll see registration concentration here."
+                title="Sem dados de estados"
+                description="Quando os estados dos clientes estiverem disponíveis, a concentração de cadastros aparecerá aqui."
                 className="border-0 bg-transparent"
               />
             ) : (
@@ -752,13 +753,13 @@ export default function CustomersPage({organization}: {organization?: "registrat
               <div className="flex items-center justify-between mb-3">
                 <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
                   <Sparkles className="h-3 w-3" />
-                  UP Insight · CRM · {insight?.source === "ai" ? "AI" : "Auto"}
+                  UP Insight · CRM · {insight?.source === "ai" ? "IA" : "Auto"}
                 </span>
                 <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Dismiss insight"
+                  aria-label="Fechar análise"
                   data-testid="customers-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
@@ -798,7 +799,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                   {regenerate.isPending ? "Regenerating…" : "Regenerate"}
                 </Button>
                 {insight?.cached && (
-                  <span className="text-[11px] text-muted-foreground">Cached · refreshes hourly</span>
+                  <span className="text-[11px] text-muted-foreground">Atualização a cada hora</span>
                 )}
               </div>
             </div>
@@ -814,7 +815,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search customers..."
+                  placeholder="Buscar clientes…"
                   className="pl-9"
                   value={search}
                   onChange={(e) => { setSearch(e.target.value); setPage(1); }}
@@ -824,15 +825,15 @@ export default function CustomersPage({organization}: {organization?: "registrat
               <div className="w-full md:w-48">
                 <Select value={rfmSegment || "all"} onValueChange={(v) => { setRfmSegment(v); setPage(1); }}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Segment" />
+                    <SelectValue placeholder="Segmento" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Segments</SelectItem>
-                    <SelectItem value="Champions">Champions</SelectItem>
-                    <SelectItem value="Loyal">Loyal</SelectItem>
-                    <SelectItem value="Potential">Potential</SelectItem>
-                    <SelectItem value="At Risk">At Risk</SelectItem>
-                    <SelectItem value="Lost">Lost</SelectItem>
+                    <SelectItem value="all">Todos os segmentos</SelectItem>
+                    <SelectItem value="Champions">Campeões</SelectItem>
+                    <SelectItem value="Loyal">Fiéis</SelectItem>
+                    <SelectItem value="Potential">Potenciais</SelectItem>
+                    <SelectItem value="At Risk">Em risco</SelectItem>
+                    <SelectItem value="Lost">Perdidos</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -842,7 +843,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     <SelectValue placeholder="State" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All States</SelectItem>
+                    <SelectItem value="all">Todos os estados</SelectItem>
                     {brazilStates.map((s) => (
                       <SelectItem key={s} value={s}>{s}</SelectItem>
                     ))}
@@ -922,7 +923,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                       aria-hidden
                     />
                     <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                      {seg.segment}
+                      {displayLabel(seg.segment)}
                     </span>
                     <span className="font-semibold tabular-nums">{formatNumber(seg.count)}</span>
                   </div>
@@ -938,9 +939,9 @@ export default function CustomersPage({organization}: {organization?: "registrat
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            Failed to load customers.{" "}
+            Não foi possível carregar os clientes.{" "}
             <Button variant="link" className="p-0 h-auto text-destructive-foreground font-semibold" onClick={() => refetch()}>
-              Retry
+              Tentar novamente
             </Button>
           </AlertDescription>
         </Alert>
@@ -951,17 +952,17 @@ export default function CustomersPage({organization}: {organization?: "registrat
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Customer</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Cliente</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Doc</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Location</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Source</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Campaign</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Segment</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Opportunity</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Orders</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Localização</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Origem</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Campanha</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Segmento</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Oportunidade</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Pedidos</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Spent</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">First Purchase</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Last Purchase</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Primeira compra</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Última compra</TableHead>
                     <TableHead className="w-8" />
                   </TableRow>
                 </TableHeader>
@@ -988,8 +989,8 @@ export default function CustomersPage({organization}: {organization?: "registrat
                       <TableCell colSpan={12} className="p-0">
                         <EmptyState
                           icon={Inbox}
-                          title="No customers match these filters"
-                          description="Try widening the date range or clearing search and segment filters."
+                          title="Nenhum cliente corresponde aos filtros"
+                          description="Amplie o período ou limpe a busca e os filtros de segmento."
                           className="m-4 border-0 bg-transparent"
                         />
                       </TableCell>
@@ -1045,7 +1046,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                                 {customer.utmSource}
                               </Badge>
                             ) : (
-                              <span className="text-muted-foreground text-xs">Direct</span>
+                              <span className="text-muted-foreground text-xs">Direto</span>
                             )}
                           </TableCell>
                           <TableCell>
@@ -1055,21 +1056,21 @@ export default function CustomersPage({organization}: {organization?: "registrat
                                 className="text-[10px] border-transparent bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"
                                 title={customer.utmCampaign ?? customer.utmSource ?? undefined}
                               >
-                                Yes
+                                Sim
                               </Badge>
                             ) : (
                               <Badge
                                 variant="outline"
                                 className="text-[10px] border-transparent bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
                               >
-                                No
+                                Não
                               </Badge>
                             )}
                           </TableCell>
                           <TableCell>
                             {customer.rfmSegment ? (
                               <Badge variant="outline" className={`border-transparent ${getRfmColor(customer.rfmSegment)}`}>
-                                {customer.rfmSegment}
+                                {displayLabel(customer.rfmSegment)}
                               </Badge>
                             ) : "—"}
                           </TableCell>
@@ -1099,7 +1100,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             {data && data.pages > 1 && (
               <div className="p-4 border-t flex items-center justify-between">
                 <div className="text-sm text-muted-foreground">
-                  Showing page {data.page} of {data.pages} ({formatNumber(data.total)} total)
+                  Exibindo página {data.page} of {data.pages} ({formatNumber(data.total)} total)
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -1108,7 +1109,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     disabled={page === 1}
                     onClick={() => setPage((p) => p - 1)}
                   >
-                    Previous
+                    Anterior
                   </Button>
                   <Button
                     variant="outline"
@@ -1116,7 +1117,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     disabled={page === data.pages}
                     onClick={() => setPage((p) => p + 1)}
                   >
-                    Next
+                    Próximo
                   </Button>
                 </div>
               </div>

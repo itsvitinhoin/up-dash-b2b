@@ -1,3 +1,6 @@
+import { displayLabel } from "@/lib/display-label";
+import { usePurchaseInsights } from "@/lib/purchase-insights";
+import { PurchaseInsightsPanels } from "@/components/purchase-insights";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { OrganizationHeading } from "@/components/metric-section";
 // Submenu Performance > Recompra — ver "00 - Especificação técnica.pdf"
@@ -206,12 +209,12 @@ function RecompraBlockCard({
   return (<GlassMetricCard label={title} value={mainValue} icon={Icon}
   deltaContent={mainDelta ? <span className={mainDelta.isUp ? "up-delta-positive up-delta" : "up-delta-negative up-delta"}>{mainDelta.text} {changeLabel}</span> : undefined}
   footer={<div className="space-y-2">
-    <p className="text-xs text-muted-foreground">{mainLabel}</p>
+    <p className="min-h-[34px] text-xs text-muted-foreground">{mainLabel}</p>
     {comparing && comparisonValue && <p className="text-xs text-muted-foreground">Comparação: {comparisonValue} (período anterior)</p>}
     {stats.map((stat) => {
       const delta = comparing && stat.delta ? formatDelta(stat.delta.value, stat.delta.type) : null;
-      return <div key={stat.label} className="flex flex-wrap items-start justify-between gap-2 text-xs">
-        <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground"><stat.icon className="h-3 w-3 shrink-0" />{stat.label}</span>
+      return <div key={stat.label} className="grid min-h-[34px] grid-cols-[minmax(0,1fr)_auto] items-start gap-2 text-xs">
+        <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground"><stat.icon className="h-3 w-3 shrink-0" />{displayLabel(stat.label)}</span>
         <span className="min-w-0 text-right font-medium tabular-nums">{stat.value}
           {delta && stat.delta && <span className={delta.isUp ? "block text-xs text-[var(--up-good)]" : "block text-xs text-[var(--up-bad)]"}>{delta.text} <span className="text-muted-foreground">· Comp.: {stat.delta.comparisonValue}</span></span>}
         </span>
@@ -584,21 +587,6 @@ function useRecompraMonthlyTrend(filters: RecompraFilterParams) {
 // Fase 5 -- Coorte + Funil de retenção: "visão geral", sem os filtros
 // Status/Tipo/Origem/Estado/Vendedora da página (decisão do usuário) --
 // por isso o hook não recebe nenhum parâmetro além do clientId.
-type RecompraFunnelStepApi = { compra: string; clientes: number; retencao: number };
-type RecompraCohortRowApi = { mes: string; clientes: number; d30: number | null; d60: number | null; d90: number | null; d180: number | null; hoje: number | null };
-type RecompraHistoryInsightsResponse = { funnel: RecompraFunnelStepApi[]; cohort: RecompraCohortRowApi[] };
-
-function useRecompraHistoryInsights() {
-  const { clientId, enabled } = useRecompraClientId();
-  return useQuery<RecompraHistoryInsightsResponse>({
-    queryKey: ["recompra-history-insights", clientId],
-    queryFn: () => customFetch(buildRecompraUrl("/api/analytics/recompra/history-insights", { clientId })),
-    enabled,
-    staleTime: 120_000,
-    refetchOnWindowFocus: false,
-  });
-}
-
 // N/A explícito (PDF seção 21/23: denominador zero/ausência de base não
 // vira 0 silencioso) em vez de formatar null como "R$0,00"/"0".
 function formatMaybeCurrency(value: number | null): string {
@@ -642,7 +630,7 @@ export default function PerformanceRecompraPage() {
   // Fase 5 -- gráficos mensais (janela fixa, reage aos filtros da página) e
   // Coorte/Funil (visão geral, sem filtro nenhum).
   const { data: monthlyTrendData, isLoading: monthlyTrendLoading } = useRecompraMonthlyTrend(recompraFilters);
-  const { data: historyInsightsData, isLoading: historyInsightsLoading } = useRecompraHistoryInsights();
+  const { data: historyInsightsData, isLoading: historyInsightsLoading, isError: historyInsightsError } = usePurchaseInsights();
 
   const revenueByMonth = useMemo(
     () => (monthlyTrendData?.months ?? []).map((m) => ({ month: formatMonthLabel(m.month), faturamento: m.faturamento, ticket: m.vendas > 0 ? m.faturamento / m.vendas : 0 })),
@@ -802,7 +790,7 @@ export default function PerformanceRecompraPage() {
 
       {/* Blocos 1-4 — dado real (Fase 1), com P2 real quando "Comparar
           período" está ativo (fórmulas de variação do PDF seção 19.1). */}
-      <div className="space-y-6"><section className="space-y-4" aria-label="RECOMPRA"><OrganizationHeading>RECOMPRA</OrganizationHeading><RecompraBlockCard
+      <OrganizationHeading>RESULTADO DA RECOMPRA</OrganizationHeading><div className="up-metric-grid" data-testid="recompra-kpi-grid"><section aria-label="RECOMPRA"><RecompraBlockCard
           icon={DollarSign}
           iconClass="bg-blue-500/15 text-blue-400"
           title="Resultado de recompra"
@@ -818,7 +806,7 @@ export default function PerformanceRecompraPage() {
             { icon: Users, label: "Clientes em recompra", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.recompra.clientes ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.recompra.clientes, blocksP2.recompra.clientes, "percent", formatNumber) : undefined },
           ]}
         /></section>
-<section className="space-y-4" aria-label="CLIENTES RECORRENTES"><OrganizationHeading>CLIENTES RECORRENTES</OrganizationHeading><RecompraBlockCard
+<section aria-label="CLIENTES RECORRENTES"><RecompraBlockCard
           icon={UserCheck}
           iconClass="bg-emerald-500/15 text-emerald-400"
           title="Clientes recorrentes"
@@ -834,7 +822,7 @@ export default function PerformanceRecompraPage() {
             { icon: Receipt, label: "Ticket médio recorrente", value: blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.recorrentes.ticketMedio ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.recorrentes.ticketMedio, blocksP2.recorrentes.ticketMedio, "percent", formatCurrencySmart) : undefined },
           ]}
         /></section>
-<section className="space-y-4" aria-label="CLIENTES REATIVADOS"><OrganizationHeading>CLIENTES REATIVADOS</OrganizationHeading><RecompraBlockCard
+<section aria-label="CLIENTES REATIVADOS"><RecompraBlockCard
           icon={RotateCcw}
           iconClass="bg-violet-500/15 text-violet-400"
           title="Clientes reativados"
@@ -850,7 +838,7 @@ export default function PerformanceRecompraPage() {
             { icon: Receipt, label: "Ticket médio reativado", value: blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.reativados.ticketMedio ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.reativados.ticketMedio, blocksP2.reativados.ticketMedio, "percent", formatCurrencySmart) : undefined },
           ]}
         /></section>
-<section className="space-y-4" aria-label="CICLO DE RECOMPRA"><OrganizationHeading>CICLO DE RECOMPRA</OrganizationHeading><RecompraBlockCard
+<section aria-label="CICLO DE RECOMPRA"><RecompraBlockCard
           icon={Timer}
           iconClass="bg-sky-500/15 text-sky-400"
           title="Ciclo de recompra"
@@ -877,6 +865,8 @@ export default function PerformanceRecompraPage() {
           {recompraData.blocks.unmatchedErpCount} pedido(s) do ERP no período não puderam ser conciliados com um cliente identificado (sem CNPJ/e-mail/telefone batendo) e ficaram de fora dos blocos acima.
         </p>
       )}
+
+      <PurchaseInsightsPanels data={historyInsightsData} loading={historyInsightsLoading} error={historyInsightsError} />
 
       {/* Gráficos 1-3: séries mensais -- sempre os últimos 12 meses corridos
           até hoje (Fase 5), independente do período (P1) escolhido no topo.

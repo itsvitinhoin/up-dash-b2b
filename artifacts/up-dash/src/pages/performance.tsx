@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { PerformanceSummarySections, MediaInvestmentCards } from "@/components/overview-organization";
 import { OrganizationHeading } from "@/components/metric-section";
@@ -321,7 +322,7 @@ const COHORT_BADGE_CLASS: Record<CohortLabel, string> = {
 const trendConfig = {
   revenue: { label: "Faturamento ERP", color: "#5b8dff" },
   attributedRevenue: { label: "Receita atribuída", color: "#5b8dff" },
-  spend: { label: "Investimento", color: "#f5b94a" },
+  spend: { label: "Investimento", color: "#0458fe" },
 } satisfies ChartConfig;
 
 const breakdownConfig = {
@@ -380,7 +381,7 @@ function SourceStatus({
               }
               title={source.value}
             >
-              {source.label}: {source.ok ? "conectado" : "atenção"}
+              {displayLabel(source.label)}: {source.ok ? "conectado" : "atenção"}
             </Badge>
           ))}
         </div>
@@ -719,7 +720,7 @@ export default function PerformancePage() {
       format: formatCurrency,
       icon: Megaphone,
       iconClass: "bg-amber-500/10 text-amber-400",
-      sparkColor: "#f5b94a",
+      sparkColor: "#0458fe",
       sub: [{ label: "Fonte", value: "Meta Ads" }],
     },
     {
@@ -728,7 +729,7 @@ export default function PerformancePage() {
       format: () => (k?.roas == null ? "—" : `${k.roas.toFixed(2)}x`),
       icon: TrendingUp,
       iconClass: "bg-emerald-500/10 text-emerald-400",
-      sparkColor: "#34d399",
+      sparkColor: "#87adff",
       sub: [{ label: "Cálculo", value: "Atribuído / mídia" }],
     },
     {
@@ -747,7 +748,7 @@ export default function PerformancePage() {
         k?.roiStatus === "available" ? formatCurrency(k.grossProfit) : "—",
       icon: Boxes,
       iconClass: "bg-fuchsia-500/10 text-fuchsia-400",
-      sparkColor: "#ff6275",
+      sparkColor: "#b3caff",
       sub: [
         { label: "Margem", value: formatPercentage(k?.grossMarginPct ?? 0) },
       ],
@@ -758,7 +759,7 @@ export default function PerformancePage() {
       format: () => (k?.roi == null ? "—" : formatPercentage(k.roi)),
       icon: BadgeDollarSign,
       iconClass: "bg-lime-500/10 text-lime-400",
-      sparkColor: "#34d399",
+      sparkColor: "#87adff",
       sub: [
         {
           label: "Custo coberto",
@@ -795,7 +796,7 @@ export default function PerformancePage() {
       format: formatNumber,
       icon: PackageCheck,
       iconClass: "bg-emerald-500/10 text-emerald-400",
-      sparkColor: "#34d399",
+      sparkColor: "#87adff",
       sub: [
         {
           label: "Cobertura",
@@ -821,7 +822,7 @@ export default function PerformancePage() {
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-lime-500/10 text-lime-400",
-      sparkColor: "#34d399",
+      sparkColor: "#87adff",
       sub: [
         {
           label: "Novos atribuídos",
@@ -835,7 +836,7 @@ export default function PerformancePage() {
       format: formatNumber,
       icon: ShoppingBag,
       iconClass: "bg-rose-500/10 text-rose-400",
-      sparkColor: "#ff6275",
+      sparkColor: "#b3caff",
       sub: [
         { label: "Retenção", value: formatPercentage(k?.retentionPct ?? 0) },
       ],
@@ -846,7 +847,7 @@ export default function PerformancePage() {
       format: () => (k?.cac == null ? "—" : formatCurrency(k.cac)),
       icon: BadgeDollarSign,
       iconClass: "bg-orange-500/10 text-orange-400",
-      sparkColor: "#f5b94a",
+      sparkColor: "#0458fe",
       sub: [{ label: "Base", value: "Novos atribuídos" }],
     },
     {
@@ -1083,7 +1084,7 @@ export default function PerformancePage() {
                   fillOpacity={0.16}
                   stroke="var(--color-revenue)"
                   strokeWidth={2}
-                />
+                 name="Faturamento" />
                 <Area
                   dataKey="attributedRevenue"
                   type="monotone"
@@ -1099,7 +1100,7 @@ export default function PerformancePage() {
                   fillOpacity={0.08}
                   stroke="var(--color-spend)"
                   strokeWidth={2}
-                />
+                 name="Investimento" />
                 <ChartLegend content={<ChartLegendContent />} />
               </AreaChart>
             </ChartContainer>
@@ -1331,7 +1332,7 @@ export default function PerformancePage() {
                 className="rounded-md border bg-background/30 p-4"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-medium">{item.label}</p>
+                  <p className="text-sm font-medium">{displayLabel(item.label)}</p>
                   <Badge
                     variant="outline"
                     className={

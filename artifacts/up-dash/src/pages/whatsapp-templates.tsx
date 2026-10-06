@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -970,8 +971,8 @@ export default function WhatsappTemplatesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="UTILITY">Utility</SelectItem>
-                  <SelectItem value="MARKETING">Marketing</SelectItem>
-                  <SelectItem value="AUTHENTICATION">Authentication</SelectItem>
+                  <SelectItem value="MARKETING">Anúncios</SelectItem>
+                  <SelectItem value="AUTHENTICATION">Autenticação</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1061,7 +1062,7 @@ export default function WhatsappTemplatesPage() {
                                 key={`${placeholder}-${variable.key}`}
                                 value={variable.key}
                               >
-                                {variable.groupTitle} - {variable.label}
+                                {variable.groupTitle} - {displayLabel(variable.label)}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1287,7 +1288,7 @@ export default function WhatsappTemplatesPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Template</TableHead>
+                <TableHead>Modelo</TableHead>
                 <TableHead>Categoria</TableHead>
                 <TableHead>Idioma</TableHead>
                 <TableHead>Status</TableHead>
@@ -1389,7 +1390,7 @@ export default function WhatsappTemplatesPage() {
                                         key={`${template.id}-${placeholder}-${variable.key}`}
                                         value={variable.key}
                                       >
-                                        {variable.groupTitle} - {variable.label}
+                                        {variable.groupTitle} - {displayLabel(variable.label)}
                                       </SelectItem>
                                     ))}
                                   </SelectContent>

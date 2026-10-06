@@ -234,7 +234,7 @@ export function useOrganizationData() {
     "ROAS Solicitado",
     selectedDashboardMode === "B2C" ? null : m?.roas,
     "ratio",
-    "Marketing",
+    "Mídia",
     marketing.isLoading,
   );
   put(

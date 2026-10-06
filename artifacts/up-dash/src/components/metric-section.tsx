@@ -31,14 +31,14 @@ export function MetricSection({
     2: "grid-cols-1 sm:grid-cols-2",
     3: "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3",
     4: "grid-cols-1 sm:grid-cols-2 xl:grid-cols-4",
-    5: "grid-cols-1 sm:grid-cols-2 xl:grid-cols-5",
+    5: "grid-cols-1 sm:grid-cols-2 xl:grid-cols-4",
     6: "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3",
     8: "grid-cols-1 sm:grid-cols-2 xl:grid-cols-4",
   };
   return (
     <section className="space-y-4" aria-label={title} data-testid={id}>
       <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-      <div className={`grid gap-4 ${grids[columns]}`}>{children}</div>
+      <div className={`up-metric-grid grid gap-4 ${grids[columns]}`}>{children}</div>
     </section>
   );
 }

@@ -36,7 +36,7 @@ import {
   YAxis,
 } from "recharts";
 
-const PALETTE = ["#5b8dff", "#34d399", "#ff6275", "#afc4ff"];
+const PALETTE = ["#5b8dff", "#87adff", "#b3caff", "#afc4ff"];
 const MAX_BRANDS = 4;
 
 interface BrandResult {
@@ -74,7 +74,7 @@ export default function ComparePage() {
         <AlertCircle className="h-4 w-4" />
         <AlertTitle>Restricted</AlertTitle>
         <AlertDescription>
-          This view is available to platform administrators only.
+          Esta visualização está disponível apenas para administradores.
         </AlertDescription>
       </Alert>
     );
@@ -85,9 +85,9 @@ export default function ComparePage() {
       <Card className="p-5 bg-card border-border">
         <div className="flex items-start justify-between mb-4">
           <div>
-            <h2 className="text-base font-semibold leading-tight">Pick brands to compare</h2>
+            <h2 className="text-base font-semibold leading-tight">Selecione marcas para comparar</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Choose up to {MAX_BRANDS} client brands. The KPIs and chart below update live.
+              Selecione até {MAX_BRANDS} marcas. Os KPIs e gráficos abaixo são atualizados automaticamente.
             </p>
           </div>
           {selected.length > 0 && (
@@ -98,7 +98,7 @@ export default function ComparePage() {
               className="text-xs"
               data-testid="compare-clear"
             >
-              Clear selection
+              Limpar seleção
             </Button>
           )}
         </div>
@@ -149,8 +149,8 @@ export default function ComparePage() {
       {selected.length < 2 ? (
         <EmptyState
           icon={GitCompareArrows}
-          title={selected.length === 0 ? "Pick 2–4 brands to start comparing" : "Pick one more brand to compare"}
-          description="Side-by-side KPIs and revenue trends will appear here once at least two brands are selected."
+          title={selected.length === 0 ? "Selecione de 2 a 4 marcas para comparar" : "Selecione mais uma marca para comparar"}
+          description="Os KPIs e a evolução do faturamento aparecerão lado a lado quando duas ou mais marcas forem selecionadas."
         />
       ) : (
         <CompareGrid
@@ -237,7 +237,7 @@ function BrandKpiCard({ clientId, name, color, dateRange, variants, onRemove }: 
             type="button"
             onClick={onRemove}
             className="text-muted-foreground hover:text-foreground"
-            aria-label={`Remove ${name}`}
+            aria-label={`Remover ${name}`}
           >
             <X className="h-3.5 w-3.5" />
           </Button>
@@ -246,14 +246,14 @@ function BrandKpiCard({ clientId, name, color, dateRange, variants, onRemove }: 
           <CountUp value={data?.kpis.revenue ?? 0} format={(v) => formatCurrencySmart(v)} />
         </p>
         <p className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">
-          Revenue
+          Faturamento
         </p>
         <div className="mt-3">
           <Sparkline values={series} stroke={color} fill={color + "33"} width={200} height={36} />
         </div>
         <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-          <Stat label="Orders" value={formatNumber(data?.kpis.orders ?? 0)} />
-          <Stat label="Avg ticket" value={formatCurrency(data?.kpis.avgTicket ?? 0)} />
+          <Stat label="Pedidos" value={formatNumber(data?.kpis.orders ?? 0)} />
+          <Stat label="Ticket médio" value={formatCurrency(data?.kpis.avgTicket ?? 0)} />
           <Stat label="Conv." value={formatPercentage(data?.kpis.conversionRate ?? 0)} />
         </div>
       </Card>
@@ -319,9 +319,9 @@ function CompareChart({ selectedIds, dateRange, allClients }: CompareChartProps)
     <Card className="p-5 bg-card border-border" data-testid="compare-chart">
       <div className="flex items-start justify-between mb-4">
         <div>
-          <h2 className="text-base font-semibold leading-tight">Daily revenue side-by-side</h2>
+          <h2 className="text-base font-semibold leading-tight">Faturamento diário comparado</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Stacked bars per brand for the selected window.
+            Barras empilhadas por marca no período selecionado.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -335,7 +335,7 @@ function CompareChart({ selectedIds, dateRange, allClients }: CompareChartProps)
             </Badge>
           ))}
           <Button size="sm" variant="outline" onClick={handleExport} className="h-7 text-xs">
-            Export CSV
+            Exportar CSV
           </Button>
         </div>
       </div>

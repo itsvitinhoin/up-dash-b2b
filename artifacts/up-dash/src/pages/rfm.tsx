@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useState } from "react";
 import { format } from "date-fns";
@@ -46,54 +47,54 @@ const SEGMENT_META: Record<string, {
   description: string;
 }> = {
   Champions: {
-    label: "Champions",
-    color: "#34d399",
+    label: "Campeões",
+    color: "#87adff",
     bg: "bg-emerald-500/10",
     ring: "ring-emerald-500/30",
-    description: "Bought recently, buy often, spent the most",
+    description: "Compraram recentemente, compram com frequência e têm maior gasto",
   },
   Loyal: {
-    label: "Loyal",
+    label: "Fiéis",
     color: "#5b8dff",
     bg: "bg-indigo-500/10",
     ring: "ring-indigo-500/30",
-    description: "Buy regularly and respond well to offers",
+    description: "Compram regularmente e respondem bem às ofertas",
   },
   Potential: {
-    label: "Promising",
+    label: "Promissores",
     color: "#5b8dff",
     bg: "bg-violet-500/10",
     ring: "ring-violet-500/30",
-    description: "Recent buyers with average frequency",
+    description: "Compradores recentes com frequência média",
   },
   "At Risk": {
-    label: "At Risk",
-    color: "#f5b94a",
+    label: "Em risco",
+    color: "#0458fe",
     bg: "bg-amber-500/10",
     ring: "ring-amber-500/30",
-    description: "Good customers who are becoming inactive",
+    description: "Clientes com bom histórico que estão ficando inativos",
   },
   Lost: {
-    label: "Lost",
-    color: "#9badd0",
+    label: "Perdidos",
+    color: "#cfddff",
     bg: "bg-zinc-500/10",
     ring: "ring-zinc-500/30",
-    description: "Purchased long ago and haven't returned",
+    description: "Compraram há muito tempo e não retornaram",
   },
 };
 
 const AREA_COLORS: Record<string, string> = {
-  Champions: "#34d399",
+  Champions: "#87adff",
   Loyal: "#5b8dff",
   Potential: "#5b8dff",
-  AtRisk: "#f5b94a",
-  Lost: "#9badd0",
+  AtRisk: "#0458fe",
+  Lost: "#cfddff",
 };
 
 function SegmentBadge({ segment }: { segment: string | null | undefined }) {
   if (!segment) return <Badge variant="outline" className="text-[10px]">—</Badge>;
   const meta = SEGMENT_META[segment];
-  const color = meta?.color ?? "#9badd0";
+  const color = meta?.color ?? "#cfddff";
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium"
@@ -259,18 +260,18 @@ export default function RfmPage() {
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
         </span>
         <span className="font-mono uppercase tracking-wider">
-          Live · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+          Atualizado · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
         </span>
       </motion.div>
 
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
+          <AlertTitle>Erro</AlertTitle>
           <AlertDescription className="flex items-center justify-between">
-            Failed to load RFM data.
+            Não foi possível carregar os dados RFM.
             <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Retry
+              <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
             </Button>
           </AlertDescription>
         </Alert>
@@ -306,7 +307,7 @@ export default function RfmPage() {
                         onClick={() => regenerate.mutate({ params: insightParams })}
                       >
                         <RefreshCw className={`h-3 w-3 mr-1 ${regenerate.isPending ? "animate-spin" : ""}`} />
-                        Refresh
+                        Atualizar
                       </Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setInsightDismissed(true)}>
                         <XIcon className="h-3 w-3" />
@@ -348,7 +349,7 @@ export default function RfmPage() {
           {/* Segment Cards */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              {(["Champions", "Loyal", "Potential", "At Risk", "Lost"] as const).map((seg) => {
+              {(["Campeões", "Fiéis", "Potenciais", "Em risco", "Perdidos"] as const).map((seg) => {
                 const meta = SEGMENT_META[seg];
                 const segData = segments.find((s) => s.segment === seg);
                 return (
@@ -357,7 +358,7 @@ export default function RfmPage() {
                       onClick={() => {
                         setSegmentFilter((prev) => (prev === seg ? "" : seg));
                         setPage(1);
-                      }}><span className="sr-only">{meta.label}</span></button>
+                      }}><span className="sr-only">{displayLabel(meta.label)}</span></button>
                     <GlassMetricCard label={meta.label} value={segData?.customerCount ?? 0} loading={isLoading}
                       info={`Segmento ${meta.label}: ${meta.description}. A classificação usa recência, frequência e valor comprado para priorizar a ação comercial.`}
                       sub={[
@@ -378,14 +379,14 @@ export default function RfmPage() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                  Segment composition over time
+                  Evolução da composição dos segmentos
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
                   <Skeleton className="h-52 w-full" />
                 ) : composition.length === 0 ? (
-                  <EmptyState icon={BarChart3} title="No segment history" description="Segment composition data will appear once purchases are recorded in this period." />
+                  <EmptyState icon={BarChart3} title="Sem histórico de segmentos" description="A composição dos segmentos aparecerá quando houver compras neste período." />
                 ) : (
                   <ResponsiveContainer width="100%" height={220}>
                     <AreaChart data={composition} margin={{ left: 0, right: 8 }}>
@@ -419,7 +420,7 @@ export default function RfmPage() {
                           key={key}
                           type="monotone"
                           dataKey={key}
-                          name={key === "AtRisk" ? "At Risk" : key}
+                          name={key === "AtRisk" ? "Em risco" : key}
                           stroke={color}
                           fill={`url(#rfmGrad-${key})`}
                           strokeWidth={2}
@@ -468,12 +469,12 @@ export default function RfmPage() {
                       onValueChange={(v) => { setSegmentFilter(v === "all" ? "" : v); setPage(1); }}
                     >
                       <SelectTrigger className="h-8 text-xs w-36">
-                        <SelectValue placeholder="All segments" />
+                        <SelectValue placeholder="Todos os segmentos" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All segments</SelectItem>
-                        {(["Champions", "Loyal", "Potential", "At Risk", "Lost"] as const).map((s) => (
-                          <SelectItem key={s} value={s}>{SEGMENT_META[s].label}</SelectItem>
+                        <SelectItem value="all">Todos os segmentos</SelectItem>
+                        {(["Campeões", "Fiéis", "Potenciais", "Em risco", "Perdidos"] as const).map((s) => (
+                          <SelectItem key={s} value={s}>{displayLabel(SEGMENT_META[s].label)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -496,25 +497,25 @@ export default function RfmPage() {
                           className="cursor-pointer select-none text-xs"
                           onClick={() => handleSort("segment")}
                         >
-                          Segment <SortIndicator col="segment" />
+                          Segmento <SortIndicator col="segment" />
                         </TableHead>
                         <TableHead
                           className="cursor-pointer select-none text-xs text-right"
                           onClick={() => handleSort("recencyDays")}
                         >
-                          Recency <SortIndicator col="recencyDays" />
+                          Recência <SortIndicator col="recencyDays" />
                         </TableHead>
                         <TableHead
                           className="cursor-pointer select-none text-xs text-right"
                           onClick={() => handleSort("frequency")}
                         >
-                          Frequency <SortIndicator col="frequency" />
+                          Frequência <SortIndicator col="frequency" />
                         </TableHead>
                         <TableHead
                           className="cursor-pointer select-none text-xs text-right"
                           onClick={() => handleSort("monetary")}
                         >
-                          Monetary <SortIndicator col="monetary" />
+                          Valor monetário <SortIndicator col="monetary" />
                         </TableHead>
                         <TableHead className="text-xs text-right">Última compra</TableHead>
                         <TableHead className="text-xs text-right">Ações</TableHead>
@@ -537,7 +538,7 @@ export default function RfmPage() {
                       ) : customers.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={8} className="py-0">
-                            <EmptyState icon={Users} title="No customers found" description="Try clearing the segment filter or selecting a broader date range." className="border-0 rounded-none" />
+                            <EmptyState icon={Users} title="Nenhum cliente encontrado" description="Limpe o filtro de segmento ou selecione um período maior." className="border-0 rounded-none" />
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -636,7 +637,7 @@ export default function RfmPage() {
                 {totalPages > 1 && (
                   <div className="flex items-center justify-between px-4 py-3 border-t border-border/40">
                     <span className="text-xs text-muted-foreground">
-                      Page {page} of {totalPages} · {formatNumber(total)} customers
+                      Página {page} of {totalPages} · {formatNumber(total)} customers
                     </span>
                     <div className="flex items-center gap-1.5">
                       <Button
@@ -669,7 +670,7 @@ export default function RfmPage() {
             <motion.div initial="hidden" animate="visible" variants={variants}>
               <div className="flex items-center gap-2 mb-3">
                 <Lightbulb className="h-4 w-4 text-amber-500" />
-                <h3 className="font-semibold text-sm">Key insights</h3>
+                <h3 className="font-semibold text-sm">Principais análises</h3>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {insight.bullets.map((bullet, i) => (
@@ -711,7 +712,7 @@ export default function RfmPage() {
                           <p className="font-medium">Pedido #{order.externalId ?? order.id.slice(0, 8)}</p>
                           <p className="text-xs text-muted-foreground">{formatDateTime(order.createdAt)}</p>
                         </div>
-                        <Badge variant="outline">{order.status}</Badge>
+                        <Badge variant="outline">{displayLabel(order.status)}</Badge>
                       </div>
                       <div className="mt-3 grid gap-3 sm:grid-cols-4">
                         <GlassMetricCard  label="Solicitado" value={<>{formatCurrency(order.amount)}</>}  />

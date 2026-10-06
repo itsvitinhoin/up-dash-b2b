@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -41,11 +42,11 @@ const RFM_COLOR: Record<string, string> = {
 };
 
 const STATUS_ORDER: Record<string, { label: string; color: string; icon: React.ElementType }> = {
-  PENDING: { label: "Pending", color: "text-amber-500", icon: Clock },
-  APPROVED: { label: "Approved", color: "text-emerald-500", icon: CheckCircle },
+  PENDING: { label: "Pendente", color: "text-amber-500", icon: Clock },
+  APPROVED: { label: "Aprovado", color: "text-emerald-500", icon: CheckCircle },
   REJECTED: { label: "Rejected", color: "text-red-500", icon: XCircle },
-  SHIPPED: { label: "Shipped", color: "text-blue-500", icon: Package },
-  DELIVERED: { label: "Delivered", color: "text-emerald-500", icon: CheckCircle },
+  SHIPPED: { label: "Enviado", color: "text-blue-500", icon: Package },
+  DELIVERED: { label: "Entregue", color: "text-emerald-500", icon: CheckCircle },
 };
 
 type TimelineTab = "events" | "orders" | "products";
@@ -135,12 +136,12 @@ function JourneyFunnel({ journey }: {
   };
 }) {
   const steps = [
-    { label: "Visits", value: journey.visits, icon: Eye, active: journey.visits > 0, numeric: true },
-    { label: "Registered", value: journey.registered ? 1 : 0, icon: User, active: journey.registered, numeric: false },
-    { label: "Approved", value: journey.approved ? 1 : 0, icon: CheckCircle, active: journey.approved, numeric: false },
-    { label: "Product Views", value: journey.productViews, icon: Package, active: journey.productViews > 0, numeric: true },
-    { label: "Cart Adds", value: journey.addedToCart, icon: ShoppingCart, active: journey.addedToCart > 0, numeric: true },
-    { label: "Purchases", value: journey.purchased, icon: ShoppingBag, active: journey.purchased > 0, numeric: true },
+    { label: "Visitas", value: journey.visits, icon: Eye, active: journey.visits > 0, numeric: true },
+    { label: "Cadastrado", value: journey.registered ? 1 : 0, icon: User, active: journey.registered, numeric: false },
+    { label: "Aprovado", value: journey.approved ? 1 : 0, icon: CheckCircle, active: journey.approved, numeric: false },
+    { label: "Visualizações de produtos", value: journey.productViews, icon: Package, active: journey.productViews > 0, numeric: true },
+    { label: "Adições ao carrinho", value: journey.addedToCart, icon: ShoppingCart, active: journey.addedToCart > 0, numeric: true },
+    { label: "Compras", value: journey.purchased, icon: ShoppingBag, active: journey.purchased > 0, numeric: true },
   ];
 
   return (
@@ -154,7 +155,7 @@ function JourneyFunnel({ journey }: {
             <span className="text-xs font-semibold tabular-nums">
               {step.numeric ? formatNumber(step.value) : step.value === 1 ? "✓" : "✗"}
             </span>
-            <span className="text-[10px] text-muted-foreground leading-tight">{step.label}</span>
+            <span className="text-[10px] text-muted-foreground leading-tight">{displayLabel(step.label)}</span>
           </div>
           {i < steps.length - 1 && (
             <div className={`h-px w-4 flex-shrink-0 ${step.active ? "bg-primary/40" : "bg-border"}`} />
@@ -175,25 +176,25 @@ function AttributionPanel({
   registrationStatus?: string;
 }) {
   const rows = [
-    { label: "Channel (First-touch)", value: utmSource ?? "Direct / None", highlight: true },
-    { label: "Medium", value: utmMedium ?? "—" },
-    { label: "Campaign", value: utmCampaign ?? "—" },
-    { label: "Registration Status", value: registrationStatus ?? "—" },
-    { label: "Approval Date", value: approvalDate ? format(new Date(approvalDate), "MMM d, yyyy HH:mm") : "—" },
+    { label: "Canal (primeiro contato)", value: utmSource ?? "Direct / None", highlight: true },
+    { label: "Mídia", value: utmMedium ?? "—" },
+    { label: "Campanha", value: utmCampaign ?? "—" },
+    { label: "Status do cadastro", value: registrationStatus ?? "—" },
+    { label: "Data de aprovação", value: approvalDate ? format(new Date(approvalDate), "MMM d, yyyy HH:mm") : "—" },
   ];
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Megaphone className="h-4 w-4 text-primary" />
-          Attribution & Registration
+          Atribuição e cadastros
         </CardTitle>
       </CardHeader>
       <CardContent>
         <dl className="space-y-2">
           {rows.map((row) => (
             <div key={row.label} className="flex items-start justify-between gap-4">
-              <dt className="text-xs text-muted-foreground flex-shrink-0">{row.label}</dt>
+              <dt className="text-xs text-muted-foreground flex-shrink-0">{displayLabel(row.label)}</dt>
               <dd className={`text-xs font-medium text-right truncate max-w-[180px] ${row.highlight ? "text-primary" : ""}`} title={row.value}>
                 {row.value}
               </dd>
@@ -670,7 +671,7 @@ function UpzeroTimelineSection({
                                 </span>
                               )}
                               <span><strong>Origem:</strong> {event.normalizedSource}</span>
-                              <span><strong>Medium:</strong> {event.normalizedMedium}</span>
+                              <span><strong>Mídia:</strong> {event.normalizedMedium}</span>
                               {event.deviceType && (
                                 <span className="flex items-center gap-1">
                                   <MonitorSmartphone className="h-3 w-3 text-muted-foreground" />
@@ -751,19 +752,19 @@ export default function CustomerDetailPage() {
 
   const TABS: { key: TimelineTab; label: string; count: number }[] = [
     { key: "events", label: "Timeline", count: upzeroTimeline?.timeline.length ?? 0 },
-    { key: "orders", label: "Orders", count: data?.orders?.length ?? 0 },
-    { key: "products", label: "Products", count: data?.productsPurchased?.length ?? 0 },
+    { key: "orders", label: "Pedidos", count: data?.orders?.length ?? 0 },
+    { key: "products", label: "Produtos", count: data?.productsPurchased?.length ?? 0 },
   ];
 
   if (isError) {
     return (
       <div className="space-y-6">
         <Button variant="ghost" size="sm" onClick={() => navigate("/customers")}>
-          <ArrowLeft className="h-4 w-4 mr-2" /> Back to Customers
+          <ArrowLeft className="h-4 w-4 mr-2" /> Voltar para Clientes
         </Button>
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>Failed to load customer profile.</AlertDescription>
+          <AlertDescription>Não foi possível carregar o perfil do cliente.</AlertDescription>
         </Alert>
       </div>
     );
@@ -780,7 +781,7 @@ export default function CustomerDetailPage() {
         data-testid="customer-detail-back"
       >
         <ArrowLeft className="h-4 w-4 mr-2" />
-        Back to Customers
+        Voltar para Clientes
       </Button>
 
       {/* Header card */}
@@ -832,7 +833,7 @@ export default function CustomerDetailPage() {
                           return seller ? (
                             <span className="flex items-center gap-1">
                               <User className="h-3.5 w-3.5" />
-                              Seller: {seller}
+                              Vendedora: {seller}
                             </span>
                           ) : null;
                         })()}
@@ -856,7 +857,7 @@ export default function CustomerDetailPage() {
                         {customer?.rfmSegment && (
                           <Badge variant="outline" className={`border-transparent ${RFM_COLOR[customer.rfmSegment] ?? ""}`}>
                             <Star className="h-3 w-3 mr-1" />
-                            {customer.rfmSegment}
+                            {displayLabel(customer.rfmSegment)}
                           </Badge>
                         )}
                         {data?.opportunityLevel && (
@@ -889,10 +890,10 @@ export default function CustomerDetailPage() {
                   Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)
                 ) : (
                   <>
-                    <GlassMetricCard  label="Total Spent" value={<>{formatCurrency(customer?.totalSpent ?? 0)}</>}  />
-                    <GlassMetricCard  label="Orders" value={<>{formatNumber(customer?.totalOrders ?? 0)}</>}  />
+                    <GlassMetricCard  label="Investimento total" value={<>{formatCurrency(customer?.totalSpent ?? 0)}</>}  />
+                    <GlassMetricCard  label="Pedidos" value={<>{formatNumber(customer?.totalOrders ?? 0)}</>}  />
                     <div>
-                      <p className="text-xs text-muted-foreground font-mono uppercase">Member Since</p>
+                      <p className="text-xs text-muted-foreground font-mono uppercase">Cliente desde</p>
                       <p className="text-sm font-semibold">
                         {customer?.createdAt ? format(new Date(customer.createdAt), "MMM yyyy") : "—"}
                       </p>
@@ -912,7 +913,7 @@ export default function CustomerDetailPage() {
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <BarChart2 className="h-4 w-4 text-primary" />
-                Customer Journey
+                Jornada do cliente
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -960,7 +961,7 @@ export default function CustomerDetailPage() {
                   }`}
                   data-testid={`customer-detail-tab-${tab.key}`}
                 >
-                  {tab.label}
+                  {displayLabel(tab.label)}
                   {tab.count > 0 && (
                     <span className="ml-1.5 text-xs bg-muted px-1.5 py-0.5 rounded-full tabular-nums">
                       {tab.count}
@@ -985,13 +986,13 @@ export default function CustomerDetailPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Order ID</TableHead>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Amount</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">ID do pedido</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Valor</TableHead>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider">Status</TableHead>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Seller</TableHead>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Items</TableHead>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Location</TableHead>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Date</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Vendedora</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Itens</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Localização</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Data</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1008,8 +1009,8 @@ export default function CustomerDetailPage() {
                         <TableCell colSpan={7} className="p-0">
                           <EmptyState
                             icon={ShoppingBag}
-                            title="No orders yet"
-                            description="This customer hasn't placed any orders."
+                            title="Nenhum pedido registrado"
+                            description="Este cliente ainda não realizou pedidos."
                             className="border-0 bg-transparent py-8"
                           />
                         </TableCell>
@@ -1024,7 +1025,7 @@ export default function CustomerDetailPage() {
                             <TableCell>
                               <span className={`flex items-center gap-1 text-xs font-medium ${s.color}`}>
                                 <s.icon className="h-3 w-3" />
-                                {s.label}
+                                {displayLabel(s.label)}
                               </span>
                             </TableCell>
                             <TableCell>
@@ -1058,12 +1059,12 @@ export default function CustomerDetailPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Product</TableHead>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Category</TableHead>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Unit Price</TableHead>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Qty</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Produto</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider">Categoria</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Preço unitário</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Quantidade</TableHead>
                       <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Spent</TableHead>
-                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">First Order</TableHead>
+                      <TableHead className="text-[10px] font-mono uppercase tracking-wider text-right">Primeiro pedido</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1080,8 +1081,8 @@ export default function CustomerDetailPage() {
                         <TableCell colSpan={6} className="p-0">
                           <EmptyState
                             icon={Package}
-                            title="No products purchased yet"
-                            description="Products will appear here once the customer makes a purchase."
+                            title="Nenhum produto comprado"
+                            description="Os produtos aparecerão aqui quando o cliente realizar uma compra."
                             className="border-0 bg-transparent py-8"
                           />
                         </TableCell>

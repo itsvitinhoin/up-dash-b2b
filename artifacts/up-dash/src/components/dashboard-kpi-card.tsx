@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { motion } from "framer-motion";
 import type { ReactNode, ElementType } from "react";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
@@ -189,7 +190,7 @@ export function DashboardKpiCard({
           {sub.map((row) => (
             <div key={row.label} className="flex justify-between gap-2 text-xs">
               <span className="min-w-0 text-muted-foreground">
-                {row.label}
+                {displayLabel(row.label)}
               </span>
               <span
                 className="min-w-0 text-right font-medium tabular-nums"

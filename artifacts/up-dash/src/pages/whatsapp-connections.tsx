@@ -874,7 +874,7 @@ export default function WhatsappConnectionsPage() {
             </div>
             <div className="rounded-md border border-border bg-muted/20 p-3">
               <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-                Phone Number ID
+                ID do número de telefone
               </p>
               <p className="mt-1 truncate font-mono text-xs">
                 {integration?.phoneNumberId ?? "-"}
@@ -987,7 +987,7 @@ export default function WhatsappConnectionsPage() {
         <CardContent className="space-y-3">
           <div className="rounded-md border border-border bg-muted/20 p-3">
             <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-              Callback URL
+              URL de retorno
             </p>
             <p className="mt-1 break-all font-mono text-sm">
               {data?.callbackUrl ?? "-"}
@@ -1277,7 +1277,7 @@ export default function WhatsappConnectionsPage() {
                         </div>
                         <div className="rounded-md border border-border bg-muted/20 p-3">
                           <p className="text-[11px] font-mono uppercase text-muted-foreground">
-                            Phone ID
+                            ID do telefone
                           </p>
                           <p className="mt-1 truncate font-mono text-xs">
                             {phone.phoneNumberId}

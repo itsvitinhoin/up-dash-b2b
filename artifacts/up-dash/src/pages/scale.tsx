@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -377,7 +378,7 @@ export default function ScalePage() {
                 { label: "Ritmo mensal", value: formatCurrencySmart(kpis.monthlyRevenue) },
               ]}
               sparkValues={[benchmarks.monthlyRevenue, kpis.monthlyRevenue]}
-              sparkColor="#34d399"
+              sparkColor="#87adff"
               isLoading={false}
               testId="scale-kpi-revenue"
             />
@@ -411,7 +412,7 @@ export default function ScalePage() {
                 { label: "Pedidos", value: formatNumber(kpis.orders) },
               ]}
               sparkValues={[benchmarks.avgTicket, kpis.avgTicket]}
-              sparkColor="#ff6275"
+              sparkColor="#b3caff"
               isLoading={false}
               testId="scale-kpi-ticket"
             />
@@ -428,11 +429,11 @@ export default function ScalePage() {
                 { label: "Ritmo mensal", value: formatPercentage(kpis.monthlyTurnoverPct) },
               ]}
               sparkValues={[benchmarks.monthlyTurnoverPct, kpis.monthlyTurnoverPct]}
-              sparkColor="#f5b94a"
+              sparkColor="#0458fe"
               isLoading={false}
               testId="scale-kpi-turnover"
               ringValue={Math.min(100, kpis.periodTurnoverPct)}
-              ringColor="#f5b94a"
+              ringColor="#0458fe"
             />
             <DashboardKpiCard
               icon={Megaphone}
@@ -464,7 +465,7 @@ export default function ScalePage() {
                 { label: "Investimento", value: formatCurrencySmart(kpis.mediaSpend) },
               ]}
               sparkValues={[benchmarks.roas, kpis.roas]}
-              sparkColor="#34d399"
+              sparkColor="#87adff"
               isLoading={false}
               testId="scale-kpi-roas"
             />
@@ -481,7 +482,7 @@ export default function ScalePage() {
                 { label: "Conversão", value: formatPercentage(kpis.conversionRate) },
               ]}
               sparkValues={[benchmarks.cpa, kpis.cpa]}
-              sparkColor="#f5b94a"
+              sparkColor="#0458fe"
               isLoading={false}
               testId="scale-kpi-cpa"
             />
@@ -557,14 +558,14 @@ export default function ScalePage() {
                 ].map((item) => (
                   <div key={item.label} className="rounded-md border border-border bg-background/40 p-4">
                     <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{item.label}</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{displayLabel(item.label)}</p>
                       <item.icon className="h-4 w-4 text-primary" />
                     </div>
                     <div className="mt-3 space-y-2">
                       <GlassMetricCard  label="Atual" value={<>{item.current}</>}  />
                       <div className="grid grid-cols-2 gap-2">
                         <GlassMetricCard  label="Meta" value={<>{item.target}</>}  />
-                        <GlassMetricCard  label="Gap" value={<>{item.gap}</>}  />
+                        <GlassMetricCard  label="Intervalo" value={<>{item.gap}</>}  />
                       </div>
                     </div>
                     <p className="mt-2 text-xs text-muted-foreground">{item.helper}</p>

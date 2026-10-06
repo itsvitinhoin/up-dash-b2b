@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { OverviewOrganization } from "@/components/overview-organization";
 import { useEffect, useMemo, useState } from "react";
@@ -201,11 +202,11 @@ function B2CSalesBreakdownCard({
 }
 
 const CHART_METRICS = [
-  { id: "revenue", label: "Revenue", formatter: (v: number) => formatCurrency(v) },
-  { id: "orders", label: "Orders", formatter: (v: number) => formatNumber(v) },
-  { id: "avgTicket", label: "Avg ticket", formatter: (v: number) => formatCurrency(v) },
-  { id: "sessions", label: "Sessions", formatter: (v: number) => formatNumber(v) },
-  { id: "conversionRate", label: "Conversion", formatter: (v: number) => formatPercentage(v) },
+  { id: "revenue", label: "Faturamento", formatter: (v: number) => formatCurrency(v) },
+  { id: "orders", label: "Pedidos", formatter: (v: number) => formatNumber(v) },
+  { id: "avgTicket", label: "Ticket médio", formatter: (v: number) => formatCurrency(v) },
+  { id: "sessions", label: "Sessões", formatter: (v: number) => formatNumber(v) },
+  { id: "conversionRate", label: "Conversão", formatter: (v: number) => formatPercentage(v) },
 ] as const;
 
 type ChartMetric = (typeof CHART_METRICS)[number]["id"];
@@ -833,7 +834,7 @@ function CampaignCustomersPanel({
             changeLabel=""
             sub={[{ label: "Base", value: "Atendido atribuído" }]}
             sparkValues={[]}
-            sparkColor="#34d399"
+            sparkColor="#87adff"
             isLoading={false}
             testId="campaign-customers-kpi-fulfilled-value"
           />
@@ -861,7 +862,7 @@ function CampaignCustomersPanel({
             changeLabel=""
             sub={[{ label: "Cálculo", value: "Atendido / investimento" }]}
             sparkValues={[]}
-            sparkColor="#f5b94a"
+            sparkColor="#0458fe"
             isLoading={false}
             testId="campaign-customers-kpi-roas"
           />
@@ -1466,7 +1467,7 @@ function B2COrdersPanel({
                     <td className="py-3 px-3 text-right tabular-nums">{formatCurrency(order.shippingAmount)}</td>
                     <td className="py-3 px-3">
                       <span className="inline-flex rounded-md bg-muted px-2 py-0.5 text-[10px] font-semibold">
-                        {order.status}
+                        {displayLabel(order.status)}
                       </span>
                     </td>
                     <td className="py-3 pl-3 text-right">
@@ -1530,7 +1531,7 @@ function B2COrdersPanel({
                 <div className="rounded-lg border border-border p-4">
                   <h3 className="text-sm font-semibold mb-2">Pedido</h3>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    <span className="text-muted-foreground">Status</span><span>{details.order.status}</span>
+                    <span className="text-muted-foreground">Status</span><span>{displayLabel(details.order.status)}</span>
                     <span className="text-muted-foreground">Criado em</span><span>{formatTimelineDate(details.order.createdAt)}</span>
                     <span className="text-muted-foreground">Itens</span><span>{formatNumber(details.order.requestedQuantity)}</span>
                     <span className="text-muted-foreground">Cancelado</span><span>{formatCurrency(details.order.cancelledAmount)}</span>
@@ -1988,7 +1989,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
           change={avgTicketChange}
           changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkLeads}
-          sparkColor="#34d399"
+          sparkColor="#87adff"
           sub={[
             { label: t("dashboard.kpi.repeatCustomers"), value: data ? formatNumber(data.kpis.repeatCustomers) : "—" },
             { label: isB2C ? t("dashboard.kpi.paidRate") : t("dashboard.kpi.approvalRate"), value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
@@ -2091,18 +2092,18 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                         strokeWidth={1}
                         dot={false}
                         isAnimationActive={false}
-                      />
+                       name="Recorrentes" />
                       <Area
                         type="monotone"
                         dataKey="new"
                         stackId="buyers"
-                        stroke="#34d399"
-                        fill="#34d399"
+                        stroke="#87adff"
+                        fill="#87adff"
                         fillOpacity={0.35}
                         strokeWidth={1}
                         dot={false}
                         isAnimationActive={false}
-                      />
+                       name="Novos" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -2278,7 +2279,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                       x={a.date}
                       y={a.value}
                       r={5}
-                      stroke="#f5b94a"
+                      stroke="#0458fe"
                       strokeWidth={2}
                       fill="hsl(var(--background))"
                       ifOverflow="extendDomain"
@@ -2596,7 +2597,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                         href={productHref}
                         className="inline-flex items-center text-xs font-medium text-primary hover:underline"
                         data-testid={`alert-link-${alert.sku}`}
-                        aria-label={`View ${alert.sku} in products`}
+                        aria-label={`Visualização ${alert.sku} em produtos`}
                       >
                         {t("dashboard.common.view")} <ChevronRight className="h-3 w-3" />
                       </Link>

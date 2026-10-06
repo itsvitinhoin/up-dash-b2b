@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { useQueryClient } from "@tanstack/react-query";
@@ -68,10 +69,10 @@ const VESTI_CHANNEL_OPTIONS = [
 
 const SEGMENT_OPTIONS = [
   { value: "VIP", label: "VIP" },
-  { value: "Loyal", label: "Loyal" },
-  { value: "Promising", label: "Promising" },
-  { value: "At-Risk", label: "At Risk" },
-  { value: "Hibernating", label: "Hibernating" },
+  { value: "Loyal", label: "Fiéis" },
+  { value: "Promising", label: "Promissores" },
+  { value: "At-Risk", label: "Em risco" },
+  { value: "Hibernating", label: "Inativos" },
 ];
 
 const UTM_SOURCE_OPTIONS = [
@@ -80,21 +81,21 @@ const UTM_SOURCE_OPTIONS = [
   { value: "tiktok", label: "TikTok" },
   { value: "facebook", label: "Facebook" },
   { value: "youtube", label: "YouTube" },
-  { value: "email", label: "Email" },
-  { value: "organic", label: "Organic" },
-  { value: "referral", label: "Referral" },
-  { value: "(direct)", label: "(direct)" },
+  { value: "email", label: "E-mail" },
+  { value: "organic", label: "Orgânico" },
+  { value: "referral", label: "Indicação" },
+  { value: "(direct)", label: "(direto)" },
 ];
 
 const UTM_MEDIUM_OPTIONS = [
   { value: "cpc", label: "CPC" },
   { value: "cpm", label: "CPM" },
   { value: "social", label: "Social" },
-  { value: "email", label: "Email" },
-  { value: "organic", label: "Organic" },
-  { value: "affiliate", label: "Affiliate" },
-  { value: "display", label: "Display" },
-  { value: "referral", label: "Referral" },
+  { value: "email", label: "E-mail" },
+  { value: "organic", label: "Orgânico" },
+  { value: "affiliate", label: "Afiliado" },
+  { value: "display", label: "Exibir" },
+  { value: "referral", label: "Indicação" },
 ];
 
 const BRAZIL_STATES = [
@@ -262,13 +263,13 @@ export function FilterBar() {
           queryKey: getListSavedViewsQueryKey({ clientId }),
         });
         toast({
-          title: "View saved",
-          description: "Your filter set is now available as a chip.",
+          title: "Visualização salva",
+          description: "Seus filtros estão disponíveis como um atalho.",
         });
       },
       onError: (err) => {
         toast({
-          title: "Could not save view",
+          title: "Não foi possível salvar a visualização",
           description:
             (err as { message?: string }).message ?? "Try a different name.",
           variant: "destructive",
@@ -318,31 +319,31 @@ export function FilterBar() {
     if (filters.category)
       chips.push({
         key: "category",
-        label: "Category",
+        label: "Categoria",
         value: labelFor(categoryOptions, filters.category),
       });
     if (filters.channel)
       chips.push({
         key: "channel",
-        label: "Channel",
+        label: "Canal",
         value: labelFor(channelOptions, filters.channel),
       });
     if (filters.segment)
       chips.push({
         key: "segment",
-        label: "Segment",
+        label: "Segmento",
         value: labelFor(SEGMENT_OPTIONS, filters.segment),
       });
     if (selectedDashboardMode === "B2B" && filters.sellerId)
       chips.push({
         key: "sellerId",
-        label: "Seller",
+        label: "Vendedora",
         value: labelFor(sellerOptions, filters.sellerId),
       });
     if (selectedDashboardMode === "B2B" && filters.utmSource)
       chips.push({
         key: "utmSource",
-        label: "UTM Source",
+        label: "Origem UTM",
         value: labelFor(UTM_SOURCE_OPTIONS, filters.utmSource),
       });
     if (selectedDashboardMode === "B2B" && filters.utmMedium)
@@ -360,25 +361,25 @@ export function FilterBar() {
     if (filters.state)
       chips.push({ key: "state", label: "State", value: filters.state });
     if (filters.city)
-      chips.push({ key: "city", label: "City", value: filters.city });
+      chips.push({ key: "city", label: "Cidade", value: filters.city });
     if (filters.product)
-      chips.push({ key: "product", label: "Product", value: filters.product });
+      chips.push({ key: "product", label: "Produto", value: filters.product });
     if (filters.size)
       chips.push({
         key: "size",
-        label: "Size",
+        label: "Tamanho",
         value: labelFor(SIZE_OPTIONS, filters.size),
       });
     if (filters.color)
       chips.push({
         key: "color",
-        label: "Color",
+        label: "Cor",
         value: labelFor(colorOptions, filters.color),
       });
     if (filters.creative)
       chips.push({
         key: "creative",
-        label: "Creative",
+        label: "Criativo",
         value: filters.creative,
       });
     return chips;
@@ -435,21 +436,21 @@ export function FilterBar() {
       data-testid="filter-bar"
     >
       <FilterSelect
-        placeholder="Category"
+        placeholder="Categoria"
         value={filters.category}
         options={categoryOptions}
         onChange={(v) => setFilter("category", v)}
         testId="filter-category"
       />
       <FilterSelect
-        placeholder="Channel"
+        placeholder="Canal"
         value={filters.channel}
         options={channelOptions}
         onChange={(v) => setFilter("channel", v)}
         testId="filter-channel"
       />
       <FilterSelect
-        placeholder="Segment"
+        placeholder="Segmento"
         value={filters.segment}
         options={SEGMENT_OPTIONS}
         onChange={(v) => setFilter("segment", v)}
@@ -457,7 +458,7 @@ export function FilterBar() {
       />
       {selectedDashboardMode === "B2B" && (
         <FilterSelect
-          placeholder="Seller"
+          placeholder="Vendedora"
           value={filters.sellerId}
           options={sellerOptions}
           onChange={(v) => setFilter("sellerId", v)}
@@ -475,7 +476,7 @@ export function FilterBar() {
             data-testid="filter-more"
           >
             <SlidersHorizontal className="h-3.5 w-3.5" />
-            {label("More filters", "Mais filtros")}
+            {label("Mais filtros", "Mais filtros")}
             {extraActiveCount > 0 && (
               <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground font-bold">
                 {extraActiveCount}
@@ -492,11 +493,11 @@ export function FilterBar() {
             {selectedDashboardMode === "B2B" && (
               <div>
                 <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                  Attribution
+                  Atribuição
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <FilterSelect
-                    placeholder="UTM Source"
+                    placeholder="Origem UTM"
                     value={filters.utmSource}
                     options={UTM_SOURCE_OPTIONS}
                     onChange={(v) => setFilter("utmSource", v)}
@@ -521,7 +522,7 @@ export function FilterBar() {
                   </div>
                   <div className="col-span-2">
                     <FilterInput
-                      placeholder="Creative name..."
+                      placeholder="Nome do criativo…"
                       value={filters.creative}
                       onChange={(v) => setFilter("creative", v)}
                       testId="filter-creative"
@@ -534,10 +535,10 @@ export function FilterBar() {
             {selectedDashboardMode === "B2C" && (
               <div>
                 <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                  Performance
+                  Desempenho
                 </p>
                 <FilterInput
-                  placeholder="Creative name..."
+                  placeholder="Nome do criativo…"
                   value={filters.creative}
                   onChange={(v) => setFilter("creative", v)}
                   testId="filter-creative"
@@ -548,7 +549,7 @@ export function FilterBar() {
             {/* Geography group */}
             <div>
               <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                Geography
+                Geografia
               </p>
               <div className="grid grid-cols-2 gap-2">
                 <FilterSelect
@@ -560,7 +561,7 @@ export function FilterBar() {
                   fullWidth
                 />
                 <FilterInput
-                  placeholder="City…"
+                  placeholder="Cidade…"
                   value={filters.city}
                   onChange={(v) => setFilter("city", v)}
                   testId="filter-city"
@@ -571,19 +572,19 @@ export function FilterBar() {
             {/* Catalog group */}
             <div>
               <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                Catalog
+                Catálogo
               </p>
               <div className="grid grid-cols-2 gap-2">
                 <div className="col-span-2">
                   <FilterInput
-                    placeholder="Product (SKU or name)…"
+                    placeholder="Produto (SKU ou nome)…"
                     value={filters.product}
                     onChange={(v) => setFilter("product", v)}
                     testId="filter-product"
                   />
                 </div>
                 <FilterSelect
-                  placeholder="Size"
+                  placeholder="Tamanho"
                   value={filters.size}
                   options={SIZE_OPTIONS}
                   onChange={(v) => setFilter("size", v)}
@@ -591,7 +592,7 @@ export function FilterBar() {
                   fullWidth
                 />
                 <FilterSelect
-                  placeholder="Color"
+                  placeholder="Cor"
                   value={filters.color}
                   options={colorOptions}
                   onChange={(v) => setFilter("color", v)}
@@ -632,7 +633,7 @@ export function FilterBar() {
                 }}
               >
                 <RotateCcw className="h-3 w-3 mr-1" />
-                Clear extra filters
+                Limpar filtros adicionais
               </Button>
             )}
           </div>
@@ -649,14 +650,14 @@ export function FilterBar() {
               data-testid={`chip-${chip.key}`}
             >
               <span className="text-[10px] uppercase tracking-wider opacity-70">
-                {chip.label}
+                {displayLabel(chip.label)}
               </span>
               <span className="font-medium">{chip.value}</span>
               <button
                 type="button"
                 onClick={() => setFilter(chip.key, null)}
                 className="rounded hover:bg-primary/20 p-0.5"
-                aria-label={`Remove ${chip.label} filter`}
+                aria-label={`Remover ${chip.label} filter`}
               >
                 <X className="h-3 w-3" />
               </button>
@@ -670,7 +671,7 @@ export function FilterBar() {
             data-testid="filter-reset"
           >
             <RotateCcw className="h-3 w-3 mr-1" />
-            {label("Clear", "Limpar filtros")}
+            {label("Limpar", "Limpar filtros")}
           </Button>
         </div>
       )}
@@ -748,7 +749,7 @@ export function FilterBar() {
                 type="button"
                 onClick={() => deleteView.mutate({ viewId: view.id })}
                 className="rounded hover:bg-destructive/20 p-0.5"
-                aria-label={`Delete view ${view.name}`}
+                aria-label={`Excluir visualização ${view.name}`}
               >
                 <X className="h-3 w-3" />
               </button>
@@ -766,30 +767,30 @@ export function FilterBar() {
               disabled={!hasAny && activeChips.length === 0}
               title={
                 hasAny || activeChips.length > 0
-                  ? label("Save current filters", "Salvar filtros atuais")
+                  ? label("Salvar filtros atuais", "Salvar filtros atuais")
                   : label(
-                      "Apply at least one filter to save",
+                      "Aplique pelo menos um filtro para salvar",
                       "Aplique pelo menos um filtro para salvar",
                     )
               }
             >
               <BookmarkPlus className="h-3.5 w-3.5 mr-1" />
-              {label("Save view", "Salvar visão")}
+              {label("Salvar visualização", "Salvar visão")}
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-72">
             <p className="text-sm font-medium mb-1">
-              {label("Name this view", "Nome da visão")}
+              {label("Nome desta visualização", "Nome da visão")}
             </p>
             <p className="text-xs text-muted-foreground mb-3">
               {label(
-                "Snapshot of your current date range and filters.",
+                "Período e filtros selecionados.",
                 "Salve o período e os filtros atuais.",
               )}
             </p>
             <Input
               autoFocus
-              placeholder="e.g. VIP — last 30 days"
+              placeholder="Ex.: VIP — últimos 30 dias"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
@@ -820,7 +821,7 @@ export function FilterBar() {
               data-testid="filter-save-confirm"
             >
               <Save className="h-3.5 w-3.5 mr-1.5" />
-              {label("Save view", "Salvar visão")}
+              {label("Salvar visualização", "Salvar visão")}
             </Button>
           </PopoverContent>
         </Popover>
@@ -867,11 +868,11 @@ function FilterSelect({
         <SelectItem value="__all">
           {language === "pt"
             ? (FILTER_ALL_PT[placeholder] ?? `Todos · ${localizedPlaceholder}`)
-            : `All ${pluralize(placeholder)}`}
+            : `Todos ${pluralize(placeholder)}`}
         </SelectItem>
         {options.map((opt) => (
           <SelectItem key={opt.value} value={opt.value}>
-            {opt.label}
+            {displayLabel(opt.label)}
           </SelectItem>
         ))}
       </SelectContent>

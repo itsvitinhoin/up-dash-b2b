@@ -54,15 +54,15 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
       `orders-${data.date}.csv`,
       data.orders,
       [
-        { header: "Order ID", accessor: (r) => r.id },
-        { header: "Created", accessor: (r) => r.createdAt },
-        { header: "Customer", accessor: (r) => r.customerName ?? "" },
-        { header: "Email", accessor: (r) => r.customerEmail ?? "" },
-        { header: "Seller", accessor: (r) => r.sellerName ?? "" },
+        { header: "ID do pedido", accessor: (r) => r.id },
+        { header: "Criado", accessor: (r) => r.createdAt },
+        { header: "Cliente", accessor: (r) => r.customerName ?? "" },
+        { header: "E-mail", accessor: (r) => r.customerEmail ?? "" },
+        { header: "Vendedora", accessor: (r) => r.sellerName ?? "" },
         { header: "State", accessor: (r) => r.state ?? "" },
-        { header: "City", accessor: (r) => r.city ?? "" },
+        { header: "Cidade", accessor: (r) => r.city ?? "" },
         { header: "Status", accessor: (r) => r.status },
-        { header: "Amount", accessor: (r) => r.amount },
+        { header: "Valor", accessor: (r) => r.amount },
       ],
     );
   };
@@ -76,10 +76,10 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
       >
         <SheetHeader>
           <SheetTitle>
-            Orders on {date ? format(parseISO(date), "EEEE, MMM d, yyyy") : "—"}
+            Pedidos em {date ? format(parseISO(date), "EEEE, MMM d, yyyy") : "—"}
           </SheetTitle>
           <SheetDescription>
-            Top revenue orders for the selected day. Click any row to learn more.
+            Pedidos com maior faturamento no dia selecionado. Clique em uma linha para ver os detalhes.
           </SheetDescription>
         </SheetHeader>
 
@@ -92,13 +92,13 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
         ) : !data || data.orders.length === 0 ? (
           <div className="mt-10 flex flex-col items-center justify-center text-center text-sm text-muted-foreground py-10">
             <Inbox className="h-8 w-8 mb-3 opacity-50" />
-            No orders recorded for this day.
+            Nenhum pedido registrado neste dia.
           </div>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3 mt-6">
-              <Stat label="Orders" value={data.totalOrders.toLocaleString()} />
-              <Stat label="Revenue" value={formatCurrency(data.totalRevenue)} />
+              <Stat label="Pedidos" value={data.totalOrders.toLocaleString()} />
+              <Stat label="Faturamento" value={formatCurrency(data.totalRevenue)} />
             </div>
 
             <div className="mt-5 flex items-center justify-between">
@@ -112,7 +112,7 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
                 className="h-7 text-xs"
                 data-testid="drilldown-export"
               >
-                Export CSV
+                Exportar CSV
               </Button>
             </div>
 
@@ -132,7 +132,7 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
                         <button
                           onClick={() => { onClose(); navigate(`/customers/${row.customerId}`); }}
                           className="text-sm font-medium truncate hover:text-primary transition-colors flex items-center gap-1 group"
-                          title="View customer profile"
+                          title="Ver perfil do cliente"
                         >
                           {row.customerName ?? "Unknown customer"}
                           <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -162,7 +162,7 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
 
             <p className="mt-4 text-[11px] text-muted-foreground inline-flex items-center gap-1">
               <ArrowUpRight className="h-3 w-3" />
-              Showing the top {data.orders.length} of {data.totalOrders} orders by amount.
+              Exibindo os principais {data.orders.length} of {data.totalOrders} pedidos por valor.
             </p>
           </>
         )}
@@ -172,7 +172,7 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
           size="sm"
           className="absolute top-4 right-12 h-7 w-7 p-0"
           onClick={onClose}
-          aria-label="Close drill-down"
+          aria-label="Fechar detalhamento"
         >
           <X className="h-4 w-4" />
         </Button>

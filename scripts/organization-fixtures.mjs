@@ -107,7 +107,7 @@ export function organizationFixture(
     units: p.totalSold,
     revenue: p.totalRevenue,
     turnoverPct: 68,
-    salesPower: 860.45,
+    salesPower: p.stock * p.price,
     grossProfit: p.totalRevenue * 0.4,
     grossMarginPct: 40,
     coverageDays: 24,
@@ -441,9 +441,9 @@ export function organizationFixture(
       page: 1,
       limit: 10,
       kpis: {
-        stockUnits: 480,
+        stockUnits: products.reduce((sum,p) => sum+Math.max(0,p.stock),0),
         totalRevenue: d.revenue,
-        salesPower: 860.45,
+        salesPower: products.reduce((sum,p) => sum+Math.max(0,p.stock)*p.price,0),
         totalUnits: 4820,
         activeProducts: 5,
         coverageDays: 24,
@@ -549,6 +549,8 @@ export function organizationFixture(
     };
   if (path === "/api/analytics/recompra/history-insights")
     return {
+      baseEvolution: [{"label": "Compra 1", "customers": 95, "basePct": 100.0, "continuationPct": 100.0, "revenue": 91376, "accumulatedRevenue": 91376}, {"label": "Compra 2", "customers": 29, "basePct": 30.526315789473685, "continuationPct": 30.526315789473685, "revenue": 18389, "accumulatedRevenue": 109765}, {"label": "Compra 3", "customers": 9, "basePct": 9.473684210526317, "continuationPct": 31.03448275862069, "revenue": 3615, "accumulatedRevenue": 113380}, {"label": "Compra 4+", "customers": 3, "basePct": 3.1578947368421053, "continuationPct": 33.33333333333333, "revenue": 1285, "accumulatedRevenue": 114665}],
+      conversionVelocity: {"sampleSize": 95, "cohortSize": 95, "missingApproval": 0, "invalidChronology": 0, "buckets": [{"label": "Mesmo dia", "customers": 25, "pct": 26.31578947368421}, {"label": "Até 3 dias", "customers": 27, "pct": 28.421052631578945}, {"label": "Até 7 dias", "customers": 9, "pct": 9.473684210526317}, {"label": "Até 14 dias", "customers": 8, "pct": 8.421052631578947}, {"label": "Até 30 dias", "customers": 10, "pct": 10.526315789473683}, {"label": "Até 60 dias", "customers": 15, "pct": 15.789473684210526}, {"label": "Mais de 60", "customers": 1, "pct": 1.0526315789473684}], "firstWeekCount": 61, "firstWeekPct": 64.21052631578948, "within30Count": 79, "within30Pct": 83.15789473684211, "medianDays": 3, "averageDays": 12},
       funnel: Array.from({ length: 6 }, (_, index) => ({
         compra: `${index + 1}ª Compra`,
         clientes: 820 - index * 110,

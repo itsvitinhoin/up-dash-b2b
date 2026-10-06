@@ -24,7 +24,7 @@ import { DateRangePicker } from "@/components/date-range-picker";
 import { NotificationBell } from "@/components/notification-bell";
 import { FilterBar } from "@/components/filter-bar";
 import { useKeyboardShortcuts } from "@/lib/keyboard-shortcuts";
-import { LANGUAGE_OPTIONS, useI18n } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n";
 import {
   LayoutDashboard,
   Filter,
@@ -125,21 +125,21 @@ interface PageMeta {
 
 const pageMeta: Record<string, PageMeta> = {
   "/": {
-    title: "Overview",
+    title: "Visão geral",
     subtitle: "",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/dashboard": {
-    title: "Overview",
+    title: "Visão geral",
     subtitle: "",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/daily": {
-    title: "Daily",
+    title: "Diário",
     subtitle: "Relatório diário B2C para PDF",
     hasDateRange: true,
     hasFilterBar: false,
@@ -153,56 +153,56 @@ const pageMeta: Record<string, PageMeta> = {
     requiresClient: true,
   },
   "/funnel": {
-    title: "Conversion funnel",
+    title: "Funil de conversão",
     subtitle: "Da visita à compra",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/customers": {
-    title: "Customers",
+    title: "Clientes",
     subtitle: "Segmentação RFM e valor dos clientes",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/orders": {
-    title: "Orders",
+    title: "Pedidos",
     subtitle: "Pedidos, atendimento e origem",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/products": {
-    title: "Products",
+    title: "Produtos",
     subtitle: "Desempenho e ranking de produtos",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/sellers": {
-    title: "Sellers",
+    title: "Vendedoras",
     subtitle: "Desempenho das vendedoras no catálogo",
     hasDateRange: false,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/geography": {
-    title: "Geography",
+    title: "Geografia",
     subtitle: "Distribuição de vendas por região",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/clients": {
-    title: "Clients",
+    title: "Clientes",
     subtitle: "Contas e marcas da plataforma",
     hasDateRange: true,
     hasFilterBar: false,
   },
   "/accesses": {
     title: "Acessos",
-    subtitle: "Client logins filtered by brand",
+    subtitle: "Acessos dos clientes filtrados por marca",
     hasDateRange: false,
     hasFilterBar: false,
   },
@@ -219,26 +219,26 @@ const pageMeta: Record<string, PageMeta> = {
     hasFilterBar: false,
   },
   "/notifications": {
-    title: "Notifications",
+    title: "Notificações",
     subtitle: "Alertas e movimentações da operação",
     hasDateRange: false,
     hasFilterBar: false,
     requiresClient: true,
   },
   "/compare": {
-    title: "Compare brands",
+    title: "Comparar marcas",
     subtitle: "Compare até quatro marcas lado a lado",
     hasDateRange: true,
     hasFilterBar: false,
   },
   "/overview": {
-    title: "Platform overview",
+    title: "Visão geral da plataforma",
     subtitle: "Todas as marcas do grupo em uma visão",
     hasDateRange: true,
     hasFilterBar: false,
   },
   "/marketing": {
-    title: "Marketing",
+    title: "Anúncios",
     subtitle: "Investimento, ROAS, CPL e desempenho dos criativos",
     hasDateRange: true,
     hasFilterBar: true,
@@ -334,35 +334,35 @@ const pageMeta: Record<string, PageMeta> = {
     requiresClient: true,
   },
   "/whatsapp/templates": {
-    title: "Templates WhatsApp",
+    title: "Modelos WhatsApp",
     subtitle: "Criação e aprovação de modelos oficiais",
     hasDateRange: false,
     hasFilterBar: false,
     requiresClient: true,
   },
   "/stock": {
-    title: "Stock Intelligence",
+    title: "Inteligência de estoque",
     subtitle: "Cobertura, risco e saúde do estoque",
     hasDateRange: false,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/journey": {
-    title: "Journey Analytics",
+    title: "Análise da jornada",
     subtitle: "Eventos, caminhos e comportamento de compra",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/rfm": {
-    title: "RFM Segmentation",
+    title: "Segmentação RFM",
     subtitle: "Recência, frequência e valor de compra",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/utm": {
-    title: "UTM / Source Analysis",
+    title: "Análise de UTM e origens",
     subtitle: "Atribuição por origem, mídia e campanha",
     hasDateRange: true,
     hasFilterBar: true,
@@ -564,7 +564,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     setSelectedDashboardMode,
   } = useAuth();
   const { theme, setTheme } = useTheme();
-  const { language, setLanguage, t } = useI18n();
+  const { language, t } = useI18n();
   const { dateRange, setDateRange } = useDashboardFilters();
   const { setOpen: setShortcutsOpen } = useKeyboardShortcuts();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -811,8 +811,8 @@ export function AppLayout({ children }: AppLayoutProps) {
     pageMeta[location] ??
     (location.startsWith("/products/")
       ? {
-          title: "Product detail",
-          subtitle: "Performance profile",
+          title: "Detalhes do produto",
+          subtitle: "Perfil de desempenho",
           hasDateRange: false,
           hasFilterBar: false,
           requiresClient: true,
@@ -820,8 +820,8 @@ export function AppLayout({ children }: AppLayoutProps) {
       : null) ??
     (location.startsWith("/customers/")
       ? {
-          title: "Customer detail",
-          subtitle: "Purchase history and behaviour",
+          title: "Detalhes do cliente",
+          subtitle: "Histórico de compras e comportamento",
           hasDateRange: false,
           hasFilterBar: false,
           requiresClient: true,
@@ -829,8 +829,8 @@ export function AppLayout({ children }: AppLayoutProps) {
       : null) ??
     (location.startsWith("/sellers/")
       ? {
-          title: "Seller detail",
-          subtitle: "Revenue, orders and top customers",
+          title: "Detalhes da vendedora",
+          subtitle: "Faturamento, pedidos e principais clientes",
           hasDateRange: true,
           hasFilterBar: false,
           requiresClient: true,
@@ -976,7 +976,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       ],
     },
     {
-      name: "Performance",
+      name: "Desempenho",
       href: "/performance",
       icon: Gauge,
       children: [
@@ -1002,7 +1002,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       ],
     },
     {
-      name: "Ecommerce",
+      name: "E-commerce",
       href: "/ecommerce",
       icon: ShoppingBag,
       children: [
@@ -1063,13 +1063,13 @@ export function AppLayout({ children }: AppLayoutProps) {
       { name: t("nav.scale", "Escala"), href: "/scale", icon: Scale },
       { name: "Envios WhatsApp", href: "/whatsapp/envios", icon: Send },
       {
-        name: "Templates WhatsApp",
+        name: "Modelos WhatsApp",
         href: "/whatsapp/templates",
         icon: FileText,
       },
     ].filter(visibleNav),
     {
-      name: t("nav.notifications", "Notifications"),
+      name: t("nav.notifications", "Notificações"),
       href: "/notifications",
       icon: Bell,
     },
@@ -1077,17 +1077,17 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   if (user?.role === "ADMIN") {
     workspaceNav.unshift({
-      name: t("nav.platformOverview", "Platform overview"),
+      name: t("nav.platformOverview", "Visão geral da plataforma"),
       href: "/overview",
       icon: Globe2,
     });
     workspaceNav.push({
-      name: t("nav.compareBrands", "Compare brands"),
+      name: t("nav.compareBrands", "Comparar marcas"),
       href: "/compare",
       icon: GitCompareArrows,
     });
     workspaceNav.push({
-      name: t("nav.clients", "Clients"),
+      name: t("nav.clients", "Clientes"),
       href: "/clients",
       icon: Building2,
     });
@@ -1262,7 +1262,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         className="up-nav flex-1 space-y-6 overflow-y-auto"
       >
         <div>
-          <p className="up-nav-label">{t("nav.analytics", "Analytics")}</p>
+          <p className="up-nav-label">{t("nav.analytics", "Análises")}</p>
           <div className="space-y-0.5">
             {analyticsNav.map((item) => (
               <div key={item.href}>{renderNavItem(item, scope)}</div>
@@ -1271,7 +1271,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         </div>
 
         <div>
-          <p className="up-nav-label">{t("nav.workspace", "Workspace")}</p>
+          <p className="up-nav-label">{t("nav.workspace", "Gestão")}</p>
           <div className="space-y-0.5">
             {workspaceNav.map((item) => (
               <div key={item.href}>{renderNavItem(item, scope)}</div>
@@ -1299,14 +1299,14 @@ export function AppLayout({ children }: AppLayoutProps) {
           </div>
         </div>
         <div className="mt-2 flex items-center justify-between px-2 text-[11px] text-muted-foreground">
-          <span>{t("top.system", "System")}</span>
+          <span>{t("top.system", "Sistema")}</span>
           <span className="flex items-center gap-1.5">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
                 health?.status === "ok" ? "bg-emerald-500" : "bg-red-500"
               }`}
             />
-            {health?.status || "checking"}
+            {health?.status === "ok" ? "Conectado" : health?.status ? "Indisponível" : "Verificando"}
           </span>
         </div>
       </div>
@@ -1330,10 +1330,10 @@ export function AppLayout({ children }: AppLayoutProps) {
     >
       <SelectTrigger
         data-testid={mobile ? "mobile-client-picker" : "client-picker"}
-        aria-label={t("top.selectClient", "Select a client")}
+        aria-label={t("top.selectClient", "Selecione um cliente")}
         className="h-9 bg-card border-border"
       >
-        <SelectValue placeholder={t("top.selectClient", "Select a client")} />
+        <SelectValue placeholder={t("top.selectClient", "Selecione um cliente")} />
       </SelectTrigger>
       <SelectContent
         className="max-h-[min(70vh,28rem)]"
@@ -1342,7 +1342,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         <SelectItem value={PLATFORM_PICK} data-testid="client-picker-platform">
           <span className="flex items-center gap-2">
             <Globe2 className="h-3.5 w-3.5 text-primary" />
-            {t("top.allClients", "All Clients · Platform")}
+            {t("top.allClients", "Todos os clientes · Plataforma")}
           </span>
         </SelectItem>
         {adminClients.length > 0 && <div className="my-1 h-px bg-border" />}
@@ -1444,7 +1444,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             </SheetContent>
           </Sheet>
 
-          <div className="up-breadcrumb hidden min-w-0 items-center gap-2 sm:flex">
+          <div className="up-breadcrumb hidden min-w-0 items-center gap-2 2xl:flex">
             <span>
               {breadcrumbArchitecture?.group ??
                 (location.startsWith("/erp")
@@ -1460,7 +1460,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           </div>
 
           {/* Search trigger — opens the command palette */}
-          <div className="up-search hidden min-w-0 flex-1 xl:flex">
+          <div className="up-search hidden min-w-0 flex-1 2xl:flex">
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
@@ -1469,7 +1469,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             >
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <span className="truncate">
-                {t("top.search", "Search SKUs, categories, customers")}
+                {t("top.search", "Buscar SKUs, categorias e clientes")}
               </span>
               <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono bg-muted border border-border rounded text-muted-foreground">
                 ⌘K
@@ -1477,42 +1477,26 @@ export function AppLayout({ children }: AppLayoutProps) {
             </button>
           </div>
 
-          <div className="ml-auto flex min-w-0 items-center gap-2">
+          <div className="up-top-controls ml-auto flex min-w-0 items-center gap-2">
+            {user?.role === "ADMIN" && <Select value={selectedDashboardMode} onValueChange={(mode: "B2B" | "B2C") => {
+              setSelectedDashboardMode(mode);
+              if ((mode === "B2C" && isB2BOnlyRoute(location)) || (mode === "B2B" && b2cOnlyRoutes.has(location))) navigate("/dashboard");
+            }}>
+              <SelectTrigger className="h-9 w-[100px] shrink-0" aria-label="Operação" data-testid="dashboard-mode-picker"><Building2 className="h-4 w-4 text-primary" /><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="B2B">B2B</SelectItem><SelectItem value="B2C">B2C</SelectItem></SelectContent>
+            </Select>}
             {user?.role === "ADMIN" && (
               <div className="hidden sm:block w-44 lg:w-52">
                 {renderClientPicker()}
               </div>
             )}
 
-            <div className="hidden lg:block w-24">
-              <Select
-                value={language}
-                onValueChange={(value) => setLanguage(value as typeof language)}
-              >
-                <SelectTrigger
-                  data-testid="language-picker"
-                  aria-label={t("top.language", "Language")}
-                  className="h-9 bg-card border-border"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {LANGUAGE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      <span className="flex items-center gap-2">
-                        <Globe2 className="h-3.5 w-3.5 text-primary" />
-                        {option.shortLabel}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {meta.hasDateRange && <div className="up-top-period"><DateRangePicker value={dateRange} onChange={setDateRange} /></div>}
 
             <Button
               variant="ghost"
               size="icon"
-              className="xl:hidden"
+              className="2xl:hidden"
               onClick={() => setSearchOpen(true)}
               aria-label={t("top.search", "Buscar")}
             >
@@ -1523,7 +1507,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               size="icon"
               className="hidden lg:inline-flex h-9 w-9 hover:bg-accent"
               onClick={() => setShortcutsOpen(true)}
-              aria-label={t("top.keyboardShortcuts", "Keyboard shortcuts")}
+              aria-label={t("top.keyboardShortcuts", "Atalhos de teclado")}
               data-testid="open-shortcuts"
             >
               <HelpCircle className="h-4 w-4" />
@@ -1536,7 +1520,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               size="icon"
               className="h-9 w-9 hover:bg-accent"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              aria-label={t("top.toggleTheme", "Toggle theme")}
+              aria-label={t("top.toggleTheme", "Alternar tema")}
               data-testid="theme-toggle"
             >
               {theme === "dark" ? (
@@ -1577,7 +1561,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 >
                   <HelpCircle className="mr-2 h-4 w-4" />
                   <span>
-                    {t("top.keyboardShortcuts", "Keyboard shortcuts")}
+                    {t("top.keyboardShortcuts", "Atalhos de teclado")}
                   </span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -1585,7 +1569,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                   className="text-destructive cursor-pointer"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>{t("top.logout", "Log out")}</span>
+                  <span>{t("top.logout", "Sair")}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1625,46 +1609,16 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <p className="up-page-subtitle">{subtitleText}</p>
               )}
             </div>
-            {meta.hasDateRange && (
-              <DateRangePicker value={dateRange} onChange={setDateRange} />
-            )}
+
           </section>
           {(LOCAL_UI_PREVIEW || DESIGN_DEMO) && (
             <p className="up-preview-notice no-print">
               Prévia visual · dados de demonstração
             </p>
           )}
-          {(user?.role === "ADMIN" ||
-            meta.hasDateRange ||
-            meta.hasFilterBar) && (
+          {(meta.hasDateRange || meta.hasFilterBar) && (
             <div className="up-control-panel up-glass-panel no-print">
               <div className="up-operation-row">
-                {user?.role === "ADMIN" && (
-                  <div
-                    className="up-segment"
-                    role="group"
-                    aria-label="Operação"
-                  >
-                    {(["B2B", "B2C"] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        aria-pressed={selectedDashboardMode === mode}
-                        data-testid={`dashboard-mode-${mode.toLowerCase()}`}
-                        onClick={() => {
-                          setSelectedDashboardMode(mode);
-                          if (
-                            (mode === "B2C" && isB2BOnlyRoute(location)) ||
-                            (mode === "B2B" && b2cOnlyRoutes.has(location))
-                          )
-                            navigate("/dashboard");
-                        }}
-                      >
-                        {mode === "B2B" ? "Atacado · B2B" : "Varejo · B2C"}
-                      </button>
-                    ))}
-                  </div>
-                )}
                 {meta.hasDateRange && (
                   <div
                     className="up-period-chips"
@@ -1708,7 +1662,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               {meta.hasFilterBar && <FilterBar />}
             </div>
           )}
-          <div className="up-page-content">
+          <div className="up-page-content" aria-busy={isGlobalSwitchLoading || activeDataLoads > 0}>
             {meta.requiresClient &&
             user?.role === "ADMIN" &&
             !selectedClientId ? (
@@ -1723,13 +1677,13 @@ export function AppLayout({ children }: AppLayoutProps) {
                   <h2 className="text-lg font-semibold">
                     {t(
                       "empty.selectClient.title",
-                      "Select a {mode} client to continue",
+                      "Selecione um cliente {mode} para continuar",
                     ).replace("{mode}", selectedDashboardMode)}
                   </h2>
                   <p className="text-sm text-muted-foreground">
                     {t(
                       "empty.selectClient.body",
-                      "This page shows data for one client at a time. Pick a client from the top selector or open the platform overview to see every brand.",
+                      "Esta página exibe um cliente por vez. Selecione um cliente no topo ou abra a visão geral para ver todas as marcas.",
                     )}
                   </p>
                 </div>
@@ -1740,7 +1694,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                   >
                     {t(
                       "empty.selectClient.overview",
-                      "Go to platform overview",
+                      "Ir para a visão geral da plataforma",
                     )}
                   </Button>
                   <Button
@@ -1748,7 +1702,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                     onClick={() => navigate("/clients")}
                     data-testid="link-go-to-clients"
                   >
-                    {t("empty.selectClient.clients", "Browse all brands")}
+                    {t("empty.selectClient.clients", "Ver todas as marcas")}
                   </Button>
                 </div>
               </div>
@@ -1759,25 +1713,9 @@ export function AppLayout({ children }: AppLayoutProps) {
         </main>
       </div>
 
-      {isGlobalSwitchLoading && (
-        <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-background/85 px-4 backdrop-blur-sm no-print"
-          role="status"
-          aria-live="polite"
-          aria-label="Carregando dados atualizados"
-        >
-          <div className="w-full max-w-md rounded-lg border border-border bg-card shadow-2xl">
-            <DashLoader
-              label="Carregando dados atualizados"
-              description={globalLoadingDescription}
-            />
-          </div>
-        </div>
-      )}
-
-      {!isGlobalSwitchLoading && activeDataLoads > 0 && (
-        <div className="pointer-events-none fixed bottom-4 right-4 z-50 hidden rounded-lg border border-border bg-card/95 px-4 py-3 shadow-lg backdrop-blur sm:block no-print">
-          <DashLoader compact label="Carregando informações" />
+      {(isGlobalSwitchLoading || activeDataLoads > 0) && (
+        <div className="up-loading-overlay fixed inset-0 z-[80] flex items-center justify-center bg-background/40 px-4 backdrop-blur-[10px] no-print" role="status" aria-live="polite" aria-label="Carregando dados atualizados" data-testid="global-loader">
+          <DashLoader label="Carregando dados atualizados" description={globalLoadingDescription} />
         </div>
       )}
 

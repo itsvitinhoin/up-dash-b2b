@@ -74,7 +74,7 @@ code, pre, [data-up-code], .up-page-content .prod-sku {
 .up-delta { display: inline-flex; align-items: center; width: fit-content; border-radius: 99px; padding: 2px 8px; font-size: 12px; margin-bottom: 12px; }
 .up-page-content .grid:has(> .up-metric-wrapper),
 .up-page-content .grid:has(> .up-metric-selection) {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
   background: transparent;
   border: 0;
@@ -124,3 +124,52 @@ code, pre, [data-up-code], .up-page-content .prod-sku {
   .up-page-content [class*="min-w-"] { max-width: 100%; }
   [role="dialog"], [role="alertdialog"] { max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; }
 }
+
+/* Métricas: uma grade compartilhada, no máximo quatro por linha. */
+.up-page-content .up-metric-grid, .up-funnel-stages, .up-funnel-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.up-metric-grid > * { min-width: 0; }
+.up-metric-grid > section > .up-metric-wrapper { height: 100%; }
+.up-top-controls { flex-wrap: wrap; }
+.up-top-period button { max-width: 100%; }
+@media (max-width: 1199px) {
+  .up-page-content .up-metric-grid, .up-page-content .grid:has(> .up-metric-wrapper), .up-page-content .grid:has(> .up-metric-selection), .up-funnel-stages, .up-funnel-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 767px) {
+  .up-page-content .up-metric-grid, .up-page-content .grid:has(> .up-metric-wrapper), .up-page-content .grid:has(> .up-metric-selection), .up-funnel-stages, .up-funnel-grid { grid-template-columns: minmax(0,1fr); }
+  .up-top-period { width: 100%; order: 5; }
+  .up-top-period button { width: 100%; }
+  .up-top-controls { flex: 1; }
+}
+.up-loader-animation { width: min(420px, 80vw); aspect-ratio: 2; object-fit: contain; }
+.up-loader-still { display: none; }
+@media (prefers-reduced-motion: reduce) { .up-loader-motion { display: none; } .up-loader-still { display: block; } }
+
+.up-analysis-title { font-family: var(--app-font-serif); font-weight: 400; font-size: clamp(26px,2.4vw,38px); letter-spacing: -.025em; }
+.up-analysis-description { margin-top: 4px; margin-bottom: 20px; font-size: 13px; line-height: 1.6; color: var(--up-muted); }
+.up-analysis-note { margin-top: 16px; font-size: 11px; line-height: 1.6; color: hsl(var(--muted-foreground)); }
+.up-base-evolution { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 28px; }
+.up-base-step { min-width: 0; }
+.up-base-connector { position: relative; height: 40px; }
+.up-base-connector::after { content: ""; position: absolute; top: 11px; left: 0; width: calc(100% + 28px); height: 1px; background: var(--up-chart-line); }
+.up-base-step:last-child .up-base-connector::after { display: none; }
+.up-base-dot { display: block; position: relative; top: 5px; width: 13px; height: 13px; border: 2px solid var(--up-chart-line); border-radius: 50%; background: hsl(var(--card)); z-index: 1; box-shadow: 0 0 12px var(--up-chart-fill); }
+.up-base-follow { position: absolute; top: 0; left: 45%; z-index: 1; white-space: nowrap; font-size: 10px; padding: 1px 6px; border-radius: 20px; border: 1px solid hsl(var(--border)); background: hsl(var(--card)); color: hsl(var(--muted-foreground)); }
+.up-base-progress { height: 4px; background: hsl(var(--muted)); border-radius: 8px; overflow: hidden; margin-top: 16px; }
+.up-base-progress span { display: block; height: 100%; border-radius: inherit; background: var(--up-chart-line); }
+.up-velocity-layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(200px,24%); gap: 16px; align-items: stretch; }
+.up-velocity-summary .up-metric, .up-velocity-summary .up-metric-wrapper { min-height: 0; }
+.up-velocity-summary .up-metric-icon { display: none; }
+.up-velocity-summary .up-metric-value { font-size: 24px; }
+.up-velocity-bars { display: flex; gap: clamp(8px,1.6vw,24px); margin-top: 16px; min-width: 0; }
+.up-velocity-column { flex: 1; min-width: 0; text-align: center; }
+.up-velocity-track { height: 240px; display: flex; align-items: flex-end; padding-top: 28px; }
+.up-velocity-bar { width: 100%; position: relative; border: 1px solid hsl(var(--chart-1) / .35); border-radius: 10px 10px 3px 3px; background: linear-gradient(180deg,var(--up-chart-line),hsl(var(--chart-1) / .12)); }
+.up-velocity-bar span { position: absolute; top: -24px; left: 0; width: 100%; font-size: 11px; font-weight: 600; }
+.up-velocity-column p { font-size: 10px; line-height: 1.35; margin-top: 10px; color: hsl(var(--muted-foreground)); }
+.up-acquisition-funnel { padding: 0; margin: 0 auto; max-width: 700px; list-style: none; }
+.up-acquisition-stage { margin-inline: auto; min-height: 52px; border: 1px solid hsl(var(--chart-1) / .5); border-radius: 14px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: linear-gradient(100deg,hsl(var(--chart-1) / .24),hsl(var(--chart-1) / .08)); font-size: 12px; }
+.up-acquisition-stage strong { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.up-acquisition-stage.is-investment { border-color: hsl(var(--border)); background: hsl(var(--muted) / .4); }
+.up-acquisition-connector { display: flex; align-items: center; justify-content: center; gap: 4px; margin: 10px 0; font-size: 11px; color: hsl(var(--muted-foreground)); text-align: center; }
+@media (max-width: 1199px) { .up-velocity-layout { grid-template-columns: minmax(0,1fr); } .up-velocity-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; } .up-velocity-summary > * { margin-top: 0 !important; } }
+@media (max-width: 767px) { .up-base-evolution { grid-template-columns: repeat(2,minmax(0,1fr)); } .up-base-step:nth-child(2) .up-base-connector::after { display: none; } .up-base-follow { left: 22%; } .up-velocity-track { height: 190px; } .up-velocity-summary { grid-template-columns: minmax(0,1fr); } .up-acquisition-stage { min-width: 72%; padding-inline: 12px; } .up-acquisition-stage span { overflow-wrap: anywhere; } }

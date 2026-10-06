@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
@@ -331,7 +332,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? "Pedidos pagos" : "Valor atendido" }]}
               sparkValues={[]}
-              sparkColor="#34d399"
+              sparkColor="#87adff"
               isLoading={false}
               testId="orders-kpi-fulfilled-revenue"
             />
@@ -359,7 +360,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? "Qtd paga" : "Qtd atendida" }]}
               sparkValues={[]}
-              sparkColor="#f5b94a"
+              sparkColor="#0458fe"
               isLoading={false}
               testId="orders-kpi-fulfilled-quantity"
             />
@@ -402,7 +403,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Regra", value: "1 pedido no período" }]}
               sparkValues={[]}
-              sparkColor="#34d399"
+              sparkColor="#87adff"
               isLoading={false}
               testId="orders-kpi-new-customers"
             />
@@ -430,7 +431,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Cálculo", value: "Recorrentes / compradores" }]}
               sparkValues={[]}
-              sparkColor="#ff6275"
+              sparkColor="#b3caff"
               ringValue={data?.kpis.retentionPct ?? 0}
               isLoading={false}
               testId="orders-kpi-retention-pct"
@@ -445,7 +446,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? `${formatNumber(data?.kpis.sessions ?? 0)} sessões` : `${formatNumber(data?.kpis.approvedLeads ?? 0)} aprovados` }]}
               sparkValues={[]}
-              sparkColor="#f5b94a"
+              sparkColor="#0458fe"
               ringValue={data?.kpis.conversionPct ?? 0}
               isLoading={false}
               testId="orders-kpi-conversion-pct"
@@ -542,7 +543,7 @@ export default function OrdersPage() {
                         <TableCell>
                           <div className="flex flex-col gap-1">
                             <Badge variant="outline" className={`w-fit max-w-[260px] justify-start truncate ${originClass(order.origin)}`}>
-                              {order.origin.label}
+                              {displayLabel(order.origin.label)}
                             </Badge>
                             <span className="truncate text-xs text-muted-foreground">
                               {order.origin.medium} · {order.origin.campaign}
@@ -551,7 +552,7 @@ export default function OrdersPage() {
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={statusClass(order.status)}>
-                            {order.status}
+                            {displayLabel(order.status)}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right">
@@ -629,7 +630,7 @@ export default function OrdersPage() {
                 <div className="rounded-lg border border-border p-4">
                   <h3 className="mb-2 text-sm font-semibold">Pedido</h3>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    <span className="text-muted-foreground">Status</span><span>{details.order.status}</span>
+                    <span className="text-muted-foreground">Status</span><span>{displayLabel(details.order.status)}</span>
                     <span className="text-muted-foreground">Criado em</span><span>{formatDateTime(details.order.createdAt)}</span>
                     <span className="text-muted-foreground">Aprovado em</span><span>{formatDateTime(details.order.approvalDate)}</span>
                     <span className="text-muted-foreground">Frete</span><span>{formatCurrency(details.order.shippingAmount)}</span>

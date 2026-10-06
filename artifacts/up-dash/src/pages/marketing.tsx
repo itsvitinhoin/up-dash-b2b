@@ -144,7 +144,7 @@ function joinSeries(
 
 const PLATFORM_COLORS: Record<string, string> = {
   META: "#5b8dff",
-  GOOGLE: "#f5b94a",
+  GOOGLE: "#0458fe",
   TIKTOK: "#afc4ff",
 };
 
@@ -348,7 +348,7 @@ function CreativeMediaPreview({ creative }: { creative: MetaTopCreative }) {
           target="_blank"
           rel="noreferrer"
           className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/75"
-          aria-label={`Open ${creative.name} preview`}
+          aria-label={`Abrir ${creative.name} preview`}
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </a>
@@ -384,7 +384,7 @@ function TopCreativeCard({
           <GlassMetricCard  label="CTR" value={<>{formatPercentage(creative.ctr)}</>}  />
           <GlassMetricCard  label={costLabel} value={<>{formatCurrency(costLabel === "Custo/Compra" ? creative.cpa : creative.cpl)}</>}  />
           <GlassMetricCard  label="Leads" value={<>{formatNumber(creative.leads)}</>}  />
-          <GlassMetricCard  label="Spend" value={<>{formatCurrency(creative.spend)}</>}  />
+          <GlassMetricCard  label="Investimento" value={<>{formatCurrency(creative.spend)}</>}  />
         </div>
       </div>
     </div>
@@ -422,7 +422,7 @@ function TopCreativesColumn({
       </h3>
       <div className="space-y-3">
         {items.length === 0 ? (
-          <EmptyState icon={ImageIcon} title="No creatives" description="No Meta creative data in this period." className="h-36" />
+          <EmptyState icon={ImageIcon} title="Nenhum criativo" description="Sem dados de criativos da Meta neste período." className="h-36" />
         ) : (
           items.slice(0, 3).map((creative) => (
             <TopCreativeCard
@@ -461,7 +461,7 @@ function InsightBlock({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-mono uppercase tracking-wider text-violet-400">AI Marketing Insight</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider text-violet-400">Análise de anúncios com IA</span>
               <Button
                 variant="ghost"
                 size="sm"
@@ -471,7 +471,7 @@ function InsightBlock({
                 data-testid="insight-regenerate"
               >
                 <RefreshCw className={`h-3 w-3 mr-1.5 ${isRegenerating ? "animate-spin" : ""}`} />
-                Refresh
+                Atualizar
               </Button>
             </div>
             {isLoading ? (
@@ -671,30 +671,30 @@ export default function MarketingPage() {
       `marketing-campaigns-${format(dateRange.from, "yyyyMMdd")}-${format(dateRange.to, "yyyyMMdd")}.csv`,
       sortedCreatives,
       isB2C ? [
-        { header: "Name", accessor: (r) => r.name },
-        { header: "Platform", accessor: (r) => r.platform },
+        { header: "Nome", accessor: (r) => r.name },
+        { header: "Plataforma", accessor: (r) => r.platform },
         { header: "Status", accessor: (r) => r.status },
-        { header: "Spend", accessor: (r) => r.spend },
-        { header: "Purchases", accessor: (r) => r.approvedLeads },
+        { header: "Investimento", accessor: (r) => r.spend },
+        { header: "Compras", accessor: (r) => r.approvedLeads },
         { header: "Custo por Compra", accessor: (r) => r.cpa.toFixed(2) },
-        { header: "Attributed Revenue", accessor: (r) => r.attributedRevenue.toFixed(2) },
+        { header: "Faturamento atribuído", accessor: (r) => r.attributedRevenue.toFixed(2) },
         { header: "ROAS", accessor: (r) => r.roas.toFixed(2) },
-        { header: "Clicks", accessor: (r) => r.clicks },
-        { header: "Impressions", accessor: (r) => r.impressions },
+        { header: "Cliques", accessor: (r) => r.clicks },
+        { header: "Impressões", accessor: (r) => r.impressions },
         { header: "CTR %", accessor: (r) => r.ctr.toFixed(2) },
       ] : [
-        { header: "Name", accessor: (r) => r.name },
-        { header: "Platform", accessor: (r) => r.platform },
+        { header: "Nome", accessor: (r) => r.name },
+        { header: "Plataforma", accessor: (r) => r.platform },
         { header: "Status", accessor: (r) => r.status },
-        { header: "Spend", accessor: (r) => r.spend },
+        { header: "Investimento", accessor: (r) => r.spend },
         { header: "Leads", accessor: (r) => r.leads },
-        { header: "Approved Leads", accessor: (r) => r.approvedLeads },
+        { header: "Leads aprovados", accessor: (r) => r.approvedLeads },
         { header: "CPL", accessor: (r) => r.cpl.toFixed(2) },
         { header: "CPA", accessor: (r) => r.cpa.toFixed(2) },
-        { header: "Attributed Revenue", accessor: (r) => r.attributedRevenue.toFixed(2) },
+        { header: "Faturamento atribuído", accessor: (r) => r.attributedRevenue.toFixed(2) },
         { header: "ROAS", accessor: (r) => r.roas.toFixed(2) },
-        { header: "Clicks", accessor: (r) => r.clicks },
-        { header: "Impressions", accessor: (r) => r.impressions },
+        { header: "Cliques", accessor: (r) => r.clicks },
+        { header: "Impressões", accessor: (r) => r.impressions },
         { header: "CTR %", accessor: (r) => r.ctr.toFixed(2) },
       ],
     );
@@ -719,11 +719,11 @@ export default function MarketingPage() {
     return (
       <Alert variant="destructive" data-testid="page-marketing">
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Error</AlertTitle>
+        <AlertTitle>Erro</AlertTitle>
         <AlertDescription className="flex items-center justify-between">
-          Failed to load marketing data.
+          Não foi possível carregar os anúncios.
           <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="mr-2 h-4 w-4" /> Retry
+            <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
           </Button>
         </AlertDescription>
       </Alert>
@@ -742,12 +742,12 @@ export default function MarketingPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-violet-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Paid channels · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            Canais pagos · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
           </span>
         </div>
         <Button variant="outline" size="sm" onClick={handleExport} disabled={!data} data-testid="marketing-export-csv">
           <Download className="h-4 w-4 mr-1.5" />
-          Export CSV
+          Exportar CSV
         </Button>
       </motion.div>
 
@@ -759,14 +759,14 @@ export default function MarketingPage() {
               <Link2 className="h-7 w-7 text-violet-400" />
             </div>
             <div>
-              <h3 className="text-base font-semibold mb-1">No paid channel data yet</h3>
+              <h3 className="text-base font-semibold mb-1">Sem dados de canais pagos</h3>
               <p className="text-sm text-muted-foreground max-w-sm">
-                Connect your ad accounts (Meta, Google, TikTok) to start tracking spend, ROA, and campaign performance in this period.
+                Conecte suas contas de anúncios (Meta, Google, TikTok) para acompanhar investimento, ROAS e desempenho das campanhas neste período.
               </p>
             </div>
             <Button variant="outline" size="sm" className="gap-2">
               <Link2 className="h-4 w-4" />
-              Connect ad accounts
+              Conectar contas de anúncios
             </Button>
           </Card>
         </motion.div>
@@ -794,7 +794,7 @@ export default function MarketingPage() {
             testId="kpi-ad-spend"
             icon={Wallet}
             iconClass="bg-violet-500/15 text-violet-400"
-            label="Ad Spend"
+            label="Investimento em anúncios"
             value={data?.kpis.totalSpend ?? 0}
             format={formatCurrency}
             change={spendChange}
@@ -806,12 +806,12 @@ export default function MarketingPage() {
             testId="kpi-revenue"
             icon={DollarSign}
             iconClass="bg-teal-500/15 text-teal-400"
-            label="Revenue"
+            label="Faturamento"
             value={data?.kpis.attributedRevenue ?? 0}
             format={formatCurrency}
             change={revenueChange}
             sparkValues={sparkRevenue}
-            sparkColor="#34d399"
+            sparkColor="#87adff"
             isLoading={isLoading}
           />
           <MktKpiCard
@@ -823,14 +823,14 @@ export default function MarketingPage() {
             format={(v) => `${v.toFixed(2)}×`}
             change={roasChange}
             sparkValues={sparkRevenue}
-            sparkColor="#34d399"
+            sparkColor="#87adff"
             isLoading={isLoading}
           />
           <MktKpiCard
             testId="kpi-approval-rate"
             icon={CheckCircle2}
             iconClass="bg-indigo-500/15 text-indigo-400"
-            label="Approval Rate"
+            label="Taxa de aprovação"
             value={data?.kpis.approvalRate ?? 0}
             format={formatPercentage}
             change={approvalRateChange}
@@ -842,7 +842,7 @@ export default function MarketingPage() {
             testId="kpi-leads"
             icon={Users}
             iconClass="bg-sky-500/15 text-sky-400"
-            label="Total Leads"
+            label="Total de leads"
             value={data?.kpis.totalLeads ?? 0}
             format={formatNumber}
             change={leadsChange}
@@ -854,12 +854,12 @@ export default function MarketingPage() {
             testId="kpi-approved-leads"
             icon={CheckCircle2}
             iconClass="bg-green-500/15 text-green-400"
-            label={isB2C ? "Compras" : "Approved Leads"}
+            label={isB2C ? "Compras" : "Leads aprovados"}
             value={data?.kpis.approvedLeads ?? 0}
             format={formatNumber}
             change={approvedLeadsChange}
             sparkValues={sparkLeads}
-            sparkColor="#34d399"
+            sparkColor="#87adff"
             isLoading={isLoading}
           />
           <MktKpiCard
@@ -871,7 +871,7 @@ export default function MarketingPage() {
             format={formatCurrency}
             change={isB2C ? cpaChange : cplChange}
             sparkValues={sparkSpend}
-            sparkColor="#f5b94a"
+            sparkColor="#0458fe"
             isLoading={isLoading}
             invertChange
           />
@@ -885,7 +885,7 @@ export default function MarketingPage() {
               format={formatCurrency}
               change={cpaChange}
               sparkValues={sparkSpend}
-              sparkColor="#f5b94a"
+              sparkColor="#0458fe"
               isLoading={isLoading}
               invertChange
             />
@@ -896,7 +896,7 @@ export default function MarketingPage() {
       {!hasNoData && (
         <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">Top Meta Creatives</h2>
+            <h2 className="text-sm font-semibold text-foreground">Principais criativos da Meta</h2>
             <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
               {isB2C ? "CTR · Custo por Compra · Compras" : "CTR · CPL · Leads"}
             </span>
@@ -912,9 +912,9 @@ export default function MarketingPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-              <TopCreativesColumn title="Best CTR" items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn title={isB2C ? "Menor custo por compra" : "Lowest CPL"} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn title={isB2C ? "Mais compras" : "Most Leads"} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn title="Melhor CTR" items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn title={isB2C ? "Menor custo por compra" : "Menor CPL"} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn title={isB2C ? "Mais compras" : "Mais leads"} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
             </div>
           )}
         </motion.div>
@@ -927,12 +927,12 @@ export default function MarketingPage() {
           <Card className="xl:col-span-2 p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
-              Spend vs Leads
+              Investimento e leads
             </h2>
             {isLoading ? (
               <Skeleton className="h-52 w-full" />
             ) : spendLeadsData.length === 0 ? (
-              <EmptyState icon={BarChart3} title="No data" description="No paid-channel activity in this period." className="h-52" />
+              <EmptyState icon={BarChart3} title="Sem dados" description="Sem atividade de canais pagos neste período." className="h-52" />
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <ComposedChart data={spendLeadsData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
@@ -948,8 +948,8 @@ export default function MarketingPage() {
                       name === "spend" ? "Ad Spend" : "Leads",
                     ]}
                   />
-                  <Bar yAxisId="left" dataKey="spend" fill="#5b8dff" opacity={0.8} radius={[2, 2, 0, 0]} name="spend" />
-                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#afc4ff" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="leads" />
+                  <Bar yAxisId="left" dataKey="spend" fill="#5b8dff" opacity={0.8} radius={[2, 2, 0, 0]} name="Investimento" />
+                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#afc4ff" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Leads" />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
@@ -959,19 +959,19 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              ROAS Over Time
+              Evolução do ROAS
             </h2>
             {isLoading ? (
               <Skeleton className="h-52 w-full" />
             ) : roasData.length === 0 ? (
-              <EmptyState icon={TrendingUp} title="No data" description="No ROAS data in this period." className="h-52" />
+              <EmptyState icon={TrendingUp} title="Sem dados" description="Sem dados de ROAS neste período." className="h-52" />
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={roasData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="roasGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#34d399" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#87adff" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#87adff" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
@@ -982,8 +982,8 @@ export default function MarketingPage() {
                     labelFormatter={fmtDateLong}
                     formatter={(v: number) => [`${v.toFixed(2)}×`, "ROAS"]}
                   />
-                  <ReferenceLine y={2} stroke="#f5b94a" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: "Target 2×", position: "insideTopRight", fontSize: 9, fill: "#f5b94a" }} />
-                  <Area type="monotone" dataKey="roas" stroke="#34d399" strokeWidth={2} fill="url(#roasGrad)" dot={false} activeDot={{ r: 4, fill: "#34d399" }} />
+                  <ReferenceLine y={2} stroke="#0458fe" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: "Target 2×", position: "insideTopRight", fontSize: 9, fill: "#0458fe" }} />
+                  <Area type="monotone" dataKey="roas" stroke="#87adff" strokeWidth={2} fill="url(#roasGrad)" dot={false} activeDot={{ r: 4, fill: "#87adff" }}  name="ROAS" />
                 </AreaChart>
               </ResponsiveContainer>
             )}
@@ -998,17 +998,17 @@ export default function MarketingPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
-                Spend vs Revenue
+                Investimento e faturamento
               </h2>
               <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
-                <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-6 rounded bg-violet-500/60" /> Spend</span>
-                <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-6 rounded bg-teal-400" /> Revenue</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-6 rounded bg-violet-500/60" /> Investimento</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-6 rounded bg-teal-400" /> Faturamento</span>
               </div>
             </div>
             {isLoading ? (
               <Skeleton className="h-48 w-full" />
             ) : spendVsRevenueData.length === 0 ? (
-              <EmptyState icon={DollarSign} title="No data" description="No paid-channel activity in this period." className="h-48" />
+              <EmptyState icon={DollarSign} title="Sem dados" description="Sem atividade de canais pagos neste período." className="h-48" />
             ) : (
               <ResponsiveContainer width="100%" height={192}>
                 <ComposedChart data={spendVsRevenueData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
@@ -1027,8 +1027,8 @@ export default function MarketingPage() {
                     labelFormatter={fmtDateLong}
                     formatter={(v: number, name: string) => [formatCurrency(v), name === "spend" ? "Spend" : "Revenue"]}
                   />
-                  <Bar yAxisId="left" dataKey="spend" fill="url(#spendGrad2)" radius={[3, 3, 0, 0]} maxBarSize={32} />
-                  <Line yAxisId="right" type="monotone" dataKey="revenue" stroke="#34d399" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                  <Bar yAxisId="left" dataKey="spend" fill="url(#spendGrad2)" radius={[3, 3, 0, 0]} maxBarSize={32}  name="Investimento" />
+                  <Line yAxisId="right" type="monotone" dataKey="revenue" stroke="#87adff" strokeWidth={2} dot={false} activeDot={{ r: 4 }}  name="Faturamento" />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
@@ -1043,12 +1043,12 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
               <Megaphone className="h-4 w-4 text-muted-foreground" />
-              By Platform
+              Por plataforma
             </h2>
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
             ) : platformRows.length === 0 ? (
-              <EmptyState icon={Megaphone} title="No campaigns" description="No active campaigns found for this brand." />
+              <EmptyState icon={Megaphone} title="Nenhuma campanha" description="Nenhuma campanha ativa encontrada para esta marca." />
             ) : (
               <div className="space-y-5">
                 {platformRows.map((row) => (
@@ -1062,12 +1062,12 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
               <MapPin className="h-4 w-4 text-muted-foreground" />
-              Top States by ROAS
+              Principais estados por ROAS
             </h2>
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
             ) : stateRows.length === 0 ? (
-              <EmptyState icon={MapPin} title="No geographic data" description="No paid-channel leads with state data in this period." />
+              <EmptyState icon={MapPin} title="Sem dados geográficos" description="Sem leads de canais pagos com estado informado neste período." />
             ) : (
               <div className="space-y-5">
                 {stateRows.map((row) => (
@@ -1085,13 +1085,13 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
               <PersonStanding className="h-4 w-4 text-muted-foreground" />
-              Customer Age Groups (Paid Leads)
+              Faixa etária dos clientes (leads pagos)
             </h2>
             <div className="space-y-5">
               {(data!.ageBreakdown).map((row, i) => {
                 const maxLeads = Math.max(...data!.ageBreakdown.map((r) => r.leads));
                 const pct = maxLeads > 0 ? (row.leads / maxLeads) * 100 : 0;
-                const colors = ["#5b8dff", "#afc4ff", "#34d399", "#f5b94a", "#f5b94a"];
+                const colors = ["#5b8dff", "#afc4ff", "#87adff", "#0458fe", "#0458fe"];
                 const color = colors[i % colors.length];
                 return (
                   <div key={row.ageGroup} className="space-y-1.5">
@@ -1125,9 +1125,9 @@ export default function MarketingPage() {
         <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
           <Card className="bg-card border-border overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-              <h2 className="text-sm font-semibold text-foreground">Campaign Performance</h2>
+              <h2 className="text-sm font-semibold text-foreground">Desempenho de campanhas</h2>
               <p className="text-xs text-muted-foreground">
-                {data ? `${Math.min((creativesPage - 1) * CREATIVES_PAGE_SIZE + 1, data.creativesTotal)}–${Math.min(creativesPage * CREATIVES_PAGE_SIZE, data.creativesTotal)} of ${data.creativesTotal}` : "—"} · click headers to sort
+                {data ? `${Math.min((creativesPage - 1) * CREATIVES_PAGE_SIZE + 1, data.creativesTotal)}–${Math.min(creativesPage * CREATIVES_PAGE_SIZE, data.creativesTotal)} of ${data.creativesTotal}` : "—"} · clique nos títulos para ordenar
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -1136,21 +1136,21 @@ export default function MarketingPage() {
                   <tr className="border-b border-border bg-muted/30">
                     {(
                       [
-                        { key: "name" as SortKey, label: "Campaign", align: "left", wide: true },
-                        { key: "platform" as SortKey, label: "Platform", align: "left", wide: false },
+                        { key: "name" as SortKey, label: "Campanha", align: "left", wide: true },
+                        { key: "platform" as SortKey, label: "Plataforma", align: "left", wide: false },
                         { key: "status" as SortKey, label: "Status", align: "left", wide: false },
-                        { key: "spend" as SortKey, label: "Spend", align: "right", wide: false },
-                        { key: "attributedRevenue" as SortKey, label: "Revenue", align: "right", wide: false },
+                        { key: "spend" as SortKey, label: "Investimento", align: "right", wide: false },
+                        { key: "attributedRevenue" as SortKey, label: "Faturamento", align: "right", wide: false },
                         { key: "roas" as SortKey, label: "ROA", align: "right", wide: false },
                         { key: "leads" as SortKey, label: "Leads", align: "right", wide: false },
-                        { key: "approvedLeads" as SortKey, label: isB2C ? "Compras" : "Purchases", align: "right", wide: false },
+                        { key: "approvedLeads" as SortKey, label: isB2C ? "Compras" : "Compras", align: "right", wide: false },
                         ...(isB2C
                           ? [{ key: "cpa" as SortKey, label: "Custo/Compra", align: "right" as const, wide: false }]
                           : [
                               { key: "cpl" as SortKey, label: "CPL", align: "right" as const, wide: false },
                               { key: "cpa" as SortKey, label: "CPA", align: "right" as const, wide: false },
                             ]),
-                        { key: "clicks" as SortKey, label: "Clicks", align: "right", wide: false },
+                        { key: "clicks" as SortKey, label: "Cliques", align: "right", wide: false },
                         { key: "ctr" as SortKey, label: "CTR %", align: "right", wide: false },
                       ] as { key: SortKey; label: string; align: "left" | "right"; wide: boolean }[]
                     ).map(({ key, label, align, wide }) => (
@@ -1176,7 +1176,7 @@ export default function MarketingPage() {
                   ) : sortedCreatives.length === 0 ? (
                     <tr>
                       <td colSpan={isB2C ? 11 : 12} className="px-5 py-10 text-center text-muted-foreground text-sm">
-                        No campaigns found for this brand.
+                        Nenhuma campanha encontrada para esta marca.
                       </td>
                     </tr>
                   ) : (
@@ -1213,7 +1213,7 @@ export default function MarketingPage() {
             {data && data.creativesTotal > CREATIVES_PAGE_SIZE && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-border bg-muted/10">
                 <p className="text-xs text-muted-foreground">
-                  Page {creativesPage} of {Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE)}
+                  Página {creativesPage} of {Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE)}
                 </p>
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm"
@@ -1221,14 +1221,14 @@ export default function MarketingPage() {
                     disabled={creativesPage === 1}
                     className="px-3 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Previous
+                    Anterior
                   </Button>
                   <Button variant="outline" size="sm"
                     onClick={() => setCreativesPage((p) => Math.min(Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE), p + 1))}
                     disabled={creativesPage * CREATIVES_PAGE_SIZE >= data.creativesTotal}
                     className="px-3 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Next
+                    Próximo
                   </Button>
                 </div>
               </div>
