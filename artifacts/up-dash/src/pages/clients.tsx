@@ -605,14 +605,14 @@ function ClientCredentialsDialog({
                   placeholder="Mínimo 8 caracteres"
                   className="pr-9"
                 />
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
                   onClick={() => setShowPassword((v) => !v)}
                   tabIndex={-1}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+                </Button>
               </div>
               <Button
                 type="button"
@@ -1130,14 +1130,14 @@ function UpZeroKeyDialog({
                 placeholder="Paste your UP Zero API key…"
                 className="pr-9 font-mono text-xs"
               />
-              <button
+              <Button variant="ghost" size="sm"
                 type="button"
                 className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
                 onClick={() => setShowValue((v) => !v)}
                 tabIndex={-1}
               >
                 {showValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+              </Button>
             </div>
           </div>
           {hasKey && !value && (
@@ -1985,11 +1985,11 @@ export default function ClientsPage() {
                 {clients.map((client) => (
                   <div
                     key={`access-${client.id}`}
-                    className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-card/50 p-3"
+                    className="up-client-access up-glass-card"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-medium">{client.name}</p>
+                        <p className="text-sm font-medium">{client.name}</p>
                         <Badge
                           variant={client.hasClientLogin ? "default" : "secondary"}
                           className="shrink-0 text-[10px]"
@@ -1997,7 +1997,7 @@ export default function ClientsPage() {
                           {client.hasClientLogin ? `${client.clientLoginCount ?? 1} acesso${(client.clientLoginCount ?? 1) > 1 ? "s" : ""}` : "Sem login"}
                         </Badge>
                       </div>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {client.clientLoginEmail ?? "Crie o primeiro acesso deste cliente"}
                       </p>
                     </div>
@@ -2025,8 +2025,12 @@ export default function ClientsPage() {
           </AlertDescription>
         </Alert>
       ) : (
-        <Card>
-          <div className="overflow-x-auto">
+        <Card className="up-client-table">
+          <CardContent>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div><h2 className="text-base font-medium">Clientes cadastrados</h2><p className="text-xs text-muted-foreground">Role a tabela para consultar todas as métricas e ações.</p></div>
+              <Badge variant="outline">{formatNumber(clients.length)} clientes</Badge>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -2047,7 +2051,7 @@ export default function ClientsPage() {
                     {selectedDashboardMode === "B2C" ? "Sessões (GA4)" : "Approval"}
                   </TableHead>
                   <TableHead className="text-right">Created</TableHead>
-                  <TableHead />
+                  <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2244,7 +2248,7 @@ export default function ClientsPage() {
                 )}
               </TableBody>
             </Table>
-          </div>
+          </CardContent>
           {data && data.pages > 1 && (
             <div className="p-4 border-t flex items-center justify-between">
               <div className="text-sm text-muted-foreground">

@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { motion } from "framer-motion";
@@ -74,13 +75,7 @@ function ProductThumbnail({ imageUrl, name, size = "lg" }: { imageUrl?: string |
 }
 
 function KpiTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card">
-      <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">{label}</span>
-      <span className="text-2xl font-bold tabular-nums">{value}</span>
-      {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
-    </div>
-  );
+  return (<GlassMetricCard label={label} value={value} footer={sub ? <p className="text-xs text-muted-foreground">{sub}</p> : undefined} />);
 }
 
 function BreakdownChart({ data, title }: {

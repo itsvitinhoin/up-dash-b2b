@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { customFetch, useListClients } from "@workspace/api-client-react";
@@ -192,30 +193,10 @@ export default function ExtractionsPage() {
   return (
     <div className="space-y-6" data-testid="page-extractions">
       <div className="grid gap-3 md:grid-cols-4">
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Execuções</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums">{data?.summary.total ?? 0}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Rodando</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-blue-500">{data?.summary.running ?? 0}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Concluídas</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-emerald-500">{data?.summary.done ?? 0}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Falhas</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-red-500">{data?.summary.failed ?? 0}</p>
-          </CardContent>
-        </Card>
+        <GlassMetricCard label="Execuções" value={<>{data?.summary.total ?? 0}</>}  />
+        <GlassMetricCard label="Rodando" value={<>{data?.summary.running ?? 0}</>}  />
+        <GlassMetricCard label="Concluídas" value={<>{data?.summary.done ?? 0}</>}  />
+        <GlassMetricCard label="Falhas" value={<>{data?.summary.failed ?? 0}</>}  />
       </div>
 
       <Card>

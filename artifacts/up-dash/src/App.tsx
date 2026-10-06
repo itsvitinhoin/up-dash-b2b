@@ -1,3 +1,5 @@
+import { architectureRoutes } from "@/lib/dashboard-architecture";
+import OrganizedPage from "@/pages/organized-pages";
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import {
   QueryClient,
@@ -99,6 +101,11 @@ function Router() {
   return (
     <AnimatePresence mode="wait" initial={false}>
       <Switch key={location} location={location}>
+        {architectureRoutes.map(route => <Route key={route.path} path={route.path}>
+          <AuthGuard><AppLayout><PageTransition routeKey={route.path}>
+            <OrganizedPage page={route.page} />
+          </PageTransition></AppLayout></AuthGuard>
+        </Route>)}
         <Route path="/login">
           <LoginPage />
         </Route>

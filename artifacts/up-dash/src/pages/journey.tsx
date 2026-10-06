@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo } from "react";
 import { format } from "date-fns";
 import { Link } from "wouter";
@@ -26,13 +27,13 @@ import { useReducedMotion, fadeInUp, withReducedMotion } from "@/lib/motion";
 import { useState } from "react";
 
 const SEGMENT_COLORS: Record<string, string> = {
-  VISIT: "#6366f1",
-  REGISTRATION: "#22d3ee",
-  APPROVED_REGISTRATION: "#10b981",
-  PRODUCT_VIEW: "#f59e0b",
-  ADD_TO_CART: "#f97316",
-  CHECKOUT_STARTED: "#ec4899",
-  PURCHASE: "#8b5cf6",
+  VISIT: "#5b8dff",
+  REGISTRATION: "#afc4ff",
+  APPROVED_REGISTRATION: "#34d399",
+  PRODUCT_VIEW: "#f5b94a",
+  ADD_TO_CART: "#f5b94a",
+  CHECKOUT_STARTED: "#ff6275",
+  PURCHASE: "#5b8dff",
 };
 
 function KpiCard({
@@ -48,24 +49,7 @@ function KpiCard({
   color: string;
   loading: boolean;
 }) {
-  return (
-    <div className="rounded-xl border border-border/60 bg-card p-4 flex items-start gap-3">
-      <span
-        className="flex h-9 w-9 items-center justify-center rounded-lg ring-1 ring-border/40 shrink-0"
-        style={{ background: `${color}18` }}
-      >
-        <Icon className="h-4 w-4" style={{ color }} />
-      </span>
-      <div className="min-w-0">
-        <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground truncate">{label}</p>
-        {loading ? (
-          <Skeleton className="h-6 w-24 mt-1" />
-        ) : (
-          <p className="text-xl font-bold tabular-nums mt-0.5">{value}</p>
-        )}
-      </div>
-    </div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} loading={loading} />);
 }
 
 export default function JourneyPage() {
@@ -213,28 +197,28 @@ export default function JourneyPage() {
                 label="Avg events before purchase"
                 value={isLoading ? "—" : kpis ? kpis.avgEventsBeforePurchase.toFixed(1) : "—"}
                 icon={Activity}
-                color="#6366f1"
+                color="#5b8dff"
                 loading={isLoading}
               />
               <KpiCard
                 label="Avg time to 1st purchase"
                 value={isLoading ? "—" : kpis?.avgTimeToFirstPurchaseDays != null ? `${kpis.avgTimeToFirstPurchaseDays.toFixed(1)}d` : "—"}
                 icon={Clock}
-                color="#22d3ee"
+                color="#afc4ff"
                 loading={isLoading}
               />
               <KpiCard
                 label="Avg time between purchases"
                 value={isLoading ? "—" : kpis?.avgTimeBetweenPurchasesDays != null ? `${kpis.avgTimeBetweenPurchasesDays.toFixed(1)}d` : "—"}
                 icon={RefreshCw}
-                color="#10b981"
+                color="#34d399"
                 loading={isLoading}
               />
               <KpiCard
                 label="Buyers from 1st session"
                 value={isLoading ? "—" : kpis ? `${kpis.pctBuyersFromFirstSession.toFixed(1)}%` : "—"}
                 icon={Zap}
-                color="#f59e0b"
+                color="#f5b94a"
                 loading={isLoading}
               />
             </div>
@@ -319,11 +303,11 @@ export default function JourneyPage() {
                   </CardTitle>
                   <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
                     <span className="flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-[#6366f1]" />
+                      <span className="h-2 w-2 rounded-full bg-[#5b8dff]" />
                       Buyers (avg {isLoading ? "—" : (buyers?.avgSessionDepth ?? 0).toFixed(1)} events/session)
                     </span>
                     <span className="flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-[#f59e0b]" />
+                      <span className="h-2 w-2 rounded-full bg-[#f5b94a]" />
                       Non-buyers (avg {isLoading ? "—" : (nonBuyers?.avgSessionDepth ?? 0).toFixed(1)} events/session)
                     </span>
                   </div>
@@ -349,8 +333,8 @@ export default function JourneyPage() {
                         }}
                       />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Bar dataKey="buyers" name="Buyers" fill="#6366f1" radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="nonBuyers" name="Non-buyers" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="buyers" name="Buyers" fill="#5b8dff" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="nonBuyers" name="Non-buyers" fill="#f5b94a" radius={[3, 3, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -365,7 +349,7 @@ export default function JourneyPage() {
                       <div className="space-y-1.5">
                         {(buyers?.topUtmSources ?? []).slice(0, 4).map((u) => (
                           <div key={u.source} className="flex items-center justify-between">
-                            <span className="inline-flex items-center rounded-full bg-[#6366f1]/10 px-2 py-0.5 text-[10px] font-medium text-[#6366f1]">
+                            <span className="inline-flex items-center rounded-full bg-[#5b8dff]/10 px-2 py-0.5 text-[10px] font-medium text-[#5b8dff]">
                               {u.source}
                             </span>
                             <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
@@ -382,7 +366,7 @@ export default function JourneyPage() {
                       <div className="space-y-1.5">
                         {(nonBuyers?.topUtmSources ?? []).slice(0, 4).map((u) => (
                           <div key={u.source} className="flex items-center justify-between">
-                            <span className="inline-flex items-center rounded-full bg-[#f59e0b]/10 px-2 py-0.5 text-[10px] font-medium text-[#f59e0b]">
+                            <span className="inline-flex items-center rounded-full bg-[#f5b94a]/10 px-2 py-0.5 text-[10px] font-medium text-[#f5b94a]">
                               {u.source}
                             </span>
                             <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
@@ -521,7 +505,7 @@ function EventFlowDiagram({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEdge
         {nodes.map((node) => {
           const pos = nodePos.get(node.id);
           if (!pos) return null;
-          const color = SEGMENT_COLORS[node.id] ?? "#6366f1";
+          const color = SEGMENT_COLORS[node.id] ?? "#5b8dff";
           const intensity = Math.max(0.15, node.count / maxCount);
           return (
             <g key={node.id}>

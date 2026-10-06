@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo } from "react";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
@@ -112,7 +113,7 @@ function formatCurrency(value: number) {
   return currencyFormatter.format(value || 0);
 }
 
-export default function FunnelPage() {
+export default function FunnelPage({ organization }: { organization?: "acquisition" } = {}) {
   const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -240,6 +241,7 @@ export default function FunnelPage() {
         </Button>
       </div>
 
+      {organization === "acquisition" && activation && <ActivationAnalysisCard activation={activation} />}
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -340,7 +342,7 @@ export default function FunnelPage() {
             </Card>
           </motion.div>
 
-          {selectedDashboardMode === "B2B" && activation && (
+          {organization !== "acquisition" && selectedDashboardMode === "B2B" && activation && (
             <motion.div initial="hidden" animate="visible" variants={variants}>
               <ActivationAnalysisCard activation={activation} />
             </motion.div>
@@ -663,9 +665,9 @@ export default function FunnelPage() {
                     </div>
                     {selectedDashboardMode !== "B2C" && (
                       <Link href="/journey">
-                        <button className="mt-3 text-[11px] text-primary flex items-center gap-1 hover:underline">
+                        <Button variant="ghost" size="sm" className="mt-3 text-[11px] text-primary flex items-center gap-1 hover:underline">
                           Full journey analysis <ChevronRight className="h-3 w-3" />
-                        </button>
+                        </Button>
                       </Link>
                     )}
                   </div>
@@ -750,7 +752,7 @@ function toneClasses(tone: string) {
   return "border-primary/40 bg-primary/10 text-primary";
 }
 
-function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAnalysis }) {
+export function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAnalysis }) {
   const thirtyDay = activation.windows.find((window) => window.key === "within_30d");
   const primaryWindow = thirtyDay ?? activation.windows[activation.windows.length - 1];
   const postApprovalSteps = [
@@ -939,12 +941,7 @@ function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAn
 }
 
 function ActivationMetric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className={`rounded-lg border p-3 ${accent ? "border-primary/40 bg-primary/5" : "border-border/60 bg-muted/20"}`}>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
-    </div>
-  );
+  return (<GlassMetricCard label={label} value={value} />);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1031,32 +1028,7 @@ function MiniStat({
   delay: number;
   reduced: boolean;
 }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, delay: reduced ? 0 : delay, ease: [0.22, 1, 0.36, 1] }}
-      className="rounded-lg border border-border/60 bg-card/70 p-3 backdrop-blur"
-    >
-      <div className="flex items-center gap-2">
-        <span
-          className="flex h-7 w-7 items-center justify-center rounded-md ring-1 ring-border/40"
-          style={{ background: tone === "warn" ? "hsl(var(--destructive) / 0.12)" : `${color.replace(")", " / 0.15)")}` }}
-        >
-          <IconWrap Icon={Icon} tone={tone} color={color} />
-        </span>
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium truncate">
-          {label}
-        </span>
-      </div>
-      <CountUp
-        value={value}
-        format={format ?? formatNumber}
-        duration={1000}
-        className={`mt-1.5 block text-xl font-bold tabular-nums ${tone === "warn" ? "text-destructive" : "text-foreground"}`}
-      />
-    </motion.div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={format ?? formatNumber} />);
 }
 
 function IconWrap({

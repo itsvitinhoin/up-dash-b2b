@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRoute } from "wouter";
@@ -448,7 +449,7 @@ function OverviewPage() {
           change={12.5}
           changeLabel="vs. mês anterior"
           sparkValues={[2, 2, 3, 3, 4, 4]}
-          sparkColor="#60a5fa"
+          sparkColor="#afc4ff"
           sub={[
             { label: "IA ativa", value: String(brands.filter((brand) => brand.aiCommercialStatus === "active").length) },
             { label: "Em setup", value: String(brands.filter((brand) => brand.status === "setup").length) },
@@ -465,7 +466,7 @@ function OverviewPage() {
           change={18.2}
           changeLabel="vs. período anterior"
           sparkValues={[88, 96, 112, 129, 141, totalRegistrations]}
-          sparkColor="#a78bfa"
+          sparkColor="#5b8dff"
           sub={[
             { label: "Aprovados", value: formatNumber(brands.reduce((sum, brand) => sum + brand.approvedRegistrations, 0)) },
             { label: "Aguardando", value: formatNumber(Math.max(totalRegistrations - brands.reduce((sum, brand) => sum + brand.approvedRegistrations, 0), 0)) },
@@ -499,7 +500,7 @@ function OverviewPage() {
           change={4.8}
           changeLabel="vs. período anterior"
           sparkValues={[68, 72, 78, 81, 84, avgQuality]}
-          sparkColor="#38bdf8"
+          sparkColor="#afc4ff"
           ringValue={avgQuality}
           sub={[
             { label: "Handoffs", value: String(brands.reduce((sum, brand) => sum + brand.handoffs, 0)) },
@@ -1660,11 +1661,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
     <div className="space-y-5">
       <Card>
         <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Marca em configuração</p>
-            <h2 className="mt-1 text-xl font-semibold">{clientName}</h2>
-            <p className="text-xs text-muted-foreground">IA Comercial {aiCommercialStatus === "active" ? "ativa" : "desativada"} · webhook {realWebhookUrl}</p>
-          </div>
+          <GlassMetricCard  label="Marca em configuração" value={<>{clientName}</>} footer={<div className="space-y-2"><p className="text-xs text-muted-foreground">IA Comercial {aiCommercialStatus === "active" ? "ativa" : "desativada"} · webhook {realWebhookUrl}</p></div>} />
           <div className="flex flex-col gap-3 lg:items-end">
             <div className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
               <span>{aiCommercialStatus === "active" ? "IA ativa" : "IA desativada"}</span>
@@ -1704,7 +1701,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
             change={0}
             changeLabel="dados reais"
             sparkValues={[0, 0, 0, conversations]}
-            sparkColor="#60a5fa"
+            sparkColor="#afc4ff"
             sub={[
               { label: "Abertas", value: formatNumber(openConversations) },
               { label: "Números", value: formatNumber(metrics?.connectedNumbers ?? 0) },
@@ -1738,7 +1735,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
             change={0}
             changeLabel="dados reais"
             sparkValues={[0, 0, 0, orders]}
-            sparkColor="#c084fc"
+            sparkColor="#5b8dff"
             sub={[
               { label: "Receita", value: money(revenue) },
               { label: "Modo", value: aiCommercialStatus === "active" ? "Ativo" : "Pausado" },
@@ -1755,7 +1752,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
             change={0}
             changeLabel="dados reais"
             sparkValues={[0, 0, 0, 0]}
-            sparkColor="#fbbf24"
+            sparkColor="#f5b94a"
             sub={[
               { label: "Qualidade", value: "0%" },
               { label: "Status", value: "Monitorado" },

@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -867,33 +868,10 @@ export default function AutomaticReportsPage() {
   return (
     <div className="space-y-6" data-testid="page-automatic-reports">
       <div className="grid gap-3 md:grid-cols-4">
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Status</p>
-            <div className="mt-2 flex items-center gap-2">
-              <span className={cn("h-2.5 w-2.5 rounded-full", config.enabled ? "bg-emerald-500" : "bg-muted-foreground")} />
-              <p className="text-2xl font-bold">{config.enabled ? "Ativo" : "Inativo"}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Marcas configuradas</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums">{summary.enabledClients}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Destinatários ativos</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums">{summary.recipients}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Na fila</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-amber-500">{summary.scheduled}</p>
-          </CardContent>
-        </Card>
+        <GlassMetricCard label="Status" value={<><span className={cn("h-2.5 w-2.5 rounded-full", config.enabled ? "bg-emerald-500" : "bg-muted-foreground")} /><p className="text-2xl font-bold">{config.enabled ? "Ativo" : "Inativo"}</p></>}  />
+        <GlassMetricCard label="Marcas configuradas" value={<>{summary.enabledClients}</>}  />
+        <GlassMetricCard label="Destinatários ativos" value={<>{summary.recipients}</>}  />
+        <GlassMetricCard label="Na fila" value={<>{summary.scheduled}</>}  />
       </div>
 
       <Tabs defaultValue="settings" className="space-y-4">
@@ -1435,10 +1413,7 @@ export default function AutomaticReportsPage() {
                       const mappedVariable = variableById(mappedVariableId);
                       return (
                         <div key={placeholder} className="grid gap-3 p-4 lg:grid-cols-[90px_minmax(0,1fr)_minmax(180px,260px)] lg:items-center">
-                          <div>
-                            <p className="text-xs uppercase tracking-wider text-muted-foreground">Campo</p>
-                            <p className="font-mono text-lg font-semibold">{placeholder}</p>
-                          </div>
+                          <GlassMetricCard  label="Campo" value={<>{placeholder}</>}  />
                           <div className="space-y-2">
                             <Label className="text-xs">Variável do UP Dash</Label>
                             <Select value={mappedVariableId} onValueChange={(value) => updateVariableMapping(placeholder, value)}>

@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -726,7 +727,7 @@ export default function WhatsappTemplatesPage() {
                     : "border-border";
 
               return (
-                <button
+                <Button variant="outline" size="sm"
                   key={phone.id}
                   type="button"
                   className={`group min-h-44 rounded-md border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-70 ${healthBorder} ${
@@ -759,30 +760,9 @@ export default function WhatsappTemplatesPage() {
                   </div>
 
                   <div className="mt-4 grid grid-cols-3 gap-3 border-y border-border/70 py-3">
-                    <div>
-                      <p className="text-[10px] uppercase text-muted-foreground">
-                        Aprovados
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-emerald-500">
-                        {summary.approved}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase text-muted-foreground">
-                        Pendentes
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-amber-500">
-                        {summary.pending}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase text-muted-foreground">
-                        Recusados
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-red-500">
-                        {summary.rejected}
-                      </p>
-                    </div>
+                    <GlassMetricCard  label="Aprovados" value={<>{summary.approved}</>}  />
+                    <GlassMetricCard  label="Pendentes" value={<>{summary.pending}</>}  />
+                    <GlassMetricCard  label="Recusados" value={<>{summary.rejected}</>}  />
                   </div>
 
                   <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
@@ -798,7 +778,7 @@ export default function WhatsappTemplatesPage() {
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     Último sync: {formatSyncDate(summary.lastSyncedAt)}
                   </p>
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -903,7 +883,7 @@ export default function WhatsappTemplatesPage() {
                   {(templates?.variableOptions?.raw ?? [])
                     .map(normalizePayloadVariableOption)
                     .map((option) => (
-                      <button
+                      <Button variant="outline" size="sm"
                         key={option.key}
                         type="button"
                         className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-left text-xs transition-colors hover:border-primary/50 hover:bg-primary/10"
@@ -924,7 +904,7 @@ export default function WhatsappTemplatesPage() {
                             {option.eventTypes.join(", ")}
                           </span>
                         ) : null}
-                      </button>
+                      </Button>
                     ))}
                 </div>
               ) : (

@@ -1,3 +1,5 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
+import { OverviewOrganization } from "@/components/overview-organization";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { addDays, differenceInDays, format, subDays } from "date-fns";
@@ -761,7 +763,7 @@ function CampaignCustomersPanel({
     sort: CampaignCustomerSortKey;
     align?: "left" | "right";
   }) => (
-    <button
+    <Button variant="ghost" size="sm"
       type="button"
       onClick={() => setSort(sort)}
       className={`inline-flex w-full items-center gap-1 font-medium hover:text-foreground ${
@@ -772,7 +774,7 @@ function CampaignCustomersPanel({
       <span className="text-[9px] text-muted-foreground">
         {sortKey === sort ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
       </span>
-    </button>
+    </Button>
   );
 
   return (
@@ -796,22 +798,10 @@ function CampaignCustomersPanel({
           // largura mínima e quebra de linha se precisar, em vez de
           // sobrepor o vizinho.
           <div className="flex flex-wrap justify-end gap-x-4 gap-y-2 text-right">
-            <div className="min-w-[56px]">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Clientes</p>
-              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatNumber(data.summary.impactedCustomers)}</p>
-            </div>
-            <div className="min-w-[110px]">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Solicitado</p>
-              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatCurrency(data.summary.requestedValue ?? data.summary.attributedRevenue)}</p>
-            </div>
-            <div className="min-w-[56px]">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pedidos</p>
-              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatNumber(data.summary.orders)}</p>
-            </div>
-            <div className="min-w-[56px]">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Cadastros</p>
-              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatNumber(data.summary.registrations)}</p>
-            </div>
+            <GlassMetricCard  label="Clientes" value={<>{formatNumber(data.summary.impactedCustomers)}</>}  />
+            <GlassMetricCard  label="Solicitado" value={<>{formatCurrency(data.summary.requestedValue ?? data.summary.attributedRevenue)}</>}  />
+            <GlassMetricCard  label="Pedidos" value={<>{formatNumber(data.summary.orders)}</>}  />
+            <GlassMetricCard  label="Cadastros" value={<>{formatNumber(data.summary.registrations)}</>}  />
           </div>
         )}
       </div>
@@ -828,7 +818,7 @@ function CampaignCustomersPanel({
             changeLabel=""
             sub={[{ label: "Base", value: "Pedidos atribuídos" }]}
             sparkValues={[]}
-            sparkColor="#60a5fa"
+            sparkColor="#afc4ff"
             isLoading={false}
             testId="campaign-customers-kpi-requested-value"
             valueAccent
@@ -857,7 +847,7 @@ function CampaignCustomersPanel({
             changeLabel=""
             sub={[{ label: "Fonte", value: "Meta Ads" }]}
             sparkValues={[]}
-            sparkColor="#a78bfa"
+            sparkColor="#5b8dff"
             isLoading={false}
             testId="campaign-customers-kpi-investment"
           />
@@ -871,7 +861,7 @@ function CampaignCustomersPanel({
             changeLabel=""
             sub={[{ label: "Cálculo", value: "Atendido / investimento" }]}
             sparkValues={[]}
-            sparkColor="#f59e0b"
+            sparkColor="#f5b94a"
             isLoading={false}
             testId="campaign-customers-kpi-roas"
           />
@@ -1206,22 +1196,10 @@ function CampaignCustomersPanel({
               </div>
 
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-lg border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Eventos</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatNumber(timelineData.summary.totalEvents)}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Produtos vistos</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatNumber(timelineData.summary.productViews)}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Carrinhos</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatNumber(timelineData.summary.addToCartEvents)}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor comprado</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatCurrency(timelineData.summary.totalPurchaseValue)}</p>
-                </div>
+                <GlassMetricCard  label="Eventos" value={<>{formatNumber(timelineData.summary.totalEvents)}</>}  />
+                <GlassMetricCard  label="Produtos vistos" value={<>{formatNumber(timelineData.summary.productViews)}</>}  />
+                <GlassMetricCard  label="Carrinhos" value={<>{formatNumber(timelineData.summary.addToCartEvents)}</>}  />
+                <GlassMetricCard  label="Valor comprado" value={<>{formatCurrency(timelineData.summary.totalPurchaseValue)}</>}  />
               </div>
 
               <div className="space-y-6">
@@ -1439,10 +1417,7 @@ function B2COrdersPanel({
             Lista paginada com detalhes de cliente, valores, frete, desconto e produtos.
           </p>
         </div>
-        <div className="text-right">
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</p>
-          <p className="text-sm font-semibold tabular-nums">{formatNumber(data?.total ?? 0)} pedidos</p>
-        </div>
+        <GlassMetricCard  label="Total" value={<>{formatNumber(data?.total ?? 0)}pedidos</>}  />
       </div>
 
       {isLoading ? (
@@ -1536,22 +1511,10 @@ function B2COrdersPanel({
           ) : (
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pago</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.fulfilledAmount)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Bruto</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.grossAmount)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Desconto</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.discountAmount)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Frete</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.shippingAmount)}</p>
-                </div>
+                <GlassMetricCard  label="Pago" value={<>{formatCurrency(details.order.fulfilledAmount)}</>}  />
+                <GlassMetricCard  label="Bruto" value={<>{formatCurrency(details.order.grossAmount)}</>}  />
+                <GlassMetricCard  label="Desconto" value={<>{formatCurrency(details.order.discountAmount)}</>}  />
+                <GlassMetricCard  label="Frete" value={<>{formatCurrency(details.order.shippingAmount)}</>}  />
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">
@@ -1603,7 +1566,7 @@ function B2COrdersPanel({
   );
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({ organization = "executive" }: { organization?: "executive" | "ecommerce" } = {}) {
   const { t } = useI18n();
   const { selectedClientId, user, selectedDashboardMode } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
@@ -1961,7 +1924,7 @@ export default function DashboardPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            {t("dashboard.live")} · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            {import.meta.env.DEV && import.meta.env.VITE_DESIGN_DEMO === "1" ? "Demonstração" : t("dashboard.live")} · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
             <span className="ml-2 text-muted-foreground/70">
               {t("dashboard.vs")} {format(prevPeriodFrom, "MMM d")} → {format(prevPeriodTo, "MMM d")}
             </span>
@@ -1979,13 +1942,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={containerVariants}
-        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"
-      >
-        <DashboardKpiCard
+      <OverviewOrganization ecommerce={organization === "ecommerce"} cards={{revenue: (<DashboardKpiCard
           testId="kpi-revenue"
           icon={DollarSign}
           iconClass="bg-blue-500/15 text-blue-400"
@@ -1996,15 +1953,14 @@ export default function DashboardPage() {
           change={revenueChange}
           changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkRevenue}
-          sparkColor="#60a5fa"
+          sparkColor="#afc4ff"
           sub={[
             { label: t("dashboard.kpi.avgTicket"), value: data ? formatCurrency(data.kpis.avgTicket) : "—" },
             { label: t("dashboard.kpi.customers"), value: data ? formatNumber(data.kpis.customers) : "—" },
           ]}
           isLoading={isLoading}
           valueAccent
-        />
-        <DashboardKpiCard
+        />), orders: (<DashboardKpiCard
           testId="kpi-orders"
           icon={Package}
           iconClass="bg-violet-500/15 text-violet-400"
@@ -2015,14 +1971,13 @@ export default function DashboardPage() {
           change={ordersChange}
           changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkOrders}
-          sparkColor="#a78bfa"
+          sparkColor="#5b8dff"
           sub={[
             { label: isB2C ? t("dashboard.kpi.sessions") : isVesti ? t("dashboard.kpi.requestedOrdersVesti") : t("dashboard.kpi.leads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
             { label: isB2C ? t("dashboard.kpi.orders") : isVesti ? t("dashboard.kpi.paidOrdersVesti") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.approvedLeads) : "—" },
           ]}
           isLoading={isLoading}
-        />
-        <DashboardKpiCard
+        />), ticket: (<DashboardKpiCard
           testId="kpi-avgTicket"
           icon={Wallet}
           iconClass="bg-emerald-500/15 text-emerald-400"
@@ -2039,8 +1994,7 @@ export default function DashboardPage() {
             { label: isB2C ? t("dashboard.kpi.paidRate") : t("dashboard.kpi.approvalRate"), value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
           ]}
           isLoading={isLoading}
-        />
-        <DashboardKpiCard
+        />), conversion: (<DashboardKpiCard
           testId="kpi-conversionRate"
           icon={Target}
           iconClass="bg-sky-500/15 text-sky-400"
@@ -2050,7 +2004,7 @@ export default function DashboardPage() {
           change={conversionChange}
           changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkConv}
-          sparkColor="#38bdf8"
+          sparkColor="#afc4ff"
           sub={
             isVesti && data?.orderStatusBreakdown
               ? [
@@ -2068,36 +2022,13 @@ export default function DashboardPage() {
           isLoading={isLoading}
           ringValue={data?.kpis.conversionRate ?? 0}
           ringColor="hsl(var(--chart-1))"
-        />
-      </motion.div>
-
-      {/* Marketing & buyer KPIs row */}
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={containerVariants}
-        className="grid grid-cols-1 sm:grid-cols-3 gap-4"
-      >
-        {/* Requested vs Approved Revenue */}
-        <Card className="p-5 bg-card border-border" data-testid="kpi-requested-revenue">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/15 shrink-0">
-              <DollarSign className="h-4 w-4 text-blue-400" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground leading-none">
-                {isB2C ? t("dashboard.kpi.invoicedValue") : t("dashboard.kpi.requestedRevenue")}
-              </p>
-              {isLoading ? (
+        />), requested: (<GlassMetricCard label={isB2C ? t("dashboard.kpi.invoicedValue") : t("dashboard.kpi.requestedRevenue")} value={isLoading ? (
                 <Skeleton className="h-6 w-24 mt-1" />
               ) : (
                 <p className="text-xl font-bold tabular-nums mt-0.5">
                   <CountUp value={data?.kpis.requestedRevenue ?? 0} format={(v) => formatCurrencySmart(v)} />
                 </p>
-              )}
-            </div>
-          </div>
-          {isLoading ? (
+              )} icon={DollarSign} testId="kpi-requested-revenue" footer={<div className="space-y-2">{isLoading ? (
             <Skeleton className="h-3 w-full mb-2" />
           ) : (
             <>
@@ -2123,18 +2054,7 @@ export default function DashboardPage() {
                   : isB2C ? t("dashboard.kpi.noInvoicedRevenue") : t("dashboard.kpi.noRequestedRevenue")}
               </p>
             </>
-          )}
-        </Card>
-
-        {/* New vs Returning Buyers */}
-        <Card className="p-5 bg-card border-border" data-testid="kpi-buyers">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/15 shrink-0">
-              <Users className="h-4 w-4 text-emerald-400" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground leading-none">{t("dashboard.kpi.buyersThisPeriod")}</p>
-              {isLoading ? (
+          )}</div>} />), buyers: (<GlassMetricCard label={t("dashboard.kpi.buyersThisPeriod")} value={isLoading ? (
                 <Skeleton className="h-6 w-24 mt-1" />
               ) : (
                 <p className="text-xl font-bold tabular-nums mt-0.5">
@@ -2143,10 +2063,7 @@ export default function DashboardPage() {
                     format={(v) => formatNumber(v)}
                   />
                 </p>
-              )}
-            </div>
-          </div>
-          {isLoading ? (
+              )} icon={Users} testId="kpi-buyers" footer={<div className="space-y-2">{isLoading ? (
             <div className="space-y-1.5">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-3 w-full mt-1" />
@@ -2168,8 +2085,8 @@ export default function DashboardPage() {
                         type="monotone"
                         dataKey="returning"
                         stackId="buyers"
-                        stroke="#60a5fa"
-                        fill="#60a5fa"
+                        stroke="#afc4ff"
+                        fill="#afc4ff"
                         fillOpacity={0.35}
                         strokeWidth={1}
                         dot={false}
@@ -2207,11 +2124,7 @@ export default function DashboardPage() {
                 </div>
               </div>
             </>
-          )}
-        </Card>
-
-        {/* Retention % */}
-        <DashboardKpiCard
+          )}</div>} />), retention: (<DashboardKpiCard
           testId="kpi-retention"
           icon={TrendingUp}
           iconClass="bg-violet-500/15 text-violet-400"
@@ -2221,14 +2134,13 @@ export default function DashboardPage() {
           change={retentionChange}
           changeLabel={t("dashboard.vsPreviousPeriod")}
           sparkValues={sparkReturning}
-          sparkColor="#a78bfa"
+          sparkColor="#5b8dff"
           sub={[
             { label: t("dashboard.kpi.newBuyers"), value: data ? formatNumber(data.kpis.newBuyers) : "—" },
             { label: t("dashboard.kpi.returning"), value: data ? formatNumber(data.kpis.returningBuyers) : "—" },
           ]}
           isLoading={isLoading}
-        />
-      </motion.div>
+        />)}} />
 
       <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
         {isB2C ? (
@@ -2269,7 +2181,7 @@ export default function DashboardPage() {
             </div>
             <div className="inline-flex items-center bg-muted/40 border border-border rounded-md p-0.5">
               {chartMetrics.map((metric) => (
-                <button
+                <Button variant="ghost" size="sm"
                   key={metric.id}
                   data-testid={`chart-toggle-${metric.id}`}
                   onClick={() => setChartMetric(metric.id)}
@@ -2280,7 +2192,7 @@ export default function DashboardPage() {
                   }`}
                 >
                   {t(CHART_METRIC_LABEL_KEYS[metric.id])}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -2366,7 +2278,7 @@ export default function DashboardPage() {
                       x={a.date}
                       y={a.value}
                       r={5}
-                      stroke="#fbbf24"
+                      stroke="#f5b94a"
                       strokeWidth={2}
                       fill="hsl(var(--background))"
                       ifOverflow="extendDomain"
@@ -2412,7 +2324,7 @@ export default function DashboardPage() {
                   <Sparkles className="h-3 w-3" />
                   UP Insight · {insight?.source === "ai" ? t("dashboard.insight.badge.ai") : t("dashboard.insight.badge.auto")}
                 </span>
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
@@ -2420,7 +2332,7 @@ export default function DashboardPage() {
                   data-testid="insight-dismiss"
                 >
                   <X className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
               {insightLoading || !insight ? (
                 <>
@@ -2707,9 +2619,9 @@ export default function DashboardPage() {
                 {t("dashboard.categories.subtitle")}
               </p>
             </div>
-            <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+            <Button variant="ghost" size="sm" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
               {t("dashboard.common.seeAll")} <ChevronRight className="h-3 w-3" />
-            </button>
+            </Button>
           </div>
 
           {isLoading ? (

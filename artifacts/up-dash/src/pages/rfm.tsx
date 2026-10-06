@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useState } from "react";
 import { format } from "date-fns";
 import { useLocation } from "wouter";
@@ -46,35 +47,35 @@ const SEGMENT_META: Record<string, {
 }> = {
   Champions: {
     label: "Champions",
-    color: "#10b981",
+    color: "#34d399",
     bg: "bg-emerald-500/10",
     ring: "ring-emerald-500/30",
     description: "Bought recently, buy often, spent the most",
   },
   Loyal: {
     label: "Loyal",
-    color: "#6366f1",
+    color: "#5b8dff",
     bg: "bg-indigo-500/10",
     ring: "ring-indigo-500/30",
     description: "Buy regularly and respond well to offers",
   },
   Potential: {
     label: "Promising",
-    color: "#8b5cf6",
+    color: "#5b8dff",
     bg: "bg-violet-500/10",
     ring: "ring-violet-500/30",
     description: "Recent buyers with average frequency",
   },
   "At Risk": {
     label: "At Risk",
-    color: "#f59e0b",
+    color: "#f5b94a",
     bg: "bg-amber-500/10",
     ring: "ring-amber-500/30",
     description: "Good customers who are becoming inactive",
   },
   Lost: {
     label: "Lost",
-    color: "#6b7280",
+    color: "#9badd0",
     bg: "bg-zinc-500/10",
     ring: "ring-zinc-500/30",
     description: "Purchased long ago and haven't returned",
@@ -82,17 +83,17 @@ const SEGMENT_META: Record<string, {
 };
 
 const AREA_COLORS: Record<string, string> = {
-  Champions: "#10b981",
-  Loyal: "#6366f1",
-  Potential: "#8b5cf6",
-  AtRisk: "#f59e0b",
-  Lost: "#6b7280",
+  Champions: "#34d399",
+  Loyal: "#5b8dff",
+  Potential: "#5b8dff",
+  AtRisk: "#f5b94a",
+  Lost: "#9badd0",
 };
 
 function SegmentBadge({ segment }: { segment: string | null | undefined }) {
   if (!segment) return <Badge variant="outline" className="text-[10px]">—</Badge>;
   const meta = SEGMENT_META[segment];
-  const color = meta?.color ?? "#9ca3af";
+  const color = meta?.color ?? "#9badd0";
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium"
@@ -126,13 +127,13 @@ function InfoHint({ text }: { text: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
+        <Button variant="ghost" size="sm"
           type="button"
           className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="Explicação da métrica"
         >
           <Info className="h-3.5 w-3.5" />
-        </button>
+        </Button>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs text-xs leading-relaxed">
         {text}
@@ -154,25 +155,7 @@ function RfmLogicCard({
   info: string;
   icon: typeof CalendarDays;
 }) {
-  return (
-    <Card className="border-border/70 bg-card">
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
-              <InfoHint text={info} />
-            </div>
-            <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-          </div>
-          <div className="rounded-lg bg-primary/10 p-2 text-primary">
-            <Icon className="h-4 w-4" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  return (<GlassMetricCard label={title} value={value} icon={Icon} info={info} footer={<p className="text-xs text-muted-foreground">{description}</p>} />);
 }
 
 export default function RfmPage() {
@@ -369,53 +352,21 @@ export default function RfmPage() {
                 const meta = SEGMENT_META[seg];
                 const segData = segments.find((s) => s.segment === seg);
                 return (
-                  <button
-                    key={seg}
-                    onClick={() => {
-                      setSegmentFilter((prev) => (prev === seg ? "" : seg));
-                      setPage(1);
-                    }}
-                    className={`rounded-xl border p-4 text-left transition-all hover:shadow-md ${
-                      segmentFilter === seg
-                        ? `ring-2 ${meta.ring} border-transparent`
-                        : "border-border/60 hover:border-primary/30"
-                    }`}
-                    style={{ background: segmentFilter === seg ? `${meta.color}10` : undefined }}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span
-                        className="h-2 w-2 rounded-full"
-                        style={{ background: meta.color }}
-                      />
-                      <div className="flex items-center gap-1">
-                        {isLoading ? (
-                          <Skeleton className="h-3 w-8" />
-                        ) : (
-                          <span className="text-[10px] font-mono text-muted-foreground">
-                            {segData ? segData.pct.toFixed(1) : 0}%
-                          </span>
-                        )}
-                        <InfoHint text={`Segmento ${meta.label}: ${meta.description}. A classificação usa recência, frequência e valor comprado para priorizar a ação comercial.`} />
-                      </div>
-                    </div>
-                    <p className="font-semibold text-sm" style={{ color: meta.color }}>{meta.label}</p>
-                    <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{meta.description}</p>
-                    {isLoading ? (
-                      <Skeleton className="h-5 w-16 mt-2" />
-                    ) : (
-                      <div className="mt-2 space-y-0.5">
-                        <p className="text-lg font-bold tabular-nums">
-                          {formatNumber(segData?.customerCount ?? 0)}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground">
-                          {formatCurrency(segData?.revenue ?? 0)} rev
-                        </p>
-                        <p className="text-[10px] font-semibold tabular-nums" style={{ color: meta.color }}>
-                          avg {formatCurrency(segData?.avgTicket ?? 0)}
-                        </p>
-                      </div>
-                    )}
-                  </button>
+                  <div key={seg} className="up-metric-selection">
+                    <button type="button" className="up-metric-select" aria-label={`Filtrar segmento ${meta.label}`} aria-pressed={segmentFilter === seg}
+                      onClick={() => {
+                        setSegmentFilter((prev) => (prev === seg ? "" : seg));
+                        setPage(1);
+                      }}><span className="sr-only">{meta.label}</span></button>
+                    <GlassMetricCard label={meta.label} value={segData?.customerCount ?? 0} loading={isLoading}
+                      info={`Segmento ${meta.label}: ${meta.description}. A classificação usa recência, frequência e valor comprado para priorizar a ação comercial.`}
+                      sub={[
+                        { label: "Participação", value: `${segData ? segData.pct.toFixed(1) : 0}%` },
+                        { label: "Faturamento", value: formatCurrency(segData?.revenue ?? 0) },
+                        { label: "Ticket médio", value: formatCurrency(segData?.avgTicket ?? 0) },
+                      ]}
+                      footer={<p className="text-muted-foreground">{meta.description}</p>} />
+                  </div>
                 );
               })}
             </div>
@@ -763,22 +714,10 @@ export default function RfmPage() {
                         <Badge variant="outline">{order.status}</Badge>
                       </div>
                       <div className="mt-3 grid gap-3 sm:grid-cols-4">
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Solicitado</p>
-                          <p className="text-sm font-semibold tabular-nums">{formatCurrency(order.amount)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Atendido</p>
-                          <p className="text-sm font-semibold tabular-nums">{formatCurrency(order.fulfilledAmount)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Peças solicitadas</p>
-                          <p className="text-sm font-semibold tabular-nums">{formatNumber(order.requestedQuantity)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Peças atendidas</p>
-                          <p className="text-sm font-semibold tabular-nums">{formatNumber(order.fulfilledQuantity)}</p>
-                        </div>
+                        <GlassMetricCard  label="Solicitado" value={<>{formatCurrency(order.amount)}</>}  />
+                        <GlassMetricCard  label="Atendido" value={<>{formatCurrency(order.fulfilledAmount)}</>}  />
+                        <GlassMetricCard  label="Peças solicitadas" value={<>{formatNumber(order.requestedQuantity)}</>}  />
+                        <GlassMetricCard  label="Peças atendidas" value={<>{formatNumber(order.fulfilledQuantity)}</>}  />
                       </div>
                     </div>
                   ))}

@@ -18,9 +18,9 @@ export const LANGUAGE_OPTIONS: Array<{ value: DashboardLanguage; label: string; 
 
 const translations: Record<DashboardLanguage, Record<string, string>> = {
   pt: {
-    "nav.analytics": "Analytics",
-    "nav.workspace": "Workspace",
-    "nav.dashboard": "Dashboard",
+    "nav.analytics": "Painel",
+    "nav.workspace": "Plataforma",
+    "nav.dashboard": "Visão geral",
     "nav.daily": "Diário",
     "nav.marketing": "Marketing",
     "nav.whatsapp": "WhatsApp",
@@ -56,7 +56,7 @@ const translations: Record<DashboardLanguage, Record<string, string>> = {
     "empty.selectClient.body": "Esta página mostra dados de um cliente por vez. Escolha um cliente no seletor do topo ou abra a visão da plataforma para ver todas as marcas.",
     "empty.selectClient.overview": "Ir para visão da plataforma",
     "empty.selectClient.clients": "Ver todas as marcas",
-    "page.dashboard.title": "Overview",
+    "page.dashboard.title": "Visão geral",
     "page.dashboard.live": "dados ao vivo",
     "page.orders.title": "Pedidos",
     "page.orders.subtitle": "Pedidos, atendimento e origem",

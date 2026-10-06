@@ -9,7 +9,12 @@ import {
 import { Link, useLocation } from "wouter";
 import { useIsFetching } from "@tanstack/react-query";
 import { Globe2 } from "lucide-react";
-import { format } from "date-fns";
+import {
+  differenceInCalendarDays,
+  format,
+  startOfDay,
+  subDays,
+} from "date-fns";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useTheme } from "@/components/theme-provider";
@@ -59,7 +64,10 @@ import {
   Sparkles,
   Scale,
   Gauge,
+  ChevronDown,
+  ChevronRight,
   RefreshCw,
+  UserRoundCheck,
 } from "lucide-react";
 import {
   useListClients,
@@ -69,7 +77,13 @@ import {
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetTrigger,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import {
   Select,
   SelectContent,
@@ -88,6 +102,11 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { SearchPalette } from "@/components/search-palette";
 import { DashLoader } from "@/components/ui/dash-loader";
+import {
+  architectureForPath,
+  legacyPath,
+  navigationPath,
+} from "@/lib/dashboard-architecture";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -135,14 +154,14 @@ const pageMeta: Record<string, PageMeta> = {
   },
   "/funnel": {
     title: "Conversion funnel",
-    subtitle: "Visit through purchase",
+    subtitle: "Da visita à compra",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/customers": {
     title: "Customers",
-    subtitle: "RFM segmentation and lifetime value",
+    subtitle: "Segmentação RFM e valor dos clientes",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
@@ -156,28 +175,28 @@ const pageMeta: Record<string, PageMeta> = {
   },
   "/products": {
     title: "Products",
-    subtitle: "Performance and ranking",
+    subtitle: "Desempenho e ranking de produtos",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/sellers": {
     title: "Sellers",
-    subtitle: "Top performers across the catalog",
+    subtitle: "Desempenho das vendedoras no catálogo",
     hasDateRange: false,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/geography": {
     title: "Geography",
-    subtitle: "Sales distribution by region",
+    subtitle: "Distribuição de vendas por região",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/clients": {
     title: "Clients",
-    subtitle: "Brand accounts on the platform",
+    subtitle: "Contas e marcas da plataforma",
     hasDateRange: true,
     hasFilterBar: false,
   },
@@ -201,32 +220,32 @@ const pageMeta: Record<string, PageMeta> = {
   },
   "/notifications": {
     title: "Notifications",
-    subtitle: "Anomalies, top movers, and rollups",
+    subtitle: "Alertas e movimentações da operação",
     hasDateRange: false,
     hasFilterBar: false,
     requiresClient: true,
   },
   "/compare": {
     title: "Compare brands",
-    subtitle: "Benchmark up to four clients side-by-side",
+    subtitle: "Compare até quatro marcas lado a lado",
     hasDateRange: true,
     hasFilterBar: false,
   },
   "/overview": {
     title: "Platform overview",
-    subtitle: "Every brand on UP Dash, at a glance",
+    subtitle: "Todas as marcas do grupo em uma visão",
     hasDateRange: true,
     hasFilterBar: false,
   },
   "/marketing": {
     title: "Marketing",
-    subtitle: "Ad spend, ROAS, CPL, and creative performance",
+    subtitle: "Investimento, ROAS, CPL e desempenho dos criativos",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/erp": {
-    title: "ERP",
+    title: "Visão Geral",
     subtitle: "Visão operacional do Miré",
     hasDateRange: true,
     hasFilterBar: false,
@@ -268,7 +287,7 @@ const pageMeta: Record<string, PageMeta> = {
     requiresClient: true,
   },
   "/performance": {
-    title: "Performance",
+    title: "Visão Geral",
     subtitle: "Mídia, ERP e e-commerce em uma visão consolidada",
     hasDateRange: true,
     hasFilterBar: false,
@@ -280,7 +299,7 @@ const pageMeta: Record<string, PageMeta> = {
   // especificação) -- convive com o /performance atual (atribuição paga)
   // por enquanto, sem substituir nada ainda.
   "/performance/recompra": {
-    title: "Performance",
+    title: "Recompra",
     subtitle: "Recompra — recorrência, reativação e ciclo de retorno da base",
     hasDateRange: true,
     hasFilterBar: false,
@@ -323,28 +342,28 @@ const pageMeta: Record<string, PageMeta> = {
   },
   "/stock": {
     title: "Stock Intelligence",
-    subtitle: "Coverage, risk, and inventory health",
+    subtitle: "Cobertura, risco e saúde do estoque",
     hasDateRange: false,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/journey": {
     title: "Journey Analytics",
-    subtitle: "Event flow, top paths, and buyer behaviour",
+    subtitle: "Eventos, caminhos e comportamento de compra",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/rfm": {
     title: "RFM Segmentation",
-    subtitle: "Recency, frequency, and monetary analysis",
+    subtitle: "Recência, frequência e valor de compra",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
   },
   "/utm": {
     title: "UTM / Source Analysis",
-    subtitle: "Attribution by source, medium, and campaign",
+    subtitle: "Atribuição por origem, mídia e campanha",
     hasDateRange: true,
     hasFilterBar: true,
     requiresClient: true,
@@ -430,6 +449,8 @@ const ADMIN_DISPLAY_EMAIL = "admin@updash.com";
 const GLOBAL_SWITCH_MIN_MS = 650;
 const GLOBAL_SWITCH_MAX_MS = 12000;
 const ADMIN_CLIENTS_CACHE_KEY = "updash.adminClientOptions.v1";
+const DESIGN_DEMO =
+  import.meta.env.DEV && import.meta.env.VITE_DESIGN_DEMO === "1";
 const LOCAL_UI_PREVIEW =
   import.meta.env.DEV && import.meta.env.VITE_UI_PREVIEW === "1";
 const LOCAL_PREVIEW_CLIENT: Client = {
@@ -481,21 +502,33 @@ function readCachedAdminClients(): AdminClientOption[] {
   if (typeof window === "undefined") return [];
 
   try {
-    const parsed = JSON.parse(localStorage.getItem(ADMIN_CLIENTS_CACHE_KEY) ?? "[]");
+    const parsed = JSON.parse(
+      localStorage.getItem(ADMIN_CLIENTS_CACHE_KEY) ?? "[]",
+    );
     if (!Array.isArray(parsed)) return [];
 
-    return parsed.map(
-      (client): AdminClientOption => ({
-        id: typeof client?.id === "string" ? client.id : "",
-        name: typeof client?.name === "string" ? client.name : "",
-        dashboardType:
-          client?.dashboardType === "B2B" || client?.dashboardType === "B2C" ? client.dashboardType : null,
-        currency: typeof client?.currency === "string" ? client.currency : "BRL",
-        locale: typeof client?.locale === "string" ? client.locale : "pt-BR",
-        commercePlatform: typeof client?.commercePlatform === "string" ? client.commercePlatform : null,
-        hiddenNavItems: Array.isArray(client?.hiddenNavItems) ? client.hiddenNavItems : null,
-      }),
-    ).filter((client) => client.id && client.name);
+    return parsed
+      .map(
+        (client): AdminClientOption => ({
+          id: typeof client?.id === "string" ? client.id : "",
+          name: typeof client?.name === "string" ? client.name : "",
+          dashboardType:
+            client?.dashboardType === "B2B" || client?.dashboardType === "B2C"
+              ? client.dashboardType
+              : null,
+          currency:
+            typeof client?.currency === "string" ? client.currency : "BRL",
+          locale: typeof client?.locale === "string" ? client.locale : "pt-BR",
+          commercePlatform:
+            typeof client?.commercePlatform === "string"
+              ? client.commercePlatform
+              : null,
+          hiddenNavItems: Array.isArray(client?.hiddenNavItems)
+            ? client.hiddenNavItems
+            : null,
+        }),
+      )
+      .filter((client) => client.id && client.name);
   } catch {
     return [];
   }
@@ -535,9 +568,14 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { dateRange, setDateRange } = useDashboardFilters();
   const { setOpen: setShortcutsOpen } = useKeyboardShortcuts();
   const [searchOpen, setSearchOpen] = useState(false);
-  const [cachedAdminClients, setCachedAdminClients] = useState<AdminClientOption[]>(
-    readCachedAdminClients,
-  );
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [expandedNav, setExpandedNav] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location]);
+  const [cachedAdminClients, setCachedAdminClients] = useState<
+    AdminClientOption[]
+  >(readCachedAdminClients);
   const userDisplayName = getUserDisplayName(user);
   const userInitials = getUserInitials(userDisplayName);
 
@@ -581,16 +619,14 @@ export function AppLayout({ children }: AppLayoutProps) {
         enabled: user?.role === "ADMIN" && !LOCAL_UI_PREVIEW,
         placeholderData: (previous) => previous,
         refetchOnWindowFocus: true,
-        refetchInterval: (query) => query.state.status === "error" ? 30_000 : false,
+        refetchInterval: (query) =>
+          query.state.status === "error" ? 30_000 : false,
       }),
     },
   );
 
   useEffect(() => {
-    if (
-      !Array.isArray(clientsData?.data) ||
-      clientsData.data.length === 0
-    ) {
+    if (!Array.isArray(clientsData?.data) || clientsData.data.length === 0) {
       return;
     }
 
@@ -603,27 +639,24 @@ export function AppLayout({ children }: AppLayoutProps) {
     }
   }, [clientsData?.data, clientsData?.total]);
 
-  const adminClients = useMemo(
-    () => {
-      const liveClients = Array.isArray(clientsData?.data)
-        ? clientsData.data.map(toAdminClientOption)
-        : [];
-      const clients: AdminClientOption[] = LOCAL_UI_PREVIEW
-        ? [toAdminClientOption(LOCAL_PREVIEW_CLIENT)]
-        : liveClients.length > 0
-          ? liveClients
-          : cachedAdminClients;
+  const adminClients = useMemo(() => {
+    const liveClients = Array.isArray(clientsData?.data)
+      ? clientsData.data.map(toAdminClientOption)
+      : [];
+    const clients: AdminClientOption[] = LOCAL_UI_PREVIEW
+      ? [toAdminClientOption(LOCAL_PREVIEW_CLIENT)]
+      : liveClients.length > 0
+        ? liveClients
+        : cachedAdminClients;
 
-      return clients
-        .filter((client) => {
-          if (client.dashboardType === selectedDashboardMode) return true;
-          // Clients created before dashboard_type existed belong to B2B.
-          return selectedDashboardMode === "B2B" && !client.dashboardType;
-        })
-        .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-    },
-    [cachedAdminClients, clientsData?.data, selectedDashboardMode],
-  );
+    return clients
+      .filter((client) => {
+        if (client.dashboardType === selectedDashboardMode) return true;
+        // Clients created before dashboard_type existed belong to B2B.
+        return selectedDashboardMode === "B2B" && !client.dashboardType;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  }, [cachedAdminClients, clientsData?.data, selectedDashboardMode]);
 
   // We deliberately do NOT auto-pick a client for admins here. UP Dash is an
   // agency platform: admins always operate on behalf of one specific brand at
@@ -760,7 +793,22 @@ export function AppLayout({ children }: AppLayoutProps) {
     return () => window.clearTimeout(settleTimer);
   }, [activeDataLoads, isGlobalSwitchLoading, globalContext]);
 
-  const meta = pageMeta[location] ??
+  const architecture = architectureForPath(location);
+  const breadcrumbArchitecture =
+    architecture ?? architectureForPath(navigationPath(location));
+  const inheritedMeta = architecture
+    ? pageMeta[architecture.legacy]
+    : undefined;
+  const meta = (architecture && inheritedMeta
+    ? {
+        ...inheritedMeta,
+        title: architecture.title,
+        ...(architecture.page === "monthly-history"
+          ? { hasDateRange: false, subtitle: "Métricas consolidadas por mês" }
+          : {}),
+      }
+    : undefined) ??
+    pageMeta[location] ??
     (location.startsWith("/products/")
       ? {
           title: "Product detail",
@@ -808,12 +856,32 @@ export function AppLayout({ children }: AppLayoutProps) {
       : location === "/orders"
         ? "orders"
         : null;
-  const titleText = pageTranslationKey
-    ? t(`page.${pageTranslationKey}.title`, meta.title)
-    : meta.title;
+  const navTitleKeys: Record<string, string> = {
+    "/funnel": "nav.funnel",
+    "/customers": "nav.customers",
+    "/orders": "nav.orders",
+    "/products": "nav.products",
+    "/sellers": "nav.sellers",
+    "/geography": "nav.geography",
+    "/clients": "nav.clients",
+    "/notifications": "nav.notifications",
+    "/compare": "nav.compareBrands",
+    "/overview": "nav.platformOverview",
+    "/stock": "nav.stock",
+    "/journey": "nav.journey",
+    "/rfm": "nav.rfm",
+    "/utm": "nav.utm",
+  };
+  const titleText =
+    architecture?.title ??
+    (pageTranslationKey
+      ? t(`page.${pageTranslationKey}.title`, meta.title)
+      : navTitleKeys[location]
+        ? t(navTitleKeys[location], meta.title)
+        : meta.title);
   const subtitleText =
     location === "/" || location === "/dashboard"
-      ? `${format(new Date(), "EEEE, MMM d")} · ${t("page.dashboard.live", "live data")}`
+      ? `${new Intl.DateTimeFormat(language === "pt" ? "pt-BR" : language === "ko" ? "ko-KR" : "en-US", { weekday: "long", day: "numeric", month: "long" }).format(new Date())} · ${DESIGN_DEMO ? "prévia visual" : t("page.dashboard.live", "live data")}`
       : pageTranslationKey
         ? t(`page.${pageTranslationKey}.subtitle`, meta.subtitle)
         : meta.subtitle;
@@ -845,15 +913,23 @@ export function AppLayout({ children }: AppLayoutProps) {
   // Clientes Vesti são dashboardType=B2B (venda por atacado), mas já têm
   // relatório diário via BigQuery (ver vestiDashboardController.getDailyReport)
   // — por isso "/daily" fica liberado pra eles mesmo em modo B2B.
-  const vestiEnabledB2cRoutes = useMemo(() => new Set(["/daily", "/scale"]), []);
+  const vestiEnabledB2cRoutes = useMemo(
+    () => new Set(["/daily", "/scale"]),
+    [],
+  );
   const isVestiClient = activeClient?.commercePlatform === "VESTI";
   const isB2BOnlyRoute = useCallback(
-    (href: string) =>
-      b2bOnlyRoutes.has(href) ||
-      href.startsWith("/whatsapp/") ||
-      href.startsWith("/erp/") ||
-      href.startsWith("/orquestrador/") ||
-      href.startsWith("/agente-vendas/"),
+    (href: string) => {
+      const entry = architectureForPath(href);
+      return (
+        Boolean(entry && "b2bOnly" in entry && entry.b2bOnly) ||
+        b2bOnlyRoutes.has(href) ||
+        href.startsWith("/whatsapp/") ||
+        href.startsWith("/erp/") ||
+        href.startsWith("/orquestrador/") ||
+        href.startsWith("/agente-vendas/")
+      );
+    },
     [b2bOnlyRoutes],
   );
   useEffect(() => {
@@ -868,127 +944,130 @@ export function AppLayout({ children }: AppLayoutProps) {
     children?: Array<{ name: string; href: string; icon: typeof Users }>;
   };
 
-  const analyticsNav = [
-    {
-      name: t("nav.dashboard", "Dashboard"),
-      href: "/dashboard",
-      icon: LayoutDashboard,
-    },
-    { name: t("nav.daily", "Daily"), href: "/daily", icon: CalendarDays },
-    { name: t("nav.scale", "Escala"), href: "/scale", icon: Scale },
-    {
-      name: t("nav.erp", "ERP"),
-      href: "/erp",
-      icon: Store,
-      children: [
-        {
-          name: t("nav.erp.overview", "Visão Geral"),
-          href: "/erp",
-          icon: LayoutDashboard,
-        },
-        {
-          name: t("nav.erp.orders", "Pedidos"),
-          href: "/erp/pedidos",
-          icon: ReceiptText,
-        },
-        {
-          name: t("nav.erp.customers", "Clientes"),
-          href: "/erp/clientes",
-          icon: Users,
-        },
-        {
-          name: t("nav.erp.products", "Produtos"),
-          href: "/erp/produtos",
-          icon: Package,
-        },
-        {
-          name: t("nav.erp.stock", "Estoque"),
-          href: "/erp/estoque",
-          icon: PackageSearch,
-        },
-        {
-          name: t("nav.erp.sellers", "Vendedores e lojas"),
-          href: "/erp/vendedores",
-          icon: Users,
-        },
-      ],
-    },
-    {
-      name: t("nav.performance", "Performance"),
-      href: "/performance",
-      icon: Gauge,
-      // Achado 11/09/2026: primeiro submenu da nova arquitetura de
-      // Performance (ver pageMeta["/performance/recompra"]) -- clicar em
-      // "Performance" continua indo direto pro /performance de hoje
-      // (NavItem sempre linka pro item.href do pai); o filho só aparece
-      // quando o usuário já está em /performance ou /performance/recompra.
-      children: [
-        {
-          name: t("nav.performance.recompra", "Recompra"),
-          href: "/performance/recompra",
-          icon: RefreshCw,
-        },
-      ],
-    },
-    {
-      name: t("nav.marketing", "Marketing"),
-      href: "/marketing",
-      icon: Megaphone,
-    },
-    {
-      name: t("nav.whatsapp", "WhatsApp"),
-      href: "/whatsapp",
-      icon: MessageCircle,
-      children: [
-        {
-          name: t("nav.whatsapp.conversations", "Conversas"),
-          href: "/whatsapp/conversas",
-          icon: MessageSquareText,
-        },
-        {
-          name: t("nav.whatsapp.connections", "Conexões"),
-          href: "/whatsapp/conexoes",
-          icon: PlugZap,
-        },
-        {
-          name: t("nav.whatsapp.sends", "Envios"),
-          href: "/whatsapp/envios",
-          icon: Send,
-        },
-        {
-          name: t("nav.whatsapp.templates", "Templates"),
-          href: "/whatsapp/templates",
-          icon: FileText,
-        },
-      ],
-    },
-    { name: t("nav.funnel", "Funnel"), href: "/funnel", icon: Filter },
-    { name: t("nav.journey", "Journey"), href: "/journey", icon: Route },
-    { name: t("nav.rfm", "RFM"), href: "/rfm", icon: BarChart3 },
-    { name: t("nav.utm", "UTM"), href: "/utm", icon: Link2 },
-    { name: t("nav.customers", "Customers"), href: "/customers", icon: Users },
-    { name: t("nav.orders", "Orders"), href: "/orders", icon: ReceiptText },
-    { name: t("nav.products", "Products"), href: "/products", icon: Package },
-    { name: t("nav.sellers", "Sellers"), href: "/sellers", icon: ShoppingBag },
-    { name: t("nav.stock", "Stock"), href: "/stock", icon: PackageSearch },
-  ].filter((item) => {
-    if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(item.href))
+  const visibleNav = (item: { href: string }) => {
+    const source = legacyPath(item.href);
+    if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(source))
       return false;
     if (
       effectiveDashboardMode === "B2B" &&
-      b2cOnlyRoutes.has(item.href) &&
-      !(isVestiClient && vestiEnabledB2cRoutes.has(item.href))
+      b2cOnlyRoutes.has(source) &&
+      !(isVestiClient && vestiEnabledB2cRoutes.has(source))
     )
       return false;
-    // Aba escondida manualmente pra esse client (admin, tela /clients —
-    // pedido 11/08/2026: clients sem ERP configurado, por ex., não
-    // precisam ver a aba levando pra uma tela sempre vazia/com erro).
-    if (activeClient?.hiddenNavItems?.includes(item.href)) return false;
-    return true;
-  });
+    return (
+      !activeClient?.hiddenNavItems?.includes(source) &&
+      !activeClient?.hiddenNavItems?.includes(item.href)
+    );
+  };
+  const analyticsNav: NavEntry[] = [
+    { name: "Visão Geral", href: "/dashboard", icon: LayoutDashboard },
+    {
+      name: "ERP",
+      href: "/erp",
+      icon: Store,
+      children: [
+        { name: "Visão Geral", href: "/erp", icon: LayoutDashboard },
+        { name: "Pedidos", href: "/erp/pedidos", icon: ReceiptText },
+        { name: "Clientes", href: "/erp/clientes", icon: Users },
+        { name: "Produtos", href: "/erp/produtos", icon: Package },
+        { name: "Estoque", href: "/erp/estoque", icon: PackageSearch },
+        { name: "Vendedoras e Lojas", href: "/erp/vendedores", icon: Users },
+        { name: "Geografia", href: "/erp/geografia", icon: MapPin },
+      ],
+    },
+    {
+      name: "Performance",
+      href: "/performance",
+      icon: Gauge,
+      children: [
+        { name: "Visão Geral", href: "/performance", icon: LayoutDashboard },
+        {
+          name: "Funil de Conversão",
+          href: "/performance/funil",
+          icon: Filter,
+        },
+        {
+          name: "Novos Clientes",
+          href: "/performance/novos-clientes",
+          icon: UserRoundCheck,
+        },
+        { name: "Recompra", href: "/performance/recompra", icon: RefreshCw },
+        { name: "Cadastros", href: "/performance/cadastros", icon: Users },
+        { name: "Anúncios", href: "/performance/anuncios", icon: Megaphone },
+        {
+          name: "Jornada & Atribuição",
+          href: "/performance/jornada",
+          icon: Route,
+        },
+      ],
+    },
+    {
+      name: "Ecommerce",
+      href: "/ecommerce",
+      icon: ShoppingBag,
+      children: [
+        { name: "Visão Geral", href: "/ecommerce", icon: LayoutDashboard },
+        { name: "Pedidos", href: "/ecommerce/pedidos", icon: ReceiptText },
+        { name: "Cadastros", href: "/ecommerce/cadastros", icon: Users },
+        { name: "Produtos", href: "/ecommerce/produtos", icon: Package },
+        { name: "Estoque", href: "/ecommerce/estoque", icon: PackageSearch },
+        { name: "Vendedores", href: "/ecommerce/vendedores", icon: Users },
+        { name: "Geografia", href: "/ecommerce/geografia", icon: MapPin },
+        {
+          name: "Inteligência de Clientes",
+          href: "/ecommerce/inteligencia-clientes",
+          icon: BarChart3,
+        },
+        {
+          name: "Histórico Mensal",
+          href: "/ecommerce/historico-mensal",
+          icon: CalendarDays,
+        },
+      ],
+    },
+    {
+      name: "WhatsApp",
+      href: "/whatsapp",
+      icon: MessageCircle,
+      children: [
+        { name: "Análise de Atendimento", href: "/whatsapp", icon: BarChart3 },
+        {
+          name: "Conversas",
+          href: "/whatsapp/conversas",
+          icon: MessageSquareText,
+        },
+        { name: "Conexões", href: "/whatsapp/conexoes", icon: PlugZap },
+      ],
+    },
+  ]
+    .map((item) => {
+      const children = item.children?.filter(visibleNav);
+      return {
+        ...item,
+        children,
+        href:
+          item.href === "/performance" && !visibleNav(item) && children?.length
+            ? children[0].href
+            : item.href,
+      };
+    })
+    .filter((item) => {
+      // A group can retain eligible children even when its legacy overview is restricted.
+      if (item.name === "Performance" && item.children?.length) return true;
+      return visibleNav(item);
+    });
 
   const workspaceNav: NavEntry[] = [
-    { name: t("nav.geography", "Geography"), href: "/geography", icon: MapPin },
+    ...[
+      { name: t("nav.daily", "Diário"), href: "/daily", icon: CalendarDays },
+      { name: t("nav.scale", "Escala"), href: "/scale", icon: Scale },
+      { name: "Envios WhatsApp", href: "/whatsapp/envios", icon: Send },
+      {
+        name: "Templates WhatsApp",
+        href: "/whatsapp/templates",
+        icon: FileText,
+      },
+    ].filter(visibleNav),
     {
       name: t("nav.notifications", "Notifications"),
       href: "/notifications",
@@ -1096,97 +1175,112 @@ export function AppLayout({ children }: AppLayoutProps) {
     });
   }
 
-  const NavItem = ({ item }: { item: NavEntry }) => {
+  const renderNavItem = (item: NavEntry, scope: string) => {
+    const navLocation = navigationPath(location);
     const isActive =
-      location === item.href ||
+      navLocation === item.href ||
       (item.href === "/dashboard" && location === "/") ||
-      Boolean(item.children?.some((child) => child.href === location)) ||
+      Boolean(item.children?.some((child) => child.href === navLocation)) ||
       (item.href === "/orquestrador" &&
         location.startsWith("/orquestrador/clientes/")) ||
       (item.href === "/agente-vendas" &&
         location.startsWith("/agente-vendas/"));
+    const expanded = expandedNav[item.href] ?? isActive;
+    const submenuId = `${scope}-submenu-${item.href.replace(/\//g, "-")}`;
     return (
       <div>
-        <Link href={item.href}>
-          <span
+        <div className={`up-nav-row ${isActive ? "is-active" : ""}`}>
+          <Link
+            href={item.href}
+            aria-current={isActive ? "page" : undefined}
             data-testid={`nav-${item.href.replace(/^\//, "").replace(/\//g, "-") || "dashboard"}`}
-            className={`relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${
-              isActive
-                ? "bg-primary/10 text-primary font-medium"
-                : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
-            }`}
+            className="up-nav-link"
           >
-            {isActive && (
-              <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r bg-primary" />
-            )}
-            <item.icon className="h-4 w-4" />
-            {item.name}
-          </span>
-        </Link>
-        {item.children && isActive && (
-          <div className="ml-7 mt-1 space-y-0.5">
-            {item.children.map((child) => {
-              const childActive = location === child.href;
-              return (
-                <Link key={child.href} href={child.href}>
-                  <span
-                    data-testid={`nav-${child.href.replace(/^\//, "").replace(/\//g, "-")}`}
-                    className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs transition-colors ${
-                      childActive
-                        ? "bg-primary/10 text-primary font-medium"
-                        : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
-                    }`}
-                  >
-                    <child.icon className="h-3.5 w-3.5" />
-                    {child.name}
-                  </span>
-                </Link>
-              );
-            })}
+            <item.icon className="h-[18px] w-[18px] shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{item.name}</span>
+          </Link>
+          {item.children && (
+            <button
+              type="button"
+              className="up-nav-toggle"
+              aria-label={`${expanded ? "Recolher" : "Expandir"} ${item.name}`}
+              aria-expanded={expanded}
+              aria-controls={submenuId}
+              onClick={() =>
+                setExpandedNav((previous) => ({
+                  ...previous,
+                  [item.href]: !expanded,
+                }))
+              }
+            >
+              <ChevronDown
+                className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}
+              />
+            </button>
+          )}
+        </div>
+        {item.children && expanded && (
+          <div id={submenuId} className="up-nav-sub">
+            {item.children.map((child) => (
+              <Link
+                key={child.href}
+                href={child.href}
+                aria-current={
+                  navigationPath(location) === child.href ? "page" : undefined
+                }
+                data-testid={`nav-${child.href.replace(/^\//, "").replace(/\//g, "-")}`}
+                className="up-nav-sub-link"
+              >
+                <child.icon className="h-3.5 w-3.5 shrink-0" />
+                {child.name}
+              </Link>
+            ))}
           </div>
         )}
       </div>
     );
   };
 
-  const SidebarContent = () => (
+  const renderSidebarContent = (scope: string) => (
     <>
-      <div className="flex h-16 items-center px-6">
-        <Link href="/dashboard" className="flex items-center">
+      <div className="up-brand">
+        <Link href="/dashboard" className="flex flex-col items-start gap-2">
           <img
-            src="/up-dash-logo.png"
-            alt="Up Dash"
-            className="h-8 w-auto object-contain"
+            src={`${import.meta.env.BASE_URL}brand/up-group.png`}
+            alt="Grupo UP"
+            className="h-[30px] w-auto object-contain"
             draggable={false}
           />
+          <span className="up-brand-sub">
+            UP Dash · Inteligência de negócios
+          </span>
         </Link>
       </div>
 
-      <nav className="flex-1 px-3 py-2 space-y-6 overflow-y-auto">
+      <nav
+        aria-label="Navegação principal"
+        className="up-nav flex-1 space-y-6 overflow-y-auto"
+      >
         <div>
-          <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-            {t("nav.analytics", "Analytics")}
-          </p>
+          <p className="up-nav-label">{t("nav.analytics", "Analytics")}</p>
           <div className="space-y-0.5">
             {analyticsNav.map((item) => (
-              <NavItem key={item.name} item={item} />
+              <div key={item.href}>{renderNavItem(item, scope)}</div>
             ))}
           </div>
         </div>
 
         <div>
-          <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-            {t("nav.workspace", "Workspace")}
-          </p>
+          <p className="up-nav-label">{t("nav.workspace", "Workspace")}</p>
           <div className="space-y-0.5">
             {workspaceNav.map((item) => (
-              <NavItem key={item.name} item={item} />
+              <div key={item.href}>{renderNavItem(item, scope)}</div>
             ))}
           </div>
         </div>
       </nav>
 
-      <div className="border-t border-border px-3 py-3">
+      <div className="up-sidebar-footer up-glass-panel">
         <div className="flex items-center gap-3 px-2 py-1.5">
           <Avatar className="h-9 w-9 bg-primary/15">
             <AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">
@@ -1200,7 +1294,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             <p className="text-xs text-muted-foreground truncate">
               {user?.role === "CLIENT" && clientData
                 ? clientData.name
-                : "UP Dash team"}
+                : "Time Grupo UP"}
             </p>
           </div>
         </div>
@@ -1222,9 +1316,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const renderClientPicker = (mobile = false) => (
     <Select
       value={
-        location === "/overview"
-          ? PLATFORM_PICK
-          : (selectedClientId ?? undefined)
+        location === "/overview" ? PLATFORM_PICK : (selectedClientId ?? "")
       }
       onValueChange={(val) => {
         if (val === PLATFORM_PICK) {
@@ -1241,18 +1333,13 @@ export function AppLayout({ children }: AppLayoutProps) {
         aria-label={t("top.selectClient", "Select a client")}
         className="h-9 bg-card border-border"
       >
-        <SelectValue
-          placeholder={t("top.selectClient", "Select a client")}
-        />
+        <SelectValue placeholder={t("top.selectClient", "Select a client")} />
       </SelectTrigger>
       <SelectContent
         className="max-h-[min(70vh,28rem)]"
         viewportClassName="h-auto max-h-[min(64vh,25rem)] overflow-y-auto overscroll-contain touch-pan-y"
       >
-        <SelectItem
-          value={PLATFORM_PICK}
-          data-testid="client-picker-platform"
-        >
+        <SelectItem value={PLATFORM_PICK} data-testid="client-picker-platform">
           <span className="flex items-center gap-2">
             <Globe2 className="h-3.5 w-3.5 text-primary" />
             {t("top.allClients", "All Clients · Platform")}
@@ -1265,7 +1352,11 @@ export function AppLayout({ children }: AppLayoutProps) {
               <span className="truncate">{client.name}</span>
               {client.commercePlatform && (
                 <Badge
-                  variant={client.commercePlatform === "VESTI" ? "default" : "secondary"}
+                  variant={
+                    client.commercePlatform === "VESTI"
+                      ? "default"
+                      : "secondary"
+                  }
                   className="shrink-0 px-1.5 py-0 text-[10px] font-normal"
                 >
                   {client.commercePlatform}
@@ -1324,116 +1415,76 @@ export function AppLayout({ children }: AppLayoutProps) {
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <aside className="hidden w-60 flex-col border-r border-border bg-sidebar md:flex no-print">
-        <SidebarContent />
+    <div className="up-app flex h-dvh overflow-hidden text-foreground">
+      <a href="#main-content" className="up-skip-link">
+        Ir para o conteúdo
+      </a>
+      <aside className="up-sidebar hidden w-[268px] shrink-0 flex-col md:flex no-print">
+        {renderSidebarContent("desktop")}
       </aside>
 
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-x-2 gap-y-2 border-b border-border bg-background px-4 py-2 sm:h-16 sm:flex-nowrap sm:gap-4 sm:px-6 sm:py-0 no-print">
-          <Sheet>
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="up-topbar flex shrink-0 flex-wrap items-center gap-3 no-print">
+          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" className="md:hidden">
                 <Menu className="h-5 w-5" />
-                <span className="sr-only">Toggle navigation</span>
+                <span className="sr-only">Abrir menu</span>
               </Button>
             </SheetTrigger>
             <SheetContent
               side="left"
-              className="w-64 p-0 bg-sidebar border-border flex flex-col"
+              className="up-sidebar up-mobile-sidebar w-[280px] max-w-[86vw] p-0 border-border flex flex-col"
             >
-              <SidebarContent />
+              <SheetTitle className="sr-only">Menu do dashboard</SheetTitle>
+              <SheetDescription className="sr-only">
+                Navegue pelas áreas da sua operação.
+              </SheetDescription>
+              {renderSidebarContent("mobile")}
             </SheetContent>
           </Sheet>
 
-          <div className="min-w-0">
-            <h1 className="text-lg sm:text-xl font-semibold leading-tight truncate">
-              {titleText}
-            </h1>
-            {subtitleText && (
-              <p className="text-xs text-muted-foreground truncate">
-                {subtitleText}
-              </p>
-            )}
+          <div className="up-breadcrumb hidden min-w-0 items-center gap-2 sm:flex">
+            <span>
+              {breadcrumbArchitecture?.group ??
+                (location.startsWith("/erp")
+                  ? "ERP"
+                  : location.startsWith("/performance")
+                    ? "Performance"
+                    : location.startsWith("/whatsapp")
+                      ? "WhatsApp"
+                      : t("nav.analytics", "Painel"))}
+            </span>
+            <ChevronRight className="h-3 w-3 shrink-0" />
+            <span className="truncate text-foreground">{titleText}</span>
           </div>
 
           {/* Search trigger — opens the command palette */}
-          <div className="hidden lg:flex flex-1 max-w-md ml-4">
+          <div className="up-search hidden min-w-0 flex-1 xl:flex">
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
               data-testid="search-trigger"
-              className="relative w-full h-9 bg-card border border-border rounded-md pl-10 pr-12 text-sm text-left text-muted-foreground hover:bg-accent/40 focus:outline-none focus:ring-1 focus:ring-primary"
+              className="relative h-9 w-full rounded-xl border border-border bg-card/30 pl-10 pr-12 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-primary"
             >
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <span className="truncate">
                 {t("top.search", "Search SKUs, categories, customers")}
               </span>
               <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono bg-muted border border-border rounded text-muted-foreground">
-                /
+                ⌘K
               </kbd>
             </button>
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex min-w-0 items-center gap-2">
             {user?.role === "ADMIN" && (
-              <div className="hidden sm:block w-32">
-                <Select
-                  value={selectedDashboardMode}
-                  onValueChange={(val) => {
-                    const mode = val === "B2C" ? "B2C" : "B2B";
-                    setSelectedDashboardMode(mode);
-                    if (
-                      mode === "B2C" &&
-                      (location.startsWith("/whatsapp") ||
-                        location.startsWith("/sellers") ||
-                        location === "/utm")
-                    ) {
-                      navigate("/dashboard");
-                    }
-                    if (
-                      mode === "B2B" &&
-                      (location === "/daily" || location === "/scale")
-                    ) {
-                      navigate("/dashboard");
-                    }
-                  }}
-                >
-                  <SelectTrigger
-                    data-testid="dashboard-mode-picker"
-                    className="h-9 bg-card border-border"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="B2B">
-                      <span className="flex items-center gap-2">
-                        <Building2 className="h-3.5 w-3.5 text-primary" />
-                        B2B
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="B2C">
-                      <span className="flex items-center gap-2">
-                        <Store className="h-3.5 w-3.5 text-primary" />
-                        B2C
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {user?.role === "ADMIN" && (
-              <div className="hidden sm:block w-52">
+              <div className="hidden sm:block w-44 lg:w-52">
                 {renderClientPicker()}
               </div>
             )}
 
-            {meta.hasDateRange && (
-              <DateRangePicker value={dateRange} onChange={setDateRange} />
-            )}
-
-            <div className="hidden sm:block w-24">
+            <div className="hidden lg:block w-24">
               <Select
                 value={language}
                 onValueChange={(value) => setLanguage(value as typeof language)}
@@ -1461,7 +1512,16 @@ export function AppLayout({ children }: AppLayoutProps) {
             <Button
               variant="ghost"
               size="icon"
-              className="h-9 w-9 hover:bg-accent"
+              className="xl:hidden"
+              onClick={() => setSearchOpen(true)}
+              aria-label={t("top.search", "Buscar")}
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden lg:inline-flex h-9 w-9 hover:bg-accent"
               onClick={() => setShortcutsOpen(true)}
               aria-label={t("top.keyboardShortcuts", "Keyboard shortcuts")}
               data-testid="open-shortcuts"
@@ -1538,52 +1598,164 @@ export function AppLayout({ children }: AppLayoutProps) {
           )}
         </header>
 
-        {meta.hasFilterBar && <FilterBar />}
-
-        <main className="flex-1 overflow-y-auto bg-background p-4 sm:p-6 md:p-8 print-area">
-          {meta.requiresClient &&
-          user?.role === "ADMIN" &&
-          !selectedClientId ? (
-            <div
-              className="mx-auto flex max-w-xl flex-col items-center justify-center gap-4 rounded-2xl border border-dashed bg-card/50 p-10 text-center"
-              data-testid="empty-no-client-selected"
-            >
-              <div className="rounded-full bg-muted p-3">
-                <Building2 className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <div className="space-y-1">
-                <h2 className="text-lg font-semibold">
-                  {t(
-                    "empty.selectClient.title",
-                    "Select a {mode} client to continue",
-                  ).replace("{mode}", selectedDashboardMode)}
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  {t(
-                    "empty.selectClient.body",
-                    "This page shows data for one client at a time. Pick a client from the top selector or open the platform overview to see every brand.",
-                  )}
-                </p>
-              </div>
-              <div className="flex flex-wrap justify-center gap-2">
-                <Button
-                  onClick={() => navigate("/overview")}
-                  data-testid="link-go-to-overview"
-                >
-                  {t("empty.selectClient.overview", "Go to platform overview")}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => navigate("/clients")}
-                  data-testid="link-go-to-clients"
-                >
-                  {t("empty.selectClient.clients", "Browse all brands")}
-                </Button>
-              </div>
+        <main
+          id="main-content"
+          className="up-main flex-1 overflow-y-auto print-area"
+        >
+          <section
+            className="up-page-head no-print"
+            aria-label="Contexto do dashboard"
+          >
+            <div className="min-w-0">
+              <p className="up-eyebrow">
+                <span className="up-status-dot" />
+                {activeClient?.name ?? "Grupo UP"} ·{" "}
+                {effectiveDashboardMode ?? selectedDashboardMode}
+              </p>
+              <h1>
+                {titleText}
+                {(location === "/" || location === "/dashboard") && (
+                  <span className="up-display up-display-accent">
+                    {" "}
+                    de performance
+                  </span>
+                )}
+              </h1>
+              {subtitleText && (
+                <p className="up-page-subtitle">{subtitleText}</p>
+              )}
             </div>
-          ) : (
-            children
+            {meta.hasDateRange && (
+              <DateRangePicker value={dateRange} onChange={setDateRange} />
+            )}
+          </section>
+          {(LOCAL_UI_PREVIEW || DESIGN_DEMO) && (
+            <p className="up-preview-notice no-print">
+              Prévia visual · dados de demonstração
+            </p>
           )}
+          {(user?.role === "ADMIN" ||
+            meta.hasDateRange ||
+            meta.hasFilterBar) && (
+            <div className="up-control-panel up-glass-panel no-print">
+              <div className="up-operation-row">
+                {user?.role === "ADMIN" && (
+                  <div
+                    className="up-segment"
+                    role="group"
+                    aria-label="Operação"
+                  >
+                    {(["B2B", "B2C"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        aria-pressed={selectedDashboardMode === mode}
+                        data-testid={`dashboard-mode-${mode.toLowerCase()}`}
+                        onClick={() => {
+                          setSelectedDashboardMode(mode);
+                          if (
+                            (mode === "B2C" && isB2BOnlyRoute(location)) ||
+                            (mode === "B2B" && b2cOnlyRoutes.has(location))
+                          )
+                            navigate("/dashboard");
+                        }}
+                      >
+                        {mode === "B2B" ? "Atacado · B2B" : "Varejo · B2C"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {meta.hasDateRange && (
+                  <div
+                    className="up-period-chips"
+                    role="group"
+                    aria-label="Períodos rápidos"
+                  >
+                    {[7, 30, 90].map((days) => (
+                      <button
+                        key={days}
+                        className="up-period-chip"
+                        type="button"
+                        aria-pressed={
+                          differenceInCalendarDays(
+                            dateRange.to,
+                            dateRange.from,
+                          ) +
+                            1 ===
+                            days &&
+                          differenceInCalendarDays(new Date(), dateRange.to) ===
+                            0
+                        }
+                        onClick={() => {
+                          const today = startOfDay(new Date());
+                          setDateRange({
+                            from: subDays(today, days - 1),
+                            to: today,
+                          });
+                        }}
+                      >
+                        {days}{" "}
+                        {language === "pt"
+                          ? "dias"
+                          : language === "ko"
+                            ? "일"
+                            : "days"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {meta.hasFilterBar && <FilterBar />}
+            </div>
+          )}
+          <div className="up-page-content">
+            {meta.requiresClient &&
+            user?.role === "ADMIN" &&
+            !selectedClientId ? (
+              <div
+                className="mx-auto flex max-w-xl flex-col items-center justify-center gap-4 rounded-2xl border border-dashed bg-card/50 p-10 text-center"
+                data-testid="empty-no-client-selected"
+              >
+                <div className="rounded-full bg-muted p-3">
+                  <Building2 className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <div className="space-y-1">
+                  <h2 className="text-lg font-semibold">
+                    {t(
+                      "empty.selectClient.title",
+                      "Select a {mode} client to continue",
+                    ).replace("{mode}", selectedDashboardMode)}
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    {t(
+                      "empty.selectClient.body",
+                      "This page shows data for one client at a time. Pick a client from the top selector or open the platform overview to see every brand.",
+                    )}
+                  </p>
+                </div>
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button
+                    onClick={() => navigate("/overview")}
+                    data-testid="link-go-to-overview"
+                  >
+                    {t(
+                      "empty.selectClient.overview",
+                      "Go to platform overview",
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate("/clients")}
+                    data-testid="link-go-to-clients"
+                  >
+                    {t("empty.selectClient.clients", "Browse all brands")}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              children
+            )}
+          </div>
         </main>
       </div>
 

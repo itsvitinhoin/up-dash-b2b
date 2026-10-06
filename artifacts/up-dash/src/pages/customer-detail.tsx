@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
@@ -410,17 +411,7 @@ function MetricCard({
   value: string;
   icon: React.ElementType;
 }) {
-  return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-          {label}
-        </p>
-        <Icon className="h-4 w-4 text-primary" />
-      </div>
-      <p className="mt-2 text-base font-semibold tabular-nums leading-tight break-words">{value}</p>
-    </Card>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} />);
 }
 
 function UpzeroTimelineSection({
@@ -898,14 +889,8 @@ export default function CustomerDetailPage() {
                   Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)
                 ) : (
                   <>
-                    <div>
-                      <p className="text-xs text-muted-foreground font-mono uppercase">Total Spent</p>
-                      <p className="text-lg font-bold">{formatCurrency(customer?.totalSpent ?? 0)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground font-mono uppercase">Orders</p>
-                      <p className="text-lg font-bold">{formatNumber(customer?.totalOrders ?? 0)}</p>
-                    </div>
+                    <GlassMetricCard  label="Total Spent" value={<>{formatCurrency(customer?.totalSpent ?? 0)}</>}  />
+                    <GlassMetricCard  label="Orders" value={<>{formatNumber(customer?.totalOrders ?? 0)}</>}  />
                     <div>
                       <p className="text-xs text-muted-foreground font-mono uppercase">Member Since</p>
                       <p className="text-sm font-semibold">
@@ -965,7 +950,7 @@ export default function CustomerDetailPage() {
           <CardHeader className="pb-0">
             <div className="flex gap-1 border-b border-border -mx-6 px-6 pb-0">
               {TABS.map((tab) => (
-                <button
+                <Button variant="outline" size="sm"
                   key={tab.key}
                   onClick={() => setActiveTab(tab.key)}
                   className={`pb-3 px-1 mr-4 text-sm font-medium border-b-2 transition-colors ${
@@ -981,7 +966,7 @@ export default function CustomerDetailPage() {
                       {tab.count}
                     </span>
                   )}
-                </button>
+                </Button>
               ))}
             </div>
           </CardHeader>

@@ -1,3 +1,6 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
+import { MetricSection } from "@/components/metric-section";
+import { RegistrationConversionCard } from "@/components/registration-conversion-card";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearch, useLocation } from "wouter";
 import { format } from "date-fns";
@@ -71,7 +74,7 @@ const STATUS_DOT: Record<string, string> = {
   REJECTED: "bg-red-500",
 };
 
-const SOURCE_COLORS = ["#6366f1", "#22d3ee", "#f59e0b", "#10b981", "#f43f5e", "#8b5cf6", "#ec4899", "#14b8a6"];
+const SOURCE_COLORS = ["#5b8dff", "#afc4ff", "#f5b94a", "#34d399", "#ff6275", "#5b8dff", "#ff6275", "#34d399"];
 
 function readQueryParam(search: string, key: string): string {
   const trimmed = search.startsWith("?") ? search.slice(1) : search;
@@ -95,7 +98,7 @@ function DeltaBadge({ pct }: { pct: number | null }) {
   );
 }
 
-function SummaryKpiCard({
+export function SummaryKpiCard({
   label, value, prevValue, deltaRaw, icon: Icon, loading,
 }: {
   label: string;
@@ -105,35 +108,13 @@ function SummaryKpiCard({
   icon: React.ElementType;
   loading: boolean;
 }) {
-  return (
-    <div className="flex items-start gap-3 p-4 bg-card border border-border rounded-xl">
-      <div className="p-2 bg-primary/10 rounded-lg mt-0.5">
-        <Icon className="h-4 w-4 text-primary" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground truncate">{label}</p>
-        {loading ? (
-          <Skeleton className="h-6 w-20 mt-1" />
-        ) : (
-          <p className="text-xl font-bold tabular-nums leading-tight">{value}</p>
-        )}
-        {!loading && (deltaRaw != null || prevValue) && (
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <DeltaBadge pct={deltaRaw ?? null} />
-            {prevValue && (
-              <span className="text-[10px] text-muted-foreground">prev {prevValue}</span>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} loading={loading} change={deltaRaw ?? null} sub={prevValue ? [{label:"Período anterior",value:prevValue}] : []} />);
 }
 
 type ChartTab = "timeline" | "state" | "source";
 type CustomerSortKey = "totalSpent" | "totalOrders" | "createdAt" | "firstPurchaseAt" | "lastPurchaseAt" | "name";
 
-export default function CustomersPage() {
+export default function CustomersPage({organization}: {organization?: "registrations"} = {}) {
   const { selectedClientId, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const locationSearch = useSearch();
@@ -392,7 +373,63 @@ export default function CustomersPage() {
       </div>
 
       {/* KPI strip */}
-      <motion.div variants={cardVariants}>
+      {organization === "registrations" ? (<div className="space-y-6"><MetricSection title="CADASTROS" columns={4}><SummaryKpiCard
+            label="Registrations"
+            value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.totalRegistrations) : undefined}
+            deltaRaw={delta(kpis?.totalRegistrations, prevKpis?.totalRegistrations)}
+            icon={Users}
+            loading={summaryLoading}
+          /><SummaryKpiCard
+            label="Approved"
+            value={kpis ? formatNumber(kpis.approvedRegistrations) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.approvedRegistrations) : undefined}
+            deltaRaw={delta(kpis?.approvedRegistrations, prevKpis?.approvedRegistrations)}
+            icon={UserCheck}
+            loading={summaryLoading}
+          /><SummaryKpiCard
+            label="Approval Rate"
+            value={kpis ? `${kpis.approvalRatePct.toFixed(1)}%` : "—"}
+            prevValue={prevKpis ? `${prevKpis.approvalRatePct.toFixed(1)}%` : undefined}
+            deltaRaw={delta(kpis?.approvalRatePct, prevKpis?.approvalRatePct)}
+            icon={TrendingUp}
+            loading={summaryLoading}
+          /><RegistrationConversionCard /></MetricSection><MetricSection title="BASE DE CLIENTES" columns={5}><SummaryKpiCard
+            label="Pending"
+            value={kpis ? formatNumber(kpis.pendingRegistrations) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.pendingRegistrations) : undefined}
+            deltaRaw={delta(kpis?.pendingRegistrations, prevKpis?.pendingRegistrations)}
+            icon={Clock}
+            loading={summaryLoading}
+          /><SummaryKpiCard
+            label="Rejected"
+            value={kpis ? formatNumber(kpis.rejectedRegistrations) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.rejectedRegistrations) : undefined}
+            deltaRaw={delta(kpis?.rejectedRegistrations, prevKpis?.rejectedRegistrations)}
+            icon={UserX}
+            loading={summaryLoading}
+          /><SummaryKpiCard
+            label="Total Buyers"
+            value={kpis ? formatNumber(kpis.totalBuyers) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.totalBuyers) : undefined}
+            deltaRaw={delta(kpis?.totalBuyers, prevKpis?.totalBuyers)}
+            icon={Users}
+            loading={summaryLoading}
+          /><SummaryKpiCard
+            label="Approved No Purchase"
+            value={kpis ? formatNumber(kpis.customersWithoutPurchase) : "—"}
+            prevValue={prevKpis ? formatNumber(prevKpis.customersWithoutPurchase) : undefined}
+            deltaRaw={delta(kpis?.customersWithoutPurchase, prevKpis?.customersWithoutPurchase)}
+            icon={UserX}
+            loading={summaryLoading}
+          /><SummaryKpiCard
+            label="Avg Days to 1st"
+            value={kpis?.avgTimeToFirstPurchaseDays != null ? `${kpis.avgTimeToFirstPurchaseDays}d` : "—"}
+            prevValue={prevKpis?.avgTimeToFirstPurchaseDays != null ? `${prevKpis.avgTimeToFirstPurchaseDays}d` : undefined}
+            deltaRaw={delta(kpis?.avgTimeToFirstPurchaseDays ?? null, prevKpis?.avgTimeToFirstPurchaseDays ?? null)}
+            icon={Clock}
+            loading={summaryLoading}
+          /></MetricSection></div>) : (<motion.div variants={cardVariants}>
         <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
           <SummaryKpiCard
             label="Registrations"
@@ -459,7 +496,7 @@ export default function CustomersPage() {
             loading={summaryLoading}
           />
         </div>
-      </motion.div>
+      </motion.div>)}
 
       {/* Chart card with tabs */}
       <motion.div variants={cardVariants}>
@@ -469,7 +506,7 @@ export default function CustomersPage() {
               <CardTitle className="text-sm font-semibold">Registration Analytics</CardTitle>
               <div className="flex gap-1 bg-muted/60 p-1 rounded-lg">
                 {CHART_TABS.map((t) => (
-                  <button
+                  <Button variant="ghost" size="sm"
                     key={t.key}
                     onClick={() => setChartTab(t.key)}
                     className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
@@ -480,7 +517,7 @@ export default function CustomersPage() {
                   >
                     <t.icon className="h-3.5 w-3.5" />
                     {t.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -494,12 +531,12 @@ export default function CustomersPage() {
                   <AreaChart data={summary?.registrationsOverTime ?? []}>
                     <defs>
                       <linearGradient id="regGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                        <stop offset="5%" stopColor="#5b8dff" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#5b8dff" stopOpacity={0} />
                       </linearGradient>
                       <linearGradient id="appGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                        <stop offset="5%" stopColor="#34d399" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
@@ -523,7 +560,7 @@ export default function CustomersPage() {
                       type="monotone"
                       dataKey="registrations"
                       name="Registrations"
-                      stroke="#6366f1"
+                      stroke="#5b8dff"
                       fill="url(#regGrad)"
                       strokeWidth={2}
                       dot={false}
@@ -532,7 +569,7 @@ export default function CustomersPage() {
                       type="monotone"
                       dataKey="approved"
                       name="Approved"
-                      stroke="#10b981"
+                      stroke="#34d399"
                       fill="url(#appGrad)"
                       strokeWidth={2}
                       dot={false}
@@ -556,7 +593,7 @@ export default function CustomersPage() {
                         fontSize: "12px",
                       }}
                     />
-                    <Bar dataKey="count" name="Customers" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="count" name="Customers" fill="#5b8dff" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -717,7 +754,7 @@ export default function CustomersPage() {
                   <Sparkles className="h-3 w-3" />
                   UP Insight · CRM · {insight?.source === "ai" ? "AI" : "Auto"}
                 </span>
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
@@ -725,7 +762,7 @@ export default function CustomersPage() {
                   data-testid="customers-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
               {insightLoading || !insight ? (
                 <>

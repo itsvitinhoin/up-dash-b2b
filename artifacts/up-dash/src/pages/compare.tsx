@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
@@ -35,7 +36,7 @@ import {
   YAxis,
 } from "recharts";
 
-const PALETTE = ["#7c5cff", "#22c55e", "#fb7185", "#38bdf8"];
+const PALETTE = ["#5b8dff", "#34d399", "#ff6275", "#afc4ff"];
 const MAX_BRANDS = 4;
 
 interface BrandResult {
@@ -113,7 +114,7 @@ export default function ComparePage() {
               const isOn = selected.includes(client.id);
               const reachedMax = !isOn && selected.length >= MAX_BRANDS;
               return (
-                <button
+                <Button variant="outline" size="sm"
                   key={client.id}
                   type="button"
                   disabled={reachedMax}
@@ -138,7 +139,7 @@ export default function ComparePage() {
                     style={{ backgroundColor: isOn ? PALETTE[selected.indexOf(client.id) % PALETTE.length] : "transparent", border: isOn ? "" : "1px solid hsl(var(--border))" }}
                   />
                   {client.name}
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -232,14 +233,14 @@ function BrandKpiCard({ clientId, name, color, dateRange, variants, onRemove }: 
             />
             <p className="text-sm font-semibold truncate" title={name}>{name}</p>
           </div>
-          <button
+          <Button variant="ghost" size="sm"
             type="button"
             onClick={onRemove}
             className="text-muted-foreground hover:text-foreground"
             aria-label={`Remove ${name}`}
           >
             <X className="h-3.5 w-3.5" />
-          </button>
+          </Button>
         </div>
         <p className="text-2xl font-semibold tabular-nums">
           <CountUp value={data?.kpis.revenue ?? 0} format={(v) => formatCurrencySmart(v)} />
@@ -261,12 +262,7 @@ function BrandKpiCard({ clientId, name, color, dateRange, variants, onRemove }: 
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="font-medium tabular-nums">{value}</p>
-    </div>
-  );
+  return (<GlassMetricCard label={label} value={value} />);
 }
 
 interface CompareChartProps {

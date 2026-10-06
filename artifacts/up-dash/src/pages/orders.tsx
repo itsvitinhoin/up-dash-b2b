@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
@@ -315,7 +316,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? "Não cancelados" : "Valor solicitado" }]}
               sparkValues={[]}
-              sparkColor="#60a5fa"
+              sparkColor="#afc4ff"
               isLoading={false}
               testId="orders-kpi-requested-revenue"
               valueAccent
@@ -344,7 +345,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? "Qtd faturada" : "Qtd solicitada" }]}
               sparkValues={[]}
-              sparkColor="#a78bfa"
+              sparkColor="#5b8dff"
               isLoading={false}
               testId="orders-kpi-requested-quantity"
             />
@@ -358,7 +359,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? "Qtd paga" : "Qtd atendida" }]}
               sparkValues={[]}
-              sparkColor="#f59e0b"
+              sparkColor="#f5b94a"
               isLoading={false}
               testId="orders-kpi-fulfilled-quantity"
             />
@@ -372,7 +373,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Cálculo", value: isB2C ? "Pago / faturado" : "Atendido / solicitado" }]}
               sparkValues={[]}
-              sparkColor="#22d3ee"
+              sparkColor="#afc4ff"
               ringValue={data?.kpis.fulfilledPct ?? 0}
               isLoading={false}
               testId="orders-kpi-fulfilled-pct"
@@ -387,7 +388,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Período", value: "Pedidos criados" }]}
               sparkValues={[]}
-              sparkColor="#38bdf8"
+              sparkColor="#afc4ff"
               isLoading={false}
               testId="orders-kpi-orders"
             />
@@ -401,7 +402,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Regra", value: "1 pedido no período" }]}
               sparkValues={[]}
-              sparkColor="#84cc16"
+              sparkColor="#34d399"
               isLoading={false}
               testId="orders-kpi-new-customers"
             />
@@ -415,7 +416,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Regra", value: "2+ pedidos no período" }]}
               sparkValues={[]}
-              sparkColor="#c084fc"
+              sparkColor="#5b8dff"
               isLoading={false}
               testId="orders-kpi-returning-customers"
             />
@@ -429,7 +430,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Cálculo", value: "Recorrentes / compradores" }]}
               sparkValues={[]}
-              sparkColor="#fb7185"
+              sparkColor="#ff6275"
               ringValue={data?.kpis.retentionPct ?? 0}
               isLoading={false}
               testId="orders-kpi-retention-pct"
@@ -444,7 +445,7 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? `${formatNumber(data?.kpis.sessions ?? 0)} sessões` : `${formatNumber(data?.kpis.approvedLeads ?? 0)} aprovados` }]}
               sparkValues={[]}
-              sparkColor="#fb923c"
+              sparkColor="#f5b94a"
               ringValue={data?.kpis.conversionPct ?? 0}
               isLoading={false}
               testId="orders-kpi-conversion-pct"
@@ -604,22 +605,10 @@ export default function OrdersPage() {
           ) : (
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Valor faturado" : "Valor solicitado"}</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.amount)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Valor pago" : "Valor atendido"}</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.fulfilledAmount)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Peças faturadas" : "Peças solicitadas"}</p>
-                  <p className="text-lg font-semibold">{formatNumber(details.order.requestedQuantity)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Peças pagas" : "Peças atendidas"}</p>
-                  <p className="text-lg font-semibold">{formatNumber(details.order.fulfilledQuantity)}</p>
-                </div>
+                <GlassMetricCard  label={isB2C ? "Valor faturado" : "Valor solicitado"} value={<>{formatCurrency(details.order.amount)}</>}  />
+                <GlassMetricCard  label={isB2C ? "Valor pago" : "Valor atendido"} value={<>{formatCurrency(details.order.fulfilledAmount)}</>}  />
+                <GlassMetricCard  label={isB2C ? "Peças faturadas" : "Peças solicitadas"} value={<>{formatNumber(details.order.requestedQuantity)}</>}  />
+                <GlassMetricCard  label={isB2C ? "Peças pagas" : "Peças atendidas"} value={<>{formatNumber(details.order.fulfilledQuantity)}</>}  />
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">
@@ -669,18 +658,9 @@ export default function OrdersPage() {
                         </div>
                       </div>
                       <div className="grid grid-cols-3 gap-4 text-right text-sm sm:min-w-[280px]">
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Faturada" : "Solicitada"}</p>
-                          <p className="font-semibold tabular-nums">{formatNumber(item.quantity)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Paga" : "Atendida"}</p>
-                          <p className="font-semibold tabular-nums">{formatNumber(item.fulfilledQuantity)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor</p>
-                          <p className="font-semibold tabular-nums">{formatCurrency(item.priceAtSale)}</p>
-                        </div>
+                        <GlassMetricCard  label={isB2C ? "Faturada" : "Solicitada"} value={<>{formatNumber(item.quantity)}</>}  />
+                        <GlassMetricCard  label={isB2C ? "Paga" : "Atendida"} value={<>{formatNumber(item.fulfilledQuantity)}</>}  />
+                        <GlassMetricCard  label="Valor" value={<>{formatCurrency(item.priceAtSale)}</>}  />
                       </div>
                     </div>
                   ))}

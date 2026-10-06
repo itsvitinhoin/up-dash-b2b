@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
@@ -173,81 +174,15 @@ export default function SellersPage() {
       {/* Hero KPI strip */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <motion.div variants={cardVariants}>
-          <Card className="p-5 bg-gradient-to-br from-primary/[0.04] via-card to-card border-border relative overflow-hidden">
-            <div
-              aria-hidden
-              className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-primary via-chart-3 to-chart-1 opacity-80"
-            />
-            <div className="flex items-center gap-2 mb-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 text-primary">
-                <DollarSign className="h-3.5 w-3.5" />
-              </div>
-              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Total Revenue
-              </span>
-            </div>
-            {isLoading ? (
-              <Skeleton className="h-8 w-32" />
-            ) : (
-              <div className="text-2xl font-semibold tracking-tight tabular-nums bg-gradient-to-br from-foreground via-foreground to-primary bg-clip-text text-transparent">
-                <CountUp value={totalRevenue} format={(v) => formatCurrencySmart(v)} />
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">
-              Across top {activeSellers} sellers
-            </p>
-          </Card>
+          <GlassMetricCard label="Total Revenue" value={totalRevenue} format={formatCurrencySmart} icon={DollarSign} loading={isLoading} footer={<p className="text-xs text-muted-foreground">Across top {activeSellers} sellers</p>} />
         </motion.div>
 
         <motion.div variants={cardVariants}>
-          <Card className="p-5 border-border">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-500/15 text-violet-400">
-                <Users className="h-3.5 w-3.5" />
-              </div>
-              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Active Sellers
-              </span>
-            </div>
-            {isLoading ? (
-              <Skeleton className="h-8 w-16" />
-            ) : (
-              <div className="text-2xl font-semibold tracking-tight tabular-nums">
-                <CountUp value={activeSellers} format={(v) => formatNumber(Math.round(v))} />
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">
-              Ranked by revenue contribution
-            </p>
-          </Card>
+          <GlassMetricCard label="Active Sellers" value={activeSellers} icon={Users} loading={isLoading} footer={<p className="text-xs text-muted-foreground">Ranked by revenue contribution</p>} />
         </motion.div>
 
         <motion.div variants={cardVariants}>
-          <Card className="p-5 border-border">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-amber-500/15 text-amber-400">
-                <Crown className="h-3.5 w-3.5" />
-              </div>
-              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Top Seller
-              </span>
-            </div>
-            {isLoading ? (
-              <Skeleton className="h-8 w-32" />
-            ) : topSeller ? (
-              <>
-                <div className="text-base font-semibold tracking-tight truncate" title={topSeller.name}>
-                  {topSeller.name}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-                  {formatCurrency(topSeller.totalRevenue)} ·{" "}
-                  {formatNumber(topSeller.totalOrders)} orders
-                </p>
-              </>
-            ) : (
-              <div className="text-sm text-muted-foreground">—</div>
-            )}
-          </Card>
+          <GlassMetricCard label="Top Seller" value={topSeller?.name ?? "—"} icon={Crown} loading={isLoading} footer={topSeller ? <p className="text-xs text-muted-foreground">{formatCurrency(topSeller.totalRevenue)} · {formatNumber(topSeller.totalOrders)} orders</p> : undefined} />
         </motion.div>
       </div>
 
@@ -263,7 +198,7 @@ export default function SellersPage() {
                   <Sparkles className="h-3 w-3" />
                   UP Insight · Sellers · {insight?.source === "ai" ? "AI" : "Auto"}
                 </span>
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
@@ -271,7 +206,7 @@ export default function SellersPage() {
                   data-testid="sellers-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
               {insightLoading || !insight ? (
                 <>

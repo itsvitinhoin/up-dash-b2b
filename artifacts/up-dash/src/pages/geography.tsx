@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
@@ -405,7 +406,7 @@ export default function GeographyPage() {
                     {view === "state" ? "All states" : "All cities"}
                   </h3>
                   <div className="inline-flex rounded-md border border-border bg-card/60 p-0.5 text-[11px] font-mono uppercase tracking-wider">
-                    <button
+                    <Button variant="ghost" size="sm"
                       type="button"
                       onClick={() => setView("state")}
                       data-testid="geo-toggle-state"
@@ -416,8 +417,8 @@ export default function GeographyPage() {
                       }`}
                     >
                       State
-                    </button>
-                    <button
+                    </Button>
+                    <Button variant="ghost" size="sm"
                       type="button"
                       onClick={() => setView("city")}
                       data-testid="geo-toggle-city"
@@ -428,7 +429,7 @@ export default function GeographyPage() {
                       }`}
                     >
                       City
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -564,37 +565,5 @@ function HeroStat({
   reduced: boolean;
 }) {
   const accent = tone === "hot" ? "hsl(0 84% 60%)" : color;
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, delay: reduced ? 0 : delay, ease: [0.22, 1, 0.36, 1] }}
-      className="rounded-lg border border-border/60 bg-card/70 p-3 backdrop-blur"
-    >
-      <div className="flex items-center gap-2">
-        <span
-          className="flex h-7 w-7 items-center justify-center rounded-md ring-1 ring-border/40"
-          style={{
-            background:
-              tone === "hot"
-                ? "hsl(0 84% 60% / 0.14)"
-                : `${color.replace(")", " / 0.15)")}`,
-          }}
-        >
-          <Icon className="h-3.5 w-3.5" style={{ color: accent }} />
-        </span>
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium truncate">
-          {label}
-        </span>
-      </div>
-      <CountUp
-        value={value}
-        format={format ?? formatNumber}
-        duration={1100}
-        className={`mt-1.5 block text-xl font-bold tabular-nums ${
-          tone === "hot" ? "text-foreground" : "text-foreground"
-        }`}
-      />
-    </motion.div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={format ?? formatNumber} />);
 }

@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
@@ -405,32 +406,16 @@ export default function ProductsPage() {
             ))
           ) : (
             <>
-              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card" data-testid="kpi-sales-power">
-                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Sales Power</span>
-                <span className="text-2xl font-bold tabular-nums">{formatCurrency(summary?.salesPower ?? 0)}</span>
-                <span className="text-xs text-muted-foreground">Revenue / active SKU / day</span>
-              </div>
-              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card">
-                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">vs Prior Period</span>
-                {summary?.salesPowerChangePct != null ? (
+              <GlassMetricCard testId="kpi-sales-power" label="Sales Power" value={<>{formatCurrency(summary?.salesPower ?? 0)}</>} footer={<div className="space-y-2"><span className="text-xs text-muted-foreground">Revenue / active SKU / day</span></div>} />
+              <GlassMetricCard  label="vs Prior Period" value={summary?.salesPowerChangePct != null ? (
                   <span className={`text-2xl font-bold tabular-nums ${summary.salesPowerChangePct >= 0 ? "text-emerald-500" : "text-red-500"}`}>
                     {summary.salesPowerChangePct >= 0 ? "+" : ""}{summary.salesPowerChangePct.toFixed(1)}%
                   </span>
                 ) : (
                   <span className="text-2xl font-bold text-muted-foreground">—</span>
-                )}
-                <span className="text-xs text-muted-foreground">Sales Power change</span>
-              </div>
-              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card">
-                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Active SKUs</span>
-                <span className="text-2xl font-bold tabular-nums">{formatNumber(summary?.activeSkus ?? 0)}</span>
-                <span className="text-xs text-muted-foreground">SKUs with sales in period</span>
-              </div>
-              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card">
-                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Period</span>
-                <span className="text-2xl font-bold tabular-nums">{summary?.periodDays ?? 30}d</span>
-                <span className="text-xs text-muted-foreground">Days in analysis window</span>
-              </div>
+                )} footer={<div className="space-y-2"><span className="text-xs text-muted-foreground">Sales Power change</span></div>} />
+              <GlassMetricCard  label="Active SKUs" value={<>{formatNumber(summary?.activeSkus ?? 0)}</>} footer={<div className="space-y-2"><span className="text-xs text-muted-foreground">SKUs with sales in period</span></div>} />
+              <GlassMetricCard  label="Period" value={<>{summary?.periodDays ?? 30}d</>} footer={<div className="space-y-2"><span className="text-xs text-muted-foreground">Days in analysis window</span></div>} />
             </>
           )}
         </div>
@@ -448,7 +433,7 @@ export default function ProductsPage() {
                   <Sparkles className="h-3 w-3" />
                   UP Insight · Catalog · {insight?.source === "ai" ? "AI" : "Auto"}
                 </span>
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
@@ -456,7 +441,7 @@ export default function ProductsPage() {
                   data-testid="products-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
               {insightLoading || insightFetching || !insight ? (
                 <>
@@ -738,18 +723,9 @@ export default function ProductsPage() {
                 </DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="rounded-md border border-border bg-card p-3">
-                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Vendidos</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatNumber(selectedProduct.totalSold)}</p>
-                </div>
-                <div className="rounded-md border border-border bg-card p-3">
-                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Receita</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatCurrency(selectedProduct.totalRevenue)}</p>
-                </div>
-                <div className="rounded-md border border-border bg-card p-3">
-                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Estoque</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatNumber(selectedProduct.stock)}</p>
-                </div>
+                <GlassMetricCard  label="Vendidos" value={<>{formatNumber(selectedProduct.totalSold)}</>}  />
+                <GlassMetricCard  label="Receita" value={<>{formatCurrency(selectedProduct.totalRevenue)}</>}  />
+                <GlassMetricCard  label="Estoque" value={<>{formatNumber(selectedProduct.stock)}</>}  />
                 <div className="rounded-md border border-border bg-card p-3">
                   <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Grade</p>
                   <Badge

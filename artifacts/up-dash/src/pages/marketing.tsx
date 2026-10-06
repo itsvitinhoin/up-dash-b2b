@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState, useEffect } from "react";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
@@ -142,9 +143,9 @@ function joinSeries(
 }
 
 const PLATFORM_COLORS: Record<string, string> = {
-  META: "#1877F2",
-  GOOGLE: "#EA4335",
-  TIKTOK: "#25F4EE",
+  META: "#5b8dff",
+  GOOGLE: "#f5b94a",
+  TIKTOK: "#afc4ff",
 };
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -197,55 +198,7 @@ function MktKpiCard({
   const variants = withReducedMotion(cardEntry, reduced);
   const effectiveChange = invertChange && change !== null ? -change : change;
   const isUp = effectiveChange !== null && effectiveChange >= 0;
-  return (
-    <motion.div variants={variants}>
-      <Card data-testid={testId} className="flex flex-col p-5 bg-card border-border hover:shadow-md transition-shadow">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2.5">
-            <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconClass}`}>
-              <Icon className="h-4 w-4" />
-            </div>
-            <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-              {label}
-            </span>
-          </div>
-          <button className="text-muted-foreground hover:text-foreground" aria-label="More options">
-            <MoreHorizontal className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="flex items-end justify-between gap-3 mb-3">
-          <div className="flex items-baseline gap-1.5">
-            {isLoading ? (
-              <Skeleton className="h-9 w-32" />
-            ) : (
-              <>
-                <span className="text-2xl font-semibold tracking-tight tabular-nums">
-                  <CountUp value={value} format={fmt} />
-                </span>
-                {unit && <span className="text-xs text-muted-foreground font-medium">{unit}</span>}
-              </>
-            )}
-          </div>
-          {!isLoading && sparkValues.length > 1 && (
-            <Sparkline values={sparkValues} stroke={sparkColor} fill={sparkColor + "22"} width={88} height={28} ariaLabel={`${label} sparkline`} />
-          )}
-        </div>
-
-        {!isLoading && effectiveChange !== null && (
-          <span
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium w-fit ${
-              isUp ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
-            }`}
-          >
-            {isUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-            {isUp ? "+" : ""}{effectiveChange.toFixed(1)}%
-            <span className="ml-1 text-muted-foreground font-normal">vs prev</span>
-          </span>
-        )}
-      </Card>
-    </motion.div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={fmt} unit={unit} change={effectiveChange} sparkValues={sparkValues} loading={isLoading} testId={testId} />);
 }
 
 // ── Platform bar ─────────────────────────────────────────────────────────────
@@ -253,7 +206,7 @@ function PlatformRow({ platform, spend, roas, leads, clicks, maxSpend }: {
   platform: string; spend: number; roas: number; leads: number; clicks: number; maxSpend: number;
 }) {
   const pct = maxSpend > 0 ? (spend / maxSpend) * 100 : 0;
-  const color = PLATFORM_COLORS[platform] ?? "#6366f1";
+  const color = PLATFORM_COLORS[platform] ?? "#5b8dff";
   const label = PLATFORM_LABELS[platform] ?? platform;
   return (
     <div className="space-y-1.5">
@@ -331,7 +284,7 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Platform chip ─────────────────────────────────────────────────────────────
 function PlatformChip({ platform }: { platform: string }) {
-  const color = PLATFORM_COLORS[platform] ?? "#6366f1";
+  const color = PLATFORM_COLORS[platform] ?? "#5b8dff";
   const short = platform === "GOOGLE" ? "G" : platform === "TIKTOK" ? "TT" : "META";
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold font-mono" style={{ color, backgroundColor: color + "20" }}>
@@ -342,7 +295,7 @@ function PlatformChip({ platform }: { platform: string }) {
 
 // ── Creative thumbnail ────────────────────────────────────────────────────────
 function CreativeThumbnail({ imageUrl, platform, name }: { imageUrl: string | null; platform: string; name: string }) {
-  const color = PLATFORM_COLORS[platform] ?? "#6366f1";
+  const color = PLATFORM_COLORS[platform] ?? "#5b8dff";
   if (imageUrl) {
     return (
       <div className="w-10 h-10 rounded-md overflow-hidden border border-border shrink-0">
@@ -428,22 +381,10 @@ function TopCreativeCard({
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs">
-          <div>
-            <p className="text-muted-foreground">CTR</p>
-            <p className="font-medium tabular-nums">{formatPercentage(creative.ctr)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">{costLabel}</p>
-            <p className="font-medium tabular-nums">{formatCurrency(costLabel === "Custo/Compra" ? creative.cpa : creative.cpl)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Leads</p>
-            <p className="font-medium tabular-nums">{formatNumber(creative.leads)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Spend</p>
-            <p className="font-medium tabular-nums">{formatCurrency(creative.spend)}</p>
-          </div>
+          <GlassMetricCard  label="CTR" value={<>{formatPercentage(creative.ctr)}</>}  />
+          <GlassMetricCard  label={costLabel} value={<>{formatCurrency(costLabel === "Custo/Compra" ? creative.cpa : creative.cpl)}</>}  />
+          <GlassMetricCard  label="Leads" value={<>{formatNumber(creative.leads)}</>}  />
+          <GlassMetricCard  label="Spend" value={<>{formatCurrency(creative.spend)}</>}  />
         </div>
       </div>
     </div>
@@ -858,7 +799,7 @@ export default function MarketingPage() {
             format={formatCurrency}
             change={spendChange}
             sparkValues={sparkSpend}
-            sparkColor="#a78bfa"
+            sparkColor="#5b8dff"
             isLoading={isLoading}
           />
           <MktKpiCard
@@ -870,7 +811,7 @@ export default function MarketingPage() {
             format={formatCurrency}
             change={revenueChange}
             sparkValues={sparkRevenue}
-            sparkColor="#2dd4bf"
+            sparkColor="#34d399"
             isLoading={isLoading}
           />
           <MktKpiCard
@@ -894,7 +835,7 @@ export default function MarketingPage() {
             format={formatPercentage}
             change={approvalRateChange}
             sparkValues={sparkLeads}
-            sparkColor="#818cf8"
+            sparkColor="#5b8dff"
             isLoading={isLoading}
           />
           <MktKpiCard
@@ -906,7 +847,7 @@ export default function MarketingPage() {
             format={formatNumber}
             change={leadsChange}
             sparkValues={sparkLeads}
-            sparkColor="#38bdf8"
+            sparkColor="#afc4ff"
             isLoading={isLoading}
           />
           <MktKpiCard
@@ -918,7 +859,7 @@ export default function MarketingPage() {
             format={formatNumber}
             change={approvedLeadsChange}
             sparkValues={sparkLeads}
-            sparkColor="#4ade80"
+            sparkColor="#34d399"
             isLoading={isLoading}
           />
           <MktKpiCard
@@ -930,7 +871,7 @@ export default function MarketingPage() {
             format={formatCurrency}
             change={isB2C ? cpaChange : cplChange}
             sparkValues={sparkSpend}
-            sparkColor="#fb923c"
+            sparkColor="#f5b94a"
             isLoading={isLoading}
             invertChange
           />
@@ -944,7 +885,7 @@ export default function MarketingPage() {
               format={formatCurrency}
               change={cpaChange}
               sparkValues={sparkSpend}
-              sparkColor="#fbbf24"
+              sparkColor="#f5b94a"
               isLoading={isLoading}
               invertChange
             />
@@ -1007,8 +948,8 @@ export default function MarketingPage() {
                       name === "spend" ? "Ad Spend" : "Leads",
                     ]}
                   />
-                  <Bar yAxisId="left" dataKey="spend" fill="#a78bfa" opacity={0.8} radius={[2, 2, 0, 0]} name="spend" />
-                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#38bdf8" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="leads" />
+                  <Bar yAxisId="left" dataKey="spend" fill="#5b8dff" opacity={0.8} radius={[2, 2, 0, 0]} name="spend" />
+                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#afc4ff" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="leads" />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
@@ -1041,7 +982,7 @@ export default function MarketingPage() {
                     labelFormatter={fmtDateLong}
                     formatter={(v: number) => [`${v.toFixed(2)}×`, "ROAS"]}
                   />
-                  <ReferenceLine y={2} stroke="#f97316" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: "Target 2×", position: "insideTopRight", fontSize: 9, fill: "#f97316" }} />
+                  <ReferenceLine y={2} stroke="#f5b94a" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: "Target 2×", position: "insideTopRight", fontSize: 9, fill: "#f5b94a" }} />
                   <Area type="monotone" dataKey="roas" stroke="#34d399" strokeWidth={2} fill="url(#roasGrad)" dot={false} activeDot={{ r: 4, fill: "#34d399" }} />
                 </AreaChart>
               </ResponsiveContainer>
@@ -1073,8 +1014,8 @@ export default function MarketingPage() {
                 <ComposedChart data={spendVsRevenueData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="spendGrad2" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.7} />
-                      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.15} />
+                      <stop offset="5%" stopColor="#5b8dff" stopOpacity={0.7} />
+                      <stop offset="95%" stopColor="#5b8dff" stopOpacity={0.15} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
@@ -1087,7 +1028,7 @@ export default function MarketingPage() {
                     formatter={(v: number, name: string) => [formatCurrency(v), name === "spend" ? "Spend" : "Revenue"]}
                   />
                   <Bar yAxisId="left" dataKey="spend" fill="url(#spendGrad2)" radius={[3, 3, 0, 0]} maxBarSize={32} />
-                  <Line yAxisId="right" type="monotone" dataKey="revenue" stroke="#2dd4bf" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                  <Line yAxisId="right" type="monotone" dataKey="revenue" stroke="#34d399" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
@@ -1150,7 +1091,7 @@ export default function MarketingPage() {
               {(data!.ageBreakdown).map((row, i) => {
                 const maxLeads = Math.max(...data!.ageBreakdown.map((r) => r.leads));
                 const pct = maxLeads > 0 ? (row.leads / maxLeads) * 100 : 0;
-                const colors = ["#a78bfa", "#38bdf8", "#34d399", "#fbbf24", "#f97316"];
+                const colors = ["#5b8dff", "#afc4ff", "#34d399", "#f5b94a", "#f5b94a"];
                 const color = colors[i % colors.length];
                 return (
                   <div key={row.ageGroup} className="space-y-1.5">
@@ -1275,20 +1216,20 @@ export default function MarketingPage() {
                   Page {creativesPage} of {Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE)}
                 </p>
                 <div className="flex items-center gap-2">
-                  <button
+                  <Button variant="outline" size="sm"
                     onClick={() => setCreativesPage((p) => Math.max(1, p - 1))}
                     disabled={creativesPage === 1}
                     className="px-3 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Previous
-                  </button>
-                  <button
+                  </Button>
+                  <Button variant="outline" size="sm"
                     onClick={() => setCreativesPage((p) => Math.min(Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE), p + 1))}
                     disabled={creativesPage * CREATIVES_PAGE_SIZE >= data.creativesTotal}
                     className="px-3 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Next
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}

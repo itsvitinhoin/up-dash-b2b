@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import React, { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
@@ -54,8 +55,8 @@ type SortKey = "registrations" | "approvals" | "approvalPct" | "buyers" | "reven
 type SortDir = "asc" | "desc";
 
 const SOURCE_PALETTE = [
-  "#6366f1", "#22d3ee", "#f59e0b", "#10b981",
-  "#f43f5e", "#8b5cf6", "#ec4899", "#14b8a6",
+  "#5b8dff", "#afc4ff", "#f5b94a", "#34d399",
+  "#ff6275", "#5b8dff", "#ff6275", "#34d399",
 ];
 
 function KpiCard({
@@ -71,21 +72,7 @@ function KpiCard({
   loading: boolean;
   accent?: string;
 }) {
-  return (
-    <div className="flex flex-col gap-1.5 p-3 bg-card border border-border rounded-xl">
-      <div className="flex items-center gap-1.5">
-        <div className={`p-1 rounded-md shrink-0 ${accent ?? "bg-primary/10"}`}>
-          <Icon className={`h-3 w-3 ${accent ? "text-foreground" : "text-primary"}`} />
-        </div>
-        <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground truncate">{label}</p>
-      </div>
-      {loading ? (
-        <Skeleton className="h-5 w-16" />
-      ) : (
-        <p className="text-base font-semibold tabular-nums leading-tight truncate">{value}</p>
-      )}
-    </div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} loading={loading} />);
 }
 
 function SortableHeader({
@@ -103,7 +90,7 @@ function SortableHeader({
 }) {
   const active = sortKey === currentKey;
   return (
-    <button
+    <Button variant="ghost" size="sm"
       type="button"
       className={`flex items-center gap-1 text-left font-medium hover:text-foreground transition-colors ${active ? "text-foreground" : "text-muted-foreground"}`}
       onClick={() => onSort(sortKey)}
@@ -113,7 +100,7 @@ function SortableHeader({
       {active && (
         <span className="text-[9px] font-mono opacity-60">{dir === "asc" ? "↑" : "↓"}</span>
       )}
-    </button>
+    </Button>
   );
 }
 
@@ -319,7 +306,7 @@ export default function UtmPage() {
           {/* Tab switcher */}
           <div className="flex gap-1 bg-muted/60 p-1 rounded-lg">
             {(["sourceMediumCampaign", "source", "campaign"] as const).map((mode) => (
-              <button
+              <Button variant="ghost" size="sm"
                 key={mode}
                 onClick={() => setGroupBy(mode)}
                 data-testid={`utm-tab-${mode}`}
@@ -335,7 +322,7 @@ export default function UtmPage() {
                   <Link2 className="h-3.5 w-3.5" />
                 )}
                 {mode === "sourceMediumCampaign" ? "GA4 view" : `By ${GROUP_LABELS[mode]}`}
-              </button>
+              </Button>
             ))}
           </div>
           <Button
@@ -422,7 +409,7 @@ export default function UtmPage() {
                   <Sparkles className="h-3 w-3" />
                   UP Insight · Attribution · {insight?.source === "ai" ? "AI" : "Auto"}
                 </span>
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
@@ -430,7 +417,7 @@ export default function UtmPage() {
                   data-testid="utm-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
               {insightLoading || !insight ? (
                 <>

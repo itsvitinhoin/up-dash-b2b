@@ -13,7 +13,7 @@ const options: Array<{
   {
     mode: "B2B",
     title: "Dashboard B2B",
-    description: "Clientes com UP Zero, sellers, WhatsApp e atribuicao por campanhas.",
+    description: "Clientes com UP Zero, sellers, WhatsApp e atribuição por campanhas.",
     icon: Building2,
     bullets: ["UP Zero", "Sellers", "WhatsApp", "UTM"],
   },
@@ -36,11 +36,11 @@ export default function WorkspaceSelectPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-10 text-foreground">
+    <main className="up-workspace relative flex min-h-screen items-center justify-center bg-background px-6 py-10 text-foreground">
       <div className="w-full max-w-4xl">
         <div className="mb-8">
           <img
-            src="/up-dash-logo.png"
+            src={`${import.meta.env.BASE_URL}brand/up-group.png`}
             alt="Up Dash"
             className="mb-8 h-9 w-auto object-contain"
             draggable={false}
@@ -49,10 +49,10 @@ export default function WorkspaceSelectPage() {
             Escolha o ambiente
           </p>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-            Qual dashboard voce quer acessar?
+            Qual dashboard você quer acessar?
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Essa escolha filtra os clientes, ajusta o menu e evita misturar metricas B2B com B2C.
+            Essa escolha filtra os clientes, ajusta o menu e evita misturar métricas B2B com B2C.
           </p>
         </div>
 
@@ -61,11 +61,11 @@ export default function WorkspaceSelectPage() {
             const Icon = option.icon;
             const active = selectedDashboardMode === option.mode;
             return (
-              <button
+              <Button variant="outline" size="sm"
                 key={option.mode}
                 type="button"
                 onClick={() => enter(option.mode)}
-                className={`group rounded-lg border bg-card p-5 text-left transition-colors hover:border-primary/60 hover:bg-accent/30 ${
+                className={`up-glass-card group rounded-[20px] border p-6 text-left transition-colors hover:border-primary/60 hover:bg-accent/30 ${
                   active ? "border-primary/70" : "border-border"
                 }`}
               >
@@ -89,7 +89,7 @@ export default function WorkspaceSelectPage() {
                     </span>
                   ))}
                 </div>
-              </button>
+              </Button>
             );
           })}
         </div>

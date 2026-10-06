@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -904,12 +905,7 @@ export default function WhatsappConnectionsPage() {
             <div className="rounded-md bg-primary/10 p-2 text-primary">
               <PlugZap className="h-4 w-4" />
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Conexões</p>
-              <p className="text-2xl font-semibold">
-                {connectedIntegrations.length}
-              </p>
-            </div>
+            <GlassMetricCard  label="Conexões" value={<>{connectedIntegrations.length}</>}  />
           </CardContent>
         </Card>
         <Card>
@@ -917,14 +913,7 @@ export default function WhatsappConnectionsPage() {
             <div className="rounded-md bg-emerald-500/10 p-2 text-emerald-500">
               <Smartphone className="h-4 w-4" />
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground">
-                Números cadastrados
-              </p>
-              <p className="text-2xl font-semibold">
-                {data?.phoneNumbers?.length ?? 0}
-              </p>
-            </div>
+            <GlassMetricCard  label="Números cadastrados" value={<>{data?.phoneNumbers?.length ?? 0}</>}  />
           </CardContent>
         </Card>
         <Card>
@@ -1084,18 +1073,8 @@ export default function WhatsappConnectionsPage() {
             )}
 
             <div className="grid gap-2 text-xs sm:grid-cols-4">
-              <div className="rounded-md border border-border bg-muted/20 p-3">
-                <p className="text-muted-foreground">Mensagens importadas</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {data.historySync.importedMessages.toLocaleString("pt-BR")}
-                </p>
-              </div>
-              <div className="rounded-md border border-border bg-muted/20 p-3">
-                <p className="text-muted-foreground">Eventos de histórico</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {data.historySync.historyEvents.toLocaleString("pt-BR")}
-                </p>
-              </div>
+              <GlassMetricCard  label="Mensagens importadas" value={<>{data.historySync.importedMessages.toLocaleString("pt-BR")}</>}  />
+              <GlassMetricCard  label="Eventos de histórico" value={<>{data.historySync.historyEvents.toLocaleString("pt-BR")}</>}  />
               <div className="rounded-md border border-border bg-muted/20 p-3">
                 <p className="text-muted-foreground">Último lote</p>
                 <p className="mt-1 font-medium">

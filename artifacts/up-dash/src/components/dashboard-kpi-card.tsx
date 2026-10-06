@@ -1,9 +1,6 @@
 import { motion } from "framer-motion";
-import {
-  ArrowDownRight,
-  ArrowUpRight,
-  MoreHorizontal,
-} from "lucide-react";
+import type { ReactNode, ElementType } from "react";
+import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CountUp } from "@/components/count-up";
@@ -11,7 +8,7 @@ import { Sparkline } from "@/components/sparkline";
 import { cardEntry, useReducedMotion, withReducedMotion } from "@/lib/motion";
 
 export interface DashboardKpiCardProps {
-  icon: React.ComponentType<{ className?: string }>;
+  icon: ElementType;
   iconClass: string;
   label: string;
   value: number;
@@ -27,6 +24,12 @@ export interface DashboardKpiCardProps {
   valueAccent?: boolean;
   ringValue?: number;
   ringColor?: string;
+  displayValue?: ReactNode;
+  labelAccessory?: ReactNode;
+  footer?: ReactNode;
+  deltaContent?: ReactNode;
+  changePositive?: boolean;
+  className?: string;
 }
 
 function MiniRing({
@@ -46,7 +49,15 @@ function MiniRing({
   const dash = (clamped / 100) * c;
   return (
     <svg width={size} height={size} className="-rotate-90 shrink-0" aria-hidden>
-      <circle cx={size / 2} cy={size / 2} r={r} stroke="hsl(var(--muted-foreground))" strokeOpacity={0.25} strokeWidth={stroke} fill="none" />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        stroke="hsl(var(--muted-foreground))"
+        strokeOpacity={0.25}
+        strokeWidth={stroke}
+        fill="none"
+      />
       <motion.circle
         cx={size / 2}
         cy={size / 2}
@@ -81,71 +92,71 @@ export function DashboardKpiCard({
   valueAccent,
   ringValue,
   ringColor,
+  displayValue,
+  labelAccessory,
+  footer,
+  deltaContent,
+  changePositive,
+  className,
 }: DashboardKpiCardProps) {
   const reduced = useReducedMotion();
-  const isUp = change !== null && change >= 0;
+  const isUp = changePositive ?? (change !== null && change >= 0);
   const variants = withReducedMotion(cardEntry, reduced);
   return (
-    <motion.div variants={variants} className="h-full">
+    <motion.div variants={variants} className={`up-metric-wrapper h-full min-w-0 ${className ?? ""}`}>
       <Card
         data-testid={testId}
-        className="flex h-full flex-col p-5 bg-card border-border hover-elevate transition-shadow"
+        className="up-metric flex h-full flex-col p-[18px] border-border transition-shadow"
       >
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2.5">
-            <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconClass}`}>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="up-metric-icon flex h-8 w-8 items-center justify-center rounded-lg">
               <Icon className="h-4 w-4" />
             </div>
-            <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
+            <span className="up-metric-label min-w-0 text-[13px] text-muted-foreground">
               {label}
             </span>
+            {labelAccessory}
           </div>
-          <button
-            className="text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="More options"
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </button>
         </div>
 
         <div className="flex items-end justify-between gap-3 mb-3">
-          <div className="flex items-baseline gap-2">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
             {isLoading ? (
               <Skeleton className="h-9 w-32" />
             ) : (
               <>
                 <span
-                  className={`text-2xl font-semibold tracking-tight tabular-nums ${
+                  className={`up-metric-value text-[30px] font-medium tracking-tight tabular-nums ${
                     valueAccent
                       ? "bg-gradient-to-br from-foreground via-foreground to-primary bg-clip-text text-transparent"
                       : ""
                   }`}
                 >
-                  <CountUp value={value} format={fmt} />
+                  {displayValue !== undefined ? displayValue : <CountUp value={value} format={fmt} />}
                 </span>
-                {unit && <span className="text-xs text-muted-foreground font-medium">{unit}</span>}
+                {unit && (
+                  <span className="text-xs text-muted-foreground font-medium">
+                    {unit}
+                  </span>
+                )}
               </>
             )}
           </div>
           {!isLoading && ringValue !== undefined ? (
-            <MiniRing pct={ringValue} color={ringColor ?? sparkColor} reduced={reduced} />
-          ) : !isLoading && sparkValues.length > 1 ? (
-            <Sparkline
-              values={sparkValues}
-              stroke={sparkColor}
-              fill={sparkColor + "22"}
-              width={88}
-              height={28}
-              ariaLabel={`${label} trend sparkline`}
+            <MiniRing
+              pct={ringValue}
+              color={ringColor ?? sparkColor}
+              reduced={reduced}
             />
           ) : null}
         </div>
 
-        {!isLoading && change !== null && (
+        {!isLoading && deltaContent !== undefined ? deltaContent : !isLoading && change !== null && (
           <div className="mb-4">
             <span
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${
-                isUp ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                isUp ? "up-delta-positive" : "up-delta-negative"
               }`}
             >
               {isUp ? (
@@ -156,18 +167,40 @@ export function DashboardKpiCard({
               {isUp ? "+" : ""}
               {change.toFixed(1)}%
             </span>
-            <span className="text-xs text-muted-foreground ml-2">{changeLabel}</span>
+            <span className="text-xs text-muted-foreground ml-2">
+              {changeLabel}
+            </span>
           </div>
         )}
 
-        <div className="mt-auto pt-3 border-t border-border space-y-2">
+        {!isLoading && sparkValues.length > 1 && (
+          <Sparkline
+            values={sparkValues}
+            stroke="var(--up-chart-line)"
+            fill="var(--up-chart-fill)"
+            width={240}
+            height={40}
+            className="up-metric-spark w-full mb-3"
+            ariaLabel={`${label} · evolução no período`}
+          />
+        )}
+
+        {(sub.length > 0 || footer) && <div className="up-metric-footer mt-auto pt-3 border-t border-border space-y-2">
           {sub.map((row) => (
-            <div key={row.label} className="flex justify-between gap-2 text-sm">
-              <span className="shrink-0 text-muted-foreground">{row.label}</span>
-              <span className="truncate font-medium tabular-nums" title={row.value}>{row.value}</span>
+            <div key={row.label} className="flex justify-between gap-2 text-xs">
+              <span className="min-w-0 text-muted-foreground">
+                {row.label}
+              </span>
+              <span
+                className="min-w-0 text-right font-medium tabular-nums"
+                title={row.value}
+              >
+                {row.value}
+              </span>
             </div>
           ))}
-        </div>
+          {footer}
+        </div>}
       </Card>
     </motion.div>
   );

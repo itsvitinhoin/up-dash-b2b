@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { addDays, differenceInDays, eachDayOfInterval, format, subDays } from "date-fns";
 import { motion } from "framer-motion";
@@ -123,42 +124,7 @@ function KpiTile({
 }: KpiTileProps) {
   const reduced = useReducedMotion();
   const variants = withReducedMotion(cardEntry, reduced);
-  return (
-    <motion.div variants={variants}>
-      <Card
-        data-testid={testId}
-        className="flex flex-col p-5 bg-card border-border hover-elevate transition-shadow"
-      >
-        <div className="flex items-center gap-2.5 mb-3">
-          <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconClass}`}>
-            <Icon className="h-4 w-4" />
-          </div>
-          <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-            {label}
-          </span>
-        </div>
-
-        <div className="flex items-baseline gap-2 mb-3">
-          {isLoading ? (
-            <Skeleton className="h-9 w-32" />
-          ) : (
-            <>
-              <span className="text-2xl font-semibold tracking-tight tabular-nums">
-                <CountUp value={value} format={fmt} />
-              </span>
-              {unit && <span className="text-xs text-muted-foreground font-medium">{unit}</span>}
-            </>
-          )}
-        </div>
-
-        {!isLoading && (
-          <div className="mt-auto">
-            <DeltaChip change={change} label={changeLabel} />
-          </div>
-        )}
-      </Card>
-    </motion.div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={fmt} unit={unit} change={change} changeLabel={changeLabel} loading={isLoading} testId={testId} />);
 }
 
 function GrowthBadge({ value }: { value: number | null }) {
@@ -239,7 +205,7 @@ function LeaderboardCard({
         <ul className="space-y-1 -mx-2">
           {rows.map((row, i) => (
             <li key={row.id}>
-              <button
+              <Button variant="ghost" size="sm"
                 type="button"
                 onClick={() => onSelect(row.id)}
                 data-testid={`${testId}-row-${i}`}
@@ -269,7 +235,7 @@ function LeaderboardCard({
                   <GrowthBadge value={row.growthPct} />
                 )}
                 <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
@@ -656,7 +622,7 @@ export default function OverviewPage() {
             aria-label="Series metric"
           >
             {(["revenue", "orders", "leads"] as SeriesMetric[]).map((m) => (
-              <button
+              <Button variant="ghost" size="sm"
                 key={m}
                 role="tab"
                 aria-selected={seriesMetric === m}
@@ -669,7 +635,7 @@ export default function OverviewPage() {
                 }`}
               >
                 {m === "revenue" ? "Revenue" : m === "orders" ? "Orders" : "Leads"}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -851,14 +817,14 @@ export default function OverviewPage() {
                       className="border-b border-border/60 last:border-0 hover-elevate"
                     >
                       <td className="py-2 pr-4">
-                        <button
+                        <Button variant="ghost" size="sm"
                           type="button"
                           onClick={() => handleSelectClient(c.id)}
                           data-testid={`overview-client-${c.id}`}
                           className="font-medium hover:text-primary text-left"
                         >
                           {c.name}
-                        </button>
+                        </Button>
                       </td>
                       <td className="py-2 px-4 text-right tabular-nums">
                         {formatCurrency(c.revenue, {

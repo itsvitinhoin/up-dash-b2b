@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { Fragment, useDeferredValue, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -627,7 +628,7 @@ function ErpOverview() {
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-blue-500/10 text-blue-500",
-      sparkColor: "#3b82f6",
+      sparkColor: "#5b8dff",
       subLabel: "Bruto",
       subValue: formatCurrency(k?.grossRevenue ?? 0),
     },
@@ -637,7 +638,7 @@ function ErpOverview() {
       format: formatNumber,
       icon: ReceiptText,
       iconClass: "bg-violet-500/10 text-violet-500",
-      sparkColor: "#8b5cf6",
+      sparkColor: "#5b8dff",
       subLabel: "Ticket médio",
       subValue: formatCurrency(k?.avgTicket ?? 0),
     },
@@ -647,7 +648,7 @@ function ErpOverview() {
       format: formatNumber,
       icon: Users,
       iconClass: "bg-emerald-500/10 text-emerald-500",
-      sparkColor: "#10b981",
+      sparkColor: "#34d399",
       subLabel: "Recorrentes",
       subValue: formatNumber(k?.returningCustomers ?? 0),
     },
@@ -657,7 +658,7 @@ function ErpOverview() {
       format: formatPercentage,
       icon: TrendingUp,
       iconClass: "bg-pink-500/10 text-pink-500",
-      sparkColor: "#ec4899",
+      sparkColor: "#ff6275",
       subLabel: "Novos",
       subValue: formatNumber(k?.newCustomers ?? 0),
       ringValue: k?.retentionPct ?? 0,
@@ -668,7 +669,7 @@ function ErpOverview() {
       format: formatNumber,
       icon: Boxes,
       iconClass: "bg-amber-500/10 text-amber-500",
-      sparkColor: "#f59e0b",
+      sparkColor: "#f5b94a",
       subLabel: "Média / pedido",
       subValue: (k?.avgItemsPerOrder ?? 0).toFixed(1),
     },
@@ -678,7 +679,7 @@ function ErpOverview() {
       format: formatCurrencySmart,
       icon: Percent,
       iconClass: "bg-cyan-500/10 text-cyan-500",
-      sparkColor: "#06b6d4",
+      sparkColor: "#afc4ff",
       subLabel: "% do bruto",
       subValue: formatPercentage(k?.discountRatePct ?? 0),
     },
@@ -688,7 +689,7 @@ function ErpOverview() {
       format: formatCurrencySmart,
       icon: AlertCircle,
       iconClass: "bg-orange-500/10 text-orange-500",
-      sparkColor: "#f97316",
+      sparkColor: "#f5b94a",
       subLabel: "% do bruto",
       subValue: formatPercentage(k?.returnRatePct ?? 0),
     },
@@ -698,7 +699,7 @@ function ErpOverview() {
       format: formatNumber,
       icon: AlertCircle,
       iconClass: "bg-red-500/10 text-red-500",
-      sparkColor: "#ef4444",
+      sparkColor: "#ff6275",
       subLabel: "Valor",
       subValue: formatCurrency(k?.cancelledAmount ?? 0),
     },
@@ -965,7 +966,7 @@ function ErpOrdersView() {
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-blue-500/10 text-blue-500",
-      sparkColor: "#3b82f6",
+      sparkColor: "#5b8dff",
       subLabel: "Líquido",
       subValue: formatCurrency(k?.netRevenue ?? 0),
     },
@@ -975,7 +976,7 @@ function ErpOrdersView() {
       format: formatNumber,
       icon: ReceiptText,
       iconClass: "bg-violet-500/10 text-violet-500",
-      sparkColor: "#8b5cf6",
+      sparkColor: "#5b8dff",
       subLabel: "Ticket médio",
       subValue: formatCurrency(k?.avgTicket ?? 0),
     },
@@ -985,7 +986,7 @@ function ErpOrdersView() {
       format: formatNumber,
       icon: Boxes,
       iconClass: "bg-amber-500/10 text-amber-500",
-      sparkColor: "#f59e0b",
+      sparkColor: "#f5b94a",
       subLabel: "Média / pedido",
       subValue: (k?.avgItemsPerOrder ?? 0).toFixed(1),
     },
@@ -995,7 +996,7 @@ function ErpOrdersView() {
       format: formatNumber,
       icon: AlertCircle,
       iconClass: "bg-red-500/10 text-red-500",
-      sparkColor: "#ef4444",
+      sparkColor: "#ff6275",
       subLabel: "Valor",
       subValue: formatCurrency(k?.cancelledAmount ?? 0),
     },
@@ -1256,33 +1257,14 @@ function BuyerOrderHistoryDialog({
         </DialogHeader>
 
         <div className="grid gap-3 border-y py-4 sm:grid-cols-3">
-          <div>
-            <p className="text-xs text-muted-foreground">Pedidos históricos</p>
-            <p className="mt-1 text-lg font-semibold">
-              {formatNumber(customer?.historicalOrders ?? 0)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">
-              Valor total comprado
-            </p>
-            <p className="mt-1 text-lg font-semibold">
-              {formatCurrency(customer?.lifetimeValue ?? 0)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">
-              Ticket médio histórico
-            </p>
-            <p className="mt-1 text-lg font-semibold">
-              {formatCurrency(
+          <GlassMetricCard  label="Pedidos históricos" value={<>{formatNumber(customer?.historicalOrders ?? 0)}</>}  />
+          <GlassMetricCard  label="Valor total comprado" value={<>{formatCurrency(customer?.lifetimeValue ?? 0)}</>}  />
+          <GlassMetricCard  label="Ticket médio histórico" value={<>{formatCurrency(
                 (customer?.historicalOrders ?? 0) > 0
                   ? (customer?.lifetimeValue ?? 0) /
                       (customer?.historicalOrders ?? 1)
                   : 0,
-              )}
-            </p>
-          </div>
+              )}</>}  />
         </div>
 
         <div className="overflow-x-auto">
@@ -1416,7 +1398,7 @@ function ErpCustomersView() {
       format: formatNumber,
       icon: Users,
       iconClass: "bg-blue-500/10 text-blue-500",
-      sparkColor: "#3b82f6",
+      sparkColor: "#5b8dff",
       subLabel: "No período",
       subValue: `${dateFrom} a ${dateTo}`,
     },
@@ -1426,7 +1408,7 @@ function ErpCustomersView() {
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-emerald-500/10 text-emerald-500",
-      sparkColor: "#10b981",
+      sparkColor: "#34d399",
       subLabel: "Regra",
       subValue: "Primeira compra histórica",
     },
@@ -1436,7 +1418,7 @@ function ErpCustomersView() {
       format: formatNumber,
       icon: Users,
       iconClass: "bg-violet-500/10 text-violet-500",
-      sparkColor: "#8b5cf6",
+      sparkColor: "#5b8dff",
       subLabel: "Regra",
       subValue: "Já compraram antes",
     },
@@ -1446,7 +1428,7 @@ function ErpCustomersView() {
       format: formatPercentage,
       icon: TrendingUp,
       iconClass: "bg-pink-500/10 text-pink-500",
-      sparkColor: "#ec4899",
+      sparkColor: "#ff6275",
       subLabel: "Cálculo",
       subValue: "Recorrentes / compradores",
       ringValue: k?.retentionPct ?? 0,
@@ -1914,7 +1896,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatNumber,
           icon: Boxes,
           iconClass: "bg-blue-500/10 text-blue-500",
-          sparkColor: "#3b82f6",
+          sparkColor: "#5b8dff",
           subLabel: "SKUs",
           subValue: formatNumber(data?.totalSkus ?? 0),
         },
@@ -1924,7 +1906,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatCurrencySmart,
           icon: CircleDollarSign,
           iconClass: "bg-emerald-500/10 text-emerald-500",
-          sparkColor: "#10b981",
+          sparkColor: "#34d399",
           subLabel: "Base",
           subValue: "Estoque × preço atual",
         },
@@ -1934,7 +1916,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: (v) => `${Math.round(v)} dias`,
           icon: Clock3,
           iconClass: "bg-violet-500/10 text-violet-500",
-          sparkColor: "#8b5cf6",
+          sparkColor: "#5b8dff",
           subLabel: "Base",
           subValue: "Ritmo do período",
         },
@@ -1944,7 +1926,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatNumber,
           icon: AlertCircle,
           iconClass: "bg-red-500/10 text-red-500",
-          sparkColor: "#ef4444",
+          sparkColor: "#ff6275",
           subLabel: "Negativos",
           subValue: formatNumber(data?.negativeStockCount ?? 0),
         },
@@ -1956,7 +1938,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatCurrencySmart,
           icon: WalletCards,
           iconClass: "bg-blue-500/10 text-blue-500",
-          sparkColor: "#3b82f6",
+          sparkColor: "#5b8dff",
           subLabel: "Peças",
           subValue: formatNumber(data?.totalUnits ?? 0),
         },
@@ -1966,7 +1948,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatCurrencySmart,
           icon: CircleDollarSign,
           iconClass: "bg-emerald-500/10 text-emerald-500",
-          sparkColor: "#10b981",
+          sparkColor: "#34d399",
           subLabel: "Margem",
           subValue: formatPercentage(data?.grossMarginPct ?? 0),
         },
@@ -1976,7 +1958,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatPercentage,
           icon: TrendingUp,
           iconClass: "bg-cyan-500/10 text-cyan-500",
-          sparkColor: "#06b6d4",
+          sparkColor: "#afc4ff",
           subLabel: "Cobertura",
           subValue:
             data?.coverageDays == null
@@ -1990,7 +1972,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatCurrencySmart,
           icon: PackageCheck,
           iconClass: "bg-violet-500/10 text-violet-500",
-          sparkColor: "#8b5cf6",
+          sparkColor: "#5b8dff",
           subLabel: "Estoque",
           subValue: formatNumber(data?.totalStock ?? 0),
         },
@@ -2177,7 +2159,7 @@ function ErpSellersView() {
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-blue-500/10 text-blue-500",
-      sparkColor: "#3b82f6",
+      sparkColor: "#5b8dff",
       subLabel: "Lojas",
       subValue: formatNumber(stores.length),
     },
@@ -2187,7 +2169,7 @@ function ErpSellersView() {
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-emerald-500/10 text-emerald-500",
-      sparkColor: "#10b981",
+      sparkColor: "#34d399",
       subLabel: "Pedidos",
       subValue: formatNumber(totalOrders),
     },
@@ -2197,7 +2179,7 @@ function ErpSellersView() {
       format: formatCurrencySmart,
       icon: CircleDollarSign,
       iconClass: "bg-violet-500/10 text-violet-500",
-      sparkColor: "#8b5cf6",
+      sparkColor: "#5b8dff",
       subLabel: "Base",
       subValue: "Por pedido",
     },
@@ -2207,7 +2189,7 @@ function ErpSellersView() {
       format: formatNumber,
       icon: Users,
       iconClass: "bg-amber-500/10 text-amber-500",
-      sparkColor: "#f59e0b",
+      sparkColor: "#f5b94a",
       subLabel: "Base",
       subValue: "Soma por vendedor",
     },
@@ -2305,4 +2287,20 @@ export default function ErpPage() {
       {view === "sellers" && <ErpSellersView />}
     </div>
   );
+}
+
+
+export function ErpGeographyView() {
+  const {data, isLoading} = useErpDashboard();
+  const states = data?.breakdowns.states ?? [];
+  return <div className="space-y-6" data-testid="erp-geography-page">
+    <BreakdownCard title="Geografia de compradores" description="Receita por estado do cadastro." icon={MapPin} data={states} />
+    <Card><CardContent className="p-5"><SectionTitle icon={MapPin} title="Estados" description="Pedidos e faturamento da fonte ERP." />
+      <div className="mt-5 overflow-x-auto"><Table><TableHeader><TableRow>
+        <TableHead>Estado</TableHead><TableHead className="text-right">Pedidos</TableHead><TableHead className="text-right">Faturamento</TableHead>
+      </TableRow></TableHeader><TableBody>{states.map(state => <TableRow key={state.label}>
+        <TableCell>{state.label}</TableCell><TableCell className="text-right">{formatNumber(state.orders)}</TableCell><TableCell className="text-right">{formatCurrency(state.revenue)}</TableCell>
+      </TableRow>)}{!states.length && <EmptyRow colSpan={3} loading={isLoading} />}</TableBody></Table></div>
+    </CardContent></Card>
+  </div>;
 }

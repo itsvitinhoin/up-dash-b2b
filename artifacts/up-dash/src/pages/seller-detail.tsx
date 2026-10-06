@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { motion } from "framer-motion";
@@ -76,29 +77,7 @@ function KpiCard({
   className?: string;
 }) {
   const delta = prev > 0 ? ((value - prev) / prev) * 100 : null;
-  return (
-    <Card className={`p-4 ${className ?? ""}`}>
-      <div className="flex items-center gap-2 mb-2">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/15 text-primary">
-          <Icon className="h-3 w-3" />
-        </div>
-        <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-          {label}
-        </span>
-      </div>
-      <div className="text-xl font-bold tabular-nums">{fmt(value)}</div>
-      {delta !== null && (
-        <p
-          className={`text-xs tabular-nums mt-0.5 ${
-            delta >= 0 ? "text-emerald-400" : "text-red-400"
-          }`}
-        >
-          {delta >= 0 ? "+" : ""}
-          {delta.toFixed(1)}% vs prev period
-        </p>
-      )}
-    </Card>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={fmt} change={delta} className={className} />);
 }
 
 function BreakdownChart({

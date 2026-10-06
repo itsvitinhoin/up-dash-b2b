@@ -1,3 +1,5 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
+import { OrganizationHeading } from "@/components/metric-section";
 import { useState, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
@@ -127,25 +129,7 @@ function KpiCard({
 }) {
   const delta = prev > 0 ? ((value - prev) / prev) * 100 : null;
   const positive = invertDelta ? delta !== null && delta <= 0 : delta !== null && delta >= 0;
-  return (
-    <Card className="p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/15 text-primary">
-          <Icon className="h-3 w-3" />
-        </div>
-        <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-          {label}
-        </span>
-      </div>
-      <div className="text-xl font-bold tabular-nums">{fmt(value)}</div>
-      {delta !== null && (
-        <p className={`text-xs tabular-nums mt-0.5 ${positive ? "text-emerald-400" : "text-red-400"}`}>
-          {delta >= 0 ? "+" : ""}
-          {delta.toFixed(1)}% vs prev period
-        </p>
-      )}
-    </Card>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={fmt} change={delta} changePositive={positive} />);
 }
 
 function SkuTile({
@@ -412,7 +396,7 @@ export default function StockIntelligencePage() {
                   <Sparkles className="h-3 w-3" />
                   UP Insight · Stock · {insight?.source === "ai" ? "AI" : "Auto"}
                 </span>
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
@@ -420,7 +404,7 @@ export default function StockIntelligencePage() {
                   data-testid="stock-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
               {insightLoading || !insight ? (
                 <>
@@ -465,7 +449,8 @@ export default function StockIntelligencePage() {
       )}
 
       {/* KPI strip */}
-      <motion.div variants={cardVariants}>
+      <OrganizationHeading>RESUMO DE ESTOQUE</OrganizationHeading>
+<motion.div variants={cardVariants}>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {isLoading ? (
             Array.from({ length: 5 }).map((_, i) => (
@@ -519,7 +504,8 @@ export default function StockIntelligencePage() {
       </motion.div>
 
       {/* Ranked SKU tiles */}
-      <motion.div variants={cardVariants}>
+      <OrganizationHeading>PRODUTOS</OrganizationHeading>
+<motion.div variants={cardVariants}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {isLoading ? (
             Array.from({ length: 3 }).map((_, i) => (
@@ -559,7 +545,199 @@ export default function StockIntelligencePage() {
       </motion.div>
 
       {/* Breakdown charts */}
+
+
+      {/* Full SKU table */}
       <motion.div variants={cardVariants}>
+        <Card className="overflow-hidden">
+          <CardHeader className="px-5 py-4 border-b border-border">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CardTitle className="text-sm font-semibold">All SKUs</CardTitle>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  placeholder="Search SKU or name…"
+                  value={search}
+                  onChange={(e) => handleSearch(e.target.value)}
+                  className="h-8 w-44 text-xs"
+                  data-testid="stock-search"
+                />
+                {categories.length > 0 && (
+                  <Select value={categoryFilter} onValueChange={handleCategoryFilter}>
+                    <SelectTrigger className="h-8 w-36 text-xs" data-testid="stock-category-filter">
+                      <SelectValue placeholder="Category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All categories</SelectItem>
+                      {categories.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <Select value={riskFilter} onValueChange={handleRiskFilter}>
+                  <SelectTrigger className="h-8 w-32 text-xs" data-testid="stock-risk-filter">
+                    <SelectValue placeholder="Risk" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All risks</SelectItem>
+                    <SelectItem value="Stockout">Stockout</SelectItem>
+                    <SelectItem value="Overstock">Overstock</SelectItem>
+                    <SelectItem value="Healthy">Healthy</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {(
+                      [
+                        { key: "sku", label: "SKU" },
+                        { key: "name", label: "Name" },
+                        { key: "category", label: "Category" },
+                        { key: "stock", label: "Stock" },
+                        { key: "dailyVelocity", label: "Daily Velocity" },
+                        { key: "coverageDays", label: "Coverage Days" },
+                        { key: "risk", label: "Risk" },
+                        { key: "unitsSold", label: "Units Sold" },
+                        { key: "lastRestockDate", label: "Last Restock" },
+                      ] as { key: StockSort; label: string }[]
+                    ).map((col) => (
+                      <TableHead
+                        key={col.key}
+                        className="cursor-pointer select-none whitespace-nowrap text-xs"
+                        onClick={() => toggleSort(col.key)}
+                      >
+                        <span className="flex items-center gap-1">
+                          {col.label}
+                          <SortIcon col={col.key} sort={sort} dir={sortDir} />
+                        </span>
+                      </TableHead>
+                    ))}
+                    <TableHead className="whitespace-nowrap text-xs">Grade</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoading ? (
+                    Array.from({ length: 8 }).map((_, i) => (
+                      <TableRow key={i}>
+                        {Array.from({ length: 10 }).map((_, j) => (
+                          <TableCell key={j}>
+                            <Skeleton className="h-4 w-full" />
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))
+                  ) : data?.skus?.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="h-32 text-center">
+                        <EmptyState
+                          icon={Package}
+                          title="No SKUs found"
+                          description="Try adjusting your filters."
+                          className="border-0 bg-transparent"
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    data?.skus?.map((row) => (
+                      <TableRow
+                        key={row.productId}
+                        className="hover:bg-accent/30 cursor-pointer"
+                        onClick={() => setSelectedSku(row)}
+                        data-testid={`stock-row-${row.productId}`}
+                      >
+                        <TableCell className="font-mono text-xs">{row.sku}</TableCell>
+                        <TableCell className="text-xs font-medium max-w-[180px] truncate" title={row.name}>
+                          {row.name}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {row.category ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-xs tabular-nums">
+                          {formatNumber(row.stock)}
+                        </TableCell>
+                        <TableCell className="text-xs tabular-nums">
+                          {row.dailyVelocity.toFixed(2)}/d
+                        </TableCell>
+                        <TableCell className="text-xs tabular-nums">
+                          {row.coverageDays !== null && row.coverageDays !== undefined
+                            ? `${row.coverageDays.toFixed(0)}d`
+                            : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] px-1.5 py-0 ${RISK_STYLES[row.risk]}`}
+                          >
+                            {row.risk}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs tabular-nums">
+                          {formatNumber(row.unitsSold)}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {row.lastRestockDate
+                            ? format(new Date(row.lastRestockDate), "MMM d, yyyy")
+                            : "—"}
+                        </TableCell>
+                        <TableCell>
+                          {row.gradeStatus ? (
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] px-1.5 py-0 ${GRADE_STYLES[row.gradeStatus]}`}
+                            >
+                              {row.gradeStatus === "complete" ? "Completa" : "Quebrada"}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/* Pagination */}
+            {data && data.total > PAGE_SIZE && (
+              <div className="flex items-center justify-between px-5 py-3 border-t border-border">
+                <span className="text-xs text-muted-foreground">
+                  {formatNumber(data.total)} SKUs · Page {page} of {totalPages}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    data-testid="stock-prev-page"
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    data-testid="stock-next-page"
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+<OrganizationHeading>GRADE · Cor · Tamanho · Quantidade</OrganizationHeading>
+<motion.div variants={cardVariants}>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Category: Stock vs Sales */}
           <Card className="p-5 lg:col-span-1">
@@ -761,196 +939,6 @@ export default function StockIntelligencePage() {
         </div>
       </motion.div>
 
-      {/* Full SKU table */}
-      <motion.div variants={cardVariants}>
-        <Card className="overflow-hidden">
-          <CardHeader className="px-5 py-4 border-b border-border">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle className="text-sm font-semibold">All SKUs</CardTitle>
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  placeholder="Search SKU or name…"
-                  value={search}
-                  onChange={(e) => handleSearch(e.target.value)}
-                  className="h-8 w-44 text-xs"
-                  data-testid="stock-search"
-                />
-                {categories.length > 0 && (
-                  <Select value={categoryFilter} onValueChange={handleCategoryFilter}>
-                    <SelectTrigger className="h-8 w-36 text-xs" data-testid="stock-category-filter">
-                      <SelectValue placeholder="Category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All categories</SelectItem>
-                      {categories.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                <Select value={riskFilter} onValueChange={handleRiskFilter}>
-                  <SelectTrigger className="h-8 w-32 text-xs" data-testid="stock-risk-filter">
-                    <SelectValue placeholder="Risk" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All risks</SelectItem>
-                    <SelectItem value="Stockout">Stockout</SelectItem>
-                    <SelectItem value="Overstock">Overstock</SelectItem>
-                    <SelectItem value="Healthy">Healthy</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    {(
-                      [
-                        { key: "sku", label: "SKU" },
-                        { key: "name", label: "Name" },
-                        { key: "category", label: "Category" },
-                        { key: "stock", label: "Stock" },
-                        { key: "dailyVelocity", label: "Daily Velocity" },
-                        { key: "coverageDays", label: "Coverage Days" },
-                        { key: "risk", label: "Risk" },
-                        { key: "unitsSold", label: "Units Sold" },
-                        { key: "lastRestockDate", label: "Last Restock" },
-                      ] as { key: StockSort; label: string }[]
-                    ).map((col) => (
-                      <TableHead
-                        key={col.key}
-                        className="cursor-pointer select-none whitespace-nowrap text-xs"
-                        onClick={() => toggleSort(col.key)}
-                      >
-                        <span className="flex items-center gap-1">
-                          {col.label}
-                          <SortIcon col={col.key} sort={sort} dir={sortDir} />
-                        </span>
-                      </TableHead>
-                    ))}
-                    <TableHead className="whitespace-nowrap text-xs">Grade</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {isLoading ? (
-                    Array.from({ length: 8 }).map((_, i) => (
-                      <TableRow key={i}>
-                        {Array.from({ length: 10 }).map((_, j) => (
-                          <TableCell key={j}>
-                            <Skeleton className="h-4 w-full" />
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ))
-                  ) : data?.skus?.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center">
-                        <EmptyState
-                          icon={Package}
-                          title="No SKUs found"
-                          description="Try adjusting your filters."
-                          className="border-0 bg-transparent"
-                        />
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    data?.skus?.map((row) => (
-                      <TableRow
-                        key={row.productId}
-                        className="hover:bg-accent/30 cursor-pointer"
-                        onClick={() => setSelectedSku(row)}
-                        data-testid={`stock-row-${row.productId}`}
-                      >
-                        <TableCell className="font-mono text-xs">{row.sku}</TableCell>
-                        <TableCell className="text-xs font-medium max-w-[180px] truncate" title={row.name}>
-                          {row.name}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {row.category ?? "—"}
-                        </TableCell>
-                        <TableCell className="text-xs tabular-nums">
-                          {formatNumber(row.stock)}
-                        </TableCell>
-                        <TableCell className="text-xs tabular-nums">
-                          {row.dailyVelocity.toFixed(2)}/d
-                        </TableCell>
-                        <TableCell className="text-xs tabular-nums">
-                          {row.coverageDays !== null && row.coverageDays !== undefined
-                            ? `${row.coverageDays.toFixed(0)}d`
-                            : <span className="text-muted-foreground">—</span>}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={`text-[10px] px-1.5 py-0 ${RISK_STYLES[row.risk]}`}
-                          >
-                            {row.risk}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-xs tabular-nums">
-                          {formatNumber(row.unitsSold)}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {row.lastRestockDate
-                            ? format(new Date(row.lastRestockDate), "MMM d, yyyy")
-                            : "—"}
-                        </TableCell>
-                        <TableCell>
-                          {row.gradeStatus ? (
-                            <Badge
-                              variant="outline"
-                              className={`text-[10px] px-1.5 py-0 ${GRADE_STYLES[row.gradeStatus]}`}
-                            >
-                              {row.gradeStatus === "complete" ? "Completa" : "Quebrada"}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-
-            {/* Pagination */}
-            {data && data.total > PAGE_SIZE && (
-              <div className="flex items-center justify-between px-5 py-3 border-t border-border">
-                <span className="text-xs text-muted-foreground">
-                  {formatNumber(data.total)} SKUs · Page {page} of {totalPages}
-                </span>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page <= 1}
-                    data-testid="stock-prev-page"
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={page >= totalPages}
-                    data-testid="stock-next-page"
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </motion.div>
-
       {/* Product detail panel */}
       <Sheet open={!!selectedSku} onOpenChange={(open) => { if (!open) setSelectedSku(null); }}>
         <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" data-testid="stock-sku-detail-panel">
@@ -978,24 +966,10 @@ export default function StockIntelligencePage() {
 
               {/* Summary stats */}
               <div className="grid grid-cols-2 gap-3 mb-6">
-                <div className="rounded-lg border border-border bg-card p-3">
-                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-1">Units Sold</p>
-                  <p className="text-lg font-bold tabular-nums">{formatNumber(selectedSku.unitsSold)}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-card p-3">
-                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-1">Stock Units</p>
-                  <p className="text-lg font-bold tabular-nums">{formatNumber(selectedSku.stock)}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-card p-3">
-                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-1">Daily Velocity</p>
-                  <p className="text-lg font-bold tabular-nums">{selectedSku.dailyVelocity.toFixed(2)}/d</p>
-                </div>
-                <div className="rounded-lg border border-border bg-card p-3">
-                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-1">Coverage Days</p>
-                  <p className="text-lg font-bold tabular-nums">
-                    {selectedSku.coverageDays != null ? `${selectedSku.coverageDays.toFixed(0)}d` : "—"}
-                  </p>
-                </div>
+                <GlassMetricCard  label="Units Sold" value={<>{formatNumber(selectedSku.unitsSold)}</>}  />
+                <GlassMetricCard  label="Stock Units" value={<>{formatNumber(selectedSku.stock)}</>}  />
+                <GlassMetricCard  label="Daily Velocity" value={<>{selectedSku.dailyVelocity.toFixed(2)}/d</>}  />
+                <GlassMetricCard  label="Coverage Days" value={<>{selectedSku.coverageDays != null ? `${selectedSku.coverageDays.toFixed(0)}d` : "—"}</>}  />
               </div>
 
               {selectedSku.variants && selectedSku.variants.length > 0 && (

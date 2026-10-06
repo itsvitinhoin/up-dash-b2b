@@ -1,0 +1,126 @@
+/* Canonical UP Glass components, shared by analytics and administration. */
+:root { --up-chart-secondary: hsl(var(--chart-2)); }
+.dark { --up-chart-secondary: #afc4ff; }
+.up-app, .up-main, .up-page-content, .up-page-content .grid,
+.up-page-content .flex, .up-page-content [data-up-surface="card"] {
+  min-width: 0;
+}
+.up-page-content .grid > *, .up-page-content .flex > div {
+  min-width: 0;
+}
+.up-page-content .font-mono, [role="dialog"] .font-mono {
+  font-family: var(--app-font-sans);
+  letter-spacing: normal;
+}
+code, pre, [data-up-code], .up-page-content .prod-sku {
+  font-family: var(--app-font-mono);
+}
+.up-page-content [data-up-surface="card"] {
+  background: var(--up-surface);
+  border-color: var(--up-line);
+  border-radius: 20px;
+  box-shadow: var(--up-shadow);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+[data-up-part="card-header"], [data-up-part="card-content"], [data-up-part="card-footer"] {
+  min-width: 0;
+  padding: 18px;
+}
+[data-up-part="card-header"] + [data-up-part="card-content"] {
+  padding-top: 0;
+}
+[data-up-part="card-title"], .up-page-content .up-glass-card h3 {
+  font-family: var(--app-font-sans);
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: normal;
+  line-height: 1.4;
+}
+.up-metric {
+  padding: 18px;
+  min-height: 150px;
+}
+.up-metric-label, .up-metric-label * {
+  font-family: var(--app-font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  overflow-wrap: anywhere;
+}
+.up-metric-value, .up-metric-value :not(svg):not(path) {
+  font-family: var(--app-font-sans);
+  font-size: inherit;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -.02em;
+  color: hsl(var(--foreground));
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.up-metric .up-metric-value {
+  display: block;
+  max-width: 100%;
+  font-size: 30px;
+}
+.up-metric-footer, .up-metric-footer :not(svg):not(path) {
+  font-family: var(--app-font-sans);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.up-metric-info { position: relative; z-index: 20; }
+.up-metric-info { pointer-events: auto; }
+.up-delta { display: inline-flex; align-items: center; width: fit-content; border-radius: 99px; padding: 2px 8px; font-size: 12px; margin-bottom: 12px; }
+.up-page-content .grid:has(> .up-metric-wrapper),
+.up-page-content .grid:has(> .up-metric-selection) {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 14px;
+  background: transparent;
+  border: 0;
+  overflow: visible;
+}
+.up-page-content .flex:has(> .grid > .up-metric-wrapper) { flex-wrap: wrap; }
+.up-page-content .flex > .grid:has(> .up-metric-wrapper) { flex: 1 1 100%; width: 100%; }
+.up-page-content [data-up-surface="card"]:is([class~="p-3"],[class~="p-4"],[class~="p-5"],[class~="p-6"],[class~="p-8"]) { padding: 18px; }
+.up-metric-selection { position: relative; min-width: 0; }
+.up-metric-selection > .up-metric-wrapper { position: relative; z-index: 2; pointer-events: none; }
+.up-metric-select { position: absolute; inset: 0; z-index: 1; border: 1px solid transparent; border-radius: 20px; cursor: pointer; }
+.up-metric-select:hover, .up-metric-select[aria-pressed="true"] { border-color: var(--up-chart-line); }
+.up-metric-select[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--up-chart-line); }
+.up-metric-selection:has(.up-metric-select[aria-pressed="true"]) .up-metric { border-color: var(--up-chart-line); }
+.up-metric-selection:has(.up-metric-select:focus-visible) .up-metric { outline: 2px solid var(--up-chart-line); outline-offset: 2px; }
+[data-up-button] { font-family: var(--app-font-sans); font-size: 13px; border-radius: 10px; gap: 8px; }
+[data-up-button][data-up-size="default"] { min-height: 36px; padding: 8px 14px; }
+[data-up-button][data-up-size="sm"] { min-height: 32px; padding: 6px 12px; }
+[data-up-button][data-up-size="icon"] { width: 34px; height: 34px; padding: 0; }
+[data-up-table-scroll] { width: 100%; max-width: 100%; min-width: 0; overscroll-behavior-x: contain; scrollbar-gutter: stable; }
+[data-up-table-scroll] table { font-family: var(--app-font-sans); font-size: 13px; }
+[data-up-table-scroll] th { height: 42px; padding: 10px; font-size: 11px; text-transform: none; letter-spacing: normal; }
+[data-up-table-scroll] td { padding: 12px 10px; }
+.up-page-content .recharts-wrapper, .up-page-content .recharts-responsive-container { min-width: 0; max-width: 100%; }
+.recharts-text, .recharts-text tspan, .recharts-legend-wrapper, .recharts-tooltip-wrapper { font-family: var(--app-font-sans); }
+.recharts-cartesian-axis-tick text { font-size: 11px; fill: var(--up-muted); }
+.recharts-cartesian-grid line { stroke: var(--up-line); }
+.up-funnel-stages { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,220px),1fr)); gap: 14px; }
+.up-funnel-stages > * { min-width: 0; }
+[data-testid="funnel-hero"] { grid-template-columns: minmax(0,1fr); gap: 18px; }
+[data-testid="funnel-hero"] > div:first-child { margin-inline: auto; }
+.up-funnel-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,220px),1fr)); gap: 14px; min-width: 0; }
+.up-client-access { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 18px; }
+.up-client-access > div { flex: 1 1 170px; }
+.up-client-access p { overflow-wrap: anywhere; white-space: normal; }
+.up-client-table [data-up-table-scroll] { max-height: 70vh; }
+.up-client-table th:first-child, .up-client-table td:first-child { position: sticky; left: 0; z-index: 1; background: hsl(var(--card)); min-width: 190px; }
+.up-client-table thead { position: sticky; top: 0; z-index: 2; background: hsl(var(--card)); }
+.up-client-table td:last-child { min-width: 220px; }
+.up-client-table td:last-child > .flex { flex-wrap: nowrap; min-width: max-content; white-space: nowrap; }
+@media (max-width: 767px) {
+  .up-page-content .grid:has(> .up-metric-wrapper), .up-page-content .grid:has(> .up-metric-selection), .up-funnel-stages, .up-funnel-grid {
+    grid-template-columns: minmax(0,1fr);
+  }
+  .up-client-access > div { flex-basis: 100%; }
+  .up-page-content .up-glass-card h2 { font-size: 24px; line-height: 1.2; }
+  .up-page-content [class*="min-w-"] { max-width: 100%; }
+  [role="dialog"], [role="alertdialog"] { max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; }
+}

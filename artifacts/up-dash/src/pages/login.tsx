@@ -71,6 +71,7 @@ function buildSeries(base: number, drift: number, variance: number, len = 19) {
 }
 
 export default function LoginPage() {
+  const designDemo = import.meta.env.DEV && import.meta.env.VITE_DESIGN_DEMO === "1";
   const { login } = useAuth();
   const [, setLocation] = useLocation();
   const loginMutation = useLogin();
@@ -155,7 +156,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-[#05060a] text-white">
+    <div className="up-login relative min-h-screen w-full overflow-hidden text-white">
       {/* ── Background layers ─────────────────────────────────────────── */}
       <div
         aria-hidden
@@ -220,13 +221,13 @@ export default function LoginPage() {
           className="flex items-center gap-2.5"
         >
           <img
-            src="/up-dash-logo.png"
+            src={`${import.meta.env.BASE_URL}brand/up-group.png`}
             alt="Up Dash"
             className="h-9 w-auto object-contain"
             draggable={false}
           />
           <span className="hidden sm:inline-flex ml-2 rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-white/70">
-            v2.4 · live
+            Grupo UP
           </span>
         </motion.div>
 
@@ -251,7 +252,7 @@ export default function LoginPage() {
           <motion.div initial="hidden" animate="visible" custom={1} variants={fadeUp}>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-white/70 backdrop-blur">
               <Sparkles className="h-3 w-3 text-primary" />
-              D2C intelligence platform
+              Inteligência para marcas de moda
             </span>
           </motion.div>
 
@@ -262,9 +263,9 @@ export default function LoginPage() {
             variants={fadeUp}
             className="mt-5 text-4xl md:text-5xl font-bold tracking-tight leading-[1.05]"
           >
-            Where fashion brands{" "}
-            <span className="bg-gradient-to-r from-white via-white to-primary bg-clip-text text-transparent">
-              decode their data.
+            Transforme dados em{" "}
+            <span className="up-display up-display-accent">
+              performance.
             </span>
           </motion.h1>
 
@@ -275,9 +276,8 @@ export default function LoginPage() {
             variants={fadeUp}
             className="mt-5 max-w-lg text-base md:text-lg text-white/65 leading-relaxed"
           >
-            Unify sales, customer behavior, and product signals into one live
-            command center. Spot anomalies the second they happen — not next
-            quarter.
+            Vendas, clientes, produtos e mídia em uma única visão.
+            Acompanhe sua operação e encontre as próximas oportunidades de crescimento.
           </motion.p>
 
           <motion.div
@@ -286,6 +286,7 @@ export default function LoginPage() {
             custom={4}
             variants={fadeUp}
             className="mt-10 grid grid-cols-2 gap-3 max-w-xl"
+            aria-label="Métricas ilustrativas, dados de exemplo"
           >
             {liveStats.map((s, i) => (
               <LiveTile key={s.label} {...s} delay={i * 0.08} reduced={!!reduced} />
@@ -304,10 +305,10 @@ export default function LoginPage() {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/60" />
                 <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
               </span>
-              Real-time pipeline
+              Métricas ilustrativas
             </span>
             <span className="hidden sm:inline">•</span>
-            <span className="hidden sm:inline">Trusted by fashion D2C teams</span>
+            <span className="hidden sm:inline">Inteligência para o grupo UP</span>
           </motion.div>
         </div>
 
@@ -332,9 +333,9 @@ export default function LoginPage() {
             <div className="relative rounded-2xl border border-white/10 bg-white/[0.04] p-7 shadow-2xl backdrop-blur-xl">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-2xl font-semibold tracking-tight">Sign in</h2>
+                  <h2 className="text-2xl font-medium tracking-tight">Acesse seu dashboard</h2>
                   <p className="mt-1 text-sm text-white/55">
-                    Access your live brand dashboard
+                    Entre com os dados da sua conta UP
                   </p>
                 </div>
                 <div className="rounded-lg border border-white/10 bg-white/5 p-2">
@@ -342,6 +343,15 @@ export default function LoginPage() {
                 </div>
               </div>
 
+              {designDemo && (
+                <div className="mb-5 rounded-xl border border-blue-400/25 bg-blue-500/10 p-4">
+                  <p className="mb-3 text-xs text-white/70">Prévia do redesign com dados fictícios.</p>
+                  <Button type="button" className="w-full" disabled={loginMutation.isPending}
+                    onClick={() => onSubmit({ email: "demo@updash.local", password: "demo-preview" })}>
+                    Abrir demonstração
+                  </Button>
+                </div>
+              )}
               <Form {...form}>
                 <form
                   onSubmit={form.handleSubmit(onSubmit)}
@@ -398,7 +408,7 @@ export default function LoginPage() {
                               data-testid="input-password"
                               className="h-11 pr-10 bg-white/5 border-white/10 text-white placeholder:text-white/35 focus-visible:ring-primary/50 focus-visible:border-primary/50"
                             />
-                            <button
+                            <Button variant="ghost" size="sm"
                               type="button"
                               onClick={() => setShowPassword((s) => !s)}
                               className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-white/50 hover:text-white"
@@ -410,7 +420,7 @@ export default function LoginPage() {
                               ) : (
                                 <Eye className="h-4 w-4" />
                               )}
-                            </button>
+                            </Button>
                           </div>
                         </FormControl>
                         <FormMessage />
@@ -429,11 +439,11 @@ export default function LoginPage() {
                         {loginMutation.isPending ? (
                           <>
                             <span className="h-2 w-2 rounded-full bg-current animate-pulse" />
-                            Signing in…
+                            Entrando…
                           </>
                         ) : (
                           <>
-                            Sign in
+                            Entrar
                             <ArrowUpRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                           </>
                         )}
@@ -452,7 +462,7 @@ export default function LoginPage() {
             </div>
 
             <p className="mt-5 text-center text-xs text-white/40">
-              © {new Date().getFullYear()} UP Dash Inc. · Built for fashion D2C teams.
+              © {new Date().getFullYear()} Grupo UP · Inteligência para marcas de moda.
             </p>
           </div>
         </motion.div>

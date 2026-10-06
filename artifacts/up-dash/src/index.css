@@ -1,5 +1,9 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./styles/brand-fonts.css";
+@import "./styles/up-glass.css";
+@import "./styles/up-glass-uniformity.css";
+@import "./styles/up-glass-palette.css";
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
