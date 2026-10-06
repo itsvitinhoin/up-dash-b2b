@@ -157,7 +157,9 @@ code, pre, [data-up-code], .up-page-content .prod-sku {
 .up-base-progress { height: 4px; background: hsl(var(--muted)); border-radius: 8px; overflow: hidden; margin-top: 16px; }
 .up-base-progress span { display: block; height: 100%; border-radius: inherit; background: var(--up-chart-line); }
 .up-velocity-layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(200px,24%); gap: 16px; align-items: stretch; }
-.up-velocity-summary .up-metric, .up-velocity-summary .up-metric-wrapper { min-height: 0; }
+.up-velocity-summary { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.up-velocity-summary > .up-metric-wrapper { height: auto; flex: 1; min-height: 0; }
+.up-velocity-summary .up-metric { height: 100%; min-height: 0; }
 .up-velocity-summary .up-metric-icon { display: none; }
 .up-velocity-summary .up-metric-value { font-size: 24px; }
 .up-velocity-bars { display: flex; gap: clamp(8px,1.6vw,24px); margin-top: 16px; min-width: 0; }

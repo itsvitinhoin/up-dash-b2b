@@ -38,7 +38,7 @@ export function PurchaseInsightsPanels({ data, loading, error }: { data?: Purcha
               {velocity.buckets.map(bucket => <div key={bucket.label} className="up-velocity-column"><div className="up-velocity-track"><div className="up-velocity-bar" style={{ height: `${Math.max(2, (bucket.pct ?? 0)/Math.max(...velocity.buckets.map(b=>b.pct??0),1)*82)}%` }}><span>{pct(bucket.pct)}</span></div></div><p>{displayLabel(bucket.label)}</p></div>)}
             </div>}
           </CardContent></Card>
-          <div className="up-velocity-summary space-y-3">
+          <div className="up-velocity-summary">
             <GlassMetricCard label="Compram na primeira semana" value={pct(velocity.firstWeekPct)} footer={`${formatNumber(velocity.firstWeekCount)} lojistas`} />
             <GlassMetricCard label="Compram em até 30 dias" value={pct(velocity.within30Pct)} footer={`${formatNumber(velocity.within30Count)} lojistas`} />
             <GlassMetricCard label="Mediana até o pedido" value={days(velocity.medianDays)} footer={`Média de ${days(velocity.averageDays)}`} />
