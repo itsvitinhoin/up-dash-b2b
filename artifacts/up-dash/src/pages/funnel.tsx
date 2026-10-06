@@ -305,7 +305,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <MiniStat
                       icon={Users}
-                      label={visibleSteps[0]?.label ?? "Top of funnel"}
+                      label={visibleSteps[0]?.label ?? "Topo do funil"}
                       value={visibleSteps[0]?.count ?? 0}
                       color="hsl(var(--chart-1))"
                       delay={0.05}

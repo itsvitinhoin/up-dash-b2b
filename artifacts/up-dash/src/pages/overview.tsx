@@ -407,7 +407,7 @@ export default function OverviewPage() {
         </div>
         {data && (
           <span className="text-muted-foreground/80">
-            {data.kpis.activeClients} of {selectedClientCount} marcas selecionadas tiveram faturamento ou campanhas de anúncios neste período.
+            {data.kpis.activeClients} de {selectedClientCount} marcas selecionadas tiveram faturamento ou campanhas de anúncios neste período.
           </span>
         )}
       </motion.div>
@@ -425,7 +425,7 @@ export default function OverviewPage() {
                     Clientes nos totais da plataforma
                   </h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {selectedClientCount} of {data?.kpis.totalClients ?? allClientIds.length} selected
+                    {selectedClientCount} de {data?.kpis.totalClients ?? allClientIds.length} selected
                   </p>
                 </div>
               </div>

@@ -351,7 +351,7 @@ export default function GeographyPage() {
                                   </span>
                                 </div>
                                 <div className="text-[11px] text-muted-foreground">
-                                  {formatNumber(s.customers)} clientes · {formatNumber(s.orders)} orders
+                                  {formatNumber(s.customers)} clientes · {formatNumber(s.orders)} pedidos
                                 </div>
                               </div>
                             </div>
@@ -380,7 +380,7 @@ export default function GeographyPage() {
                             </span>
                           </p>
                           <p className="text-[11px] text-muted-foreground">
-                            {formatNumber(topCity.orders)} orders
+                            {formatNumber(topCity.orders)} pedidos
                           </p>
                         </div>
                         <span className="text-base font-bold tabular-nums text-foreground">

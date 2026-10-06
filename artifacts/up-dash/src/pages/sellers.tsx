@@ -174,7 +174,7 @@ export default function SellersPage() {
       {/* Hero KPI strip */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <motion.div variants={cardVariants}>
-          <GlassMetricCard label="Faturamento total" value={totalRevenue} format={formatCurrencySmart} icon={DollarSign} loading={isLoading} footer={<p className="text-xs text-muted-foreground">Entre os principais {activeSellers} sellers</p>} />
+          <GlassMetricCard label="Faturamento total" value={totalRevenue} format={formatCurrencySmart} icon={DollarSign} loading={isLoading} footer={<p className="text-xs text-muted-foreground">Entre os principais {activeSellers} vendedoras</p>} />
         </motion.div>
 
         <motion.div variants={cardVariants}>
@@ -182,7 +182,7 @@ export default function SellersPage() {
         </motion.div>
 
         <motion.div variants={cardVariants}>
-          <GlassMetricCard label="Principal vendedora" value={topSeller?.name ?? "—"} icon={Crown} loading={isLoading} footer={topSeller ? <p className="text-xs text-muted-foreground">{formatCurrency(topSeller.totalRevenue)} · {formatNumber(topSeller.totalOrders)} orders</p> : undefined} />
+          <GlassMetricCard label="Principal vendedora" value={topSeller?.name ?? "—"} icon={Crown} loading={isLoading} footer={topSeller ? <p className="text-xs text-muted-foreground">{formatCurrency(topSeller.totalRevenue)} · {formatNumber(topSeller.totalOrders)} pedidos</p> : undefined} />
         </motion.div>
       </div>
 
@@ -340,7 +340,7 @@ export default function SellersPage() {
                             #{p.rank} · {p.name}
                           </div>
                           <div className="text-muted-foreground tabular-nums">
-                            {formatCurrency(p.revenue)} · {formatNumber(p.orders)} orders
+                            {formatCurrency(p.revenue)} · {formatNumber(p.orders)} pedidos
                           </div>
                           <div className="text-muted-foreground/70 tabular-nums">
                             {p.share.toFixed(1)}% do total

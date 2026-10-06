@@ -39,6 +39,8 @@ import { CountUp } from "@/components/count-up";
 import { useReducedMotion, fadeInUp, withReducedMotion } from "@/lib/motion";
 import type { RfmCustomerRow } from "@workspace/api-client-react";
 
+const RFM_SEGMENTS = ["Champions", "Loyal", "Potential", "At Risk", "Lost"] as const;
+
 const SEGMENT_META: Record<string, {
   label: string;
   color: string;
@@ -349,7 +351,7 @@ export default function RfmPage() {
           {/* Segment Cards */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              {(["Campeões", "Fiéis", "Potenciais", "Em risco", "Perdidos"] as const).map((seg) => {
+              {RFM_SEGMENTS.map((seg) => {
                 const meta = SEGMENT_META[seg];
                 const segData = segments.find((s) => s.segment === seg);
                 return (
@@ -420,7 +422,7 @@ export default function RfmPage() {
                           key={key}
                           type="monotone"
                           dataKey={key}
-                          name={key === "AtRisk" ? "Em risco" : key}
+                          name={displayLabel(key)}
                           stroke={color}
                           fill={`url(#rfmGrad-${key})`}
                           strokeWidth={2}
@@ -473,7 +475,7 @@ export default function RfmPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Todos os segmentos</SelectItem>
-                        {(["Campeões", "Fiéis", "Potenciais", "Em risco", "Perdidos"] as const).map((s) => (
+                        {RFM_SEGMENTS.map((s) => (
                           <SelectItem key={s} value={s}>{displayLabel(SEGMENT_META[s].label)}</SelectItem>
                         ))}
                       </SelectContent>
@@ -637,7 +639,7 @@ export default function RfmPage() {
                 {totalPages > 1 && (
                   <div className="flex items-center justify-between px-4 py-3 border-t border-border/40">
                     <span className="text-xs text-muted-foreground">
-                      Página {page} of {totalPages} · {formatNumber(total)} customers
+                      Página {page} de {totalPages} · {formatNumber(total)} clientes
                     </span>
                     <div className="flex items-center gap-1.5">
                       <Button

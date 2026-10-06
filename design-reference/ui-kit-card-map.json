@@ -885,7 +885,7 @@
     "line": 331,
     "component": "GlassMetricCard",
     "family": "Métrica",
-    "label": "\"UP Dash · Relatório Daily\"",
+    "label": "\"UP Dash · Relatório diário\"",
     "value": "{<>{data?.client.name ?? \"B2C\"}</>}",
     "sources": "useGetClient",
     "template": "DashboardKpiCard → UP Glass"
@@ -2106,7 +2106,7 @@
     "line": 306,
     "component": "MiniStat",
     "family": "Métrica",
-    "label": "{visibleSteps[0]?.label ?? \"Top of funnel\"}",
+    "label": "{visibleSteps[0]?.label ?? \"Topo do funil\"}",
     "value": "{visibleSteps[0]?.count ?? 0}",
     "sources": "useGetFunnel, useGetSiteVisits",
     "template": "DashboardKpiCard → UP Glass"
@@ -4633,7 +4633,7 @@
   {
     "id": "UP-422",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 159,
+    "line": 161,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{title}",
@@ -4644,7 +4644,7 @@
   {
     "id": "UP-423",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 283,
+    "line": 285,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -4655,7 +4655,7 @@
   {
     "id": "UP-424",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 325,
+    "line": 327,
     "component": "RfmLogicCard",
     "family": "Métrica",
     "label": "\"Recência\"",
@@ -4666,7 +4666,7 @@
   {
     "id": "UP-425",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 332,
+    "line": 334,
     "component": "RfmLogicCard",
     "family": "Métrica",
     "label": "\"Frequência\"",
@@ -4677,7 +4677,7 @@
   {
     "id": "UP-426",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 339,
+    "line": 341,
     "component": "RfmLogicCard",
     "family": "Métrica",
     "label": "\"Monetário\"",
@@ -4688,7 +4688,7 @@
   {
     "id": "UP-427",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 362,
+    "line": 364,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{meta.label}",
@@ -4699,7 +4699,7 @@
   {
     "id": "UP-428",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 378,
+    "line": 380,
     "component": "Card",
     "family": "Gráfico",
     "label": "<span className=\"h-1.5 w-1.5 rounded-full bg-primary\" />Evolução da composição dos segmentos",
@@ -4710,7 +4710,7 @@
   {
     "id": "UP-429",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 440,
+    "line": 442,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "<span className=\"h-1.5 w-1.5 rounded-full bg-chart-3\" />Compradoras RFM <span className=\"text-muted-foreground font-normal\">({formatNumber(total)})</span><InfoHint text=\"A lista mostra clientes que solicitaram pedidos no período filtrado. Por padrão entram todos os pedidos; use o filtro de status para analisar somente aprovados, pendentes ou recusados.\" />",
@@ -4721,7 +4721,7 @@
   {
     "id": "UP-430",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 677,
+    "line": 679,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -4732,7 +4732,7 @@
   {
     "id": "UP-431",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 718,
+    "line": 720,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Solicitado\"",
@@ -4743,7 +4743,7 @@
   {
     "id": "UP-432",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 719,
+    "line": 721,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Atendido\"",
@@ -4754,7 +4754,7 @@
   {
     "id": "UP-433",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 720,
+    "line": 722,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Peças solicitadas\"",
@@ -4765,7 +4765,7 @@
   {
     "id": "UP-434",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 721,
+    "line": 723,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Peças atendidas\"",

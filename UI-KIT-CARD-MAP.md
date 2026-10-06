@@ -118,7 +118,7 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 | UP-078 | 144 | {label} | GlassMetricCard | Métrica |
 | UP-079 | 155 | "Carregando relatório diário" | DashLoadingCard | Painel |
 | UP-080 | 162 | Painel / conteúdo | Card | Painel |
-| UP-081 | 331 | "UP Dash · Relatório Daily" | GlassMetricCard | Métrica |
+| UP-081 | 331 | "UP Dash · Relatório diário" | GlassMetricCard | Métrica |
 | UP-082 | 343 | "Faturamento aprovado" | DailyKpiCard | Métrica |
 | UP-083 | 355 | "Quantidade de vendas" | DailyKpiCard | Métrica |
 | UP-084 | 366 | "Ticket médio" | DailyKpiCard | Métrica |
@@ -249,7 +249,7 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 |---|---:|---|---|---|
 | UP-190 | 246 | Painel / conteúdo | ActivationAnalysisCard | Painel |
 | UP-191 | 267 | {visitStepHidden ? "Leads → Compras" : "Visitantes → Compras"} | Card | Painel |
-| UP-192 | 306 | {visibleSteps[0]?.label ?? "Top of funnel"} | MiniStat | Métrica |
+| UP-192 | 306 | {visibleSteps[0]?.label ?? "Topo do funil"} | MiniStat | Métrica |
 | UP-193 | 314 | "Compras" | MiniStat | Métrica |
 | UP-194 | 322 | {biggestDrop ? Perda em ${biggestDrop.to.label} : "Maior perda"} | MiniStat | Métrica |
 | UP-195 | 331 | "Média de eventos antes da compra" | MiniStat | Métrica |
@@ -559,19 +559,19 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-422 | 159 | {title} | GlassMetricCard | Métrica |
-| UP-423 | 283 | Painel / conteúdo | Card | Painel |
-| UP-424 | 325 | "Recência" | RfmLogicCard | Métrica |
-| UP-425 | 332 | "Frequência" | RfmLogicCard | Métrica |
-| UP-426 | 339 | "Monetário" | RfmLogicCard | Métrica |
-| UP-427 | 362 | {meta.label} | GlassMetricCard | Métrica |
-| UP-428 | 378 | <span className="h-1.5 w-1.5 rounded-full bg-primary" />Evolução da composição dos segmentos | Card | Gráfico |
-| UP-429 | 440 | <span className="h-1.5 w-1.5 rounded-full bg-chart-3" />Compradoras RFM <span className="text-muted-foreground font-normal">({formatNumber(total)})</span><InfoHint text="A lista mostra clientes que solicitaram pedidos no período filtrado. Por padrão entram todos os pedidos; use o filtro de status para analisar somente aprovados, pendentes ou recusados." /> | Card | Tabela / lista / detalhe |
-| UP-430 | 677 | Painel / conteúdo | Card | Painel |
-| UP-431 | 718 | "Solicitado" | GlassMetricCard | Métrica |
-| UP-432 | 719 | "Atendido" | GlassMetricCard | Métrica |
-| UP-433 | 720 | "Peças solicitadas" | GlassMetricCard | Métrica |
-| UP-434 | 721 | "Peças atendidas" | GlassMetricCard | Métrica |
+| UP-422 | 161 | {title} | GlassMetricCard | Métrica |
+| UP-423 | 285 | Painel / conteúdo | Card | Painel |
+| UP-424 | 327 | "Recência" | RfmLogicCard | Métrica |
+| UP-425 | 334 | "Frequência" | RfmLogicCard | Métrica |
+| UP-426 | 341 | "Monetário" | RfmLogicCard | Métrica |
+| UP-427 | 364 | {meta.label} | GlassMetricCard | Métrica |
+| UP-428 | 380 | <span className="h-1.5 w-1.5 rounded-full bg-primary" />Evolução da composição dos segmentos | Card | Gráfico |
+| UP-429 | 442 | <span className="h-1.5 w-1.5 rounded-full bg-chart-3" />Compradoras RFM <span className="text-muted-foreground font-normal">({formatNumber(total)})</span><InfoHint text="A lista mostra clientes que solicitaram pedidos no período filtrado. Por padrão entram todos os pedidos; use o filtro de status para analisar somente aprovados, pendentes ou recusados." /> | Card | Tabela / lista / detalhe |
+| UP-430 | 679 | Painel / conteúdo | Card | Painel |
+| UP-431 | 720 | "Solicitado" | GlassMetricCard | Métrica |
+| UP-432 | 721 | "Atendido" | GlassMetricCard | Métrica |
+| UP-433 | 722 | "Peças solicitadas" | GlassMetricCard | Métrica |
+| UP-434 | 723 | "Peças atendidas" | GlassMetricCard | Métrica |
 
 ## sales-agent
 

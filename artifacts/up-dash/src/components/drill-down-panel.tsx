@@ -103,7 +103,7 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
 
             <div className="mt-5 flex items-center justify-between">
               <p className="text-xs uppercase tracking-wider text-muted-foreground">
-                Top {data.orders.length} orders
+                Top {data.orders.length} pedidos
               </p>
               <Button
                 size="sm"
@@ -162,7 +162,7 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
 
             <p className="mt-4 text-[11px] text-muted-foreground inline-flex items-center gap-1">
               <ArrowUpRight className="h-3 w-3" />
-              Exibindo os principais {data.orders.length} of {data.totalOrders} pedidos por valor.
+              Exibindo os principais {data.orders.length} de {data.totalOrders} pedidos por valor.
             </p>
           </>
         )}

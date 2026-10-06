@@ -13,7 +13,7 @@ const options: Array<{
   {
     mode: "B2B",
     title: "Painel B2B",
-    description: "Clientes com UP Zero, sellers, WhatsApp e atribuição por campanhas.",
+    description: "Clientes com UP Zero, vendedoras, WhatsApp e atribuição por campanhas.",
     icon: Building2,
     bullets: ["UP Zero", "Sellers", "WhatsApp", "UTM"],
   },

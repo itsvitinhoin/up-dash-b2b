@@ -34,6 +34,7 @@ Não há alteração da extração, jobs, credenciais, autenticação, schema de
 - Builds normais do frontend e backend.
 - Três testes de purchase-progression: primeira compra histórica, receita 4+, limites do período/dia brasileiro, faixas disjuntas, datas ausentes/invertidas e ausência de amostra.
 - Revisão local atual: 12 páginas em desktop (1280 px) e celular (390 px), mais Visão Geral em 1920 px; sem rolagem lateral e sem grades com mais de quatro métricas. Os quatro cards de Recompra têm o mesmo alinhamento vertical.
+- Revisão adicional de 40 rotas no desktop sem erros de execução, quebra lateral ou grades acima de quatro métricas. Filtro RFM conferido com rótulo Campeões e código de API Champions. Rotas administrativas sem fixture podem mostrar dados indisponíveis após as tentativas de consulta.
 - Loader observado durante troca de período, blur de 10 px e remoção ao concluir.
 - git diff --check e ausência do token sintético no bundle normal.
 

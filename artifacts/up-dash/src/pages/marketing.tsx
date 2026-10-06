@@ -982,7 +982,7 @@ export default function MarketingPage() {
                     labelFormatter={fmtDateLong}
                     formatter={(v: number) => [`${v.toFixed(2)}×`, "ROAS"]}
                   />
-                  <ReferenceLine y={2} stroke="#0458fe" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: "Target 2×", position: "insideTopRight", fontSize: 9, fill: "#0458fe" }} />
+                  <ReferenceLine y={2} stroke="#0458fe" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: "Meta 2×", position: "insideTopRight", fontSize: 9, fill: "#0458fe" }} />
                   <Area type="monotone" dataKey="roas" stroke="#87adff" strokeWidth={2} fill="url(#roasGrad)" dot={false} activeDot={{ r: 4, fill: "#87adff" }}  name="ROAS" />
                 </AreaChart>
               </ResponsiveContainer>
@@ -1127,7 +1127,7 @@ export default function MarketingPage() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <h2 className="text-sm font-semibold text-foreground">Desempenho de campanhas</h2>
               <p className="text-xs text-muted-foreground">
-                {data ? `${Math.min((creativesPage - 1) * CREATIVES_PAGE_SIZE + 1, data.creativesTotal)}–${Math.min(creativesPage * CREATIVES_PAGE_SIZE, data.creativesTotal)} of ${data.creativesTotal}` : "—"} · clique nos títulos para ordenar
+                {data ? `${Math.min((creativesPage - 1) * CREATIVES_PAGE_SIZE + 1, data.creativesTotal)}–${Math.min(creativesPage * CREATIVES_PAGE_SIZE, data.creativesTotal)} de ${data.creativesTotal}` : "—"} · clique nos títulos para ordenar
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -1213,7 +1213,7 @@ export default function MarketingPage() {
             {data && data.creativesTotal > CREATIVES_PAGE_SIZE && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-border bg-muted/10">
                 <p className="text-xs text-muted-foreground">
-                  Página {creativesPage} of {Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE)}
+                  Página {creativesPage} de {Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE)}
                 </p>
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm"

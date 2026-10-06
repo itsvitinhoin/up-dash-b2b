@@ -278,7 +278,7 @@ export default function DailyPage() {
     return (
       <Alert data-testid="page-daily-b2b-warning">
         <FileText className="h-4 w-4" />
-        <AlertTitle>Daily não disponível para este cliente</AlertTitle>
+        <AlertTitle>Relatório diário não disponível para este cliente</AlertTitle>
         <AlertDescription>Relatório diário disponível para clientes B2C (Nuvemshop) ou Vesti.</AlertDescription>
       </Alert>
     );
@@ -287,7 +287,7 @@ export default function DailyPage() {
   if (isError) {
     return (
       <Alert variant="destructive" data-testid="page-daily-error">
-        <AlertTitle>Não foi possível carregar o Daily.</AlertTitle>
+        <AlertTitle>Não foi possível carregar o relatório diário.</AlertTitle>
         <AlertDescription>
           Verifique se o cliente é B2C ou Vesti e se as integrações necessárias estão configuradas.
         </AlertDescription>
@@ -328,7 +328,7 @@ export default function DailyPage() {
         </div>
       </div>
 
-      <GlassMetricCard label="UP Dash · Relatório Daily" value={<>{data?.client.name ?? "B2C"}</>} footer={<div className="space-y-2"><p className="mt-1 text-sm text-muted-foreground">Período {periodLabel}</p></div>}    />
+      <GlassMetricCard label="UP Dash · Relatório diário" value={<>{data?.client.name ?? "B2C"}</>} footer={<div className="space-y-2"><p className="mt-1 text-sm text-muted-foreground">Período {periodLabel}</p></div>}    />
 
       {isLoading || !kpis ? (
         <DailyLoadingState />

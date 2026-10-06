@@ -1100,7 +1100,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             {data && data.pages > 1 && (
               <div className="p-4 border-t flex items-center justify-between">
                 <div className="text-sm text-muted-foreground">
-                  Exibindo página {data.page} of {data.pages} ({formatNumber(data.total)} total)
+                  Exibindo página {data.page} de {data.pages} ({formatNumber(data.total)} total)
                 </div>
                 <div className="flex gap-2">
                   <Button

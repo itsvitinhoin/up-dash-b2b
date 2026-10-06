@@ -101,7 +101,7 @@ const NAV_ITEM_OPTIONS: Array<{ href: string; label: string }> = [
   { href: "/sellers", label: "Vendedores" },
   { href: "/stock", label: "Estoque" },
   { href: "/geography", label: "Geografia" },
-  { href: "/daily", label: "Daily (B2C)" },
+  { href: "/daily", label: "Diário (B2C)" },
   { href: "/scale", label: "Escala (B2C)" },
 ];
 
@@ -2248,7 +2248,7 @@ export default function ClientsPage() {
           {data && data.pages > 1 && (
             <div className="p-4 border-t flex items-center justify-between">
               <div className="text-sm text-muted-foreground">
-                Exibindo página {data.page} of {data.pages} ({formatNumber(data.total)} total)
+                Exibindo página {data.page} de {data.pages} ({formatNumber(data.total)} total)
               </div>
               <div className="flex gap-2">
                 <Button

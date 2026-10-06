@@ -710,7 +710,7 @@ export default function StockIntelligencePage() {
             {data && data.total > PAGE_SIZE && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-border">
                 <span className="text-xs text-muted-foreground">
-                  {formatNumber(data.total)} SKUs · Página {page} of {totalPages}
+                  {formatNumber(data.total)} SKUs · Página {page} de {totalPages}
                 </span>
                 <div className="flex items-center gap-2">
                   <Button
