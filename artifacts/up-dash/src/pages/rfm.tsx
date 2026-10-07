@@ -1,3 +1,9 @@
+import { useI18n } from "@/lib/i18n";
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { getGetRfmUrl } from "@workspace/api-client-react";
+import { MetricDataProvider } from "@/components/metric-data-context";
+import { useDisplayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useState } from "react";
 import { format } from "date-fns";
 import { useLocation } from "wouter";
@@ -37,6 +43,8 @@ import { CountUp } from "@/components/count-up";
 import { useReducedMotion, fadeInUp, withReducedMotion } from "@/lib/motion";
 import type { RfmCustomerRow } from "@workspace/api-client-react";
 
+const RFM_SEGMENTS = ["Champions", "Loyal", "Potential", "At Risk", "Lost"] as const;
+
 const SEGMENT_META: Record<string, {
   label: string;
   color: string;
@@ -45,61 +53,62 @@ const SEGMENT_META: Record<string, {
   description: string;
 }> = {
   Champions: {
-    label: "Champions",
-    color: "#10b981",
+    label: "Campeões",
+    color: "#87adff",
     bg: "bg-emerald-500/10",
     ring: "ring-emerald-500/30",
-    description: "Bought recently, buy often, spent the most",
+    description: "Compraram recentemente, compram com frequência e têm maior gasto",
   },
   Loyal: {
-    label: "Loyal",
-    color: "#6366f1",
+    label: "Fiéis",
+    color: "#5b8dff",
     bg: "bg-indigo-500/10",
     ring: "ring-indigo-500/30",
-    description: "Buy regularly and respond well to offers",
+    description: "Compram regularmente e respondem bem às ofertas",
   },
   Potential: {
-    label: "Promising",
-    color: "#8b5cf6",
+    label: "Promissores",
+    color: "#5b8dff",
     bg: "bg-violet-500/10",
     ring: "ring-violet-500/30",
-    description: "Recent buyers with average frequency",
+    description: "Compradores recentes com frequência média",
   },
   "At Risk": {
-    label: "At Risk",
-    color: "#f59e0b",
+    label: "Em risco",
+    color: "#0458fe",
     bg: "bg-amber-500/10",
     ring: "ring-amber-500/30",
-    description: "Good customers who are becoming inactive",
+    description: "Clientes com bom histórico que estão ficando inativos",
   },
   Lost: {
-    label: "Lost",
-    color: "#6b7280",
+    label: "Perdidos",
+    color: "#cfddff",
     bg: "bg-zinc-500/10",
     ring: "ring-zinc-500/30",
-    description: "Purchased long ago and haven't returned",
+    description: "Compraram há muito tempo e não retornaram",
   },
 };
 
 const AREA_COLORS: Record<string, string> = {
-  Champions: "#10b981",
-  Loyal: "#6366f1",
-  Potential: "#8b5cf6",
-  AtRisk: "#f59e0b",
-  Lost: "#6b7280",
+  Champions: "#87adff",
+  Loyal: "#5b8dff",
+  Potential: "#5b8dff",
+  AtRisk: "#0458fe",
+  Lost: "#cfddff",
 };
 
 function SegmentBadge({ segment }: { segment: string | null | undefined }) {
+  const { tx } = useI18n();
   if (!segment) return <Badge variant="outline" className="text-[10px]">—</Badge>;
   const meta = SEGMENT_META[segment];
-  const color = meta?.color ?? "#9ca3af";
+  const color = meta?.color ?? "#cfddff";
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium"
       style={{ background: `${color}18`, color }}
     >
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-      {meta?.label ?? segment}
+      {meta ? tx(meta.label) : segment}
     </span>
   );
 }
@@ -126,13 +135,13 @@ function InfoHint({ text }: { text: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
+        <Button variant="ghost" size="sm"
           type="button"
           className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="Explicação da métrica"
         >
           <Info className="h-3.5 w-3.5" />
-        </button>
+        </Button>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs text-xs leading-relaxed">
         {text}
@@ -154,28 +163,12 @@ function RfmLogicCard({
   info: string;
   icon: typeof CalendarDays;
 }) {
-  return (
-    <Card className="border-border/70 bg-card">
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
-              <InfoHint text={info} />
-            </div>
-            <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-          </div>
-          <div className="rounded-lg bg-primary/10 p-2 text-primary">
-            <Icon className="h-4 w-4" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  return (<GlassMetricCard label={title} value={value} icon={Icon} info={<><p>{info}</p><p className="mt-2">{description}</p></>} />);
 }
 
 export default function RfmPage() {
+  const { tx } = useI18n();
+  const displayLabel = useDisplayLabel();
   const { selectedClientId, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -216,6 +209,7 @@ export default function RfmPage() {
     }
   );
 
+  const previous = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetRfmUrl({ clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), segment: segmentFilter && segmentFilter !== "all" ? segmentFilter : undefined, page, limit, sortBy, sortDir, orderStatus: orderStatusFilter, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, state: filters.state || undefined, city: filters.city || undefined, product: filters.product || undefined }), enabled);
   const insightParams = {
     clientId,
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
@@ -247,6 +241,13 @@ export default function RfmPage() {
     ? customers.reduce((sum, customer) => sum + customer.monetary, 0) / customers.length
     : 0;
 
+  const priorCustomers = previous.data?.customers ?? [];
+  const priorMean = (field: "recencyDays" | "frequency" | "monetary") => priorCustomers.length ? priorCustomers.reduce((sum, customer) => sum + (customer[field] ?? 0), 0) / priorCustomers.length : undefined;
+  const metricComparisons = {
+    "metric-recência": { current: avgRecency, previous: priorMean("recencyDays"), format: (v: number) => `${Math.round(v)} dias` },
+    "metric-frequência": { current: avgFrequency, previous: priorMean("frequency"), format: formatNumber },
+    "metric-monetário": { current: avgMonetary, previous: priorMean("monetary"), format: formatCurrency },
+  };
   const handleSort = (col: typeof sortBy) => {
     if (col === sortBy) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -276,18 +277,18 @@ export default function RfmPage() {
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
         </span>
         <span className="font-mono uppercase tracking-wider">
-          Live · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+          Atualizado · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
         </span>
       </motion.div>
 
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
+          <AlertTitle>{tx("Erro")}</AlertTitle>
           <AlertDescription className="flex items-center justify-between">
-            Failed to load RFM data.
+            {tx("Não foi possível carregar os dados RFM.")}
             <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Retry
+              <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
             </Button>
           </AlertDescription>
         </Alert>
@@ -323,7 +324,7 @@ export default function RfmPage() {
                         onClick={() => regenerate.mutate({ params: insightParams })}
                       >
                         <RefreshCw className={`h-3 w-3 mr-1 ${regenerate.isPending ? "animate-spin" : ""}`} />
-                        Refresh
+                        {tx("Atualizar")}
                       </Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setInsightDismissed(true)}>
                         <XIcon className="h-3 w-3" />
@@ -335,87 +336,57 @@ export default function RfmPage() {
             </motion.div>
           )}
 
+<MetricDataProvider source={tx("Ecommerce · RFM")} comparisons={metricComparisons}>
           {/* RFM Logic */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <div className="grid gap-3 md:grid-cols-3">
               <RfmLogicCard
                 title="Recência"
                 value={isLoading ? "—" : `${Math.round(avgRecency)}d`}
-                description="Média de dias desde a última compra"
-                info="Recência mede há quantos dias a cliente comprou pela última vez. Quanto menor o número, mais quente está a relação comercial."
+                description={tx("Média de dias desde a última compra")}
+                info={tx("Recência mede há quantos dias a cliente comprou pela última vez. Quanto menor o número, mais quente está a relação comercial.")}
                 icon={CalendarDays}
               />
               <RfmLogicCard
                 title="Frequência"
                 value={isLoading ? "—" : formatNumber(Math.round(avgFrequency))}
-                description="Média de pedidos por compradora"
-                info="Frequência considera quantas compras a cliente já realizou. Clientes com mais compras tendem a responder melhor a relacionamento e reposição."
+                description={tx("Média de pedidos por compradora")}
+                info={tx("Frequência considera quantas compras a cliente já realizou. Clientes com mais compras tendem a responder melhor a relacionamento e reposição.")}
                 icon={ShoppingBag}
               />
               <RfmLogicCard
                 title="Monetário"
                 value={isLoading ? "—" : formatCurrency(avgMonetary)}
-                description="Valor médio acumulado por compradora"
-                info="Monetário soma o valor comprado pela cliente. Esse pilar ajuda a priorizar clientes de maior valor para ações comerciais."
+                description={tx("Valor médio acumulado por compradora")}
+                info={tx("Monetário soma o valor comprado pela cliente. Esse pilar ajuda a priorizar clientes de maior valor para ações comerciais.")}
                 icon={BarChart3}
               />
             </div>
           </motion.div>
+</MetricDataProvider>
 
           {/* Segment Cards */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              {(["Champions", "Loyal", "Potential", "At Risk", "Lost"] as const).map((seg) => {
+              {RFM_SEGMENTS.map((seg) => {
                 const meta = SEGMENT_META[seg];
                 const segData = segments.find((s) => s.segment === seg);
                 return (
-                  <button
-                    key={seg}
-                    onClick={() => {
-                      setSegmentFilter((prev) => (prev === seg ? "" : seg));
-                      setPage(1);
-                    }}
-                    className={`rounded-xl border p-4 text-left transition-all hover:shadow-md ${
-                      segmentFilter === seg
-                        ? `ring-2 ${meta.ring} border-transparent`
-                        : "border-border/60 hover:border-primary/30"
-                    }`}
-                    style={{ background: segmentFilter === seg ? `${meta.color}10` : undefined }}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span
-                        className="h-2 w-2 rounded-full"
-                        style={{ background: meta.color }}
-                      />
-                      <div className="flex items-center gap-1">
-                        {isLoading ? (
-                          <Skeleton className="h-3 w-8" />
-                        ) : (
-                          <span className="text-[10px] font-mono text-muted-foreground">
-                            {segData ? segData.pct.toFixed(1) : 0}%
-                          </span>
-                        )}
-                        <InfoHint text={`Segmento ${meta.label}: ${meta.description}. A classificação usa recência, frequência e valor comprado para priorizar a ação comercial.`} />
-                      </div>
-                    </div>
-                    <p className="font-semibold text-sm" style={{ color: meta.color }}>{meta.label}</p>
-                    <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{meta.description}</p>
-                    {isLoading ? (
-                      <Skeleton className="h-5 w-16 mt-2" />
-                    ) : (
-                      <div className="mt-2 space-y-0.5">
-                        <p className="text-lg font-bold tabular-nums">
-                          {formatNumber(segData?.customerCount ?? 0)}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground">
-                          {formatCurrency(segData?.revenue ?? 0)} rev
-                        </p>
-                        <p className="text-[10px] font-semibold tabular-nums" style={{ color: meta.color }}>
-                          avg {formatCurrency(segData?.avgTicket ?? 0)}
-                        </p>
-                      </div>
-                    )}
-                  </button>
+                  <div key={seg} className="up-metric-selection">
+                    <button type="button" className="up-metric-select" aria-label={`${tx("Filtrar segmento")} ${tx(meta.label)}`} aria-pressed={segmentFilter === seg}
+                      onClick={() => {
+                        setSegmentFilter((prev) => (prev === seg ? "" : seg));
+                        setPage(1);
+                      }}><span className="sr-only">{tx(meta.label)}</span></button>
+                    <GlassMetricCard label={meta.label} value={segData?.customerCount ?? 0} previousValue={previous.data?.segments.find(segment => segment.segment === segData?.segment)?.customerCount} source={tx("Ecommerce · segmentação RFM")} loading={isLoading}
+                      info={`${tx("Segmento")} ${tx(meta.label)}: ${tx(meta.description)}. ${tx("A classificação usa recência, frequência e valor comprado para priorizar a ação comercial.")}`}
+                      sub={[
+                        { label: tx("Participação"), value: `${segData ? segData.pct.toFixed(1) : 0}%` },
+                        { label: tx("Faturamento"), value: formatCurrency(segData?.revenue ?? 0) },
+                        { label: tx("Ticket médio"), value: formatCurrency(segData?.avgTicket ?? 0) },
+                      ]}
+                      footer={<p className="text-muted-foreground">{tx(meta.description)}</p>} />
+                  </div>
                 );
               })}
             </div>
@@ -427,14 +398,14 @@ export default function RfmPage() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                  Segment composition over time
+                  {tx("Evolução da composição dos segmentos")}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
                   <Skeleton className="h-52 w-full" />
                 ) : composition.length === 0 ? (
-                  <EmptyState icon={BarChart3} title="No segment history" description="Segment composition data will appear once purchases are recorded in this period." />
+                  <EmptyState icon={BarChart3} title={tx("Sem histórico de segmentos")} description={tx("A composição dos segmentos aparecerá quando houver compras neste período.")} />
                 ) : (
                   <ResponsiveContainer width="100%" height={220}>
                     <AreaChart data={composition} margin={{ left: 0, right: 8 }}>
@@ -468,7 +439,7 @@ export default function RfmPage() {
                           key={key}
                           type="monotone"
                           dataKey={key}
-                          name={key === "AtRisk" ? "At Risk" : key}
+                          name={displayLabel(key)}
                           stroke={color}
                           fill={`url(#rfmGrad-${key})`}
                           strokeWidth={2}
@@ -517,12 +488,12 @@ export default function RfmPage() {
                       onValueChange={(v) => { setSegmentFilter(v === "all" ? "" : v); setPage(1); }}
                     >
                       <SelectTrigger className="h-8 text-xs w-36">
-                        <SelectValue placeholder="All segments" />
+                        <SelectValue placeholder={tx("Todos os segmentos")} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All segments</SelectItem>
-                        {(["Champions", "Loyal", "Potential", "At Risk", "Lost"] as const).map((s) => (
-                          <SelectItem key={s} value={s}>{SEGMENT_META[s].label}</SelectItem>
+                        <SelectItem value="all">{tx("Todos os segmentos")}</SelectItem>
+                        {RFM_SEGMENTS.map((s) => (
+                          <SelectItem key={s} value={s}>{tx(SEGMENT_META[s].label)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -545,25 +516,25 @@ export default function RfmPage() {
                           className="cursor-pointer select-none text-xs"
                           onClick={() => handleSort("segment")}
                         >
-                          Segment <SortIndicator col="segment" />
+                          Segmento <SortIndicator col="segment" />
                         </TableHead>
                         <TableHead
                           className="cursor-pointer select-none text-xs text-right"
                           onClick={() => handleSort("recencyDays")}
                         >
-                          Recency <SortIndicator col="recencyDays" />
+                          {tx("Recência")} <SortIndicator col="recencyDays" />
                         </TableHead>
                         <TableHead
                           className="cursor-pointer select-none text-xs text-right"
                           onClick={() => handleSort("frequency")}
                         >
-                          Frequency <SortIndicator col="frequency" />
+                          {tx("Frequência")} <SortIndicator col="frequency" />
                         </TableHead>
                         <TableHead
                           className="cursor-pointer select-none text-xs text-right"
                           onClick={() => handleSort("monetary")}
                         >
-                          Monetary <SortIndicator col="monetary" />
+                          {tx("Valor monetário")} <SortIndicator col="monetary" />
                         </TableHead>
                         <TableHead className="text-xs text-right">Última compra</TableHead>
                         <TableHead className="text-xs text-right">Ações</TableHead>
@@ -586,7 +557,7 @@ export default function RfmPage() {
                       ) : customers.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={8} className="py-0">
-                            <EmptyState icon={Users} title="No customers found" description="Try clearing the segment filter or selecting a broader date range." className="border-0 rounded-none" />
+                            <EmptyState icon={Users} title={tx("Nenhum cliente encontrado")} description={tx("Limpe o filtro de segmento ou selecione um período maior.")} className="border-0 rounded-none" />
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -685,7 +656,7 @@ export default function RfmPage() {
                 {totalPages > 1 && (
                   <div className="flex items-center justify-between px-4 py-3 border-t border-border/40">
                     <span className="text-xs text-muted-foreground">
-                      Page {page} of {totalPages} · {formatNumber(total)} customers
+                      Página {page} de {totalPages} · {formatNumber(total)} clientes
                     </span>
                     <div className="flex items-center gap-1.5">
                       <Button
@@ -718,7 +689,7 @@ export default function RfmPage() {
             <motion.div initial="hidden" animate="visible" variants={variants}>
               <div className="flex items-center gap-2 mb-3">
                 <Lightbulb className="h-4 w-4 text-amber-500" />
-                <h3 className="font-semibold text-sm">Key insights</h3>
+                <h3 className="font-semibold text-sm">{tx("Principais análises")}</h3>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {insight.bullets.map((bullet, i) => (
@@ -760,25 +731,13 @@ export default function RfmPage() {
                           <p className="font-medium">Pedido #{order.externalId ?? order.id.slice(0, 8)}</p>
                           <p className="text-xs text-muted-foreground">{formatDateTime(order.createdAt)}</p>
                         </div>
-                        <Badge variant="outline">{order.status}</Badge>
+                        <Badge variant="outline">{displayLabel(order.status)}</Badge>
                       </div>
                       <div className="mt-3 grid gap-3 sm:grid-cols-4">
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Solicitado</p>
-                          <p className="text-sm font-semibold tabular-nums">{formatCurrency(order.amount)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Atendido</p>
-                          <p className="text-sm font-semibold tabular-nums">{formatCurrency(order.fulfilledAmount)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Peças solicitadas</p>
-                          <p className="text-sm font-semibold tabular-nums">{formatNumber(order.requestedQuantity)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Peças atendidas</p>
-                          <p className="text-sm font-semibold tabular-nums">{formatNumber(order.fulfilledQuantity)}</p>
-                        </div>
+                        <GlassMetricCard  label={tx("Solicitado")} value={<>{formatCurrency(order.amount)}</>}  />
+                        <GlassMetricCard  label={tx("Atendido")} value={<>{formatCurrency(order.fulfilledAmount)}</>}  />
+                        <GlassMetricCard  label={tx("Peças solicitadas")} value={<>{formatNumber(order.requestedQuantity)}</>}  />
+                        <GlassMetricCard  label={tx("Peças atendidas")} value={<>{formatNumber(order.fulfilledQuantity)}</>}  />
                       </div>
                     </div>
                   ))}

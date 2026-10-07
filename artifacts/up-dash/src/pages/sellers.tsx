@@ -1,3 +1,5 @@
+import { useI18n } from "@/lib/i18n";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
@@ -49,6 +51,7 @@ const BAR_PALETTE = [
 ];
 
 export default function SellersPage() {
+  const { tx } = useI18n();
   const { selectedClientId, user } = useAuth();
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
@@ -121,11 +124,11 @@ export default function SellersPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Live ·{" "}
+            Atualizado ·{" "}
             <span className="text-foreground font-semibold tabular-nums">
               Top {limit}
             </span>{" "}
-            Sellers
+            {tx("Vendedoras")}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -151,10 +154,10 @@ export default function SellersPage() {
           data-testid="sellers-export"
         >
           <Download className="h-4 w-4 mr-1.5" />
-          Export CSV
+          Exportar CSV
         </Button>
         <div className="flex items-center gap-2 bg-card p-1 rounded-md border border-border">
-          <span className="text-sm font-medium text-muted-foreground px-2">Show top</span>
+          <span className="text-sm font-medium text-muted-foreground px-2">{tx("Exibir principais")}</span>
           <Select value={limit.toString()} onValueChange={(val) => setLimit(Number(val))}>
             <SelectTrigger className="w-[80px] border-none shadow-none h-8">
               <SelectValue />
@@ -173,81 +176,15 @@ export default function SellersPage() {
       {/* Hero KPI strip */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <motion.div variants={cardVariants}>
-          <Card className="p-5 bg-gradient-to-br from-primary/[0.04] via-card to-card border-border relative overflow-hidden">
-            <div
-              aria-hidden
-              className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-primary via-chart-3 to-chart-1 opacity-80"
-            />
-            <div className="flex items-center gap-2 mb-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 text-primary">
-                <DollarSign className="h-3.5 w-3.5" />
-              </div>
-              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Total Revenue
-              </span>
-            </div>
-            {isLoading ? (
-              <Skeleton className="h-8 w-32" />
-            ) : (
-              <div className="text-2xl font-semibold tracking-tight tabular-nums bg-gradient-to-br from-foreground via-foreground to-primary bg-clip-text text-transparent">
-                <CountUp value={totalRevenue} format={(v) => formatCurrencySmart(v)} />
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">
-              Across top {activeSellers} sellers
-            </p>
-          </Card>
+          <GlassMetricCard label={tx("Faturamento total")} value={totalRevenue} format={formatCurrencySmart} icon={DollarSign} loading={isLoading} footer={<p className="text-xs text-muted-foreground">{tx("Entre os principais")} {activeSellers} {tx("vendedoras")}</p>} />
         </motion.div>
 
         <motion.div variants={cardVariants}>
-          <Card className="p-5 border-border">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-500/15 text-violet-400">
-                <Users className="h-3.5 w-3.5" />
-              </div>
-              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Active Sellers
-              </span>
-            </div>
-            {isLoading ? (
-              <Skeleton className="h-8 w-16" />
-            ) : (
-              <div className="text-2xl font-semibold tracking-tight tabular-nums">
-                <CountUp value={activeSellers} format={(v) => formatNumber(Math.round(v))} />
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">
-              Ranked by revenue contribution
-            </p>
-          </Card>
+          <GlassMetricCard label={tx("Vendedoras ativas")} value={activeSellers} icon={Users} loading={isLoading} footer={<p className="text-xs text-muted-foreground">{tx("Classificação por participação no faturamento")}</p>} />
         </motion.div>
 
         <motion.div variants={cardVariants}>
-          <Card className="p-5 border-border">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-amber-500/15 text-amber-400">
-                <Crown className="h-3.5 w-3.5" />
-              </div>
-              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Top Seller
-              </span>
-            </div>
-            {isLoading ? (
-              <Skeleton className="h-8 w-32" />
-            ) : topSeller ? (
-              <>
-                <div className="text-base font-semibold tracking-tight truncate" title={topSeller.name}>
-                  {topSeller.name}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-                  {formatCurrency(topSeller.totalRevenue)} ·{" "}
-                  {formatNumber(topSeller.totalOrders)} orders
-                </p>
-              </>
-            ) : (
-              <div className="text-sm text-muted-foreground">—</div>
-            )}
-          </Card>
+          <GlassMetricCard label={tx("Principal vendedora")} value={topSeller?.name ?? "—"} icon={Crown} loading={isLoading} footer={topSeller ? <p className="text-xs text-muted-foreground">{formatCurrency(topSeller.totalRevenue)} · {formatNumber(topSeller.totalOrders)} {tx("pedidos")}</p> : undefined} />
         </motion.div>
       </div>
 
@@ -261,17 +198,17 @@ export default function SellersPage() {
               <div className="flex items-center justify-between mb-3">
                 <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
                   <Sparkles className="h-3 w-3" />
-                  UP Insight · Sellers · {insight?.source === "ai" ? "AI" : "Auto"}
+                  UP Insight · {tx("Vendedoras")} · {insight?.source === "ai" ? "IA" : "Auto"}
                 </span>
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Dismiss insight"
+                  aria-label={tx("Fechar análise")}
                   data-testid="sellers-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
               {insightLoading || !insight ? (
                 <>
@@ -307,7 +244,7 @@ export default function SellersPage() {
                   {regenerate.isPending ? "Regenerating…" : "Regenerate"}
                 </Button>
                 {insight?.cached && (
-                  <span className="text-[11px] text-muted-foreground">Cached · refreshes hourly</span>
+                  <span className="text-[11px] text-muted-foreground">{tx("Atualização a cada hora")}</span>
                 )}
               </div>
             </div>
@@ -324,7 +261,7 @@ export default function SellersPage() {
                 <BarChart3 className="h-3.5 w-3.5" />
               </div>
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Revenue Contribution
+                {tx("Participação no faturamento")}
                 {chartData.length > 0 && (
                   <span className="ml-1 text-muted-foreground/60">
                     · Top {chartData.length}
@@ -339,7 +276,7 @@ export default function SellersPage() {
                   style={{ background: "hsl(var(--chart-1))" }}
                   aria-hidden
                 />
-                <span>Higher = more revenue</span>
+                <span>{tx("Maior intensidade = maior faturamento")}</span>
               </div>
             )}
           </div>
@@ -358,14 +295,14 @@ export default function SellersPage() {
             </div>
           ) : chartData.length === 0 ? (
             <div className="h-[280px] flex items-center justify-center text-sm text-muted-foreground">
-              No seller revenue to chart yet
+              {tx("Sem faturamento de vendedoras para exibir")}
             </div>
           ) : (
             <div
               style={{ height: Math.max(220, chartData.length * 32 + 20) }}
               data-testid="sellers-revenue-chart"
               role="img"
-              aria-label={`Horizontal bar chart of revenue contribution for the top ${chartData.length} sellers. Leader ${chartData[0]?.name} with ${formatCurrency(chartData[0]?.revenue ?? 0)} accounts for ${chartData[0]?.share.toFixed(1)}% of total revenue.`}
+              aria-label={`Gráfico de participação no faturamento das principais ${chartData.length} vendedoras. Líder ${chartData[0]?.name} com ${formatCurrency(chartData[0]?.revenue ?? 0)} representa ${chartData[0]?.share.toFixed(1)}% do faturamento total.`}
             >
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
@@ -405,10 +342,10 @@ export default function SellersPage() {
                             #{p.rank} · {p.name}
                           </div>
                           <div className="text-muted-foreground tabular-nums">
-                            {formatCurrency(p.revenue)} · {formatNumber(p.orders)} orders
+                            {formatCurrency(p.revenue)} · {formatNumber(p.orders)} {tx("pedidos")}
                           </div>
                           <div className="text-muted-foreground/70 tabular-nums">
-                            {p.share.toFixed(1)}% of total
+                            {p.share.toFixed(1)}% do total
                           </div>
                         </div>
                       );
@@ -438,14 +375,14 @@ export default function SellersPage() {
               {/* Screen-reader fallback: same info as the visual chart, in
                   table form, since the Recharts tooltip is hover-only. */}
               <table className="sr-only">
-                <caption>Revenue contribution by seller, top {chartData.length}</caption>
+                <caption>{tx("Participação no faturamento por vendedora, principais")} {chartData.length}</caption>
                 <thead>
                   <tr>
-                    <th scope="col">Rank</th>
-                    <th scope="col">Seller</th>
-                    <th scope="col">Revenue</th>
-                    <th scope="col">Orders</th>
-                    <th scope="col">Share of total</th>
+                    <th scope="col">{tx("Posição")}</th>
+                    <th scope="col">{tx("Vendedora")}</th>
+                    <th scope="col">{tx("Faturamento")}</th>
+                    <th scope="col">{tx("Pedidos")}</th>
+                    <th scope="col">{tx("Participação no total")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -469,8 +406,8 @@ export default function SellersPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription className="flex items-center justify-between">
-            Failed to load sellers.
-            <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+            {tx("Não foi possível carregar as vendedoras.")}
+            <Button variant="outline" size="sm" onClick={() => refetch()}>{tx("Tentar novamente")}</Button>
           </AlertDescription>
         </Alert>
       ) : (
@@ -495,8 +432,8 @@ export default function SellersPage() {
           ) : data?.length === 0 ? (
             <EmptyState
               icon={Trophy}
-              title="No seller activity yet"
-              description="Once orders are attributed to sellers in the selected window, they'll appear ranked here."
+              title={tx("Sem atividade de vendedoras")}
+              description={tx("Quando houver pedidos atribuídos a vendedoras no período, elas aparecerão classificadas aqui.")}
             />
           ) : (
             data?.map((seller, index) => {
@@ -555,18 +492,18 @@ export default function SellersPage() {
                       <div className="hidden md:flex items-center gap-8 text-right">
                         <div>
                           <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground flex items-center justify-end gap-1 mb-1">
-                            <ShoppingBag className="h-3 w-3" /> Orders
+                            <ShoppingBag className="h-3 w-3" /> {tx("Pedidos")}
                           </p>
                           <p className="font-medium tabular-nums">{formatNumber(seller.totalOrders)}</p>
                         </div>
                         <div>
                           <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground flex items-center justify-end gap-1 mb-1">
-                            <DollarSign className="h-3 w-3" /> Avg Ticket
+                            <DollarSign className="h-3 w-3" /> {tx("Ticket médio")}
                           </p>
                           <p className="font-medium tabular-nums">{formatCurrency(seller.avgTicket)}</p>
                         </div>
                         <div className="w-32">
-                          <p className="font-mono uppercase tracking-wider text-[10px] text-primary mb-1">Revenue</p>
+                          <p className="font-mono uppercase tracking-wider text-[10px] text-primary mb-1">{tx("Faturamento")}</p>
                           <p className={`text-xl font-bold tabular-nums ${
                             index === 0
                               ? "bg-gradient-to-br from-foreground via-foreground to-primary bg-clip-text text-transparent"
