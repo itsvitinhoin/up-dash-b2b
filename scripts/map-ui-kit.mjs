@@ -27,7 +27,7 @@ const compact = (text) => text.replace(/\s+/g, " ").trim();
 for (const file of fs
   .readdirSync(dir)
   .filter((f) => f.endsWith(".tsx"))
-  .sort().concat(["../components/purchase-insights.tsx", "../components/acquisition-funnel.tsx"])) {
+  .sort().concat(["../components/purchase-insights.tsx", "../components/acquisition-funnel.tsx", "../components/product-sales-charts.tsx"])) {
   const source = fs.readFileSync(path.join(dir, file), "utf8"),
     ast = ts.createSourceFile(
       file,

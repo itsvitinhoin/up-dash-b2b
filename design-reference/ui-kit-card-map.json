@@ -4534,7 +4534,7 @@
   {
     "id": "UP-413",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 415,
+    "line": 416,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Sales Power\"",
@@ -4545,7 +4545,7 @@
   {
     "id": "UP-414",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 416,
+    "line": 417,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Faturamento por SKU/dia\"",
@@ -4556,7 +4556,7 @@
   {
     "id": "UP-415",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 417,
+    "line": 418,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"SKUs ativos\"",
@@ -4567,7 +4567,7 @@
   {
     "id": "UP-416",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 418,
+    "line": 419,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Período\"",
@@ -4578,7 +4578,7 @@
   {
     "id": "UP-417",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 427,
+    "line": 444,
     "component": "Card",
     "family": "Painel",
     "label": "{insight.headline}",
@@ -4589,7 +4589,7 @@
   {
     "id": "UP-418",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 489,
+    "line": 506,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -4600,7 +4600,7 @@
   {
     "id": "UP-419",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 582,
+    "line": 599,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -4611,7 +4611,7 @@
   {
     "id": "UP-420",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 727,
+    "line": 744,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Vendidos\"",
@@ -4622,7 +4622,7 @@
   {
     "id": "UP-421",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 728,
+    "line": 745,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Receita\"",
@@ -4633,7 +4633,7 @@
   {
     "id": "UP-422",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 729,
+    "line": 746,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Estoque\"",
@@ -6353,6 +6353,61 @@
     "component": "Card",
     "family": "Painel",
     "label": "{title}",
+    "value": "",
+    "sources": "",
+    "template": "Card / controles / gráficos → tokens UP Glass"
+  },
+  {
+    "id": "UP-579",
+    "file": "artifacts/up-dash/src/components/product-sales-charts.tsx",
+    "line": 65,
+    "component": "Card",
+    "family": "Gráfico",
+    "label": "{title}",
+    "value": "",
+    "sources": "",
+    "template": "Card / controles / gráficos → tokens UP Glass"
+  },
+  {
+    "id": "UP-580",
+    "file": "artifacts/up-dash/src/components/product-sales-charts.tsx",
+    "line": 140,
+    "component": "Card",
+    "family": "Painel",
+    "label": "Painel / conteúdo",
+    "value": "",
+    "sources": "",
+    "template": "Card / controles / gráficos → tokens UP Glass"
+  },
+  {
+    "id": "UP-581",
+    "file": "artifacts/up-dash/src/components/product-sales-charts.tsx",
+    "line": 143,
+    "component": "ProductSalesCard",
+    "family": "Painel",
+    "label": "\"Vendas por Categoria\"",
+    "value": "",
+    "sources": "",
+    "template": "Card / controles / gráficos → tokens UP Glass"
+  },
+  {
+    "id": "UP-582",
+    "file": "artifacts/up-dash/src/components/product-sales-charts.tsx",
+    "line": 144,
+    "component": "ProductSalesCard",
+    "family": "Painel",
+    "label": "\"Vendas por Cor\"",
+    "value": "",
+    "sources": "",
+    "template": "Card / controles / gráficos → tokens UP Glass"
+  },
+  {
+    "id": "UP-583",
+    "file": "artifacts/up-dash/src/components/product-sales-charts.tsx",
+    "line": 145,
+    "component": "ProductSalesCard",
+    "family": "Painel",
+    "label": "\"Vendas por Tamanho\"",
     "value": "",
     "sources": "",
     "template": "Card / controles / gráficos → tokens UP Glass"

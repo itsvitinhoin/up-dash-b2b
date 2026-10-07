@@ -68,10 +68,52 @@ const products = productNames.map((name, i) => ({
   availableVariantCount: i === 0 ? 2 : 4,
   variants: ["P", "M", "G", "GG"].map((size, index) => ({
     id: `variant-${i}-${index}`,productId: `variant-${i}-${index}`,sku: `UP-2026-0${i+1}-${size}`,name: `${name} · ${size}`,
-    color: "Preto",size,stock: i===0 ? (index<2?2:0) : (88+i*12)/4,price:159+i*20,
-    totalSold:42+index*7,totalRevenue:(42+index*7)*(159+i*20),imageUrl:null,
+    color: ["Preto", "Off-white", "Azul", "Verde"][(i+index)%4],size,stock: i===0 ? (index<2?2:0) : (88+i*12)/4,price:159+i*20,
+    totalSold: index < 3 ? Math.floor((280-i*35)*[0.15,0.35,0.3][index]) : (280-i*35)-[0.15,0.35,0.3].reduce((sum,weight)=>sum+Math.floor((280-i*35)*weight),0),
+    totalRevenue: (48500-i*6500)*(index < 3 ? Math.floor((280-i*35)*[0.15,0.35,0.3][index]) : (280-i*35)-[0.15,0.35,0.3].reduce((sum,weight)=>sum+Math.floor((280-i*35)*weight),0))/(280-i*35),imageUrl:null,
   })),
 }));
+// Synthetic sales stay reconciled across dimensions and react to report filters.
+function filteredDemoProducts(url) {
+  const params = url.searchParams;
+  const from = params.get("dateFrom"), to = params.get("dateTo");
+  const days = from && to ? Math.max(1, Math.round((new Date(to)-new Date(from))/86400000)+1) : 30;
+  const factor = Math.min(1, days/30);
+  const search = (params.get("search") || params.get("sku") || "").toLowerCase();
+  const selected = products.filter((product, index) =>
+    (!search || `${product.name} ${product.sku}`.toLowerCase().includes(search)) &&
+    (!params.get("category") || product.category === params.get("category")) &&
+    (!params.get("state") || ["SP","MG","RJ","PR","SP"][index] === params.get("state"))
+  );
+  return selected.map(product => {
+    const variants = product.variants.filter(variant =>
+      (!params.get("color") || variant.color.toLowerCase() === params.get("color").toLowerCase()) &&
+      (!params.get("size") || variant.size.toLowerCase() === params.get("size").toLowerCase())
+    ).map(variant => {
+      const totalSold = Math.round(variant.totalSold*factor);
+      return { ...variant, totalSold, totalRevenue: variant.totalSold ? variant.totalRevenue*totalSold/variant.totalSold : 0 };
+    });
+    return { ...product, variants, totalSold: variants.reduce((sum,row)=>sum+row.totalSold,0), totalRevenue: variants.reduce((sum,row)=>sum+row.totalRevenue,0) };
+  }).filter(product => product.variants.length > 0);
+}
+function demoProductSalesBreakdowns(url) {
+  const categories = new Map(), colors = new Map(), sizes = new Map();
+  const totals = { units: 0, revenue: 0 };
+  const add = (map, label, variant) => {
+    const bucket = map.get(label) || { label, units: 0, revenue: 0 };
+    bucket.units += variant.totalSold;
+    bucket.revenue += variant.totalRevenue;
+    map.set(label,bucket);
+  };
+  for (const product of filteredDemoProducts(url)) for (const variant of product.variants) {
+    totals.units += variant.totalSold;
+    totals.revenue += variant.totalRevenue;
+    add(categories,product.category,variant);
+    add(colors,variant.color,variant);
+    add(sizes,variant.size,variant);
+  }
+  return { totals, categories: [...categories.values()], colors: [...colors.values()], sizes: [...sizes.values()] };
+}
 const sellers = ["Mariana Costa", "Ana Oliveira", "Camila Santos"].map(
   (name, i) => ({
     id: `seller-${i}`,
@@ -349,16 +391,12 @@ const server = createServer(async (req, res) => {
   if (path === "/api/analytics/insight") return send(insight);
   if (path === "/api/analytics/alerts") return send(alerts);
   if (path === "/api/analytics/sellers") return send(sellers);
-  if (path === "/api/analytics/products")
-    return send(
-      products.filter(
-        (p) =>
-          !url.searchParams.get("search") ||
-          p.name
-            .toLowerCase()
-            .includes(url.searchParams.get("search").toLowerCase()),
-      ),
-    );
+  if (path === "/api/analytics/products/sales-breakdowns") return send(demoProductSalesBreakdowns(url));
+  if (path === "/api/analytics/products") {
+    const sort = url.searchParams.get("sort");
+    const rows = filteredDemoProducts(url).sort((a,b) => sort === "units" ? b.totalSold-a.totalSold : b.totalRevenue-a.totalRevenue);
+    return send(rows.slice(0, Number(url.searchParams.get("limit") || 50)));
+  }
   if (path === "/api/analytics/products/summary")
     return send({
       availableStockSalesValue: products.reduce((sum, p) => sum + Math.max(0, p.stock) * p.price, 0),

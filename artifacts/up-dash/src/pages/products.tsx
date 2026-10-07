@@ -1,4 +1,5 @@
-import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { ProductSalesCharts } from "@/components/product-sales-charts";
+import { periodQuery, usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { getGetProductsSummaryUrl } from "@workspace/api-client-react";
 import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
@@ -420,6 +421,22 @@ export default function ProductsPage() {
           )}
         </div>
       </motion.div>
+
+      {selectedDashboardMode === "B2C" && (
+        <motion.div variants={cardVariants}>
+          <ProductSalesCharts
+            enabled={queryEnabled}
+            url={periodQuery("/api/analytics/products/sales-breakdowns", {
+              ...periodParams,
+              search: urlSearch || undefined,
+              category: urlCategory || undefined,
+              state: filters.state || undefined,
+              size: filters.size || undefined,
+              color: filters.color || undefined,
+            })}
+          />
+        </motion.div>
+      )}
 
       {/* AI Insight card */}
       {!insightDismissed && (

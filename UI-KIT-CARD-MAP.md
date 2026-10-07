@@ -1,6 +1,6 @@
 # Mapeamento card por card · UP Glass
 
-578 pontos de uso/configuração encontrados nas 40 arquivos com cards (páginas e componentes compartilhados). Cada linha identifica a posição no código, o título ou expressão dinâmica e o componente final. Modelos dentro de loops são registrados na sua declaração; a quantidade de cards em execução depende dos dados. As configurações de KPI também são listadas para identificar as métricas que alimentam um modelo compartilhado.
+583 pontos de uso/configuração encontrados nas 41 arquivos com cards (páginas e componentes compartilhados). Cada linha identifica a posição no código, o título ou expressão dinâmica e o componente final. Modelos dentro de loops são registrados na sua declaração; a quantidade de cards em execução depende dos dados. As configurações de KPI também são listadas para identificar as métricas que alimentam um modelo compartilhado.
 
 Referência única de métricas: **DashboardKpiCard**, o componente de Visão Geral. **GlassMetricCard** adapta os valores já formatados para esse mesmo componente; não consulta nem recalcula dados. Painéis, gráficos, listas e detalhes usam Card e os tokens UP Glass. O CSV contém as expressões de valor e as consultas da página.
 
@@ -545,16 +545,16 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-413 | 415 | "Sales Power" | GlassMetricCard | Métrica |
-| UP-414 | 416 | "Faturamento por SKU/dia" | GlassMetricCard | Métrica |
-| UP-415 | 417 | "SKUs ativos" | GlassMetricCard | Métrica |
-| UP-416 | 418 | "Período" | GlassMetricCard | Métrica |
-| UP-417 | 427 | {insight.headline} | Card | Painel |
-| UP-418 | 489 | Painel / conteúdo | Card | Painel |
-| UP-419 | 582 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-420 | 727 | "Vendidos" | GlassMetricCard | Métrica |
-| UP-421 | 728 | "Receita" | GlassMetricCard | Métrica |
-| UP-422 | 729 | "Estoque" | GlassMetricCard | Métrica |
+| UP-413 | 416 | "Sales Power" | GlassMetricCard | Métrica |
+| UP-414 | 417 | "Faturamento por SKU/dia" | GlassMetricCard | Métrica |
+| UP-415 | 418 | "SKUs ativos" | GlassMetricCard | Métrica |
+| UP-416 | 419 | "Período" | GlassMetricCard | Métrica |
+| UP-417 | 444 | {insight.headline} | Card | Painel |
+| UP-418 | 506 | Painel / conteúdo | Card | Painel |
+| UP-419 | 599 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-420 | 744 | "Vendidos" | GlassMetricCard | Métrica |
+| UP-421 | 745 | "Receita" | GlassMetricCard | Métrica |
+| UP-422 | 746 | "Estoque" | GlassMetricCard | Métrica |
 
 ## rfm
 
@@ -781,4 +781,14 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
 | UP-578 | 7 | {title} | Card | Painel |
+
+## product-sales-charts
+
+| ID | Linha | Título / label | Componente | Família |
+|---|---:|---|---|---|
+| UP-579 | 65 | {title} | Card | Gráfico |
+| UP-580 | 140 | Painel / conteúdo | Card | Painel |
+| UP-581 | 143 | "Vendas por Categoria" | ProductSalesCard | Painel |
+| UP-582 | 144 | "Vendas por Cor" | ProductSalesCard | Painel |
+| UP-583 | 145 | "Vendas por Tamanho" | ProductSalesCard | Painel |
 

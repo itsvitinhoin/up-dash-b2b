@@ -88,6 +88,8 @@ import { syncPaidTouchpointsForCustomer } from "../services/paid-touchpoints";
 import { computeErpPaidAttribution } from "../services/erp-attribution";
 import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiAvailableStockSalesValue, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
 
+import { buildProductSalesBreakdowns } from "../services/product-sales-breakdowns";
+
 const router: IRouter = Router();
 
 router.use("/analytics", authenticate);
@@ -5430,6 +5432,51 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
     : sortedB2bRows.slice(0, limit);
 
   res.json(GetProductsResponse.parse(enriched));
+});
+
+// Full-period sales partitions, independent of the product table's display limit.
+router.get("/analytics/products/sales-breakdowns", async (req, res): Promise<void> => {
+  const parsed = GetProductsQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { dateFrom, dateTo, search, sku, category, state, size, color } = parsed.data;
+  const { from, to } = dateRange(dateFrom, dateTo);
+  const conditions: SQL[] = [
+    eq(ordersTable.clientId, clientId),
+    eq(productsTable.clientId, clientId),
+    gte(ordersTable.createdAt, from),
+    lte(ordersTable.createdAt, to),
+  ];
+  if (search?.trim()) {
+    const term = `%${search.trim()}%`;
+    conditions.push(or(ilike(productsTable.sku, term), ilike(productsTable.name, term))!);
+  }
+  if (sku?.trim()) conditions.push(ilike(productsTable.sku, `%${sku.trim()}%`));
+  if (category?.trim()) conditions.push(eq(productsTable.category, category.trim()));
+  if (state?.trim()) conditions.push(eq(ordersTable.state, state.trim()));
+  if (size?.trim()) conditions.push(ilike(orderItemsTable.size, size.trim()));
+  if (color?.trim()) conditions.push(ilike(orderItemsTable.color, color.trim()));
+
+  const rows = await db.select({
+    category: productsTable.category,
+    color: orderItemsTable.color,
+    size: orderItemsTable.size,
+    units: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::float`,
+    revenue: sql<number>`COALESCE(SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale}), 0)::float`,
+  })
+    .from(orderItemsTable)
+    .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+    .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+    .where(and(...conditions))
+    .groupBy(productsTable.category, orderItemsTable.color, orderItemsTable.size);
+
+  res.json(buildProductSalesBreakdowns(rows.map(row => ({
+    ...row, units: Number(row.units), revenue: Number(row.revenue),
+  }))));
 });
 
 router.get("/analytics/products/summary", async (req, res): Promise<void> => {
