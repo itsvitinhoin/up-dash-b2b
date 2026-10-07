@@ -29,7 +29,8 @@ export function CountUp({ value, duration = 800, format, className }: CountUpPro
       const elapsed = ts - startRef.current;
       const t = Math.min(1, elapsed / duration);
       const eased = 1 - Math.pow(1 - t, 3);
-      setDisplay(from + (target - from) * eased);
+      const next = from + (target - from) * eased;
+      setDisplay(Number.isInteger(target) ? Math.round(next) : next);
       if (t < 1) {
         rafRef.current = requestAnimationFrame(animate);
       }

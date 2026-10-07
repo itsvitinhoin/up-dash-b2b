@@ -34,7 +34,7 @@ export const formatCurrencySmart = (
 ) => formatCurrency(value, { ...opts, compact: Math.abs(value) >= 10_000 });
 
 export const formatPercentage = (value: number) => {
-  return `${value.toFixed(1)}%`;
+  return `${value.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 };
 
 export const formatNumber = (

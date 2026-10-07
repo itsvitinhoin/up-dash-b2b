@@ -328,6 +328,8 @@ const entries: Array<[string, string, string]> = [
   ["Novos", "New", "신규"],
   ["Recorrentes", "Returning", "재구매"],
   ["Reativados", "Reactivated", "재활성"],
+  // ---- tabela
+  ["Tabela com rolagem horizontal", "Horizontally scrollable table", "가로 스크롤 가능한 표"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
