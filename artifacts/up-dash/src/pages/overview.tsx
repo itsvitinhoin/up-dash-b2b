@@ -1,3 +1,5 @@
+import { useI18n } from "@/lib/i18n";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { addDays, differenceInDays, eachDayOfInterval, format, subDays } from "date-fns";
 import { motion } from "framer-motion";
@@ -55,7 +57,7 @@ import {
 type SeriesMetric = "revenue" | "orders" | "leads";
 
 function deltaPct(current: number, previous: number): number | null {
-  if (previous === 0) return current > 0 ? 100 : null;
+  if (previous === 0) return current === 0 ? 0 : null;
   return ((current - previous) / previous) * 100;
 }
 
@@ -66,11 +68,12 @@ function DeltaChip({
   change: number | null;
   label: string;
 }) {
+  const { tx } = useI18n();
   if (change === null) {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-muted/40 text-muted-foreground">
         <Minus className="h-3 w-3" />
-        no prior data
+        {tx("sem dados anteriores")}
         <span className="text-muted-foreground/70 ml-1">{label}</span>
       </span>
     );
@@ -123,42 +126,7 @@ function KpiTile({
 }: KpiTileProps) {
   const reduced = useReducedMotion();
   const variants = withReducedMotion(cardEntry, reduced);
-  return (
-    <motion.div variants={variants}>
-      <Card
-        data-testid={testId}
-        className="flex flex-col p-5 bg-card border-border hover-elevate transition-shadow"
-      >
-        <div className="flex items-center gap-2.5 mb-3">
-          <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconClass}`}>
-            <Icon className="h-4 w-4" />
-          </div>
-          <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-            {label}
-          </span>
-        </div>
-
-        <div className="flex items-baseline gap-2 mb-3">
-          {isLoading ? (
-            <Skeleton className="h-9 w-32" />
-          ) : (
-            <>
-              <span className="text-2xl font-semibold tracking-tight tabular-nums">
-                <CountUp value={value} format={fmt} />
-              </span>
-              {unit && <span className="text-xs text-muted-foreground font-medium">{unit}</span>}
-            </>
-          )}
-        </div>
-
-        {!isLoading && (
-          <div className="mt-auto">
-            <DeltaChip change={change} label={changeLabel} />
-          </div>
-        )}
-      </Card>
-    </motion.div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={fmt} unit={unit} change={change} changeLabel={changeLabel} loading={isLoading} testId={testId} />);
 }
 
 function GrowthBadge({ value }: { value: number | null }) {
@@ -239,7 +207,7 @@ function LeaderboardCard({
         <ul className="space-y-1 -mx-2">
           {rows.map((row, i) => (
             <li key={row.id}>
-              <button
+              <Button variant="ghost" size="sm"
                 type="button"
                 onClick={() => onSelect(row.id)}
                 data-testid={`${testId}-row-${i}`}
@@ -269,7 +237,7 @@ function LeaderboardCard({
                   <GrowthBadge value={row.growthPct} />
                 )}
                 <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
@@ -279,6 +247,7 @@ function LeaderboardCard({
 }
 
 export default function OverviewPage() {
+  const { tx } = useI18n();
   const { user, setSelectedClientId } = useAuth();
   const { dateRange } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -382,7 +351,7 @@ export default function OverviewPage() {
         <AlertCircle className="h-4 w-4" />
         <AlertTitle>Restricted</AlertTitle>
         <AlertDescription>
-          The platform overview is available to platform administrators only.
+          {tx("A visão geral da plataforma está disponível apenas para administradores.")}
         </AlertDescription>
       </Alert>
     );
@@ -392,11 +361,11 @@ export default function OverviewPage() {
     return (
       <Alert variant="destructive" data-testid="page-overview">
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Error</AlertTitle>
+        <AlertTitle>{tx("Erro")}</AlertTitle>
         <AlertDescription className="flex items-center justify-between">
-          Failed to load the platform overview.
+          {tx("Não foi possível carregar a visão geral da plataforma.")}
           <Button variant="outline" size="sm" onClick={() => refetch()}>
-            Retry
+            {tx("Tentar novamente")}
           </Button>
         </AlertDescription>
       </Alert>
@@ -431,7 +400,7 @@ export default function OverviewPage() {
         <div className="flex items-center gap-2">
           <Globe2 className="h-3.5 w-3.5 text-primary" />
           <span className="font-mono uppercase tracking-wider">
-            Platform · {format(dateRange.from, "MMM d")} →{" "}
+            {tx("Plataforma")} · {format(dateRange.from, "MMM d")} →{" "}
             {format(dateRange.to, "MMM d, yyyy")}
             <span className="ml-2 text-muted-foreground/70">
               vs. {format(prevPeriodFrom, "MMM d")} →{" "}
@@ -441,8 +410,7 @@ export default function OverviewPage() {
         </div>
         {data && (
           <span className="text-muted-foreground/80">
-            {data.kpis.activeClients} of {selectedClientCount} selected brands generated
-            revenue or ran marketing campaigns in this window.
+            {data.kpis.activeClients} {tx("de")} {selectedClientCount} {tx("marcas selecionadas tiveram faturamento ou campanhas de anúncios neste período.")}
           </span>
         )}
       </motion.div>
@@ -457,10 +425,10 @@ export default function OverviewPage() {
                 </div>
                 <div>
                   <h2 className="text-sm font-semibold leading-tight">
-                    Clients in platform totals
+                    {tx("Clientes nos totais da plataforma")}
                   </h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {selectedClientCount} of {data?.kpis.totalClients ?? allClientIds.length} selected
+                    {selectedClientCount} {tx("de")} {data?.kpis.totalClients ?? allClientIds.length} {tx("selecionadas")}
                   </p>
                 </div>
               </div>
@@ -474,7 +442,7 @@ export default function OverviewPage() {
                 onClick={() => setSelectedClientIds(null)}
                 data-testid="overview-clients-select-all"
               >
-                Select all
+                {tx("Selecionar todas")}
               </Button>
               <Button
                 type="button"
@@ -483,7 +451,7 @@ export default function OverviewPage() {
                 onClick={() => setSelectedClientIds([])}
                 data-testid="overview-clients-clear"
               >
-                Clear
+                {tx("Limpar")}
               </Button>
             </div>
           </div>
@@ -497,7 +465,7 @@ export default function OverviewPage() {
               </div>
             ) : clientOptions.length === 0 ? (
               <div className="text-xs text-muted-foreground py-2">
-                No registered clients found.
+                {tx("Nenhum cliente cadastrado encontrado.")}
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
@@ -532,56 +500,56 @@ export default function OverviewPage() {
           testId="overview-kpi-revenue"
           icon={CircleDollarSign}
           iconClass="bg-blue-500/15 text-blue-400"
-          label="Platform revenue"
+          label={tx("Faturamento da plataforma")}
           value={kpis?.revenue ?? 0}
           format={(v) => formatCurrencySmart(v)}
           change={revenueDelta}
-          changeLabel="vs. previous period"
+          changeLabel={tx("vs. período anterior")}
           isLoading={isLoading}
         />
         <KpiTile
           testId="overview-kpi-orders"
           icon={Package}
           iconClass="bg-violet-500/15 text-violet-400"
-          label="Platform orders"
+          label={tx("Pedidos da plataforma")}
           value={kpis?.orders ?? 0}
           format={(v) => formatNumber(v)}
           change={ordersDelta}
-          changeLabel="vs. previous period"
+          changeLabel={tx("vs. período anterior")}
           isLoading={isLoading}
         />
         <KpiTile
           testId="overview-kpi-customers"
           icon={Users}
           iconClass="bg-emerald-500/15 text-emerald-400"
-          label="Active customers"
+          label={tx("Clientes ativos")}
           value={kpis?.customers ?? 0}
           format={(v) => formatNumber(v)}
           change={customersDelta}
-          changeLabel="vs. previous period"
+          changeLabel={tx("vs. período anterior")}
           isLoading={isLoading}
         />
         <KpiTile
           testId="overview-kpi-active-brands"
           icon={Building2}
           iconClass="bg-sky-500/15 text-sky-400"
-          label="Active brands"
+          label={tx("Marcas ativas")}
           value={kpis?.activeClients ?? 0}
           format={(v) => formatNumber(v)}
           unit={kpis ? `of ${selectedClientCount}` : undefined}
           change={activeDelta}
-          changeLabel="vs. previous period"
+          changeLabel={tx("vs. período anterior")}
           isLoading={isLoading}
         />
         <KpiTile
           testId="overview-kpi-aov"
           icon={Award}
           iconClass="bg-amber-500/15 text-amber-400"
-          label="Platform AOV"
+          label={tx("Ticket médio da plataforma")}
           value={kpis?.avgOrderValue ?? 0}
           format={(v) => formatCurrencySmart(v)}
           change={aovDelta}
-          changeLabel="vs. previous period"
+          changeLabel={tx("vs. período anterior")}
           isLoading={isLoading}
         />
       </motion.div>
@@ -597,44 +565,44 @@ export default function OverviewPage() {
           testId="overview-kpi-adspend"
           icon={Megaphone}
           iconClass="bg-rose-500/15 text-rose-400"
-          label="Ad spend"
+          label={tx("Investimento em anúncios")}
           value={kpis?.adSpend ?? 0}
           format={(v) => formatCurrencySmart(v)}
           change={adSpendDelta}
-          changeLabel="vs. previous period"
+          changeLabel={tx("vs. período anterior")}
           isLoading={isLoading}
         />
         <KpiTile
           testId="overview-kpi-roas"
           icon={Zap}
           iconClass="bg-yellow-500/15 text-yellow-400"
-          label="Global ROAS"
+          label={tx("ROAS geral")}
           value={kpis?.roas ?? 0}
           format={(v) => `${v.toFixed(2)}×`}
           change={roasDelta}
-          changeLabel="vs. previous period"
+          changeLabel={tx("vs. período anterior")}
           isLoading={isLoading}
         />
         <KpiTile
           testId="overview-kpi-total-leads"
           icon={UserPlus}
           iconClass="bg-indigo-500/15 text-indigo-400"
-          label="Total leads"
+          label={tx("Total de leads")}
           value={kpis?.totalLeads ?? 0}
           format={(v) => formatNumber(v)}
           change={totalLeadsDelta}
-          changeLabel="vs. previous period"
+          changeLabel={tx("vs. período anterior")}
           isLoading={isLoading}
         />
         <KpiTile
           testId="overview-kpi-approved-leads"
           icon={BadgeCheck}
           iconClass="bg-teal-500/15 text-teal-400"
-          label="Approved leads"
+          label={tx("Leads aprovados")}
           value={kpis?.approvedLeads ?? 0}
           format={(v) => formatNumber(v)}
           change={approvedLeadsDelta}
-          changeLabel="vs. previous period"
+          changeLabel={tx("vs. período anterior")}
           isLoading={isLoading}
         />
       </motion.div>
@@ -643,11 +611,10 @@ export default function OverviewPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-base font-semibold leading-tight">
-              Platform-wide trend
+              {tx("Evolução da plataforma")}
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Daily totals summed across selected brands. Dashed line shows the prior
-              period.
+              {tx("Totais diários das marcas selecionadas. A linha tracejada representa o período anterior.")}
             </p>
           </div>
           <div
@@ -656,7 +623,7 @@ export default function OverviewPage() {
             aria-label="Series metric"
           >
             {(["revenue", "orders", "leads"] as SeriesMetric[]).map((m) => (
-              <button
+              <Button variant="ghost" size="sm"
                 key={m}
                 role="tab"
                 aria-selected={seriesMetric === m}
@@ -668,8 +635,8 @@ export default function OverviewPage() {
                     : "text-muted-foreground hover:bg-accent/40"
                 }`}
               >
-                {m === "revenue" ? "Revenue" : m === "orders" ? "Orders" : "Leads"}
-              </button>
+                {m === "revenue" ? tx("Faturamento") : m === "orders" ? tx("Pedidos") : "Leads"}
+              </Button>
             ))}
           </div>
         </div>
@@ -679,8 +646,8 @@ export default function OverviewPage() {
         ) : seriesEmpty ? (
           <EmptyState
             icon={Globe2}
-            title="No platform activity yet"
-            description="No brands had revenue-bearing orders in this window. Try a wider date range."
+            title={tx("Sem atividade na plataforma")}
+            description={tx("Nenhuma marca teve pedidos com faturamento neste período. Amplie o intervalo de datas.")}
           />
         ) : (
           <div className="h-72 w-full" data-testid="overview-chart">
@@ -763,8 +730,8 @@ export default function OverviewPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <LeaderboardCard
           testId="overview-top-performers"
-          title="Top performers"
-          subtitle="Highest revenue this period"
+          title={tx("Melhores desempenhos")}
+          subtitle={tx("Maior faturamento no período")}
           icon={Award}
           iconClass="bg-amber-500/15 text-amber-400"
           rows={data?.topPerformers ?? []}
@@ -775,8 +742,8 @@ export default function OverviewPage() {
         />
         <LeaderboardCard
           testId="overview-top-growth"
-          title="Top growth"
-          subtitle="Biggest gainers vs. previous period"
+          title={tx("Maior crescimento")}
+          subtitle={tx("Maiores crescimentos em relação ao período anterior")}
           icon={TrendingUp}
           iconClass="bg-emerald-500/15 text-emerald-400"
           rows={data?.topGrowth ?? []}
@@ -787,8 +754,8 @@ export default function OverviewPage() {
         />
         <LeaderboardCard
           testId="overview-bottom-growth"
-          title="Needs attention"
-          subtitle="Biggest declines vs. previous period"
+          title={tx("Precisa de atenção")}
+          subtitle={tx("Maiores quedas em relação ao período anterior")}
           icon={TrendingDown}
           iconClass="bg-red-500/15 text-red-400"
           rows={data?.bottomGrowth ?? []}
@@ -802,15 +769,14 @@ export default function OverviewPage() {
       <Card className="p-5 bg-card border-border">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h2 className="text-base font-semibold leading-tight">Selected brands</h2>
+            <h2 className="text-base font-semibold leading-tight">{tx("Marcas selecionadas")}</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Per-brand revenue, orders and growth for the active window. Open the
-              full management table for AOV and conversion details.
+              {tx("Faturamento, pedidos e crescimento por marca no período selecionado. Abra a tabela completa para ver ticket médio e conversão.")}
             </p>
           </div>
           <Link href="/clients">
             <Button variant="outline" size="sm" data-testid="overview-go-clients">
-              Manage brands
+              {tx("Gerenciar marcas")}
               <ChevronRight className="ml-1 h-4 w-4" />
             </Button>
           </Link>
@@ -824,11 +790,11 @@ export default function OverviewPage() {
         ) : data && data.clientStats.length === 0 ? (
           <EmptyState
             icon={Building2}
-            title={selectedClientIds?.length === 0 ? "No brands selected" : "No brands yet"}
+            title={selectedClientIds?.length === 0 ? "Nenhuma marca selecionada" : "Nenhuma marca cadastrada"}
             description={
               selectedClientIds?.length === 0
-                ? "Select at least one brand to see the platform totals."
-                : "Create a brand from the Clients page to start seeing platform numbers here."
+                ? "Selecione pelo menos uma marca para ver os totais da plataforma."
+                : "Cadastre uma marca na página Clientes para visualizar os números da plataforma."
             }
           />
         ) : (
@@ -836,10 +802,10 @@ export default function OverviewPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground/80 border-b border-border">
-                  <th className="py-2 pr-4 font-medium">Brand</th>
-                  <th className="py-2 px-4 font-medium text-right">Revenue</th>
-                  <th className="py-2 px-4 font-medium text-right">Orders</th>
-                  <th className="py-2 pl-4 font-medium text-right">vs. prev.</th>
+                  <th className="py-2 pr-4 font-medium">{tx("Marca")}</th>
+                  <th className="py-2 px-4 font-medium text-right">{tx("Faturamento")}</th>
+                  <th className="py-2 px-4 font-medium text-right">{tx("Pedidos")}</th>
+                  <th className="py-2 pl-4 font-medium text-right">{tx("vs. anterior")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -851,14 +817,14 @@ export default function OverviewPage() {
                       className="border-b border-border/60 last:border-0 hover-elevate"
                     >
                       <td className="py-2 pr-4">
-                        <button
+                        <Button variant="ghost" size="sm"
                           type="button"
                           onClick={() => handleSelectClient(c.id)}
                           data-testid={`overview-client-${c.id}`}
                           className="font-medium hover:text-primary text-left"
                         >
                           {c.name}
-                        </button>
+                        </Button>
                       </td>
                       <td className="py-2 px-4 text-right tabular-nums">
                         {formatCurrency(c.revenue, {
