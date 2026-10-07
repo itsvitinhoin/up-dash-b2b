@@ -61,3 +61,11 @@ node scripts/build-public-preview.mjs /tmp/up-dash-glass-preview
 A saída padrão tmp/public-preview é ignorada pelo Git. O artefato .vercel/output deve ser vinculado exclusivamente a up-dash-glass-preview, nunca ao projeto data-intelligence-system.
 
 A prévia não inclui banco, credenciais, variáveis de integração ou jobs. Escritas e extrações retornam 405; somente o login fictício retorna a sessão de demonstração. Rotas sem fixture não consultam serviços reais. A produção existente permanece em www.grupoup-dash.com.br.
+
+## Diário, Escala, Comparar Marcas, Clientes e Acessos
+
+As cinco telas usam superfícies, formulários, botões, tabelas e cards UP Glass. Diário preserva exportação em PDF, campanhas, produtos e rankings, com seis KPIs (até quatro por linha). Escala usa oito KPIs e uma calculadora com valores atuais, metas e acréscimos em listas legíveis; estimativas de cenários não são indicadores históricos. Comparar Marcas mantém seleção de até quatro marcas, quatro KPIs por marca, gráfico azul e CSV; as séries usam IDs, evitando colisões de nomes. Clientes preserva cadastro, importação, integrações, credenciais, abas e paginação. Acessos preserva criação, busca e remoção de logins.
+
+Indicadores comerciais usam valores anteriores reais da resposta ou uma consulta da janela imediatamente anterior de mesma duração. Cadastros administrativos e estoque atual não têm snapshots históricos; exibem a comparação como indisponível e explicam isso no botão de informação. A prévia isolada inclui respostas sintéticas para Diário, Escala, lista de clientes e acessos, com cinco marcas fictícias, sem credenciais nem operações de escrita.
+
+O loader transparente foi retimado de 10.042 ms para 5.021 ms (2×), com 121 frames a 480 × 240. O arquivo passa de 2.316.434 para 1.173.588 bytes (49,3% menor). O HTML antecipa seu download; picture seleciona somente o poster estático em movimento reduzido. O overlay com blur segue o carregamento real das consultas. A conversão é reproduzível com scripts/optimize-loader.py e Pillow, usando o WebP anterior como entrada separada.

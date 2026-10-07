@@ -17,10 +17,10 @@ const user = {
   role: "ADMIN",
   clientId: null,
 };
-const clients = ["B2B", "B2C"].map((mode) => ({
-  id: `design-${mode.toLowerCase()}`,
+const clients = ["B2B", "B2C", "B2C", "B2C", "B2C"].map((mode, index) => ({
+  id: index < 2 ? `design-${mode.toLowerCase()}` : `design-brand-${index}`,
   name:
-    mode === "B2B" ? "Ateliê UP · Demonstração" : "Studio UP · Demonstração",
+    index === 0 ? "Ateliê UP · Demonstração" : ["", "Studio UP", "Aurora", "Serena", "Origem"][index] + " · Demonstração",
   email: "demo@updash.local",
   apiKey: "",
   revenueYtd: 842360,
@@ -28,6 +28,10 @@ const clients = ["B2B", "B2C"].map((mode) => ({
   leadsYtd: 3280,
   approvedLeads: 2150,
   isActive: true,
+  hasClientLogin: true,
+  clientLoginCount: index === 1 ? 2 : 1,
+  clientLoginEmail: `equipe${index + 1}@updash.local`,
+  clientLoginName: "Equipe Demonstração",
   dashboardType: mode,
   commercePlatform: mode === "B2B" ? "UPZERO" : "NUVEMSHOP",
   currency: "BRL",
@@ -181,7 +185,8 @@ const series = (url, base) => {
   }));
 };
 const dashboard = (url) => {
-  const factor = url.searchParams.get("category") ? 0.65 : 1;
+  const brandFactor = ({ "design-brand-2": 0.84, "design-brand-3": 1.12, "design-brand-4": 0.67 })[url.searchParams.get("clientId")] ?? 1;
+  const factor = (url.searchParams.get("category") ? 0.65 : 1) * brandFactor;
   const revenueOverTime = series(url, 8200 * factor);
   const ordersOverTime = series(url, 23 * factor);
   const revenue = revenueOverTime.reduce((sum, row) => sum + row.value, 0);
@@ -353,6 +358,65 @@ const ordersResponse = (url) => ({
   limit: 50,
   total: 4,
 });
+// Full-dashboard synthetic views. These fixtures contain no credentials and never perform writes.
+const demoAccesses = clients.flatMap((client, index) => Array.from({ length: client.clientLoginCount }, (_, slot) => ({
+  id: `demo-access-${index}-${slot}`, userId: `demo-user-${index}-${slot}`, email: slot === 0 ? client.clientLoginEmail : `comercial${index}@updash.local`,
+  firstName: slot === 0 ? "Equipe" : "Comercial", lastName: ["Ateliê", "Studio", "Aurora", "Serena", "Origem"][index],
+  role: "CLIENT", clientId: client.id, clientName: client.name, createdAt: now, updatedAt: now,
+})));
+function demoClientList(url) {
+  const search = (url.searchParams.get("search") ?? "").toLocaleLowerCase("pt-BR");
+  const type = url.searchParams.get("dashboardType");
+  const rows = clients.filter(c => (!type || c.dashboardType === type) && (!search || `${c.name} ${c.email}`.toLocaleLowerCase("pt-BR").includes(search))).map(c => {
+    const scoped = new URL(url); scoped.searchParams.set("clientId", c.id);
+    const { kpis, prevKpis, traffic } = dashboard(scoped);
+    return { ...c, revenueYtd: kpis.revenue, ordersYtd: kpis.orders, avgOrderValue: kpis.avgTicket, conversionRate: kpis.conversionRate,
+      periodGrowthPct: (kpis.revenue / prevKpis.revenue - 1) * 100, periodRoas: 10.74, periodLeads: c.dashboardType === "B2C" ? kpis.orders : kpis.leads,
+      periodApprovalRate: c.dashboardType === "B2C" ? traffic.sessions : kpis.approvalRate };
+  });
+  const page = Math.max(1, Number(url.searchParams.get("page") || 1)), limit = Math.max(1, Number(url.searchParams.get("limit") || 20));
+  return { data: rows.slice((page - 1) * limit, page * limit), total: rows.length, page, pages: Math.max(1, Math.ceil(rows.length / limit)), limit };
+}
+function demoReportPeriod(url) {
+  const from = url.searchParams.get("dateFrom") || now.slice(0, 10), to = url.searchParams.get("dateTo") || from;
+  const days = Math.max(1, Math.round((new Date(to) - new Date(from)) / 86400000) + 1);
+  const previousTo = new Date(new Date(from).getTime() - 86400000).toISOString().slice(0, 10);
+  const previousFrom = new Date(new Date(from).getTime() - days * 86400000).toISOString().slice(0, 10);
+  return { from, to, days, previousFrom, previousTo };
+}
+function demoDailyReport(url) {
+  const d = dashboard(url), period = demoReportPeriod(url), breakdown = demoProductSalesBreakdowns(url);
+  const client = clients.find(c => c.id === url.searchParams.get("clientId")) || clients[1];
+  const spend = Math.round(d.kpis.revenue / 10.74), previousSpend = Math.round(spend / 1.06);
+  const metrics = (k, mediaSpend) => ({ approvedRevenue: k.revenue, sales: k.orders, avgTicket: k.orders ? k.revenue / k.orders : 0, mediaSpend, costPerPurchase: k.orders ? mediaSpend / k.orders : 0, roas: mediaSpend ? k.revenue / mediaSpend : 0 });
+  const kpis = metrics(d.kpis, spend), prevKpis = metrics(d.prevKpis, previousSpend);
+  return { client: { id: client.id, name: client.name }, period: { from: period.from, to: period.to }, previousPeriod: { from: period.previousFrom, to: period.previousTo }, kpis, prevKpis,
+    changes: Object.fromEntries(Object.keys(kpis).map(key => [key, prevKpis[key] ? (kpis[key] / prevKpis[key] - 1) * 100 : null])),
+    campaigns: ["Coleção Primavera", "Remarketing · Catálogo", "Novos clientes"].map((name, i) => { const weight = [0.5, 0.3, 0.2][i], campaignSpend = spend * weight, purchases = Math.round(kpis.sales * weight), revenue = kpis.approvedRevenue * weight; return { id: `demo-campaign-${i}`, name, spend: campaignSpend, purchases, revenue, roas: campaignSpend ? revenue / campaignSpend : 0, cpa: purchases ? campaignSpend / purchases : 0, clicks: purchases * 24, impressions: purchases * 1300 }; }),
+    products: filteredDemoProducts(url).map(p => ({ name: p.name, category: p.category, units: p.totalSold, revenue: p.totalRevenue })),
+    categories: breakdown.categories.map(r => ({ name: r.label, units: r.units, revenue: r.revenue })), colors: breakdown.colors.map(r => ({ name: r.label, units: r.units, revenue: r.revenue })), sizes: breakdown.sizes.map(r => ({ name: r.label, units: r.units, revenue: r.revenue })),
+    analysis: { source: "heuristic", generalAnalysis: "Nesta demonstração, a receita e a quantidade de pedidos avançam em relação ao período anterior. Acompanhe a reposição das peças mais vendidas e o custo por compra antes de aumentar o investimento.", reportSummary: ["Compare faturamento, pedidos e ticket médio na mesma janela de datas.", "Priorize a reposição de tamanhos com maior saída e estoque baixo.", "Acompanhe o retorno de cada campanha ao ajustar o orçamento de mídia."] }, generatedAt: now };
+}
+function demoScale(url) {
+  const d = dashboard(url).kpis, period = demoReportPeriod(url), rows = filteredDemoProducts(url), breakdown = demoProductSalesBreakdowns(url);
+  const client = clients.find(c => c.id === url.searchParams.get("clientId")) || clients[1];
+  const currentSalesPower = products.reduce((sum, p) => sum + p.variants.reduce((value, v) => value + v.stock * v.price, 0), 0);
+  const availableStockUnits = products.reduce((sum, p) => sum + p.stock, 0);
+  const monthlyRevenue = d.revenue / period.days * 30, monthlyOrders = d.orders / period.days * 30;
+  const roas = 10.74, mediaSpend = d.revenue / roas, cpa = mediaSpend / d.orders, monthlyTurnoverPct = currentSalesPower ? monthlyRevenue / currentSalesPower * 100 : 0;
+  const benchmarks = { windowDays: 90, from: new Date(new Date(period.to).getTime() - 89 * 86400000).toISOString().slice(0, 10), to: period.to, monthlyRevenue: monthlyRevenue / 1.08, monthlyOrders: monthlyOrders / 1.05, avgTicket: d.avgTicket / 1.03, monthlyTurnoverPct: monthlyTurnoverPct / 1.08, mediaSpend: monthlyRevenue / 1.08 / roas * 3, monthlyMediaSpend: monthlyRevenue / 1.08 / roas, roas, cpa, sessions: Math.round(d.orders / 0.0342), conversionRate: 3.42 };
+  const targetRevenue = Number(url.searchParams.get("targetRevenue")) > 0 ? Number(url.searchParams.get("targetRevenue")) : Math.round(monthlyRevenue * 1.3);
+  const requiredSalesPower = benchmarks.monthlyTurnoverPct ? targetRevenue / (benchmarks.monthlyTurnoverPct / 100) : 0;
+  const projection = { targetRevenue, simulatedSalesPower: currentSalesPower, requiredSalesPower, projectedRevenue: targetRevenue, projectedMediaSpend: targetRevenue / benchmarks.roas, projectedOrders: targetRevenue / benchmarks.avgTicket, projectedCpa: benchmarks.avgTicket / benchmarks.roas,
+    revenueIncrement: Math.max(0, targetRevenue - monthlyRevenue), mediaSpendIncrement: Math.max(0, targetRevenue / benchmarks.roas - mediaSpend / period.days * 30), salesPowerGap: Math.max(0, requiredSalesPower - currentSalesPower), status: requiredSalesPower > currentSalesPower ? "caution" : "ready",
+    scenarios: [0.9, 1, 1.15].map((factor, i) => ({ name: ["Conservador", "Meta planejada", "Expansão"][i], salesPower: requiredSalesPower * factor, revenue: targetRevenue * factor, mediaSpend: targetRevenue * factor / benchmarks.roas, orders: targetRevenue * factor / benchmarks.avgTicket })) };
+  const mapRows = list => list.map(r => ({ name: r.label, revenue: r.revenue, units: r.units, orders: Math.round(r.units / 1.5) })).sort((a, b) => b.revenue - a.revenue);
+  return { client: { id: client.id, name: client.name }, period: { from: period.from, to: period.to, days: period.days },
+    kpis: { currentSalesPower, revenue: d.revenue, orders: d.orders, availableStockUnits, activeProducts: products.length, availableProducts: products.filter(p => p.stock > 0).length, periodTurnoverPct: currentSalesPower ? d.revenue / currentSalesPower * 100 : 0, monthlyRevenue, monthlyOrders, avgTicket: d.avgTicket, monthlyTurnoverPct, mediaSpend, monthlyMediaSpend: mediaSpend / period.days * 30, roas, cpa, sessions: Math.round(d.orders / 0.0342), conversionRate: 3.42, brokenGradePct: 20, brokenGradeCount: 1, productGroupCount: products.length }, benchmarks, projection,
+    breakdowns: { categories: mapRows(breakdown.categories), colors: mapRows(breakdown.colors), sizes: mapRows(breakdown.sizes), stockByCategory: products.map(p => ({ name: p.category, revenue: 0, units: 0, stockUnits: p.stock, salesPower: p.variants.reduce((sum, v) => sum + v.stock * v.price, 0) })) },
+    insights: { headline: "Prepare o estoque para o próximo patamar", summary: "Esta simulação usa o ritmo de vendas e as referências de giro, ticket médio e ROAS da marca. As projeções são estimativas e dependem de disponibilidade e demanda.", actions: ["Reponha tamanhos com estoque baixo antes de ampliar a mídia.", "Ajuste o faturamento alvo na calculadora e acompanhe o estoque adicional.", "Acompanhe o custo por compra à medida que aumentar o investimento."], risks: ["Grade incompleta pode limitar a conversão.", "O desempenho passado não garante a receita projetada."], source: "heuristic" }, generatedAt: now };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${apiPort}`);
   const path = url.pathname;
@@ -382,9 +446,12 @@ const server = createServer(async (req, res) => {
   if (path === "/api/auth/me") return send(user);
   if (path === "/api/healthz") return send({ status: "ok" });
   if (path === "/api/clients")
-    return send({ data: clients, total: 2, page: 1, pages: 1 });
-  if (path.startsWith("/api/clients/"))
+    return send(demoClientList(url));
+  if (/^\/api\/clients\/[^/]+$/.test(path))
     return send(clients.find((c) => path.endsWith(c.id)) || clients[0]);
+  if (path === "/api/accesses") return send({ data: demoAccesses });
+  if (path === "/api/analytics/daily-report") return send(demoDailyReport(url));
+  if (path === "/api/analytics/scale") return send(demoScale(url));
   if (path === "/api/analytics/dashboard") return send(dashboard(url));
   const organizedData = organizationFixture(path, url, dashboard(url), products, customers, sellers, now);
   if (organizedData !== undefined) return send(organizedData);

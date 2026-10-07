@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { displayLabel } from "@/lib/display-label";
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -284,7 +285,7 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
       .map((r) => ({ visitDate: r.visitDate, visitCount: Number(r.visitCount) }));
 
     if (validRows.length === 0) {
-      toast.error("Enter at least one valid date and visit count.");
+      toast.error("Informe pelo menos uma data válida e o número de visitas.");
       return;
     }
 
@@ -292,11 +293,11 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
       { data: { clientId, rows: validRows } },
       {
         onSuccess: (res) => {
-          toast.success(`Saved ${res.rows.length} day${res.rows.length !== 1 ? "s" : ""} of visit data for ${clientName}`);
+          toast.success(`Visitas de ${res.rows.length} dia${res.rows.length !== 1 ? "s" : ""} salvas para ${clientName}`);
           setOpen(false);
         },
         onError: () => {
-          toast.error("Failed to save site visit data. Please try again.");
+          toast.error("Não foi possível salvar as visitas. Tente novamente.");
         },
       }
     );
@@ -686,10 +687,10 @@ function MetaAdsKeyDialog({
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
           setOpen(false);
-          toast.success("Meta Ads settings updated");
+          toast.success("Configurações do Meta Ads atualizadas");
         },
         onError: () => {
-          toast.error("Failed to update Meta Ads settings");
+          toast.error("Não foi possível atualizar as configurações do Meta Ads");
         },
       }
     );
@@ -705,14 +706,14 @@ function MetaAdsKeyDialog({
       setAccounts(res.accounts);
       if (res.accounts.length === 1) {
         setAdAccountId(res.accounts[0].id);
-        toast.success(`Ad account detected: ${res.accounts[0].name}`);
+        toast.success(`Conta de anúncios encontrada: ${res.accounts[0].name}`);
       } else if (res.accounts.length > 1) {
-        toast.success(`${res.accounts.length} ad accounts found`);
+        toast.success(`${res.accounts.length} contas de anúncios encontradas`);
       } else {
-        toast.warning("No ad accounts found for the global Meta token");
+        toast.warning("Nenhuma conta de anúncios encontrada para o token global da Meta");
       }
     } catch {
-      toast.error("Could not detect Meta ad accounts");
+      toast.error("Não foi possível detectar as contas de anúncios da Meta");
     } finally {
       setIsDetecting(false);
     }
@@ -727,10 +728,10 @@ function MetaAdsKeyDialog({
           variant="ghost"
           size="sm"
           className={`h-7 gap-1 text-xs ${hasAdAccount ? "text-emerald-400 hover:text-emerald-300" : ""}`}
-          title="Set Meta Ads integration"
+          title="Configurar integração Meta Ads"
         >
           <Network className="h-3 w-3" />
-          {hasAdAccount ? "Meta ✓" : "Meta account"}
+          {hasAdAccount ? "Meta ✓" : "Conta Meta"}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[460px]">
@@ -1082,10 +1083,10 @@ function UpZeroKeyDialog({
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
           setOpen(false);
-          toast.success("UP Zero API key updated");
+          toast.success("Chave de API da UP Zero atualizada");
         },
         onError: () => {
-          toast.error("Failed to update UP Zero API key");
+          toast.error("Não foi possível atualizar a chave de API da UP Zero");
         },
       }
     );
@@ -1202,29 +1203,29 @@ function UpZeroSyncButton({
     if (status === "done" && jobQuery.data?.result) {
       const { customersCreated, customersUpdated, ordersCreated, ordersUpdated, productsCreated, productsUpdated, orderItemsSynced, errors } = jobQuery.data.result;
       const desc = [
-        ordersCreated > 0 && `${ordersCreated} new orders`,
-        ordersUpdated > 0 && `${ordersUpdated} orders updated`,
+        ordersCreated > 0 && `${ordersCreated} novos pedidos`,
+        ordersUpdated > 0 && `${ordersUpdated} pedidos atualizados`,
         customersCreated > 0 && `${customersCreated} new customers`,
-        customersUpdated > 0 && `${customersUpdated} customers updated`,
+        customersUpdated > 0 && `${customersUpdated} clientes atualizados`,
         productsCreated > 0 && `${productsCreated} new products`,
-        productsUpdated > 0 && `${productsUpdated} products updated`,
+        productsUpdated > 0 && `${productsUpdated} produtos atualizados`,
         orderItemsSynced > 0 && `${orderItemsSynced} order items`,
       ]
         .filter(Boolean)
-        .join(", ") || "No new records";
+        .join(", ") || "Nenhum registro novo";
       if (errors.length > 0) {
         const firstMsg = errors[0] ?? "";
         const truncated = firstMsg.length > 120 ? firstMsg.slice(0, 117) + "…" : firstMsg;
         const suffix = errors.length > 1 ? ` (+${errors.length - 1} more)` : "";
-        toast.warning(`Sync complete for ${clientName}`, {
+        toast.warning(`Sincronização concluída para ${clientName}`, {
           id: toastId,
           description: `${desc} · ${truncated}${suffix}`,
         });
       } else {
-        toast.success(`Sync complete for ${clientName}`, { id: toastId, description: desc });
+        toast.success(`Sincronização concluída para ${clientName}`, { id: toastId, description: desc });
       }
     } else if (status === "failed") {
-      toast.error(`Sync failed for ${clientName}`, {
+      toast.error(`Falha na sincronização de ${clientName}`, {
         id: toastId,
         description: jobQuery.data?.error ?? undefined,
       });
@@ -1237,13 +1238,13 @@ function UpZeroSyncButton({
       {
         onSuccess: (data) => {
           setJobId(data.jobId);
-          toast.loading(`Syncing ${clientName}…`, {
+          toast.loading(`Sincronizando ${clientName}…`, {
             id: `sync-${clientId}`,
             description: "This may take a minute…",
           });
         },
         onError: () => {
-          toast.error(`Could not start sync for ${clientName}`);
+          toast.error(`Não foi possível iniciar a sincronização de ${clientName}`);
         },
       }
     );
@@ -1307,7 +1308,7 @@ function NuvemshopSyncButton({
   async function handleSync() {
     setIsSyncing(true);
     const toastId = `nuvemshop-sync-${clientId}`;
-    toast.loading(`Syncing ${clientName} from Nuvemshop...`, {
+    toast.loading(`Sincronizando ${clientName} com a Nuvemshop...`, {
       id: toastId,
       description: "Importando pedidos, clientes, produtos e faturamento pago.",
     });
@@ -1319,28 +1320,28 @@ function NuvemshopSyncButton({
       const result = data.result;
       queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
       if (!result) {
-        toast.success(`Nuvemshop sync started for ${clientName}`, { id: toastId });
+        toast.success(`Sincronização da Nuvemshop iniciada para ${clientName}`, { id: toastId });
         return;
       }
       const desc = [
-        `${result.ordersCreated} new orders`,
+        `${result.ordersCreated} novos pedidos`,
         `${result.ordersUpdated} updated`,
         `${result.paidOrders} paid`,
         `${result.productsCreated + result.productsUpdated} products`,
       ].join(" · ");
       if (result.errors.length > 0) {
-        toast.warning(`Nuvemshop sync complete for ${clientName}`, {
+        toast.warning(`Sincronização da Nuvemshop concluída para ${clientName}`, {
           id: toastId,
           description: `${desc} · ${result.errors.length} warnings`,
         });
       } else {
-        toast.success(`Nuvemshop sync complete for ${clientName}`, {
+        toast.success(`Sincronização da Nuvemshop concluída para ${clientName}`, {
           id: toastId,
           description: desc,
         });
       }
     } catch (err) {
-      toast.error(`Could not sync Nuvemshop for ${clientName}`, {
+      toast.error(`Não foi possível sincronizar a Nuvemshop para ${clientName}`, {
         id: toastId,
         description: err instanceof Error ? err.message : undefined,
       });
@@ -1476,10 +1477,10 @@ export default function ClientsPage() {
             totalSkipped > 0
               ? `${result.created} created, ${totalSkipped} skipped`
               : `${result.created} created`;
-          toast.success("Import complete", { description: desc });
+          toast.success("Importação concluída", { description: desc });
         },
         onError() {
-          toast.error("Import failed", { description: "Erro no servidor. Tente novamente." });
+          toast.error("Falha na importação", { description: "Erro no servidor. Tente novamente." });
         },
       }
     );
@@ -1562,6 +1563,9 @@ export default function ClientsPage() {
 
   return (
     <div className="space-y-6" data-testid="page-clients">
+      <div className="up-metric-grid">
+        {[["Clientes encontrados", data?.total ?? 0], ["Ativos nesta página", clients.filter(c => c.isActive).length], ["Acessos nesta página", clients.reduce((sum, c) => sum + (c.clientLoginCount ?? 0), 0)], ["Sem login nesta página", clients.filter(c => !c.hasClientLogin).length]].map(([label, value]) => <GlassMetricCard key={label} label={String(label)} value={Number(value)} loading={isLoading} source="UP Dash · cadastro de clientes e acessos" info="Contagem atual dos cadastros. Clientes encontrados considera todos os resultados da busca; os demais cards consideram a página exibida da lista." comparisonUnavailable="O cadastro não disponibiliza snapshots históricos para comparar períodos." />)}
+      </div>
       {/* Hidden file input for CSV upload */}
       <input
         ref={fileInputRef}
@@ -1586,11 +1590,11 @@ export default function ClientsPage() {
           <div className="flex items-center gap-3 text-sm">
             <span className="flex items-center gap-1.5 text-emerald-400">
               <CheckCircle2 className="h-3.5 w-3.5" />
-              {validCsvRows.length} valid
+              {validCsvRows.length} válidas
             </span>
             <span className="flex items-center gap-1.5 text-red-400">
               <XCircle className="h-3.5 w-3.5" />
-              {csvRows.length - validCsvRows.length} invalid
+              {csvRows.length - validCsvRows.length} inválidas
             </span>
             <a
               href={CSV_TEMPLATE}
@@ -1620,11 +1624,11 @@ export default function ClientsPage() {
                     <TableCell className="max-w-[120px] truncate">{row.name || <span className="text-muted-foreground">—</span>}</TableCell>
                     <TableCell className="max-w-[160px] truncate">{row.email || <span className="text-muted-foreground">—</span>}</TableCell>
                     <TableCell className="max-w-[140px] truncate font-mono text-xs">{row.apiKey || <span className="text-muted-foreground">—</span>}</TableCell>
-                    <TableCell>{row.currency || <span className="text-muted-foreground text-xs">default</span>}</TableCell>
+                    <TableCell>{row.currency || <span className="text-muted-foreground text-xs">padrão</span>}</TableCell>
                     <TableCell>
                       {row.errors.length === 0 ? (
                         <span className="flex items-center gap-1 text-xs text-emerald-400">
-                          <CheckCircle2 className="h-3 w-3" /> Valid
+                          <CheckCircle2 className="h-3 w-3" /> Válida
                         </span>
                       ) : (
                         <span className="flex items-center gap-1 text-xs text-red-400" title={row.errors.join("; ")}>
@@ -1650,14 +1654,14 @@ export default function ClientsPage() {
               {importMutation.isPending ? (
                 <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importando…</>
               ) : (
-                `Importar ${validCsvRows.length} row${validCsvRows.length !== 1 ? "s" : ""}`
+                `Importar ${validCsvRows.length} linha${validCsvRows.length !== 1 ? "s" : ""}`
               )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
           <Upload className="mr-2 h-4 w-4" /> Importar CSV
         </Button>
@@ -1770,7 +1774,7 @@ export default function ClientsPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="metaAdAccountId">
-                    Meta Ad Account{" "}
+                    Conta de anúncios Meta{" "}
                     <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
                   </Label>
                   <Input
@@ -1786,7 +1790,7 @@ export default function ClientsPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="metaAdsApiKey">
-                    Meta access token{" "}
+                    Token de acesso Meta{" "}
                     <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
                   </Label>
                   <Input
@@ -1802,7 +1806,7 @@ export default function ClientsPage() {
                   <div className="rounded-md border border-border/70 bg-muted/20 p-3">
                     <div className="mb-3 flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-medium">B2C integrations</p>
+                        <p className="text-sm font-medium">Integrações B2C</p>
                         <p className="text-xs text-muted-foreground">
                           As credenciais da Nuvemshop e GA4 são armazenadas no servidor.
                         </p>
@@ -1862,13 +1866,13 @@ export default function ClientsPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="ga4ApiSecret">GA4 API secret</Label>
+                        <Label htmlFor="ga4ApiSecret">Segredo de API GA4</Label>
                         <Input
                           id="ga4ApiSecret"
                           type={showB2CSecrets ? "text" : "password"}
                           value={newGa4ApiSecret}
                           onChange={(e) => setNewGa4ApiSecret(e.target.value)}
-                          placeholder="Paste GA4 API secret"
+                          placeholder="Cole o segredo de API GA4"
                           className="font-mono text-xs"
                         />
                       </div>
@@ -1933,8 +1937,8 @@ export default function ClientsPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="B2B">B2B clients</SelectItem>
-                <SelectItem value="B2C">B2C clients</SelectItem>
+                <SelectItem value="B2B">Clientes B2B</SelectItem>
+                <SelectItem value="B2C">Clientes B2C</SelectItem>
               </SelectContent>
             </Select>
             <div className="relative w-full max-w-sm">
@@ -1965,7 +1969,7 @@ export default function ClientsPage() {
               </div>
               <Badge variant="outline" className="gap-1.5">
                 <KeyRound className="h-3 w-3" />
-                {formatNumber(clients.reduce((sum, client) => sum + (client.clientLoginCount ?? 0), 0))} acessos
+                {formatNumber(clients.reduce((sum, client) => sum + (client.clientLoginCount ?? 0), 0))} {clients.reduce((sum, client) => sum + (client.clientLoginCount ?? 0), 0) === 1 ? "acesso" : "acessos"}
               </Badge>
             </div>
             {isLoading && !data ? (
@@ -2025,7 +2029,7 @@ export default function ClientsPage() {
           <CardContent>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div><h2 className="text-base font-medium">Clientes cadastrados</h2><p className="text-xs text-muted-foreground">Role a tabela para consultar todas as métricas e ações.</p></div>
-              <Badge variant="outline">{formatNumber(clients.length)} clientes</Badge>
+              <Badge variant="outline">{formatNumber(clients.length)} {clients.length === 1 ? "cliente" : "clientes"}</Badge>
             </div>
             <Table>
               <TableHeader>
@@ -2075,7 +2079,7 @@ export default function ClientsPage() {
                     <TableCell colSpan={14} className="h-32 text-center text-muted-foreground">
                       <div className="flex flex-col items-center justify-center">
                         <Building2 className="h-8 w-8 mb-2 text-muted-foreground/50" />
-                        Não {selectedDashboardMode} clientes encontrados.
+                        Nenhum cliente {selectedDashboardMode} encontrado.
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2171,7 +2175,7 @@ export default function ClientsPage() {
                           : "—"}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground tabular-nums">
-                        {format(new Date(client.createdAt), "MMM d, yyyy")}
+                        {format(new Date(client.createdAt), "dd/MM/yyyy")}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1 flex-wrap">

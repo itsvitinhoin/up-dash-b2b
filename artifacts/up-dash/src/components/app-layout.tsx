@@ -227,7 +227,7 @@ const pageMeta: Record<string, PageMeta> = {
   },
   "/compare": {
     title: "Comparar marcas",
-    subtitle: "Compare até quatro marcas lado a lado",
+    subtitle: "Compare o desempenho de até quatro marcas",
     hasDateRange: true,
     hasFilterBar: false,
   },

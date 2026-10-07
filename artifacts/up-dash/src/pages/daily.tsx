@@ -4,11 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { format, startOfDay, subDays } from "date-fns";
 import { motion } from "framer-motion";
 import {
-  ArrowDownRight,
-  ArrowUpRight,
   FileText,
   Megaphone,
-  MoreHorizontal,
   Package,
   Receipt,
   RefreshCw,
@@ -26,10 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashLoadingCard } from "@/components/ui/dash-loader";
-import { CountUp } from "@/components/count-up";
-import { Sparkline } from "@/components/sparkline";
 import {
-  cardEntry,
   fadeInUp,
   staggerContainer,
   useReducedMotion,
@@ -84,41 +78,13 @@ type DailyReportResponse = {
   generatedAt: string;
 };
 
-function metricChangeLabel(value: number | null) {
-  if (value === null) return "sem base";
-  if (value === 0) return "0,0%";
-  return `${value > 0 ? "+" : ""}${formatPercentage(value)}`;
-}
-
-function TrendPill({ value, inverse = false }: { value: number | null; inverse?: boolean }) {
-  const positive = value !== null && value > 0;
-  const negative = value !== null && value < 0;
-  const good = inverse ? negative : positive;
-  const bad = inverse ? positive : negative;
-  return (
-    <span
-      className={
-        `inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${
-          good
-            ? "bg-emerald-500/10 text-emerald-400"
-            : bad
-              ? "bg-red-500/10 text-red-400"
-              : "bg-muted text-muted-foreground"
-        }`
-      }
-    >
-      {good ? <ArrowUpRight className="mr-1 h-3 w-3" /> : bad ? <ArrowDownRight className="mr-1 h-3 w-3" /> : null}
-      {metricChangeLabel(value)}
-    </span>
-  );
-}
-
 function DailyKpiCard({
   label,
   value,
   format: formatValue,
   unit,
   change,
+  previousValue,
   icon: Icon,
   iconClass,
   sparkValues,
@@ -131,6 +97,7 @@ function DailyKpiCard({
   format: (value: number) => string;
   unit?: string;
   change: number | null;
+  previousValue?: number;
   icon: React.ComponentType<{ className?: string }>;
   iconClass: string;
   sparkValues: number[];
@@ -138,10 +105,7 @@ function DailyKpiCard({
   inverse?: boolean;
   valueAccent?: boolean;
 }) {
-  const reduced = useReducedMotion();
-  const variants = withReducedMotion(cardEntry, reduced);
-
-  return (<GlassMetricCard label={label} value={value} icon={Icon} format={formatValue} unit={unit} change={change} changePositive={change !== null ? (inverse ? change <= 0 : change >= 0) : undefined} sparkValues={sparkValues} />);
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={formatValue} unit={unit} previousValue={previousValue} source="Ecommerce · pedidos pagos; Meta Ads · investimento e compras atribuídas" info={label === "Custo por compra" ? "Investimento em mídia dividido pela quantidade de pedidos pagos no período." : label === "Ticket médio" ? "Faturamento aprovado dividido pela quantidade de pedidos pagos." : label === "ROAS" ? "Faturamento aprovado dividido pelo investimento em mídia no período." : undefined} change={change} changePositive={change !== null ? (inverse ? change <= 0 : change >= 0) : undefined} sparkValues={sparkValues} />);
 }
 
 function DailyLoadingState() {
@@ -157,7 +121,7 @@ function DailyLoadingState() {
         description="Buscando vendas, mídia, produtos e insights do período selecionado."
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 6 }).map((_, index) => (
           <Card key={index} className="p-5 bg-card border-border">
             <div className="mb-4 flex items-center justify-between">
@@ -215,17 +179,17 @@ export default function DailyPage() {
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
 
   const { data, isLoading, isError, refetch } = useQuery<DailyReportResponse>({
+    ...queryOpts<DailyReportResponse>({ enabled }),
     queryKey: ["b2c-daily-report", clientId, dateFrom, dateTo, selectedDashboardMode],
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const params = new URLSearchParams({ dateFrom, dateTo });
       if (clientId) params.set("clientId", clientId);
-      return customFetch<DailyReportResponse>(`/api/analytics/daily-report?${params.toString()}`);
+      return customFetch<DailyReportResponse>(`/api/analytics/daily-report?${params.toString()}`, { signal });
     },
-    enabled,
   });
 
   const kpis = data?.kpis;
-  const periodLabel = data ? `${data.period.from} a ${data.period.to}` : `${dateFrom} a ${dateTo}`;
+  const periodLabel = `${format(dateRange.from, "dd/MM/yyyy")} a ${format(dateRange.to, "dd/MM/yyyy")}`;
 
   const handlePrint = () => {
     const cleanup = () => {
@@ -328,7 +292,7 @@ export default function DailyPage() {
         </div>
       </div>
 
-      <GlassMetricCard label="UP Dash · Relatório diário" value={<>{data?.client.name ?? "B2C"}</>} footer={<div className="space-y-2"><p className="mt-1 text-sm text-muted-foreground">Período {periodLabel}</p></div>}    />
+      <Card className="p-5 up-report-intro"><div className="up-section-heading"><div><p className="text-xs text-primary mb-1">Relatório diário</p><h2 className="text-lg font-semibold">{data?.client.name ?? targetClient?.name ?? "Sua marca"}</h2><p className="mt-1 text-sm text-muted-foreground">Vendas, mídia e produtos de {periodLabel}.</p></div><FileText className="h-5 w-5 text-primary shrink-0" /></div></Card>
 
       {isLoading || !kpis ? (
         <DailyLoadingState />
@@ -338,7 +302,7 @@ export default function DailyPage() {
             initial="hidden"
             animate="visible"
             variants={containerVariants}
-            className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+            className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"
           >
             <DailyKpiCard
               label="Faturamento aprovado"
@@ -346,6 +310,7 @@ export default function DailyPage() {
               format={formatCurrency}
               unit="BRL"
               change={data.changes.approvedRevenue}
+              previousValue={data.prevKpis?.approvedRevenue}
               icon={Wallet}
               iconClass="bg-blue-500/15 text-blue-400"
               sparkValues={sparkValues.approvedRevenue}
@@ -358,6 +323,7 @@ export default function DailyPage() {
               format={formatNumber}
               unit="pedidos"
               change={data.changes.sales}
+              previousValue={data.prevKpis?.sales}
               icon={ShoppingCart}
               iconClass="bg-violet-500/15 text-violet-400"
               sparkValues={sparkValues.sales}
@@ -369,6 +335,7 @@ export default function DailyPage() {
               format={formatCurrency}
               unit="BRL"
               change={data.changes.avgTicket}
+              previousValue={data.prevKpis?.avgTicket}
               icon={Receipt}
               iconClass="bg-emerald-500/15 text-emerald-400"
               sparkValues={sparkValues.avgTicket}
@@ -380,6 +347,7 @@ export default function DailyPage() {
               format={formatCurrency}
               unit="BRL"
               change={data.changes.costPerPurchase}
+              previousValue={data.prevKpis?.costPerPurchase}
               icon={Tags}
               iconClass="bg-amber-500/15 text-amber-400"
               sparkValues={sparkValues.costPerPurchase}
@@ -392,6 +360,7 @@ export default function DailyPage() {
               format={formatCurrency}
               unit="BRL"
               change={data.changes.mediaSpend}
+              previousValue={data.prevKpis?.mediaSpend}
               icon={Megaphone}
               iconClass="bg-sky-500/15 text-sky-400"
               sparkValues={sparkValues.mediaSpend}
@@ -402,6 +371,7 @@ export default function DailyPage() {
               value={kpis.roas}
               format={(value) => `${value.toFixed(2)}x`}
               change={data.changes.roas}
+              previousValue={data.prevKpis?.roas}
               icon={Sparkles}
               iconClass="bg-primary/15 text-primary"
               sparkValues={sparkValues.roas}
@@ -426,7 +396,7 @@ export default function DailyPage() {
               <div className="absolute -top-12 -right-12 h-40 w-40 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
               <div className="relative z-10">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <GlassMetricCard  label="Análise geral" value={<>Leitura do período</>}  />
+                <div><h2 className="text-base font-semibold">Análise geral</h2><p className="mt-1 text-xs text-muted-foreground">Leitura do período</p></div>
                 <span className="inline-flex items-center gap-1.5 rounded-md bg-primary/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
                   <Sparkles className="h-3 w-3" />
                   Análises
@@ -438,7 +408,7 @@ export default function DailyPage() {
             </Card>
 
             <Card className="p-5 bg-card border-border" data-testid="daily-summary-insights">
-              <GlassMetricCard  label="Resumo do relatório" value={<>Insights para envio</>}  />
+              <div className="mb-4"><h2 className="text-base font-semibold">Resumo do relatório</h2><p className="mt-1 text-xs text-muted-foreground">Insights para envio</p></div>
               <ol className="space-y-3">
                 {data.analysis.reportSummary.map((item, index) => (
                   <li key={`${item}-${index}`} className="flex gap-3 text-sm leading-relaxed">
@@ -554,7 +524,7 @@ function RankingCard({
           <p className="py-6 text-center text-sm text-muted-foreground">{emptyLabel}</p>
         ) : (
           rows.slice(0, 6).map((row, index) => (
-            <div key={row.name} className="flex items-center justify-between gap-3 border-b border-border/70 pb-3 last:border-0 last:pb-0">
+            <div key={row.name} className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 pb-3 last:border-0 last:pb-0">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{index + 1}. {row.name}</p>
                 <p className="text-xs text-muted-foreground">{formatNumber(row.units)} unidades</p>
