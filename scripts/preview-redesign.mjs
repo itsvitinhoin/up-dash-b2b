@@ -397,15 +397,22 @@ const server = createServer(async (req, res) => {
     const rows = filteredDemoProducts(url).sort((a,b) => sort === "units" ? b.totalSold-a.totalSold : b.totalRevenue-a.totalRevenue);
     return send(rows.slice(0, Number(url.searchParams.get("limit") || 50)));
   }
-  if (path === "/api/analytics/products/summary")
+  if (path === "/api/analytics/products/summary") {
+    const rows = filteredDemoProducts(url);
+    const from = url.searchParams.get("dateFrom"), to = url.searchParams.get("dateTo");
+    const periodDays = from && to ? Math.max(1, Math.round((new Date(to)-new Date(from))/86400000)+1) : 30;
+    const activeSkus = rows.reduce((sum, product) => sum + product.variants.filter(variant => variant.totalSold > 0).length, 0);
+    const revenue = rows.reduce((sum, product) => sum+product.totalRevenue, 0);
+    const salesPower = activeSkus > 0 ? revenue/activeSkus/periodDays : 0;
     return send({
       availableStockSalesValue: products.reduce((sum, p) => sum + Math.max(0, p.stock) * p.price, 0),
-      salesPower: 860.45,
-      prevSalesPower: 744.8,
-      salesPowerChangePct: 15.52,
-      activeSkus: 5,
-      periodDays: 30,
+      salesPower,
+      prevSalesPower: salesPower,
+      salesPowerChangePct: 0,
+      activeSkus,
+      periodDays,
     });
+  }
   if (path === "/api/analytics/customers")
     return send({
       data: customers,
