@@ -1,6 +1,7 @@
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -33,8 +34,8 @@ import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatCurrencySmart, formatNumber } from "@/lib/formatters";
 import { exportRowsAsCsv } from "@/lib/csv-export";
-import { CountUp } from "@/components/count-up";
 import { BrazilHeatMap } from "@/components/brazil-heat-map";
+import { periodQuery, usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { useReducedMotion, fadeInUp, withReducedMotion } from "@/lib/motion";
 
 export default function GeographyPage() {
@@ -46,19 +47,19 @@ export default function GeographyPage() {
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
 
-  const { data, isLoading, isError, refetch } = useGetGeography(
-    {
-      clientId,
-      dateFrom: format(dateRange.from, "yyyy-MM-dd"),
-      dateTo: format(dateRange.to, "yyyy-MM-dd"),
-      utmSource: filters.utmSource || undefined,
-      utmMedium: filters.utmMedium || undefined,
-    },
-    {
-      query: queryOpts({
-        enabled: user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId),
-      }),
-    },
+  const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+  const params = {
+    clientId,
+    dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+    dateTo: format(dateRange.to, "yyyy-MM-dd"),
+    utmSource: filters.utmSource || undefined,
+    utmMedium: filters.utmMedium || undefined,
+  };
+  const { data, isLoading, isError, refetch } = useGetGeography(params, {
+    query: queryOpts({ enabled }),
+  });
+  const previous = usePreviousPeriodQuery<NonNullable<typeof data>>(
+    periodQuery("/api/analytics/geography", params), enabled,
   );
 
   const states = useMemo(() => data?.states ?? [], [data]);
@@ -83,12 +84,21 @@ export default function GeographyPage() {
   );
   const topState = sortedStates[0];
   const topCity = sortedCities[0];
+  const previousRevenue = previous.data?.states.reduce((sum, state) => sum + state.revenue, 0);
+  // Compare the current leading state with itself, even when the ranking changes.
+  const previousTopRevenue = topState && previous.data
+    ? previous.data.states.find(state => state.state === topState?.state)?.revenue ?? 0
+    : undefined;
+  const comparisonUnavailable = previous.isError
+    ? "Não foi possível carregar a mesma métrica no período anterior."
+    : "O período anterior ainda não está disponível.";
+  const metricSource = "Ecommerce · pedidos e distribuição geográfica";
 
   const handleExport = () => {
     if (!data) return;
     const rows = [
       ...states.map((s) => ({
-        kind: "state",
+        kind: "Estado",
         name: s.state,
         state: s.state,
         customers: s.customers,
@@ -96,7 +106,7 @@ export default function GeographyPage() {
         revenue: s.revenue,
       })),
       ...cities.map((c) => ({
-        kind: "city",
+        kind: "Cidade",
         name: c.city,
         state: c.state,
         customers: 0,
@@ -108,12 +118,12 @@ export default function GeographyPage() {
       `geography-${new Date().toISOString().slice(0, 10)}.csv`,
       rows,
       [
-        { header: "kind", accessor: (r) => r.kind },
-        { header: "name", accessor: (r) => r.name },
-        { header: "state", accessor: (r) => r.state },
-        { header: "customers", accessor: (r) => r.customers },
-        { header: "orders", accessor: (r) => r.orders },
-        { header: "revenue", accessor: (r) => r.revenue },
+        { header: "Tipo", accessor: (r) => r.kind },
+        { header: "Nome", accessor: (r) => r.name },
+        { header: "Estado", accessor: (r) => r.state },
+        { header: "Clientes", accessor: (r) => r.customers },
+        { header: "Pedidos", accessor: (r) => r.orders },
+        { header: "Faturamento", accessor: (r) => r.revenue },
       ],
     );
   };
@@ -133,7 +143,7 @@ export default function GeographyPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Atualizado · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            Atualizado · {format(dateRange.from, "d MMM", { locale: ptBR })} → {format(dateRange.to, "d MMM, yyyy", { locale: ptBR })}
           </span>
         </motion.div>
         <Button
@@ -161,107 +171,70 @@ export default function GeographyPage() {
         </Alert>
       ) : (
         <>
-          {/* ── Hero section ─────────────────────────────────────────────────── */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
-            <Card className="relative overflow-hidden border-border/60 bg-gradient-to-br from-primary/[0.08] via-card to-card">
-              <div
-                aria-hidden
-                className="absolute -top-24 -right-24 h-72 w-72 rounded-full blur-3xl opacity-40"
-                style={{ background: "radial-gradient(circle, hsl(var(--chart-1) / 0.45), transparent 65%)" }}
-              />
-              <div
-                aria-hidden
-                className="absolute -bottom-32 -left-20 h-72 w-72 rounded-full blur-3xl opacity-30"
-                style={{ background: "radial-gradient(circle, hsl(var(--chart-3) / 0.45), transparent 65%)" }}
-              />
-              <div
-                aria-hidden
-                className="absolute inset-0 opacity-[0.06]"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px)",
-                  backgroundSize: "32px 32px",
-                  maskImage:
-                    "radial-gradient(ellipse 80% 60% at 50% 50%, black 30%, transparent 100%)",
-                  WebkitMaskImage:
-                    "radial-gradient(ellipse 80% 60% at 50% 50%, black 30%, transparent 100%)",
-                }}
-              />
-              <CardContent className="relative p-6 sm:p-8">
-                <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
+            <Card>
+              <CardContent>
+                <div className="up-section-heading">
                   <div>
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground backdrop-blur">
-                      <Globe2 className="h-3 w-3 text-primary" />
-                      Inteligência geográfica
-                    </span>
-                    <h2 className="mt-2 text-3xl sm:text-4xl font-bold tracking-tight">
-                      Onde estão seus clientes{" "}
-                      <span className="bg-gradient-to-r from-primary via-chart-1 to-chart-3 bg-clip-text text-transparent">
-                        buying
-                      </span>
+                    <h2 className="flex items-center gap-2 text-lg font-medium">
+                      <Globe2 className="h-5 w-5 shrink-0 text-primary" />
+                      Onde estão seus clientes
                     </h2>
-                    <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+                    <p className="mt-2 text-sm text-muted-foreground">
                       Mapa do faturamento no Brasil. O tamanho das bolhas indica o número de clientes e os tons de azul indicam a intensidade do faturamento.
                     </p>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 lg:max-w-2xl">
-                    <HeroStat
-                      icon={TrendingUp}
-                      label="Faturamento total"
-                      value={totalRevenue}
-                      format={(v) => formatCurrencySmart(v)}
-                      color="hsl(var(--chart-1))"
-                      delay={0.05}
-                      reduced={reduced}
-                    />
-                    <HeroStat
-                      icon={MapPin}
-                      label="States covered"
-                      value={states.length}
-                      color="hsl(var(--chart-3))"
-                      delay={0.12}
-                      reduced={reduced}
-                    />
-                    <HeroStat
-                      icon={Building2}
-                      label="Cidades"
-                      value={cities.length}
-                      color="hsl(var(--chart-4))"
-                      delay={0.19}
-                      reduced={reduced}
-                    />
-                    <HeroStat
-                      icon={Trophy}
-                      label={topState ? `Top · ${topState.state}` : "Principal mercado"}
-                      value={topState?.revenue ?? 0}
-                      format={(v) => formatCurrencySmart(v)}
-                      tone="hot"
-                      delay={0.26}
-                      reduced={reduced}
-                    />
                   </div>
                 </div>
               </CardContent>
             </Card>
           </motion.div>
 
+          <div className="up-metric-grid" data-testid="geography-metrics">
+            <GlassMetricCard
+              icon={TrendingUp} label="Faturamento total" value={totalRevenue}
+              format={formatCurrencySmart} loading={isLoading}
+              previousValue={previousRevenue} comparisonUnavailable={comparisonUnavailable}
+              source={metricSource}
+              info="Soma do faturamento dos pedidos agrupados por estado, no período e filtros selecionados."
+            />
+            <GlassMetricCard
+              icon={MapPin} label="Estados atendidos" value={states.length}
+              loading={isLoading} previousValue={previous.data?.states.length}
+              comparisonUnavailable={comparisonUnavailable} source={metricSource}
+              info="Quantidade de estados retornados na distribuição de vendas do período. Registros sem estado informado seguem o agrupamento da fonte."
+            />
+            <GlassMetricCard
+              icon={Building2} label="Cidades" value={cities.length}
+              loading={isLoading} previousValue={previous.data?.cities.length}
+              comparisonUnavailable={comparisonUnavailable} source={metricSource}
+              info="Quantidade de cidades retornadas pela fonte. A consulta de Ecommerce lista até 50 cidades, ordenadas por faturamento."
+            />
+            <GlassMetricCard
+              icon={Trophy} label={topState ? `Principal mercado · ${topState.state}` : "Principal mercado"}
+              value={topState?.revenue ?? 0} format={formatCurrencySmart} loading={isLoading}
+              previousValue={previousTopRevenue} comparisonUnavailable={comparisonUnavailable}
+              source={metricSource}
+              info="Faturamento do estado que lidera o período atual. O comparativo usa o faturamento desse mesmo estado no período anterior."
+            />
+          </div>
+
           {/* ── Heat map + leaderboard ──────────────────────────────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="up-geography-layout">
             <motion.div
-              className="lg:col-span-2"
+              className="up-geography-map"
               initial="hidden"
               animate="visible"
               variants={variants}
             >
               <Card className="overflow-hidden">
                 <CardContent className="p-4 sm:p-6">
-                  <div className="mb-3 flex items-center justify-between">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <span className="h-1.5 w-1.5 rounded-full bg-primary" />
                       Mapa de faturamento no Brasil
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {states.length} estados · {cities.length} cities
+                      {states.length} estados · {cities.length} cidades
                     </span>
                   </div>
                   {isLoading ? (
@@ -273,7 +246,8 @@ export default function GeographyPage() {
                       description="Quando os pedidos forem enviados, o mapa por estado aparecerá aqui."
                     />
                   ) : (
-                    <BrazilHeatMap states={states} cities={cities} reduced={reduced} />
+                    <BrazilHeatMap states={states} cities={cities} reduced={reduced}
+                      ariaLabel="Mapa de faturamento por estado no Brasil" lowLabel="Menor" highLabel="Maior" />
                   )}
                 </CardContent>
               </Card>
@@ -283,9 +257,9 @@ export default function GeographyPage() {
             <motion.div initial="hidden" animate="visible" variants={variants}>
               <Card className="overflow-hidden h-full">
                 <CardContent className="p-4 sm:p-6">
-                  <div className="mb-4 flex items-center justify-between">
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
-                      <Flame className="h-4 w-4 text-amber-500" />
+                      <Flame className="h-4 w-4 text-primary" />
                       Mercados em destaque
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -306,7 +280,6 @@ export default function GeographyPage() {
                     <ol className="space-y-2.5" data-testid="geo-leaderboard">
                       {sortedStates.slice(0, 8).map((s, i) => {
                         const pct = totalRevenue > 0 ? (s.revenue / totalRevenue) * 100 : 0;
-                        const isTop = i < 3;
                         return (
                           <motion.li
                             key={s.state}
@@ -318,36 +291,24 @@ export default function GeographyPage() {
                             {/* progress bar background */}
                             <motion.div
                               aria-hidden
-                              className={`absolute inset-y-0 left-0 ${
-                                isTop
-                                  ? "bg-gradient-to-r from-amber-500/20 via-orange-500/15 to-red-500/10"
-                                  : "bg-primary/8"
-                              }`}
+                              className="absolute inset-y-0 left-0 bg-primary/10"
                               initial={{ width: 0 }}
                               animate={{ width: `${pct}%` }}
                               transition={{ duration: reduced ? 0 : 0.9, delay: reduced ? 0 : 0.2 + i * 0.05, ease: [0.22, 1, 0.36, 1] }}
                             />
                             <div className="relative flex items-center gap-2.5">
                               <span
-                                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[11px] font-bold ${
-                                  i === 0
-                                    ? "bg-red-500 text-white"
-                                    : i === 1
-                                      ? "bg-orange-500 text-white"
-                                      : i === 2
-                                        ? "bg-amber-500 text-white"
-                                        : "bg-muted text-muted-foreground"
-                                }`}
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/15 text-[11px] font-bold text-primary"
                               >
                                 {s.state}
                               </span>
                               <div className="min-w-0 flex-1">
-                                <div className="flex items-baseline justify-between gap-2">
+                                <div className="flex flex-wrap items-baseline justify-between gap-2">
                                   <span className="text-sm font-semibold tabular-nums text-foreground">
                                     {formatCurrency(s.revenue)}
                                   </span>
                                   <span className="font-mono text-[10px] text-muted-foreground">
-                                    {pct.toFixed(1)}%
+                                    {pct.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%
                                   </span>
                                 </div>
                                 <div className="text-[11px] text-muted-foreground">
@@ -371,8 +332,8 @@ export default function GeographyPage() {
                       <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
                         <Activity className="h-3 w-3" /> Cidade em destaque
                       </p>
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
                           <p className="text-sm font-semibold text-foreground">
                             {topCity.city}
                             <span className="ml-1.5 text-[10px] font-mono text-muted-foreground">
@@ -398,7 +359,7 @@ export default function GeographyPage() {
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <Card className="overflow-hidden">
               <CardContent className="p-4 sm:p-6">
-                <div className="mb-3 flex items-center justify-between">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                   <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-primary" />
                     {view === "state" ? "Todos os estados" : "Todas as cidades"}
@@ -408,18 +369,20 @@ export default function GeographyPage() {
                       type="button"
                       onClick={() => setView("state")}
                       data-testid="geo-toggle-state"
+                      aria-pressed={view === "state"}
                       className={`px-2.5 py-1 rounded-sm transition ${
                         view === "state"
                           ? "bg-primary/15 text-primary"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      State
+                      Estado
                     </Button>
                     <Button variant="ghost" size="sm"
                       type="button"
                       onClick={() => setView("city")}
                       data-testid="geo-toggle-city"
+                      aria-pressed={view === "city"}
                       className={`px-2.5 py-1 rounded-sm transition ${
                         view === "city"
                           ? "bg-primary/15 text-primary"
@@ -436,11 +399,11 @@ export default function GeographyPage() {
                     <Table>
                       <TableHeader className="sticky top-0 bg-card z-10">
                         <TableRow>
-                          <TableHead>State</TableHead>
+                          <TableHead>Estado</TableHead>
                           <TableHead className="text-right">Clientes</TableHead>
                           <TableHead className="text-right">Pedidos</TableHead>
                           <TableHead className="text-right">Faturamento</TableHead>
-                          <TableHead className="text-right">Share</TableHead>
+                          <TableHead className="text-right">Participação</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -474,7 +437,7 @@ export default function GeographyPage() {
                                 <TableCell className="text-right tabular-nums">{formatNumber(state.customers)}</TableCell>
                                 <TableCell className="text-right tabular-nums">{formatNumber(state.orders)}</TableCell>
                                 <TableCell className="text-right font-medium tabular-nums">{formatCurrency(state.revenue)}</TableCell>
-                                <TableCell className="text-right font-mono text-xs text-muted-foreground">{pct.toFixed(1)}%</TableCell>
+                                <TableCell className="text-right font-mono text-xs text-muted-foreground">{pct.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</TableCell>
                               </TableRow>
                             );
                           })
@@ -486,7 +449,7 @@ export default function GeographyPage() {
                       <TableHeader className="sticky top-0 bg-card z-10">
                         <TableRow>
                           <TableHead>Cidade</TableHead>
-                          <TableHead>State</TableHead>
+                          <TableHead>Estado</TableHead>
                           <TableHead className="text-right">Pedidos</TableHead>
                           <TableHead className="text-right">Faturamento</TableHead>
                         </TableRow>
@@ -529,7 +492,7 @@ export default function GeographyPage() {
 
                 {!isLoading && (totalCustomers > 0) && (
                   <p className="mt-3 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
-                    {formatNumber(totalCustomers)} clientes únicos entre {states.length} states
+                    {formatNumber(totalCustomers)} clientes nos agrupamentos de {states.length} estados
                   </p>
                 )}
               </CardContent>
@@ -539,29 +502,4 @@ export default function GeographyPage() {
       )}
     </div>
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-
-function HeroStat({
-  icon: Icon,
-  label,
-  value,
-  format,
-  color = "hsl(var(--primary))",
-  tone,
-  delay,
-  reduced,
-}: {
-  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-  label: string;
-  value: number;
-  format?: (v: number) => string;
-  color?: string;
-  tone?: "hot";
-  delay: number;
-  reduced: boolean;
-}) {
-  const accent = tone === "hot" ? "hsl(var(--chart-1))" : color;
-  return (<GlassMetricCard label={label} value={value} icon={Icon} format={format ?? formatNumber} />);
 }

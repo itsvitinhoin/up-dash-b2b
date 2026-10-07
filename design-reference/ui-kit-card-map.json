@@ -2301,10 +2301,10 @@
   {
     "id": "UP-210",
     "file": "artifacts/up-dash/src/pages/geography.tsx",
-    "line": 166,
+    "line": 175,
     "component": "Card",
     "family": "Painel",
-    "label": "Onde estão seus clientes{\" \"}<span className=\"bg-gradient-to-r from-primary via-chart-1 to-chart-3 bg-clip-text text-transparent\"> buying </span>",
+    "label": "<Globe2 className=\"h-5 w-5 shrink-0 text-primary\" />Onde estão seus clientes",
     "value": "",
     "sources": "useGetGeography",
     "template": "Card / controles / gráficos → tokens UP Glass"
@@ -2312,8 +2312,8 @@
   {
     "id": "UP-211",
     "file": "artifacts/up-dash/src/pages/geography.tsx",
-    "line": 208,
-    "component": "HeroStat",
+    "line": 193,
+    "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Faturamento total\"",
     "value": "{totalRevenue}",
@@ -2323,10 +2323,10 @@
   {
     "id": "UP-212",
     "file": "artifacts/up-dash/src/pages/geography.tsx",
-    "line": 217,
-    "component": "HeroStat",
+    "line": 200,
+    "component": "GlassMetricCard",
     "family": "Métrica",
-    "label": "\"States covered\"",
+    "label": "\"Estados atendidos\"",
     "value": "{states.length}",
     "sources": "useGetGeography",
     "template": "DashboardKpiCard → UP Glass"
@@ -2334,8 +2334,8 @@
   {
     "id": "UP-213",
     "file": "artifacts/up-dash/src/pages/geography.tsx",
-    "line": 225,
-    "component": "HeroStat",
+    "line": 206,
+    "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Cidades\"",
     "value": "{cities.length}",
@@ -2345,10 +2345,10 @@
   {
     "id": "UP-214",
     "file": "artifacts/up-dash/src/pages/geography.tsx",
-    "line": 233,
-    "component": "HeroStat",
+    "line": 212,
+    "component": "GlassMetricCard",
     "family": "Métrica",
-    "label": "{topState ? `Top · ${topState.state}` : \"Principal mercado\"}",
+    "label": "{topState ? `Principal mercado · ${topState.state}` : \"Principal mercado\"}",
     "value": "{topState?.revenue ?? 0}",
     "sources": "useGetGeography",
     "template": "DashboardKpiCard → UP Glass"
@@ -2356,7 +2356,7 @@
   {
     "id": "UP-215",
     "file": "artifacts/up-dash/src/pages/geography.tsx",
-    "line": 256,
+    "line": 229,
     "component": "Card",
     "family": "Gráfico",
     "label": "<span className=\"h-1.5 w-1.5 rounded-full bg-primary\" />Mapa de faturamento no Brasil",
@@ -2367,10 +2367,10 @@
   {
     "id": "UP-216",
     "file": "artifacts/up-dash/src/pages/geography.tsx",
-    "line": 284,
+    "line": 258,
     "component": "Card",
     "family": "Painel",
-    "label": "<Flame className=\"h-4 w-4 text-amber-500\" />Mercados em destaque",
+    "label": "<Flame className=\"h-4 w-4 text-primary\" />Mercados em destaque",
     "value": "",
     "sources": "useGetGeography",
     "template": "Card / controles / gráficos → tokens UP Glass"
@@ -2378,7 +2378,7 @@
   {
     "id": "UP-217",
     "file": "artifacts/up-dash/src/pages/geography.tsx",
-    "line": 399,
+    "line": 360,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "<span className=\"h-1.5 w-1.5 rounded-full bg-primary\" />{view === \"state\" ? \"Todos os estados\" : \"Todas as cidades\"}",
@@ -2388,17 +2388,6 @@
   },
   {
     "id": "UP-218",
-    "file": "artifacts/up-dash/src/pages/geography.tsx",
-    "line": 566,
-    "component": "GlassMetricCard",
-    "family": "Métrica",
-    "label": "{label}",
-    "value": "{value}",
-    "sources": "useGetGeography",
-    "template": "DashboardKpiCard → UP Glass"
-  },
-  {
-    "id": "UP-219",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
     "line": 56,
     "component": "GlassMetricCard",
@@ -2409,7 +2398,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-220",
+    "id": "UP-219",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
     "line": 166,
     "component": "Card",
@@ -2420,7 +2409,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-221",
+    "id": "UP-220",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
     "line": 209,
     "component": "KpiCard",
@@ -2431,7 +2420,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-222",
+    "id": "UP-221",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
     "line": 216,
     "component": "KpiCard",
@@ -2442,7 +2431,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-223",
+    "id": "UP-222",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
     "line": 223,
     "component": "KpiCard",
@@ -2453,7 +2442,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-224",
+    "id": "UP-223",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
     "line": 230,
     "component": "KpiCard",
@@ -2464,7 +2453,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-225",
+    "id": "UP-224",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
     "line": 244,
     "component": "Card",
@@ -2475,7 +2464,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-226",
+    "id": "UP-225",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
     "line": 263,
     "component": "Card",
@@ -2486,7 +2475,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-227",
+    "id": "UP-226",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
     "line": 311,
     "component": "Card",
@@ -2497,7 +2486,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-228",
+    "id": "UP-227",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
     "line": 408,
     "component": "Card",
@@ -2508,7 +2497,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-229",
+    "id": "UP-228",
     "file": "artifacts/up-dash/src/pages/login.tsx",
     "line": 110,
     "component": "Configuração de KPI",
@@ -2519,7 +2508,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-230",
+    "id": "UP-229",
     "file": "artifacts/up-dash/src/pages/login.tsx",
     "line": 119,
     "component": "Configuração de KPI",
@@ -2530,7 +2519,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-231",
+    "id": "UP-230",
     "file": "artifacts/up-dash/src/pages/login.tsx",
     "line": 128,
     "component": "Configuração de KPI",
@@ -2541,7 +2530,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-232",
+    "id": "UP-231",
     "file": "artifacts/up-dash/src/pages/login.tsx",
     "line": 137,
     "component": "Configuração de KPI",
@@ -2552,7 +2541,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-233",
+    "id": "UP-232",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 203,
     "component": "GlassMetricCard",
@@ -2563,7 +2552,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-234",
+    "id": "UP-233",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 376,
     "component": "Card",
@@ -2574,7 +2563,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-235",
+    "id": "UP-234",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 385,
     "component": "GlassMetricCard",
@@ -2585,7 +2574,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-236",
+    "id": "UP-235",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 386,
     "component": "GlassMetricCard",
@@ -2596,7 +2585,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-237",
+    "id": "UP-236",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 387,
     "component": "GlassMetricCard",
@@ -2607,7 +2596,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-238",
+    "id": "UP-237",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 388,
     "component": "GlassMetricCard",
@@ -2618,7 +2607,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-239",
+    "id": "UP-238",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 420,
     "component": "Card",
@@ -2629,7 +2618,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-240",
+    "id": "UP-239",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 430,
     "component": "TopCreativeCard",
@@ -2640,7 +2629,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-241",
+    "id": "UP-240",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 460,
     "component": "Card",
@@ -2651,7 +2640,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-242",
+    "id": "UP-241",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 762,
     "component": "Card",
@@ -2662,7 +2651,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-243",
+    "id": "UP-242",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 798,
     "component": "MktKpiCard",
@@ -2673,7 +2662,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-244",
+    "id": "UP-243",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 810,
     "component": "MktKpiCard",
@@ -2684,7 +2673,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-245",
+    "id": "UP-244",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 822,
     "component": "MktKpiCard",
@@ -2695,7 +2684,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-246",
+    "id": "UP-245",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 834,
     "component": "MktKpiCard",
@@ -2706,7 +2695,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-247",
+    "id": "UP-246",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 846,
     "component": "MktKpiCard",
@@ -2717,7 +2706,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-248",
+    "id": "UP-247",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 858,
     "component": "MktKpiCard",
@@ -2728,7 +2717,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-249",
+    "id": "UP-248",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 870,
     "component": "MktKpiCard",
@@ -2739,7 +2728,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-250",
+    "id": "UP-249",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 884,
     "component": "MktKpiCard",
@@ -2750,7 +2739,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-251",
+    "id": "UP-250",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 912,
     "component": "Card",
@@ -2761,7 +2750,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-252",
+    "id": "UP-251",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 932,
     "component": "Card",
@@ -2772,7 +2761,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-253",
+    "id": "UP-252",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 964,
     "component": "Card",
@@ -2783,7 +2772,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-254",
+    "id": "UP-253",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 1002,
     "component": "Card",
@@ -2794,7 +2783,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-255",
+    "id": "UP-254",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 1048,
     "component": "Card",
@@ -2805,7 +2794,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-256",
+    "id": "UP-255",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 1067,
     "component": "Card",
@@ -2816,7 +2805,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-257",
+    "id": "UP-256",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 1090,
     "component": "Card",
@@ -2827,7 +2816,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-258",
+    "id": "UP-257",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
     "line": 1131,
     "component": "Card",
@@ -2838,7 +2827,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-259",
+    "id": "UP-258",
     "file": "artifacts/up-dash/src/pages/monthly-history.tsx",
     "line": 234,
     "component": "Card",
@@ -2849,7 +2838,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-260",
+    "id": "UP-259",
     "file": "artifacts/up-dash/src/pages/not-found.tsx",
     "line": 7,
     "component": "Card",
@@ -2860,7 +2849,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-261",
+    "id": "UP-260",
     "file": "artifacts/up-dash/src/pages/notifications.tsx",
     "line": 112,
     "component": "Card",
@@ -2871,7 +2860,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-262",
+    "id": "UP-261",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 399,
     "component": "Card",
@@ -2882,7 +2871,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-263",
+    "id": "UP-262",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 443,
     "component": "DashboardKpiCard",
@@ -2893,7 +2882,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-264",
+    "id": "UP-263",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 460,
     "component": "DashboardKpiCard",
@@ -2904,7 +2893,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-265",
+    "id": "UP-264",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 477,
     "component": "DashboardKpiCard",
@@ -2915,7 +2904,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-266",
+    "id": "UP-265",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 494,
     "component": "DashboardKpiCard",
@@ -2926,7 +2915,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-267",
+    "id": "UP-266",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 515,
     "component": "Card",
@@ -2937,7 +2926,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-268",
+    "id": "UP-267",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 648,
     "component": "Card",
@@ -2948,7 +2937,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-269",
+    "id": "UP-268",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 721,
     "component": "Card",
@@ -2959,7 +2948,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-270",
+    "id": "UP-269",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 912,
     "component": "Card",
@@ -2970,7 +2959,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-271",
+    "id": "UP-270",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 952,
     "component": "Card",
@@ -2981,7 +2970,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-272",
+    "id": "UP-271",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 977,
     "component": "Card",
@@ -2992,7 +2981,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-273",
+    "id": "UP-272",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1028,
     "component": "Card",
@@ -3003,7 +2992,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-274",
+    "id": "UP-273",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1032,
     "component": "Card",
@@ -3014,7 +3003,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-275",
+    "id": "UP-274",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1160,
     "component": "Card",
@@ -3025,7 +3014,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-276",
+    "id": "UP-275",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1279,
     "component": "Card",
@@ -3036,7 +3025,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-277",
+    "id": "UP-276",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1331,
     "component": "Card",
@@ -3047,7 +3036,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-278",
+    "id": "UP-277",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1374,
     "component": "Card",
@@ -3058,7 +3047,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-279",
+    "id": "UP-278",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1411,
     "component": "Card",
@@ -3069,7 +3058,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-280",
+    "id": "UP-279",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1425,
     "component": "Card",
@@ -3080,7 +3069,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-281",
+    "id": "UP-280",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1442,
     "component": "Card",
@@ -3091,7 +3080,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-282",
+    "id": "UP-281",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1461,
     "component": "Card",
@@ -3102,7 +3091,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-283",
+    "id": "UP-282",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1475,
     "component": "Card",
@@ -3113,7 +3102,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-284",
+    "id": "UP-283",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1485,
     "component": "Card",
@@ -3124,7 +3113,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-285",
+    "id": "UP-284",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1509,
     "component": "Card",
@@ -3135,7 +3124,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-286",
+    "id": "UP-285",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1519,
     "component": "Card",
@@ -3146,7 +3135,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-287",
+    "id": "UP-286",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1557,
     "component": "Card",
@@ -3157,7 +3146,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-288",
+    "id": "UP-287",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1575,
     "component": "Card",
@@ -3168,7 +3157,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-289",
+    "id": "UP-288",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1663,
     "component": "Card",
@@ -3179,7 +3168,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-290",
+    "id": "UP-289",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1665,
     "component": "GlassMetricCard",
@@ -3190,7 +3179,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-291",
+    "id": "UP-290",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1695,
     "component": "DashboardKpiCard",
@@ -3201,7 +3190,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-292",
+    "id": "UP-291",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1712,
     "component": "DashboardKpiCard",
@@ -3212,7 +3201,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-293",
+    "id": "UP-292",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1729,
     "component": "DashboardKpiCard",
@@ -3223,7 +3212,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-294",
+    "id": "UP-293",
     "file": "artifacts/up-dash/src/pages/orchestrator.tsx",
     "line": 1746,
     "component": "DashboardKpiCard",
@@ -3234,7 +3223,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-295",
+    "id": "UP-294",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 287,
     "component": "Card",
@@ -3245,7 +3234,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-296",
+    "id": "UP-295",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 313,
     "component": "DashboardKpiCard",
@@ -3256,7 +3245,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-297",
+    "id": "UP-296",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 329,
     "component": "DashboardKpiCard",
@@ -3267,7 +3256,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-298",
+    "id": "UP-297",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 344,
     "component": "DashboardKpiCard",
@@ -3278,7 +3267,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-299",
+    "id": "UP-298",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 359,
     "component": "DashboardKpiCard",
@@ -3289,7 +3278,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-300",
+    "id": "UP-299",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 374,
     "component": "DashboardKpiCard",
@@ -3300,7 +3289,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-301",
+    "id": "UP-300",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 390,
     "component": "DashboardKpiCard",
@@ -3311,7 +3300,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-302",
+    "id": "UP-301",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 405,
     "component": "DashboardKpiCard",
@@ -3322,7 +3311,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-303",
+    "id": "UP-302",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 420,
     "component": "DashboardKpiCard",
@@ -3333,7 +3322,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-304",
+    "id": "UP-303",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 435,
     "component": "DashboardKpiCard",
@@ -3344,7 +3333,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-305",
+    "id": "UP-304",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 451,
     "component": "DashboardKpiCard",
@@ -3355,7 +3344,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-306",
+    "id": "UP-305",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 471,
     "component": "Card",
@@ -3366,7 +3355,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-307",
+    "id": "UP-306",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 622,
     "component": "GlassMetricCard",
@@ -3377,7 +3366,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-308",
+    "id": "UP-307",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 623,
     "component": "GlassMetricCard",
@@ -3388,7 +3377,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-309",
+    "id": "UP-308",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 624,
     "component": "GlassMetricCard",
@@ -3399,7 +3388,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-310",
+    "id": "UP-309",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 625,
     "component": "GlassMetricCard",
@@ -3410,7 +3399,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-311",
+    "id": "UP-310",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 675,
     "component": "GlassMetricCard",
@@ -3421,7 +3410,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-312",
+    "id": "UP-311",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 676,
     "component": "GlassMetricCard",
@@ -3432,7 +3421,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-313",
+    "id": "UP-312",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
     "line": 677,
     "component": "GlassMetricCard",
@@ -3443,7 +3432,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-314",
+    "id": "UP-313",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
     "line": 37,
     "component": "Metrics",
@@ -3454,7 +3443,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-315",
+    "id": "UP-314",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
     "line": 47,
     "component": "Metrics",
@@ -3465,7 +3454,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-316",
+    "id": "UP-315",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
     "line": 52,
     "component": "Metrics",
@@ -3476,7 +3465,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-317",
+    "id": "UP-316",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
     "line": 57,
     "component": "Metrics",
@@ -3487,7 +3476,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-318",
+    "id": "UP-317",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
     "line": 68,
     "component": "Card",
@@ -3498,7 +3487,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-319",
+    "id": "UP-318",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
     "line": 142,
     "component": "Metrics",
@@ -3509,7 +3498,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-320",
+    "id": "UP-319",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
     "line": 158,
     "component": "Card",
@@ -3520,7 +3509,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-321",
+    "id": "UP-320",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
     "line": 162,
     "component": "GlassMetricCard",
@@ -3531,7 +3520,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-322",
+    "id": "UP-321",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
     "line": 189,
     "component": "Metrics",
@@ -3542,7 +3531,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-323",
+    "id": "UP-322",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 127,
     "component": "GlassMetricCard",
@@ -3553,7 +3542,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-324",
+    "id": "UP-323",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 189,
     "component": "Card",
@@ -3564,7 +3553,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-325",
+    "id": "UP-324",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 416,
     "component": "Card",
@@ -3575,7 +3564,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-326",
+    "id": "UP-325",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 496,
     "component": "KpiTile",
@@ -3586,7 +3575,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-327",
+    "id": "UP-326",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 507,
     "component": "KpiTile",
@@ -3597,7 +3586,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-328",
+    "id": "UP-327",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 518,
     "component": "KpiTile",
@@ -3608,7 +3597,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-329",
+    "id": "UP-328",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 529,
     "component": "KpiTile",
@@ -3619,7 +3608,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-330",
+    "id": "UP-329",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 541,
     "component": "KpiTile",
@@ -3630,7 +3619,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-331",
+    "id": "UP-330",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 561,
     "component": "KpiTile",
@@ -3641,7 +3630,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-332",
+    "id": "UP-331",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 572,
     "component": "KpiTile",
@@ -3652,7 +3641,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-333",
+    "id": "UP-332",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 583,
     "component": "KpiTile",
@@ -3663,7 +3652,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-334",
+    "id": "UP-333",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 594,
     "component": "KpiTile",
@@ -3674,7 +3663,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-335",
+    "id": "UP-334",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 607,
     "component": "Card",
@@ -3685,7 +3674,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-336",
+    "id": "UP-335",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 728,
     "component": "LeaderboardCard",
@@ -3696,7 +3685,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-337",
+    "id": "UP-336",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 740,
     "component": "LeaderboardCard",
@@ -3707,7 +3696,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-338",
+    "id": "UP-337",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 752,
     "component": "LeaderboardCard",
@@ -3718,7 +3707,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-339",
+    "id": "UP-338",
     "file": "artifacts/up-dash/src/pages/overview.tsx",
     "line": 766,
     "component": "Card",
@@ -3729,7 +3718,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-340",
+    "id": "UP-339",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 216,
     "component": "GlassMetricCard",
@@ -3740,7 +3729,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-341",
+    "id": "UP-340",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 414,
     "component": "PeriodCalendarCard",
@@ -3751,7 +3740,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-342",
+    "id": "UP-341",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 719,
     "component": "Card",
@@ -3762,7 +3751,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-343",
+    "id": "UP-342",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 800,
     "component": "RecompraBlockCard",
@@ -3773,7 +3762,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-344",
+    "id": "UP-343",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 812,
     "component": "Configuração de KPI",
@@ -3784,7 +3773,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-345",
+    "id": "UP-344",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 813,
     "component": "Configuração de KPI",
@@ -3795,7 +3784,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-346",
+    "id": "UP-345",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 814,
     "component": "Configuração de KPI",
@@ -3806,7 +3795,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-347",
+    "id": "UP-346",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 817,
     "component": "RecompraBlockCard",
@@ -3817,7 +3806,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-348",
+    "id": "UP-347",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 829,
     "component": "Configuração de KPI",
@@ -3828,7 +3817,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-349",
+    "id": "UP-348",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 830,
     "component": "Configuração de KPI",
@@ -3839,7 +3828,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-350",
+    "id": "UP-349",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 831,
     "component": "Configuração de KPI",
@@ -3850,7 +3839,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-351",
+    "id": "UP-350",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 834,
     "component": "RecompraBlockCard",
@@ -3861,7 +3850,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-352",
+    "id": "UP-351",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 846,
     "component": "Configuração de KPI",
@@ -3872,7 +3861,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-353",
+    "id": "UP-352",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 847,
     "component": "Configuração de KPI",
@@ -3883,7 +3872,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-354",
+    "id": "UP-353",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 848,
     "component": "Configuração de KPI",
@@ -3894,7 +3883,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-355",
+    "id": "UP-354",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 851,
     "component": "RecompraBlockCard",
@@ -3905,7 +3894,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-356",
+    "id": "UP-355",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 864,
     "component": "Configuração de KPI",
@@ -3916,7 +3905,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-357",
+    "id": "UP-356",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 865,
     "component": "Configuração de KPI",
@@ -3927,7 +3916,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-358",
+    "id": "UP-357",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 866,
     "component": "Configuração de KPI",
@@ -3938,7 +3927,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-359",
+    "id": "UP-358",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 888,
     "component": "Card",
@@ -3949,7 +3938,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-360",
+    "id": "UP-359",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 912,
     "component": "Card",
@@ -3960,7 +3949,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-361",
+    "id": "UP-360",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 935,
     "component": "Card",
@@ -3971,7 +3960,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-362",
+    "id": "UP-361",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 962,
     "component": "Card",
@@ -3982,7 +3971,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-363",
+    "id": "UP-362",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 1010,
     "component": "Card",
@@ -3993,7 +3982,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-364",
+    "id": "UP-363",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 1051,
     "component": "Card",
@@ -4004,7 +3993,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-365",
+    "id": "UP-364",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 1084,
     "component": "Card",
@@ -4015,7 +4004,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-366",
+    "id": "UP-365",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
     "line": 1132,
     "component": "Card",
@@ -4026,7 +4015,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-367",
+    "id": "UP-366",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 454,
     "component": "Card",
@@ -4037,7 +4026,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-368",
+    "id": "UP-367",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 697,
     "component": "Configuração de KPI",
@@ -4048,7 +4037,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-369",
+    "id": "UP-368",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 709,
     "component": "Configuração de KPI",
@@ -4059,7 +4048,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-370",
+    "id": "UP-369",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 726,
     "component": "Configuração de KPI",
@@ -4070,7 +4059,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-371",
+    "id": "UP-370",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 738,
     "component": "Configuração de KPI",
@@ -4081,7 +4070,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-372",
+    "id": "UP-371",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 750,
     "component": "Configuração de KPI",
@@ -4092,7 +4081,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-373",
+    "id": "UP-372",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 762,
     "component": "Configuração de KPI",
@@ -4103,7 +4092,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-374",
+    "id": "UP-373",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 777,
     "component": "Configuração de KPI",
@@ -4114,7 +4103,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-375",
+    "id": "UP-374",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 794,
     "component": "Configuração de KPI",
@@ -4125,7 +4114,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-376",
+    "id": "UP-375",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 811,
     "component": "Configuração de KPI",
@@ -4136,7 +4125,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-377",
+    "id": "UP-376",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 823,
     "component": "Configuração de KPI",
@@ -4147,7 +4136,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-378",
+    "id": "UP-377",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 841,
     "component": "Configuração de KPI",
@@ -4158,7 +4147,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-379",
+    "id": "UP-378",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 855,
     "component": "Configuração de KPI",
@@ -4169,7 +4158,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-380",
+    "id": "UP-379",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 872,
     "component": "Configuração de KPI",
@@ -4180,7 +4169,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-381",
+    "id": "UP-380",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 886,
     "component": "Configuração de KPI",
@@ -4191,7 +4180,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-382",
+    "id": "UP-381",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 898,
     "component": "Configuração de KPI",
@@ -4202,7 +4191,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-383",
+    "id": "UP-382",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 910,
     "component": "Configuração de KPI",
@@ -4213,7 +4202,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-384",
+    "id": "UP-383",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1079,
     "component": "DashboardKpiCard",
@@ -4224,7 +4213,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-385",
+    "id": "UP-384",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1097,
     "component": "Card",
@@ -4235,7 +4224,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-386",
+    "id": "UP-385",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1161,
     "component": "Card",
@@ -4246,7 +4235,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-387",
+    "id": "UP-386",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1201,
     "component": "Card",
@@ -4257,7 +4246,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-388",
+    "id": "UP-387",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1238,
     "component": "GlassMetricCard",
@@ -4268,7 +4257,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-389",
+    "id": "UP-388",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1337,
     "component": "DashboardKpiCard",
@@ -4279,7 +4268,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-390",
+    "id": "UP-389",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1359,
     "component": "DashboardKpiCard",
@@ -4290,7 +4279,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-391",
+    "id": "UP-390",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1373,
     "component": "Card",
@@ -4301,7 +4290,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-392",
+    "id": "UP-391",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1422,
     "component": "GlassMetricCard",
@@ -4312,7 +4301,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-393",
+    "id": "UP-392",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1430,
     "component": "Card",
@@ -4323,7 +4312,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-394",
+    "id": "UP-393",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1439,
     "component": "GlassMetricCard",
@@ -4334,7 +4323,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-395",
+    "id": "UP-394",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1453,
     "component": "Card",
@@ -4345,7 +4334,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-396",
+    "id": "UP-395",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1549,
     "component": "BreakdownCard",
@@ -4356,7 +4345,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-397",
+    "id": "UP-396",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1554,
     "component": "BreakdownCard",
@@ -4367,7 +4356,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-398",
+    "id": "UP-397",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1559,
     "component": "BreakdownCard",
@@ -4378,7 +4367,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-399",
+    "id": "UP-398",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1566,
     "component": "Card",
@@ -4389,7 +4378,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-400",
+    "id": "UP-399",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1662,
     "component": "Card",
@@ -4400,7 +4389,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-401",
+    "id": "UP-400",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1753,
     "component": "Card",
@@ -4411,7 +4400,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-402",
+    "id": "UP-401",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1812,
     "component": "GlassMetricCard",
@@ -4422,7 +4411,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-403",
+    "id": "UP-402",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1813,
     "component": "GlassMetricCard",
@@ -4433,7 +4422,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-404",
+    "id": "UP-403",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1814,
     "component": "GlassMetricCard",
@@ -4444,7 +4433,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-405",
+    "id": "UP-404",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1815,
     "component": "GlassMetricCard",
@@ -4455,7 +4444,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-406",
+    "id": "UP-405",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
     "line": 1817,
     "component": "GlassMetricCard",
@@ -4466,7 +4455,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-407",
+    "id": "UP-406",
     "file": "artifacts/up-dash/src/pages/product-detail.tsx",
     "line": 79,
     "component": "GlassMetricCard",
@@ -4477,7 +4466,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-408",
+    "id": "UP-407",
     "file": "artifacts/up-dash/src/pages/product-detail.tsx",
     "line": 221,
     "component": "Card",
@@ -4488,7 +4477,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-409",
+    "id": "UP-408",
     "file": "artifacts/up-dash/src/pages/product-detail.tsx",
     "line": 274,
     "component": "KpiTile",
@@ -4499,7 +4488,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-410",
+    "id": "UP-409",
     "file": "artifacts/up-dash/src/pages/product-detail.tsx",
     "line": 275,
     "component": "KpiTile",
@@ -4510,7 +4499,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-411",
+    "id": "UP-410",
     "file": "artifacts/up-dash/src/pages/product-detail.tsx",
     "line": 276,
     "component": "KpiTile",
@@ -4521,7 +4510,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-412",
+    "id": "UP-411",
     "file": "artifacts/up-dash/src/pages/product-detail.tsx",
     "line": 277,
     "component": "KpiTile",
@@ -4532,7 +4521,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-413",
+    "id": "UP-412",
     "file": "artifacts/up-dash/src/pages/product-detail.tsx",
     "line": 287,
     "component": "Card",
@@ -4543,7 +4532,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-414",
+    "id": "UP-413",
     "file": "artifacts/up-dash/src/pages/product-detail.tsx",
     "line": 367,
     "component": "Card",
@@ -4554,7 +4543,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-415",
+    "id": "UP-414",
     "file": "artifacts/up-dash/src/pages/product-detail.tsx",
     "line": 385,
     "component": "Card",
@@ -4565,7 +4554,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-416",
+    "id": "UP-415",
     "file": "artifacts/up-dash/src/pages/products.tsx",
     "line": 416,
     "component": "GlassMetricCard",
@@ -4576,7 +4565,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-417",
+    "id": "UP-416",
     "file": "artifacts/up-dash/src/pages/products.tsx",
     "line": 417,
     "component": "GlassMetricCard",
@@ -4587,7 +4576,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-418",
+    "id": "UP-417",
     "file": "artifacts/up-dash/src/pages/products.tsx",
     "line": 418,
     "component": "GlassMetricCard",
@@ -4598,7 +4587,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-419",
+    "id": "UP-418",
     "file": "artifacts/up-dash/src/pages/products.tsx",
     "line": 419,
     "component": "GlassMetricCard",
@@ -4609,7 +4598,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-420",
+    "id": "UP-419",
     "file": "artifacts/up-dash/src/pages/products.tsx",
     "line": 444,
     "component": "Card",
@@ -4620,7 +4609,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-421",
+    "id": "UP-420",
     "file": "artifacts/up-dash/src/pages/products.tsx",
     "line": 506,
     "component": "Card",
@@ -4631,7 +4620,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-422",
+    "id": "UP-421",
     "file": "artifacts/up-dash/src/pages/products.tsx",
     "line": 599,
     "component": "Card",
@@ -4642,7 +4631,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-423",
+    "id": "UP-422",
     "file": "artifacts/up-dash/src/pages/products.tsx",
     "line": 744,
     "component": "GlassMetricCard",
@@ -4653,7 +4642,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-424",
+    "id": "UP-423",
     "file": "artifacts/up-dash/src/pages/products.tsx",
     "line": 745,
     "component": "GlassMetricCard",
@@ -4664,7 +4653,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-425",
+    "id": "UP-424",
     "file": "artifacts/up-dash/src/pages/products.tsx",
     "line": 746,
     "component": "GlassMetricCard",
@@ -4675,7 +4664,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-426",
+    "id": "UP-425",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 164,
     "component": "GlassMetricCard",
@@ -4686,7 +4675,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-427",
+    "id": "UP-426",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 296,
     "component": "Card",
@@ -4697,7 +4686,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-428",
+    "id": "UP-427",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 339,
     "component": "RfmLogicCard",
@@ -4708,7 +4697,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-429",
+    "id": "UP-428",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 346,
     "component": "RfmLogicCard",
@@ -4719,7 +4708,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-430",
+    "id": "UP-429",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 353,
     "component": "RfmLogicCard",
@@ -4730,7 +4719,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-431",
+    "id": "UP-430",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 377,
     "component": "GlassMetricCard",
@@ -4741,7 +4730,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-432",
+    "id": "UP-431",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 393,
     "component": "Card",
@@ -4752,7 +4741,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-433",
+    "id": "UP-432",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 455,
     "component": "Card",
@@ -4763,7 +4752,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-434",
+    "id": "UP-433",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 692,
     "component": "Card",
@@ -4774,7 +4763,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-435",
+    "id": "UP-434",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 733,
     "component": "GlassMetricCard",
@@ -4785,7 +4774,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-436",
+    "id": "UP-435",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 734,
     "component": "GlassMetricCard",
@@ -4796,7 +4785,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-437",
+    "id": "UP-436",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 735,
     "component": "GlassMetricCard",
@@ -4807,7 +4796,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-438",
+    "id": "UP-437",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
     "line": 736,
     "component": "GlassMetricCard",
@@ -4818,7 +4807,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-439",
+    "id": "UP-438",
     "file": "artifacts/up-dash/src/pages/sales-agent.tsx",
     "line": 33,
     "component": "GlassMetricCard",
@@ -4829,7 +4818,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-440",
+    "id": "UP-439",
     "file": "artifacts/up-dash/src/pages/sales-agent.tsx",
     "line": 47,
     "component": "Card",
@@ -4840,7 +4829,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-441",
+    "id": "UP-440",
     "file": "artifacts/up-dash/src/pages/sales-agent.tsx",
     "line": 62,
     "component": "Metric",
@@ -4851,7 +4840,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-442",
+    "id": "UP-441",
     "file": "artifacts/up-dash/src/pages/sales-agent.tsx",
     "line": 68,
     "component": "Metric",
@@ -4862,7 +4851,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-443",
+    "id": "UP-442",
     "file": "artifacts/up-dash/src/pages/sales-agent.tsx",
     "line": 74,
     "component": "Metric",
@@ -4873,7 +4862,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-444",
+    "id": "UP-443",
     "file": "artifacts/up-dash/src/pages/sales-agent.tsx",
     "line": 80,
     "component": "Metric",
@@ -4884,7 +4873,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-445",
+    "id": "UP-444",
     "file": "artifacts/up-dash/src/pages/sales-agent.tsx",
     "line": 88,
     "component": "Card",
@@ -4895,7 +4884,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-446",
+    "id": "UP-445",
     "file": "artifacts/up-dash/src/pages/sales-agent.tsx",
     "line": 97,
     "component": "Card",
@@ -4906,7 +4895,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-447",
+    "id": "UP-446",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 158,
     "component": "Card",
@@ -4917,7 +4906,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-448",
+    "id": "UP-447",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 199,
     "component": "Card",
@@ -4928,7 +4917,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-449",
+    "id": "UP-448",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 218,
     "component": "DashLoadingCard",
@@ -4939,7 +4928,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-450",
+    "id": "UP-449",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 357,
     "component": "GlassMetricCard",
@@ -4950,7 +4939,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-451",
+    "id": "UP-450",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 362,
     "component": "Card",
@@ -4961,7 +4950,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-452",
+    "id": "UP-451",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 450,
     "component": "Card",
@@ -4972,7 +4961,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-453",
+    "id": "UP-452",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 496,
     "component": "ScenarioCard",
@@ -4983,7 +4972,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-454",
+    "id": "UP-453",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 501,
     "component": "BreakdownCard",
@@ -4994,7 +4983,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-455",
+    "id": "UP-454",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 502,
     "component": "BreakdownCard",
@@ -5005,7 +4994,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-456",
+    "id": "UP-455",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 503,
     "component": "BreakdownCard",
@@ -5016,7 +5005,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-457",
+    "id": "UP-456",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 504,
     "component": "BreakdownCard",
@@ -5027,7 +5016,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-458",
+    "id": "UP-457",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
     "line": 507,
     "component": "Card",
@@ -5038,7 +5027,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-459",
+    "id": "UP-458",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 81,
     "component": "GlassMetricCard",
@@ -5049,7 +5038,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-460",
+    "id": "UP-459",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 253,
     "component": "Card",
@@ -5060,7 +5049,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-461",
+    "id": "UP-460",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 301,
     "component": "Card",
@@ -5071,7 +5060,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-462",
+    "id": "UP-461",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 308,
     "component": "KpiCard",
@@ -5082,7 +5071,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-463",
+    "id": "UP-462",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 316,
     "component": "KpiCard",
@@ -5093,7 +5082,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-464",
+    "id": "UP-463",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 323,
     "component": "KpiCard",
@@ -5104,7 +5093,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-465",
+    "id": "UP-464",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 330,
     "component": "KpiCard",
@@ -5115,7 +5104,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-466",
+    "id": "UP-465",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 337,
     "component": "KpiCard",
@@ -5126,7 +5115,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-467",
+    "id": "UP-466",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 344,
     "component": "KpiCard",
@@ -5137,7 +5126,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-468",
+    "id": "UP-467",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 358,
     "component": "Card",
@@ -5148,7 +5137,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-469",
+    "id": "UP-468",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 461,
     "component": "Card",
@@ -5159,7 +5148,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-470",
+    "id": "UP-469",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 476,
     "component": "Card",
@@ -5170,7 +5159,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-471",
+    "id": "UP-470",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 496,
     "component": "Card",
@@ -5181,7 +5170,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-472",
+    "id": "UP-471",
     "file": "artifacts/up-dash/src/pages/seller-detail.tsx",
     "line": 586,
     "component": "Card",
@@ -5192,7 +5181,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-473",
+    "id": "UP-472",
     "file": "artifacts/up-dash/src/pages/sellers.tsx",
     "line": 177,
     "component": "GlassMetricCard",
@@ -5203,7 +5192,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-474",
+    "id": "UP-473",
     "file": "artifacts/up-dash/src/pages/sellers.tsx",
     "line": 181,
     "component": "GlassMetricCard",
@@ -5214,7 +5203,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-475",
+    "id": "UP-474",
     "file": "artifacts/up-dash/src/pages/sellers.tsx",
     "line": 185,
     "component": "GlassMetricCard",
@@ -5225,7 +5214,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-476",
+    "id": "UP-475",
     "file": "artifacts/up-dash/src/pages/sellers.tsx",
     "line": 192,
     "component": "Card",
@@ -5236,7 +5225,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-477",
+    "id": "UP-476",
     "file": "artifacts/up-dash/src/pages/sellers.tsx",
     "line": 255,
     "component": "Card",
@@ -5247,7 +5236,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-478",
+    "id": "UP-477",
     "file": "artifacts/up-dash/src/pages/sellers.tsx",
     "line": 415,
     "component": "Card",
@@ -5258,7 +5247,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-479",
+    "id": "UP-478",
     "file": "artifacts/up-dash/src/pages/sellers.tsx",
     "line": 455,
     "component": "Card",
@@ -5269,7 +5258,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-480",
+    "id": "UP-479",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 133,
     "component": "GlassMetricCard",
@@ -5280,7 +5269,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-481",
+    "id": "UP-480",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 160,
     "component": "Card",
@@ -5291,7 +5280,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-482",
+    "id": "UP-481",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 388,
     "component": "Card",
@@ -5302,7 +5291,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-483",
+    "id": "UP-482",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 458,
     "component": "Card",
@@ -5313,7 +5302,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-484",
+    "id": "UP-483",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 465,
     "component": "KpiCard",
@@ -5324,7 +5313,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-485",
+    "id": "UP-484",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 472,
     "component": "KpiCard",
@@ -5335,7 +5324,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-486",
+    "id": "UP-485",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 479,
     "component": "KpiCard",
@@ -5346,7 +5335,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-487",
+    "id": "UP-486",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 487,
     "component": "KpiCard",
@@ -5357,7 +5346,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-488",
+    "id": "UP-487",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 495,
     "component": "KpiCard",
@@ -5368,7 +5357,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-489",
+    "id": "UP-488",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 513,
     "component": "Card",
@@ -5379,7 +5368,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-490",
+    "id": "UP-489",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 553,
     "component": "Card",
@@ -5390,7 +5379,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-491",
+    "id": "UP-490",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 744,
     "component": "Card",
@@ -5401,7 +5390,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-492",
+    "id": "UP-491",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 822,
     "component": "Card",
@@ -5412,7 +5401,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-493",
+    "id": "UP-492",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 882,
     "component": "Card",
@@ -5423,7 +5412,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-494",
+    "id": "UP-493",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 970,
     "component": "GlassMetricCard",
@@ -5434,7 +5423,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-495",
+    "id": "UP-494",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 971,
     "component": "GlassMetricCard",
@@ -5445,7 +5434,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-496",
+    "id": "UP-495",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 972,
     "component": "GlassMetricCard",
@@ -5456,7 +5445,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-497",
+    "id": "UP-496",
     "file": "artifacts/up-dash/src/pages/stock-intelligence.tsx",
     "line": 973,
     "component": "GlassMetricCard",
@@ -5467,7 +5456,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-498",
+    "id": "UP-497",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 78,
     "component": "GlassMetricCard",
@@ -5478,7 +5467,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-499",
+    "id": "UP-498",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 359,
     "component": "KpiCard",
@@ -5489,7 +5478,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-500",
+    "id": "UP-499",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 366,
     "component": "KpiCard",
@@ -5500,7 +5489,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-501",
+    "id": "UP-500",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 372,
     "component": "KpiCard",
@@ -5511,7 +5500,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-502",
+    "id": "UP-501",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 379,
     "component": "KpiCard",
@@ -5522,7 +5511,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-503",
+    "id": "UP-502",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 385,
     "component": "KpiCard",
@@ -5533,7 +5522,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-504",
+    "id": "UP-503",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 392,
     "component": "KpiCard",
@@ -5544,7 +5533,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-505",
+    "id": "UP-504",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 399,
     "component": "KpiCard",
@@ -5555,7 +5544,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-506",
+    "id": "UP-505",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 413,
     "component": "Card",
@@ -5566,7 +5555,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-507",
+    "id": "UP-506",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 487,
     "component": "Card",
@@ -5577,7 +5566,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-508",
+    "id": "UP-507",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 543,
     "component": "Card",
@@ -5588,7 +5577,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-509",
+    "id": "UP-508",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
     "line": 615,
     "component": "Card",
@@ -5599,7 +5588,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-510",
+    "id": "UP-509",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 727,
     "component": "Card",
@@ -5610,7 +5599,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-511",
+    "id": "UP-510",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 903,
     "component": "GlassMetricCard",
@@ -5621,7 +5610,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-512",
+    "id": "UP-511",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 904,
     "component": "GlassMetricCard",
@@ -5632,7 +5621,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-513",
+    "id": "UP-512",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 905,
     "component": "Card",
@@ -5643,7 +5632,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-514",
+    "id": "UP-513",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 933,
     "component": "Card",
@@ -5654,7 +5643,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-515",
+    "id": "UP-514",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 950,
     "component": "Card",
@@ -5665,7 +5654,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-516",
+    "id": "UP-515",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 995,
     "component": "Card",
@@ -5676,7 +5665,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-517",
+    "id": "UP-516",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 1062,
     "component": "GlassMetricCard",
@@ -5687,7 +5676,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-518",
+    "id": "UP-517",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 1063,
     "component": "GlassMetricCard",
@@ -5698,7 +5687,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-519",
+    "id": "UP-518",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 1081,
     "component": "Card",
@@ -5709,7 +5698,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-520",
+    "id": "UP-519",
     "file": "artifacts/up-dash/src/pages/whatsapp-connections.tsx",
     "line": 1176,
     "component": "Card",
@@ -5720,7 +5709,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-521",
+    "id": "UP-520",
     "file": "artifacts/up-dash/src/pages/whatsapp-conversations.tsx",
     "line": 215,
     "component": "GlassMetricCard",
@@ -5731,7 +5720,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-522",
+    "id": "UP-521",
     "file": "artifacts/up-dash/src/pages/whatsapp-conversations.tsx",
     "line": 216,
     "component": "GlassMetricCard",
@@ -5742,7 +5731,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-523",
+    "id": "UP-522",
     "file": "artifacts/up-dash/src/pages/whatsapp-conversations.tsx",
     "line": 217,
     "component": "GlassMetricCard",
@@ -5753,7 +5742,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-524",
+    "id": "UP-523",
     "file": "artifacts/up-dash/src/pages/whatsapp-conversations.tsx",
     "line": 218,
     "component": "Card",
@@ -5764,7 +5753,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-525",
+    "id": "UP-524",
     "file": "artifacts/up-dash/src/pages/whatsapp-conversations.tsx",
     "line": 231,
     "component": "Card",
@@ -5775,7 +5764,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-526",
+    "id": "UP-525",
     "file": "artifacts/up-dash/src/pages/whatsapp-sends.tsx",
     "line": 169,
     "component": "Card",
@@ -5786,7 +5775,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-527",
+    "id": "UP-526",
     "file": "artifacts/up-dash/src/pages/whatsapp-templates.tsx",
     "line": 764,
     "component": "GlassMetricCard",
@@ -5797,7 +5786,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-528",
+    "id": "UP-527",
     "file": "artifacts/up-dash/src/pages/whatsapp-templates.tsx",
     "line": 765,
     "component": "GlassMetricCard",
@@ -5808,7 +5797,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-529",
+    "id": "UP-528",
     "file": "artifacts/up-dash/src/pages/whatsapp-templates.tsx",
     "line": 766,
     "component": "GlassMetricCard",
@@ -5819,7 +5808,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-530",
+    "id": "UP-529",
     "file": "artifacts/up-dash/src/pages/whatsapp-templates.tsx",
     "line": 804,
     "component": "Card",
@@ -5830,7 +5819,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-531",
+    "id": "UP-530",
     "file": "artifacts/up-dash/src/pages/whatsapp-templates.tsx",
     "line": 856,
     "component": "Card",
@@ -5841,7 +5830,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-532",
+    "id": "UP-531",
     "file": "artifacts/up-dash/src/pages/whatsapp-templates.tsx",
     "line": 922,
     "component": "Card",
@@ -5852,7 +5841,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-533",
+    "id": "UP-532",
     "file": "artifacts/up-dash/src/pages/whatsapp-templates.tsx",
     "line": 1283,
     "component": "Card",
@@ -5863,7 +5852,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-534",
+    "id": "UP-533",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 213,
     "component": "GlassMetricCard",
@@ -5874,7 +5863,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-535",
+    "id": "UP-534",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 423,
     "component": "Card",
@@ -5885,7 +5874,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-536",
+    "id": "UP-535",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 489,
     "component": "KpiCard",
@@ -5896,7 +5885,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-537",
+    "id": "UP-536",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 490,
     "component": "KpiCard",
@@ -5907,7 +5896,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-538",
+    "id": "UP-537",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 491,
     "component": "KpiCard",
@@ -5918,7 +5907,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-539",
+    "id": "UP-538",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 492,
     "component": "KpiCard",
@@ -5929,7 +5918,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-540",
+    "id": "UP-539",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 493,
     "component": "KpiCard",
@@ -5940,7 +5929,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-541",
+    "id": "UP-540",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 494,
     "component": "KpiCard",
@@ -5951,7 +5940,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-542",
+    "id": "UP-541",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 495,
     "component": "KpiCard",
@@ -5962,7 +5951,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-543",
+    "id": "UP-542",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 496,
     "component": "KpiCard",
@@ -5973,7 +5962,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-544",
+    "id": "UP-543",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 497,
     "component": "KpiCard",
@@ -5984,7 +5973,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-545",
+    "id": "UP-544",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 498,
     "component": "KpiCard",
@@ -5995,7 +5984,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-546",
+    "id": "UP-545",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 499,
     "component": "KpiCard",
@@ -6006,7 +5995,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-547",
+    "id": "UP-546",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 503,
     "component": "Card",
@@ -6017,7 +6006,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-548",
+    "id": "UP-547",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 518,
     "component": "Card",
@@ -6028,7 +6017,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-549",
+    "id": "UP-548",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 533,
     "component": "Card",
@@ -6039,7 +6028,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-550",
+    "id": "UP-549",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 549,
     "component": "Card",
@@ -6050,7 +6039,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-551",
+    "id": "UP-550",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 566,
     "component": "Card",
@@ -6061,7 +6050,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-552",
+    "id": "UP-551",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 600,
     "component": "Card",
@@ -6072,7 +6061,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-553",
+    "id": "UP-552",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 634,
     "component": "Card",
@@ -6083,7 +6072,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-554",
+    "id": "UP-553",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 650,
     "component": "Card",
@@ -6094,7 +6083,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-555",
+    "id": "UP-554",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 678,
     "component": "Card",
@@ -6105,7 +6094,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-556",
+    "id": "UP-555",
     "file": "artifacts/up-dash/src/pages/whatsapp.tsx",
     "line": 703,
     "component": "Card",
@@ -6116,9 +6105,20 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-557",
+    "id": "UP-556",
     "file": "artifacts/up-dash/src/components/purchase-insights.tsx",
     "line": 15,
+    "component": "Card",
+    "family": "Painel",
+    "label": "Painel / conteúdo",
+    "value": "",
+    "sources": "",
+    "template": "Card / controles / gráficos → tokens UP Glass"
+  },
+  {
+    "id": "UP-557",
+    "file": "artifacts/up-dash/src/components/purchase-insights.tsx",
+    "line": 34,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -6140,17 +6140,6 @@
   {
     "id": "UP-559",
     "file": "artifacts/up-dash/src/components/purchase-insights.tsx",
-    "line": 34,
-    "component": "Card",
-    "family": "Painel",
-    "label": "Painel / conteúdo",
-    "value": "",
-    "sources": "",
-    "template": "Card / controles / gráficos → tokens UP Glass"
-  },
-  {
-    "id": "UP-560",
-    "file": "artifacts/up-dash/src/components/purchase-insights.tsx",
     "line": 36,
     "component": "Card",
     "family": "Painel",
@@ -6160,7 +6149,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-561",
+    "id": "UP-560",
     "file": "artifacts/up-dash/src/components/purchase-insights.tsx",
     "line": 42,
     "component": "GlassMetricCard",
@@ -6171,7 +6160,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-562",
+    "id": "UP-561",
     "file": "artifacts/up-dash/src/components/purchase-insights.tsx",
     "line": 43,
     "component": "GlassMetricCard",
@@ -6182,7 +6171,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-563",
+    "id": "UP-562",
     "file": "artifacts/up-dash/src/components/purchase-insights.tsx",
     "line": 44,
     "component": "GlassMetricCard",
@@ -6193,7 +6182,7 @@
     "template": "DashboardKpiCard → UP Glass"
   },
   {
-    "id": "UP-564",
+    "id": "UP-563",
     "file": "artifacts/up-dash/src/components/acquisition-funnel.tsx",
     "line": 7,
     "component": "Card",
@@ -6204,7 +6193,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-565",
+    "id": "UP-564",
     "file": "artifacts/up-dash/src/components/product-sales-charts.tsx",
     "line": 69,
     "component": "Card",
@@ -6215,7 +6204,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-566",
+    "id": "UP-565",
     "file": "artifacts/up-dash/src/components/product-sales-charts.tsx",
     "line": 148,
     "component": "Card",
@@ -6226,7 +6215,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-567",
+    "id": "UP-566",
     "file": "artifacts/up-dash/src/components/product-sales-charts.tsx",
     "line": 151,
     "component": "ProductSalesCard",
@@ -6237,7 +6226,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-568",
+    "id": "UP-567",
     "file": "artifacts/up-dash/src/components/product-sales-charts.tsx",
     "line": 152,
     "component": "ProductSalesCard",
@@ -6248,7 +6237,7 @@
     "template": "Card / controles / gráficos → tokens UP Glass"
   },
   {
-    "id": "UP-569",
+    "id": "UP-568",
     "file": "artifacts/up-dash/src/components/product-sales-charts.tsx",
     "line": 153,
     "component": "ProductSalesCard",

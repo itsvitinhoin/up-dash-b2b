@@ -265,3 +265,9 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
 .up-projection-summary > div { min-width: 0; padding: 14px; border-radius: 12px; border: 1px solid hsl(var(--border)); background: hsl(var(--background) / .35); }
 .up-projection-summary dd { margin-top: 8px; font-size: 20px; font-weight: 500; overflow-wrap: anywhere; }
 @media (min-width: 1280px) { .up-access-layout { grid-template-columns: minmax(0, 360px) minmax(0, 1fr); } }
+
+/* Geographic summaries have a full-width metric grid, independent of the map. */
+.up-geography-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.up-geography-layout > * { min-width: 0; }
+.up-geography-map [data-testid="brazil-heat-map"] { width: 100%; max-width: 560px; margin-inline: auto; }
+@media (min-width: 1280px) { .up-geography-layout { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); } }

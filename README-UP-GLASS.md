@@ -13,7 +13,7 @@ Este redesign aplica o kit UP Glass enviado ao dashboard existente. As métricas
 - Gráficos em variações do azul UP; o funil usa etapas alinhadas e progressivamente estreitas, conforme a referência. Etapas operacionais e diagnósticos existentes continuam disponíveis.
 - Loader oficial derivado de Sample 5.mp4, com canal alfa, em WebP animado. A conversão preserva duração e movimento; recorta apenas as margens pretas e remove áudio/metadados. WebP mantém transparência inclusive em navegadores que não reproduzem vídeo com alfa. Há imagem estática para a preferência de movimento reduzido. O overlay aplica blur de 10 px e permanece durante as consultas de dados; saúde e notificações em segundo plano não bloqueiam a página.
 
-UI-KIT-CARD-MAP.md, ui-kit-card-map.csv e design-reference/ui-kit-card-map.json identificam as declarações e consultas de cada card, incluindo os novos componentes compartilhados. O inventário atual contém 583 declarações em 38 páginas e três componentes, com 329 métricas. Modelos dentro de loops são contados na definição.
+UI-KIT-CARD-MAP.md, ui-kit-card-map.csv e design-reference/ui-kit-card-map.json identificam as declarações e consultas de cada card, incluindo os novos componentes compartilhados. O inventário atual contém 568 declarações em 38 páginas e três componentes, com 313 métricas. Modelos dentro de loops são contados na definição.
 
 ## Métricas e compatibilidade
 
@@ -69,3 +69,11 @@ As cinco telas usam superfícies, formulários, botões, tabelas e cards UP Glas
 Indicadores comerciais usam valores anteriores reais da resposta ou uma consulta da janela imediatamente anterior de mesma duração. Cadastros administrativos e estoque atual não têm snapshots históricos; exibem a comparação como indisponível e explicam isso no botão de informação. A prévia isolada inclui respostas sintéticas para Diário, Escala, lista de clientes e acessos, com cinco marcas fictícias, sem credenciais nem operações de escrita.
 
 O loader transparente foi retimado de 10.042 ms para 5.021 ms (2×), com 121 frames a 480 × 240. O arquivo passa de 2.316.434 para 1.173.588 bytes (49,3% menor). O HTML antecipa seu download; picture seleciona somente o poster estático em movimento reduzido. O overlay com blur segue o carregamento real das consultas. A conversão é reproduzível com scripts/optimize-loader.py e Pillow, usando o WebP anterior como entrada separada.
+
+## Geografia
+
+A introdução e a grade de quatro métricas ocupam blocos próprios, sem divisão lateral que comprima os cards. Mapa e ranking usam colunas com largura mínima zero e empilham em telas menores; o SVG conserva sua proporção e tem largura limitada dentro do card. Títulos, legendas e tabela usam português, e o ranking usa azul UP. A alternância entre estados/cidades e o CSV permanecem.
+
+Os quatro indicadores consultam a mesma distribuição na janela anterior de igual duração, mantendo cliente e filtros UTM. Principal mercado compara o estado líder atual com o mesmo estado na janela anterior, mesmo que o ranking mude. Falha/ausência do período anterior continua explícita. Cidades respeita a amostra retornada pela fonte (até 50 no endpoint Ecommerce); a soma de clientes por estado não é apresentada como uma deduplicação nacional.
+
+Geografia foi conferida em 320, 390, 768, 1280 e 1920 px: documento e main sem excesso de largura, quatro métricas com quatro botões de informação/comparativos e números dentro dos cards. Alternância de estados/cidades, detalhe do mapa por teclado e mudança de período foram exercitados com a API fictícia. O endpoint e os valores geográficos existentes são preservados; a prévia usa os mesmos dados sintéticos da versão anterior.
