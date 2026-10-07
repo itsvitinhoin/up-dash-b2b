@@ -41,6 +41,7 @@ export interface DashboardKpiCardProps {
   previousValue?: number | null;
   comparisonValue?: number | null;
   comparisonUnavailable?: string;
+  hideComparison?: boolean;
 }
 
 const METRIC_DESCRIPTIONS: Record<string, string> = {
@@ -121,7 +122,7 @@ export function DashboardKpiCard({
   footer,
   deltaContent,
   changePositive,
-  className, info, source, previousValue, comparisonValue, comparisonUnavailable,
+  className, info, source, previousValue, comparisonValue, comparisonUnavailable, hideComparison,
 }: DashboardKpiCardProps) {
   const reduced = useReducedMotion();
   const { language, tx } = useI18n();
@@ -166,7 +167,7 @@ export function DashboardKpiCard({
                 <div className="text-muted-foreground leading-relaxed">{info ?? tx(METRIC_DESCRIPTIONS[label] ?? "Valor da métrica conforme o período e os filtros selecionados.")}</div>
                 {metadata.filter(row => !/^fonte$/i.test(row.label)).map(row => <p key={row.label}><span className="text-muted-foreground">{tx(row.label)}: </span>{tx(row.value)}</p>)}
                 <p><span className="text-muted-foreground">{tx("Fonte")}: </span>{metricSource}</p>
-                <p className="text-muted-foreground">{tx("Comparação com a janela imediatamente anterior de mesma duração, mantendo os filtros.")} {effectiveChange === null ? comparisonText : tx("Variação percentual sobre o valor anterior.")}</p>
+                {!hideComparison && <p className="text-muted-foreground">{tx("Comparação com a janela imediatamente anterior de mesma duração, mantendo os filtros.")} {effectiveChange === null ? comparisonText : tx("Variação percentual sobre o valor anterior.")}</p>}
               </PopoverContent>
             </Popover>
           </div>
@@ -204,7 +205,7 @@ export function DashboardKpiCard({
           ) : null}
         </div>
 
-        {!isLoading && <div className="up-metric-comparison mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-comparison-state={effectiveChange !== null ? "available" : comparison.status}>
+        {!isLoading && !hideComparison && <div className="up-metric-comparison mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-comparison-state={effectiveChange !== null ? "available" : comparison.status}>
           {effectiveChange !== null && Number.isFinite(effectiveChange) ? <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${effectiveChange === 0 ? "up-delta-neutral" : positive ? "up-delta-positive" : "up-delta-negative"}`}>
             {effectiveChange === 0 ? <Minus className="h-3 w-3" /> : rising ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
             {effectiveChange > 0 ? "+" : ""}{effectiveChange.toLocaleString(numberLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%

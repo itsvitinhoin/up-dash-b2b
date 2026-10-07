@@ -1,3 +1,4 @@
+import { useI18n } from "@/lib/i18n";
 /** Traduz rótulos de apresentação sem alterar os valores usados nas APIs e nos filtros. */
 const labels: Record<string,string> = {
   "Champions": "Campeões",
@@ -57,3 +58,8 @@ const labels: Record<string,string> = {
   "stock": "Estoque"
 };
 export function displayLabel(value: string | null | undefined): string { return value == null ? "—" : labels[value] ?? value; }
+/** Igual a displayLabel em portugues; em en/ko mantem o valor original (a main nunca traduziu esses rotulos para o portugues). */
+export function useDisplayLabel(): (value: string | null | undefined) => string {
+  const { language } = useI18n();
+  return (value) => (language === "pt" ? displayLabel(value) : value == null ? "—" : value);
+}

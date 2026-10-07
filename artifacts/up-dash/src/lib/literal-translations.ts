@@ -269,6 +269,26 @@ const entries: Array<[string, string, string]> = [
   ["Ecommerce · cadastros e eventos", "Ecommerce · sign-ups and events", "이커머스 · 가입 및 이벤트"],
   ["Registros do UP Dash", "UP Dash records", "UP Dash 기록"],
   ["Ecommerce · dados conectados do relatório", "Ecommerce · connected report data", "이커머스 · 연결된 리포트 데이터"],
+  // ---- pedidos (cartoes e detalhe)
+  ["Ecommerce · pedidos", "Ecommerce · orders", "이커머스 · 주문"],
+  ["Faturamento faturado", "Billed revenue", "청구 매출"],
+  ["Faturamento pago", "Paid revenue", "결제 매출"],
+  ["Peças faturadas", "Billed units", "청구 수량"],
+  ["Peças pagas", "Paid units", "결제 수량"],
+  ["Peças solicitadas", "Requested units", "요청 수량"],
+  ["Peças atendidas", "Fulfilled units", "처리 수량"],
+  ["% Pago", "% Paid", "결제율"],
+  ["Novos compradores", "New buyers", "신규 구매자"],
+  ["Recompradores", "Repeat buyers", "재구매자"],
+  ["Valor faturado", "Billed value", "청구 금액"],
+  ["Valor pago", "Paid value", "결제 금액"],
+  ["Faturada", "Billed", "청구"],
+  ["Solicitada", "Requested", "요청"],
+  ["Paga", "Paid", "결제"],
+  ["Atendida", "Fulfilled", "처리"],
+  ["Valor", "Value", "금액"],
+  ["sessões", "sessions", "세션"],
+  ["aprovados", "approved", "승인"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
