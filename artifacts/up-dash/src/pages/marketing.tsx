@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState, useEffect } from "react";
 import { format } from "date-fns";
@@ -210,16 +211,16 @@ function PlatformRow({ platform, spend, roas, leads, clicks, maxSpend }: {
   const label = PLATFORM_LABELS[platform] ?? platform;
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-sm">
+      <div className="up-channel-row space-y-2 text-sm">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
           <span className="font-medium">{label}</span>
         </div>
-        <div className="flex items-center gap-4 text-muted-foreground text-xs tabular-nums">
+        <div className="up-channel-summary text-muted-foreground text-xs tabular-nums">
           <span>{formatCurrency(spend)}</span>
-          <span className="w-14 text-right">ROAS {roas.toFixed(2)}×</span>
-          <span className="w-16 text-right">{formatNumber(leads)} leads</span>
-          <span className="w-18 text-right">{formatNumber(clicks)} clicks</span>
+          <span>ROAS {roas.toFixed(2)}×</span>
+          <span>{formatNumber(leads)} leads</span>
+          <span>{formatNumber(clicks)} cliques</span>
         </div>
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
@@ -242,15 +243,15 @@ function StateRow({ state, leads, attributedRevenue, roas, maxLeads }: {
   const pct = maxLeads > 0 ? (leads / maxLeads) * 100 : 0;
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-sm">
+      <div className="up-channel-row space-y-2 text-sm">
         <div className="flex items-center gap-2">
           <MapPin className="h-3 w-3 text-muted-foreground" />
           <span className="font-medium">{state}</span>
         </div>
-        <div className="flex items-center gap-4 text-muted-foreground text-xs tabular-nums">
+        <div className="up-channel-summary text-muted-foreground text-xs tabular-nums">
           <span>{formatNumber(leads)} leads</span>
-          <span className="w-24 text-right">{formatCurrency(attributedRevenue)}</span>
-          <span className="w-20 text-right">ROAS {roas.toFixed(2)}×</span>
+          <span>{formatCurrency(attributedRevenue)}</span>
+          <span>ROAS {roas.toFixed(2)}×</span>
         </div>
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
@@ -277,7 +278,7 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium font-mono uppercase tracking-wide ${isActive ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${isActive ? "bg-emerald-500" : "bg-amber-500"}`} />
-      {status.toLowerCase()}
+      {displayLabel(status)}
     </span>
   );
 }
@@ -369,25 +370,21 @@ function TopCreativeCard({
   costLabel?: string;
 }) {
   return (
-    <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3 rounded-md border border-border bg-background/40 p-3">
-      <CreativeMediaPreview creative={creative} />
-      <div className="min-w-0 space-y-2">
-        <div>
-          <p className="truncate text-sm font-medium text-foreground" title={creative.name}>
-            {creative.name}
-          </p>
-          <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-            {metricLabel} · {metricValue}
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <GlassMetricCard  label="CTR" value={<>{formatPercentage(creative.ctr)}</>}  />
-          <GlassMetricCard  label={costLabel} value={<>{formatCurrency(costLabel === "Custo/Compra" ? creative.cpa : creative.cpl)}</>}  />
-          <GlassMetricCard  label="Leads" value={<>{formatNumber(creative.leads)}</>}  />
-          <GlassMetricCard  label="Investimento" value={<>{formatCurrency(creative.spend)}</>}  />
+    <Card className="up-creative-card" data-testid="top-creative-card">
+      <div className="up-creative-head">
+        <CreativeMediaPreview creative={creative} />
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground" title={creative.name}>{creative.name}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{metricLabel} · {metricValue}</p>
         </div>
       </div>
-    </div>
+      <div className="up-metric-grid up-creative-metrics">
+        <GlassMetricCard label="CTR" value={formatPercentage(creative.ctr)} />
+        <GlassMetricCard label={costLabel} value={formatCurrency(costLabel === "Custo/Compra" ? creative.cpa : creative.cpl)} />
+        <GlassMetricCard label="Leads" value={formatNumber(creative.leads)} />
+        <GlassMetricCard label="Investimento" value={formatCurrency(creative.spend)} />
+      </div>
+    </Card>
   );
 }
 
@@ -902,7 +899,7 @@ export default function MarketingPage() {
             </span>
           </div>
           {isLoading ? (
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 2xl:grid-cols-3 gap-4">
               {Array.from({ length: 3 }).map((_, idx) => (
                 <Card key={idx} className="p-4">
                   <Skeleton className="h-4 w-32 mb-3" />
@@ -911,7 +908,7 @@ export default function MarketingPage() {
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 2xl:grid-cols-3 gap-4">
               <TopCreativesColumn title="Melhor CTR" items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
               <TopCreativesColumn title={isB2C ? "Menor custo por compra" : "Menor CPL"} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
               <TopCreativesColumn title={isB2C ? "Mais compras" : "Mais leads"} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />

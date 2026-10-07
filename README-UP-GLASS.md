@@ -6,11 +6,11 @@ Este redesign aplica o kit UP Glass enviado ao dashboard existente. As métricas
 
 - Operação B2B/B2C, cliente e período no topo; removida a duplicação Atacado/Varejo acima dos filtros.
 - Interface fixa em português, incluindo menus, estados, legendas e datas. Siglas e nomes usuais de métricas, como ROAS, CTR, CAC, LTV, SKU e Sales Power, permanecem.
-- Grades com no máximo quatro métricas por linha no desktop, duas em telas intermediárias e uma no celular. Os quatro cards iniciais de Recompra ficam na mesma linha no desktop.
+- Grades dimensionadas pela largura disponível de cada componente, com no máximo quatro métricas por linha. A tipografia dos números também se adapta à largura do card, sem quebrar valores em caracteres. Os quatro cards iniciais de Recompra ficam na mesma linha no desktop.
 - Gráficos em variações do azul UP; o funil usa etapas alinhadas e progressivamente estreitas, conforme a referência. Etapas operacionais e diagnósticos existentes continuam disponíveis.
 - Loader oficial derivado de Sample 5.mp4, com canal alfa, em WebP animado. A conversão preserva duração e movimento; recorta apenas as margens pretas e remove áudio/metadados. WebP mantém transparência inclusive em navegadores que não reproduzem vídeo com alfa. Há imagem estática para a preferência de movimento reduzido. O overlay aplica blur de 10 px e permanece durante as consultas de dados; saúde e notificações em segundo plano não bloqueiam a página.
 
-UI-KIT-CARD-MAP.md, ui-kit-card-map.csv e design-reference/ui-kit-card-map.json identificam as declarações e consultas de cada card, incluindo os novos componentes compartilhados. Modelos dentro de loops são contados na definição.
+UI-KIT-CARD-MAP.md, ui-kit-card-map.csv e design-reference/ui-kit-card-map.json identificam as declarações e consultas de cada card, incluindo os novos componentes compartilhados. O inventário atual contém 578 declarações em 38 páginas e dois componentes, com 329 métricas. Modelos dentro de loops são contados na definição.
 
 ## Métricas e compatibilidade
 
@@ -20,7 +20,9 @@ Evolução da Base usa os mesmos pedidos positivos e identidades já conciliados
 
 Velocidade de Conversão cruza essa base com a data de aprovação disponível em customers.approvalDate. As sete faixas são disjuntas. Compradores sem aprovação datada ou com cronologia invertida ficam fora da amostra, com contagem visível; uma amostra vazia gera ausência explícita. A data do pedido positivo disponível na origem pode diferir da data efetiva de pagamento. Aprovações do Vesti sem timestamp conciliado no cadastro não são estimadas a partir da data de criação.
 
-O endpoint recompra/history-insights mantém funnel e cohort históricos e recebe campos adicionais baseEvolution e conversionVelocity. O período altera apenas as análises novas; a chave de cache inclui cliente, datasets e datas. As verificações de acesso por cliente existentes permanecem.
+Análise de Cohort mostra os quatro meses de primeira compra até o fim do período selecionado, com Mês 0 a Mês 3. Cada célula conta lojistas distintos com um pedido positivo naquele mês de calendário, no horário de São Paulo, sobre a base do mês de primeira compra histórica. Não é retenção acumulada por dias. Meses futuros e grupos vazios geram ausência explícita; meses observados sem retorno mostram 0%. O último mês é parcial até a data selecionada. A tabela acumulada anterior continua em uma seção expansível.
+
+O endpoint recompra/history-insights mantém funnel e cohort históricos e recebe campos adicionais baseEvolution, conversionVelocity e monthlyCohort. O período altera apenas as análises novas; a chave de cache inclui cliente, datasets e datas. As verificações de acesso por cliente existentes permanecem.
 
 ## Base e preservação
 
@@ -32,9 +34,10 @@ Não há alteração da extração, jobs, credenciais, autenticação, schema de
 
 - TypeScript do frontend e backend; declarações dos pacotes workspace.
 - Builds normais do frontend e backend.
-- Três testes de purchase-progression: primeira compra histórica, receita 4+, limites do período/dia brasileiro, faixas disjuntas, datas ausentes/invertidas e ausência de amostra.
-- Revisão local atual: 12 páginas em desktop (1280 px) e celular (390 px), mais Visão Geral em 1920 px; sem rolagem lateral e sem grades com mais de quatro métricas. Os quatro cards de Recompra têm o mesmo alinhamento vertical.
-- Revisão adicional de 40 rotas no desktop sem erros de execução, quebra lateral ou grades acima de quatro métricas. Filtro RFM conferido com rótulo Campeões e código de API Champions. Rotas administrativas sem fixture podem mostrar dados indisponíveis após as tentativas de consulta.
+- Cinco testes de purchase-progression e monthly-cohort: primeira compra histórica, receita 4+, limites do período/dia brasileiro, faixas disjuntas, datas ausentes/invertidas e ausência de amostra.
+- Auditoria atual em 40 rotas a 320 px, verificando a largura de rolagem do próprio main e o conteúdo dos cards; pontos encontrados foram corrigidos e conferidos novamente. Rotas administrativas sem fixture mantêm estados de indisponibilidade.
+- Páginas principais conferidas em 360, 390, 430, 768, 1024, 1280 e 1536 px. A auditoria mede números dentro dos cards, altura e conteúdo lateral, além da largura do documento. Gestos horizontais mantêm a página em scrollLeft 0; tabelas extensas preservam rolagem somente no próprio componente.
+- Topo mobile com operação/ações, cliente e período em linhas definidas. Criativos, Funil, campanhas, alertas, categorias, paginação e cards de WhatsApp se adaptam à largura disponível. Filtro RFM mantém os códigos de API originais.
 - Loader observado durante troca de período, blur de 10 px e remoção ao concluir.
 - git diff --check e ausência do token sintético no bundle normal.
 

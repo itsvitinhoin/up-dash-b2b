@@ -1427,7 +1427,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         <header className="up-topbar flex shrink-0 flex-wrap items-center gap-3 no-print">
           <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="md:hidden">
+              <Button variant="ghost" size="icon" className="up-top-menu md:hidden">
                 <Menu className="h-5 w-5" />
                 <span className="sr-only">Abrir menu</span>
               </Button>
@@ -1482,104 +1482,100 @@ export function AppLayout({ children }: AppLayoutProps) {
               setSelectedDashboardMode(mode);
               if ((mode === "B2C" && isB2BOnlyRoute(location)) || (mode === "B2B" && b2cOnlyRoutes.has(location))) navigate("/dashboard");
             }}>
-              <SelectTrigger className="h-9 w-[100px] shrink-0" aria-label="Operação" data-testid="dashboard-mode-picker"><Building2 className="h-4 w-4 text-primary" /><SelectValue /></SelectTrigger>
+              <SelectTrigger className="up-top-operation h-9 w-[100px] shrink-0" aria-label="Operação" data-testid="dashboard-mode-picker"><Building2 className="h-4 w-4 text-primary" /><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="B2B">B2B</SelectItem><SelectItem value="B2C">B2C</SelectItem></SelectContent>
             </Select>}
             {user?.role === "ADMIN" && (
-              <div className="hidden sm:block w-44 lg:w-52">
+              <div className="up-top-client w-44 lg:w-52">
                 {renderClientPicker()}
               </div>
             )}
 
             {meta.hasDateRange && <div className="up-top-period"><DateRangePicker value={dateRange} onChange={setDateRange} /></div>}
 
-            <Button
-              variant="ghost"
-              size="icon"
-              className="2xl:hidden"
-              onClick={() => setSearchOpen(true)}
-              aria-label={t("top.search", "Buscar")}
-            >
-              <Search className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="hidden lg:inline-flex h-9 w-9 hover:bg-accent"
-              onClick={() => setShortcutsOpen(true)}
-              aria-label={t("top.keyboardShortcuts", "Atalhos de teclado")}
-              data-testid="open-shortcuts"
-            >
-              <HelpCircle className="h-4 w-4" />
-            </Button>
+            <div className="up-top-actions flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="2xl:hidden"
+                onClick={() => setSearchOpen(true)}
+                aria-label={t("top.search", "Buscar")}
+              >
+                <Search className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hidden lg:inline-flex h-9 w-9 hover:bg-accent"
+                onClick={() => setShortcutsOpen(true)}
+                aria-label={t("top.keyboardShortcuts", "Atalhos de teclado")}
+                data-testid="open-shortcuts"
+              >
+                <HelpCircle className="h-4 w-4" />
+              </Button>
 
-            {!LOCAL_UI_PREVIEW && <NotificationBell />}
+              {!LOCAL_UI_PREVIEW && <NotificationBell />}
 
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 hover:bg-accent"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              aria-label={t("top.toggleTheme", "Alternar tema")}
-              data-testid="theme-toggle"
-            >
-              {theme === "dark" ? (
-                <Sun className="h-4 w-4" />
-              ) : (
-                <Moon className="h-4 w-4" />
-              )}
-            </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 hover:bg-accent"
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                aria-label={t("top.toggleTheme", "Alternar tema")}
+                data-testid="theme-toggle"
+              >
+                {theme === "dark" ? (
+                  <Sun className="h-4 w-4" />
+                ) : (
+                  <Moon className="h-4 w-4" />
+                )}
+              </Button>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  className="relative h-9 w-9 rounded-full p-0"
-                >
-                  <Avatar className="h-9 w-9 bg-primary/15">
-                    <AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">
-                      {userInitials}
-                    </AvatarFallback>
-                  </Avatar>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-56" align="end" forceMount>
-                <DropdownMenuLabel className="font-normal">
-                  <div className="flex flex-col space-y-1">
-                    <p className="text-sm font-medium leading-none">
-                      {userDisplayName}
-                    </p>
-                    <p className="text-xs leading-none text-muted-foreground">
-                      {user?.email}
-                    </p>
-                  </div>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => setShortcutsOpen(true)}
-                  className="cursor-pointer"
-                >
-                  <HelpCircle className="mr-2 h-4 w-4" />
-                  <span>
-                    {t("top.keyboardShortcuts", "Atalhos de teclado")}
-                  </span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={logout}
-                  className="text-destructive cursor-pointer"
-                >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>{t("top.logout", "Sair")}</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-
-          {user?.role === "ADMIN" && (
-            <div className="order-last w-full sm:hidden">
-              {renderClientPicker(true)}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    className="relative h-9 w-9 rounded-full p-0"
+                  >
+                    <Avatar className="h-9 w-9 bg-primary/15">
+                      <AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">
+                        {userInitials}
+                      </AvatarFallback>
+                    </Avatar>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-56" align="end" forceMount>
+                  <DropdownMenuLabel className="font-normal">
+                    <div className="flex flex-col space-y-1">
+                      <p className="text-sm font-medium leading-none">
+                        {userDisplayName}
+                      </p>
+                      <p className="text-xs leading-none text-muted-foreground">
+                        {user?.email}
+                      </p>
+                    </div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setShortcutsOpen(true)}
+                    className="cursor-pointer"
+                  >
+                    <HelpCircle className="mr-2 h-4 w-4" />
+                    <span>
+                      {t("top.keyboardShortcuts", "Atalhos de teclado")}
+                    </span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={logout}
+                    className="text-destructive cursor-pointer"
+                  >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>{t("top.logout", "Sair")}</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-          )}
+          </div>
         </header>
 
         <main

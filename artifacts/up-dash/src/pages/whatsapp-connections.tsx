@@ -899,23 +899,9 @@ export default function WhatsappConnectionsPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 md:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-primary/10 p-2 text-primary">
-              <PlugZap className="h-4 w-4" />
-            </div>
-            <GlassMetricCard  label="Conexões" value={<>{connectedIntegrations.length}</>}  />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-emerald-500/10 p-2 text-emerald-500">
-              <Smartphone className="h-4 w-4" />
-            </div>
-            <GlassMetricCard  label="Números cadastrados" value={<>{data?.phoneNumbers?.length ?? 0}</>}  />
-          </CardContent>
-        </Card>
+      <div className="up-metric-grid">
+        <GlassMetricCard icon={PlugZap}  label="Conexões" value={<>{connectedIntegrations.length}</>}  />
+        <GlassMetricCard icon={Smartphone}  label="Números cadastrados" value={<>{data?.phoneNumbers?.length ?? 0}</>}  />
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <div

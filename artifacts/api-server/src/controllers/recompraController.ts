@@ -261,7 +261,7 @@ export async function getHistoryInsights(req: Request, res: Response): Promise<v
   if (period.dateFromOnly > period.dateToOnly) { res.status(400).json({ error: true, message: "O início do período deve ser anterior ao fim.", status: 400 }); return; }
 
   const insights = await cached(
-    `recompra:history-insights:v2:${ctx.clientId}:${ctx.dataset ?? "no-erp"}:${ctx.vestiDataset ?? "no-vesti"}:${period.dateFromOnly}:${period.dateToOnly}`,
+    `recompra:history-insights:v3:${ctx.clientId}:${ctx.dataset ?? "no-erp"}:${ctx.vestiDataset ?? "no-vesti"}:${period.dateFromOnly}:${period.dateToOnly}`,
     RECOMPRA_CACHE_TTL_MS,
     () =>
       fetchRecompraHistoryInsights({

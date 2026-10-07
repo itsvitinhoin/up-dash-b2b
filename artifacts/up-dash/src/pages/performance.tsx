@@ -1761,13 +1761,8 @@ export default function PerformancePage() {
                 <GlassMetricCard  label="Pedidos no período" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>}  />
                 <GlassMetricCard  label="Valor total" value={<>{formatCurrency(filteredStats.valorTotal)}</>}  />
                 <GlassMetricCard  label="Pedidos atribuídos" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>}  />
-                <GlassMetricCard  label="Receita atribuída" value={<>{formatCurrency(filteredStats.receitaAtribuida)}{" "}<span className="text-xs font-normal text-muted-foreground">
-                      {formatPercentage(
-                        filteredStats.valorTotal > 0
-                          ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100
-                          : 0,
-                      )}
-                    </span></>}  />
+                <GlassMetricCard label="Receita atribuída" value={formatCurrency(filteredStats.receitaAtribuida)}
+                  sub={[{label: "Participação no valor total", value: formatPercentage(filteredStats.valorTotal > 0 ? filteredStats.receitaAtribuida / filteredStats.valorTotal * 100 : 0)}]} />
                 <GlassMetricCard  label="Faturamento pago atribuído" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>}  />
               </div>
               <div className="mt-4 overflow-x-auto">

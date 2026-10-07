@@ -211,31 +211,10 @@ export default function WhatsappConversationsPage() {
 
   return (
     <div className="space-y-4" data-testid="page-whatsapp-conversations">
-      <div className="grid gap-3 md:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-primary/10 p-2 text-primary">
-              <MessageCircle className="h-4 w-4" />
-            </div>
-            <GlassMetricCard  label="Conversas" value={<>{data?.total ?? 0}</>}  />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-amber-500/10 p-2 text-amber-500">
-              <Bell className="h-4 w-4" />
-            </div>
-            <GlassMetricCard  label="Mensagens aguardando" value={<>{totalUnread}</>}  />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-emerald-500/10 p-2 text-emerald-500">
-              <CheckCircle2 className="h-4 w-4" />
-            </div>
-            <GlassMetricCard  label="Encerradas" value={<>{data?.data.filter((row) => row.status === "closed").length ?? 0}</>}  />
-          </CardContent>
-        </Card>
+      <div className="up-metric-grid">
+        <GlassMetricCard icon={MessageCircle}  label="Conversas" value={<>{data?.total ?? 0}</>}  />
+        <GlassMetricCard icon={Bell}  label="Mensagens aguardando" value={<>{totalUnread}</>}  />
+        <GlassMetricCard icon={CheckCircle2}  label="Encerradas" value={<>{data?.data.filter((row) => row.status === "closed").length ?? 0}</>}  />
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <div className="rounded-md bg-sky-500/10 p-2 text-sky-500">

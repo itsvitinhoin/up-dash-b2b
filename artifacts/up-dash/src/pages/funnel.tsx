@@ -288,7 +288,8 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                 }}
               />
 
-              <CardContent className="relative grid grid-cols-1 lg:grid-cols-[auto_1fr] gap-8 p-6 sm:p-8" data-testid="funnel-hero">
+              <CardContent className="relative p-6 sm:p-8" data-testid="funnel-hero">
+                <div className="up-funnel-intro">
                 <ConversionRing pct={data.overallConversion} reduced={reduced} />
                 <div className="flex flex-col justify-center">
                   <span className="inline-flex items-center gap-1.5 self-start rounded-full border border-border/60 bg-card/60 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground backdrop-blur">
@@ -302,7 +303,9 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     Dos leads cadastrados às compras aprovadas no período selecionado. Consulte cada etapa para ver volumes, conversões e perdas.
                   </p>
 
-                  <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                </div>
+                </div>
+                  <div className="up-metric-grid">
                     <MiniStat
                       icon={Users}
                       label={visibleSteps[0]?.label ?? "Topo do funil"}
@@ -338,7 +341,6 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                       reduced={reduced}
                     />
                   </div>
-                </div>
               </CardContent>
             </Card>
           </motion.div>
@@ -742,7 +744,7 @@ export function ActivationAnalysisCard({ activation }: { activation: FunnelActiv
   return (
     <Card className="overflow-hidden border-border/60" data-testid="approved-customer-activation">
       <CardContent className="space-y-5 p-4 sm:p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="space-y-4">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/30 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -761,7 +763,7 @@ export function ActivationAnalysisCard({ activation }: { activation: FunnelActiv
             </p>
           </div>
 
-          <div className="grid min-w-full gap-3 sm:grid-cols-3 lg:min-w-[460px]">
+          <div className="up-metric-grid">
             <ActivationMetric label="Aprovados" value={formatNumber(activation.approvedCustomers)} />
             <ActivationMetric
               label="Ativação em 30 dias"

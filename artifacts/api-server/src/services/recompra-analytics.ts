@@ -1,3 +1,4 @@
+import { buildMonthlyCohort } from "./monthly-cohort";
 import { buildPurchaseProgression } from "./purchase-progression";
 // Criado 21/09/2026 -- Fase 1 da integração de dado real de Performance >
 // Recompra (ver "00 - Especificação técnica.pdf" v1.0). Fase 2 (21/09/2026)
@@ -1428,5 +1429,6 @@ export async function fetchRecompraHistoryInsights(params: {
     ...buildPurchaseProgression(eventsByCustomer, new Map(approvals.map(row => [row.id, row.approvalDate])), params.dateFrom, params.dateTo),
     funnel: buildPurchaseFunnel(eventsByCustomer),
     cohort: buildCohortRows(eventsByCustomer, cohortMonths),
+    monthlyCohort: buildMonthlyCohort(eventsByCustomer, params.dateTo),
   };
 }

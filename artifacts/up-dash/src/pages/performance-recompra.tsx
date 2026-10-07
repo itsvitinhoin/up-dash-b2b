@@ -1,5 +1,6 @@
 import { displayLabel } from "@/lib/display-label";
 import { usePurchaseInsights } from "@/lib/purchase-insights";
+import { CohortHeatmap } from "@/components/cohort-heatmap";
 import { PurchaseInsightsPanels } from "@/components/purchase-insights";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { OrganizationHeading } from "@/components/metric-section";
@@ -989,12 +990,16 @@ export default function PerformanceRecompraPage() {
         </Card>
       </div>
 
+      <CohortHeatmap data={historyInsightsData?.monthlyCohort} loading={historyInsightsLoading} error={historyInsightsError} />
+
       {/* Gráfico 5: retenção por número de compra -- Coorte e Funil (Fase 5)
           são "visão geral", sem os filtros Status/Tipo/Origem/Estado/
           Vendedora da página (decisão do usuário). */}
+      <details className="up-cohort-legacy">
+        <summary>Ver retenção acumulada por prazo (30, 60, 90 e 180 dias)</summary>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Análise de coorte de recompra</CardTitle>
+          <CardTitle className="text-sm">Retenção acumulada por prazo</CardTitle>
         </CardHeader>
         <CardContent>
           {historyInsightsLoading ? (
@@ -1031,6 +1036,7 @@ export default function PerformanceRecompraPage() {
           )}
         </CardContent>
       </Card>
+      </details>
 <OrganizationHeading>PROGRESSÃO DE COMPRA</OrganizationHeading>
 <Card>
         <CardHeader>

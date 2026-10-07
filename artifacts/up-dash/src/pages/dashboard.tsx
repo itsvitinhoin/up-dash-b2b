@@ -780,7 +780,7 @@ function CampaignCustomersPanel({
 
   return (
     <Card className="p-5 bg-card border-border" data-testid="campaign-customers-panel">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+      <div className="space-y-4 mb-4">
         <div>
           <h2 className="text-base font-semibold leading-tight flex items-center gap-2">
             <Megaphone className="h-4 w-4 text-primary" />
@@ -791,14 +791,7 @@ function CampaignCustomersPanel({
           </p>
         </div>
         {data && (
-          // flex-wrap em vez de grid de 4 colunas fixas: com colunas
-          // iguais, "R$ 588.083,12" (~102px) não cabia nos ~62px que
-          // sobravam por coluna em telas de notebook comuns (~1024-1280px
-          // de largura útil, depois da sidebar) e vazava por cima da
-          // coluna "Clientes" vizinha. Cada item agora tem sua própria
-          // largura mínima e quebra de linha se precisar, em vez de
-          // sobrepor o vizinho.
-          <div className="flex flex-wrap justify-end gap-x-4 gap-y-2 text-right">
+          <div className="up-metric-grid">
             <GlassMetricCard  label="Clientes" value={<>{formatNumber(data.summary.impactedCustomers)}</>}  />
             <GlassMetricCard  label="Solicitado" value={<>{formatCurrency(data.summary.requestedValue ?? data.summary.attributedRevenue)}</>}  />
             <GlassMetricCard  label="Pedidos" value={<>{formatNumber(data.summary.orders)}</>}  />
@@ -1408,7 +1401,7 @@ function B2COrdersPanel({
 
   return (
     <Card className="p-5 bg-card border-border" data-testid="b2c-orders-panel">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+      <div className="space-y-4 mb-4">
         <div>
           <h2 className="text-base font-semibold leading-tight flex items-center gap-2">
             <ShoppingBag className="h-4 w-4 text-primary" />
@@ -1418,7 +1411,9 @@ function B2COrdersPanel({
             Lista paginada com detalhes de cliente, valores, frete, desconto e produtos.
           </p>
         </div>
-        <GlassMetricCard  label="Total" value={<>{formatNumber(data?.total ?? 0)}pedidos</>}  />
+        <div className="up-metric-grid">
+          <GlassMetricCard label="Pedidos no período" value={data?.total ?? 0} />
+        </div>
       </div>
 
       {isLoading ? (
@@ -2171,7 +2166,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         className="grid grid-cols-1 lg:grid-cols-3 gap-4"
       >
         <Card className="lg:col-span-2 p-5 bg-card border-border">
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-start sm:justify-between gap-3 mb-4">
             <div>
               <h2 className="text-base font-semibold leading-tight">{t("dashboard.chart.title")}</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
@@ -2180,7 +2175,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                   : t("dashboard.chart.subtitle.b2b").replace("{days}", String(inclusiveDays))}
               </p>
             </div>
-            <div className="inline-flex items-center bg-muted/40 border border-border rounded-md p-0.5">
+            <div className="inline-flex max-w-full flex-wrap items-center bg-muted/40 border border-border rounded-md p-0.5">
               {chartMetrics.map((metric) => (
                 <Button variant="ghost" size="sm"
                   key={metric.id}
@@ -2468,7 +2463,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
 
       {/* Inventory alerts */}
       <Card className="p-5 bg-card border-border" data-testid="alerts-panel">
-        <div className="flex items-start justify-between mb-4">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
           <div>
             <h2 className="text-base font-semibold leading-tight flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-amber-400" />
@@ -2518,7 +2513,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
           </div>
         ) : (
           <div>
-            <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
+            <div className="up-alert-header grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
               <div className="col-span-5">{t("dashboard.alerts.col.product")}</div>
               <div className="col-span-2 text-right">{t("dashboard.alerts.col.stock")}</div>
               <div className="col-span-2 text-right">{t("dashboard.alerts.col.threshold")}</div>
@@ -2553,7 +2548,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                 return (
                   <div
                     key={alert.productId}
-                    className="grid grid-cols-12 gap-4 items-center px-2 py-3"
+                    className="up-alert-row grid grid-cols-12 gap-4 items-center px-2 py-3"
                     data-testid={`alert-row-${alert.sku}`}
                   >
                     <div className="col-span-5 flex items-center gap-3 min-w-0">
@@ -2584,12 +2579,15 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                       </div>
                     </div>
                     <div className="col-span-2 text-right tabular-nums text-sm">
+                      <span className="up-alert-label">{t("dashboard.alerts.col.stock")}</span>
                       {formatNumber(alert.stock)}
                     </div>
                     <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                      <span className="up-alert-label">{t("dashboard.alerts.col.threshold")}</span>
                       {formatNumber(alert.restockThreshold)}
                     </div>
                     <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                      <span className="up-alert-label">{t("dashboard.alerts.col.daysOfCover")}</span>
                       {daysCover}
                     </div>
                     <div className="col-span-1 flex justify-end">
@@ -2613,7 +2611,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
       {/* Top categories */}
       {!isB2C && (
         <Card className="p-5 bg-card border-border">
-          <div className="flex items-start justify-between mb-4">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
             <div>
               <h2 className="text-base font-semibold leading-tight">{t("dashboard.categories.title")}</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
@@ -2637,7 +2635,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
             </p>
           ) : (
             <div>
-              <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
+              <div className="up-category-header grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
                 <div className="col-span-5">{t("dashboard.categories.col.category")}</div>
                 <div className="col-span-3 text-right">{t("dashboard.common.revenue")}</div>
                 <div className="col-span-2 text-right">{t("dashboard.kpi.orders")}</div>
@@ -2650,7 +2648,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                   return (
                     <div
                       key={cat.category}
-                      className="grid grid-cols-12 gap-4 items-center px-2 py-3"
+                      className="up-category-row grid grid-cols-12 gap-4 items-center px-2 py-3"
                       data-testid={`category-row-${cat.category}`}
                     >
                       <div className="col-span-5 flex items-center gap-3">
@@ -2660,12 +2658,15 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                         <span className="font-medium text-sm">{cat.category}</span>
                       </div>
                       <div className="col-span-3 text-right tabular-nums text-sm">
+                        <span className="up-alert-label">{t("dashboard.common.revenue")}</span>
                         {formatCurrency(cat.revenue)}
                       </div>
                       <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                        <span className="up-alert-label">{t("dashboard.kpi.orders")}</span>
                         {formatNumber(cat.orders)}
                       </div>
                       <div className="col-span-2 text-right">
+                        <span className="up-alert-label">{t("dashboard.common.share")}</span>
                         <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
                           <TrendingUp className="h-3 w-3" />
                           {share.toFixed(1)}%

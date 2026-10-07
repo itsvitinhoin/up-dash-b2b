@@ -524,15 +524,16 @@ export default function ProductsPage() {
           </div>
 
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground flex items-center gap-1">
-                <ArrowDownUp className="h-3 w-3" /> Sort by
+                <ArrowDownUp className="h-3 w-3" /> Ordenar por
               </span>
               <ToggleGroup
                 type="single"
                 value={sort}
                 onValueChange={(val) => val && setSort(val as GetProductsSort)}
                 data-testid="product-sort-toggle"
+                className="flex-wrap justify-start"
               >
                 <ToggleGroupItem value={GetProductsSort.revenue} aria-label="Ordenar por faturamento">
                   Faturamento
@@ -540,7 +541,7 @@ export default function ProductsPage() {
                 <ToggleGroupItem value={GetProductsSort.units} aria-label="Ordenar por unidades">
                   Unidades vendidas
                 </ToggleGroupItem>
-                <ToggleGroupItem value={GetProductsSort.created} aria-label="Sort by Newest">
+                <ToggleGroupItem value={GetProductsSort.created} aria-label="Ordenar pelos mais recentes">
                   Mais recentes
                 </ToggleGroupItem>
               </ToggleGroup>

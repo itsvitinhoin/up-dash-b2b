@@ -567,7 +567,7 @@ export default function OrdersPage() {
                 </Table>
               </div>
 
-              <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
                 <span>
                   Página {formatNumber(page)} de {formatNumber(totalPages)} · {formatNumber(data.total)} pedidos
                 </span>
