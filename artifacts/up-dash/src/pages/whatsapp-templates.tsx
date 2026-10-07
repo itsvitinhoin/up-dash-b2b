@@ -1,3 +1,6 @@
+import { useI18n } from "@/lib/i18n";
+import { useDisplayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -220,6 +223,8 @@ function normalizePayloadVariableOption(
 }
 
 export default function WhatsappTemplatesPage() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
@@ -759,30 +764,9 @@ export default function WhatsappTemplatesPage() {
                   </div>
 
                   <div className="mt-4 grid grid-cols-3 gap-3 border-y border-border/70 py-3">
-                    <div>
-                      <p className="text-[10px] uppercase text-muted-foreground">
-                        Aprovados
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-emerald-500">
-                        {summary.approved}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase text-muted-foreground">
-                        Pendentes
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-amber-500">
-                        {summary.pending}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase text-muted-foreground">
-                        Recusados
-                      </p>
-                      <p className="mt-1 text-lg font-semibold text-red-500">
-                        {summary.rejected}
-                      </p>
-                    </div>
+                    <GlassMetricCard  label={tx("Aprovados")} value={<>{summary.approved}</>} hideComparison />
+                    <GlassMetricCard  label={tx("Pendentes")} value={<>{summary.pending}</>} hideComparison />
+                    <GlassMetricCard  label={tx("Recusados")} value={<>{summary.rejected}</>} hideComparison />
                   </div>
 
                   <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
@@ -838,9 +822,9 @@ export default function WhatsappTemplatesPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={ALL}>Todos os status</SelectItem>
-                      <SelectItem value="APPROVED">Aprovados</SelectItem>
-                      <SelectItem value="PENDING">Pendentes</SelectItem>
-                      <SelectItem value="REJECTED">Recusados</SelectItem>
+                      <SelectItem value="APPROVED">{tx("Aprovados")}</SelectItem>
+                      <SelectItem value="PENDING">{tx("Pendentes")}</SelectItem>
+                      <SelectItem value="REJECTED">{tx("Recusados")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <Button
@@ -903,7 +887,7 @@ export default function WhatsappTemplatesPage() {
                   {(templates?.variableOptions?.raw ?? [])
                     .map(normalizePayloadVariableOption)
                     .map((option) => (
-                      <button
+                      <Button variant="outline" size="sm"
                         key={option.key}
                         type="button"
                         className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-left text-xs transition-colors hover:border-primary/50 hover:bg-primary/10"
@@ -924,7 +908,7 @@ export default function WhatsappTemplatesPage() {
                             {option.eventTypes.join(", ")}
                           </span>
                         ) : null}
-                      </button>
+                      </Button>
                     ))}
                 </div>
               ) : (
@@ -990,8 +974,8 @@ export default function WhatsappTemplatesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="UTILITY">Utility</SelectItem>
-                  <SelectItem value="MARKETING">Marketing</SelectItem>
-                  <SelectItem value="AUTHENTICATION">Authentication</SelectItem>
+                  <SelectItem value="MARKETING">{tx("Anúncios")}</SelectItem>
+                  <SelectItem value="AUTHENTICATION">{tx("Autenticação")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1081,7 +1065,7 @@ export default function WhatsappTemplatesPage() {
                                 key={`${placeholder}-${variable.key}`}
                                 value={variable.key}
                               >
-                                {variable.groupTitle} - {variable.label}
+                                {variable.groupTitle} - {displayLabel(variable.label)}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1307,7 +1291,7 @@ export default function WhatsappTemplatesPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Template</TableHead>
+                <TableHead>{tx("Modelo")}</TableHead>
                 <TableHead>Categoria</TableHead>
                 <TableHead>Idioma</TableHead>
                 <TableHead>Status</TableHead>
@@ -1409,7 +1393,7 @@ export default function WhatsappTemplatesPage() {
                                         key={`${template.id}-${placeholder}-${variable.key}`}
                                         value={variable.key}
                                       >
-                                        {variable.groupTitle} - {variable.label}
+                                        {variable.groupTitle} - {displayLabel(variable.label)}
                                       </SelectItem>
                                     ))}
                                   </SelectContent>

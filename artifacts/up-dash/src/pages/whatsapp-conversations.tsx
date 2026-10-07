@@ -1,3 +1,5 @@
+import { useI18n } from "@/lib/i18n";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNowStrict } from "date-fns";
@@ -104,6 +106,7 @@ function messageTime(value: string) {
 }
 
 export default function WhatsappConversationsPage() {
+  const { tx } = useI18n();
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
@@ -210,40 +213,10 @@ export default function WhatsappConversationsPage() {
 
   return (
     <div className="space-y-4" data-testid="page-whatsapp-conversations">
-      <div className="grid gap-3 md:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-primary/10 p-2 text-primary">
-              <MessageCircle className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Conversas</p>
-              <p className="text-2xl font-semibold">{data?.total ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-amber-500/10 p-2 text-amber-500">
-              <Bell className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Mensagens aguardando</p>
-              <p className="text-2xl font-semibold">{totalUnread}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-emerald-500/10 p-2 text-emerald-500">
-              <CheckCircle2 className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Encerradas</p>
-              <p className="text-2xl font-semibold">{data?.data.filter((row) => row.status === "closed").length ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="up-metric-grid">
+        <GlassMetricCard icon={MessageCircle}  label={tx("Conversas")} value={<>{data?.total ?? 0}</>} hideComparison />
+        <GlassMetricCard icon={Bell}  label={tx("Mensagens aguardando")} value={<>{totalUnread}</>} hideComparison />
+        <GlassMetricCard icon={CheckCircle2}  label={tx("Encerradas")} value={<>{data?.data.filter((row) => row.status === "closed").length ?? 0}</>} hideComparison />
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <div className="rounded-md bg-sky-500/10 p-2 text-sky-500">
@@ -262,7 +235,7 @@ export default function WhatsappConversationsPage() {
           <aside className="border-b border-border lg:border-b-0 lg:border-r">
             <CardHeader className="gap-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Conversas</CardTitle>
+                <CardTitle className="text-base">{tx("Conversas")}</CardTitle>
                 <Button variant="ghost" size="icon" onClick={() => refetch()} aria-label="Atualizar conversas">
                   <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
                 </Button>

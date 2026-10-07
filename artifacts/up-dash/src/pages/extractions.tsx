@@ -1,3 +1,5 @@
+import { useI18n } from "@/lib/i18n";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { customFetch, useListClients } from "@workspace/api-client-react";
@@ -142,6 +144,7 @@ function resultSummary(job: ExtractionJob) {
 }
 
 export default function ExtractionsPage() {
+  const { tx } = useI18n();
   const [status, setStatus] = useState(ALL);
   const [jobType, setJobType] = useState(ALL);
   const [trigger, setTrigger] = useState(ALL);
@@ -192,30 +195,10 @@ export default function ExtractionsPage() {
   return (
     <div className="space-y-6" data-testid="page-extractions">
       <div className="grid gap-3 md:grid-cols-4">
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Execuções</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums">{data?.summary.total ?? 0}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Rodando</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-blue-500">{data?.summary.running ?? 0}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Concluídas</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-emerald-500">{data?.summary.done ?? 0}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Falhas</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-red-500">{data?.summary.failed ?? 0}</p>
-          </CardContent>
-        </Card>
+        <GlassMetricCard label={tx("Execuções")} value={<>{data?.summary.total ?? 0}</>} hideComparison />
+        <GlassMetricCard label={tx("Rodando")} value={<>{data?.summary.running ?? 0}</>} hideComparison />
+        <GlassMetricCard label={tx("Concluídas")} value={<>{data?.summary.done ?? 0}</>} hideComparison />
+        <GlassMetricCard label={tx("Falhas")} value={<>{data?.summary.failed ?? 0}</>} hideComparison />
       </div>
 
       <Card>
@@ -250,7 +233,7 @@ export default function ExtractionsPage() {
               <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>Status: todos</SelectItem>
-                <SelectItem value="running">Rodando</SelectItem>
+                <SelectItem value="running">{tx("Rodando")}</SelectItem>
                 <SelectItem value="done">Concluída</SelectItem>
                 <SelectItem value="failed">Falha</SelectItem>
                 <SelectItem value="pending">Pendente</SelectItem>
