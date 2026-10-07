@@ -1,3 +1,8 @@
+import { useI18n } from "@/lib/i18n";
+import { periodQuery, usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { getGetProductsSummaryUrl } from "@workspace/api-client-react";
+import { useDisplayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
@@ -36,7 +41,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, PackageOpen, ArrowDownUp, Download, X as XIcon, Search, ChevronRight, Sparkles, RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
-import { formatCurrency, formatNumber } from "@/lib/formatters";
+import { formatCurrency, formatCurrencySmart, formatNumber } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { CountUp } from "@/components/count-up";
@@ -88,6 +93,8 @@ function readQueryParam(search: string, key: string): string | undefined {
 const LOW_STOCK_THRESHOLD = 10;
 
 export default function ProductsPage() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const [, setLocation] = useLocation();
@@ -197,6 +204,9 @@ export default function ProductsPage() {
     periodParams,
     { query: queryOpts({ enabled: queryEnabled }) },
   );
+
+  const previousSummary = usePreviousPeriodQuery<NonNullable<typeof summary>>(getGetProductsSummaryUrl(periodParams), queryEnabled);
+  const stockSalesValue = (summary as typeof summary & { availableStockSalesValue?: number })?.availableStockSalesValue;
 
   // AI Insight
   const insightParams = { ...periodParams, screen: "products" as const };
@@ -323,23 +333,23 @@ export default function ProductsPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Live ·{" "}
+            Atualizado ·{" "}
             <span className="text-foreground font-semibold tabular-nums">
               <CountUp
                 value={visibleCount}
                 format={(v) => formatNumber(Math.round(v))}
               />
             </span>{" "}
-            Shown
+            {tx("Exibidos")}
             <span className="ml-2 text-muted-foreground/70">
               · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
             </span>
             <span className="ml-2 text-muted-foreground/70">
-              · {formatNumber(inStockCount)} In Stock
+              · {formatNumber(inStockCount)} Em estoque
             </span>
             {lowStockCount > 0 && (
               <span className="ml-2 text-amber-500/90">
-                · {formatNumber(lowStockCount)} Low Stock
+                · {formatNumber(lowStockCount)} Estoque baixo
               </span>
             )}
           </span>
@@ -352,7 +362,7 @@ export default function ProductsPage() {
           data-testid="products-export"
         >
           <Download className="h-4 w-4 mr-1.5" />
-          Export CSV
+          Exportar CSV
         </Button>
       </div>
 
@@ -362,14 +372,14 @@ export default function ProductsPage() {
           data-testid="products-active-filters"
         >
           <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-            Filtered by:
+            {tx("Filtrado por:")}
           </span>
           {urlSearch && (
             <span
               className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium bg-primary/10 text-primary"
               data-testid="products-filter-search"
             >
-              Search: {urlSearch}
+              Busca: {urlSearch}
             </span>
           )}
           {urlCategory && (
@@ -377,7 +387,7 @@ export default function ProductsPage() {
               className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium bg-primary/10 text-primary"
               data-testid="products-filter-category"
             >
-              Category: {urlCategory}
+              Categoria: {urlCategory}
             </span>
           )}
           <Button
@@ -388,7 +398,7 @@ export default function ProductsPage() {
             data-testid="products-clear-filters"
           >
             <XIcon className="h-3 w-3 mr-1" />
-            Clear
+            {tx("Limpar")}
           </Button>
         </div>
       )}
@@ -405,32 +415,10 @@ export default function ProductsPage() {
             ))
           ) : (
             <>
-              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card" data-testid="kpi-sales-power">
-                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Sales Power</span>
-                <span className="text-2xl font-bold tabular-nums">{formatCurrency(summary?.salesPower ?? 0)}</span>
-                <span className="text-xs text-muted-foreground">Revenue / active SKU / day</span>
-              </div>
-              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card">
-                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">vs Prior Period</span>
-                {summary?.salesPowerChangePct != null ? (
-                  <span className={`text-2xl font-bold tabular-nums ${summary.salesPowerChangePct >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-                    {summary.salesPowerChangePct >= 0 ? "+" : ""}{summary.salesPowerChangePct.toFixed(1)}%
-                  </span>
-                ) : (
-                  <span className="text-2xl font-bold text-muted-foreground">—</span>
-                )}
-                <span className="text-xs text-muted-foreground">Sales Power change</span>
-              </div>
-              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card">
-                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Active SKUs</span>
-                <span className="text-2xl font-bold tabular-nums">{formatNumber(summary?.activeSkus ?? 0)}</span>
-                <span className="text-xs text-muted-foreground">SKUs with sales in period</span>
-              </div>
-              <div className="flex flex-col gap-1 p-4 rounded-lg border border-border bg-card">
-                <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Period</span>
-                <span className="text-2xl font-bold tabular-nums">{summary?.periodDays ?? 30}d</span>
-                <span className="text-xs text-muted-foreground">Days in analysis window</span>
-              </div>
+              <GlassMetricCard testId="kpi-sales-power" label={tx("Sales Power")} value={stockSalesValue == null ? "—" : formatCurrencySmart(stockSalesValue)} info="Soma do estoque disponível de todo o catálogo multiplicado pelo preço de venda de cada SKU." source={tx("Catálogo e estoque conectado")} comparisonUnavailable="O catálogo não fornece o estoque histórico da janela anterior." />
+              <GlassMetricCard label={tx("Faturamento por SKU/dia")} comparisonValue={summary?.salesPower ?? null} previousValue={previousSummary.data?.salesPower} format={formatCurrency} value={summary ? formatCurrency(summary.salesPower) : "—"} change={summary?.salesPowerChangePct} info="Faturamento / SKUs com venda / dias." source={tx("Ecommerce · resumo de produtos")} />
+              <GlassMetricCard  label={tx("SKUs ativos")} comparisonValue={summary?.activeSkus ?? null} previousValue={previousSummary.data?.activeSkus} value={<>{formatNumber(summary?.activeSkus ?? 0)}</>} info="SKUs com vendas no período selecionado." source={tx("Ecommerce · resumo de produtos")} />
+              <GlassMetricCard  label={tx("Período")} comparisonValue={summary?.periodDays ?? null} previousValue={previousSummary.data?.periodDays} format={v => `${v} dias`} value={<>{summary?.periodDays ?? 30}d</>} info="Quantidade de dias do período analisado." source={tx("Filtro de período")} />
             </>
           )}
         </div>
@@ -446,17 +434,17 @@ export default function ProductsPage() {
               <div className="flex items-center justify-between mb-3">
                 <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
                   <Sparkles className="h-3 w-3" />
-                  UP Insight · Catalog · {insight?.source === "ai" ? "AI" : "Auto"}
+                  UP Insight · Catálogo · {insight?.source === "ai" ? "IA" : "Auto"}
                 </span>
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Dismiss insight"
+                  aria-label={tx("Fechar análise")}
                   data-testid="products-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
               {insightLoading || insightFetching || !insight ? (
                 <>
@@ -492,7 +480,7 @@ export default function ProductsPage() {
                   {regenerate.isPending ? "Regenerating…" : "Regenerate"}
                 </Button>
                 {insight?.cached && (
-                  <span className="text-[11px] text-muted-foreground">Cached · refreshes hourly</span>
+                  <span className="text-[11px] text-muted-foreground">{tx("Atualização a cada hora")}</span>
                 )}
               </div>
             </div>
@@ -509,7 +497,7 @@ export default function ProductsPage() {
               <Input
                 value={searchInput}
                 onChange={(e) => handleSearchInputChange(e.target.value)}
-                placeholder="Search by SKU or product name..."
+                placeholder={tx("Buscar por SKU ou nome do produto…")}
                 className="pl-8"
                 data-testid="products-search-input"
               />
@@ -528,10 +516,10 @@ export default function ProductsPage() {
                 className="w-full sm:w-[220px]"
                 data-testid="products-category-select"
               >
-                <SelectValue placeholder="All categories" />
+                <SelectValue placeholder={tx("Todas as categorias")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
+                <SelectItem value={ALL_CATEGORIES}>{tx("Todas as categorias")}</SelectItem>
                 {categoryOptions.map((c) => (
                   <SelectItem key={c} value={c}>
                     {c}
@@ -542,30 +530,31 @@ export default function ProductsPage() {
           </div>
 
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground flex items-center gap-1">
-                <ArrowDownUp className="h-3 w-3" /> Sort by
+                <ArrowDownUp className="h-3 w-3" /> Ordenar por
               </span>
               <ToggleGroup
                 type="single"
                 value={sort}
                 onValueChange={(val) => val && setSort(val as GetProductsSort)}
                 data-testid="product-sort-toggle"
+                className="flex-wrap justify-start"
               >
-                <ToggleGroupItem value={GetProductsSort.revenue} aria-label="Sort by Revenue">
-                  Revenue
+                <ToggleGroupItem value={GetProductsSort.revenue} aria-label={tx("Ordenar por faturamento")}>
+                  {tx("Faturamento")}
                 </ToggleGroupItem>
-                <ToggleGroupItem value={GetProductsSort.units} aria-label="Sort by Units">
-                  Units Sold
+                <ToggleGroupItem value={GetProductsSort.units} aria-label={tx("Ordenar por unidades")}>
+                  {tx("Unidades vendidas")}
                 </ToggleGroupItem>
-                <ToggleGroupItem value={GetProductsSort.created} aria-label="Sort by Newest">
-                  Newest
+                <ToggleGroupItem value={GetProductsSort.created} aria-label={tx("Ordenar pelos mais recentes")}>
+                  {tx("Mais recentes")}
                 </ToggleGroupItem>
               </ToggleGroup>
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Show</span>
+              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">{tx("Exibir")}</span>
               <Select value={limit.toString()} onValueChange={(val) => setLimit(Number(val))}>
                 <SelectTrigger className="w-[80px]">
                   <SelectValue />
@@ -587,8 +576,8 @@ export default function ProductsPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription className="flex items-center justify-between">
-            Failed to load products.
-            <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+            {tx("Não foi possível carregar os produtos.")}
+            <Button variant="outline" size="sm" onClick={() => refetch()}>{tx("Tentar novamente")}</Button>
           </AlertDescription>
         </Alert>
       ) : (
@@ -599,19 +588,19 @@ export default function ProductsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10" />
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Product</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Category</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Level</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Produto")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Categoria")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Classificação")}</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Grade</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Status</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Price</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Stock</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Views</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Sold in Period</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Preço")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Estoque")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Visualizações")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Vendido no período")}</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Conv %</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">% Sold</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Revenue</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Added</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("% vendido")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Faturamento")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Adicionado")}</TableHead>
                   <TableHead className="w-6" />
                 </TableRow>
               </TableHeader>
@@ -641,8 +630,8 @@ export default function ProductsPage() {
                     <TableCell colSpan={15} className="p-0">
                       <EmptyState
                         icon={PackageOpen}
-                        title="No products to show"
-                        description="There are no products in the catalog for the current filters. Try clearing filters or syncing the store catalog."
+                        title={tx("Nenhum produto para exibir")}
+                        description={tx("Não há produtos no catálogo com os filtros atuais. Limpe os filtros ou sincronize o catálogo da loja.")}
                         className="m-4 border-0 bg-transparent"
                       />
                     </TableCell>
@@ -668,7 +657,7 @@ export default function ProductsPage() {
                       <TableCell className="text-muted-foreground">{product.category || '—'}</TableCell>
                       <TableCell>
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${LEVEL_STYLES[product.level] ?? ""}`}>
-                          {product.level}
+                          {displayLabel(product.level)}
                         </span>
                       </TableCell>
                       <TableCell>
@@ -688,7 +677,7 @@ export default function ProductsPage() {
                           variant={product.status === "ACTIVE" ? "default" : "secondary"}
                           className="text-[10px]"
                         >
-                          {product.status}
+                          {displayLabel(product.status)}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">{formatCurrency(product.price)}</TableCell>
@@ -738,18 +727,9 @@ export default function ProductsPage() {
                 </DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="rounded-md border border-border bg-card p-3">
-                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Vendidos</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatNumber(selectedProduct.totalSold)}</p>
-                </div>
-                <div className="rounded-md border border-border bg-card p-3">
-                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Receita</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatCurrency(selectedProduct.totalRevenue)}</p>
-                </div>
-                <div className="rounded-md border border-border bg-card p-3">
-                  <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Estoque</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatNumber(selectedProduct.stock)}</p>
-                </div>
+                <GlassMetricCard  label={tx("Vendidos")} value={<>{formatNumber(selectedProduct.totalSold)}</>} hideComparison />
+                <GlassMetricCard  label={tx("Receita")} value={<>{formatCurrency(selectedProduct.totalRevenue)}</>} hideComparison />
+                <GlassMetricCard  label={tx("Estoque")} value={<>{formatNumber(selectedProduct.stock)}</>} hideComparison />
                 <div className="rounded-md border border-border bg-card p-3">
                   <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Grade</p>
                   <Badge
@@ -767,9 +747,9 @@ export default function ProductsPage() {
                       <TableHead className="font-mono uppercase tracking-wider text-[10px]">SKU</TableHead>
                       <TableHead className="font-mono uppercase tracking-wider text-[10px]">Cor</TableHead>
                       <TableHead className="font-mono uppercase tracking-wider text-[10px]">Tamanho</TableHead>
-                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Estoque</TableHead>
-                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Vendidos</TableHead>
-                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Receita</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Estoque")}</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Vendidos")}</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Receita")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
