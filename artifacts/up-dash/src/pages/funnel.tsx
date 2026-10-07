@@ -1,3 +1,8 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { type FunnelResponse, getGetFunnelUrl } from "@workspace/api-client-react";
+import { MetricDataProvider } from "@/components/metric-data-context";
+import { displayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo } from "react";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
@@ -17,7 +22,8 @@ import {
   Legend,
 } from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
-import { FunnelChart, PatternLines, type FunnelStage } from "@/components/ui/funnel-chart";
+import type { FunnelStage } from "@/components/ui/funnel-chart";
+import { AcquisitionFunnel } from "@/components/acquisition-funnel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -91,7 +97,7 @@ interface FunnelActivationAnalysis {
   }>;
 }
 
-type FunnelDataWithActivation = NonNullable<ReturnType<typeof useGetFunnel>["data"]> & {
+type FunnelDataWithActivation = FunnelResponse & {
   activation?: FunnelActivationAnalysis | null;
 };
 
@@ -112,7 +118,7 @@ function formatCurrency(value: number) {
   return currencyFormatter.format(value || 0);
 }
 
-export default function FunnelPage() {
+export default function FunnelPage({ organization }: { organization?: "acquisition" } = {}) {
   const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -146,6 +152,7 @@ export default function FunnelPage() {
       query: queryOpts({ enabled: queryEnabled, placeholderData: (prev) => prev }),
     }
   );
+  const previous = usePreviousPeriodQuery<FunnelDataWithActivation>(getGetFunnelUrl({ clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, utmCampaign: filters.utmCampaign || undefined }), queryEnabled);
   const activation = (data as FunnelDataWithActivation | undefined)?.activation ?? null;
 
   // Hide the VISIT step from the visual funnel when its count is zero.
@@ -225,7 +232,7 @@ export default function FunnelPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Live · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            Atualizado · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
           </span>
         </motion.div>
         <Button
@@ -236,18 +243,19 @@ export default function FunnelPage() {
           data-testid="funnel-export"
         >
           <Download className="h-4 w-4 mr-1.5" />
-          Export CSV
+          Exportar CSV
         </Button>
       </div>
 
+      {organization === "acquisition" && activation && <ActivationAnalysisCard activation={activation} previousActivation={previous.data?.activation ?? undefined} />}
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
+          <AlertTitle>Erro</AlertTitle>
           <AlertDescription className="flex items-center justify-between">
-            Failed to load funnel data.
+            Não foi possível carregar o funil.
             <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Retry
+              <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
             </Button>
           </AlertDescription>
         </Alert>
@@ -284,25 +292,33 @@ export default function FunnelPage() {
                 }}
               />
 
-              <CardContent className="relative grid grid-cols-1 lg:grid-cols-[auto_1fr] gap-8 p-6 sm:p-8" data-testid="funnel-hero">
+              <CardContent className="relative p-6 sm:p-8" data-testid="funnel-hero">
+                <div className="up-funnel-intro">
                 <ConversionRing pct={data.overallConversion} reduced={reduced} />
                 <div className="flex flex-col justify-center">
                   <span className="inline-flex items-center gap-1.5 self-start rounded-full border border-border/60 bg-card/60 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground backdrop-blur">
                     <Activity className="h-3 w-3 text-primary" />
-                    Conversion funnel
+                    Funil de conversão
                   </span>
                   <h2 className="mt-2 text-3xl sm:text-4xl font-bold tracking-tight">
-                    {visitStepHidden ? "Leads → Purchases" : "Visitors → Purchases"}
+                    {visitStepHidden ? "Leads → Compras" : "Visitantes → Compras"}
                   </h2>
                   <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                    From registered leads to approved purchases over the selected period.
-                    Hover any stage below to see counts, conversion, and drop-off.
+                    Dos leads cadastrados às compras aprovadas no período selecionado. Consulte cada etapa para ver volumes, conversões e perdas.
                   </p>
 
-                  <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                </div>
+                </div>
+<MetricDataProvider source="Ecommerce · eventos do funil" comparisons={{
+  [`metric-${(visibleSteps[0]?.label ?? "Topo do funil").toLowerCase().replace(/\s+/g, "-")}`]: { current: visibleSteps[0]?.count, previous: previous.data?.steps.find(step => step.step === visibleSteps[0]?.step)?.count },
+  [`metric-${(biggestDrop ? `Perda em ${biggestDrop.to.label}` : "Maior perda").toLowerCase().replace(/\s+/g, "-")}`]: { current: biggestDrop?.dropPct, previous: previous.data?.steps.find(step => step.step === biggestDrop?.to.step)?.dropOffRate, format: v => `${v.toFixed(1)}%` },
+  "metric-compras": { current: visibleSteps[visibleSteps.length - 1]?.count, previous: previous.data?.steps.find(step => step.step === visibleSteps[visibleSteps.length - 1]?.step)?.count },
+  "metric-média-de-eventos-antes-da-compra": { current: data.avgEventsBeforePurchase, previous: previous.data?.avgEventsBeforePurchase, format: v => v.toFixed(1) },
+}}>
+                  <div className="up-metric-grid">
                     <MiniStat
                       icon={Users}
-                      label={visibleSteps[0]?.label ?? "Top of funnel"}
+                      label={visibleSteps[0]?.label ?? "Topo do funil"}
                       value={visibleSteps[0]?.count ?? 0}
                       color="hsl(var(--chart-1))"
                       delay={0.05}
@@ -310,7 +326,7 @@ export default function FunnelPage() {
                     />
                     <MiniStat
                       icon={ShoppingCart}
-                      label="Purchases"
+                      label="Compras"
                       value={visibleSteps[visibleSteps.length - 1]?.count ?? 0}
                       color="hsl(var(--chart-3))"
                       delay={0.12}
@@ -318,7 +334,7 @@ export default function FunnelPage() {
                     />
                     <MiniStat
                       icon={TrendingUp}
-                      label={biggestDrop ? `Drop @ ${biggestDrop.to.label}` : "Biggest drop"}
+                      label={biggestDrop ? `Perda em ${biggestDrop.to.label}` : "Maior perda"}
                       value={biggestDrop?.dropPct ?? 0}
                       format={(v) => `${v.toFixed(1)}%`}
                       tone="warn"
@@ -327,7 +343,7 @@ export default function FunnelPage() {
                     />
                     <MiniStat
                       icon={Zap}
-                      label="Avg events before purchase"
+                      label="Média de eventos antes da compra"
                       value={data.avgEventsBeforePurchase ?? 0}
                       format={(v) => v.toFixed(1)}
                       color="hsl(var(--chart-4))"
@@ -335,14 +351,14 @@ export default function FunnelPage() {
                       reduced={reduced}
                     />
                   </div>
-                </div>
+</MetricDataProvider>
               </CardContent>
             </Card>
           </motion.div>
 
-          {selectedDashboardMode === "B2B" && activation && (
+          {organization !== "acquisition" && selectedDashboardMode === "B2B" && activation && (
             <motion.div initial="hidden" animate="visible" variants={variants}>
-              <ActivationAnalysisCard activation={activation} />
+              <ActivationAnalysisCard activation={activation} previousActivation={previous.data?.activation ?? undefined} />
             </motion.div>
           )}
 
@@ -359,10 +375,10 @@ export default function FunnelPage() {
                   <div className="mb-4 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <TrendingUp className="h-3.5 w-3.5 text-primary" />
-                      Daily site visits &amp; conversion rate
+                      Visitas diárias ao site e taxa de conversão
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {visitsData.totalVisits.toLocaleString()} total visits
+                      {visitsData.totalVisits.toLocaleString()} visitas no total
                     </span>
                   </div>
                   {(() => {
@@ -426,7 +442,7 @@ export default function FunnelPage() {
                                 };
                                 return (
                                   <div className="rounded-lg border border-border/60 bg-card px-3 py-2 shadow-md text-xs space-y-1">
-                                    <p className="font-semibold text-foreground">{d.label}</p>
+                                    <p className="font-semibold text-foreground">{displayLabel(d.label)}</p>
                                     <p className="text-muted-foreground">
                                       <span className="font-mono text-primary">{d.visits.toLocaleString()}</span>{" "}
                                       visits
@@ -450,7 +466,7 @@ export default function FunnelPage() {
                               fill="hsl(var(--chart-1))"
                               radius={[3, 3, 0, 0]}
                               maxBarSize={32}
-                              name="Visits"
+                              name="Visitas"
                             />
                             {hasConversionData && (
                               <Line
@@ -461,7 +477,7 @@ export default function FunnelPage() {
                                 strokeWidth={2}
                                 dot={false}
                                 activeDot={{ r: 4, fill: "hsl(var(--chart-3))" }}
-                                name="Conv. rate %"
+                                name="Taxa de conversão %"
                                 connectNulls
                               />
                             )}
@@ -497,62 +513,15 @@ export default function FunnelPage() {
                   <div className="mb-2 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                      Stage-by-stage flow
+                      Fluxo por etapa
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {visibleSteps.length} stages
+                      {visibleSteps.length} etapas
                     </span>
                   </div>
                   {funnelChartData.length > 0 && funnelChartData[0].value > 0 ? (
                     <div className="space-y-5">
-                      <div className="hidden md:block" data-testid="funnel-chart-horizontal">
-                        <FunnelChart
-                          data={funnelChartData}
-                          edges="curved"
-                          gap={6}
-                          grid={{
-                            bands: true,
-                            bandColor: "hsl(var(--muted) / 0.25)",
-                            lines: true,
-                            lineColor: "hsl(var(--border))",
-                            lineOpacity: 0.55,
-                          }}
-                          labelAlign="center"
-                          labelLayout="spread"
-                          layers={4}
-                          formatPercentage={formatPercentage}
-                          formatValue={formatNumber}
-                          renderPattern={(id, color) => (
-                            <PatternLines
-                              id={id}
-                              stroke={color}
-                              strokeWidth={1.2}
-                              width={8}
-                              height={8}
-                              orientation={["diagonal"]}
-                            />
-                          )}
-                        />
-                      </div>
-                      <div className="md:hidden" data-testid="funnel-chart-vertical">
-                        <FunnelChart
-                          data={funnelChartData}
-                          orientation="vertical"
-                          edges="curved"
-                          gap={6}
-                          grid={{
-                            bands: true,
-                            bandColor: "hsl(var(--muted) / 0.25)",
-                            lines: true,
-                            lineColor: "hsl(var(--border))",
-                            lineOpacity: 0.55,
-                          }}
-                          labelLayout="spread"
-                          layers={4}
-                          formatPercentage={formatPercentage}
-                          formatValue={formatNumber}
-                        />
-                      </div>
+                      <AcquisitionFunnel title="Etapas de conversão" stages={funnelChartData.map((step, index) => ({ label: step.label, value: step.value, connector: funnelChartData[index+1] && step.value > 0 ? `${formatPercentage(funnelChartData[index+1].value / step.value * 100)} seguem para a próxima etapa` : undefined }))} />
                       <div className="grid gap-2 sm:grid-cols-2">
                         {visibleSteps.map((step, index) => (
                           <div key={step.step} className="rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -563,7 +532,7 @@ export default function FunnelPage() {
                                     className="h-2 w-2 rounded-full"
                                     style={{ backgroundColor: STAGE_PALETTE[index % STAGE_PALETTE.length] }}
                                   />
-                                  <p className="truncate text-sm font-medium">{step.label}</p>
+                                  <p className="truncate text-sm font-medium">{displayLabel(step.label)}</p>
                                 </div>
                                 <p className="mt-1 text-xs text-muted-foreground">
                                   {formatPercentage(step.conversionRate)} conversão · {formatPercentage(step.dropOffRate)} queda
@@ -596,7 +565,7 @@ export default function FunnelPage() {
                     <Lightbulb className="h-4 w-4 text-amber-500" />
                     <span aria-hidden className="absolute inset-0 rounded-full bg-amber-400/30 blur-md -z-10" />
                   </span>
-                  Key insights
+                  Principais análises
                 </h3>
               </motion.div>
               {data.insights.length > 0 ? (
@@ -626,7 +595,7 @@ export default function FunnelPage() {
               ) : (
                 <Card>
                   <CardContent className="p-6 text-center text-muted-foreground text-sm">
-                    Not enough data to generate insights for this period.
+                    Dados insuficientes para gerar análises neste período.
                   </CardContent>
                 </Card>
               )}
@@ -641,7 +610,7 @@ export default function FunnelPage() {
                   <div className="rounded-lg border border-border/60 bg-card p-4">
                     <p className="font-semibold text-sm flex items-center gap-1.5 mb-3">
                       <ArrowRight className="h-3.5 w-3.5 text-primary" />
-                      Common paths to purchase
+                      Caminhos mais comuns até a compra
                     </p>
                     <div className="space-y-2">
                       {data.topPaths.slice(0, 3).map((path, i) => (
@@ -663,9 +632,9 @@ export default function FunnelPage() {
                     </div>
                     {selectedDashboardMode !== "B2C" && (
                       <Link href="/journey">
-                        <button className="mt-3 text-[11px] text-primary flex items-center gap-1 hover:underline">
-                          Full journey analysis <ChevronRight className="h-3 w-3" />
-                        </button>
+                        <Button variant="ghost" size="sm" className="mt-3 text-[11px] text-primary flex items-center gap-1 hover:underline">
+                          Análise completa da jornada <ChevronRight className="h-3 w-3" />
+                        </Button>
                       </Link>
                     )}
                   </div>
@@ -704,12 +673,10 @@ export default function FunnelPage() {
                 className="rounded-lg border border-dashed border-border/60 bg-muted/30 p-4 text-xs text-muted-foreground"
               >
                 <p className="font-semibold text-foreground/80 mb-1.5 flex items-center gap-1.5">
-                  <Activity className="h-3 w-3" /> How to read
+                  <Activity className="h-3 w-3" /> Como interpretar
                 </p>
                 <p className="leading-relaxed">
-                  Each stage shows the count entering it, the conversion vs. the
-                  prior stage, and where users drop off. Optimize the largest red
-                  drop first — that's where you'll move the needle fastest.
+                  Cada etapa mostra o volume de entrada, a conversão em relação à etapa anterior e as perdas. Priorize as etapas com maior perda de usuários.
                 </p>
               </motion.div>
 
@@ -722,11 +689,10 @@ export default function FunnelPage() {
                   className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4 text-xs"
                 >
                   <p className="font-semibold text-foreground/80 mb-1.5 flex items-center gap-1.5">
-                    <Info className="h-3 w-3 text-blue-500" /> About this data
+                    <Info className="h-3 w-3 text-blue-500" /> Sobre estes dados
                   </p>
                   <p className="leading-relaxed text-muted-foreground">
-                    UP Zero tracks <strong className="text-foreground/80">registered leads, cart activity, and purchases</strong> — the funnel starts at your first available data point.
-                    Website visit tracking requires a separate web analytics integration (e.g. Google Analytics or a pixel).
+                    UP Zero tracks <strong className="text-foreground/80">leads cadastrados, atividade de carrinho e compras</strong> — o funil começa na primeira etapa com dados disponíveis. O acompanhamento de visitas exige uma integração de análise de tráfego, como Google Analytics ou um pixel.
                   </p>
                 </motion.div>
               )}
@@ -750,7 +716,7 @@ function toneClasses(tone: string) {
   return "border-primary/40 bg-primary/10 text-primary";
 }
 
-function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAnalysis }) {
+export function ActivationAnalysisCard({ activation, previousActivation }: { activation: FunnelActivationAnalysis; previousActivation?: FunnelActivationAnalysis }) {
   const thirtyDay = activation.windows.find((window) => window.key === "within_30d");
   const primaryWindow = thirtyDay ?? activation.windows[activation.windows.length - 1];
   const postApprovalSteps = [
@@ -789,7 +755,7 @@ function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAn
   return (
     <Card className="overflow-hidden border-border/60" data-testid="approved-customer-activation">
       <CardContent className="space-y-5 p-4 sm:p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="space-y-4">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/30 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -797,7 +763,7 @@ function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAn
                 Ativação B2B
               </span>
               <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${toneClasses(activation.performance.tone)}`}>
-                {activation.performance.label}
+                {displayLabel(activation.performance.label)}
               </span>
             </div>
             <h3 className="mt-2 text-xl font-semibold tracking-tight">
@@ -808,7 +774,12 @@ function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAn
             </p>
           </div>
 
-          <div className="grid min-w-full gap-3 sm:grid-cols-3 lg:min-w-[460px]">
+<MetricDataProvider source="Ecommerce · cadastros aprovados e primeira compra" comparisons={{
+  "metric-aprovados": { current: activation.approvedCustomers, previous: previousActivation?.approvedCustomers, format: formatNumber },
+  "metric-ativação-em-30-dias": { current: activation.thirtyDayActivationRate, previous: previousActivation?.thirtyDayActivationRate, format: v => `${v.toFixed(1)}%` },
+  "metric-ticket-1ª-compra": { current: activation.firstPurchaseAov, previous: previousActivation?.firstPurchaseAov, format: formatCurrency },
+}}>
+          <div className="up-metric-grid">
             <ActivationMetric label="Aprovados" value={formatNumber(activation.approvedCustomers)} />
             <ActivationMetric
               label="Ativação em 30 dias"
@@ -820,6 +791,7 @@ function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAn
               value={formatCurrency(activation.firstPurchaseAov)}
             />
           </div>
+</MetricDataProvider>
         </div>
 
         <div className="grid gap-3 md:grid-cols-5">
@@ -832,7 +804,7 @@ function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAn
                   : "border-border/60 bg-muted/20"
               }`}
             >
-              <p className="text-xs text-muted-foreground">{window.label}</p>
+              <p className="text-xs text-muted-foreground">{displayLabel(window.label)}</p>
               <div className="mt-2 flex items-end justify-between gap-3">
                 <p className="text-lg font-semibold tabular-nums">{formatPercentage(window.activationRate)}</p>
                 <p className="text-xs text-muted-foreground tabular-nums">
@@ -855,7 +827,7 @@ function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAn
               {postApprovalSteps.map((step) => (
                 <div key={step.label}>
                   <div className="mb-1 flex items-center justify-between gap-3 text-xs">
-                    <span className={step.muted ? "text-muted-foreground" : "text-foreground/90"}>{step.label}</span>
+                    <span className={step.muted ? "text-muted-foreground" : "text-foreground/90"}>{displayLabel(step.label)}</span>
                     <span className="font-mono text-muted-foreground">
                       {step.count == null ? "Sem dados" : `${formatNumber(step.count)} · ${formatNullablePercent(step.rate)}`}
                     </span>
@@ -939,12 +911,7 @@ function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAn
 }
 
 function ActivationMetric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className={`rounded-lg border p-3 ${accent ? "border-primary/40 bg-primary/5" : "border-border/60 bg-muted/20"}`}>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
-    </div>
-  );
+  return (<GlassMetricCard label={label} value={value} />);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -994,7 +961,7 @@ function ConversionRing({ pct, reduced }: { pct: number; reduced: boolean }) {
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-          Overall
+          Geral
         </span>
         <CountUp
           value={clamped}
@@ -1002,7 +969,7 @@ function ConversionRing({ pct, reduced }: { pct: number; reduced: boolean }) {
           duration={1200}
           className="text-4xl font-bold tracking-tight tabular-nums bg-gradient-to-br from-foreground to-primary bg-clip-text text-transparent"
         />
-        <span className="mt-0.5 text-[11px] text-muted-foreground">conversion</span>
+        <span className="mt-0.5 text-[11px] text-muted-foreground">conversão</span>
       </div>
     </div>
   );
@@ -1031,32 +998,7 @@ function MiniStat({
   delay: number;
   reduced: boolean;
 }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, delay: reduced ? 0 : delay, ease: [0.22, 1, 0.36, 1] }}
-      className="rounded-lg border border-border/60 bg-card/70 p-3 backdrop-blur"
-    >
-      <div className="flex items-center gap-2">
-        <span
-          className="flex h-7 w-7 items-center justify-center rounded-md ring-1 ring-border/40"
-          style={{ background: tone === "warn" ? "hsl(var(--destructive) / 0.12)" : `${color.replace(")", " / 0.15)")}` }}
-        >
-          <IconWrap Icon={Icon} tone={tone} color={color} />
-        </span>
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium truncate">
-          {label}
-        </span>
-      </div>
-      <CountUp
-        value={value}
-        format={format ?? formatNumber}
-        duration={1000}
-        className={`mt-1.5 block text-xl font-bold tabular-nums ${tone === "warn" ? "text-destructive" : "text-foreground"}`}
-      />
-    </motion.div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={format ?? formatNumber} />);
 }
 
 function IconWrap({

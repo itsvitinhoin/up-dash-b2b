@@ -1,3 +1,8 @@
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
+import { displayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
+import { PerformanceSummarySections, MediaInvestmentCards } from "@/components/overview-organization";
+import { OrganizationHeading } from "@/components/metric-section";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -316,13 +321,13 @@ const COHORT_BADGE_CLASS: Record<CohortLabel, string> = {
 };
 
 const trendConfig = {
-  revenue: { label: "Faturamento ERP", color: "#3b82f6" },
-  attributedRevenue: { label: "Receita atribuída", color: "#8b5cf6" },
-  spend: { label: "Investimento", color: "#f59e0b" },
+  revenue: { label: "Faturamento ERP", color: "#5b8dff" },
+  attributedRevenue: { label: "Receita atribuída", color: "#5b8dff" },
+  spend: { label: "Investimento", color: "#0458fe" },
 } satisfies ChartConfig;
 
 const breakdownConfig = {
-  value: { label: "Participação", color: "#3b82f6" },
+  value: { label: "Participação", color: "#5b8dff" },
 } satisfies ChartConfig;
 
 const PAGE_SIZE = 10;
@@ -377,7 +382,7 @@ function SourceStatus({
               }
               title={source.value}
             >
-              {source.label}: {source.ok ? "conectado" : "atenção"}
+              {displayLabel(source.label)}: {source.ok ? "conectado" : "atenção"}
             </Badge>
           ))}
         </div>
@@ -685,24 +690,32 @@ export default function PerformancePage() {
   );
   useEffect(() => setOrdersPage(1), [cohortFilter]);
 
+  const previous = usePreviousPeriodQuery<PerformanceResponse>(periodQuery("/api/analytics/performance", { ...commonParams, page: ordersPage, limit: PAGE_SIZE }), enabled);
+  const pk = previous.data?.kpis;
   const k = data?.kpis;
   const financialMetrics = [
     {
       label: "Faturamento ERP",
       value: k?.netRevenue ?? 0,
+      comparisonValue: k?.netRevenue ?? null,
+      previousValue: pk?.netRevenue,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: CircleDollarSign,
       iconClass: "bg-blue-500/10 text-blue-400",
-      sparkColor: "#3b82f6",
+      sparkColor: "#5b8dff",
       sub: [{ label: "Bruto", value: formatCurrency(k?.grossRevenue ?? 0) }],
     },
     {
       label: "Receita atribuída",
       value: k?.attributedRevenue ?? 0,
+      comparisonValue: k?.attributedRevenue ?? null,
+      previousValue: pk?.attributedRevenue,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: Target,
       iconClass: "bg-violet-500/10 text-violet-400",
-      sparkColor: "#8b5cf6",
+      sparkColor: "#5b8dff",
       sub: [
         {
           label: "Cobertura",
@@ -713,38 +726,50 @@ export default function PerformancePage() {
     {
       label: "Investimento",
       value: k?.mediaSpend ?? 0,
+      comparisonValue: k?.mediaSpend ?? null,
+      previousValue: pk?.mediaSpend,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: Megaphone,
       iconClass: "bg-amber-500/10 text-amber-400",
-      sparkColor: "#f59e0b",
+      sparkColor: "#0458fe",
       sub: [{ label: "Fonte", value: "Meta Ads" }],
     },
     {
       label: "ROAS atribuído",
       value: k?.roas ?? 0,
-      format: () => (k?.roas == null ? "—" : `${k.roas.toFixed(2)}x`),
+      comparisonValue: k?.roas ?? null,
+      previousValue: pk?.roas,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.roas == null ? "—" : `${v.toFixed(2)}x`),
       icon: TrendingUp,
       iconClass: "bg-emerald-500/10 text-emerald-400",
-      sparkColor: "#34d399",
+      sparkColor: "#87adff",
       sub: [{ label: "Cálculo", value: "Atribuído / mídia" }],
     },
     {
       label: "MER geral",
       value: k?.mer ?? 0,
-      format: () => (k?.mer == null ? "—" : `${k.mer.toFixed(2)}x`),
+      comparisonValue: k?.mer ?? null,
+      previousValue: pk?.mer,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.mer == null ? "—" : `${v.toFixed(2)}x`),
       icon: Gauge,
       iconClass: "bg-cyan-500/10 text-cyan-400",
-      sparkColor: "#22d3ee",
+      sparkColor: "#afc4ff",
       sub: [{ label: "Cálculo", value: "ERP / mídia" }],
     },
     {
       label: "Lucro bruto",
       value: k?.grossProfit ?? 0,
-      format: () =>
-        k?.roiStatus === "available" ? formatCurrency(k.grossProfit) : "—",
+      comparisonValue: k?.roiStatus === "available" ? k.grossProfit : null,
+      previousValue: pk?.roiStatus === "available" ? pk.grossProfit : null,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) =>
+        k?.roiStatus === "available" ? formatCurrency(v) : "—",
       icon: Boxes,
       iconClass: "bg-fuchsia-500/10 text-fuchsia-400",
-      sparkColor: "#d946ef",
+      sparkColor: "#b3caff",
       sub: [
         { label: "Margem", value: formatPercentage(k?.grossMarginPct ?? 0) },
       ],
@@ -752,10 +777,13 @@ export default function PerformancePage() {
     {
       label: "ROI final",
       value: k?.roi ?? 0,
-      format: () => (k?.roi == null ? "—" : formatPercentage(k.roi)),
+      comparisonValue: k?.roi ?? null,
+      previousValue: pk?.roi,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.roi == null ? "—" : formatPercentage(v)),
       icon: BadgeDollarSign,
       iconClass: "bg-lime-500/10 text-lime-400",
-      sparkColor: "#84cc16",
+      sparkColor: "#87adff",
       sub: [
         {
           label: "Custo coberto",
@@ -766,10 +794,13 @@ export default function PerformancePage() {
     {
       label: "Ticket médio",
       value: k?.averageTicket ?? 0,
+      comparisonValue: k?.averageTicket ?? null,
+      previousValue: pk?.averageTicket,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: ReceiptText,
       iconClass: "bg-blue-500/10 text-blue-400",
-      sparkColor: "#60a5fa",
+      sparkColor: "#afc4ff",
       sub: [
         { label: "Peças/pedido", value: (k?.avgItemsPerOrder ?? 0).toFixed(1) },
       ],
@@ -780,19 +811,25 @@ export default function PerformancePage() {
     {
       label: "Pedidos ERP",
       value: k?.orders ?? 0,
+      comparisonValue: k?.orders ?? null,
+      previousValue: pk?.orders,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: ReceiptText,
       iconClass: "bg-blue-500/10 text-blue-400",
-      sparkColor: "#60a5fa",
+      sparkColor: "#afc4ff",
       sub: [{ label: "Peças", value: formatNumber(k?.totalQuantity ?? 0) }],
     },
     {
       label: "Pedidos atribuídos",
       value: k?.attributedOrders ?? 0,
+      comparisonValue: k?.attributedOrders ?? null,
+      previousValue: pk?.attributedOrders,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: PackageCheck,
       iconClass: "bg-emerald-500/10 text-emerald-400",
-      sparkColor: "#10b981",
+      sparkColor: "#87adff",
       sub: [
         {
           label: "Cobertura",
@@ -804,10 +841,13 @@ export default function PerformancePage() {
     {
       label: "Compradores únicos",
       value: k?.uniqueBuyers ?? 0,
+      comparisonValue: k?.uniqueBuyers ?? null,
+      previousValue: pk?.uniqueBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: Users,
       iconClass: "bg-purple-500/10 text-purple-400",
-      sparkColor: "#c084fc",
+      sparkColor: "#5b8dff",
       sub: [
         { label: "Atribuídos", value: formatNumber(k?.attributedBuyers ?? 0) },
       ],
@@ -815,10 +855,13 @@ export default function PerformancePage() {
     {
       label: "Clientes novos",
       value: k?.newBuyers ?? 0,
+      comparisonValue: k?.newBuyers ?? null,
+      previousValue: pk?.newBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-lime-500/10 text-lime-400",
-      sparkColor: "#84cc16",
+      sparkColor: "#87adff",
       sub: [
         {
           label: "Novos atribuídos",
@@ -829,10 +872,13 @@ export default function PerformancePage() {
     {
       label: "Clientes recorrentes",
       value: k?.returningBuyers ?? 0,
+      comparisonValue: k?.returningBuyers ?? null,
+      previousValue: pk?.returningBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: ShoppingBag,
       iconClass: "bg-rose-500/10 text-rose-400",
-      sparkColor: "#fb7185",
+      sparkColor: "#b3caff",
       sub: [
         { label: "Retenção", value: formatPercentage(k?.retentionPct ?? 0) },
       ],
@@ -840,28 +886,37 @@ export default function PerformancePage() {
     {
       label: "CAC",
       value: k?.cac ?? 0,
+      comparisonValue: k?.cac ?? null,
+      previousValue: pk?.cac,
+      source: "ERP · Ecommerce · Meta Ads",
       format: () => (k?.cac == null ? "—" : formatCurrency(k.cac)),
       icon: BadgeDollarSign,
       iconClass: "bg-orange-500/10 text-orange-400",
-      sparkColor: "#fb923c",
+      sparkColor: "#0458fe",
       sub: [{ label: "Base", value: "Novos atribuídos" }],
     },
     {
       label: "CTR",
       value: k?.ctr ?? 0,
+      comparisonValue: k?.ctr ?? null,
+      previousValue: pk?.ctr,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatPercentage,
       icon: MousePointerClick,
       iconClass: "bg-sky-500/10 text-sky-400",
-      sparkColor: "#38bdf8",
+      sparkColor: "#afc4ff",
       sub: [{ label: "Cliques", value: formatNumber(k?.clicks ?? 0) }],
     },
     {
       label: "CPL",
       value: k?.cpl ?? 0,
+      comparisonValue: k?.cpl ?? null,
+      previousValue: pk?.cpl,
+      source: "ERP · Ecommerce · Meta Ads",
       format: () => (k?.cpl == null ? "—" : formatCurrency(k.cpl)),
       icon: Target,
       iconClass: "bg-violet-500/10 text-violet-400",
-      sparkColor: "#a78bfa",
+      sparkColor: "#5b8dff",
       sub: [{ label: "Leads Meta", value: formatNumber(k?.leads ?? 0) }],
     },
   ];
@@ -1016,11 +1071,11 @@ export default function PerformancePage() {
 
       <section className="space-y-4">
         <SectionHeader
-          title="Resumo financeiro"
+          title="RESULTADO GERAL"
           description="Resultado oficial do ERP conciliado com mídia e atribuição do e-commerce."
         />
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {financialMetrics.map((metric, index) => (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          {[0, 3].map((index) => { const metric = financialMetrics[index]; return (
             <DashboardKpiCard
               key={metric.label}
               {...metric}
@@ -1032,132 +1087,13 @@ export default function PerformancePage() {
               testId={`performance-financial-kpi-${index}`}
               valueAccent={index === 0}
             />
-          ))}
+          ); })}
+          <MediaInvestmentCards />
         </div>
       </section>
-
-      <section className="space-y-4">
-        <SectionHeader
-          title="Aquisição e clientes"
-          description="Eficiência da mídia até o comprador identificado no ERP."
-        />
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {acquisitionMetrics.map((metric, index) => (
-            <DashboardKpiCard
-              key={metric.label}
-              {...metric}
-              change={null}
-              changeLabel=""
-              sparkValues={[]}
-              ringColor={metric.sparkColor}
-              isLoading={isLoading}
-              testId={`performance-acquisition-kpi-${index}`}
-            />
-          ))}
-        </div>
-      </section>
-
-      <Card>
-        <CardContent className="p-5">
-          <SectionHeader
-            title="Qualidade e conciliação dos dados"
-            description="Cobertura real das chaves necessárias para calcular atribuição, margem e ROI."
-          />
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {(data?.quality ?? []).map((item) => (
-              <div
-                key={item.key}
-                className="rounded-md border bg-background/30 p-4"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-medium">{item.label}</p>
-                  <Badge
-                    variant="outline"
-                    className={
-                      item.status === "good"
-                        ? "border-emerald-500/30 text-emerald-400"
-                        : item.status === "attention"
-                          ? "border-amber-500/30 text-amber-400"
-                          : "border-red-500/30 text-red-400"
-                    }
-                  >
-                    {formatPercentage(item.value)}
-                  </Badge>
-                </div>
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={
-                      item.status === "good"
-                        ? "h-full bg-emerald-500"
-                        : item.status === "attention"
-                          ? "h-full bg-amber-500"
-                          : "h-full bg-red-500"
-                    }
-                    style={{
-                      width: `${Math.min(100, Math.max(0, item.value))}%`,
-                    }}
-                  />
-                </div>
-                <p className="mt-3 text-xs text-muted-foreground">
-                  {item.detail}
-                </p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-4">
-            {(data?.reconciliation ?? []).map((item) => (
-              <div key={item.label} className="bg-card p-4">
-                <p className="text-xs text-muted-foreground">{item.label}</p>
-                <p className="mt-2 text-2xl font-semibold tabular-nums">
-                  {formatNumber(item.value)}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {item.detail}
-                </p>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="p-5">
-          <SectionHeader
-            title="Funil consolidado"
-            description="A origem de cada etapa é indicada porque cliques, eventos do site e pedidos do ERP possuem bases diferentes."
-          />
-          <div className="mt-5 overflow-x-auto">
-            <div className="grid min-w-[980px] grid-cols-8 gap-2">
-              {(data?.funnel ?? []).map((stage, index) => (
-                <div
-                  key={stage.key}
-                  className="relative rounded-md border bg-background/30 p-3"
-                >
-                  <Badge variant="outline" className="mb-3 text-[10px]">
-                    {stage.source}
-                  </Badge>
-                  <p className="min-h-10 text-xs font-medium">{stage.label}</p>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums">
-                    {formatNumber(stage.value)}
-                  </p>
-                  <p className="mt-2 text-[11px] text-muted-foreground">
-                    {stage.previousRate == null
-                      ? "Entrada do funil"
-                      : `${formatPercentage(stage.previousRate)} da etapa anterior`}
-                  </p>
-                  {index < (data?.funnel.length ?? 0) - 1 && (
-                    <span className="absolute -right-2.5 top-1/2 z-10 text-muted-foreground">
-                      →
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
+<PerformanceSummarySections />
+<OrganizationHeading>FATURAMENTO × INVESTIMENTO</OrganizationHeading>
+<div className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
         <Card>
           <CardContent className="p-5">
             <SectionHeader
@@ -1199,7 +1135,7 @@ export default function PerformancePage() {
                   fillOpacity={0.16}
                   stroke="var(--color-revenue)"
                   strokeWidth={2}
-                />
+                 name="Faturamento" />
                 <Area
                   dataKey="attributedRevenue"
                   type="monotone"
@@ -1215,7 +1151,7 @@ export default function PerformancePage() {
                   fillOpacity={0.08}
                   stroke="var(--color-spend)"
                   strokeWidth={2}
-                />
+                 name="Investimento" />
                 <ChartLegend content={<ChartLegendContent />} />
               </AreaChart>
             </ChartContainer>
@@ -1261,6 +1197,258 @@ export default function PerformancePage() {
           </CardContent>
         </Card>
       </div>
+<OrganizationHeading>AQUISIÇÃO × RETENÇÃO</OrganizationHeading>
+<Card>
+        <CardContent className="p-5">
+          <SectionHeader
+            title="Novos, recorrentes e reativados"
+            description="Coorte pela última compra concluída antes da 1ª compra que a mídia influenciou. Sem compra anterior = novo · até 90 dias = recorrente · acima = reativado."
+          />
+          {attributionQuery.isLoading ? (
+            <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
+          ) : isVestiWithoutUpZero ? (
+            <Alert className="mt-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Não disponível para este cliente</AlertTitle>
+              <AlertDescription>
+                Essa seção usa dados de clique da UpZero, que este cliente (Vesti nativo) não tem configurado.
+              </AlertDescription>
+            </Alert>
+          ) : attributionQuery.isError ? (
+            <Alert variant="destructive" className="mt-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Não foi possível carregar a atribuição</AlertTitle>
+              <AlertDescription>
+                Tente novamente em alguns instantes.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <>
+              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-3">
+                {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
+                  const summary = attributionQuery.data?.cohortSummary.find(
+                    (c) => c.cohort === cohort,
+                  );
+                  const totalClientes = attributionQuery.data?.influencedCustomers ?? 0;
+                  const pct =
+                    totalClientes > 0 && summary
+                      ? (summary.clientes / totalClientes) * 100
+                      : 0;
+                  return (
+                    <GlassMetricCard key={cohort} label={COHORT_LABEL[cohort]} value={<>{formatNumber(summary?.clientes ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">
+                          {formatPercentage(pct)}
+                        </span></>}  />
+                  );
+                })}
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Coorte</TableHead>
+                      <TableHead className="text-right">Clientes</TableHead>
+                      <TableHead className="text-right">Pedidos</TableHead>
+                      <TableHead className="text-right">Pedidos pagos</TableHead>
+                      <TableHead className="text-right">Fat. gerado</TableHead>
+                      <TableHead className="text-right">Fat. pago</TableHead>
+                      <TableHead className="text-right">Ticket médio</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
+                      const summary = attributionQuery.data?.cohortSummary.find(
+                        (c) => c.cohort === cohort,
+                      );
+                      return (
+                        <TableRow key={cohort}>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={COHORT_BADGE_CLASS[cohort]}
+                            >
+                              {COHORT_LABEL[cohort]}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(summary?.clientes ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(summary?.pedidos ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(summary?.pedidosPagos ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(summary?.faturamentoGerado ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(summary?.faturamentoPago ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(summary?.ticketMedio ?? 0)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {(() => {
+                      const rows = attributionQuery.data?.cohortSummary ?? [];
+                      const totalPedidos = rows.reduce((s, r) => s + r.pedidos, 0);
+                      const totalPedidosPagos = rows.reduce((s, r) => s + r.pedidosPagos, 0);
+                      const totalFatPago = rows.reduce((s, r) => s + r.faturamentoPago, 0);
+                      const totalFatGerado = attributionQuery.data?.influencedTotal ?? 0;
+                      return (
+                        <TableRow className="bg-muted/30 font-semibold">
+                          <TableCell>Total</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(attributionQuery.data?.influencedCustomers ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(totalPedidos)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(totalPedidosPagos)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(totalFatGerado)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(totalFatPago)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(totalPedidos > 0 ? totalFatGerado / totalPedidos : 0)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })()}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+<section className="space-y-4">
+        <SectionHeader
+          title="CONCILIAÇÃO FINANCEIRA"
+          description="Resultado oficial do ERP conciliado com mídia e atribuição do e-commerce."
+        />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {[1, 2, 4, 5, 6, 7].map((index) => { const metric = financialMetrics[index]; return (
+            <DashboardKpiCard
+              key={metric.label}
+              {...metric}
+              change={null}
+              changeLabel=""
+              sparkValues={[]}
+              ringColor={metric.sparkColor}
+              isLoading={isLoading}
+              testId={`performance-financial-kpi-${index}`}
+              valueAccent={index === 0}
+            />
+          ); })}
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <SectionHeader
+          title="Aquisição e clientes"
+          description="Eficiência da mídia até o comprador identificado no ERP."
+        />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {acquisitionMetrics.map((metric, index) => (
+            <DashboardKpiCard
+              key={metric.label}
+              {...metric}
+              change={null}
+              changeLabel=""
+              sparkValues={[]}
+              ringColor={metric.sparkColor}
+              isLoading={isLoading}
+              testId={`performance-acquisition-kpi-${index}`}
+            />
+          ))}
+        </div>
+      </section>
+
+      <Card>
+        <CardContent className="p-5">
+          <SectionHeader
+            title="Qualidade e conciliação dos dados"
+            description="Cobertura real das chaves necessárias para calcular atribuição, margem e ROI."
+          />
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {(data?.quality ?? []).map((item) => (
+              <div
+                key={item.key}
+                className="rounded-md border bg-background/30 p-4"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium">{displayLabel(item.label)}</p>
+                  <Badge
+                    variant="outline"
+                    className={
+                      item.status === "good"
+                        ? "border-emerald-500/30 text-emerald-400"
+                        : item.status === "attention"
+                          ? "border-amber-500/30 text-amber-400"
+                          : "border-red-500/30 text-red-400"
+                    }
+                  >
+                    {formatPercentage(item.value)}
+                  </Badge>
+                </div>
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={
+                      item.status === "good"
+                        ? "h-full bg-emerald-500"
+                        : item.status === "attention"
+                          ? "h-full bg-amber-500"
+                          : "h-full bg-red-500"
+                    }
+                    style={{
+                      width: `${Math.min(100, Math.max(0, item.value))}%`,
+                    }}
+                  />
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {item.detail}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-4">
+            {(data?.reconciliation ?? []).map((item) => (
+              <GlassMetricCard key={item.label} label={item.label} value={<>{formatNumber(item.value)}</>} footer={<div className="space-y-2"><p className="mt-1 text-xs text-muted-foreground">
+                  {item.detail}
+                </p></div>} />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-5">
+          <SectionHeader
+            title="Funil consolidado"
+            description="A origem de cada etapa é indicada porque cliques, eventos do site e pedidos do ERP possuem bases diferentes."
+          />
+          <div className="mt-5 overflow-x-auto">
+            <div className="up-funnel-grid">
+              {(data?.funnel ?? []).map((stage, index) => (
+                <GlassMetricCard key={stage.key} label={stage.label} value={stage.value}
+                  footer={<div className="space-y-2">
+                    <Badge variant="outline">{stage.source}</Badge>
+                    <p className="text-xs text-muted-foreground">{stage.previousRate == null ? "Entrada do funil" : `${formatPercentage(stage.previousRate)} da etapa anterior`}</p>
+                    {index < (data?.funnel.length ?? 0) - 1 && <span className="block text-center text-muted-foreground">→</span>}
+                  </div>} />
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+
 
       <Card>
         <CardContent className="p-5">
@@ -1621,53 +1809,12 @@ export default function PerformancePage() {
                 </Alert>
               )}
               <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-5">
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Pedidos no período
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatNumber(filteredStats.pedidosNoPeriodo)}
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Valor total
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatCurrency(filteredStats.valorTotal)}
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Pedidos atribuídos
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatNumber(filteredStats.pedidosAtribuidos)}
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Receita atribuída
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatCurrency(filteredStats.receitaAtribuida)}{" "}
-                    <span className="text-xs font-normal text-muted-foreground">
-                      {formatPercentage(
-                        filteredStats.valorTotal > 0
-                          ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100
-                          : 0,
-                      )}
-                    </span>
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Faturamento pago atribuído
-                  </p>
-                  <p className="mt-1 text-lg font-semibold text-primary">
-                    {formatCurrency(filteredStats.faturamentoPago)}
-                  </p>
-                </div>
+                <GlassMetricCard  label="Pedidos no período" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>}  />
+                <GlassMetricCard  label="Valor total" value={<>{formatCurrency(filteredStats.valorTotal)}</>}  />
+                <GlassMetricCard  label="Pedidos atribuídos" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>}  />
+                <GlassMetricCard label="Receita atribuída" value={formatCurrency(filteredStats.receitaAtribuida)}
+                  sub={[{label: "Participação no valor total", value: formatPercentage(filteredStats.valorTotal > 0 ? filteredStats.receitaAtribuida / filteredStats.valorTotal * 100 : 0)}]} />
+                <GlassMetricCard  label="Faturamento pago atribuído" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>}  />
               </div>
               <div className="mt-4 overflow-x-auto">
                 <Table>
@@ -1744,143 +1891,7 @@ export default function PerformancePage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="p-5">
-          <SectionHeader
-            title="Novos, recorrentes e reativados"
-            description="Coorte pela última compra concluída antes da 1ª compra que a mídia influenciou. Sem compra anterior = novo · até 90 dias = recorrente · acima = reativado."
-          />
-          {attributionQuery.isLoading ? (
-            <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
-          ) : isVestiWithoutUpZero ? (
-            <Alert className="mt-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Não disponível para este cliente</AlertTitle>
-              <AlertDescription>
-                Essa seção usa dados de clique da UpZero, que este cliente (Vesti nativo) não tem configurado.
-              </AlertDescription>
-            </Alert>
-          ) : attributionQuery.isError ? (
-            <Alert variant="destructive" className="mt-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Não foi possível carregar a atribuição</AlertTitle>
-              <AlertDescription>
-                Tente novamente em alguns instantes.
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <>
-              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-3">
-                {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
-                  const summary = attributionQuery.data?.cohortSummary.find(
-                    (c) => c.cohort === cohort,
-                  );
-                  const totalClientes = attributionQuery.data?.influencedCustomers ?? 0;
-                  const pct =
-                    totalClientes > 0 && summary
-                      ? (summary.clientes / totalClientes) * 100
-                      : 0;
-                  return (
-                    <div key={cohort} className="bg-card px-4 py-3">
-                      <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                        {COHORT_LABEL[cohort]}
-                      </p>
-                      <p className="mt-1 text-lg font-semibold">
-                        {formatNumber(summary?.clientes ?? 0)}{" "}
-                        <span className="text-xs font-normal text-muted-foreground">
-                          {formatPercentage(pct)}
-                        </span>
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-4 overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Coorte</TableHead>
-                      <TableHead className="text-right">Clientes</TableHead>
-                      <TableHead className="text-right">Pedidos</TableHead>
-                      <TableHead className="text-right">Pedidos pagos</TableHead>
-                      <TableHead className="text-right">Fat. gerado</TableHead>
-                      <TableHead className="text-right">Fat. pago</TableHead>
-                      <TableHead className="text-right">Ticket médio</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
-                      const summary = attributionQuery.data?.cohortSummary.find(
-                        (c) => c.cohort === cohort,
-                      );
-                      return (
-                        <TableRow key={cohort}>
-                          <TableCell>
-                            <Badge
-                              variant="outline"
-                              className={COHORT_BADGE_CLASS[cohort]}
-                            >
-                              {COHORT_LABEL[cohort]}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(summary?.clientes ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(summary?.pedidos ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(summary?.pedidosPagos ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(summary?.faturamentoGerado ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(summary?.faturamentoPago ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(summary?.ticketMedio ?? 0)}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                    {(() => {
-                      const rows = attributionQuery.data?.cohortSummary ?? [];
-                      const totalPedidos = rows.reduce((s, r) => s + r.pedidos, 0);
-                      const totalPedidosPagos = rows.reduce((s, r) => s + r.pedidosPagos, 0);
-                      const totalFatPago = rows.reduce((s, r) => s + r.faturamentoPago, 0);
-                      const totalFatGerado = attributionQuery.data?.influencedTotal ?? 0;
-                      return (
-                        <TableRow className="bg-muted/30 font-semibold">
-                          <TableCell>Total</TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(attributionQuery.data?.influencedCustomers ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(totalPedidos)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(totalPedidosPagos)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(totalFatGerado)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(totalFatPago)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(totalPedidos > 0 ? totalFatGerado / totalPedidos : 0)}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })()}
-                  </TableBody>
-                </Table>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+
     </div>
   );
 }

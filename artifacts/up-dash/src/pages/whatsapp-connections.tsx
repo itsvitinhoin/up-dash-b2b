@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -873,7 +874,7 @@ export default function WhatsappConnectionsPage() {
             </div>
             <div className="rounded-md border border-border bg-muted/20 p-3">
               <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-                Phone Number ID
+                ID do número de telefone
               </p>
               <p className="mt-1 truncate font-mono text-xs">
                 {integration?.phoneNumberId ?? "-"}
@@ -898,35 +899,9 @@ export default function WhatsappConnectionsPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 md:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-primary/10 p-2 text-primary">
-              <PlugZap className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Conexões</p>
-              <p className="text-2xl font-semibold">
-                {connectedIntegrations.length}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-emerald-500/10 p-2 text-emerald-500">
-              <Smartphone className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">
-                Números cadastrados
-              </p>
-              <p className="text-2xl font-semibold">
-                {data?.phoneNumbers?.length ?? 0}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="up-metric-grid">
+        <GlassMetricCard icon={PlugZap}  label="Conexões" value={<>{connectedIntegrations.length}</>}  />
+        <GlassMetricCard icon={Smartphone}  label="Números cadastrados" value={<>{data?.phoneNumbers?.length ?? 0}</>}  />
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <div
@@ -998,7 +973,7 @@ export default function WhatsappConnectionsPage() {
         <CardContent className="space-y-3">
           <div className="rounded-md border border-border bg-muted/20 p-3">
             <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-              Callback URL
+              URL de retorno
             </p>
             <p className="mt-1 break-all font-mono text-sm">
               {data?.callbackUrl ?? "-"}
@@ -1084,18 +1059,8 @@ export default function WhatsappConnectionsPage() {
             )}
 
             <div className="grid gap-2 text-xs sm:grid-cols-4">
-              <div className="rounded-md border border-border bg-muted/20 p-3">
-                <p className="text-muted-foreground">Mensagens importadas</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {data.historySync.importedMessages.toLocaleString("pt-BR")}
-                </p>
-              </div>
-              <div className="rounded-md border border-border bg-muted/20 p-3">
-                <p className="text-muted-foreground">Eventos de histórico</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {data.historySync.historyEvents.toLocaleString("pt-BR")}
-                </p>
-              </div>
+              <GlassMetricCard  label="Mensagens importadas" value={<>{data.historySync.importedMessages.toLocaleString("pt-BR")}</>}  />
+              <GlassMetricCard  label="Eventos de histórico" value={<>{data.historySync.historyEvents.toLocaleString("pt-BR")}</>}  />
               <div className="rounded-md border border-border bg-muted/20 p-3">
                 <p className="text-muted-foreground">Último lote</p>
                 <p className="mt-1 font-medium">
@@ -1298,7 +1263,7 @@ export default function WhatsappConnectionsPage() {
                         </div>
                         <div className="rounded-md border border-border bg-muted/20 p-3">
                           <p className="text-[11px] font-mono uppercase text-muted-foreground">
-                            Phone ID
+                            ID do telefone
                           </p>
                           <p className="mt-1 truncate font-mono text-xs">
                             {phone.phoneNumberId}

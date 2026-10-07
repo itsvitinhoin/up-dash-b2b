@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNowStrict } from "date-fns";
@@ -210,40 +211,10 @@ export default function WhatsappConversationsPage() {
 
   return (
     <div className="space-y-4" data-testid="page-whatsapp-conversations">
-      <div className="grid gap-3 md:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-primary/10 p-2 text-primary">
-              <MessageCircle className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Conversas</p>
-              <p className="text-2xl font-semibold">{data?.total ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-amber-500/10 p-2 text-amber-500">
-              <Bell className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Mensagens aguardando</p>
-              <p className="text-2xl font-semibold">{totalUnread}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-md bg-emerald-500/10 p-2 text-emerald-500">
-              <CheckCircle2 className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Encerradas</p>
-              <p className="text-2xl font-semibold">{data?.data.filter((row) => row.status === "closed").length ?? 0}</p>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="up-metric-grid">
+        <GlassMetricCard icon={MessageCircle}  label="Conversas" value={<>{data?.total ?? 0}</>}  />
+        <GlassMetricCard icon={Bell}  label="Mensagens aguardando" value={<>{totalUnread}</>}  />
+        <GlassMetricCard icon={CheckCircle2}  label="Encerradas" value={<>{data?.data.filter((row) => row.status === "closed").length ?? 0}</>}  />
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <div className="rounded-md bg-sky-500/10 p-2 text-sky-500">
@@ -300,7 +271,7 @@ export default function WhatsappConversationsPage() {
               ) : (
                 <div className="space-y-1">
                   {filteredConversations.map((conversation) => (
-                    <button
+                    <Button variant="outline" size="sm"
                       key={conversation.id}
                       type="button"
                       onClick={() => setSelectedConversationId(conversation.id)}
@@ -330,7 +301,7 @@ export default function WhatsappConversationsPage() {
                         <Badge variant="outline">{WHATSAPP_STATUS_LABEL[conversation.status]}</Badge>
                         <span className="text-[11px] text-muted-foreground">{conversationTime(conversation.updatedAt)}</span>
                       </div>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               )}

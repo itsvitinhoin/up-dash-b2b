@@ -71,7 +71,7 @@ export default function NotificationsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <p className="text-sm text-muted-foreground">
-            {data?.unreadCount ?? 0} unread · {data?.data.length ?? 0} total
+            {data?.unreadCount ?? 0} não lidas · {data?.data.length ?? 0} total
           </p>
         </div>
         <Button
@@ -82,7 +82,7 @@ export default function NotificationsPage() {
           data-testid="notifications-mark-all"
         >
           <CheckCheck className="h-4 w-4 mr-1.5" />
-          Mark all as read
+          Marcar todas como lidas
         </Button>
       </div>
 
@@ -95,8 +95,8 @@ export default function NotificationsPage() {
       ) : !data || data.data.length === 0 ? (
         <EmptyState
           icon={BellOff}
-          title="No notifications yet"
-          description="Anomalies, top movers, and rollups will appear here as we detect them."
+          title="Nenhuma notificação"
+          description="Anomalias, destaques e consolidações aparecerão aqui conforme forem identificados."
         />
       ) : (
         <motion.ul
@@ -140,7 +140,7 @@ export default function NotificationsPage() {
                             })
                           }
                         >
-                          Mark as read
+                          Marcar como lida
                         </Button>
                       )}
                     </div>

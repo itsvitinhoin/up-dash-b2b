@@ -1,3 +1,10 @@
+import { displayLabel } from "@/lib/display-label";
+import { usePurchaseInsights } from "@/lib/purchase-insights";
+import { CohortHeatmap } from "@/components/cohort-heatmap";
+import { PurchaseInsightsPanels } from "@/components/purchase-insights";
+import { precedingPeriod } from "@/lib/metric-comparison";
+import { GlassMetricCard } from "@/components/glass-metric-card";
+import { OrganizationHeading } from "@/components/metric-section";
 // Submenu Performance > Recompra — ver "00 - Especificação técnica.pdf"
 // (v1.0, 07/09/2026) pra regras de dados completas.
 //
@@ -6,7 +13,7 @@
 // Vendedoras/filtros a dado real (ver plano salvo, "greedy-fluttering-
 // cupcake"). Fase 5 (23/09/2026) ligou os 3 gráficos mensais, "Intervalo
 // entre compras", Coorte e Funil de retenção -- nada mock resta na página.
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { customFetch } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
@@ -119,8 +126,8 @@ type DetailRow = {
 // (barra escura = série principal, linha/barra clara = secundária) — antes
 // cada gráfico tinha uma cor própria (verde/violeta/laranja), inconsistente
 // entre si. Padroniza aqui pra reaproveitar em todos os 5 gráficos.
-const CHART_PRIMARY = "#3b82f6";
-const CHART_SECONDARY = "#93c5fd";
+const CHART_PRIMARY = "#5b8dff";
+const CHART_SECONDARY = "#afc4ff";
 
 const CHART_TOOLTIP_STYLE = {
   background: "hsl(var(--card))",
@@ -159,7 +166,8 @@ function formatDelta(value: number, type: DeltaType) {
 // usam variação percentual; percentuais de composição (%recorrente/
 // %reativado) usam diferença em pontos percentuais; dias usam diferença
 // absoluta. Usado agora que os Blocos 1-4 têm P2 real vindo do backend.
-function computeDelta(p1: number, p2: number, type: DeltaType, formatter: (n: number) => string): { value: number; type: DeltaType; comparisonValue: string } {
+function computeDelta(p1: number, p2: number, type: DeltaType, formatter: (n: number) => string) {
+  if (type === "percent" && p2 === 0 && p1 !== 0) return undefined;
   const value = type === "percent" ? (p2 === 0 ? 0 : ((p1 - p2) / p2) * 100) : p1 - p2;
   return { value, type, comparisonValue: formatter(p2) };
 }
@@ -187,12 +195,16 @@ function RecompraBlockCard({
   comparisonValue,
   stats,
   comparing,
+  rawValue, previousValue, formatValue = formatNumber,
 }: {
   icon: LucideIcon;
   iconClass: string;
   title: string;
   mainLabel: string;
   mainValue: string;
+  rawValue?: number | null;
+  previousValue?: number | null;
+  formatValue?: (value: number) => string;
   change: number | null;
   changeType?: DeltaType;
   changeLabel: string;
@@ -201,66 +213,19 @@ function RecompraBlockCard({
   comparing: boolean;
 }) {
   const mainDelta = change !== null ? formatDelta(change, changeType) : null;
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-2 border-b border-border pb-2.5">
-          <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${iconClass}`}>
-            <Icon className="h-3.5 w-3.5" />
-          </div>
-          <span className="text-sm font-semibold leading-tight">{title}</span>
-        </div>
-
-        <div className="flex flex-col items-center gap-1 border-b border-border py-3 text-center">
-          <span className="text-xs text-muted-foreground">{mainLabel}</span>
-          <span className="text-2xl font-bold tabular-nums">{mainValue}</span>
-          {mainDelta && (
-            <span
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-                mainDelta.isUp ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
-              }`}
-            >
-              {mainDelta.text} {changeLabel}
-            </span>
-          )}
-          {/* Pedido explícito (15/09/2026): no modo comparação, mostrar o
-              VALOR real do período anterior, não só a variação percentual. */}
-          {comparing && comparisonValue && (
-            <span className="text-[11px] text-muted-foreground">
-              Comparação: {comparisonValue} (período anterior)
-            </span>
-          )}
-        </div>
-
-        {/* Empilhado (label+valor por linha, largura cheia do card) em vez
-            de 3 colunas lado a lado -- com 4 blocos por linha o card fica
-            estreito, e 3 colunas divididas cortavam o texto dos sub-rótulos.
-            Com "Comparar período" ativo, cada linha ganha delta% + valor
-            comparativo real na mesma linha embaixo do valor. */}
-        <div className="flex flex-col gap-1.5 pt-2.5">
-          {stats.map((stat) => {
-            const delta = comparing && stat.delta ? formatDelta(stat.delta.value, stat.delta.type) : null;
-            return (
-              <div key={stat.label} className="flex items-center justify-between gap-3">
-                <span className="flex min-w-0 items-center gap-1.5 text-[11px] leading-tight text-muted-foreground">
-                  <stat.icon className="h-3 w-3 shrink-0" />
-                  {stat.label}
-                </span>
-                <span className="flex shrink-0 flex-col items-end">
-                  <span className="text-xs font-semibold tabular-nums">{stat.value}</span>
-                  {delta && stat.delta && (
-                    <span className={`text-[10px] font-medium tabular-nums ${delta.isUp ? "text-emerald-400" : "text-red-400"}`}>
-                      {delta.text} <span className="text-muted-foreground">· Comp.: {stat.delta.comparisonValue}</span>
-                    </span>
-                  )}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  );
+  return (<GlassMetricCard label={title} value={mainValue} icon={Icon}
+  comparisonValue={rawValue} previousValue={previousValue} format={formatValue} info={mainLabel} source="Ecommerce · ERP · recompra" changeLabel={changeLabel}
+  footer={<div className="space-y-2">
+    {stats.map((stat) => {
+      const delta = comparing && stat.delta ? formatDelta(stat.delta.value, stat.delta.type) : null;
+      return <div key={stat.label} className="grid min-h-[34px] grid-cols-[minmax(0,1fr)_auto] items-start gap-2 text-xs">
+        <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground"><stat.icon className="h-3 w-3 shrink-0" />{displayLabel(stat.label)}</span>
+        <span className="min-w-0 text-right font-medium tabular-nums">{stat.value}
+          {delta && stat.delta && <span className={delta.isUp ? "block text-xs text-[var(--up-good)]" : "block text-xs text-[var(--up-bad)]"}>{delta.text} <span className="text-muted-foreground">· Comp.: {stat.delta.comparisonValue}</span></span>}
+        </span>
+      </div>;
+    })}
+  </div>} />);
 }
 
 // Cabeçalho de coluna ordenável (visual só, por enquanto — sem estado de
@@ -268,13 +233,13 @@ function RecompraBlockCard({
 function SortableHead({ children, align }: { children: ReactNode; align?: "right" }) {
   return (
     <TableHead className={align === "right" ? "text-right" : undefined}>
-      <button
+      <Button variant="ghost" size="sm"
         type="button"
         className={`inline-flex items-center gap-1 hover:text-foreground ${align === "right" ? "flex-row-reverse" : ""}`}
       >
         {children}
         <ArrowUpDown className="h-3 w-3 opacity-50" />
-      </button>
+      </Button>
     </TableHead>
   );
 }
@@ -627,21 +592,6 @@ function useRecompraMonthlyTrend(filters: RecompraFilterParams) {
 // Fase 5 -- Coorte + Funil de retenção: "visão geral", sem os filtros
 // Status/Tipo/Origem/Estado/Vendedora da página (decisão do usuário) --
 // por isso o hook não recebe nenhum parâmetro além do clientId.
-type RecompraFunnelStepApi = { compra: string; clientes: number; retencao: number };
-type RecompraCohortRowApi = { mes: string; clientes: number; d30: number | null; d60: number | null; d90: number | null; d180: number | null; hoje: number | null };
-type RecompraHistoryInsightsResponse = { funnel: RecompraFunnelStepApi[]; cohort: RecompraCohortRowApi[] };
-
-function useRecompraHistoryInsights() {
-  const { clientId, enabled } = useRecompraClientId();
-  return useQuery<RecompraHistoryInsightsResponse>({
-    queryKey: ["recompra-history-insights", clientId],
-    queryFn: () => customFetch(buildRecompraUrl("/api/analytics/recompra/history-insights", { clientId })),
-    enabled,
-    staleTime: 120_000,
-    refetchOnWindowFocus: false,
-  });
-}
-
 // N/A explícito (PDF seção 21/23: denominador zero/ausência de base não
 // vira 0 silencioso) em vez de formatar null como "R$0,00"/"0".
 function formatMaybeCurrency(value: number | null): string {
@@ -675,17 +625,19 @@ export default function PerformanceRecompraPage() {
 
   const dateFrom = format(range.from, "yyyy-MM-dd");
   const dateTo = format(range.to, "yyyy-MM-dd");
-  const compareDateFrom = comparing ? format(comparisonRange.from, "yyyy-MM-dd") : undefined;
-  const compareDateTo = comparing ? format(comparisonRange.to, "yyyy-MM-dd") : undefined;
+  const defaultComparison = precedingPeriod(dateFrom, dateTo);
+  const compareDateFrom = comparing ? format(comparisonRange.from, "yyyy-MM-dd") : defaultComparison.dateFrom;
+  const compareDateTo = comparing ? format(comparisonRange.to, "yyyy-MM-dd") : defaultComparison.dateTo;
   const recompraFilters: RecompraFilterParams = { status, tipo, estado, vendedora, origem };
   const { data: recompraData, isLoading: blocksLoading } = useRecompraDashboard(dateFrom, dateTo, recompraFilters, compareDateFrom, compareDateTo);
   const { data: detailData, isLoading: detailLoading } = useRecompraDetail(dateFrom, dateTo, recompraFilters);
   const { data: sellersData, isLoading: sellersLoading } = useRecompraSellers(dateFrom, dateTo, status, tipo, origem, estado);
-  const blocksP2 = comparing ? recompraData?.blocksP2 ?? null : null;
+  const blocksP2 = recompraData?.blocksP2 ?? null;
   // Fase 5 -- gráficos mensais (janela fixa, reage aos filtros da página) e
   // Coorte/Funil (visão geral, sem filtro nenhum).
   const { data: monthlyTrendData, isLoading: monthlyTrendLoading } = useRecompraMonthlyTrend(recompraFilters);
-  const { data: historyInsightsData, isLoading: historyInsightsLoading } = useRecompraHistoryInsights();
+  const { data: historyInsightsData, isLoading: historyInsightsLoading, isError: historyInsightsError } = usePurchaseInsights();
+  const { data: previousHistoryInsights } = usePurchaseInsights("previous");
 
   const revenueByMonth = useMemo(
     () => (monthlyTrendData?.months ?? []).map((m) => ({ month: formatMonthLabel(m.month), faturamento: m.faturamento, ticket: m.vendas > 0 ? m.faturamento / m.vendas : 0 })),
@@ -845,56 +797,58 @@ export default function PerformanceRecompraPage() {
 
       {/* Blocos 1-4 — dado real (Fase 1), com P2 real quando "Comparar
           período" está ativo (fórmulas de variação do PDF seção 19.1). */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <RecompraBlockCard
+      <OrganizationHeading>RESULTADO DA RECOMPRA</OrganizationHeading><div className="up-metric-grid" data-testid="recompra-kpi-grid"><section aria-label="RECOMPRA"><RecompraBlockCard
           icon={DollarSign}
           iconClass="bg-blue-500/15 text-blue-400"
           title="Resultado de recompra"
           mainLabel="Faturamento de recompra"
           mainValue={blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.recompra.faturamento ?? null)}
-          change={blocksP2 ? computeDelta(recompraData!.blocks.recompra.faturamento, blocksP2.recompra.faturamento, "percent", formatCurrencySmart).value : null}
+          change={blocksP2 ? computeDelta(recompraData!.blocks.recompra.faturamento, blocksP2.recompra.faturamento, "percent", formatCurrencySmart)?.value ?? null : null}
           comparisonValue={blocksP2 ? formatCurrencySmart(blocksP2.recompra.faturamento) : undefined}
+          rawValue={recompraData?.blocks.recompra.faturamento ?? null} previousValue={blocksP2?.recompra.faturamento} formatValue={formatCurrencySmart}
           changeLabel="vs. período anterior"
-          comparing={comparing}
+          comparing={Boolean(blocksP2)}
           stats={[
             { icon: ShoppingBag, label: "Vendas de recompra", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.recompra.vendas ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.recompra.vendas, blocksP2.recompra.vendas, "percent", formatNumber) : undefined },
             { icon: Receipt, label: "Ticket médio", value: blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.recompra.ticketMedio ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.recompra.ticketMedio, blocksP2.recompra.ticketMedio, "percent", formatCurrencySmart) : undefined },
             { icon: Users, label: "Clientes em recompra", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.recompra.clientes ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.recompra.clientes, blocksP2.recompra.clientes, "percent", formatNumber) : undefined },
           ]}
-        />
-        <RecompraBlockCard
+        /></section>
+<section aria-label="CLIENTES RECORRENTES"><RecompraBlockCard
           icon={UserCheck}
           iconClass="bg-emerald-500/15 text-emerald-400"
           title="Clientes recorrentes"
           mainLabel="Clientes recorrentes"
           mainValue={blocksLoading ? "…" : formatNumber(recompraData?.blocks.recorrentes.clientes ?? 0)}
-          change={blocksP2 ? computeDelta(recompraData!.blocks.recorrentes.clientes, blocksP2.recorrentes.clientes, "percent", formatNumber).value : null}
+          change={blocksP2 ? computeDelta(recompraData!.blocks.recorrentes.clientes, blocksP2.recorrentes.clientes, "percent", formatNumber)?.value ?? null : null}
           comparisonValue={blocksP2 ? formatNumber(blocksP2.recorrentes.clientes) : undefined}
+          rawValue={recompraData?.blocks.recorrentes.clientes ?? null} previousValue={blocksP2?.recorrentes.clientes} formatValue={formatNumber}
           changeLabel="vs. período anterior"
-          comparing={comparing}
+          comparing={Boolean(blocksP2)}
           stats={[
             { icon: ShoppingBag, label: "Vendas recorrentes", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.recorrentes.vendas ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.recorrentes.vendas, blocksP2.recorrentes.vendas, "percent", formatNumber) : undefined },
             { icon: Wallet, label: "Faturamento recorrente", value: blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.recorrentes.faturamento ?? null), delta: blocksP2 ? computeDelta(recompraData!.blocks.recorrentes.faturamento, blocksP2.recorrentes.faturamento, "percent", formatCurrencySmart) : undefined },
             { icon: Receipt, label: "Ticket médio recorrente", value: blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.recorrentes.ticketMedio ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.recorrentes.ticketMedio, blocksP2.recorrentes.ticketMedio, "percent", formatCurrencySmart) : undefined },
           ]}
-        />
-        <RecompraBlockCard
+        /></section>
+<section aria-label="CLIENTES REATIVADOS"><RecompraBlockCard
           icon={RotateCcw}
           iconClass="bg-violet-500/15 text-violet-400"
           title="Clientes reativados"
           mainLabel="Clientes reativados"
           mainValue={blocksLoading ? "…" : formatNumber(recompraData?.blocks.reativados.clientes ?? 0)}
-          change={blocksP2 ? computeDelta(recompraData!.blocks.reativados.clientes, blocksP2.reativados.clientes, "percent", formatNumber).value : null}
+          change={blocksP2 ? computeDelta(recompraData!.blocks.reativados.clientes, blocksP2.reativados.clientes, "percent", formatNumber)?.value ?? null : null}
           comparisonValue={blocksP2 ? formatNumber(blocksP2.reativados.clientes) : undefined}
+          rawValue={recompraData?.blocks.reativados.clientes ?? null} previousValue={blocksP2?.reativados.clientes} formatValue={formatNumber}
           changeLabel="vs. período anterior"
-          comparing={comparing}
+          comparing={Boolean(blocksP2)}
           stats={[
             { icon: ShoppingBag, label: "Vendas reativadas", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.reativados.vendas ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.reativados.vendas, blocksP2.reativados.vendas, "percent", formatNumber) : undefined },
             { icon: Wallet, label: "Faturamento reativado", value: blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.reativados.faturamento ?? null), delta: blocksP2 ? computeDelta(recompraData!.blocks.reativados.faturamento, blocksP2.reativados.faturamento, "percent", formatCurrencySmart) : undefined },
             { icon: Receipt, label: "Ticket médio reativado", value: blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.reativados.ticketMedio ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.reativados.ticketMedio, blocksP2.reativados.ticketMedio, "percent", formatCurrencySmart) : undefined },
           ]}
-        />
-        <RecompraBlockCard
+        /></section>
+<section aria-label="CICLO DE RECOMPRA"><RecompraBlockCard
           icon={Timer}
           iconClass="bg-sky-500/15 text-sky-400"
           title="Ciclo de recompra"
@@ -903,15 +857,15 @@ export default function PerformanceRecompraPage() {
           change={blocksP2 ? maybeDelta(recompraData!.blocks.ciclo.tempoMedioDias, blocksP2.ciclo.tempoMedioDias, "days", formatMaybeDays)?.value ?? null : null}
           changeType="days"
           comparisonValue={blocksP2 ? formatMaybeDays(blocksP2.ciclo.tempoMedioDias) : undefined}
+          rawValue={recompraData?.blocks.ciclo.tempoMedioDias ?? null} previousValue={blocksP2?.ciclo.tempoMedioDias} formatValue={formatMaybeDays}
           changeLabel="vs. período anterior"
-          comparing={comparing}
+          comparing={Boolean(blocksP2)}
           stats={[
             { icon: Hourglass, label: "Mediana entre compras", value: blocksLoading ? "…" : formatMaybeDays(recompraData?.blocks.ciclo.medianaDias ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.ciclo.medianaDias, blocksP2.ciclo.medianaDias, "days", formatMaybeDays) : undefined },
             { icon: UserCheck, label: "% recorrente", value: blocksLoading ? "…" : formatMaybePercentage(recompraData?.blocks.ciclo.pctRecorrente ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.ciclo.pctRecorrente, blocksP2.ciclo.pctRecorrente, "pp", formatMaybePercentage) : undefined },
             { icon: RotateCcw, label: "% reativado", value: blocksLoading ? "…" : formatMaybePercentage(recompraData?.blocks.ciclo.pctReativado ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.ciclo.pctReativado, blocksP2.ciclo.pctReativado, "pp", formatMaybePercentage) : undefined },
           ]}
-        />
-      </div>
+        /></section></div>
       {recompraData?.blocks.attributionUnavailable && (
         <p className="text-xs text-amber-500">
           Este cliente não tem chave UpZero configurada — Tipo=Anúncios não pode ser calculado (sem touchpoint pago pra atribuir) e os blocos/tabela abaixo estão vazios.
@@ -922,6 +876,8 @@ export default function PerformanceRecompraPage() {
           {recompraData.blocks.unmatchedErpCount} pedido(s) do ERP no período não puderam ser conciliados com um cliente identificado (sem CNPJ/e-mail/telefone batendo) e ficaram de fora dos blocos acima.
         </p>
       )}
+
+      <PurchaseInsightsPanels previousData={previousHistoryInsights} data={historyInsightsData} loading={historyInsightsLoading} error={historyInsightsError} />
 
       {/* Gráficos 1-3: séries mensais -- sempre os últimos 12 meses corridos
           até hoje (Fase 5), independente do período (P1) escolhido no topo.
@@ -1044,41 +1000,16 @@ export default function PerformanceRecompraPage() {
         </Card>
       </div>
 
+      <CohortHeatmap data={historyInsightsData?.monthlyCohort} loading={historyInsightsLoading} error={historyInsightsError} />
+
       {/* Gráfico 5: retenção por número de compra -- Coorte e Funil (Fase 5)
           são "visão geral", sem os filtros Status/Tipo/Origem/Estado/
           Vendedora da página (decisão do usuário). */}
+      <details className="up-cohort-legacy">
+        <summary>Ver retenção acumulada por prazo (30, 60, 90 e 180 dias)</summary>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Retenção por número de compra</CardTitle>
-        </CardHeader>
-        <CardContent className="h-80">
-          {historyInsightsLoading ? (
-            <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Carregando…</div>
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={retentionSteps} margin={{ top: 24, right: 8, left: 8, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="opacity-20" />
-                <XAxis dataKey="compra" fontSize={12} />
-                <YAxis yAxisId="left" fontSize={12} />
-                <YAxis yAxisId="right" orientation="right" fontSize={12} tickFormatter={(v) => `${v}%`} />
-                <Tooltip formatter={chartTooltipFormatter} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={{ color: "hsl(var(--foreground))" }} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar yAxisId="left" dataKey="clientes" name="Clientes" fill={CHART_PRIMARY} radius={[3, 3, 0, 0]}>
-                  <LabelList dataKey="clientes" position="insideTop" fill="#fff" fontSize={12} formatter={(v: number) => formatNumber(v)} />
-                </Bar>
-                <Line yAxisId="right" dataKey="retencao" name="Retenção acumulada" stroke={CHART_SECONDARY} strokeWidth={2} dot={{ r: 4, fill: CHART_SECONDARY }}>
-                  <LabelList dataKey="retencao" position="top" fill={CHART_SECONDARY} fontSize={12} formatter={(v: number) => `${v}%`} />
-                </Line>
-              </ComposedChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Coorte */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Análise de coorte de recompra</CardTitle>
+          <CardTitle className="text-sm">Retenção acumulada por prazo</CardTitle>
         </CardHeader>
         <CardContent>
           {historyInsightsLoading ? (
@@ -1115,6 +1046,38 @@ export default function PerformanceRecompraPage() {
           )}
         </CardContent>
       </Card>
+      </details>
+<OrganizationHeading>PROGRESSÃO DE COMPRA</OrganizationHeading>
+<Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Retenção por número de compra</CardTitle>
+        </CardHeader>
+        <CardContent className="h-80">
+          {historyInsightsLoading ? (
+            <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Carregando…</div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={retentionSteps} margin={{ top: 24, right: 8, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="opacity-20" />
+                <XAxis dataKey="compra" fontSize={12} />
+                <YAxis yAxisId="left" fontSize={12} />
+                <YAxis yAxisId="right" orientation="right" fontSize={12} tickFormatter={(v) => `${v}%`} />
+                <Tooltip formatter={chartTooltipFormatter} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={{ color: "hsl(var(--foreground))" }} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Bar yAxisId="left" dataKey="clientes" name="Clientes" fill={CHART_PRIMARY} radius={[3, 3, 0, 0]}>
+                  <LabelList dataKey="clientes" position="insideTop" fill="#fff" fontSize={12} formatter={(v: number) => formatNumber(v)} />
+                </Bar>
+                <Line yAxisId="right" dataKey="retencao" name="Retenção acumulada" stroke={CHART_SECONDARY} strokeWidth={2} dot={{ r: 4, fill: CHART_SECONDARY }}>
+                  <LabelList dataKey="retencao" position="top" fill={CHART_SECONDARY} fontSize={12} formatter={(v: number) => `${v}%`} />
+                </Line>
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Coorte */}
+
 
       {/* Desempenho por vendedora — dado real (Fase 2). PDF seção 17: reage
           a Status/Estado/Vendedora, não recebe P2. */}
@@ -1210,7 +1173,7 @@ export default function PerformanceRecompraPage() {
                 {filteredDetailRows.map((row) => {
                   const isOpen = expandedRow === row.codigoPedido;
                   return (
-                    <>
+                    <Fragment key={row.codigoPedido}>
                       <TableRow
                         key={row.codigoPedido}
                         className="cursor-pointer"
@@ -1272,7 +1235,7 @@ export default function PerformanceRecompraPage() {
                           </TableCell>
                         </TableRow>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })}
                 {filteredDetailRows.length === 0 && (

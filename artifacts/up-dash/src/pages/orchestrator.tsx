@@ -1,3 +1,5 @@
+import { displayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRoute } from "wouter";
@@ -125,7 +127,7 @@ const clientTabs = [
   { id: "operacao", label: "Operação Comercial", icon: Workflow },
   { id: "automacoes", label: "Automações", icon: Bot },
   { id: "qualidade", label: "Qualidade", icon: ShieldCheck },
-  { id: "insights", label: "Insights", icon: Lightbulb },
+  { id: "insights", label: "Análises", icon: Lightbulb },
   { id: "simulador", label: "Simulador", icon: PlayCircle },
   { id: "logs", label: "Logs", icon: FileText },
 ] as const;
@@ -383,7 +385,7 @@ function ShellNav({ current }: { current: string }) {
           <Link key={item.id} href={item.href}>
             <Button variant={current === item.id ? "default" : "outline"} size="sm" className="shrink-0">
               <Icon className="mr-2 h-4 w-4" />
-              {item.label}
+              {displayLabel(item.label)}
             </Button>
           </Link>
         );
@@ -448,7 +450,7 @@ function OverviewPage() {
           change={12.5}
           changeLabel="vs. mês anterior"
           sparkValues={[2, 2, 3, 3, 4, 4]}
-          sparkColor="#60a5fa"
+          sparkColor="#afc4ff"
           sub={[
             { label: "IA ativa", value: String(brands.filter((brand) => brand.aiCommercialStatus === "active").length) },
             { label: "Em setup", value: String(brands.filter((brand) => brand.status === "setup").length) },
@@ -465,7 +467,7 @@ function OverviewPage() {
           change={18.2}
           changeLabel="vs. período anterior"
           sparkValues={[88, 96, 112, 129, 141, totalRegistrations]}
-          sparkColor="#a78bfa"
+          sparkColor="#5b8dff"
           sub={[
             { label: "Aprovados", value: formatNumber(brands.reduce((sum, brand) => sum + brand.approvedRegistrations, 0)) },
             { label: "Aguardando", value: formatNumber(Math.max(totalRegistrations - brands.reduce((sum, brand) => sum + brand.approvedRegistrations, 0), 0)) },
@@ -482,7 +484,7 @@ function OverviewPage() {
           change={14}
           changeLabel="vs. período anterior"
           sparkValues={[18, 21, 24, 25, 29, totalOrders]}
-          sparkColor="#34d399"
+          sparkColor="#87adff"
           sub={[
             { label: "Receita solicitada", value: money(totalRevenue) },
             { label: "Ticket médio", value: money(totalRevenue / Math.max(totalOrders, 1)) },
@@ -499,7 +501,7 @@ function OverviewPage() {
           change={4.8}
           changeLabel="vs. período anterior"
           sparkValues={[68, 72, 78, 81, 84, avgQuality]}
-          sparkColor="#38bdf8"
+          sparkColor="#afc4ff"
           ringValue={avgQuality}
           sub={[
             { label: "Handoffs", value: String(brands.reduce((sum, brand) => sum + brand.handoffs, 0)) },
@@ -664,7 +666,7 @@ function CrmPage({ compact = false, clientId }: { compact?: boolean; clientId?: 
             <div key={stage.id} className="w-[255px] shrink-0 rounded-lg border border-border bg-card">
               <div className="border-b border-border px-3 py-3">
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold">{stage.label}</h3>
+                  <h3 className="text-sm font-semibold">{displayLabel(stage.label)}</h3>
                   <Badge variant="outline">{cards.length}</Badge>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">{stage.description}</p>
@@ -751,7 +753,7 @@ function RegistrationsPage({ clientId }: { clientId?: string }) {
                   <TableCell className="font-medium">{row.customer}</TableCell>
                   <TableCell>{row.document}</TableCell>
                   <TableCell>{row.source}</TableCell>
-                  <TableCell><Badge variant={statusConfig.variant}>{statusConfig.label}</Badge></TableCell>
+                  <TableCell><Badge variant={statusConfig.variant}>{displayLabel(statusConfig.label)}</Badge></TableCell>
                   <TableCell>{row.owner}</TableCell>
                   <TableCell className="text-muted-foreground">{row.nextStep}</TableCell>
                   <TableCell>{dateTime(row.createdAt)}</TableCell>
@@ -1059,7 +1061,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                   <SelectContent>
                     {eventOptions.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
-                        {option.label} ({option.value})
+                        {displayLabel(option.label)} ({option.value})
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1075,14 +1077,14 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                   <SelectContent>
                     {availableTemplates.map((template) => (
                       <SelectItem key={`${template.id}-${template.language}`} value={`${template.name}||${template.language}`}>
-                        {template.name} · {template.language} · {template.status}
+                        {template.name} · {template.language} · {displayLabel(template.status)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Delay</Label>
+                <Label>Intervalo</Label>
                 <Input
                   type="number"
                   min={0}
@@ -1183,7 +1185,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                     <SelectContent>
                       {eventOptions.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
-                          {option.label} ({option.value})
+                          {displayLabel(option.label)} ({option.value})
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1212,7 +1214,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                     <SelectContent>
                       {availableTemplates.map((template) => (
                         <SelectItem key={`${template.id}-${template.language}`} value={`${template.name}||${template.language}`}>
-                          {template.name} · {template.language} · {template.status}
+                          {template.name} · {template.language} · {displayLabel(template.status)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1226,7 +1228,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Label>Delay</Label>
+                  <Label>Intervalo</Label>
                   <Input
                     type="number"
                     min={0}
@@ -1238,7 +1240,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-center text-xs">
                   <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{rule.enabled ? "ON" : "OFF"}</p><p className="text-muted-foreground">status</p></div>
-                  <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{rule.approval === "automatic_after_delay" ? "Auto" : "Review"}</p><p className="text-muted-foreground">envio</p></div>
+                  <div className="rounded-md border border-border p-2"><p className="font-semibold text-foreground">{rule.approval === "automatic_after_delay" ? "Auto" : "Revisar"}</p><p className="text-muted-foreground">envio</p></div>
                 </div>
                 {rule.audience === "internal_seller" && (
                   <div className="grid gap-3 rounded-md border border-border bg-muted/20 p-3 text-xs xl:col-span-4 md:grid-cols-3">
@@ -1580,7 +1582,7 @@ function LogsPage({ clientId }: { clientId?: string }) {
                   <p className="font-medium">{log.message ?? "Evento registrado pelo webhook."}</p>
                   <p className="mt-1 text-xs text-muted-foreground">{dateTime(log.createdAt)} · {log.action} · {log.eventType}</p>
                 </div>
-                <Badge variant={log.status === "blocked" ? "destructive" : "outline"}>{log.status}</Badge>
+                <Badge variant={log.status === "blocked" ? "destructive" : "outline"}>{displayLabel(log.status)}</Badge>
               </div>
               {log.webhookPayload ? (
                 <details className="mt-3 rounded-md border border-border/70 bg-muted/20">
@@ -1660,11 +1662,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
     <div className="space-y-5">
       <Card>
         <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Marca em configuração</p>
-            <h2 className="mt-1 text-xl font-semibold">{clientName}</h2>
-            <p className="text-xs text-muted-foreground">IA Comercial {aiCommercialStatus === "active" ? "ativa" : "desativada"} · webhook {realWebhookUrl}</p>
-          </div>
+          <GlassMetricCard  label="Marca em configuração" value={<>{clientName}</>} footer={<div className="space-y-2"><p className="text-xs text-muted-foreground">IA Comercial {aiCommercialStatus === "active" ? "ativa" : "desativada"} · webhook {realWebhookUrl}</p></div>} />
           <div className="flex flex-col gap-3 lg:items-end">
             <div className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
               <span>{aiCommercialStatus === "active" ? "IA ativa" : "IA desativada"}</span>
@@ -1682,7 +1680,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
                   <Link key={tab.id} href={`/orquestrador/clientes/${clientId}/${tab.id}`}>
                     <Button variant={active === tab.id ? "default" : "outline"} size="sm" className="shrink-0">
                       <Icon className="mr-2 h-4 w-4" />
-                      {tab.label}
+                      {displayLabel(tab.label)}
                     </Button>
                   </Link>
                 );
@@ -1704,7 +1702,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
             change={0}
             changeLabel="dados reais"
             sparkValues={[0, 0, 0, conversations]}
-            sparkColor="#60a5fa"
+            sparkColor="#afc4ff"
             sub={[
               { label: "Abertas", value: formatNumber(openConversations) },
               { label: "Números", value: formatNumber(metrics?.connectedNumbers ?? 0) },
@@ -1721,7 +1719,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
             change={0}
             changeLabel="dados reais"
             sparkValues={[0, 0, 0, registrationsCount]}
-            sparkColor="#34d399"
+            sparkColor="#87adff"
             sub={[
               { label: "Aprovados", value: formatNumber(approvedRegistrations) },
               { label: "Taxa", value: formatPercentage(approvedRegistrations / Math.max(registrationsCount, 1)) },
@@ -1738,7 +1736,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
             change={0}
             changeLabel="dados reais"
             sparkValues={[0, 0, 0, orders]}
-            sparkColor="#c084fc"
+            sparkColor="#5b8dff"
             sub={[
               { label: "Receita", value: money(revenue) },
               { label: "Modo", value: aiCommercialStatus === "active" ? "Ativo" : "Pausado" },
@@ -1755,7 +1753,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
             change={0}
             changeLabel="dados reais"
             sparkValues={[0, 0, 0, 0]}
-            sparkColor="#fbbf24"
+            sparkColor="#0458fe"
             sub={[
               { label: "Qualidade", value: "0%" },
               { label: "Status", value: "Monitorado" },

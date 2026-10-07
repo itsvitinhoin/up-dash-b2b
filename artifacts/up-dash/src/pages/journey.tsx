@@ -1,3 +1,8 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { MetricDataProvider, metricBindings } from "@/components/metric-data-context";
+import { getGetJourneyUrl } from "@workspace/api-client-react";
+import { displayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo } from "react";
 import { format } from "date-fns";
 import { Link } from "wouter";
@@ -26,13 +31,13 @@ import { useReducedMotion, fadeInUp, withReducedMotion } from "@/lib/motion";
 import { useState } from "react";
 
 const SEGMENT_COLORS: Record<string, string> = {
-  VISIT: "#6366f1",
-  REGISTRATION: "#22d3ee",
-  APPROVED_REGISTRATION: "#10b981",
-  PRODUCT_VIEW: "#f59e0b",
-  ADD_TO_CART: "#f97316",
-  CHECKOUT_STARTED: "#ec4899",
-  PURCHASE: "#8b5cf6",
+  VISIT: "#5b8dff",
+  REGISTRATION: "#afc4ff",
+  APPROVED_REGISTRATION: "#87adff",
+  PRODUCT_VIEW: "#0458fe",
+  ADD_TO_CART: "#0458fe",
+  CHECKOUT_STARTED: "#b3caff",
+  PURCHASE: "#5b8dff",
 };
 
 function KpiCard({
@@ -48,24 +53,7 @@ function KpiCard({
   color: string;
   loading: boolean;
 }) {
-  return (
-    <div className="rounded-xl border border-border/60 bg-card p-4 flex items-start gap-3">
-      <span
-        className="flex h-9 w-9 items-center justify-center rounded-lg ring-1 ring-border/40 shrink-0"
-        style={{ background: `${color}18` }}
-      >
-        <Icon className="h-4 w-4" style={{ color }} />
-      </span>
-      <div className="min-w-0">
-        <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground truncate">{label}</p>
-        {loading ? (
-          <Skeleton className="h-6 w-24 mt-1" />
-        ) : (
-          <p className="text-xl font-bold tabular-nums mt-0.5">{value}</p>
-        )}
-      </div>
-    </div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} loading={loading} />);
 }
 
 export default function JourneyPage() {
@@ -94,6 +82,14 @@ export default function JourneyPage() {
       query: queryOpts({ enabled, placeholderData: (prev) => prev }),
     }
   );
+
+  const previous = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetJourneyUrl({ clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, state: filters.state || undefined, city: filters.city || undefined, product: filters.product || undefined }), enabled);
+  const metricComparisons = metricBindings(data?.kpis, previous.data?.kpis, {
+    "metric-média-de-eventos-antes-da-compra": { field: "avgEventsBeforePurchase", format: v => v.toFixed(1) },
+    "metric-tempo-médio-até-a-primeira-compra": { field: "avgTimeToFirstPurchaseDays", format: v => `${v.toFixed(1)} dias` },
+    "metric-tempo-médio-entre-compras": { field: "avgTimeBetweenPurchasesDays", format: v => `${v.toFixed(1)} dias` },
+    "metric-compradores-na-primeira-sessão": { field: "pctBuyersFromFirstSession", format: v => `${v.toFixed(1)}%` }
+  });
 
   const insightParams = {
     clientId,
@@ -147,18 +143,18 @@ export default function JourneyPage() {
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
         </span>
         <span className="font-mono uppercase tracking-wider">
-          Live · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+          Atualizado · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
         </span>
       </motion.div>
 
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
+          <AlertTitle>Erro</AlertTitle>
           <AlertDescription className="flex items-center justify-between gap-3">
             {(error as { data?: { message?: string } } | undefined)?.data?.message ?? "Failed to load journey data."}
             <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Retry
+              <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
             </Button>
           </AlertDescription>
         </Alert>
@@ -194,7 +190,7 @@ export default function JourneyPage() {
                         onClick={() => regenerate.mutate({ params: insightParams })}
                       >
                         <RefreshCw className={`h-3 w-3 mr-1 ${regenerate.isPending ? "animate-spin" : ""}`} />
-                        Refresh
+                        Atualizar
                       </Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setInsightDismissed(true)}>
                         <XIcon className="h-3 w-3" />
@@ -206,39 +202,41 @@ export default function JourneyPage() {
             </motion.div>
           )}
 
+<MetricDataProvider source="UP Zero · jornada e atribuição" comparisons={metricComparisons}>
           {/* KPI Strip */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <KpiCard
-                label="Avg events before purchase"
+                label="Média de eventos antes da compra"
                 value={isLoading ? "—" : kpis ? kpis.avgEventsBeforePurchase.toFixed(1) : "—"}
                 icon={Activity}
-                color="#6366f1"
+                color="#5b8dff"
                 loading={isLoading}
               />
               <KpiCard
-                label="Avg time to 1st purchase"
+                label="Tempo médio até a primeira compra"
                 value={isLoading ? "—" : kpis?.avgTimeToFirstPurchaseDays != null ? `${kpis.avgTimeToFirstPurchaseDays.toFixed(1)}d` : "—"}
                 icon={Clock}
-                color="#22d3ee"
+                color="#afc4ff"
                 loading={isLoading}
               />
               <KpiCard
-                label="Avg time between purchases"
+                label="Tempo médio entre compras"
                 value={isLoading ? "—" : kpis?.avgTimeBetweenPurchasesDays != null ? `${kpis.avgTimeBetweenPurchasesDays.toFixed(1)}d` : "—"}
                 icon={RefreshCw}
-                color="#10b981"
+                color="#87adff"
                 loading={isLoading}
               />
               <KpiCard
-                label="Buyers from 1st session"
+                label="Compradores na primeira sessão"
                 value={isLoading ? "—" : kpis ? `${kpis.pctBuyersFromFirstSession.toFixed(1)}%` : "—"}
                 icon={Zap}
-                color="#f59e0b"
+                color="#0458fe"
                 loading={isLoading}
               />
             </div>
           </motion.div>
+</MetricDataProvider>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Event Flow Graph */}
@@ -247,7 +245,7 @@ export default function JourneyPage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                    Event flow graph
+                    Fluxo de eventos
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -266,14 +264,14 @@ export default function JourneyPage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-chart-3" />
-                    Top paths to purchase
+                    Principais caminhos até a compra
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {isLoading ? (
                     Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)
                   ) : topPaths.length === 0 ? (
-                    <EmptyState icon={Route} title="No purchase paths yet" description="Once customers complete purchases, their event sequences will appear here." />
+                    <EmptyState icon={Route} title="Sem caminhos de compra" description="Quando os clientes concluírem compras, a sequência de eventos aparecerá aqui." />
                   ) : (
                     topPaths.map((path, i) => (
                       <div
@@ -285,7 +283,7 @@ export default function JourneyPage() {
                             #{i + 1}
                           </Badge>
                           <span className="text-[11px] font-mono text-muted-foreground">
-                            {formatNumber(path.visitCount)} buyers · {path.conversionRate.toFixed(1)}%
+                            {formatNumber(path.visitCount)} compradores · {path.conversionRate.toFixed(1)}%
                           </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-1">
@@ -315,16 +313,16 @@ export default function JourneyPage() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-chart-4" />
-                    Buyers vs non-buyers — event comparison
+                    Compradores e não compradores — comparação de eventos
                   </CardTitle>
                   <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
                     <span className="flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-[#6366f1]" />
-                      Buyers (avg {isLoading ? "—" : (buyers?.avgSessionDepth ?? 0).toFixed(1)} events/session)
+                      <span className="h-2 w-2 rounded-full bg-[#5b8dff]" />
+                      Compradores (média de {isLoading ? "—" : (buyers?.avgSessionDepth ?? 0).toFixed(1)} eventos/sessão)
                     </span>
                     <span className="flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-[#f59e0b]" />
-                      Non-buyers (avg {isLoading ? "—" : (nonBuyers?.avgSessionDepth ?? 0).toFixed(1)} events/session)
+                      <span className="h-2 w-2 rounded-full bg-[#0458fe]" />
+                      Não compradores (média de {isLoading ? "—" : (nonBuyers?.avgSessionDepth ?? 0).toFixed(1)} eventos/sessão)
                     </span>
                   </div>
                 </div>
@@ -333,7 +331,7 @@ export default function JourneyPage() {
                 {isLoading ? (
                   <Skeleton className="h-52 w-full" />
                 ) : comparisonData.length === 0 ? (
-                  <EmptyState icon={Activity} title="No event data" description="No visitor events were recorded in this date range." />
+                  <EmptyState icon={Activity} title="Sem dados de eventos" description="Nenhum evento de visitante registrado neste período." />
                 ) : (
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={comparisonData} margin={{ left: 0, right: 8 }}>
@@ -349,8 +347,8 @@ export default function JourneyPage() {
                         }}
                       />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Bar dataKey="buyers" name="Buyers" fill="#6366f1" radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="nonBuyers" name="Non-buyers" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="buyers" name="Compradores" fill="#5b8dff" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="nonBuyers" name="Não compradores" fill="#0458fe" radius={[3, 3, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -360,12 +358,12 @@ export default function JourneyPage() {
                   <div className="mt-4 grid grid-cols-2 gap-4 border-t border-border/40 pt-4">
                     <div>
                       <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                        Buyer UTM sources
+                        Origens UTM de compradores
                       </p>
                       <div className="space-y-1.5">
                         {(buyers?.topUtmSources ?? []).slice(0, 4).map((u) => (
                           <div key={u.source} className="flex items-center justify-between">
-                            <span className="inline-flex items-center rounded-full bg-[#6366f1]/10 px-2 py-0.5 text-[10px] font-medium text-[#6366f1]">
+                            <span className="inline-flex items-center rounded-full bg-[#5b8dff]/10 px-2 py-0.5 text-[10px] font-medium text-[#5b8dff]">
                               {u.source}
                             </span>
                             <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
@@ -377,12 +375,12 @@ export default function JourneyPage() {
                     </div>
                     <div>
                       <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                        Non-buyer UTM sources
+                        Origens UTM de não compradores
                       </p>
                       <div className="space-y-1.5">
                         {(nonBuyers?.topUtmSources ?? []).slice(0, 4).map((u) => (
                           <div key={u.source} className="flex items-center justify-between">
-                            <span className="inline-flex items-center rounded-full bg-[#f59e0b]/10 px-2 py-0.5 text-[10px] font-medium text-[#f59e0b]">
+                            <span className="inline-flex items-center rounded-full bg-[#0458fe]/10 px-2 py-0.5 text-[10px] font-medium text-[#0458fe]">
                               {u.source}
                             </span>
                             <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
@@ -403,7 +401,7 @@ export default function JourneyPage() {
             <motion.div initial="hidden" animate="visible" variants={variants}>
               <div className="flex items-center gap-2 mb-3">
                 <Lightbulb className="h-4 w-4 text-amber-500" />
-                <h3 className="font-semibold text-sm">Key insights</h3>
+                <h3 className="font-semibold text-sm">Principais análises</h3>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {insight.bullets.map((bullet, i) => (
@@ -448,8 +446,8 @@ function EventFlowDiagram({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEdge
     return (
       <EmptyState
         icon={Activity}
-        title="No conversion journeys yet"
-        description="Purchase-bounded event flows will appear here once buyers are recorded in this period."
+        title="Sem jornadas de conversão"
+        description="Os fluxos de eventos até a compra aparecerão aqui quando houver compradores no período."
         className="my-4"
       />
     );
@@ -521,7 +519,7 @@ function EventFlowDiagram({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEdge
         {nodes.map((node) => {
           const pos = nodePos.get(node.id);
           if (!pos) return null;
-          const color = SEGMENT_COLORS[node.id] ?? "#6366f1";
+          const color = SEGMENT_COLORS[node.id] ?? "#5b8dff";
           const intensity = Math.max(0.15, node.count / maxCount);
           return (
             <g key={node.id}>
@@ -545,7 +543,7 @@ function EventFlowDiagram({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEdge
                 fontWeight={600}
                 fill={color}
               >
-                {node.label}
+                {displayLabel(node.label)}
               </text>
               <text
                 x={pos.x + NODE_W / 2}

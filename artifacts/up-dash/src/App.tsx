@@ -1,3 +1,7 @@
+import { setDefaultOptions } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { architectureRoutes } from "@/lib/dashboard-architecture";
+import OrganizedPage from "@/pages/organized-pages";
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import {
   QueryClient,
@@ -23,6 +27,8 @@ import { I18nProvider } from "@/lib/i18n";
 import { PageTransition } from "@/components/page-transition";
 import { FloatingAiAssistant } from "@/components/floating-ai-assistant";
 import { useMemo } from "react";
+
+setDefaultOptions({ locale: ptBR });
 
 import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/login";
@@ -99,6 +105,11 @@ function Router() {
   return (
     <AnimatePresence mode="wait" initial={false}>
       <Switch key={location} location={location}>
+        {architectureRoutes.map(route => <Route key={route.path} path={route.path}>
+          <AuthGuard><AppLayout><PageTransition routeKey={route.path}>
+            <OrganizedPage page={route.page} />
+          </PageTransition></AppLayout></AuthGuard>
+        </Route>)}
         <Route path="/login">
           <LoginPage />
         </Route>

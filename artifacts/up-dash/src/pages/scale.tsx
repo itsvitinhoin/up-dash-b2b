@@ -1,3 +1,6 @@
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
+import { displayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -29,7 +32,6 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { DashLoadingCard } from "@/components/ui/dash-loader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
 import {
   fadeInUp,
   staggerContainer,
@@ -181,7 +183,7 @@ function BreakdownCard({
                   </span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, pct)}%` }} />
+                  <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
                 </div>
               </div>
             );
@@ -202,20 +204,11 @@ function ScenarioCard({ scenario }: { scenario: ScaleResponse["projection"]["sce
         </div>
         <TrendingUp className="h-4 w-4 text-primary" />
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-        <div>
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Receita</p>
-          <p className="font-semibold tabular-nums">{formatCurrencySmart(scenario.revenue)}</p>
-        </div>
-        <div>
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Mídia</p>
-          <p className="font-semibold tabular-nums">{formatCurrencySmart(scenario.mediaSpend)}</p>
-        </div>
-        <div className="col-span-2">
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pedidos estimados</p>
-          <p className="font-semibold tabular-nums">{formatNumber(Math.round(scenario.orders))}</p>
-        </div>
-      </div>
+      <dl className="up-projection-values mt-4">
+        <div><dt>Receita estimada</dt><dd>{formatCurrencySmart(scenario.revenue)}</dd></div>
+        <div><dt>Mídia estimada</dt><dd>{formatCurrencySmart(scenario.mediaSpend)}</dd></div>
+        <div><dt>Pedidos estimados</dt><dd>{formatNumber(Math.round(scenario.orders))}</dd></div>
+      </dl>
     </Card>
   );
 }
@@ -250,27 +243,23 @@ export default function ScalePage() {
   const enabled = hasClientSelected && isSupportedClient;
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
-  const [targetRevenueInput, setTargetRevenueInput] = useState("");
-  const targetRevenue = parseCurrencyInput(targetRevenueInput);
+  const [targetRevenueInput, setTargetRevenueInput] = useState<string | null>(null);
+  const targetRevenue = parseCurrencyInput(targetRevenueInput ?? "");
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery<ScaleResponse>({
+    ...queryOpts<ScaleResponse>({ enabled }),
     queryKey: ["b2c-scale", clientId, dateFrom, dateTo, targetRevenue, selectedDashboardMode],
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const params = new URLSearchParams({ dateFrom, dateTo });
       if (clientId) params.set("clientId", clientId);
       if (targetRevenue) params.set("targetRevenue", String(targetRevenue));
-      return customFetch<ScaleResponse>(`/api/analytics/scale?${params.toString()}`);
+      return customFetch<ScaleResponse>(`/api/analytics/scale?${params.toString()}`, { signal });
     },
-    enabled,
-    placeholderData: (previous) => previous,
   });
 
-  useEffect(() => {
-    if (!data || targetRevenueInput) return;
-    setTargetRevenueInput(Math.round(data.projection.targetRevenue).toLocaleString("pt-BR"));
-  }, [data, targetRevenueInput]);
+  const previous = usePreviousPeriodQuery<ScaleResponse>(periodQuery("/api/analytics/scale", { clientId, dateFrom, dateTo }), enabled);
 
-  const periodLabel = data ? `${data.period.from} a ${data.period.to}` : `${dateFrom} a ${dateTo}`;
+  const periodLabel = `${format(dateRange.from, "dd/MM/yyyy")} a ${format(dateRange.to, "dd/MM/yyyy")}`;
   const kpis = data?.kpis;
   const benchmarks = data?.benchmarks;
   const projection = data?.projection;
@@ -353,146 +342,20 @@ export default function ScalePage() {
         <ScaleLoadingState />
       ) : (
         <>
-          <motion.div initial="hidden" animate="visible" variants={containerVariants} className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <DashboardKpiCard
-              icon={Package}
-              iconClass="bg-blue-500/15 text-blue-400"
-              label="Poder de venda"
-              value={kpis.currentSalesPower}
-              format={formatCurrencySmart}
-              change={null}
-              changeLabel="fixo"
-              sub={[
-                { label: "Estoque disponível", value: `${formatNumber(kpis.availableStockUnits)} un.` },
-                { label: "Produtos ativos", value: formatNumber(kpis.activeProducts) },
-              ]}
-              sparkValues={[kpis.currentSalesPower, projection.requiredSalesPower]}
-              sparkColor="#60a5fa"
-              isLoading={false}
-              testId="scale-kpi-sales-power"
-              valueAccent
-            />
-            <DashboardKpiCard
-              icon={Wallet}
-              iconClass="bg-emerald-500/15 text-emerald-400"
-              label="Faturamento"
-              value={kpis.revenue}
-              format={formatCurrencySmart}
-              change={null}
-              changeLabel="período"
-              sub={[
-                { label: "Média 90d/mês", value: formatCurrencySmart(benchmarks.monthlyRevenue) },
-                { label: "Ritmo mensal", value: formatCurrencySmart(kpis.monthlyRevenue) },
-              ]}
-              sparkValues={[benchmarks.monthlyRevenue, kpis.monthlyRevenue]}
-              sparkColor="#34d399"
-              isLoading={false}
-              testId="scale-kpi-revenue"
-            />
-            <DashboardKpiCard
-              icon={ShoppingCart}
-              iconClass="bg-violet-500/15 text-violet-400"
-              label="Qtd. vendas"
-              value={kpis.orders}
-              format={(value) => formatNumber(Math.round(value))}
-              change={null}
-              changeLabel="período"
-              sub={[
-                { label: "Média 90d/mês", value: formatNumber(Math.round(benchmarks.monthlyOrders)) },
-                { label: "Ritmo mensal", value: formatNumber(Math.round(kpis.monthlyOrders)) },
-              ]}
-              sparkValues={[benchmarks.monthlyOrders, kpis.monthlyOrders]}
-              sparkColor="#a78bfa"
-              isLoading={false}
-              testId="scale-kpi-orders"
-            />
-            <DashboardKpiCard
-              icon={Target}
-              iconClass="bg-pink-500/15 text-pink-400"
-              label="Ticket médio"
-              value={kpis.avgTicket}
-              format={formatCurrencySmart}
-              change={null}
-              changeLabel="período"
-              sub={[
-                { label: "Média 90d", value: formatCurrencySmart(benchmarks.avgTicket) },
-                { label: "Pedidos", value: formatNumber(kpis.orders) },
-              ]}
-              sparkValues={[benchmarks.avgTicket, kpis.avgTicket]}
-              sparkColor="#f472b6"
-              isLoading={false}
-              testId="scale-kpi-ticket"
-            />
-            <DashboardKpiCard
-              icon={Gauge}
-              iconClass="bg-amber-500/15 text-amber-400"
-              label="Giro"
-              value={kpis.periodTurnoverPct}
-              format={formatPercentage}
-              change={null}
-              changeLabel="período"
-              sub={[
-                { label: "Média 90d/mês", value: formatPercentage(benchmarks.monthlyTurnoverPct) },
-                { label: "Ritmo mensal", value: formatPercentage(kpis.monthlyTurnoverPct) },
-              ]}
-              sparkValues={[benchmarks.monthlyTurnoverPct, kpis.monthlyTurnoverPct]}
-              sparkColor="#f59e0b"
-              isLoading={false}
-              testId="scale-kpi-turnover"
-              ringValue={Math.min(100, kpis.periodTurnoverPct)}
-              ringColor="#f59e0b"
-            />
-            <DashboardKpiCard
-              icon={Megaphone}
-              iconClass="bg-sky-500/15 text-sky-400"
-              label="Invest. mídia"
-              value={kpis.mediaSpend}
-              format={formatCurrencySmart}
-              change={null}
-              changeLabel="período"
-              sub={[
-                { label: "Média 90d/mês", value: formatCurrencySmart(benchmarks.monthlyMediaSpend) },
-                { label: "Ritmo mensal", value: formatCurrencySmart(kpis.monthlyMediaSpend) },
-              ]}
-              sparkValues={[benchmarks.monthlyMediaSpend, kpis.monthlyMediaSpend]}
-              sparkColor="#38bdf8"
-              isLoading={false}
-              testId="scale-kpi-media"
-            />
-            <DashboardKpiCard
-              icon={TrendingUp}
-              iconClass="bg-lime-500/15 text-lime-400"
-              label="ROAS"
-              value={kpis.roas}
-              format={(value) => `${value.toFixed(2)}x`}
-              change={null}
-              changeLabel="período"
-              sub={[
-                { label: "Média 90d", value: `${benchmarks.roas.toFixed(2)}x` },
-                { label: "Investimento", value: formatCurrencySmart(kpis.mediaSpend) },
-              ]}
-              sparkValues={[benchmarks.roas, kpis.roas]}
-              sparkColor="#84cc16"
-              isLoading={false}
-              testId="scale-kpi-roas"
-            />
-            <DashboardKpiCard
-              icon={Calculator}
-              iconClass="bg-orange-500/15 text-orange-400"
-              label="Custo por compra"
-              value={kpis.cpa}
-              format={formatCurrencySmart}
-              change={null}
-              changeLabel="período"
-              sub={[
-                { label: "Média 90d", value: formatCurrencySmart(benchmarks.cpa) },
-                { label: "Conversão", value: formatPercentage(kpis.conversionRate) },
-              ]}
-              sparkValues={[benchmarks.cpa, kpis.cpa]}
-              sparkColor="#fb923c"
-              isLoading={false}
-              testId="scale-kpi-cpa"
-            />
+          <motion.div initial="hidden" animate="visible" variants={containerVariants} className="up-metric-grid">
+            {([
+              { field: "currentSalesPower", label: "Sales Power", icon: Package, format: formatCurrencySmart, snapshot: true, detail: "Soma de cada estoque disponível × preço de venda do SKU. Retrato do estoque atual, sem histórico de estoque comparável." },
+              { field: "revenue", label: "Faturamento", icon: Wallet, format: formatCurrencySmart, detail: "Receita de pedidos pagos no período selecionado." },
+              { field: "orders", label: "Quantidade de vendas", icon: ShoppingCart, format: formatNumber, detail: "Quantidade de pedidos pagos no período selecionado." },
+              { field: "avgTicket", label: "Ticket médio", icon: Target, format: formatCurrencySmart, detail: "Faturamento dividido pela quantidade de pedidos pagos." },
+              { field: "periodTurnoverPct", label: "Giro", icon: Gauge, format: formatPercentage, snapshot: true, detail: "Receita do período em relação ao Sales Power atual. A fonte não mantém o estoque de fechamento de períodos anteriores para comparar o giro." },
+              { field: "mediaSpend", label: "Investimento em mídia", icon: Megaphone, format: formatCurrencySmart, detail: "Investimento em campanhas no período selecionado." },
+              { field: "roas", label: "ROAS", icon: TrendingUp, format: (v: number) => `${v.toFixed(2)}x`, detail: "Faturamento pago dividido pelo investimento em mídia." },
+              { field: "cpa", label: "Custo por compra", icon: Calculator, format: formatCurrencySmart, inverse: true, detail: "Investimento em mídia dividido pela quantidade de pedidos pagos." },
+            ] satisfies Array<{ field: keyof ScaleResponse["kpis"]; label: string; icon: typeof Package; format: (v: number) => string; snapshot?: boolean; inverse?: boolean; detail: string }>).map(item => {
+              const prior = item.snapshot ? undefined : previous.data?.kpis[item.field];
+              return <GlassMetricCard key={item.field} testId={`scale-kpi-${item.field}`} label={item.label} icon={item.icon} value={kpis[item.field]} format={item.format} previousValue={prior} changePositive={item.inverse && prior !== undefined ? kpis[item.field] <= prior : undefined} source="Ecommerce · estoque e pedidos pagos; mídia conectada" info={item.detail} comparisonUnavailable={item.snapshot ? "A fonte fornece somente o estoque atual, sem histórico para comparar períodos." : undefined} sparkValues={prior !== undefined ? [prior, kpis[item.field]] : []} />;
+            })}
           </motion.div>
 
           <div className="space-y-4">
@@ -506,11 +369,12 @@ export default function ScalePage() {
                   <p className="mt-1 text-xs text-muted-foreground">Insira o faturamento mensal que a marca quer atingir para estimar estoque, mídia, pedidos e CPA necessários.</p>
                 </div>
                 <div className="w-full max-w-xs">
-                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <label htmlFor="scale-target" className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Faturamento alvo mensal
                   </label>
                   <Input
-                    value={targetRevenueInput}
+                    id="scale-target"
+                    value={targetRevenueInput ?? Math.round(projection.targetRevenue).toLocaleString("pt-BR")}
                     onChange={(event) => setTargetRevenueInput(event.target.value)}
                     placeholder="Ex: 150.000"
                     inputMode="decimal"
@@ -520,7 +384,7 @@ export default function ScalePage() {
                 </div>
               </div>
 
-              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 {[
                   {
                     label: "Faturamento",
@@ -565,52 +429,26 @@ export default function ScalePage() {
                 ].map((item) => (
                   <div key={item.label} className="rounded-md border border-border bg-background/40 p-4">
                     <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{item.label}</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{displayLabel(item.label)}</p>
                       <item.icon className="h-4 w-4 text-primary" />
                     </div>
-                    <div className="mt-3 space-y-2">
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Atual</p>
-                        <p className="text-lg font-semibold tabular-nums">{item.current}</p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Meta</p>
-                          <p className="truncate text-sm font-semibold tabular-nums">{item.target}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Gap</p>
-                          <p className="truncate text-sm font-semibold tabular-nums text-amber-400">{item.gap}</p>
-                        </div>
-                      </div>
-                    </div>
+                    <dl className="up-projection-values mt-3">
+                      <div><dt>Atual</dt><dd>{item.current}</dd></div>
+                      <div><dt>{item.label === "Grade quebrada" ? "Produtos" : "Meta"}</dt><dd>{item.target}</dd></div>
+                      <div><dt>{item.label === "Grade quebrada" ? "Ação" : "A acrescentar"}</dt><dd>{item.gap}</dd></div>
+                    </dl>
                     <p className="mt-2 text-xs text-muted-foreground">{item.helper}</p>
                   </div>
                 ))}
               </div>
 
-              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-4">
-                <div className="rounded-md border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Incremento de receita</p>
-                  <p className="mt-1 text-lg font-semibold text-emerald-400">{formatCurrencySmart(projection.revenueIncrement)}</p>
-                </div>
-                <div className="rounded-md border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Incremento de mídia</p>
-                  <p className="mt-1 text-lg font-semibold text-sky-400">{formatCurrencySmart(projection.mediaSpendIncrement)}</p>
-                </div>
-                <div className="rounded-md border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Gap de estoque</p>
-                  <p className="mt-1 text-lg font-semibold text-amber-400">{formatCurrencySmart(projection.salesPowerGap)}</p>
-                </div>
-                <div className="rounded-md border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Peças adicionais</p>
-                  <p className="mt-1 text-lg font-semibold text-blue-400">{formatNumber(additionalUnitsNeeded)}</p>
-                </div>
-              </div>
+              <dl className="up-projection-summary mt-5">
+                {[["Incremento de receita", formatCurrencySmart(projection.revenueIncrement)], ["Incremento de mídia", formatCurrencySmart(projection.mediaSpendIncrement)], ["Estoque adicional em valor de venda", formatCurrencySmart(projection.salesPowerGap)], ["Peças adicionais", formatNumber(additionalUnitsNeeded)]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+              </dl>
             </Card>
 
             <Card className="p-5 bg-card border-border">
-              <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-primary" />

@@ -1,3 +1,5 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
+import { displayLabel } from "@/lib/display-label";
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -76,9 +78,9 @@ import {
 
 const CURRENCY_OPTIONS: Array<{ code: string; locale: string; label: string }> = [
   { code: "BRL", locale: "pt-BR", label: "Real (BRL) — Português (Brasil)" },
-  { code: "USD", locale: "en-US", label: "Dollar (USD) — English (US)" },
+  { code: "USD", locale: "en-US", label: "Dólar (USD) — formato americano" },
   { code: "EUR", locale: "pt-PT", label: "Euro (EUR) — Português (Portugal)" },
-  { code: "GBP", locale: "en-GB", label: "Pound (GBP) — English (UK)" },
+  { code: "GBP", locale: "en-GB", label: "Libra (GBP) — formato britânico" },
   { code: "MXN", locale: "es-MX", label: "Peso (MXN) — Español (México)" },
 ];
 
@@ -87,8 +89,8 @@ const CURRENCY_OPTIONS: Array<{ code: string; locale: string; label: string }> =
 // escondê-lo deixaria o client sem nenhuma página ao logar).
 const NAV_ITEM_OPTIONS: Array<{ href: string; label: string }> = [
   { href: "/erp", label: "ERP" },
-  { href: "/performance", label: "Performance" },
-  { href: "/marketing", label: "Marketing" },
+  { href: "/performance", label: "Desempenho" },
+  { href: "/marketing", label: "Anúncios" },
   { href: "/whatsapp", label: "WhatsApp" },
   { href: "/funnel", label: "Funil" },
   { href: "/journey", label: "Jornada" },
@@ -100,7 +102,7 @@ const NAV_ITEM_OPTIONS: Array<{ href: string; label: string }> = [
   { href: "/sellers", label: "Vendedores" },
   { href: "/stock", label: "Estoque" },
   { href: "/geography", label: "Geografia" },
-  { href: "/daily", label: "Daily (B2C)" },
+  { href: "/daily", label: "Diário (B2C)" },
   { href: "/scale", label: "Escala (B2C)" },
 ];
 
@@ -230,7 +232,7 @@ function CopyButton({ text }: { text: string }) {
       size="icon"
       className="h-7 w-7 shrink-0"
       onClick={handleCopy}
-      title="Copy to clipboard"
+      title="Copiar"
     >
       {copied ? (
         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
@@ -283,7 +285,7 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
       .map((r) => ({ visitDate: r.visitDate, visitCount: Number(r.visitCount) }));
 
     if (validRows.length === 0) {
-      toast.error("Enter at least one valid date and visit count.");
+      toast.error("Informe pelo menos uma data válida e o número de visitas.");
       return;
     }
 
@@ -291,11 +293,11 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
       { data: { clientId, rows: validRows } },
       {
         onSuccess: (res) => {
-          toast.success(`Saved ${res.rows.length} day${res.rows.length !== 1 ? "s" : ""} of visit data for ${clientName}`);
+          toast.success(`Visitas de ${res.rows.length} dia${res.rows.length !== 1 ? "s" : ""} salvas para ${clientName}`);
           setOpen(false);
         },
         onError: () => {
-          toast.error("Failed to save site visit data. Please try again.");
+          toast.error("Não foi possível salvar as visitas. Tente novamente.");
         },
       }
     );
@@ -308,20 +310,19 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
           variant="ghost"
           size="sm"
           className="h-7 gap-1 text-xs"
-          title="Enter daily site visit counts"
+          title="Informe o número de visitas diárias ao site"
         >
           <BarChart2 className="h-3 w-3" />
-          Site Visits
+          Visitas ao site
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <BarChart2 className="h-4 w-4" /> Site Visit Data
+            <BarChart2 className="h-4 w-4" /> Dados de visitas ao site
           </DialogTitle>
           <DialogDescription>
-            Enter daily website visit counts for <strong>{clientName}</strong>. These populate
-            the top-of-funnel "Site Visits" step. Existing entries for the same date are overwritten.
+            Informe as visitas diárias ao site de <strong>{clientName}</strong>. Estes valores alimentam a etapa "Visitas ao site". Valores existentes para a mesma data serão substituídos.
           </DialogDescription>
         </DialogHeader>
 
@@ -337,7 +338,7 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
               <Input
                 type="number"
                 min={0}
-                placeholder="Visits"
+                placeholder="Visitas"
                 value={row.visitCount}
                 onChange={(e) => updateRow(i, "visitCount", e.target.value)}
                 className="flex-1 text-sm"
@@ -358,25 +359,25 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
         </div>
 
         <Button variant="outline" size="sm" className="w-full" onClick={addRow}>
-          <Plus className="h-3.5 w-3.5 mr-1.5" /> Add another day
+          <Plus className="h-3.5 w-3.5 mr-1.5" /> Adicionar outro dia
         </Button>
 
         {upsertMutation.isError && (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>Failed to save. Please try again.</AlertDescription>
+            <AlertDescription>Não foi possível salvar. Tente novamente.</AlertDescription>
           </Alert>
         )}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={upsertMutation.isPending}>
-            Cancel
+            Cancelar
           </Button>
           <Button onClick={handleSave} disabled={upsertMutation.isPending}>
             {upsertMutation.isPending ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</>
             ) : (
-              "Save Visit Data"
+              "Salvar visitas"
             )}
           </Button>
         </DialogFooter>
@@ -416,52 +417,52 @@ function RotateKeyDialog({ clientId, clientName }: { clientId: string; clientNam
           variant="ghost"
           size="sm"
           className="h-7 gap-1 text-xs"
-          title="Rotate API key"
+          title="Renovar chave de API"
         >
           <RefreshCw className="h-3 w-3" />
-          Rotate Key
+          Renovar chave
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="h-4 w-4" /> Rotate API Key
+            <KeyRound className="h-4 w-4" /> Renovar chave de API
           </DialogTitle>
           <DialogDescription>
             {newKey
-              ? "The API key has been rotated. Copy the new key now — it won't be shown again."
-              : `Rotating the key for "${clientName}" will immediately invalidate the current key. Any integrations using it will stop working until updated.`}
+              ? "A chave de API foi renovada. Copie a nova chave agora, pois ela não será exibida novamente."
+              : `Renovar a chave de "${clientName}" invalidará imediatamente a chave atual. As integrações que a utilizam pararão de funcionar até serem atualizadas.`}
           </DialogDescription>
         </DialogHeader>
 
         {newKey ? (
           <div className="space-y-2">
-            <Label>New API Key</Label>
+            <Label>Nova chave de API</Label>
             <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
               <code className="flex-1 break-all text-xs font-mono">{newKey}</code>
               <CopyButton text={newKey} />
             </div>
             <p className="text-xs text-amber-400 flex items-center gap-1">
               <AlertCircle className="h-3 w-3 shrink-0" />
-              Store this key securely — it cannot be retrieved after closing this dialog.
+              Guarde a chave em um local seguro. Ela não poderá ser consultada após fechar esta janela.
             </p>
           </div>
         ) : (
           rotateMutation.isError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Failed to rotate key. Please try again.</AlertDescription>
+              <AlertDescription>Não foi possível renovar a chave. Tente novamente.</AlertDescription>
             </Alert>
           )
         )}
 
         <DialogFooter>
           {newKey ? (
-            <Button onClick={handleClose}>Done</Button>
+            <Button onClick={handleClose}>Concluído</Button>
           ) : (
             <>
               <Button variant="outline" onClick={handleClose} disabled={rotateMutation.isPending}>
-                Cancel
+                Cancelar
               </Button>
               <Button
                 variant="destructive"
@@ -474,7 +475,7 @@ function RotateKeyDialog({ clientId, clientName }: { clientId: string; clientNam
                     Rotating…
                   </>
                 ) : (
-                  "Rotate Key"
+                  "Renovar chave"
                 )}
               </Button>
             </>
@@ -605,14 +606,14 @@ function ClientCredentialsDialog({
                   placeholder="Mínimo 8 caracteres"
                   className="pr-9"
                 />
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
                   onClick={() => setShowPassword((v) => !v)}
                   tabIndex={-1}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+                </Button>
               </div>
               <Button
                 type="button"
@@ -686,10 +687,10 @@ function MetaAdsKeyDialog({
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
           setOpen(false);
-          toast.success("Meta Ads settings updated");
+          toast.success("Configurações do Meta Ads atualizadas");
         },
         onError: () => {
-          toast.error("Failed to update Meta Ads settings");
+          toast.error("Não foi possível atualizar as configurações do Meta Ads");
         },
       }
     );
@@ -705,14 +706,14 @@ function MetaAdsKeyDialog({
       setAccounts(res.accounts);
       if (res.accounts.length === 1) {
         setAdAccountId(res.accounts[0].id);
-        toast.success(`Ad account detected: ${res.accounts[0].name}`);
+        toast.success(`Conta de anúncios encontrada: ${res.accounts[0].name}`);
       } else if (res.accounts.length > 1) {
-        toast.success(`${res.accounts.length} ad accounts found`);
+        toast.success(`${res.accounts.length} contas de anúncios encontradas`);
       } else {
-        toast.warning("No ad accounts found for the global Meta token");
+        toast.warning("Nenhuma conta de anúncios encontrada para o token global da Meta");
       }
     } catch {
-      toast.error("Could not detect Meta ad accounts");
+      toast.error("Não foi possível detectar as contas de anúncios da Meta");
     } finally {
       setIsDetecting(false);
     }
@@ -727,10 +728,10 @@ function MetaAdsKeyDialog({
           variant="ghost"
           size="sm"
           className={`h-7 gap-1 text-xs ${hasAdAccount ? "text-emerald-400 hover:text-emerald-300" : ""}`}
-          title="Set Meta Ads integration"
+          title="Configurar integração Meta Ads"
         >
           <Network className="h-3 w-3" />
-          {hasAdAccount ? "Meta ✓" : "Meta account"}
+          {hasAdAccount ? "Meta ✓" : "Conta Meta"}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[460px]">
@@ -739,7 +740,7 @@ function MetaAdsKeyDialog({
             <Network className="h-4 w-4" /> Meta Ads
           </DialogTitle>
           <DialogDescription>
-            Select the ad account for <strong>{clientName}</strong>. The Meta API key is global and fixed for all clients.
+            Selecione a conta de anúncios de <strong>{clientName}</strong>. A chave de API Meta é global para todos os clientes.
           </DialogDescription>
         </DialogHeader>
 
@@ -747,11 +748,11 @@ function MetaAdsKeyDialog({
           <div className="grid gap-2 pt-2">
             <div className="flex items-end gap-2">
               <div className="flex-1 space-y-2">
-                <Label htmlFor="meta-ad-account">Ad Account</Label>
+                <Label htmlFor="meta-ad-account">Conta de anúncios</Label>
                 {accounts.length > 0 ? (
                   <Select value={adAccountId} onValueChange={setAdAccountId}>
                     <SelectTrigger id="meta-ad-account">
-                      <SelectValue placeholder="Select ad account" />
+                      <SelectValue placeholder="Selecione a conta de anúncios" />
                     </SelectTrigger>
                     <SelectContent>
                       {accounts.map((account) => (
@@ -780,32 +781,32 @@ function MetaAdsKeyDialog({
                 disabled={isDetecting}
               >
                 {isDetecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Network className="h-3.5 w-3.5" />}
-                Detect
+                Detectar
               </Button>
             </div>
             {adAccountId && (
               <p className="text-xs text-muted-foreground">
-                Selected account: <span className="font-mono">{adAccountId}</span>
+                Conta selecionada: <span className="font-mono">{adAccountId}</span>
               </p>
             )}
           </div>
           {updateMutation.isError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Failed to save. Please try again.</AlertDescription>
+              <AlertDescription>Não foi possível salvar. Tente novamente.</AlertDescription>
             </Alert>
           )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
-            Cancel
+            Cancelar
           </Button>
           <Button onClick={handleSave} disabled={updateMutation.isPending}>
             {updateMutation.isPending ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</>
             ) : (
-              "Save Meta"
+              "Salvar Meta"
             )}
           </Button>
         </DialogFooter>
@@ -890,7 +891,7 @@ function PlatformDialog({
               <SelectContent>
                 {COMMERCE_PLATFORM_OPTIONS.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
+                    {displayLabel(opt.label)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1023,7 +1024,7 @@ function VisibleTabsDialog({
                 checked={!hidden.has(item.href)}
                 onCheckedChange={(checked) => toggle(item.href, checked === true)}
               />
-              {item.label}
+              {displayLabel(item.label)}
             </label>
           ))}
         </div>
@@ -1082,10 +1083,10 @@ function UpZeroKeyDialog({
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
           setOpen(false);
-          toast.success("UP Zero API key updated");
+          toast.success("Chave de API da UP Zero atualizada");
         },
         onError: () => {
-          toast.error("Failed to update UP Zero API key");
+          toast.error("Não foi possível atualizar a chave de API da UP Zero");
         },
       }
     );
@@ -1100,26 +1101,24 @@ function UpZeroKeyDialog({
           variant="ghost"
           size="sm"
           className={`h-7 gap-1 text-xs ${hasKey ? "text-blue-400 hover:text-blue-300" : ""}`}
-          title="Set UP Zero API key"
+          title="Configurar chave de API UP Zero"
         >
           <CloudDownload className="h-3 w-3" />
-          {hasKey ? "UPZ Key ✓" : "Add UPZ Key"}
+          {hasKey ? "Chave UPZ ✓" : "Adicionar chave UPZ"}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <CloudDownload className="h-4 w-4" /> UP Zero API Key
+            <CloudDownload className="h-4 w-4" /> Chave de API UP Zero
           </DialogTitle>
           <DialogDescription>
-            Set the UP Zero API key for <strong>{clientName}</strong>. This
-            key is used to pull live orders and customers directly from their
-            UP Zero store. Leave blank to clear the existing key.
+            Configure a chave de API UP Zero para <strong>{clientName}</strong>. Esta chave consulta pedidos e clientes da loja UP Zero. Deixe em branco para remover a chave existente.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2">
-          <Label htmlFor="upzero-key">API Key</Label>
+          <Label htmlFor="upzero-key">Chave de API</Label>
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <Input
@@ -1127,42 +1126,42 @@ function UpZeroKeyDialog({
                 type={showValue ? "text" : "password"}
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                placeholder="Paste your UP Zero API key…"
+                placeholder="Cole sua chave de API UP Zero…"
                 className="pr-9 font-mono text-xs"
               />
-              <button
+              <Button variant="ghost" size="sm"
                 type="button"
                 className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
                 onClick={() => setShowValue((v) => !v)}
                 tabIndex={-1}
               >
                 {showValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+              </Button>
             </div>
           </div>
           {hasKey && !value && (
             <p className="text-xs text-amber-400 flex items-center gap-1">
               <AlertCircle className="h-3 w-3 shrink-0" />
-              Saving with an empty field will remove the existing key.
+              Salvar com o campo vazio removerá a chave existente.
             </p>
           )}
           {updateMutation.isError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Failed to save. Please try again.</AlertDescription>
+              <AlertDescription>Não foi possível salvar. Tente novamente.</AlertDescription>
             </Alert>
           )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
-            Cancel
+            Cancelar
           </Button>
           <Button onClick={handleSave} disabled={updateMutation.isPending}>
             {updateMutation.isPending ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</>
             ) : (
-              "Save Key"
+              "Salvar chave"
             )}
           </Button>
         </DialogFooter>
@@ -1204,29 +1203,29 @@ function UpZeroSyncButton({
     if (status === "done" && jobQuery.data?.result) {
       const { customersCreated, customersUpdated, ordersCreated, ordersUpdated, productsCreated, productsUpdated, orderItemsSynced, errors } = jobQuery.data.result;
       const desc = [
-        ordersCreated > 0 && `${ordersCreated} new orders`,
-        ordersUpdated > 0 && `${ordersUpdated} orders updated`,
+        ordersCreated > 0 && `${ordersCreated} novos pedidos`,
+        ordersUpdated > 0 && `${ordersUpdated} pedidos atualizados`,
         customersCreated > 0 && `${customersCreated} new customers`,
-        customersUpdated > 0 && `${customersUpdated} customers updated`,
+        customersUpdated > 0 && `${customersUpdated} clientes atualizados`,
         productsCreated > 0 && `${productsCreated} new products`,
-        productsUpdated > 0 && `${productsUpdated} products updated`,
+        productsUpdated > 0 && `${productsUpdated} produtos atualizados`,
         orderItemsSynced > 0 && `${orderItemsSynced} order items`,
       ]
         .filter(Boolean)
-        .join(", ") || "No new records";
+        .join(", ") || "Nenhum registro novo";
       if (errors.length > 0) {
         const firstMsg = errors[0] ?? "";
         const truncated = firstMsg.length > 120 ? firstMsg.slice(0, 117) + "…" : firstMsg;
         const suffix = errors.length > 1 ? ` (+${errors.length - 1} more)` : "";
-        toast.warning(`Sync complete for ${clientName}`, {
+        toast.warning(`Sincronização concluída para ${clientName}`, {
           id: toastId,
           description: `${desc} · ${truncated}${suffix}`,
         });
       } else {
-        toast.success(`Sync complete for ${clientName}`, { id: toastId, description: desc });
+        toast.success(`Sincronização concluída para ${clientName}`, { id: toastId, description: desc });
       }
     } else if (status === "failed") {
-      toast.error(`Sync failed for ${clientName}`, {
+      toast.error(`Falha na sincronização de ${clientName}`, {
         id: toastId,
         description: jobQuery.data?.error ?? undefined,
       });
@@ -1239,13 +1238,13 @@ function UpZeroSyncButton({
       {
         onSuccess: (data) => {
           setJobId(data.jobId);
-          toast.loading(`Syncing ${clientName}…`, {
+          toast.loading(`Sincronizando ${clientName}…`, {
             id: `sync-${clientId}`,
             description: "This may take a minute…",
           });
         },
         onError: () => {
-          toast.error(`Could not start sync for ${clientName}`);
+          toast.error(`Não foi possível iniciar a sincronização de ${clientName}`);
         },
       }
     );
@@ -1261,14 +1260,14 @@ function UpZeroSyncButton({
         className="h-7 gap-1 text-xs text-blue-400 hover:text-blue-300"
         onClick={handleSync}
         disabled={isBusy}
-        title="Sync from UP Zero"
+        title="Sincronizar UP Zero"
       >
         {isBusy ? (
           <Loader2 className="h-3 w-3 animate-spin" />
         ) : (
           <RefreshCw className="h-3 w-3" />
         )}
-        {isBusy ? "Syncing…" : "Sync"}
+        {isBusy ? "Sincronizando…" : "Sincronizar"}
       </Button>
       {lastSync && (
         <span className="text-[10px] text-muted-foreground whitespace-nowrap">
@@ -1309,9 +1308,9 @@ function NuvemshopSyncButton({
   async function handleSync() {
     setIsSyncing(true);
     const toastId = `nuvemshop-sync-${clientId}`;
-    toast.loading(`Syncing ${clientName} from Nuvemshop...`, {
+    toast.loading(`Sincronizando ${clientName} com a Nuvemshop...`, {
       id: toastId,
-      description: "Importing orders, customers, products and paid revenue.",
+      description: "Importando pedidos, clientes, produtos e faturamento pago.",
     });
     try {
       const data = await customFetch<NuvemshopSyncResponse>(
@@ -1321,28 +1320,28 @@ function NuvemshopSyncButton({
       const result = data.result;
       queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
       if (!result) {
-        toast.success(`Nuvemshop sync started for ${clientName}`, { id: toastId });
+        toast.success(`Sincronização da Nuvemshop iniciada para ${clientName}`, { id: toastId });
         return;
       }
       const desc = [
-        `${result.ordersCreated} new orders`,
+        `${result.ordersCreated} novos pedidos`,
         `${result.ordersUpdated} updated`,
         `${result.paidOrders} paid`,
         `${result.productsCreated + result.productsUpdated} products`,
       ].join(" · ");
       if (result.errors.length > 0) {
-        toast.warning(`Nuvemshop sync complete for ${clientName}`, {
+        toast.warning(`Sincronização da Nuvemshop concluída para ${clientName}`, {
           id: toastId,
           description: `${desc} · ${result.errors.length} warnings`,
         });
       } else {
-        toast.success(`Nuvemshop sync complete for ${clientName}`, {
+        toast.success(`Sincronização da Nuvemshop concluída para ${clientName}`, {
           id: toastId,
           description: desc,
         });
       }
     } catch (err) {
-      toast.error(`Could not sync Nuvemshop for ${clientName}`, {
+      toast.error(`Não foi possível sincronizar a Nuvemshop para ${clientName}`, {
         id: toastId,
         description: err instanceof Error ? err.message : undefined,
       });
@@ -1358,14 +1357,14 @@ function NuvemshopSyncButton({
       className="h-7 gap-1 text-xs text-blue-400 hover:text-blue-300"
       onClick={handleSync}
       disabled={isSyncing}
-      title="Sync from Nuvemshop"
+      title="Sincronizar Nuvemshop"
     >
       {isSyncing ? (
         <Loader2 className="h-3 w-3 animate-spin" />
       ) : (
         <RefreshCw className="h-3 w-3" />
       )}
-      {isSyncing ? "Syncing..." : "Sync"}
+      {isSyncing ? "Sincronizando…" : "Sincronizar"}
     </Button>
   );
 }
@@ -1478,10 +1477,10 @@ export default function ClientsPage() {
             totalSkipped > 0
               ? `${result.created} created, ${totalSkipped} skipped`
               : `${result.created} created`;
-          toast.success("Import complete", { description: desc });
+          toast.success("Importação concluída", { description: desc });
         },
         onError() {
-          toast.error("Import failed", { description: "Server error — please try again." });
+          toast.error("Falha na importação", { description: "Erro no servidor. Tente novamente." });
         },
       }
     );
@@ -1564,6 +1563,9 @@ export default function ClientsPage() {
 
   return (
     <div className="space-y-6" data-testid="page-clients">
+      <div className="up-metric-grid">
+        {[["Clientes encontrados", data?.total ?? 0], ["Ativos nesta página", clients.filter(c => c.isActive).length], ["Acessos nesta página", clients.reduce((sum, c) => sum + (c.clientLoginCount ?? 0), 0)], ["Sem login nesta página", clients.filter(c => !c.hasClientLogin).length]].map(([label, value]) => <GlassMetricCard key={label} label={String(label)} value={Number(value)} loading={isLoading} source="UP Dash · cadastro de clientes e acessos" info="Contagem atual dos cadastros. Clientes encontrados considera todos os resultados da busca; os demais cards consideram a página exibida da lista." comparisonUnavailable="O cadastro não disponibiliza snapshots históricos para comparar períodos." />)}
+      </div>
       {/* Hidden file input for CSV upload */}
       <input
         ref={fileInputRef}
@@ -1579,28 +1581,27 @@ export default function ClientsPage() {
       }}>
         <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Preview CSV Import</DialogTitle>
+            <DialogTitle>Prévia da importação CSV</DialogTitle>
             <DialogDescription>
-              Review the rows below before importing. Invalid rows (highlighted
-              in red) will be skipped automatically.
+              Revise as linhas antes de importar. Linhas inválidas destacadas em vermelho serão ignoradas.
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex items-center gap-3 text-sm">
             <span className="flex items-center gap-1.5 text-emerald-400">
               <CheckCircle2 className="h-3.5 w-3.5" />
-              {validCsvRows.length} valid
+              {validCsvRows.length} válidas
             </span>
             <span className="flex items-center gap-1.5 text-red-400">
               <XCircle className="h-3.5 w-3.5" />
-              {csvRows.length - validCsvRows.length} invalid
+              {csvRows.length - validCsvRows.length} inválidas
             </span>
             <a
               href={CSV_TEMPLATE}
               download="clients_template.csv"
               className="ml-auto text-xs underline text-muted-foreground hover:text-foreground"
             >
-              Download template
+              Baixar modelo
             </a>
           </div>
 
@@ -1609,10 +1610,10 @@ export default function ClientsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8">#</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>API Key</TableHead>
-                  <TableHead>Currency</TableHead>
+                  <TableHead>Nome</TableHead>
+                  <TableHead>E-mail</TableHead>
+                  <TableHead>Chave de API</TableHead>
+                  <TableHead>Moeda</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1623,11 +1624,11 @@ export default function ClientsPage() {
                     <TableCell className="max-w-[120px] truncate">{row.name || <span className="text-muted-foreground">—</span>}</TableCell>
                     <TableCell className="max-w-[160px] truncate">{row.email || <span className="text-muted-foreground">—</span>}</TableCell>
                     <TableCell className="max-w-[140px] truncate font-mono text-xs">{row.apiKey || <span className="text-muted-foreground">—</span>}</TableCell>
-                    <TableCell>{row.currency || <span className="text-muted-foreground text-xs">default</span>}</TableCell>
+                    <TableCell>{row.currency || <span className="text-muted-foreground text-xs">padrão</span>}</TableCell>
                     <TableCell>
                       {row.errors.length === 0 ? (
                         <span className="flex items-center gap-1 text-xs text-emerald-400">
-                          <CheckCircle2 className="h-3 w-3" /> Valid
+                          <CheckCircle2 className="h-3 w-3" /> Válida
                         </span>
                       ) : (
                         <span className="flex items-center gap-1 text-xs text-red-400" title={row.errors.join("; ")}>
@@ -1644,25 +1645,25 @@ export default function ClientsPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => { setIsImportOpen(false); setCsvRows([]); }}>
-              Cancel
+              Cancelar
             </Button>
             <Button
               onClick={handleImportConfirm}
               disabled={validCsvRows.length === 0 || importMutation.isPending}
             >
               {importMutation.isPending ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing…</>
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importando…</>
               ) : (
-                `Import ${validCsvRows.length} row${validCsvRows.length !== 1 ? "s" : ""}`
+                `Importar ${validCsvRows.length} linha${validCsvRows.length !== 1 ? "s" : ""}`
               )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
-          <Upload className="mr-2 h-4 w-4" /> Import CSV
+          <Upload className="mr-2 h-4 w-4" /> Importar CSV
         </Button>
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
           setIsDialogOpen(open);
@@ -1686,23 +1687,23 @@ export default function ClientsPage() {
         }}>
           <DialogTrigger asChild>
             <Button>
-              <Plus className="mr-2 h-4 w-4" /> New Client
+              <Plus className="mr-2 h-4 w-4" /> Novo cliente
             </Button>
           </DialogTrigger>
           <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-[520px]">
             <form onSubmit={handleCreate}>
               <DialogHeader>
-                <DialogTitle>Create New Client</DialogTitle>
+                <DialogTitle>Criar novo cliente</DialogTitle>
                 <DialogDescription>
-                  Add a new client organization to the platform.
+                  Adicione uma nova empresa cliente à plataforma.
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="dashboardType">Dashboard</Label>
+                  <Label htmlFor="dashboardType">Painel</Label>
                   <Select value={newDashboardType} onValueChange={(value) => setNewDashboardType(value === "B2C" ? "B2C" : "B2B")}>
                     <SelectTrigger id="dashboardType">
-                      <SelectValue placeholder="Select dashboard" />
+                      <SelectValue placeholder="Selecione o painel" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="B2B">B2B · UP Zero</SelectItem>
@@ -1711,7 +1712,7 @@ export default function ClientsPage() {
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="name">Company Name</Label>
+                  <Label htmlFor="name">Nome da empresa</Label>
                   <Input
                     id="name"
                     value={newName}
@@ -1721,7 +1722,7 @@ export default function ClientsPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="email">Primary Contact Email</Label>
+                  <Label htmlFor="email">E-mail do contato principal</Label>
                   <Input
                     id="email"
                     type="email"
@@ -1732,7 +1733,7 @@ export default function ClientsPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="apiKey">API Key {newDashboardType === "B2C" ? "(Internal)" : "(Integration)"}</Label>
+                  <Label htmlFor="apiKey">Chave de API {newDashboardType === "B2C" ? "(Interno)" : "(Integração)"}</Label>
                   <div className="flex gap-2">
                     <div className="relative flex-1">
                       <Input
@@ -1761,20 +1762,20 @@ export default function ClientsPage() {
                       }}
                     >
                       <Wand2 className="h-3.5 w-3.5" />
-                      Generate Key
+                      Gerar chave
                     </Button>
                   </div>
                   {lookupMatch && (
                     <p className="flex items-center gap-1 text-xs text-emerald-400">
                       <CheckCircle2 className="h-3 w-3 shrink-0" />
-                      Found: {lookupMatch} — fields pre-filled
+                      Encontrados: {lookupMatch} — campos preenchidos
                     </p>
                   )}
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="metaAdAccountId">
-                    Meta Ad Account{" "}
-                    <span className="text-xs text-muted-foreground font-normal">(optional)</span>
+                    Conta de anúncios Meta{" "}
+                    <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
                   </Label>
                   <Input
                     id="metaAdAccountId"
@@ -1784,20 +1785,20 @@ export default function ClientsPage() {
                     className="font-mono text-xs"
                   />
                   <p className="text-xs text-muted-foreground">
-                    If a global Meta token is not configured, paste a client-specific token below.
+                    Se não houver um token global da Meta configurado, cole abaixo um token específico do cliente.
                   </p>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="metaAdsApiKey">
-                    Meta access token{" "}
-                    <span className="text-xs text-muted-foreground font-normal">(optional)</span>
+                    Token de acesso Meta{" "}
+                    <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
                   </Label>
                   <Input
                     id="metaAdsApiKey"
                     type={showB2CSecrets ? "text" : "password"}
                     value={newMetaAdsApiKey}
                     onChange={(e) => setNewMetaAdsApiKey(e.target.value)}
-                    placeholder="Paste token if no global token is configured"
+                    placeholder="Cole o token se não houver um token global configurado"
                     className="font-mono text-xs"
                   />
                 </div>
@@ -1805,9 +1806,9 @@ export default function ClientsPage() {
                   <div className="rounded-md border border-border/70 bg-muted/20 p-3">
                     <div className="mb-3 flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-medium">B2C integrations</p>
+                        <p className="text-sm font-medium">Integrações B2C</p>
                         <p className="text-xs text-muted-foreground">
-                          Nuvemshop and GA4 credentials are stored server-side.
+                          As credenciais da Nuvemshop e GA4 são armazenadas no servidor.
                         </p>
                       </div>
                       <Button
@@ -1816,14 +1817,14 @@ export default function ClientsPage() {
                         size="icon"
                         className="h-8 w-8"
                         onClick={() => setShowB2CSecrets((value) => !value)}
-                        title={showB2CSecrets ? "Hide secrets" : "Show secrets"}
+                        title={showB2CSecrets ? "Ocultar chaves" : "Mostrar chaves"}
                       >
                         {showB2CSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </Button>
                     </div>
                     <div className="grid gap-3">
                       <div className="grid gap-2">
-                        <Label htmlFor="nuvemshopStoreId">Nuvemshop store ID</Label>
+                        <Label htmlFor="nuvemshopStoreId">ID da loja Nuvemshop</Label>
                         <Input
                           id="nuvemshopStoreId"
                           value={newNuvemshopStoreId}
@@ -1833,18 +1834,18 @@ export default function ClientsPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="nuvemshopAccessToken">Nuvemshop access token</Label>
+                        <Label htmlFor="nuvemshopAccessToken">Token de acesso Nuvemshop</Label>
                         <Input
                           id="nuvemshopAccessToken"
                           type={showB2CSecrets ? "text" : "password"}
                           value={newNuvemshopAccessToken}
                           onChange={(e) => setNewNuvemshopAccessToken(e.target.value)}
-                          placeholder="Paste access token"
+                          placeholder="Cole o token de acesso"
                           className="font-mono text-xs"
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="ga4MeasurementId">GA4 measurement ID</Label>
+                        <Label htmlFor="ga4MeasurementId">ID de medição GA4</Label>
                         <Input
                           id="ga4MeasurementId"
                           value={newGa4MeasurementId}
@@ -1854,7 +1855,7 @@ export default function ClientsPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="ga4PropertyId">GA4 property ID</Label>
+                        <Label htmlFor="ga4PropertyId">ID da propriedade GA4</Label>
                         <Input
                           id="ga4PropertyId"
                           value={newGa4PropertyId}
@@ -1865,13 +1866,13 @@ export default function ClientsPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="ga4ApiSecret">GA4 API secret</Label>
+                        <Label htmlFor="ga4ApiSecret">Segredo de API GA4</Label>
                         <Input
                           id="ga4ApiSecret"
                           type={showB2CSecrets ? "text" : "password"}
                           value={newGa4ApiSecret}
                           onChange={(e) => setNewGa4ApiSecret(e.target.value)}
-                          placeholder="Paste GA4 API secret"
+                          placeholder="Cole o segredo de API GA4"
                           className="font-mono text-xs"
                         />
                       </div>
@@ -1879,22 +1880,21 @@ export default function ClientsPage() {
                   </div>
                 )}
                 <div className="grid gap-2">
-                  <Label htmlFor="currency">Currency &amp; Locale</Label>
+                  <Label htmlFor="currency">Moeda e formato regional</Label>
                   <Select value={newCurrencyCode} onValueChange={setNewCurrencyCode}>
                     <SelectTrigger id="currency">
-                      <SelectValue placeholder="Select currency" />
+                      <SelectValue placeholder="Selecione a moeda" />
                     </SelectTrigger>
                     <SelectContent>
                       {CURRENCY_OPTIONS.map((opt) => (
                         <SelectItem key={opt.code} value={opt.code}>
-                          {opt.label}
+                          {displayLabel(opt.label)}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    All revenue numbers in this client&apos;s dashboards will be
-                    formatted with these settings.
+                    Todos os valores deste cliente serão formatados com estas configurações.
                   </p>
                 </div>
               </div>
@@ -1914,7 +1914,7 @@ export default function ClientsPage() {
                         !newGa4ApiSecret.trim()))
                   }
                 >
-                  {createMutation.isPending ? "Creating..." : "Save Client"}
+                  {createMutation.isPending ? "Criando…" : "Salvar cliente"}
                 </Button>
               </DialogFooter>
             </form>
@@ -1937,14 +1937,14 @@ export default function ClientsPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="B2B">B2B clients</SelectItem>
-                <SelectItem value="B2C">B2C clients</SelectItem>
+                <SelectItem value="B2B">Clientes B2B</SelectItem>
+                <SelectItem value="B2C">Clientes B2C</SelectItem>
               </SelectContent>
             </Select>
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder={`Search ${selectedDashboardMode} clients...`}
+                placeholder={`Buscar ${selectedDashboardMode} clientes…`}
                 className="pl-9"
                 value={search}
                 onChange={(e) => {
@@ -1969,7 +1969,7 @@ export default function ClientsPage() {
               </div>
               <Badge variant="outline" className="gap-1.5">
                 <KeyRound className="h-3 w-3" />
-                {formatNumber(clients.reduce((sum, client) => sum + (client.clientLoginCount ?? 0), 0))} acessos
+                {formatNumber(clients.reduce((sum, client) => sum + (client.clientLoginCount ?? 0), 0))} {clients.reduce((sum, client) => sum + (client.clientLoginCount ?? 0), 0) === 1 ? "acesso" : "acessos"}
               </Badge>
             </div>
             {isLoading && !data ? (
@@ -1985,11 +1985,11 @@ export default function ClientsPage() {
                 {clients.map((client) => (
                   <div
                     key={`access-${client.id}`}
-                    className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-card/50 p-3"
+                    className="up-client-access up-glass-card"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-medium">{client.name}</p>
+                        <p className="text-sm font-medium">{client.name}</p>
                         <Badge
                           variant={client.hasClientLogin ? "default" : "secondary"}
                           className="shrink-0 text-[10px]"
@@ -1997,7 +1997,7 @@ export default function ClientsPage() {
                           {client.hasClientLogin ? `${client.clientLoginCount ?? 1} acesso${(client.clientLoginCount ?? 1) > 1 ? "s" : ""}` : "Sem login"}
                         </Badge>
                       </div>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {client.clientLoginEmail ?? "Crie o primeiro acesso deste cliente"}
                       </p>
                     </div>
@@ -2020,34 +2020,38 @@ export default function ClientsPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription className="flex items-center justify-between">
-            Failed to load clients.
-            <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+            Não foi possível carregar os clientes.
+            <Button variant="outline" size="sm" onClick={() => refetch()}>Tentar novamente</Button>
           </AlertDescription>
         </Alert>
       ) : (
-        <Card>
-          <div className="overflow-x-auto">
+        <Card className="up-client-table">
+          <CardContent>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div><h2 className="text-base font-medium">Clientes cadastrados</h2><p className="text-xs text-muted-foreground">Role a tabela para consultar todas as métricas e ações.</p></div>
+              <Badge variant="outline">{formatNumber(clients.length)} {clients.length === 1 ? "cliente" : "clientes"}</Badge>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Client</TableHead>
+                  <TableHead>Cliente</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Dashboard</TableHead>
+                  <TableHead>Painel</TableHead>
                   <TableHead>Login</TableHead>
-                  <TableHead className="text-right">Revenue</TableHead>
-                  <TableHead className="text-right">Orders</TableHead>
-                  <TableHead className="text-right">Avg order</TableHead>
+                  <TableHead className="text-right">Faturamento</TableHead>
+                  <TableHead className="text-right">Pedidos</TableHead>
+                  <TableHead className="text-right">Pedido médio</TableHead>
                   <TableHead className="text-right">Conv. %</TableHead>
-                  <TableHead className="text-right">Growth</TableHead>
+                  <TableHead className="text-right">Crescimento</TableHead>
                   <TableHead className="text-right">ROAS</TableHead>
                   <TableHead className="text-right">
                     {selectedDashboardMode === "B2C" ? "Qtd de Compras" : "Leads"}
                   </TableHead>
                   <TableHead className="text-right">
-                    {selectedDashboardMode === "B2C" ? "Sessões (GA4)" : "Approval"}
+                    {selectedDashboardMode === "B2C" ? "Sessões (GA4)" : "Aprovação"}
                   </TableHead>
-                  <TableHead className="text-right">Created</TableHead>
-                  <TableHead />
+                  <TableHead className="text-right">Criado</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2075,7 +2079,7 @@ export default function ClientsPage() {
                     <TableCell colSpan={14} className="h-32 text-center text-muted-foreground">
                       <div className="flex flex-col items-center justify-center">
                         <Building2 className="h-8 w-8 mb-2 text-muted-foreground/50" />
-                        No {selectedDashboardMode} clients found.
+                        Nenhum cliente {selectedDashboardMode} encontrado.
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2088,7 +2092,7 @@ export default function ClientsPage() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={client.isActive ? 'default' : 'secondary'}>
-                          {client.isActive ? 'Active' : 'Inactive'}
+                          {client.isActive ? "Ativo" : "Inativo"}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -2171,7 +2175,7 @@ export default function ClientsPage() {
                           : "—"}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground tabular-nums">
-                        {format(new Date(client.createdAt), "MMM d, yyyy")}
+                        {format(new Date(client.createdAt), "dd/MM/yyyy")}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1 flex-wrap">
@@ -2244,11 +2248,11 @@ export default function ClientsPage() {
                 )}
               </TableBody>
             </Table>
-          </div>
+          </CardContent>
           {data && data.pages > 1 && (
             <div className="p-4 border-t flex items-center justify-between">
               <div className="text-sm text-muted-foreground">
-                Showing page {data.page} of {data.pages} ({formatNumber(data.total)} total)
+                Exibindo página {data.page} de {data.pages} ({formatNumber(data.total)} total)
               </div>
               <div className="flex gap-2">
                 <Button
@@ -2257,7 +2261,7 @@ export default function ClientsPage() {
                   disabled={page === 1}
                   onClick={() => setPage(p => p - 1)}
                 >
-                  Previous
+                  Anterior
                 </Button>
                 <Button
                   variant="outline"
@@ -2265,7 +2269,7 @@ export default function ClientsPage() {
                   disabled={page === data.pages}
                   onClick={() => setPage(p => p + 1)}
                 >
-                  Next
+                  Próximo
                 </Button>
               </div>
             </div>

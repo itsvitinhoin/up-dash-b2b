@@ -1,3 +1,5 @@
+import { displayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -867,33 +869,10 @@ export default function AutomaticReportsPage() {
   return (
     <div className="space-y-6" data-testid="page-automatic-reports">
       <div className="grid gap-3 md:grid-cols-4">
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Status</p>
-            <div className="mt-2 flex items-center gap-2">
-              <span className={cn("h-2.5 w-2.5 rounded-full", config.enabled ? "bg-emerald-500" : "bg-muted-foreground")} />
-              <p className="text-2xl font-bold">{config.enabled ? "Ativo" : "Inativo"}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Marcas configuradas</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums">{summary.enabledClients}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Destinatários ativos</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums">{summary.recipients}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Na fila</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-amber-500">{summary.scheduled}</p>
-          </CardContent>
-        </Card>
+        <GlassMetricCard label="Status" value={<><span className={cn("h-2.5 w-2.5 rounded-full", config.enabled ? "bg-emerald-500" : "bg-muted-foreground")} /><p className="text-2xl font-bold">{config.enabled ? "Ativo" : "Inativo"}</p></>}  />
+        <GlassMetricCard label="Marcas configuradas" value={<>{summary.enabledClients}</>}  />
+        <GlassMetricCard label="Destinatários ativos" value={<>{summary.recipients}</>}  />
+        <GlassMetricCard label="Na fila" value={<>{summary.scheduled}</>}  />
       </div>
 
       <Tabs defaultValue="settings" className="space-y-4">
@@ -1435,10 +1414,7 @@ export default function AutomaticReportsPage() {
                       const mappedVariable = variableById(mappedVariableId);
                       return (
                         <div key={placeholder} className="grid gap-3 p-4 lg:grid-cols-[90px_minmax(0,1fr)_minmax(180px,260px)] lg:items-center">
-                          <div>
-                            <p className="text-xs uppercase tracking-wider text-muted-foreground">Campo</p>
-                            <p className="font-mono text-lg font-semibold">{placeholder}</p>
-                          </div>
+                          <GlassMetricCard  label="Campo" value={<>{placeholder}</>}  />
                           <div className="space-y-2">
                             <Label className="text-xs">Variável do UP Dash</Label>
                             <Select value={mappedVariableId} onValueChange={(value) => updateVariableMapping(placeholder, value)}>
@@ -1451,7 +1427,7 @@ export default function AutomaticReportsPage() {
                                     <SelectLabel>{label}</SelectLabel>
                                     {REPORT_VARIABLES.filter((variable) => variable.category === category).map((variable) => (
                                       <SelectItem key={variable.id} value={variable.id}>
-                                        {variable.id} · {variable.label}
+                                        {variable.id} · {displayLabel(variable.label)}
                                       </SelectItem>
                                     ))}
                                   </SelectGroup>
@@ -1504,7 +1480,7 @@ export default function AutomaticReportsPage() {
                           <div key={variable.id} className="rounded-lg border border-border bg-muted/20 p-3">
                             <div className="flex items-start justify-between gap-3">
                               <div>
-                                <p className="text-sm font-medium">{variable.label}</p>
+                                <p className="text-sm font-medium">{displayLabel(variable.label)}</p>
                                 <p className="font-mono text-xs text-primary">{variable.id}</p>
                               </div>
                               <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
@@ -1513,7 +1489,7 @@ export default function AutomaticReportsPage() {
                             </div>
                             <p className="mt-2 text-xs text-muted-foreground">{variable.description}</p>
                             <div className="mt-2 rounded-md bg-background/60 px-2 py-1 text-xs">
-                              <span className="text-muted-foreground">Preview: </span>
+                              <span className="text-muted-foreground">Prévia: </span>
                               <span className="font-medium">{variableValues[variable.id] ?? variable.sample}</span>
                             </div>
                           </div>
@@ -1541,7 +1517,7 @@ export default function AutomaticReportsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Template</TableHead>
+                      <TableHead>Modelo</TableHead>
                       <TableHead>Categoria</TableHead>
                       <TableHead>Idioma</TableHead>
                       <TableHead>Status</TableHead>
@@ -1633,7 +1609,7 @@ export default function AutomaticReportsPage() {
                     <TableRow>
                       <TableHead>Cliente</TableHead>
                       <TableHead>Destinatário</TableHead>
-                      <TableHead>Template</TableHead>
+                      <TableHead>Modelo</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Gerado em</TableHead>
                       <TableHead className="text-right">Link</TableHead>

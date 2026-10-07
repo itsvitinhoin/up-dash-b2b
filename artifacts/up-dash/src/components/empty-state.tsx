@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { type LucideIcon } from "lucide-react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -38,7 +39,7 @@ export function EmptyState({ icon: Icon, title, description, action, className }
           onClick={action.onClick}
           data-testid="empty-state-action"
         >
-          {action.label}
+          {displayLabel(action.label)}
         </Button>
       )}
     </motion.div>

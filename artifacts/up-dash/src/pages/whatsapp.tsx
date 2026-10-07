@@ -1,3 +1,5 @@
+import { displayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -103,13 +105,13 @@ const CHART_TOOLTIP_STYLE = {
 };
 
 const FUNNEL_COLORS = [
-  "#2563eb",
-  "#0ea5e9",
-  "#10b981",
-  "#84cc16",
-  "#f59e0b",
-  "#6366f1",
-  "#ef4444",
+  "#5b8dff",
+  "#afc4ff",
+  "#87adff",
+  "#87adff",
+  "#0458fe",
+  "#5b8dff",
+  "#b3caff",
 ];
 
 const KPI_INFO: Record<string, string> = {
@@ -208,39 +210,7 @@ function KpiCard({
     blue: "bg-blue-500/10 text-blue-500",
   }[tone];
 
-  return (
-    <Card className="bg-card border-border">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <p className="truncate text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-              {label}
-            </p>
-            {info && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label={`Explicação: ${label}`}
-                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <Info className="h-3.5 w-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs bg-popover text-popover-foreground">
-                  {info}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-          <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", toneClass)}>
-            <Icon className="h-4 w-4" />
-          </span>
-        </div>
-        <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">{value}</p>
-      </CardContent>
-    </Card>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} info={info} />);
 }
 
 export default function WhatsappPage() {
@@ -569,8 +539,8 @@ export default function WhatsappPage() {
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
                 <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} />
-                <Line type="monotone" dataKey="recebidas" stroke="#2563eb" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="enviadas" stroke="#10b981" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="recebidas" stroke="#5b8dff" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="enviadas" stroke="#87adff" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -585,7 +555,7 @@ export default function WhatsappPage() {
                 <XAxis type="number" tick={{ fontSize: 12 }} />
                 <YAxis type="category" dataKey="profile" tick={{ fontSize: 12 }} width={95} />
                 <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} />
-                <Bar dataKey="conversations" fill="#0ea5e9" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="conversations" fill="#afc4ff" radius={[0, 4, 4, 0]} />
               </RechartsBarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -634,16 +604,16 @@ export default function WhatsappPage() {
               <div key={row.stage} className="space-y-1.5">
                 <div className="flex items-center justify-between gap-3 text-sm">
                   <span className="flex items-center gap-1.5 text-muted-foreground">
-                    {row.label}
+                    {displayLabel(row.label)}
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <button
+                        <Button variant="ghost" size="sm"
                           type="button"
                           aria-label={`Explicação: ${row.label}`}
                           className="inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:text-foreground"
                         >
                           <Info className="h-3.5 w-3.5" />
-                        </button>
+                        </Button>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs bg-popover text-popover-foreground">
                         {FUNNEL_STAGE_INFO[row.stage]}
@@ -670,7 +640,7 @@ export default function WhatsappPage() {
               <XAxis dataKey="profile" tick={{ fontSize: 12 }} />
               <YAxis tickFormatter={(value) => `${value}m`} tick={{ fontSize: 12 }} />
               <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatMinutes(Number(value))} />
-              <Bar dataKey="avgResponse" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="avgResponse" fill="#0458fe" radius={[4, 4, 0, 0]} />
             </RechartsBarChart>
           </ResponsiveContainer>
         </CardContent>

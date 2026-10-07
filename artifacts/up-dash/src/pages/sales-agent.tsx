@@ -1,3 +1,4 @@
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, MessageCircle, ShoppingBag, Users } from "lucide-react";
 import { customFetch } from "@workspace/api-client-react";
@@ -29,20 +30,7 @@ function money(value: number) {
 }
 
 function Metric({ title, value, detail, icon: Icon }: { title: string; value: string; detail: string; icon: typeof Users }) {
-  return (
-    <Card>
-      <CardContent className="flex items-start justify-between gap-3 p-5">
-        <div>
-          <p className="text-xs text-muted-foreground">{title}</p>
-          <p className="mt-2 text-2xl font-semibold">{value}</p>
-          <p className="mt-2 text-xs text-muted-foreground">{detail}</p>
-        </div>
-        <div className="rounded-md bg-primary/10 p-2 text-primary">
-          <Icon className="h-5 w-5" />
-        </div>
-      </CardContent>
-    </Card>
-  );
+  return (<GlassMetricCard label={title} value={value} icon={Icon} footer={<p className="text-xs text-muted-foreground">{detail}</p>} />);
 }
 
 export default function SalesAgentPage() {

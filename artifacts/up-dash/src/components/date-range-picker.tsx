@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import {
   addMonths,
   differenceInDays,
@@ -228,7 +229,7 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
                   : "text-muted-foreground hover:bg-accent hover:text-foreground",
               )}
             >
-              <span>{preset.label}</span>
+              <span>{displayLabel(preset.label)}</span>
               {activePreset?.id === preset.id && <Check className="h-3.5 w-3.5" />}
             </button>
           ))}

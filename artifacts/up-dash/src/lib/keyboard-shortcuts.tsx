@@ -30,21 +30,21 @@ interface ShortcutsContextValue {
 const ShortcutsContext = createContext<ShortcutsContextValue | null>(null);
 
 const NAV_SHORTCUTS: Shortcut[] = [
-  { combo: "g d", description: "Go to Dashboard" },
-  { combo: "g f", description: "Go to Funnel" },
-  { combo: "g c", description: "Go to Customers" },
-  { combo: "g p", description: "Go to Products" },
-  { combo: "g s", description: "Go to Sellers" },
-  { combo: "g g", description: "Go to Geography" },
-  { combo: "g l", description: "Go to Clients (admin)" },
-  { combo: "g n", description: "Open Notifications" },
+  { combo: "g d", description: "Ir para o Painel" },
+  { combo: "g f", description: "Ir para o Funil" },
+  { combo: "g c", description: "Ir para Clientes" },
+  { combo: "g p", description: "Ir para Produtos" },
+  { combo: "g s", description: "Ir para Vendedoras" },
+  { combo: "g g", description: "Ir para Geografia" },
+  { combo: "g l", description: "Ir para Clientes (admin)" },
+  { combo: "g n", description: "Abrir notificações" },
 ];
 
 const ACTION_SHORTCUTS: Shortcut[] = [
-  { combo: "?", description: "Open this help" },
-  { combo: "/", description: "Focus search" },
+  { combo: "?", description: "Abrir esta ajuda" },
+  { combo: "/", description: "Focar busca" },
   { combo: "t", description: "Toggle dark / light theme" },
-  { combo: "Esc", description: "Dismiss panel or dialog" },
+  { combo: "Esc", description: "Fechar painel ou janela" },
 ];
 
 const NAV_MAP: Record<string, string> = {
@@ -146,12 +146,12 @@ function ShortcutsDialog() {
     <Dialog open={ctx.open} onOpenChange={setOpen}>
       <DialogContent className="max-w-md" data-testid="keyboard-shortcuts-dialog">
         <DialogHeader>
-          <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription>Move around UP Dash without leaving the keyboard.</DialogDescription>
+          <DialogTitle>Atalhos de teclado</DialogTitle>
+          <DialogDescription>Navegue pelo UP Dash com o teclado.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-5 mt-2">
           <div>
-            <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Navigate</p>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Navegar</p>
             <ul className="space-y-1.5">
               {NAV_SHORTCUTS.map((s) => (
                 <li key={s.combo} className="flex items-center justify-between text-sm">
@@ -162,7 +162,7 @@ function ShortcutsDialog() {
             </ul>
           </div>
           <div>
-            <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Actions</p>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Ações</p>
             <ul className="space-y-1.5">
               {ACTION_SHORTCUTS.map((s) => (
                 <li key={s.combo} className="flex items-center justify-between text-sm">

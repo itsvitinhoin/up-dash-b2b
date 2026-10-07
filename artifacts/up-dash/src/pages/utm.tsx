@@ -1,3 +1,7 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { MetricDataProvider, metricBindings } from "@/components/metric-data-context";
+import { getGetUtmUrl } from "@workspace/api-client-react";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import React, { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
@@ -54,8 +58,8 @@ type SortKey = "registrations" | "approvals" | "approvalPct" | "buyers" | "reven
 type SortDir = "asc" | "desc";
 
 const SOURCE_PALETTE = [
-  "#6366f1", "#22d3ee", "#f59e0b", "#10b981",
-  "#f43f5e", "#8b5cf6", "#ec4899", "#14b8a6",
+  "#5b8dff", "#afc4ff", "#0458fe", "#87adff",
+  "#b3caff", "#5b8dff", "#b3caff", "#87adff",
 ];
 
 function KpiCard({
@@ -71,21 +75,7 @@ function KpiCard({
   loading: boolean;
   accent?: string;
 }) {
-  return (
-    <div className="flex flex-col gap-1.5 p-3 bg-card border border-border rounded-xl">
-      <div className="flex items-center gap-1.5">
-        <div className={`p-1 rounded-md shrink-0 ${accent ?? "bg-primary/10"}`}>
-          <Icon className={`h-3 w-3 ${accent ? "text-foreground" : "text-primary"}`} />
-        </div>
-        <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground truncate">{label}</p>
-      </div>
-      {loading ? (
-        <Skeleton className="h-5 w-16" />
-      ) : (
-        <p className="text-base font-semibold tabular-nums leading-tight truncate">{value}</p>
-      )}
-    </div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} loading={loading} />);
 }
 
 function SortableHeader({
@@ -103,7 +93,7 @@ function SortableHeader({
 }) {
   const active = sortKey === currentKey;
   return (
-    <button
+    <Button variant="ghost" size="sm"
       type="button"
       className={`flex items-center gap-1 text-left font-medium hover:text-foreground transition-colors ${active ? "text-foreground" : "text-muted-foreground"}`}
       onClick={() => onSort(sortKey)}
@@ -113,7 +103,7 @@ function SortableHeader({
       {active && (
         <span className="text-[9px] font-mono opacity-60">{dir === "asc" ? "↑" : "↓"}</span>
       )}
-    </button>
+    </Button>
   );
 }
 
@@ -193,6 +183,17 @@ export default function UtmPage() {
 
   const { data, isLoading, isError, refetch } = useGetUtm(utmParams, {
     query: queryOpts({ enabled, placeholderData: (prev) => prev }),
+  });
+
+  const previous = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetUtmUrl(utmParams), enabled);
+  const metricComparisons = metricBindings(data?.kpis, previous.data?.kpis, {
+    "metric-sessões": { field: "totalSessions", format: formatNumber },
+    "metric-cadastros": { field: "totalRegistrations", format: formatNumber },
+    "metric-%-de-aprovação": { field: "approvalPct", format: v => `${v.toFixed(1)}%` },
+    "metric-compradores": { field: "totalBuyers", format: formatNumber },
+    "metric-faturamento": { field: "totalRevenue", format: formatCurrencySmart },
+    "metric-%-de-conversão": { field: "conversionPct", format: v => `${v.toFixed(1)}%` },
+    "metric-roas": { field: "totalRoas", format: v => `${v.toFixed(2)}x` }
   });
 
   const insightParams = { clientId, dateFrom, dateTo, screen: "utm" as const };
@@ -308,7 +309,7 @@ export default function UtmPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Live ·{" "}
+            Atualizado ·{" "}
             <span className="text-foreground font-semibold tabular-nums">
               <CountUp value={totalRows} format={(v) => formatNumber(Math.round(v))} />
             </span>{" "}
@@ -319,7 +320,7 @@ export default function UtmPage() {
           {/* Tab switcher */}
           <div className="flex gap-1 bg-muted/60 p-1 rounded-lg">
             {(["sourceMediumCampaign", "source", "campaign"] as const).map((mode) => (
-              <button
+              <Button variant="ghost" size="sm"
                 key={mode}
                 onClick={() => setGroupBy(mode)}
                 data-testid={`utm-tab-${mode}`}
@@ -334,8 +335,8 @@ export default function UtmPage() {
                 ) : (
                   <Link2 className="h-3.5 w-3.5" />
                 )}
-                {mode === "sourceMediumCampaign" ? "GA4 view" : `By ${GROUP_LABELS[mode]}`}
-              </button>
+                {mode === "sourceMediumCampaign" ? "Visualização GA4" : `Por ${GROUP_LABELS[mode]}`}
+              </Button>
             ))}
           </div>
           <Button
@@ -346,49 +347,50 @@ export default function UtmPage() {
             data-testid="utm-export"
           >
             <Download className="h-4 w-4 mr-1.5" />
-            Export CSV
+            Exportar CSV
           </Button>
         </div>
       </div>
 
+<MetricDataProvider source="UP Zero · jornada e atribuição" comparisons={metricComparisons}>
       {/* KPI Strip */}
       <motion.div variants={cardVariants}>
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
           <KpiCard
-            label="Sessions"
+            label="Sessões"
             value={kpis ? formatNumber(kpis.totalSessions) : "—"}
             icon={TrendingUp}
             loading={isLoading}
             accent="bg-sky-500/10"
           />
           <KpiCard
-            label="Registrations"
+            label="Cadastros"
             value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
             icon={Users}
             loading={isLoading}
           />
           <KpiCard
-            label="Approval %"
+            label="% de aprovação"
             value={kpis ? `${kpis.approvalPct.toFixed(1)}%` : "—"}
             icon={UserCheck}
             loading={isLoading}
             accent="bg-amber-500/10"
           />
           <KpiCard
-            label="Buyers"
+            label="Compradores"
             value={kpis ? formatNumber(kpis.totalBuyers) : "—"}
             icon={Users}
             loading={isLoading}
           />
           <KpiCard
-            label="Revenue"
+            label="Faturamento"
             value={kpis ? formatCurrencySmart(kpis.totalRevenue) : "—"}
             icon={BarChart2}
             loading={isLoading}
             accent="bg-violet-500/10"
           />
           <KpiCard
-            label="Conversion %"
+            label="% de conversão"
             value={kpis ? `${kpis.conversionPct.toFixed(1)}%` : "—"}
             icon={TrendingUp}
             loading={isLoading}
@@ -403,6 +405,7 @@ export default function UtmPage() {
           />
         </div>
       </motion.div>
+</MetricDataProvider>
 
       {/* AI Insight */}
       {!insightDismissed && (
@@ -420,17 +423,17 @@ export default function UtmPage() {
               <div className="flex items-center justify-between mb-3">
                 <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
                   <Sparkles className="h-3 w-3" />
-                  UP Insight · Attribution · {insight?.source === "ai" ? "AI" : "Auto"}
+                  UP Insight · Attribution · {insight?.source === "ai" ? "IA" : "Auto"}
                 </span>
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Dismiss insight"
+                  aria-label="Fechar análise"
                   data-testid="utm-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
               {insightLoading || !insight ? (
                 <>
@@ -469,7 +472,7 @@ export default function UtmPage() {
                 </Button>
                 {insight?.cached && (
                   <span className="text-[11px] text-muted-foreground">
-                    Cached · refreshes hourly
+                    Atualização a cada hora
                   </span>
                 )}
               </div>
@@ -484,7 +487,7 @@ export default function UtmPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold">
-                Revenue by {GROUP_LABELS[groupBy]}
+                Faturamento por {GROUP_LABELS[groupBy]}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -492,7 +495,7 @@ export default function UtmPage() {
                 <Skeleton className="h-48 w-full" />
               ) : barDataRevenue.length === 0 ? (
                 <div className="h-48 flex items-center justify-center text-sm text-muted-foreground">
-                  No revenue data
+                  Sem dados de faturamento
                 </div>
               ) : (
                 <div className="h-48">
@@ -540,7 +543,7 @@ export default function UtmPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold">
-                Conversion % by {GROUP_LABELS[groupBy]}
+                % de conversão por {GROUP_LABELS[groupBy]}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -548,7 +551,7 @@ export default function UtmPage() {
                 <Skeleton className="h-48 w-full" />
               ) : barDataConv.length === 0 ? (
                 <div className="h-48 flex items-center justify-center text-sm text-muted-foreground">
-                  No conversion data
+                  Sem dados de conversão
                 </div>
               ) : (
                 <div className="h-48">
@@ -615,9 +618,9 @@ export default function UtmPage() {
               <Alert variant="destructive" className="m-4">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription className="flex items-center justify-between">
-                  Failed to load UTM data.
+                  Não foi possível carregar os dados UTM.
                   <Button variant="outline" size="sm" onClick={() => refetch()}>
-                    Retry
+                    Tentar novamente
                   </Button>
                 </AlertDescription>
               </Alert>
@@ -635,8 +638,8 @@ export default function UtmPage() {
             ) : sortedRows.length === 0 ? (
               <EmptyState
                 icon={Globe}
-                title="No UTM data for this period"
-                description="When customers register with UTM parameters, their attribution will appear here."
+                title="Sem dados UTM neste período"
+                description="Quando os clientes se cadastrarem com parâmetros UTM, a atribuição aparecerá aqui."
               />
             ) : (
               <div className="overflow-x-auto">
@@ -649,13 +652,13 @@ export default function UtmPage() {
                       {groupBy === "sourceMediumCampaign" ? (
                         <>
                           <th className="py-3 pl-4 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground min-w-[120px]">
-                            Source
+                            Origem
                           </th>
                           <th className="py-3 px-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground min-w-[130px]">
-                            Medium
+                            Mídia
                           </th>
                           <th className="py-3 px-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground min-w-[220px]">
-                            Campaign
+                            Campanha
                           </th>
                         </>
                       ) : (
@@ -665,7 +668,7 @@ export default function UtmPage() {
                       )}
                       <th className="py-3 px-3 text-right min-w-[100px]">
                         <SortableHeader
-                          label="Registrations"
+                          label="Cadastros"
                           sortKey="registrations"
                           currentKey={sortKey}
                           dir={sortDir}
@@ -674,7 +677,7 @@ export default function UtmPage() {
                       </th>
                       <th className="py-3 px-3 text-right min-w-[90px]">
                         <SortableHeader
-                          label="Approved"
+                          label="Aprovado"
                           sortKey="approvals"
                           currentKey={sortKey}
                           dir={sortDir}
@@ -683,7 +686,7 @@ export default function UtmPage() {
                       </th>
                       <th className="py-3 px-3 text-right min-w-[90px]">
                         <SortableHeader
-                          label="Appr %"
+                          label="% aprovado"
                           sortKey="approvalPct"
                           currentKey={sortKey}
                           dir={sortDir}
@@ -692,7 +695,7 @@ export default function UtmPage() {
                       </th>
                       <th className="py-3 px-3 text-right min-w-[80px]">
                         <SortableHeader
-                          label="Buyers"
+                          label="Compradores"
                           sortKey="buyers"
                           currentKey={sortKey}
                           dir={sortDir}
@@ -701,7 +704,7 @@ export default function UtmPage() {
                       </th>
                       <th className="py-3 px-3 text-right min-w-[110px]">
                         <SortableHeader
-                          label="Revenue"
+                          label="Faturamento"
                           sortKey="revenue"
                           currentKey={sortKey}
                           dir={sortDir}

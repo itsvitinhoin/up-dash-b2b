@@ -1,56 +1,16 @@
 import { cn } from "@/lib/utils";
 
-type DashLoaderProps = {
-  className?: string;
-  label?: string;
-  description?: string;
-  compact?: boolean;
-};
+type DashLoaderProps = { className?: string; label?: string; description?: string; compact?: boolean };
 
+/** Animação oficial UP, derivada do vídeo fornecido, com canal alfa. */
 export function DashLoader({ className, label = "Carregando dados", description, compact = false }: DashLoaderProps) {
-  return (
-    <div className={cn("flex flex-col items-center justify-center gap-4 text-center", compact ? "py-4" : "min-h-[260px] py-8", className)}>
-      <div className="loader" aria-hidden="true">
-        <div className="box box0">
-          <div />
-        </div>
-        <div className="box box1">
-          <div />
-        </div>
-        <div className="box box2">
-          <div />
-        </div>
-        <div className="box box3">
-          <div />
-        </div>
-        <div className="box box4">
-          <div />
-        </div>
-        <div className="box box5">
-          <div />
-        </div>
-        <div className="box box6">
-          <div />
-        </div>
-        <div className="box box7">
-          <div />
-        </div>
-        <div className="ground">
-          <div />
-        </div>
-      </div>
-      <div className="space-y-1">
-        <p className="text-xs font-semibold uppercase tracking-wider text-foreground">{label}</p>
-        {description ? <p className="max-w-sm text-xs text-muted-foreground">{description}</p> : null}
-      </div>
-    </div>
-  );
+  const base = `${import.meta.env.BASE_URL}brand/`;
+  return <div className={cn("flex flex-col items-center justify-center gap-3 text-center", compact ? "py-2" : "py-8", className)}>
+    <picture aria-hidden="true"><source media="(prefers-reduced-motion: reduce)" srcSet={`${base}up-loader-poster.webp`} /><img src={`${base}up-loader.webp`} width="480" height="240" decoding="async" fetchPriority="high" className="up-loader-animation" alt="" /></picture>
+    <div className="space-y-1"><p className="text-xs font-semibold text-foreground">{label}</p>{description && <p className="max-w-sm text-xs text-muted-foreground">{description}</p>}</div>
+  </div>;
 }
 
 export function DashLoadingCard({ className, label, description }: DashLoaderProps) {
-  return (
-    <div className={cn("rounded-lg border border-border bg-card", className)}>
-      <DashLoader label={label} description={description} />
-    </div>
-  );
+  return <div className={cn("rounded-[20px] border border-border bg-card", className)}><DashLoader label={label} description={description} /></div>;
 }
