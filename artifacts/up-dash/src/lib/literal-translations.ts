@@ -289,6 +289,21 @@ const entries: Array<[string, string, string]> = [
   ["Valor", "Value", "금액"],
   ["sessões", "sessions", "세션"],
   ["aprovados", "approved", "승인"],
+  // ---- dashboard (cartoes e paineis)
+  ["Solicitado", "Requested", "요청"],
+  ["Cadastros", "Sign-ups", "가입"],
+  ["Eventos", "Events", "이벤트"],
+  ["Produtos vistos", "Products viewed", "조회한 상품"],
+  ["Carrinhos", "Carts", "장바구니"],
+  ["Valor comprado", "Purchased value", "구매 금액"],
+  ["Pago", "Paid", "결제"],
+  ["Bruto", "Gross", "총액"],
+  ["Desconto", "Discount", "할인"],
+  ["Frete", "Shipping", "배송비"],
+  ["Pedidos no período", "Orders in the period", "기간 내 주문"],
+  ["Investimento", "Investment", "투자"],
+  ["UP Zero · campanhas pagas", "UP Zero · paid campaigns", "UP Zero · 유료 캠페인"],
+  ["UP Zero · Meta Ads", "UP Zero · Meta Ads", "UP Zero · Meta Ads"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
