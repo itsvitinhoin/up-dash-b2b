@@ -42,6 +42,8 @@ export interface DashboardKpiCardProps {
   comparisonValue?: number | null;
   comparisonUnavailable?: string;
   hideComparison?: boolean;
+  /** Metrica de custo (CAC, CPL, CPA...): variacao negativa e favorável e fica verde. */
+  lowerIsBetter?: boolean;
 }
 
 const METRIC_DESCRIPTIONS: Record<string, string> = {
@@ -122,7 +124,7 @@ export function DashboardKpiCard({
   footer,
   deltaContent,
   changePositive,
-  className, info, source, previousValue, comparisonValue, comparisonUnavailable, hideComparison,
+  className, info, source, previousValue, comparisonValue, comparisonUnavailable, hideComparison, lowerIsBetter,
 }: DashboardKpiCardProps) {
   const reduced = useReducedMotion();
   const { language, tx } = useI18n();
@@ -131,7 +133,7 @@ export function DashboardKpiCard({
   const previous = previousValue !== undefined ? previousValue : contextual.previous;
   const comparison = metricComparison(comparisonValue !== undefined ? comparisonValue : contextual.current !== undefined ? contextual.current : (displayValue === undefined ? value : undefined), previous);
   const effectiveChange = previous !== undefined ? comparison.change : change !== null && Number.isFinite(change) ? change : null;
-  const positive = changePositive ?? (effectiveChange !== null && effectiveChange >= 0);
+  const positive = changePositive ?? (effectiveChange !== null && (lowerIsBetter ? effectiveChange <= 0 : effectiveChange >= 0));
   const rising = effectiveChange !== null && effectiveChange > 0;
   // Linhas de fonte/base/regra vão para o popover de informação, exceto as que trazem número: número nunca sai da vista.
   const metadata = sub.filter(row => /^(fonte|base|cálculo|disponibilidade|regra|período)$/i.test(row.label) && !/\d/.test(row.value));

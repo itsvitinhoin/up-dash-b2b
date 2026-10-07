@@ -1,3 +1,5 @@
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -316,13 +318,13 @@ const COHORT_BADGE_CLASS: Record<CohortLabel, string> = {
 };
 
 const trendConfig = {
-  revenue: { label: "Faturamento ERP", color: "#3b82f6" },
-  attributedRevenue: { label: "Receita atribuída", color: "#8b5cf6" },
-  spend: { label: "Investimento", color: "#f59e0b" },
+  revenue: { label: "Faturamento ERP", color: "#5b8dff" },
+  attributedRevenue: { label: "Receita atribuída", color: "#afc4ff" },
+  spend: { label: "Investimento", color: "#0458fe" },
 } satisfies ChartConfig;
 
 const breakdownConfig = {
-  value: { label: "Participação", color: "#3b82f6" },
+  value: { label: "Participação", color: "#5b8dff" },
 } satisfies ChartConfig;
 
 const PAGE_SIZE = 10;
@@ -685,11 +687,16 @@ export default function PerformancePage() {
   );
   useEffect(() => setOrdersPage(1), [cohortFilter]);
 
+  const previous = usePreviousPeriodQuery<PerformanceResponse>(periodQuery("/api/analytics/performance", { ...commonParams, page: 1, limit: PAGE_SIZE }), enabled);
+  const pk = previous.data?.kpis;
   const k = data?.kpis;
   const financialMetrics = [
     {
       label: "Faturamento ERP",
       value: k?.netRevenue ?? 0,
+      comparisonValue: k?.netRevenue ?? null,
+      previousValue: pk?.netRevenue,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: CircleDollarSign,
       iconClass: "bg-blue-500/10 text-blue-400",
@@ -699,6 +706,9 @@ export default function PerformancePage() {
     {
       label: "Receita atribuída",
       value: k?.attributedRevenue ?? 0,
+      comparisonValue: k?.attributedRevenue ?? null,
+      previousValue: pk?.attributedRevenue,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: Target,
       iconClass: "bg-violet-500/10 text-violet-400",
@@ -713,6 +723,9 @@ export default function PerformancePage() {
     {
       label: "Investimento",
       value: k?.mediaSpend ?? 0,
+      comparisonValue: k?.mediaSpend ?? null,
+      previousValue: pk?.mediaSpend,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: Megaphone,
       iconClass: "bg-amber-500/10 text-amber-400",
@@ -722,7 +735,10 @@ export default function PerformancePage() {
     {
       label: "ROAS atribuído",
       value: k?.roas ?? 0,
-      format: () => (k?.roas == null ? "—" : `${k.roas.toFixed(2)}x`),
+      comparisonValue: k?.roas ?? null,
+      previousValue: pk?.roas,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.roas == null ? "—" : `${v.toFixed(2)}x`),
       icon: TrendingUp,
       iconClass: "bg-emerald-500/10 text-emerald-400",
       sparkColor: "#34d399",
@@ -731,7 +747,10 @@ export default function PerformancePage() {
     {
       label: "MER geral",
       value: k?.mer ?? 0,
-      format: () => (k?.mer == null ? "—" : `${k.mer.toFixed(2)}x`),
+      comparisonValue: k?.mer ?? null,
+      previousValue: pk?.mer,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.mer == null ? "—" : `${v.toFixed(2)}x`),
       icon: Gauge,
       iconClass: "bg-cyan-500/10 text-cyan-400",
       sparkColor: "#22d3ee",
@@ -740,8 +759,11 @@ export default function PerformancePage() {
     {
       label: "Lucro bruto",
       value: k?.grossProfit ?? 0,
-      format: () =>
-        k?.roiStatus === "available" ? formatCurrency(k.grossProfit) : "—",
+      comparisonValue: k?.roiStatus === "available" ? k.grossProfit : null,
+      previousValue: pk?.roiStatus === "available" ? pk.grossProfit : null,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) =>
+        k?.roiStatus === "available" ? formatCurrency(v) : "—",
       icon: Boxes,
       iconClass: "bg-fuchsia-500/10 text-fuchsia-400",
       sparkColor: "#d946ef",
@@ -752,7 +774,10 @@ export default function PerformancePage() {
     {
       label: "ROI final",
       value: k?.roi ?? 0,
-      format: () => (k?.roi == null ? "—" : formatPercentage(k.roi)),
+      comparisonValue: k?.roi ?? null,
+      previousValue: pk?.roi,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.roi == null ? "—" : formatPercentage(v)),
       icon: BadgeDollarSign,
       iconClass: "bg-lime-500/10 text-lime-400",
       sparkColor: "#84cc16",
@@ -766,6 +791,9 @@ export default function PerformancePage() {
     {
       label: "Ticket médio",
       value: k?.averageTicket ?? 0,
+      comparisonValue: k?.averageTicket ?? null,
+      previousValue: pk?.averageTicket,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: ReceiptText,
       iconClass: "bg-blue-500/10 text-blue-400",
@@ -780,6 +808,9 @@ export default function PerformancePage() {
     {
       label: "Pedidos ERP",
       value: k?.orders ?? 0,
+      comparisonValue: k?.orders ?? null,
+      previousValue: pk?.orders,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: ReceiptText,
       iconClass: "bg-blue-500/10 text-blue-400",
@@ -789,6 +820,9 @@ export default function PerformancePage() {
     {
       label: "Pedidos atribuídos",
       value: k?.attributedOrders ?? 0,
+      comparisonValue: k?.attributedOrders ?? null,
+      previousValue: pk?.attributedOrders,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: PackageCheck,
       iconClass: "bg-emerald-500/10 text-emerald-400",
@@ -804,6 +838,9 @@ export default function PerformancePage() {
     {
       label: "Compradores únicos",
       value: k?.uniqueBuyers ?? 0,
+      comparisonValue: k?.uniqueBuyers ?? null,
+      previousValue: pk?.uniqueBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: Users,
       iconClass: "bg-purple-500/10 text-purple-400",
@@ -815,6 +852,9 @@ export default function PerformancePage() {
     {
       label: "Clientes novos",
       value: k?.newBuyers ?? 0,
+      comparisonValue: k?.newBuyers ?? null,
+      previousValue: pk?.newBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-lime-500/10 text-lime-400",
@@ -829,6 +869,9 @@ export default function PerformancePage() {
     {
       label: "Clientes recorrentes",
       value: k?.returningBuyers ?? 0,
+      comparisonValue: k?.returningBuyers ?? null,
+      previousValue: pk?.returningBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: ShoppingBag,
       iconClass: "bg-rose-500/10 text-rose-400",
@@ -840,7 +883,11 @@ export default function PerformancePage() {
     {
       label: "CAC",
       value: k?.cac ?? 0,
-      format: () => (k?.cac == null ? "—" : formatCurrency(k.cac)),
+      comparisonValue: k?.cac ?? null,
+      previousValue: pk?.cac,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.cac == null ? "—" : formatCurrency(v)),
+      lowerIsBetter: true,
       icon: BadgeDollarSign,
       iconClass: "bg-orange-500/10 text-orange-400",
       sparkColor: "#fb923c",
@@ -849,6 +896,9 @@ export default function PerformancePage() {
     {
       label: "CTR",
       value: k?.ctr ?? 0,
+      comparisonValue: k?.ctr ?? null,
+      previousValue: pk?.ctr,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatPercentage,
       icon: MousePointerClick,
       iconClass: "bg-sky-500/10 text-sky-400",
@@ -858,7 +908,11 @@ export default function PerformancePage() {
     {
       label: "CPL",
       value: k?.cpl ?? 0,
-      format: () => (k?.cpl == null ? "—" : formatCurrency(k.cpl)),
+      comparisonValue: k?.cpl ?? null,
+      previousValue: pk?.cpl,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.cpl == null ? "—" : formatCurrency(v)),
+      lowerIsBetter: true,
       icon: Target,
       iconClass: "bg-violet-500/10 text-violet-400",
       sparkColor: "#a78bfa",
@@ -1620,54 +1674,12 @@ export default function PerformancePage() {
                   </AlertDescription>
                 </Alert>
               )}
-              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-5">
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Pedidos no período
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatNumber(filteredStats.pedidosNoPeriodo)}
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Valor total
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatCurrency(filteredStats.valorTotal)}
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Pedidos atribuídos
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatNumber(filteredStats.pedidosAtribuidos)}
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Receita atribuída
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatCurrency(filteredStats.receitaAtribuida)}{" "}
-                    <span className="text-xs font-normal text-muted-foreground">
-                      {formatPercentage(
-                        filteredStats.valorTotal > 0
-                          ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100
-                          : 0,
-                      )}
-                    </span>
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Faturamento pago atribuído
-                  </p>
-                  <p className="mt-1 text-lg font-semibold text-primary">
-                    {formatCurrency(filteredStats.faturamentoPago)}
-                  </p>
-                </div>
+              <div className="mt-4 up-metric-grid">
+                <GlassMetricCard label="Pedidos no período" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>} hideComparison />
+                <GlassMetricCard label="Valor total" value={<>{formatCurrency(filteredStats.valorTotal)}</>} hideComparison />
+                <GlassMetricCard label="Pedidos atribuídos" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>} hideComparison />
+                <GlassMetricCard label="Receita atribuída" value={<>{formatCurrency(filteredStats.receitaAtribuida)}{" "}<span className="text-xs font-normal text-muted-foreground">{formatPercentage(filteredStats.valorTotal > 0 ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100 : 0)}</span></>} hideComparison />
+                <GlassMetricCard label="Faturamento pago atribuído" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>} hideComparison />
               </div>
               <div className="mt-4 overflow-x-auto">
                 <Table>
@@ -1770,7 +1782,7 @@ export default function PerformancePage() {
             </Alert>
           ) : (
             <>
-              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-3">
+              <div className="mt-4 up-metric-grid">
                 {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
                   const summary = attributionQuery.data?.cohortSummary.find(
                     (c) => c.cohort === cohort,
@@ -1781,17 +1793,7 @@ export default function PerformancePage() {
                       ? (summary.clientes / totalClientes) * 100
                       : 0;
                   return (
-                    <div key={cohort} className="bg-card px-4 py-3">
-                      <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                        {COHORT_LABEL[cohort]}
-                      </p>
-                      <p className="mt-1 text-lg font-semibold">
-                        {formatNumber(summary?.clientes ?? 0)}{" "}
-                        <span className="text-xs font-normal text-muted-foreground">
-                          {formatPercentage(pct)}
-                        </span>
-                      </p>
-                    </div>
+                    <GlassMetricCard key={cohort} label={COHORT_LABEL[cohort]} value={<>{formatNumber(summary?.clientes ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">{formatPercentage(pct)}</span></>} hideComparison />
                   );
                 })}
               </div>
