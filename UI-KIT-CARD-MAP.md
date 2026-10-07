@@ -597,15 +597,15 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 | UP-447 | 158 | {title} | Card | Painel |
 | UP-448 | 199 | Painel / conteúdo | Card | Painel |
 | UP-449 | 218 | "Carregando Escala" | DashLoadingCard | Painel |
-| UP-450 | 362 | {item.label} | GlassMetricCard | Métrica |
-| UP-451 | 367 | Calculadora de projeção | Card | Painel |
-| UP-452 | 455 | Insights de escala | Card | Painel |
-| UP-453 | 501 | Painel / conteúdo | ScenarioCard | Painel |
-| UP-454 | 506 | "Categorias mais vendidas" | BreakdownCard | Painel |
-| UP-455 | 507 | "Tamanhos mais vendidos" | BreakdownCard | Painel |
-| UP-456 | 508 | "Cores mais vendidas" | BreakdownCard | Painel |
-| UP-457 | 509 | "Poder por categoria" | BreakdownCard | Painel |
-| UP-458 | 512 | Como a projeção foi calculada | Card | Painel |
+| UP-450 | 357 | {item.label} | GlassMetricCard | Métrica |
+| UP-451 | 362 | Calculadora de projeção | Card | Painel |
+| UP-452 | 450 | Insights de escala | Card | Painel |
+| UP-453 | 496 | Painel / conteúdo | ScenarioCard | Painel |
+| UP-454 | 501 | "Categorias mais vendidas" | BreakdownCard | Painel |
+| UP-455 | 502 | "Tamanhos mais vendidos" | BreakdownCard | Painel |
+| UP-456 | 503 | "Cores mais vendidas" | BreakdownCard | Painel |
+| UP-457 | 504 | "Poder por categoria" | BreakdownCard | Painel |
+| UP-458 | 507 | Como a projeção foi calculada | Card | Painel |
 
 ## seller-detail
 

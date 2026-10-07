@@ -4941,7 +4941,7 @@
   {
     "id": "UP-450",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
-    "line": 362,
+    "line": 357,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{item.label}",
@@ -4952,7 +4952,7 @@
   {
     "id": "UP-451",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
-    "line": 367,
+    "line": 362,
     "component": "Card",
     "family": "Painel",
     "label": "Calculadora de projeção",
@@ -4963,7 +4963,7 @@
   {
     "id": "UP-452",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
-    "line": 455,
+    "line": 450,
     "component": "Card",
     "family": "Painel",
     "label": "Insights de escala",
@@ -4974,7 +4974,7 @@
   {
     "id": "UP-453",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
-    "line": 501,
+    "line": 496,
     "component": "ScenarioCard",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -4985,7 +4985,7 @@
   {
     "id": "UP-454",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
-    "line": 506,
+    "line": 501,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Categorias mais vendidas\"",
@@ -4996,7 +4996,7 @@
   {
     "id": "UP-455",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
-    "line": 507,
+    "line": 502,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Tamanhos mais vendidos\"",
@@ -5007,7 +5007,7 @@
   {
     "id": "UP-456",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
-    "line": 508,
+    "line": 503,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Cores mais vendidas\"",
@@ -5018,7 +5018,7 @@
   {
     "id": "UP-457",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
-    "line": 509,
+    "line": 504,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Poder por categoria\"",
@@ -5029,7 +5029,7 @@
   {
     "id": "UP-458",
     "file": "artifacts/up-dash/src/pages/scale.tsx",
-    "line": 512,
+    "line": 507,
     "component": "Card",
     "family": "Painel",
     "label": "Como a projeção foi calculada",

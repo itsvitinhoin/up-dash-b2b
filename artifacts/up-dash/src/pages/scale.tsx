@@ -243,8 +243,8 @@ export default function ScalePage() {
   const enabled = hasClientSelected && isSupportedClient;
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
-  const [targetRevenueInput, setTargetRevenueInput] = useState("");
-  const targetRevenue = parseCurrencyInput(targetRevenueInput);
+  const [targetRevenueInput, setTargetRevenueInput] = useState<string | null>(null);
+  const targetRevenue = parseCurrencyInput(targetRevenueInput ?? "");
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery<ScaleResponse>({
     ...queryOpts<ScaleResponse>({ enabled }),
@@ -258,11 +258,6 @@ export default function ScalePage() {
   });
 
   const previous = usePreviousPeriodQuery<ScaleResponse>(periodQuery("/api/analytics/scale", { clientId, dateFrom, dateTo }), enabled);
-
-  useEffect(() => {
-    if (!data || targetRevenueInput) return;
-    setTargetRevenueInput(Math.round(data.projection.targetRevenue).toLocaleString("pt-BR"));
-  }, [data, targetRevenueInput]);
 
   const periodLabel = `${format(dateRange.from, "dd/MM/yyyy")} a ${format(dateRange.to, "dd/MM/yyyy")}`;
   const kpis = data?.kpis;
@@ -379,7 +374,7 @@ export default function ScalePage() {
                   </label>
                   <Input
                     id="scale-target"
-                    value={targetRevenueInput}
+                    value={targetRevenueInput ?? Math.round(projection.targetRevenue).toLocaleString("pt-BR")}
                     onChange={(event) => setTargetRevenueInput(event.target.value)}
                     placeholder="Ex: 150.000"
                     inputMode="decimal"
