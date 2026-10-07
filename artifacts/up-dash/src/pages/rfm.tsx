@@ -1,3 +1,6 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { getGetRfmUrl } from "@workspace/api-client-react";
+import { MetricDataProvider } from "@/components/metric-data-context";
 import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useState } from "react";
@@ -158,7 +161,7 @@ function RfmLogicCard({
   info: string;
   icon: typeof CalendarDays;
 }) {
-  return (<GlassMetricCard label={title} value={value} icon={Icon} info={info} footer={<p className="text-xs text-muted-foreground">{description}</p>} />);
+  return (<GlassMetricCard label={title} value={value} icon={Icon} info={<><p>{info}</p><p className="mt-2">{description}</p></>} />);
 }
 
 export default function RfmPage() {
@@ -202,6 +205,7 @@ export default function RfmPage() {
     }
   );
 
+  const previous = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetRfmUrl({ clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), segment: segmentFilter && segmentFilter !== "all" ? segmentFilter : undefined, page, limit, sortBy, sortDir, orderStatus: orderStatusFilter, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, state: filters.state || undefined, city: filters.city || undefined, product: filters.product || undefined }), enabled);
   const insightParams = {
     clientId,
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
@@ -233,6 +237,13 @@ export default function RfmPage() {
     ? customers.reduce((sum, customer) => sum + customer.monetary, 0) / customers.length
     : 0;
 
+  const priorCustomers = previous.data?.customers ?? [];
+  const priorMean = (field: "recencyDays" | "frequency" | "monetary") => priorCustomers.length ? priorCustomers.reduce((sum, customer) => sum + (customer[field] ?? 0), 0) / priorCustomers.length : undefined;
+  const metricComparisons = {
+    "metric-recência": { current: avgRecency, previous: priorMean("recencyDays"), format: (v: number) => `${Math.round(v)} dias` },
+    "metric-frequência": { current: avgFrequency, previous: priorMean("frequency"), format: formatNumber },
+    "metric-monetário": { current: avgMonetary, previous: priorMean("monetary"), format: formatCurrency },
+  };
   const handleSort = (col: typeof sortBy) => {
     if (col === sortBy) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -321,6 +332,7 @@ export default function RfmPage() {
             </motion.div>
           )}
 
+<MetricDataProvider source="Ecommerce · RFM" comparisons={metricComparisons}>
           {/* RFM Logic */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <div className="grid gap-3 md:grid-cols-3">
@@ -347,6 +359,7 @@ export default function RfmPage() {
               />
             </div>
           </motion.div>
+</MetricDataProvider>
 
           {/* Segment Cards */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
@@ -361,7 +374,7 @@ export default function RfmPage() {
                         setSegmentFilter((prev) => (prev === seg ? "" : seg));
                         setPage(1);
                       }}><span className="sr-only">{displayLabel(meta.label)}</span></button>
-                    <GlassMetricCard label={meta.label} value={segData?.customerCount ?? 0} loading={isLoading}
+                    <GlassMetricCard label={meta.label} value={segData?.customerCount ?? 0} previousValue={previous.data?.segments.find(segment => segment.segment === segData?.segment)?.customerCount} source="Ecommerce · segmentação RFM" loading={isLoading}
                       info={`Segmento ${meta.label}: ${meta.description}. A classificação usa recência, frequência e valor comprado para priorizar a ação comercial.`}
                       sub={[
                         { label: "Participação", value: `${segData ? segData.pct.toFixed(1) : 0}%` },

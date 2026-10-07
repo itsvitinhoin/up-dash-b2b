@@ -1,3 +1,6 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { MetricDataProvider, metricBindings } from "@/components/metric-data-context";
+import { getGetUtmUrl } from "@workspace/api-client-react";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import React, { useMemo, useState } from "react";
 import { format } from "date-fns";
@@ -182,6 +185,17 @@ export default function UtmPage() {
     query: queryOpts({ enabled, placeholderData: (prev) => prev }),
   });
 
+  const previous = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetUtmUrl(utmParams), enabled);
+  const metricComparisons = metricBindings(data?.kpis, previous.data?.kpis, {
+    "metric-sessões": { field: "totalSessions", format: formatNumber },
+    "metric-cadastros": { field: "totalRegistrations", format: formatNumber },
+    "metric-%-de-aprovação": { field: "approvalPct", format: v => `${v.toFixed(1)}%` },
+    "metric-compradores": { field: "totalBuyers", format: formatNumber },
+    "metric-faturamento": { field: "totalRevenue", format: formatCurrencySmart },
+    "metric-%-de-conversão": { field: "conversionPct", format: v => `${v.toFixed(1)}%` },
+    "metric-roas": { field: "totalRoas", format: v => `${v.toFixed(2)}x` }
+  });
+
   const insightParams = { clientId, dateFrom, dateTo, screen: "utm" as const };
   const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
     query: queryOpts({ enabled }),
@@ -338,6 +352,7 @@ export default function UtmPage() {
         </div>
       </div>
 
+<MetricDataProvider source="UP Zero · jornada e atribuição" comparisons={metricComparisons}>
       {/* KPI Strip */}
       <motion.div variants={cardVariants}>
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
@@ -390,6 +405,7 @@ export default function UtmPage() {
           />
         </div>
       </motion.div>
+</MetricDataProvider>
 
       {/* AI Insight */}
       {!insightDismissed && (

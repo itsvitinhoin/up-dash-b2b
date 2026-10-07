@@ -1069,7 +1069,7 @@
   {
     "id": "UP-098",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 152,
+    "line": 153,
     "component": "Card",
     "family": "Painel",
     "label": "{title}",
@@ -1080,7 +1080,7 @@
   {
     "id": "UP-099",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 782,
+    "line": 784,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "<Megaphone className=\"h-4 w-4 text-primary\" />Clientes atribuídos às campanhas",
@@ -1091,51 +1091,51 @@
   {
     "id": "UP-100",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 795,
+    "line": 797,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Clientes\"",
-    "value": "{<>{formatNumber(data.summary.impactedCustomers)}</>}",
+    "value": "{data.summary.impactedCustomers ?? 0}",
     "sources": "useGetClient, useGetDashboard, useGetInsight, useGetAlerts, useGetSellers",
     "template": "DashboardKpiCard → UP Glass"
   },
   {
     "id": "UP-101",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 796,
+    "line": 798,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Solicitado\"",
-    "value": "{<>{formatCurrency(data.summary.requestedValue ?? data.summary.attributedRevenue)}</>}",
+    "value": "{data.summary.requestedValue ?? 0}",
     "sources": "useGetClient, useGetDashboard, useGetInsight, useGetAlerts, useGetSellers",
     "template": "DashboardKpiCard → UP Glass"
   },
   {
     "id": "UP-102",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 797,
+    "line": 799,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Pedidos\"",
-    "value": "{<>{formatNumber(data.summary.orders)}</>}",
+    "value": "{data.summary.orders ?? 0}",
     "sources": "useGetClient, useGetDashboard, useGetInsight, useGetAlerts, useGetSellers",
     "template": "DashboardKpiCard → UP Glass"
   },
   {
     "id": "UP-103",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 798,
+    "line": 800,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Cadastros\"",
-    "value": "{<>{formatNumber(data.summary.registrations)}</>}",
+    "value": "{data.summary.registrations ?? 0}",
     "sources": "useGetClient, useGetDashboard, useGetInsight, useGetAlerts, useGetSellers",
     "template": "DashboardKpiCard → UP Glass"
   },
   {
     "id": "UP-104",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 805,
+    "line": 807,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "\"Valor solicitado\"",
@@ -1146,7 +1146,7 @@
   {
     "id": "UP-105",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 820,
+    "line": 822,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "\"Valor atendido\"",
@@ -1157,7 +1157,7 @@
   {
     "id": "UP-106",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 834,
+    "line": 836,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "\"Investimento\"",
@@ -1168,7 +1168,7 @@
   {
     "id": "UP-107",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 848,
+    "line": 850,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "\"ROAS\"",
@@ -1179,7 +1179,7 @@
   {
     "id": "UP-108",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1193,
+    "line": 1195,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Eventos\"",
@@ -1190,7 +1190,7 @@
   {
     "id": "UP-109",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1194,
+    "line": 1196,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Produtos vistos\"",
@@ -1201,7 +1201,7 @@
   {
     "id": "UP-110",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1195,
+    "line": 1197,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Carrinhos\"",
@@ -1212,7 +1212,7 @@
   {
     "id": "UP-111",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1196,
+    "line": 1198,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Valor comprado\"",
@@ -1223,7 +1223,7 @@
   {
     "id": "UP-112",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1403,
+    "line": 1405,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "<ShoppingBag className=\"h-4 w-4 text-primary\" />Pedidos do período",
@@ -1234,7 +1234,7 @@
   {
     "id": "UP-113",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1415,
+    "line": 1417,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Pedidos no período\"",
@@ -1245,7 +1245,7 @@
   {
     "id": "UP-114",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1510,
+    "line": 1512,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Pago\"",
@@ -1256,7 +1256,7 @@
   {
     "id": "UP-115",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1511,
+    "line": 1513,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Bruto\"",
@@ -1267,7 +1267,7 @@
   {
     "id": "UP-116",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1512,
+    "line": 1514,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Desconto\"",
@@ -1278,7 +1278,7 @@
   {
     "id": "UP-117",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1513,
+    "line": 1515,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Frete\"",
@@ -1289,7 +1289,7 @@
   {
     "id": "UP-118",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1852,
+    "line": 1854,
     "component": "DashLoadingCard",
     "family": "Painel",
     "label": "{t(\"dashboard.loading.title\")}",
@@ -1300,7 +1300,7 @@
   {
     "id": "UP-119",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1941,
+    "line": 1943,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{isB2C ? t(\"dashboard.kpi.totalRevenue.b2c\") : t(\"dashboard.kpi.totalRevenue.b2b\")}",
@@ -1311,7 +1311,7 @@
   {
     "id": "UP-120",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1959,
+    "line": 1961,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{t(\"dashboard.kpi.orders\")}",
@@ -1322,7 +1322,7 @@
   {
     "id": "UP-121",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1976,
+    "line": 1978,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{t(\"dashboard.kpi.avgTicket\")}",
@@ -1333,7 +1333,7 @@
   {
     "id": "UP-122",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 1993,
+    "line": 1995,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{t(\"dashboard.kpi.conversionRate\")}",
@@ -1344,7 +1344,7 @@
   {
     "id": "UP-123",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2021,
+    "line": 2023,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{isB2C ? t(\"dashboard.kpi.invoicedValue\") : t(\"dashboard.kpi.requestedRevenue\")}",
@@ -1355,7 +1355,7 @@
   {
     "id": "UP-124",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2053,
+    "line": 2055,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{t(\"dashboard.kpi.buyersThisPeriod\")}",
@@ -1366,7 +1366,7 @@
   {
     "id": "UP-125",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2123,
+    "line": 2125,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{t(\"dashboard.kpi.buyerRetention\")}",
@@ -1377,7 +1377,7 @@
   {
     "id": "UP-126",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2168,
+    "line": 2170,
     "component": "Card",
     "family": "Gráfico",
     "label": "{t(\"dashboard.chart.title\")}",
@@ -1388,7 +1388,7 @@
   {
     "id": "UP-127",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2308,
+    "line": 2310,
     "component": "Card",
     "family": "Painel",
     "label": "{insight.headline}",
@@ -1399,7 +1399,7 @@
   {
     "id": "UP-128",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2383,
+    "line": 2385,
     "component": "B2CSalesBreakdownCard",
     "family": "Painel",
     "label": "{t(\"dashboard.b2c.byCategory.title\")}",
@@ -1410,7 +1410,7 @@
   {
     "id": "UP-129",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2392,
+    "line": 2394,
     "component": "B2CSalesBreakdownCard",
     "family": "Painel",
     "label": "{t(\"dashboard.b2c.byColor.title\")}",
@@ -1421,7 +1421,7 @@
   {
     "id": "UP-130",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2401,
+    "line": 2403,
     "component": "B2CSalesBreakdownCard",
     "family": "Gráfico",
     "label": "{t(\"dashboard.b2c.bySize.title\")}",
@@ -1432,7 +1432,7 @@
   {
     "id": "UP-131",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2420,
+    "line": 2422,
     "component": "Card",
     "family": "Gráfico",
     "label": "{t(\"dashboard.signals.title\")}",
@@ -1443,7 +1443,7 @@
   {
     "id": "UP-132",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2465,
+    "line": 2467,
     "component": "Card",
     "family": "Painel",
     "label": "<AlertTriangle className=\"h-4 w-4 text-amber-400\" />{t(\"dashboard.alerts.title\")}",
@@ -1454,7 +1454,7 @@
   {
     "id": "UP-133",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2613,
+    "line": 2615,
     "component": "Card",
     "family": "Painel",
     "label": "{t(\"dashboard.categories.title\")}",
@@ -1465,7 +1465,7 @@
   {
     "id": "UP-134",
     "file": "artifacts/up-dash/src/pages/dashboard.tsx",
-    "line": 2686,
+    "line": 2688,
     "component": "Card",
     "family": "Painel",
     "label": "{t(\"dashboard.sellers.title\")}",
@@ -1476,7 +1476,7 @@
   {
     "id": "UP-135",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 372,
+    "line": 377,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{metric.label}",
@@ -1487,7 +1487,7 @@
   {
     "id": "UP-136",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 546,
+    "line": 554,
     "component": "Card",
     "family": "Gráfico",
     "label": "Painel / conteúdo",
@@ -1498,7 +1498,7 @@
   {
     "id": "UP-137",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 626,
+    "line": 635,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Faturamento líquido\"",
@@ -1509,7 +1509,7 @@
   {
     "id": "UP-138",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 636,
+    "line": 647,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Pedidos\"",
@@ -1520,7 +1520,7 @@
   {
     "id": "UP-139",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 646,
+    "line": 659,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Compradores\"",
@@ -1531,7 +1531,7 @@
   {
     "id": "UP-140",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 656,
+    "line": 671,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Retenção\"",
@@ -1542,7 +1542,7 @@
   {
     "id": "UP-141",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 667,
+    "line": 684,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Peças vendidas\"",
@@ -1553,7 +1553,7 @@
   {
     "id": "UP-142",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 677,
+    "line": 696,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Descontos\"",
@@ -1564,7 +1564,7 @@
   {
     "id": "UP-143",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 687,
+    "line": 708,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Devoluções\"",
@@ -1575,7 +1575,7 @@
   {
     "id": "UP-144",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 697,
+    "line": 720,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Cancelamentos\"",
@@ -1586,7 +1586,7 @@
   {
     "id": "UP-145",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 717,
+    "line": 742,
     "component": "Card",
     "family": "Gráfico",
     "label": "Painel / conteúdo",
@@ -1597,7 +1597,7 @@
   {
     "id": "UP-146",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 761,
+    "line": 786,
     "component": "Card",
     "family": "Gráfico",
     "label": "Painel / conteúdo",
@@ -1608,7 +1608,7 @@
   {
     "id": "UP-147",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 819,
+    "line": 844,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Formas de pagamento\"",
@@ -1619,7 +1619,7 @@
   {
     "id": "UP-148",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 825,
+    "line": 850,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Ranking de vendedores\"",
@@ -1630,7 +1630,7 @@
   {
     "id": "UP-149",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 831,
+    "line": 856,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Geografia de compradores\"",
@@ -1641,7 +1641,7 @@
   {
     "id": "UP-150",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 838,
+    "line": 863,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -1652,7 +1652,7 @@
   {
     "id": "UP-151",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 964,
+    "line": 990,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Faturamento bruto\"",
@@ -1663,7 +1663,7 @@
   {
     "id": "UP-152",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 974,
+    "line": 1002,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Pedidos únicos\"",
@@ -1674,7 +1674,7 @@
   {
     "id": "UP-153",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 984,
+    "line": 1014,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Peças vendidas\"",
@@ -1685,7 +1685,7 @@
   {
     "id": "UP-154",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 994,
+    "line": 1026,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Cancelamentos\"",
@@ -1696,7 +1696,7 @@
   {
     "id": "UP-155",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1008,
+    "line": 1042,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -1707,7 +1707,7 @@
   {
     "id": "UP-156",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1261,
+    "line": 1295,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Pedidos históricos\"",
@@ -1718,7 +1718,7 @@
   {
     "id": "UP-157",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1262,
+    "line": 1296,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Valor total comprado\"",
@@ -1729,7 +1729,7 @@
   {
     "id": "UP-158",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1263,
+    "line": 1297,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Ticket médio histórico\"",
@@ -1740,7 +1740,7 @@
   {
     "id": "UP-159",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1396,
+    "line": 1431,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Compradores\"",
@@ -1751,7 +1751,7 @@
   {
     "id": "UP-160",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1406,
+    "line": 1443,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Novos compradores\"",
@@ -1762,7 +1762,7 @@
   {
     "id": "UP-161",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1416,
+    "line": 1455,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Recorrentes\"",
@@ -1773,7 +1773,7 @@
   {
     "id": "UP-162",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1426,
+    "line": 1467,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Retenção\"",
@@ -1784,7 +1784,7 @@
   {
     "id": "UP-163",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1441,
+    "line": 1484,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -1795,7 +1795,7 @@
   {
     "id": "UP-164",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1894,
+    "line": 1937,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Estoque atual\"",
@@ -1806,7 +1806,7 @@
   {
     "id": "UP-165",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1904,
+    "line": 1947,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Poder de venda\"",
@@ -1817,7 +1817,7 @@
   {
     "id": "UP-166",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1914,
+    "line": 1957,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Cobertura\"",
@@ -1828,7 +1828,7 @@
   {
     "id": "UP-167",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1924,
+    "line": 1967,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"SKUs sem estoque\"",
@@ -1839,7 +1839,7 @@
   {
     "id": "UP-168",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1936,
+    "line": 1979,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Faturamento\"",
@@ -1850,7 +1850,7 @@
   {
     "id": "UP-169",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1946,
+    "line": 1989,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Lucro bruto\"",
@@ -1861,7 +1861,7 @@
   {
     "id": "UP-170",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1956,
+    "line": 1999,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"% de giro\"",
@@ -1872,7 +1872,7 @@
   {
     "id": "UP-171",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1970,
+    "line": 2013,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Poder de venda\"",
@@ -1883,7 +1883,7 @@
   {
     "id": "UP-172",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 1985,
+    "line": 2028,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Categorias\"",
@@ -1894,7 +1894,7 @@
   {
     "id": "UP-173",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2000,
+    "line": 2043,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Cores\"",
@@ -1905,7 +1905,7 @@
   {
     "id": "UP-174",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2012,
+    "line": 2055,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Tamanhos\"",
@@ -1916,7 +1916,7 @@
   {
     "id": "UP-175",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2025,
+    "line": 2068,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -1927,7 +1927,7 @@
   {
     "id": "UP-176",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2157,
+    "line": 2200,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Vendedores ativos\"",
@@ -1938,7 +1938,7 @@
   {
     "id": "UP-177",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2167,
+    "line": 2210,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Faturamento\"",
@@ -1949,7 +1949,7 @@
   {
     "id": "UP-178",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2177,
+    "line": 2220,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Ticket médio\"",
@@ -1960,7 +1960,7 @@
   {
     "id": "UP-179",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2187,
+    "line": 2230,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Clientes atendidos\"",
@@ -1971,7 +1971,7 @@
   {
     "id": "UP-180",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2202,
+    "line": 2245,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Ranking de vendedores\"",
@@ -1982,7 +1982,7 @@
   {
     "id": "UP-181",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2208,
+    "line": 2251,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Desempenho por loja\"",
@@ -1993,7 +1993,7 @@
   {
     "id": "UP-182",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2215,
+    "line": 2258,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -2004,7 +2004,7 @@
   {
     "id": "UP-183",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2298,
+    "line": 2341,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Geografia de compradores\"",
@@ -2015,7 +2015,7 @@
   {
     "id": "UP-184",
     "file": "artifacts/up-dash/src/pages/erp.tsx",
-    "line": 2299,
+    "line": 2342,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -2081,7 +2081,7 @@
   {
     "id": "UP-190",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 246,
+    "line": 250,
     "component": "ActivationAnalysisCard",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -2092,7 +2092,7 @@
   {
     "id": "UP-191",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 267,
+    "line": 271,
     "component": "Card",
     "family": "Painel",
     "label": "{visitStepHidden ? \"Leads → Compras\" : \"Visitantes → Compras\"}",
@@ -2103,7 +2103,7 @@
   {
     "id": "UP-192",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 309,
+    "line": 319,
     "component": "MiniStat",
     "family": "Métrica",
     "label": "{visibleSteps[0]?.label ?? \"Topo do funil\"}",
@@ -2114,7 +2114,7 @@
   {
     "id": "UP-193",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 317,
+    "line": 327,
     "component": "MiniStat",
     "family": "Métrica",
     "label": "\"Compras\"",
@@ -2125,7 +2125,7 @@
   {
     "id": "UP-194",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 325,
+    "line": 335,
     "component": "MiniStat",
     "family": "Métrica",
     "label": "{biggestDrop ? `Perda em ${biggestDrop.to.label}` : \"Maior perda\"}",
@@ -2136,7 +2136,7 @@
   {
     "id": "UP-195",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 334,
+    "line": 344,
     "component": "MiniStat",
     "family": "Métrica",
     "label": "\"Média de eventos antes da compra\"",
@@ -2147,7 +2147,7 @@
   {
     "id": "UP-196",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 350,
+    "line": 361,
     "component": "ActivationAnalysisCard",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -2158,7 +2158,7 @@
   {
     "id": "UP-197",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 362,
+    "line": 373,
     "component": "Card",
     "family": "Gráfico",
     "label": "<TrendingUp className=\"h-3.5 w-3.5 text-primary\" />Visitas diárias ao site e taxa de conversão",
@@ -2169,7 +2169,7 @@
   {
     "id": "UP-198",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 500,
+    "line": 511,
     "component": "Card",
     "family": "Gráfico",
     "label": "<span className=\"h-1.5 w-1.5 rounded-full bg-primary\" />Fluxo por etapa",
@@ -2180,7 +2180,7 @@
   {
     "id": "UP-199",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 568,
+    "line": 579,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -2191,7 +2191,7 @@
   {
     "id": "UP-200",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 585,
+    "line": 596,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -2202,7 +2202,7 @@
   {
     "id": "UP-201",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 745,
+    "line": 756,
     "component": "Card",
     "family": "Painel",
     "label": "Cadastro aprovado → primeira compra",
@@ -2213,7 +2213,7 @@
   {
     "id": "UP-202",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 767,
+    "line": 783,
     "component": "ActivationMetric",
     "family": "Métrica",
     "label": "\"Aprovados\"",
@@ -2224,7 +2224,7 @@
   {
     "id": "UP-203",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 768,
+    "line": 784,
     "component": "ActivationMetric",
     "family": "Métrica",
     "label": "\"Ativação em 30 dias\"",
@@ -2235,7 +2235,7 @@
   {
     "id": "UP-204",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 773,
+    "line": 789,
     "component": "ActivationMetric",
     "family": "Métrica",
     "label": "\"Ticket 1ª compra\"",
@@ -2246,7 +2246,7 @@
   {
     "id": "UP-205",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 897,
+    "line": 914,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{label}",
@@ -2257,7 +2257,7 @@
   {
     "id": "UP-206",
     "file": "artifacts/up-dash/src/pages/funnel.tsx",
-    "line": 984,
+    "line": 1001,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{label}",
@@ -2367,7 +2367,7 @@
   {
     "id": "UP-216",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
-    "line": 53,
+    "line": 56,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{label}",
@@ -2378,7 +2378,7 @@
   {
     "id": "UP-217",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
-    "line": 155,
+    "line": 166,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -2389,7 +2389,7 @@
   {
     "id": "UP-218",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
-    "line": 197,
+    "line": 209,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"Média de eventos antes da compra\"",
@@ -2400,7 +2400,7 @@
   {
     "id": "UP-219",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
-    "line": 204,
+    "line": 216,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"Tempo médio até a primeira compra\"",
@@ -2411,7 +2411,7 @@
   {
     "id": "UP-220",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
-    "line": 211,
+    "line": 223,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"Tempo médio entre compras\"",
@@ -2422,7 +2422,7 @@
   {
     "id": "UP-221",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
-    "line": 218,
+    "line": 230,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"Compradores na primeira sessão\"",
@@ -2433,7 +2433,7 @@
   {
     "id": "UP-222",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
-    "line": 231,
+    "line": 244,
     "component": "Card",
     "family": "Painel",
     "label": "<span className=\"h-1.5 w-1.5 rounded-full bg-primary\" />Fluxo de eventos",
@@ -2444,7 +2444,7 @@
   {
     "id": "UP-223",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
-    "line": 250,
+    "line": 263,
     "component": "Card",
     "family": "Painel",
     "label": "<span className=\"h-1.5 w-1.5 rounded-full bg-chart-3\" />Principais caminhos até a compra",
@@ -2455,7 +2455,7 @@
   {
     "id": "UP-224",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
-    "line": 298,
+    "line": 311,
     "component": "Card",
     "family": "Gráfico",
     "label": "<span className=\"h-1.5 w-1.5 rounded-full bg-chart-4\" />Compradores e não compradores — comparação de eventos",
@@ -2466,7 +2466,7 @@
   {
     "id": "UP-225",
     "file": "artifacts/up-dash/src/pages/journey.tsx",
-    "line": 395,
+    "line": 408,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -2521,7 +2521,7 @@
   {
     "id": "UP-230",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 202,
+    "line": 203,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{label}",
@@ -2532,7 +2532,7 @@
   {
     "id": "UP-231",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 373,
+    "line": 376,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -2543,51 +2543,51 @@
   {
     "id": "UP-232",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 382,
+    "line": 385,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"CTR\"",
-    "value": "{formatPercentage(creative.ctr)}",
+    "value": "{creative.ctr}",
     "sources": "useGetMarketing, useGetInsight",
     "template": "DashboardKpiCard → UP Glass"
   },
   {
     "id": "UP-233",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 383,
+    "line": 386,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{costLabel}",
-    "value": "{formatCurrency(costLabel === \"Custo/Compra\" ? creative.cpa : creative.cpl)}",
+    "value": "{costLabel === \"Custo/Compra\" ? creative.cpa : creative.cpl}",
     "sources": "useGetMarketing, useGetInsight",
     "template": "DashboardKpiCard → UP Glass"
   },
   {
     "id": "UP-234",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 384,
+    "line": 387,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Leads\"",
-    "value": "{formatNumber(creative.leads)}",
+    "value": "{creative.leads}",
     "sources": "useGetMarketing, useGetInsight",
     "template": "DashboardKpiCard → UP Glass"
   },
   {
     "id": "UP-235",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 385,
+    "line": 388,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Investimento\"",
-    "value": "{formatCurrency(creative.spend)}",
+    "value": "{creative.spend}",
     "sources": "useGetMarketing, useGetInsight",
     "template": "DashboardKpiCard → UP Glass"
   },
   {
     "id": "UP-236",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 415,
+    "line": 420,
     "component": "Card",
     "family": "Painel",
     "label": "<Sparkles className=\"h-4 w-4 text-muted-foreground\" />{title}",
@@ -2598,7 +2598,7 @@
   {
     "id": "UP-237",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 425,
+    "line": 430,
     "component": "TopCreativeCard",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -2609,7 +2609,7 @@
   {
     "id": "UP-238",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 454,
+    "line": 460,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -2620,7 +2620,7 @@
   {
     "id": "UP-239",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 754,
+    "line": 762,
     "component": "Card",
     "family": "Painel",
     "label": "Sem dados de canais pagos",
@@ -2631,7 +2631,7 @@
   {
     "id": "UP-240",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 790,
+    "line": 798,
     "component": "MktKpiCard",
     "family": "Métrica",
     "label": "\"Investimento em anúncios\"",
@@ -2642,7 +2642,7 @@
   {
     "id": "UP-241",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 802,
+    "line": 810,
     "component": "MktKpiCard",
     "family": "Métrica",
     "label": "\"Faturamento\"",
@@ -2653,7 +2653,7 @@
   {
     "id": "UP-242",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 814,
+    "line": 822,
     "component": "MktKpiCard",
     "family": "Métrica",
     "label": "\"ROA\"",
@@ -2664,7 +2664,7 @@
   {
     "id": "UP-243",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 826,
+    "line": 834,
     "component": "MktKpiCard",
     "family": "Métrica",
     "label": "\"Taxa de aprovação\"",
@@ -2675,7 +2675,7 @@
   {
     "id": "UP-244",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 838,
+    "line": 846,
     "component": "MktKpiCard",
     "family": "Métrica",
     "label": "\"Total de leads\"",
@@ -2686,7 +2686,7 @@
   {
     "id": "UP-245",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 850,
+    "line": 858,
     "component": "MktKpiCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Compras\" : \"Leads aprovados\"}",
@@ -2697,7 +2697,7 @@
   {
     "id": "UP-246",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 862,
+    "line": 870,
     "component": "MktKpiCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Custo por Compra\" : \"CPL\"}",
@@ -2708,7 +2708,7 @@
   {
     "id": "UP-247",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 876,
+    "line": 884,
     "component": "MktKpiCard",
     "family": "Métrica",
     "label": "\"CPA\"",
@@ -2719,7 +2719,7 @@
   {
     "id": "UP-248",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 904,
+    "line": 912,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -2730,7 +2730,7 @@
   {
     "id": "UP-249",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 924,
+    "line": 932,
     "component": "Card",
     "family": "Gráfico",
     "label": "<BarChart3 className=\"h-4 w-4 text-muted-foreground\" />Investimento e leads",
@@ -2741,7 +2741,7 @@
   {
     "id": "UP-250",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 956,
+    "line": 964,
     "component": "Card",
     "family": "Gráfico",
     "label": "<TrendingUp className=\"h-4 w-4 text-muted-foreground\" />Evolução do ROAS",
@@ -2752,7 +2752,7 @@
   {
     "id": "UP-251",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 994,
+    "line": 1002,
     "component": "Card",
     "family": "Gráfico",
     "label": "<DollarSign className=\"h-4 w-4 text-muted-foreground\" />Investimento e faturamento",
@@ -2763,7 +2763,7 @@
   {
     "id": "UP-252",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 1040,
+    "line": 1048,
     "component": "Card",
     "family": "Painel",
     "label": "<Megaphone className=\"h-4 w-4 text-muted-foreground\" />Por plataforma",
@@ -2774,7 +2774,7 @@
   {
     "id": "UP-253",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 1059,
+    "line": 1067,
     "component": "Card",
     "family": "Painel",
     "label": "<MapPin className=\"h-4 w-4 text-muted-foreground\" />Principais estados por ROAS",
@@ -2785,7 +2785,7 @@
   {
     "id": "UP-254",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 1082,
+    "line": 1090,
     "component": "Card",
     "family": "Painel",
     "label": "<PersonStanding className=\"h-4 w-4 text-muted-foreground\" />Faixa etária dos clientes (leads pagos)",
@@ -2796,7 +2796,7 @@
   {
     "id": "UP-255",
     "file": "artifacts/up-dash/src/pages/marketing.tsx",
-    "line": 1123,
+    "line": 1131,
     "component": "Card",
     "family": "Painel",
     "label": "Desempenho de campanhas",
@@ -3203,7 +3203,7 @@
   {
     "id": "UP-292",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 284,
+    "line": 287,
     "component": "Card",
     "family": "Painel",
     "label": "{t(\"orders.selectBrand.title\", \"Selecione uma marca\")}",
@@ -3214,7 +3214,7 @@
   {
     "id": "UP-293",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 310,
+    "line": 313,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Faturamento faturado\" : t(\"orders.kpi.requestedRevenue\", \"Faturamento solicitado\")}",
@@ -3225,7 +3225,7 @@
   {
     "id": "UP-294",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 325,
+    "line": 329,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Faturamento pago\" : t(\"orders.kpi.fulfilledRevenue\", \"Faturamento atendido\")}",
@@ -3236,7 +3236,7 @@
   {
     "id": "UP-295",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 339,
+    "line": 344,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Peças faturadas\" : t(\"orders.kpi.requestedQuantity\", \"Peças solicitadas\")}",
@@ -3247,7 +3247,7 @@
   {
     "id": "UP-296",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 353,
+    "line": 359,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Peças pagas\" : t(\"orders.kpi.fulfilledQuantity\", \"Peças atendidas\")}",
@@ -3258,7 +3258,7 @@
   {
     "id": "UP-297",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 367,
+    "line": 374,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{isB2C ? \"% Pago\" : t(\"orders.kpi.fulfilledPct\", \"% de atendido\")}",
@@ -3269,7 +3269,7 @@
   {
     "id": "UP-298",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 382,
+    "line": 390,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{t(\"orders.kpi.orders\", \"Qtd de pedidos\")}",
@@ -3280,7 +3280,7 @@
   {
     "id": "UP-299",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 396,
+    "line": 405,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Novos compradores\" : t(\"orders.kpi.newCustomers\", \"Clientes novos\")}",
@@ -3291,7 +3291,7 @@
   {
     "id": "UP-300",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 410,
+    "line": 420,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Recompradores\" : t(\"orders.kpi.returningCustomers\", \"Clientes recorrentes\")}",
@@ -3302,7 +3302,7 @@
   {
     "id": "UP-301",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 424,
+    "line": 435,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{t(\"orders.kpi.retentionPct\", \"% de retenção\")}",
@@ -3313,7 +3313,7 @@
   {
     "id": "UP-302",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 439,
+    "line": 451,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "{t(\"orders.kpi.conversionPct\", \"% de conversão\")}",
@@ -3324,7 +3324,7 @@
   {
     "id": "UP-303",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 458,
+    "line": 471,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "<ShoppingBag className=\"h-4 w-4 text-primary\" />{t(\"orders.list.title\", \"Lista de pedidos\")}",
@@ -3335,7 +3335,7 @@
   {
     "id": "UP-304",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 609,
+    "line": 622,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Valor faturado\" : \"Valor solicitado\"}",
@@ -3346,7 +3346,7 @@
   {
     "id": "UP-305",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 610,
+    "line": 623,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Valor pago\" : \"Valor atendido\"}",
@@ -3357,7 +3357,7 @@
   {
     "id": "UP-306",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 611,
+    "line": 624,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Peças faturadas\" : \"Peças solicitadas\"}",
@@ -3368,7 +3368,7 @@
   {
     "id": "UP-307",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 612,
+    "line": 625,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Peças pagas\" : \"Peças atendidas\"}",
@@ -3379,7 +3379,7 @@
   {
     "id": "UP-308",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 662,
+    "line": 675,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Faturada\" : \"Solicitada\"}",
@@ -3390,7 +3390,7 @@
   {
     "id": "UP-309",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 663,
+    "line": 676,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{isB2C ? \"Paga\" : \"Atendida\"}",
@@ -3401,7 +3401,7 @@
   {
     "id": "UP-310",
     "file": "artifacts/up-dash/src/pages/orders.tsx",
-    "line": 664,
+    "line": 677,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Valor\"",
@@ -3467,7 +3467,7 @@
   {
     "id": "UP-316",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
-    "line": 140,
+    "line": 142,
     "component": "Metrics",
     "family": "Métrica",
     "label": "{pick( \"spend\", \"requestedRoas\", \"paidRoas\", \"approvedConversion\", )}",
@@ -3478,7 +3478,7 @@
   {
     "id": "UP-317",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
-    "line": 156,
+    "line": 158,
     "component": "Card",
     "family": "Painel",
     "label": "Etapas operacionais",
@@ -3489,7 +3489,7 @@
   {
     "id": "UP-318",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
-    "line": 160,
+    "line": 162,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{stage.label}",
@@ -3500,7 +3500,7 @@
   {
     "id": "UP-319",
     "file": "artifacts/up-dash/src/pages/organized-pages.tsx",
-    "line": 184,
+    "line": 189,
     "component": "Metrics",
     "family": "Métrica",
     "label": "{pick( \"metaSpend\", \"impressions\", \"reach\", \"frequency\", \"clicks\", \"ctr\", \"cpc\", \"cpm\", \"metaPurchases\", \"metaCpa\", \"metaRoas\", )}",
@@ -3698,7 +3698,7 @@
   {
     "id": "UP-337",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 210,
+    "line": 216,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{title}",
@@ -3709,7 +3709,7 @@
   {
     "id": "UP-338",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 410,
+    "line": 414,
     "component": "PeriodCalendarCard",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -3720,7 +3720,7 @@
   {
     "id": "UP-339",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 713,
+    "line": 719,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -3731,7 +3731,7 @@
   {
     "id": "UP-340",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 794,
+    "line": 800,
     "component": "RecompraBlockCard",
     "family": "Métrica",
     "label": "\"Resultado de recompra\"",
@@ -3742,7 +3742,7 @@
   {
     "id": "UP-341",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 805,
+    "line": 812,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Vendas de recompra\"",
@@ -3753,7 +3753,7 @@
   {
     "id": "UP-342",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 806,
+    "line": 813,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Ticket médio\"",
@@ -3764,7 +3764,7 @@
   {
     "id": "UP-343",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 807,
+    "line": 814,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Clientes em recompra\"",
@@ -3775,7 +3775,7 @@
   {
     "id": "UP-344",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 810,
+    "line": 817,
     "component": "RecompraBlockCard",
     "family": "Métrica",
     "label": "\"Clientes recorrentes\"",
@@ -3786,7 +3786,7 @@
   {
     "id": "UP-345",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 821,
+    "line": 829,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Vendas recorrentes\"",
@@ -3797,7 +3797,7 @@
   {
     "id": "UP-346",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 822,
+    "line": 830,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Faturamento recorrente\"",
@@ -3808,7 +3808,7 @@
   {
     "id": "UP-347",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 823,
+    "line": 831,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Ticket médio recorrente\"",
@@ -3819,7 +3819,7 @@
   {
     "id": "UP-348",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 826,
+    "line": 834,
     "component": "RecompraBlockCard",
     "family": "Métrica",
     "label": "\"Clientes reativados\"",
@@ -3830,7 +3830,7 @@
   {
     "id": "UP-349",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 837,
+    "line": 846,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Vendas reativadas\"",
@@ -3841,7 +3841,7 @@
   {
     "id": "UP-350",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 838,
+    "line": 847,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Faturamento reativado\"",
@@ -3852,7 +3852,7 @@
   {
     "id": "UP-351",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 839,
+    "line": 848,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Ticket médio reativado\"",
@@ -3863,7 +3863,7 @@
   {
     "id": "UP-352",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 842,
+    "line": 851,
     "component": "RecompraBlockCard",
     "family": "Métrica",
     "label": "\"Ciclo de recompra\"",
@@ -3874,7 +3874,7 @@
   {
     "id": "UP-353",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 854,
+    "line": 864,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Mediana entre compras\"",
@@ -3885,7 +3885,7 @@
   {
     "id": "UP-354",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 855,
+    "line": 865,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"% recorrente\"",
@@ -3896,7 +3896,7 @@
   {
     "id": "UP-355",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 856,
+    "line": 866,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"% reativado\"",
@@ -3907,7 +3907,7 @@
   {
     "id": "UP-356",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 878,
+    "line": 888,
     "component": "Card",
     "family": "Gráfico",
     "label": "Resultado de recompra",
@@ -3918,7 +3918,7 @@
   {
     "id": "UP-357",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 902,
+    "line": 912,
     "component": "Card",
     "family": "Gráfico",
     "label": "Volume de recompra",
@@ -3929,7 +3929,7 @@
   {
     "id": "UP-358",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 925,
+    "line": 935,
     "component": "Card",
     "family": "Gráfico",
     "label": "Recorrentes x Reativados",
@@ -3940,7 +3940,7 @@
   {
     "id": "UP-359",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 952,
+    "line": 962,
     "component": "Card",
     "family": "Gráfico",
     "label": "Intervalo entre compras",
@@ -3951,7 +3951,7 @@
   {
     "id": "UP-360",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 1000,
+    "line": 1010,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Retenção acumulada por prazo",
@@ -3962,7 +3962,7 @@
   {
     "id": "UP-361",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 1041,
+    "line": 1051,
     "component": "Card",
     "family": "Gráfico",
     "label": "Retenção por número de compra",
@@ -3973,7 +3973,7 @@
   {
     "id": "UP-362",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 1074,
+    "line": 1084,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Desempenho por vendedora",
@@ -3984,7 +3984,7 @@
   {
     "id": "UP-363",
     "file": "artifacts/up-dash/src/pages/performance-recompra.tsx",
-    "line": 1122,
+    "line": 1132,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Detalhamento de recompra",
@@ -3995,7 +3995,7 @@
   {
     "id": "UP-364",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 453,
+    "line": 454,
     "component": "Card",
     "family": "Gráfico",
     "label": "{title}",
@@ -4006,7 +4006,7 @@
   {
     "id": "UP-365",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 694,
+    "line": 697,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Faturamento ERP\"",
@@ -4017,7 +4017,7 @@
   {
     "id": "UP-366",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 703,
+    "line": 709,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Receita atribuída\"",
@@ -4028,7 +4028,7 @@
   {
     "id": "UP-367",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 717,
+    "line": 726,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Investimento\"",
@@ -4039,7 +4039,7 @@
   {
     "id": "UP-368",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 726,
+    "line": 738,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"ROAS atribuído\"",
@@ -4050,7 +4050,7 @@
   {
     "id": "UP-369",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 735,
+    "line": 750,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"MER geral\"",
@@ -4061,7 +4061,7 @@
   {
     "id": "UP-370",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 744,
+    "line": 762,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Lucro bruto\"",
@@ -4072,7 +4072,7 @@
   {
     "id": "UP-371",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 756,
+    "line": 777,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"ROI final\"",
@@ -4083,7 +4083,7 @@
   {
     "id": "UP-372",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 770,
+    "line": 794,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Ticket médio\"",
@@ -4094,7 +4094,7 @@
   {
     "id": "UP-373",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 784,
+    "line": 811,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Pedidos ERP\"",
@@ -4105,7 +4105,7 @@
   {
     "id": "UP-374",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 793,
+    "line": 823,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Pedidos atribuídos\"",
@@ -4116,7 +4116,7 @@
   {
     "id": "UP-375",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 808,
+    "line": 841,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Compradores únicos\"",
@@ -4127,7 +4127,7 @@
   {
     "id": "UP-376",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 819,
+    "line": 855,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Clientes novos\"",
@@ -4138,7 +4138,7 @@
   {
     "id": "UP-377",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 833,
+    "line": 872,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"Clientes recorrentes\"",
@@ -4149,7 +4149,7 @@
   {
     "id": "UP-378",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 844,
+    "line": 886,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"CAC\"",
@@ -4160,7 +4160,7 @@
   {
     "id": "UP-379",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 853,
+    "line": 898,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"CTR\"",
@@ -4171,7 +4171,7 @@
   {
     "id": "UP-380",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 862,
+    "line": 910,
     "component": "Configuração de KPI",
     "family": "Métrica configurada",
     "label": "\"CPL\"",
@@ -4182,7 +4182,7 @@
   {
     "id": "UP-381",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1028,
+    "line": 1079,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "Painel / conteúdo",
@@ -4193,7 +4193,7 @@
   {
     "id": "UP-382",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1046,
+    "line": 1097,
     "component": "Card",
     "family": "Gráfico",
     "label": "Painel / conteúdo",
@@ -4204,7 +4204,7 @@
   {
     "id": "UP-383",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1110,
+    "line": 1161,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -4215,7 +4215,7 @@
   {
     "id": "UP-384",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1150,
+    "line": 1201,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -4226,7 +4226,7 @@
   {
     "id": "UP-385",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1187,
+    "line": 1238,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{COHORT_LABEL[cohort]}",
@@ -4237,7 +4237,7 @@
   {
     "id": "UP-386",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1286,
+    "line": 1337,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "Painel / conteúdo",
@@ -4248,7 +4248,7 @@
   {
     "id": "UP-387",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1308,
+    "line": 1359,
     "component": "DashboardKpiCard",
     "family": "Métrica",
     "label": "Painel / conteúdo",
@@ -4259,7 +4259,7 @@
   {
     "id": "UP-388",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1322,
+    "line": 1373,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -4270,7 +4270,7 @@
   {
     "id": "UP-389",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1371,
+    "line": 1422,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{item.label}",
@@ -4281,7 +4281,7 @@
   {
     "id": "UP-390",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1379,
+    "line": 1430,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -4292,7 +4292,7 @@
   {
     "id": "UP-391",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1388,
+    "line": 1439,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{stage.label}",
@@ -4303,7 +4303,7 @@
   {
     "id": "UP-392",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1402,
+    "line": 1453,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -4314,7 +4314,7 @@
   {
     "id": "UP-393",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1498,
+    "line": 1549,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Vendas por cor\"",
@@ -4325,7 +4325,7 @@
   {
     "id": "UP-394",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1503,
+    "line": 1554,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Vendas por tamanho\"",
@@ -4336,7 +4336,7 @@
   {
     "id": "UP-395",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1508,
+    "line": 1559,
     "component": "BreakdownCard",
     "family": "Painel",
     "label": "\"Vendas por estado\"",
@@ -4347,7 +4347,7 @@
   {
     "id": "UP-396",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1515,
+    "line": 1566,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -4358,7 +4358,7 @@
   {
     "id": "UP-397",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1611,
+    "line": 1662,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -4369,7 +4369,7 @@
   {
     "id": "UP-398",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1702,
+    "line": 1753,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -4380,7 +4380,7 @@
   {
     "id": "UP-399",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1761,
+    "line": 1812,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Pedidos no período\"",
@@ -4391,7 +4391,7 @@
   {
     "id": "UP-400",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1762,
+    "line": 1813,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Valor total\"",
@@ -4402,7 +4402,7 @@
   {
     "id": "UP-401",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1763,
+    "line": 1814,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Pedidos atribuídos\"",
@@ -4413,7 +4413,7 @@
   {
     "id": "UP-402",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1764,
+    "line": 1815,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Receita atribuída\"",
@@ -4424,7 +4424,7 @@
   {
     "id": "UP-403",
     "file": "artifacts/up-dash/src/pages/performance.tsx",
-    "line": 1766,
+    "line": 1817,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Faturamento pago atribuído\"",
@@ -4534,7 +4534,7 @@
   {
     "id": "UP-413",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 412,
+    "line": 415,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Sales Power\"",
@@ -4545,7 +4545,7 @@
   {
     "id": "UP-414",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 413,
+    "line": 416,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Faturamento por SKU/dia\"",
@@ -4556,7 +4556,7 @@
   {
     "id": "UP-415",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 414,
+    "line": 417,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"SKUs ativos\"",
@@ -4567,7 +4567,7 @@
   {
     "id": "UP-416",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 415,
+    "line": 418,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Período\"",
@@ -4578,7 +4578,7 @@
   {
     "id": "UP-417",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 424,
+    "line": 427,
     "component": "Card",
     "family": "Painel",
     "label": "{insight.headline}",
@@ -4589,7 +4589,7 @@
   {
     "id": "UP-418",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 486,
+    "line": 489,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -4600,7 +4600,7 @@
   {
     "id": "UP-419",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 579,
+    "line": 582,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "Painel / conteúdo",
@@ -4611,7 +4611,7 @@
   {
     "id": "UP-420",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 724,
+    "line": 727,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Vendidos\"",
@@ -4622,7 +4622,7 @@
   {
     "id": "UP-421",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 725,
+    "line": 728,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Receita\"",
@@ -4633,7 +4633,7 @@
   {
     "id": "UP-422",
     "file": "artifacts/up-dash/src/pages/products.tsx",
-    "line": 726,
+    "line": 729,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Estoque\"",
@@ -4644,7 +4644,7 @@
   {
     "id": "UP-423",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 161,
+    "line": 164,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{title}",
@@ -4655,7 +4655,7 @@
   {
     "id": "UP-424",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 285,
+    "line": 296,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -4666,7 +4666,7 @@
   {
     "id": "UP-425",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 327,
+    "line": 339,
     "component": "RfmLogicCard",
     "family": "Métrica",
     "label": "\"Recência\"",
@@ -4677,7 +4677,7 @@
   {
     "id": "UP-426",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 334,
+    "line": 346,
     "component": "RfmLogicCard",
     "family": "Métrica",
     "label": "\"Frequência\"",
@@ -4688,7 +4688,7 @@
   {
     "id": "UP-427",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 341,
+    "line": 353,
     "component": "RfmLogicCard",
     "family": "Métrica",
     "label": "\"Monetário\"",
@@ -4699,7 +4699,7 @@
   {
     "id": "UP-428",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 364,
+    "line": 377,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{meta.label}",
@@ -4710,7 +4710,7 @@
   {
     "id": "UP-429",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 380,
+    "line": 393,
     "component": "Card",
     "family": "Gráfico",
     "label": "<span className=\"h-1.5 w-1.5 rounded-full bg-primary\" />Evolução da composição dos segmentos",
@@ -4721,7 +4721,7 @@
   {
     "id": "UP-430",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 442,
+    "line": 455,
     "component": "Card",
     "family": "Tabela / lista / detalhe",
     "label": "<span className=\"h-1.5 w-1.5 rounded-full bg-chart-3\" />Compradoras RFM <span className=\"text-muted-foreground font-normal\">({formatNumber(total)})</span><InfoHint text=\"A lista mostra clientes que solicitaram pedidos no período filtrado. Por padrão entram todos os pedidos; use o filtro de status para analisar somente aprovados, pendentes ou recusados.\" />",
@@ -4732,7 +4732,7 @@
   {
     "id": "UP-431",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 679,
+    "line": 692,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",
@@ -4743,7 +4743,7 @@
   {
     "id": "UP-432",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 720,
+    "line": 733,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Solicitado\"",
@@ -4754,7 +4754,7 @@
   {
     "id": "UP-433",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 721,
+    "line": 734,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Atendido\"",
@@ -4765,7 +4765,7 @@
   {
     "id": "UP-434",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 722,
+    "line": 735,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Peças solicitadas\"",
@@ -4776,7 +4776,7 @@
   {
     "id": "UP-435",
     "file": "artifacts/up-dash/src/pages/rfm.tsx",
-    "line": 723,
+    "line": 736,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "\"Peças atendidas\"",
@@ -5623,7 +5623,7 @@
   {
     "id": "UP-512",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 75,
+    "line": 78,
     "component": "GlassMetricCard",
     "family": "Métrica",
     "label": "{label}",
@@ -5634,7 +5634,7 @@
   {
     "id": "UP-513",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 344,
+    "line": 359,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"Sessões\"",
@@ -5645,7 +5645,7 @@
   {
     "id": "UP-514",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 351,
+    "line": 366,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"Cadastros\"",
@@ -5656,7 +5656,7 @@
   {
     "id": "UP-515",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 357,
+    "line": 372,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"% de aprovação\"",
@@ -5667,7 +5667,7 @@
   {
     "id": "UP-516",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 364,
+    "line": 379,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"Compradores\"",
@@ -5678,7 +5678,7 @@
   {
     "id": "UP-517",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 370,
+    "line": 385,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"Faturamento\"",
@@ -5689,7 +5689,7 @@
   {
     "id": "UP-518",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 377,
+    "line": 392,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"% de conversão\"",
@@ -5700,7 +5700,7 @@
   {
     "id": "UP-519",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 384,
+    "line": 399,
     "component": "KpiCard",
     "family": "Métrica",
     "label": "\"ROAS\"",
@@ -5711,7 +5711,7 @@
   {
     "id": "UP-520",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 397,
+    "line": 413,
     "component": "Card",
     "family": "Painel",
     "label": "{insight.headline}",
@@ -5722,7 +5722,7 @@
   {
     "id": "UP-521",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 471,
+    "line": 487,
     "component": "Card",
     "family": "Gráfico",
     "label": "Faturamento por {GROUP_LABELS[groupBy]}",
@@ -5733,7 +5733,7 @@
   {
     "id": "UP-522",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 527,
+    "line": 543,
     "component": "Card",
     "family": "Gráfico",
     "label": "% de conversão por {GROUP_LABELS[groupBy]}",
@@ -5744,7 +5744,7 @@
   {
     "id": "UP-523",
     "file": "artifacts/up-dash/src/pages/utm.tsx",
-    "line": 599,
+    "line": 615,
     "component": "Card",
     "family": "Painel",
     "label": "Painel / conteúdo",

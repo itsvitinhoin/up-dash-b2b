@@ -1,3 +1,4 @@
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
 import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { OverviewOrganization } from "@/components/overview-organization";
@@ -90,7 +91,7 @@ import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
 
 function computeChange(current: number | undefined, previous: number | undefined): number | null {
   if (current === undefined || previous === undefined) return null;
-  if (previous === 0) return current > 0 ? 100 : null;
+  if (previous === 0) return current === 0 ? 0 : null;
   return ((current - previous) / previous) * 100;
 }
 
@@ -623,6 +624,7 @@ function CampaignCustomersPanel({
   dateTo: string;
 }) {
   const [search, setSearch] = useState("");
+  const previous = usePreviousPeriodQuery<CampaignCustomersResponse>(periodQuery("/api/analytics/campaign-customers", { clientId, dateFrom, dateTo, limit: 500 }), Boolean(data));
   const [sourceFilter, setSourceFilter] = useState("all");
   const [campaignFilter, setCampaignFilter] = useState("all");
   const [documentFilter, setDocumentFilter] = useState("all");
@@ -792,10 +794,10 @@ function CampaignCustomersPanel({
         </div>
         {data && (
           <div className="up-metric-grid">
-            <GlassMetricCard  label="Clientes" value={<>{formatNumber(data.summary.impactedCustomers)}</>}  />
-            <GlassMetricCard  label="Solicitado" value={<>{formatCurrency(data.summary.requestedValue ?? data.summary.attributedRevenue)}</>}  />
-            <GlassMetricCard  label="Pedidos" value={<>{formatNumber(data.summary.orders)}</>}  />
-            <GlassMetricCard  label="Cadastros" value={<>{formatNumber(data.summary.registrations)}</>}  />
+            <GlassMetricCard label="Clientes" value={data.summary.impactedCustomers ?? 0} format={formatNumber} previousValue={previous.data?.summary.impactedCustomers} source="UP Zero · campanhas pagas" />
+            <GlassMetricCard label="Solicitado" value={data.summary.requestedValue ?? 0} format={formatCurrency} previousValue={previous.data?.summary.requestedValue} source="UP Zero · campanhas pagas" />
+            <GlassMetricCard label="Pedidos" value={data.summary.orders ?? 0} format={formatNumber} previousValue={previous.data?.summary.orders} source="UP Zero · campanhas pagas" />
+            <GlassMetricCard label="Cadastros" value={data.summary.registrations ?? 0} format={formatNumber} previousValue={previous.data?.summary.registrations} source="UP Zero · campanhas pagas" />
           </div>
         )}
       </div>
@@ -814,7 +816,7 @@ function CampaignCustomersPanel({
             sparkValues={[]}
             sparkColor="#afc4ff"
             isLoading={false}
-            testId="campaign-customers-kpi-requested-value"
+            testId="campaign-customers-kpi-requested-value" comparisonValue={data.summary.requestedValue ?? null} previousValue={previous.data?.summary.requestedValue} source="UP Zero · Meta Ads"
             valueAccent
           />
           <DashboardKpiCard
@@ -829,7 +831,7 @@ function CampaignCustomersPanel({
             sparkValues={[]}
             sparkColor="#87adff"
             isLoading={false}
-            testId="campaign-customers-kpi-fulfilled-value"
+            testId="campaign-customers-kpi-fulfilled-value" comparisonValue={data.summary.fulfilledValue ?? null} previousValue={previous.data?.summary.fulfilledValue} source="UP Zero · Meta Ads"
           />
           <DashboardKpiCard
             label="Investimento"
@@ -843,7 +845,7 @@ function CampaignCustomersPanel({
             sparkValues={[]}
             sparkColor="#5b8dff"
             isLoading={false}
-            testId="campaign-customers-kpi-investment"
+            testId="campaign-customers-kpi-investment" comparisonValue={data.summary.investment ?? null} previousValue={previous.data?.summary.investment} source="UP Zero · Meta Ads"
           />
           <DashboardKpiCard
             label="ROAS"
@@ -857,7 +859,7 @@ function CampaignCustomersPanel({
             sparkValues={[]}
             sparkColor="#0458fe"
             isLoading={false}
-            testId="campaign-customers-kpi-roas"
+            testId="campaign-customers-kpi-roas" comparisonValue={data.summary.roas ?? null} previousValue={previous.data?.summary.roas} source="UP Zero · Meta Ads"
           />
         </div>
       )}
@@ -1939,7 +1941,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
       </div>
 
       <OverviewOrganization ecommerce={organization === "ecommerce"} cards={{revenue: (<DashboardKpiCard
-          testId="kpi-revenue"
+          testId="kpi-revenue" comparisonValue={data?.kpis.revenue ?? null} previousValue={data?.prevKpis?.revenue}
           icon={DollarSign}
           iconClass="bg-blue-500/15 text-blue-400"
           label={isB2C ? t("dashboard.kpi.totalRevenue.b2c") : t("dashboard.kpi.totalRevenue.b2b")}
@@ -1957,7 +1959,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
           isLoading={isLoading}
           valueAccent
         />), orders: (<DashboardKpiCard
-          testId="kpi-orders"
+          testId="kpi-orders" comparisonValue={data?.kpis.orders ?? null} previousValue={data?.prevKpis?.orders}
           icon={Package}
           iconClass="bg-violet-500/15 text-violet-400"
           label={t("dashboard.kpi.orders")}
@@ -2024,7 +2026,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                 <p className="text-xl font-bold tabular-nums mt-0.5">
                   <CountUp value={data?.kpis.requestedRevenue ?? 0} format={(v) => formatCurrencySmart(v)} />
                 </p>
-              )} icon={DollarSign} testId="kpi-requested-revenue" footer={<div className="space-y-2">{isLoading ? (
+              )} icon={DollarSign} testId="kpi-requested-revenue" comparisonValue={data?.kpis.requestedRevenue ?? null} previousValue={data?.prevKpis?.requestedRevenue} source="Ecommerce · pedidos" footer={<div className="space-y-2">{isLoading ? (
             <Skeleton className="h-3 w-full mb-2" />
           ) : (
             <>
@@ -2059,7 +2061,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                     format={(v) => formatNumber(v)}
                   />
                 </p>
-              )} icon={Users} testId="kpi-buyers" footer={<div className="space-y-2">{isLoading ? (
+              )} icon={Users} testId="kpi-buyers" comparisonValue={data ? (data.kpis.newBuyers ?? 0) + (data.kpis.returningBuyers ?? 0) : null} previousValue={data?.prevKpis ? (data.prevKpis.newBuyers ?? 0) + (data.prevKpis.returningBuyers ?? 0) : undefined} source="Ecommerce · compradores" footer={<div className="space-y-2">{isLoading ? (
             <div className="space-y-1.5">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-3 w-full mt-1" />
@@ -2121,7 +2123,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
               </div>
             </>
           )}</div>} />), retention: (<DashboardKpiCard
-          testId="kpi-retention"
+          testId="kpi-retention" comparisonValue={data?.kpis.retentionPct ?? null} previousValue={data?.prevKpis?.retentionPct}
           icon={TrendingUp}
           iconClass="bg-violet-500/15 text-violet-400"
           label={t("dashboard.kpi.buyerRetention")}

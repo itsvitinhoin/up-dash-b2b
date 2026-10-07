@@ -7,6 +7,8 @@ Este redesign aplica o kit UP Glass enviado ao dashboard existente. As métricas
 - Operação B2B/B2C, cliente e período no topo; removida a duplicação Atacado/Varejo acima dos filtros.
 - Interface fixa em português, incluindo menus, estados, legendas e datas. Siglas e nomes usuais de métricas, como ROAS, CTR, CAC, LTV, SKU e Sales Power, permanecem.
 - Grades dimensionadas pela largura disponível de cada componente, com no máximo quatro métricas por linha. A tipografia dos números também se adapta à largura do card, sem quebrar valores em caracteres. Os quatro cards iniciais de Recompra ficam na mesma linha no desktop.
+- Todos os cards exibem o botão “i” no canto superior direito. Descrição, fonte e regras de cálculo/base ficam nesse popover, acessível por clique, toque e teclado; linhas de fonte não ocupam o rodapé.
+- Os cards sempre mostram o comparativo. KPIs anteriores existentes são reutilizados; os demais totais consultam os mesmos endpoints de leitura na janela imediatamente anterior de igual duração e com os mesmos filtros. As consultas são compartilhadas/cacheadas, sem requests por card. Valores históricos ausentes e snapshots sem histórico mostram indisponibilidade; base anterior zero não gera +100% artificial. Queda em métricas de custo conserva o sinal negativo e pode ser marcada como favorável.
 - Gráficos em variações do azul UP; o funil usa etapas alinhadas e progressivamente estreitas, conforme a referência. Etapas operacionais e diagnósticos existentes continuam disponíveis.
 - Loader oficial derivado de Sample 5.mp4, com canal alfa, em WebP animado. A conversão preserva duração e movimento; recorta apenas as margens pretas e remove áudio/metadados. WebP mantém transparência inclusive em navegadores que não reproduzem vídeo com alfa. Há imagem estática para a preferência de movimento reduzido. O overlay aplica blur de 10 px e permanece durante as consultas de dados; saúde e notificações em segundo plano não bloqueiam a página.
 
@@ -24,6 +26,8 @@ Análise de Cohort mostra os quatro meses de primeira compra até o fim do perí
 
 O endpoint recompra/history-insights mantém funnel e cohort históricos e recebe campos adicionais baseEvolution, conversionVelocity e monthlyCohort. O período altera apenas as análises novas; a chave de cache inclui cliente, datasets e datas. As verificações de acesso por cliente existentes permanecem.
 
+Comparativos de Recompra ficam ativos por padrão; o seletor de comparação personalizada continua disponível. Velocidade de Conversão compara coortes independentes com seus respectivos cortes de período. Sales Power e detalhes de um pedido individual não possuem uma janela anterior equivalente; nesses casos, a informação de indisponibilidade permanece explícita.
+
 ## Base e preservação
 
 Branch codex/up-glass-redesign, a partir da main publicada b93552a109b4f94555c1d1e1751775d4d503092b. O delta original do frontend foi transportado sem copiar o backend antigo do ZIP sobre a main. As alterações adicionais de backend são agregações de leitura para as análises descritas acima.
@@ -34,7 +38,7 @@ Não há alteração da extração, jobs, credenciais, autenticação, schema de
 
 - TypeScript do frontend e backend; declarações dos pacotes workspace.
 - Builds normais do frontend e backend.
-- Cinco testes de purchase-progression e monthly-cohort: primeira compra histórica, receita 4+, limites do período/dia brasileiro, faixas disjuntas, datas ausentes/invertidas e ausência de amostra.
+- Oito testes de metric-comparison, purchase-progression e monthly-cohort: janelas inclusivas, mudança de mês/ano bissexto, ausência de histórico, base zero, direção da variação, primeira compra histórica, receita 4+, limites do período/dia brasileiro, faixas disjuntas, datas ausentes/invertidas e ausência de amostra.
 - Auditoria atual em 40 rotas a 320 px, verificando a largura de rolagem do próprio main e o conteúdo dos cards; pontos encontrados foram corrigidos e conferidos novamente. Rotas administrativas sem fixture mantêm estados de indisponibilidade.
 - Páginas principais conferidas em 360, 390, 430, 768, 1024, 1280 e 1536 px. A auditoria mede números dentro dos cards, altura e conteúdo lateral, além da largura do documento. Gestos horizontais mantêm a página em scrollLeft 0; tabelas extensas preservam rolagem somente no próprio componente.
 - Topo mobile com operação/ações, cliente e período em linhas definidas. Criativos, Funil, campanhas, alertas, categorias, paginação e cards de WhatsApp se adaptam à largura disponível. Filtro RFM mantém os códigos de API originais.

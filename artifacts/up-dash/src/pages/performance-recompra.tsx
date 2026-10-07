@@ -2,6 +2,7 @@ import { displayLabel } from "@/lib/display-label";
 import { usePurchaseInsights } from "@/lib/purchase-insights";
 import { CohortHeatmap } from "@/components/cohort-heatmap";
 import { PurchaseInsightsPanels } from "@/components/purchase-insights";
+import { precedingPeriod } from "@/lib/metric-comparison";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { OrganizationHeading } from "@/components/metric-section";
 // Submenu Performance > Recompra — ver "00 - Especificação técnica.pdf"
@@ -165,7 +166,8 @@ function formatDelta(value: number, type: DeltaType) {
 // usam variação percentual; percentuais de composição (%recorrente/
 // %reativado) usam diferença em pontos percentuais; dias usam diferença
 // absoluta. Usado agora que os Blocos 1-4 têm P2 real vindo do backend.
-function computeDelta(p1: number, p2: number, type: DeltaType, formatter: (n: number) => string): { value: number; type: DeltaType; comparisonValue: string } {
+function computeDelta(p1: number, p2: number, type: DeltaType, formatter: (n: number) => string) {
+  if (type === "percent" && p2 === 0 && p1 !== 0) return undefined;
   const value = type === "percent" ? (p2 === 0 ? 0 : ((p1 - p2) / p2) * 100) : p1 - p2;
   return { value, type, comparisonValue: formatter(p2) };
 }
@@ -193,12 +195,16 @@ function RecompraBlockCard({
   comparisonValue,
   stats,
   comparing,
+  rawValue, previousValue, formatValue = formatNumber,
 }: {
   icon: LucideIcon;
   iconClass: string;
   title: string;
   mainLabel: string;
   mainValue: string;
+  rawValue?: number | null;
+  previousValue?: number | null;
+  formatValue?: (value: number) => string;
   change: number | null;
   changeType?: DeltaType;
   changeLabel: string;
@@ -208,10 +214,8 @@ function RecompraBlockCard({
 }) {
   const mainDelta = change !== null ? formatDelta(change, changeType) : null;
   return (<GlassMetricCard label={title} value={mainValue} icon={Icon}
-  deltaContent={mainDelta ? <span className={mainDelta.isUp ? "up-delta-positive up-delta" : "up-delta-negative up-delta"}>{mainDelta.text} {changeLabel}</span> : undefined}
+  comparisonValue={rawValue} previousValue={previousValue} format={formatValue} info={mainLabel} source="Ecommerce · ERP · recompra" changeLabel={changeLabel}
   footer={<div className="space-y-2">
-    <p className="min-h-[34px] text-xs text-muted-foreground">{mainLabel}</p>
-    {comparing && comparisonValue && <p className="text-xs text-muted-foreground">Comparação: {comparisonValue} (período anterior)</p>}
     {stats.map((stat) => {
       const delta = comparing && stat.delta ? formatDelta(stat.delta.value, stat.delta.type) : null;
       return <div key={stat.label} className="grid min-h-[34px] grid-cols-[minmax(0,1fr)_auto] items-start gap-2 text-xs">
@@ -621,17 +625,19 @@ export default function PerformanceRecompraPage() {
 
   const dateFrom = format(range.from, "yyyy-MM-dd");
   const dateTo = format(range.to, "yyyy-MM-dd");
-  const compareDateFrom = comparing ? format(comparisonRange.from, "yyyy-MM-dd") : undefined;
-  const compareDateTo = comparing ? format(comparisonRange.to, "yyyy-MM-dd") : undefined;
+  const defaultComparison = precedingPeriod(dateFrom, dateTo);
+  const compareDateFrom = comparing ? format(comparisonRange.from, "yyyy-MM-dd") : defaultComparison.dateFrom;
+  const compareDateTo = comparing ? format(comparisonRange.to, "yyyy-MM-dd") : defaultComparison.dateTo;
   const recompraFilters: RecompraFilterParams = { status, tipo, estado, vendedora, origem };
   const { data: recompraData, isLoading: blocksLoading } = useRecompraDashboard(dateFrom, dateTo, recompraFilters, compareDateFrom, compareDateTo);
   const { data: detailData, isLoading: detailLoading } = useRecompraDetail(dateFrom, dateTo, recompraFilters);
   const { data: sellersData, isLoading: sellersLoading } = useRecompraSellers(dateFrom, dateTo, status, tipo, origem, estado);
-  const blocksP2 = comparing ? recompraData?.blocksP2 ?? null : null;
+  const blocksP2 = recompraData?.blocksP2 ?? null;
   // Fase 5 -- gráficos mensais (janela fixa, reage aos filtros da página) e
   // Coorte/Funil (visão geral, sem filtro nenhum).
   const { data: monthlyTrendData, isLoading: monthlyTrendLoading } = useRecompraMonthlyTrend(recompraFilters);
   const { data: historyInsightsData, isLoading: historyInsightsLoading, isError: historyInsightsError } = usePurchaseInsights();
+  const { data: previousHistoryInsights } = usePurchaseInsights("previous");
 
   const revenueByMonth = useMemo(
     () => (monthlyTrendData?.months ?? []).map((m) => ({ month: formatMonthLabel(m.month), faturamento: m.faturamento, ticket: m.vendas > 0 ? m.faturamento / m.vendas : 0 })),
@@ -797,10 +803,11 @@ export default function PerformanceRecompraPage() {
           title="Resultado de recompra"
           mainLabel="Faturamento de recompra"
           mainValue={blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.recompra.faturamento ?? null)}
-          change={blocksP2 ? computeDelta(recompraData!.blocks.recompra.faturamento, blocksP2.recompra.faturamento, "percent", formatCurrencySmart).value : null}
+          change={blocksP2 ? computeDelta(recompraData!.blocks.recompra.faturamento, blocksP2.recompra.faturamento, "percent", formatCurrencySmart)?.value ?? null : null}
           comparisonValue={blocksP2 ? formatCurrencySmart(blocksP2.recompra.faturamento) : undefined}
+          rawValue={recompraData?.blocks.recompra.faturamento ?? null} previousValue={blocksP2?.recompra.faturamento} formatValue={formatCurrencySmart}
           changeLabel="vs. período anterior"
-          comparing={comparing}
+          comparing={Boolean(blocksP2)}
           stats={[
             { icon: ShoppingBag, label: "Vendas de recompra", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.recompra.vendas ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.recompra.vendas, blocksP2.recompra.vendas, "percent", formatNumber) : undefined },
             { icon: Receipt, label: "Ticket médio", value: blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.recompra.ticketMedio ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.recompra.ticketMedio, blocksP2.recompra.ticketMedio, "percent", formatCurrencySmart) : undefined },
@@ -813,10 +820,11 @@ export default function PerformanceRecompraPage() {
           title="Clientes recorrentes"
           mainLabel="Clientes recorrentes"
           mainValue={blocksLoading ? "…" : formatNumber(recompraData?.blocks.recorrentes.clientes ?? 0)}
-          change={blocksP2 ? computeDelta(recompraData!.blocks.recorrentes.clientes, blocksP2.recorrentes.clientes, "percent", formatNumber).value : null}
+          change={blocksP2 ? computeDelta(recompraData!.blocks.recorrentes.clientes, blocksP2.recorrentes.clientes, "percent", formatNumber)?.value ?? null : null}
           comparisonValue={blocksP2 ? formatNumber(blocksP2.recorrentes.clientes) : undefined}
+          rawValue={recompraData?.blocks.recorrentes.clientes ?? null} previousValue={blocksP2?.recorrentes.clientes} formatValue={formatNumber}
           changeLabel="vs. período anterior"
-          comparing={comparing}
+          comparing={Boolean(blocksP2)}
           stats={[
             { icon: ShoppingBag, label: "Vendas recorrentes", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.recorrentes.vendas ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.recorrentes.vendas, blocksP2.recorrentes.vendas, "percent", formatNumber) : undefined },
             { icon: Wallet, label: "Faturamento recorrente", value: blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.recorrentes.faturamento ?? null), delta: blocksP2 ? computeDelta(recompraData!.blocks.recorrentes.faturamento, blocksP2.recorrentes.faturamento, "percent", formatCurrencySmart) : undefined },
@@ -829,10 +837,11 @@ export default function PerformanceRecompraPage() {
           title="Clientes reativados"
           mainLabel="Clientes reativados"
           mainValue={blocksLoading ? "…" : formatNumber(recompraData?.blocks.reativados.clientes ?? 0)}
-          change={blocksP2 ? computeDelta(recompraData!.blocks.reativados.clientes, blocksP2.reativados.clientes, "percent", formatNumber).value : null}
+          change={blocksP2 ? computeDelta(recompraData!.blocks.reativados.clientes, blocksP2.reativados.clientes, "percent", formatNumber)?.value ?? null : null}
           comparisonValue={blocksP2 ? formatNumber(blocksP2.reativados.clientes) : undefined}
+          rawValue={recompraData?.blocks.reativados.clientes ?? null} previousValue={blocksP2?.reativados.clientes} formatValue={formatNumber}
           changeLabel="vs. período anterior"
-          comparing={comparing}
+          comparing={Boolean(blocksP2)}
           stats={[
             { icon: ShoppingBag, label: "Vendas reativadas", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.reativados.vendas ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.reativados.vendas, blocksP2.reativados.vendas, "percent", formatNumber) : undefined },
             { icon: Wallet, label: "Faturamento reativado", value: blocksLoading ? "…" : formatMaybeCurrency(recompraData?.blocks.reativados.faturamento ?? null), delta: blocksP2 ? computeDelta(recompraData!.blocks.reativados.faturamento, blocksP2.reativados.faturamento, "percent", formatCurrencySmart) : undefined },
@@ -848,8 +857,9 @@ export default function PerformanceRecompraPage() {
           change={blocksP2 ? maybeDelta(recompraData!.blocks.ciclo.tempoMedioDias, blocksP2.ciclo.tempoMedioDias, "days", formatMaybeDays)?.value ?? null : null}
           changeType="days"
           comparisonValue={blocksP2 ? formatMaybeDays(blocksP2.ciclo.tempoMedioDias) : undefined}
+          rawValue={recompraData?.blocks.ciclo.tempoMedioDias ?? null} previousValue={blocksP2?.ciclo.tempoMedioDias} formatValue={formatMaybeDays}
           changeLabel="vs. período anterior"
-          comparing={comparing}
+          comparing={Boolean(blocksP2)}
           stats={[
             { icon: Hourglass, label: "Mediana entre compras", value: blocksLoading ? "…" : formatMaybeDays(recompraData?.blocks.ciclo.medianaDias ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.ciclo.medianaDias, blocksP2.ciclo.medianaDias, "days", formatMaybeDays) : undefined },
             { icon: UserCheck, label: "% recorrente", value: blocksLoading ? "…" : formatMaybePercentage(recompraData?.blocks.ciclo.pctRecorrente ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.ciclo.pctRecorrente, blocksP2.ciclo.pctRecorrente, "pp", formatMaybePercentage) : undefined },
@@ -867,7 +877,7 @@ export default function PerformanceRecompraPage() {
         </p>
       )}
 
-      <PurchaseInsightsPanels data={historyInsightsData} loading={historyInsightsLoading} error={historyInsightsError} />
+      <PurchaseInsightsPanels previousData={previousHistoryInsights} data={historyInsightsData} loading={historyInsightsLoading} error={historyInsightsError} />
 
       {/* Gráficos 1-3: séries mensais -- sempre os últimos 12 meses corridos
           até hoje (Fase 5), independente do período (P1) escolhido no topo.

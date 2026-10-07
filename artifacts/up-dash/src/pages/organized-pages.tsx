@@ -87,39 +87,41 @@ function AcquisitionPage() {
   );
 }
 function PerformanceFunnelPage() {
-  const { pick, measures, funnel, dashboard } = useOrganizationData();
+  const { pick, measures, funnel, previousFunnel, dashboard, previousDashboard } = useOrganizationData();
   const insights = usePurchaseInsights();
   const acquisitionLeads = measures.registrations.value;
   const acquisitionApproved = measures.approved.value;
   const steps = funnel.data?.steps ?? [];
   const count = (...keys: string[]) =>
     steps.find((step) => keys.includes(step.step))?.count;
+  const previousCount = (...keys: string[]) => previousFunnel.data?.steps.find(step => keys.includes(step.step))?.count;
   const stages = [
-    { label: "Impressões", value: measures.impressions.value },
-    { label: "Alcance", value: measures.reach.value },
-    { label: "Cliques no Link", value: null },
+    { label: "Impressões", value: measures.impressions.value, previous: measures.impressions.previousValue },
+    { label: "Alcance", value: measures.reach.value, previous: measures.reach.previousValue },
+    { label: "Cliques no Link", value: null, previous: undefined },
     {
       label: "Visitas / Sessões",
       value: dashboard.data?.traffic?.sessions ?? count("VISIT", "SESSIONS"),
+      previous: dashboard.data?.traffic?.sessions != null ? previousDashboard.data?.traffic?.sessions : previousCount("VISIT", "SESSIONS"),
     },
-    { label: "Cadastros", value: count("REGISTRATION") },
+    { label: "Cadastros", previous: previousCount("REGISTRATION"), value: count("REGISTRATION") },
     {
       label: "Cadastros Aprovados",
-      value: count("APPROVED_REGISTRATION", "APPROVAL"),
+      previous: previousCount("APPROVED_REGISTRATION", "APPROVAL"), value: count("APPROVED_REGISTRATION", "APPROVAL"),
     },
-    { label: "Adições ao Carrinho", value: count("ADD_TO_CART") },
+    { label: "Adições ao Carrinho", previous: previousCount("ADD_TO_CART"), value: count("ADD_TO_CART") },
     {
       label: "Checkout",
-      value: count("CHECKOUT_STARTED", "CHECKOUT", "ORDER_SUBMITTED"),
+      previous: previousCount("CHECKOUT_STARTED", "CHECKOUT", "ORDER_SUBMITTED"), value: count("CHECKOUT_STARTED", "CHECKOUT", "ORDER_SUBMITTED"),
     },
     {
       label: "Faturamento Solicitado",
-      value: measures.requestedRevenue.value,
+      value: measures.requestedRevenue.value, previous: measures.requestedRevenue.previousValue,
       currency: true,
     },
     {
       label: "Faturamento Pago",
-      value: measures.paidRevenue.value,
+      value: measures.paidRevenue.value, previous: measures.paidRevenue.previousValue,
       currency: true,
     },
   ];
@@ -159,6 +161,9 @@ function PerformanceFunnelPage() {
               const indicator = measures[indicators[index]];
               return <GlassMetricCard key={stage.label} label={stage.label}
                 value={stage.value == null ? "—" : stage.currency ? formatCurrency(stage.value) : formatNumber(stage.value)}
+                comparisonValue={stage.value ?? null}
+                previousValue={stage.previous}
+                format={stage.currency ? formatCurrency : formatNumber} source={index < 3 ? "Meta Ads" : "Ecommerce · funil"}
                 testId={`performance-stage-${index}`}
                 footer={indicator ? <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span className="text-muted-foreground">{displayLabel(indicator.label)}</span>

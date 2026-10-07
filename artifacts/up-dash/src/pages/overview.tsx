@@ -56,7 +56,7 @@ import {
 type SeriesMetric = "revenue" | "orders" | "leads";
 
 function deltaPct(current: number, previous: number): number | null {
-  if (previous === 0) return current > 0 ? 100 : null;
+  if (previous === 0) return current === 0 ? 0 : null;
   return ((current - previous) / previous) * 100;
 }
 

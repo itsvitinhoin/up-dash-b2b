@@ -1,8 +1,12 @@
 import { displayLabel } from "@/lib/display-label";
 import { motion } from "framer-motion";
 import type { ReactNode, ElementType } from "react";
-import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Minus, Info } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { metricComparison } from "@/lib/metric-comparison";
+import { useMetricData } from "@/components/metric-data-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CountUp } from "@/components/count-up";
 import { Sparkline } from "@/components/sparkline";
@@ -31,7 +35,25 @@ export interface DashboardKpiCardProps {
   deltaContent?: ReactNode;
   changePositive?: boolean;
   className?: string;
+  info?: ReactNode;
+  source?: string;
+  previousValue?: number | null;
+  comparisonValue?: number | null;
+  comparisonUnavailable?: string;
 }
+
+const METRIC_DESCRIPTIONS: Record<string, string> = {
+  "Investimento Meta": "Valor investido em anúncios na Meta durante o período selecionado.",
+  "Investimento Google": "Valor investido em anúncios no Google durante o período selecionado.",
+  "Impressões": "Número de vezes que os anúncios foram exibidos no período.",
+  "Cliques": "Quantidade de cliques registrada pela plataforma no período.",
+  "CTR": "Taxa de cliques em relação às impressões dos anúncios.",
+  "CPC": "Custo médio por clique registrado pela fonte.",
+  "CPL": "Custo médio por lead registrado pela fonte.",
+  "CPA": "Custo médio por aquisição registrada pela fonte.",
+  "ROAS": "Retorno da receita atribuída em relação ao investimento em mídia, conforme a base desta fonte.",
+  "Ticket Médio": "Valor médio dos pedidos considerados na fonte e nos filtros selecionados.",
+};
 
 function MiniRing({
   pct,
@@ -98,10 +120,19 @@ export function DashboardKpiCard({
   footer,
   deltaContent,
   changePositive,
-  className,
+  className, info, source, previousValue, comparisonValue, comparisonUnavailable,
 }: DashboardKpiCardProps) {
   const reduced = useReducedMotion();
-  const isUp = changePositive ?? (change !== null && change >= 0);
+  const contextual = useMetricData(testId);
+  const previous = previousValue !== undefined ? previousValue : contextual.previous;
+  const comparison = metricComparison(comparisonValue !== undefined ? comparisonValue : contextual.current !== undefined ? contextual.current : (displayValue === undefined ? value : undefined), previous);
+  const effectiveChange = previous !== undefined ? comparison.change : change !== null && Number.isFinite(change) ? change : null;
+  const positive = changePositive ?? (effectiveChange !== null && effectiveChange >= 0);
+  const rising = effectiveChange !== null && effectiveChange > 0;
+  const metadata = sub.filter(row => /^(fonte|base|cálculo|disponibilidade|regra|período)$/i.test(row.label));
+  const details = sub.filter(row => !metadata.includes(row));
+  const metricSource = source ?? metadata.find(row => /^fonte$/i.test(row.label))?.value ?? contextual.source ?? "Dados conectados do relatório";
+  const comparisonText = comparison.status === "zero-base" ? "O valor anterior é zero; a variação percentual não pode ser calculada." : comparisonUnavailable ?? "A fonte não disponibilizou um valor anterior comparável para esta métrica.";
   const variants = withReducedMotion(cardEntry, reduced);
   return (
     <motion.div variants={variants} className={`up-metric-wrapper h-full min-w-0 ${className ?? ""}`}>
@@ -109,7 +140,7 @@ export function DashboardKpiCard({
         data-testid={testId}
         className="up-metric flex h-full flex-col p-[18px] border-border transition-shadow"
       >
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex min-w-0 items-center gap-2.5">
             <div className="up-metric-icon flex h-8 w-8 items-center justify-center rounded-lg">
               <Icon className="h-4 w-4" />
@@ -117,7 +148,23 @@ export function DashboardKpiCard({
             <span className="up-metric-label min-w-0 text-[13px] text-muted-foreground">
               {label}
             </span>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
             {labelAccessory}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="up-metric-info h-7 w-7 shrink-0 rounded-full" aria-label={`Informações: ${label}`}>
+                  <Info className="h-3.5 w-3.5" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="up-metric-information w-[min(320px,calc(100vw-24px))] space-y-3 text-xs" aria-label={`Informações da métrica ${label}`}>
+                <p className="font-semibold text-sm">{label}</p>
+                <div className="text-muted-foreground leading-relaxed">{info ?? METRIC_DESCRIPTIONS[label] ?? "Valor da métrica conforme o período e os filtros selecionados."}</div>
+                {metadata.filter(row => !/^fonte$/i.test(row.label)).map(row => <p key={row.label}><span className="text-muted-foreground">{row.label}: </span>{row.value}</p>)}
+                <p><span className="text-muted-foreground">Fonte: </span>{metricSource}</p>
+                <p className="text-muted-foreground">Comparação com a janela imediatamente anterior de mesma duração, mantendo os filtros. {effectiveChange === null ? comparisonText : "Variação percentual sobre o valor anterior."}</p>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
 
@@ -153,26 +200,15 @@ export function DashboardKpiCard({
           ) : null}
         </div>
 
-        {!isLoading && deltaContent !== undefined ? deltaContent : !isLoading && change !== null && (
-          <div className="mb-4">
-            <span
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                isUp ? "up-delta-positive" : "up-delta-negative"
-              }`}
-            >
-              {isUp ? (
-                <ArrowUpRight className="h-3 w-3" />
-              ) : (
-                <ArrowDownRight className="h-3 w-3" />
-              )}
-              {isUp ? "+" : ""}
-              {change.toFixed(1)}%
-            </span>
-            <span className="text-xs text-muted-foreground ml-2">
-              {changeLabel}
-            </span>
-          </div>
-        )}
+        {!isLoading && <div className="up-metric-comparison mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-comparison-state={effectiveChange !== null ? "available" : comparison.status}>
+          {effectiveChange !== null && Number.isFinite(effectiveChange) ? <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${effectiveChange === 0 ? "up-delta-neutral" : positive ? "up-delta-positive" : "up-delta-negative"}`}>
+            {effectiveChange === 0 ? <Minus className="h-3 w-3" /> : rising ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+            {effectiveChange > 0 ? "+" : ""}{effectiveChange.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+          </span> : <span className="up-delta-neutral rounded-full px-2 py-0.5">{comparison.status === "zero-base" ? "Sem base percentual" : "Indisponível"}</span>}
+          <span className="text-muted-foreground">{changeLabel || "vs. período anterior"}</span>
+          {previous != null && Number.isFinite(previous) && <span className="basis-full text-muted-foreground">Anterior: <span className="text-foreground tabular-nums">{(contextual.format ?? fmt)(previous)}</span></span>}
+          {deltaContent !== undefined && <div className="basis-full">{deltaContent}</div>}
+        </div>}
 
         {!isLoading && sparkValues.length > 1 && (
           <Sparkline
@@ -186,8 +222,8 @@ export function DashboardKpiCard({
           />
         )}
 
-        {(sub.length > 0 || footer) && <div className="up-metric-footer mt-auto pt-3 border-t border-border space-y-2">
-          {sub.map((row) => (
+        {(details.length > 0 || footer) && <div className="up-metric-footer mt-auto pt-3 border-t border-border space-y-2">
+          {details.map((row) => (
             <div key={row.label} className="flex justify-between gap-2 text-xs">
               <span className="min-w-0 text-muted-foreground">
                 {displayLabel(row.label)}

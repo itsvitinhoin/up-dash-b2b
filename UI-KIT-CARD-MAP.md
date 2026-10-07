@@ -140,98 +140,98 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-098 | 152 | {title} | Card | Painel |
-| UP-099 | 782 | <Megaphone className="h-4 w-4 text-primary" />Clientes atribuídos às campanhas | Card | Tabela / lista / detalhe |
-| UP-100 | 795 | "Clientes" | GlassMetricCard | Métrica |
-| UP-101 | 796 | "Solicitado" | GlassMetricCard | Métrica |
-| UP-102 | 797 | "Pedidos" | GlassMetricCard | Métrica |
-| UP-103 | 798 | "Cadastros" | GlassMetricCard | Métrica |
-| UP-104 | 805 | "Valor solicitado" | DashboardKpiCard | Métrica |
-| UP-105 | 820 | "Valor atendido" | DashboardKpiCard | Métrica |
-| UP-106 | 834 | "Investimento" | DashboardKpiCard | Métrica |
-| UP-107 | 848 | "ROAS" | DashboardKpiCard | Métrica |
-| UP-108 | 1193 | "Eventos" | GlassMetricCard | Métrica |
-| UP-109 | 1194 | "Produtos vistos" | GlassMetricCard | Métrica |
-| UP-110 | 1195 | "Carrinhos" | GlassMetricCard | Métrica |
-| UP-111 | 1196 | "Valor comprado" | GlassMetricCard | Métrica |
-| UP-112 | 1403 | <ShoppingBag className="h-4 w-4 text-primary" />Pedidos do período | Card | Tabela / lista / detalhe |
-| UP-113 | 1415 | "Pedidos no período" | GlassMetricCard | Métrica |
-| UP-114 | 1510 | "Pago" | GlassMetricCard | Métrica |
-| UP-115 | 1511 | "Bruto" | GlassMetricCard | Métrica |
-| UP-116 | 1512 | "Desconto" | GlassMetricCard | Métrica |
-| UP-117 | 1513 | "Frete" | GlassMetricCard | Métrica |
-| UP-118 | 1852 | {t("dashboard.loading.title")} | DashLoadingCard | Painel |
-| UP-119 | 1941 | {isB2C ? t("dashboard.kpi.totalRevenue.b2c") : t("dashboard.kpi.totalRevenue.b2b")} | DashboardKpiCard | Métrica |
-| UP-120 | 1959 | {t("dashboard.kpi.orders")} | DashboardKpiCard | Métrica |
-| UP-121 | 1976 | {t("dashboard.kpi.avgTicket")} | DashboardKpiCard | Métrica |
-| UP-122 | 1993 | {t("dashboard.kpi.conversionRate")} | DashboardKpiCard | Métrica |
-| UP-123 | 2021 | {isB2C ? t("dashboard.kpi.invoicedValue") : t("dashboard.kpi.requestedRevenue")} | GlassMetricCard | Métrica |
-| UP-124 | 2053 | {t("dashboard.kpi.buyersThisPeriod")} | GlassMetricCard | Métrica |
-| UP-125 | 2123 | {t("dashboard.kpi.buyerRetention")} | DashboardKpiCard | Métrica |
-| UP-126 | 2168 | {t("dashboard.chart.title")} | Card | Gráfico |
-| UP-127 | 2308 | {insight.headline} | Card | Painel |
-| UP-128 | 2383 | {t("dashboard.b2c.byCategory.title")} | B2CSalesBreakdownCard | Painel |
-| UP-129 | 2392 | {t("dashboard.b2c.byColor.title")} | B2CSalesBreakdownCard | Painel |
-| UP-130 | 2401 | {t("dashboard.b2c.bySize.title")} | B2CSalesBreakdownCard | Gráfico |
-| UP-131 | 2420 | {t("dashboard.signals.title")} | Card | Gráfico |
-| UP-132 | 2465 | <AlertTriangle className="h-4 w-4 text-amber-400" />{t("dashboard.alerts.title")} | Card | Painel |
-| UP-133 | 2613 | {t("dashboard.categories.title")} | Card | Painel |
-| UP-134 | 2686 | {t("dashboard.sellers.title")} | Card | Painel |
+| UP-098 | 153 | {title} | Card | Painel |
+| UP-099 | 784 | <Megaphone className="h-4 w-4 text-primary" />Clientes atribuídos às campanhas | Card | Tabela / lista / detalhe |
+| UP-100 | 797 | "Clientes" | GlassMetricCard | Métrica |
+| UP-101 | 798 | "Solicitado" | GlassMetricCard | Métrica |
+| UP-102 | 799 | "Pedidos" | GlassMetricCard | Métrica |
+| UP-103 | 800 | "Cadastros" | GlassMetricCard | Métrica |
+| UP-104 | 807 | "Valor solicitado" | DashboardKpiCard | Métrica |
+| UP-105 | 822 | "Valor atendido" | DashboardKpiCard | Métrica |
+| UP-106 | 836 | "Investimento" | DashboardKpiCard | Métrica |
+| UP-107 | 850 | "ROAS" | DashboardKpiCard | Métrica |
+| UP-108 | 1195 | "Eventos" | GlassMetricCard | Métrica |
+| UP-109 | 1196 | "Produtos vistos" | GlassMetricCard | Métrica |
+| UP-110 | 1197 | "Carrinhos" | GlassMetricCard | Métrica |
+| UP-111 | 1198 | "Valor comprado" | GlassMetricCard | Métrica |
+| UP-112 | 1405 | <ShoppingBag className="h-4 w-4 text-primary" />Pedidos do período | Card | Tabela / lista / detalhe |
+| UP-113 | 1417 | "Pedidos no período" | GlassMetricCard | Métrica |
+| UP-114 | 1512 | "Pago" | GlassMetricCard | Métrica |
+| UP-115 | 1513 | "Bruto" | GlassMetricCard | Métrica |
+| UP-116 | 1514 | "Desconto" | GlassMetricCard | Métrica |
+| UP-117 | 1515 | "Frete" | GlassMetricCard | Métrica |
+| UP-118 | 1854 | {t("dashboard.loading.title")} | DashLoadingCard | Painel |
+| UP-119 | 1943 | {isB2C ? t("dashboard.kpi.totalRevenue.b2c") : t("dashboard.kpi.totalRevenue.b2b")} | DashboardKpiCard | Métrica |
+| UP-120 | 1961 | {t("dashboard.kpi.orders")} | DashboardKpiCard | Métrica |
+| UP-121 | 1978 | {t("dashboard.kpi.avgTicket")} | DashboardKpiCard | Métrica |
+| UP-122 | 1995 | {t("dashboard.kpi.conversionRate")} | DashboardKpiCard | Métrica |
+| UP-123 | 2023 | {isB2C ? t("dashboard.kpi.invoicedValue") : t("dashboard.kpi.requestedRevenue")} | GlassMetricCard | Métrica |
+| UP-124 | 2055 | {t("dashboard.kpi.buyersThisPeriod")} | GlassMetricCard | Métrica |
+| UP-125 | 2125 | {t("dashboard.kpi.buyerRetention")} | DashboardKpiCard | Métrica |
+| UP-126 | 2170 | {t("dashboard.chart.title")} | Card | Gráfico |
+| UP-127 | 2310 | {insight.headline} | Card | Painel |
+| UP-128 | 2385 | {t("dashboard.b2c.byCategory.title")} | B2CSalesBreakdownCard | Painel |
+| UP-129 | 2394 | {t("dashboard.b2c.byColor.title")} | B2CSalesBreakdownCard | Painel |
+| UP-130 | 2403 | {t("dashboard.b2c.bySize.title")} | B2CSalesBreakdownCard | Gráfico |
+| UP-131 | 2422 | {t("dashboard.signals.title")} | Card | Gráfico |
+| UP-132 | 2467 | <AlertTriangle className="h-4 w-4 text-amber-400" />{t("dashboard.alerts.title")} | Card | Painel |
+| UP-133 | 2615 | {t("dashboard.categories.title")} | Card | Painel |
+| UP-134 | 2688 | {t("dashboard.sellers.title")} | Card | Painel |
 
 ## erp
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-135 | 372 | {metric.label} | DashboardKpiCard | Métrica |
-| UP-136 | 546 | Painel / conteúdo | Card | Gráfico |
-| UP-137 | 626 | "Faturamento líquido" | Configuração de KPI | Métrica configurada |
-| UP-138 | 636 | "Pedidos" | Configuração de KPI | Métrica configurada |
-| UP-139 | 646 | "Compradores" | Configuração de KPI | Métrica configurada |
-| UP-140 | 656 | "Retenção" | Configuração de KPI | Métrica configurada |
-| UP-141 | 667 | "Peças vendidas" | Configuração de KPI | Métrica configurada |
-| UP-142 | 677 | "Descontos" | Configuração de KPI | Métrica configurada |
-| UP-143 | 687 | "Devoluções" | Configuração de KPI | Métrica configurada |
-| UP-144 | 697 | "Cancelamentos" | Configuração de KPI | Métrica configurada |
-| UP-145 | 717 | Painel / conteúdo | Card | Gráfico |
-| UP-146 | 761 | Painel / conteúdo | Card | Gráfico |
-| UP-147 | 819 | "Formas de pagamento" | BreakdownCard | Painel |
-| UP-148 | 825 | "Ranking de vendedores" | BreakdownCard | Painel |
-| UP-149 | 831 | "Geografia de compradores" | BreakdownCard | Painel |
-| UP-150 | 838 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-151 | 964 | "Faturamento bruto" | Configuração de KPI | Métrica configurada |
-| UP-152 | 974 | "Pedidos únicos" | Configuração de KPI | Métrica configurada |
-| UP-153 | 984 | "Peças vendidas" | Configuração de KPI | Métrica configurada |
-| UP-154 | 994 | "Cancelamentos" | Configuração de KPI | Métrica configurada |
-| UP-155 | 1008 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-156 | 1261 | "Pedidos históricos" | GlassMetricCard | Métrica |
-| UP-157 | 1262 | "Valor total comprado" | GlassMetricCard | Métrica |
-| UP-158 | 1263 | "Ticket médio histórico" | GlassMetricCard | Métrica |
-| UP-159 | 1396 | "Compradores" | Configuração de KPI | Métrica configurada |
-| UP-160 | 1406 | "Novos compradores" | Configuração de KPI | Métrica configurada |
-| UP-161 | 1416 | "Recorrentes" | Configuração de KPI | Métrica configurada |
-| UP-162 | 1426 | "Retenção" | Configuração de KPI | Métrica configurada |
-| UP-163 | 1441 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-164 | 1894 | "Estoque atual" | Configuração de KPI | Métrica configurada |
-| UP-165 | 1904 | "Poder de venda" | Configuração de KPI | Métrica configurada |
-| UP-166 | 1914 | "Cobertura" | Configuração de KPI | Métrica configurada |
-| UP-167 | 1924 | "SKUs sem estoque" | Configuração de KPI | Métrica configurada |
-| UP-168 | 1936 | "Faturamento" | Configuração de KPI | Métrica configurada |
-| UP-169 | 1946 | "Lucro bruto" | Configuração de KPI | Métrica configurada |
-| UP-170 | 1956 | "% de giro" | Configuração de KPI | Métrica configurada |
-| UP-171 | 1970 | "Poder de venda" | Configuração de KPI | Métrica configurada |
-| UP-172 | 1985 | "Categorias" | BreakdownCard | Painel |
-| UP-173 | 2000 | "Cores" | BreakdownCard | Painel |
-| UP-174 | 2012 | "Tamanhos" | BreakdownCard | Painel |
-| UP-175 | 2025 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-176 | 2157 | "Vendedores ativos" | Configuração de KPI | Métrica configurada |
-| UP-177 | 2167 | "Faturamento" | Configuração de KPI | Métrica configurada |
-| UP-178 | 2177 | "Ticket médio" | Configuração de KPI | Métrica configurada |
-| UP-179 | 2187 | "Clientes atendidos" | Configuração de KPI | Métrica configurada |
-| UP-180 | 2202 | "Ranking de vendedores" | BreakdownCard | Painel |
-| UP-181 | 2208 | "Desempenho por loja" | BreakdownCard | Painel |
-| UP-182 | 2215 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-183 | 2298 | "Geografia de compradores" | BreakdownCard | Painel |
-| UP-184 | 2299 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-135 | 377 | {metric.label} | DashboardKpiCard | Métrica |
+| UP-136 | 554 | Painel / conteúdo | Card | Gráfico |
+| UP-137 | 635 | "Faturamento líquido" | Configuração de KPI | Métrica configurada |
+| UP-138 | 647 | "Pedidos" | Configuração de KPI | Métrica configurada |
+| UP-139 | 659 | "Compradores" | Configuração de KPI | Métrica configurada |
+| UP-140 | 671 | "Retenção" | Configuração de KPI | Métrica configurada |
+| UP-141 | 684 | "Peças vendidas" | Configuração de KPI | Métrica configurada |
+| UP-142 | 696 | "Descontos" | Configuração de KPI | Métrica configurada |
+| UP-143 | 708 | "Devoluções" | Configuração de KPI | Métrica configurada |
+| UP-144 | 720 | "Cancelamentos" | Configuração de KPI | Métrica configurada |
+| UP-145 | 742 | Painel / conteúdo | Card | Gráfico |
+| UP-146 | 786 | Painel / conteúdo | Card | Gráfico |
+| UP-147 | 844 | "Formas de pagamento" | BreakdownCard | Painel |
+| UP-148 | 850 | "Ranking de vendedores" | BreakdownCard | Painel |
+| UP-149 | 856 | "Geografia de compradores" | BreakdownCard | Painel |
+| UP-150 | 863 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-151 | 990 | "Faturamento bruto" | Configuração de KPI | Métrica configurada |
+| UP-152 | 1002 | "Pedidos únicos" | Configuração de KPI | Métrica configurada |
+| UP-153 | 1014 | "Peças vendidas" | Configuração de KPI | Métrica configurada |
+| UP-154 | 1026 | "Cancelamentos" | Configuração de KPI | Métrica configurada |
+| UP-155 | 1042 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-156 | 1295 | "Pedidos históricos" | GlassMetricCard | Métrica |
+| UP-157 | 1296 | "Valor total comprado" | GlassMetricCard | Métrica |
+| UP-158 | 1297 | "Ticket médio histórico" | GlassMetricCard | Métrica |
+| UP-159 | 1431 | "Compradores" | Configuração de KPI | Métrica configurada |
+| UP-160 | 1443 | "Novos compradores" | Configuração de KPI | Métrica configurada |
+| UP-161 | 1455 | "Recorrentes" | Configuração de KPI | Métrica configurada |
+| UP-162 | 1467 | "Retenção" | Configuração de KPI | Métrica configurada |
+| UP-163 | 1484 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-164 | 1937 | "Estoque atual" | Configuração de KPI | Métrica configurada |
+| UP-165 | 1947 | "Poder de venda" | Configuração de KPI | Métrica configurada |
+| UP-166 | 1957 | "Cobertura" | Configuração de KPI | Métrica configurada |
+| UP-167 | 1967 | "SKUs sem estoque" | Configuração de KPI | Métrica configurada |
+| UP-168 | 1979 | "Faturamento" | Configuração de KPI | Métrica configurada |
+| UP-169 | 1989 | "Lucro bruto" | Configuração de KPI | Métrica configurada |
+| UP-170 | 1999 | "% de giro" | Configuração de KPI | Métrica configurada |
+| UP-171 | 2013 | "Poder de venda" | Configuração de KPI | Métrica configurada |
+| UP-172 | 2028 | "Categorias" | BreakdownCard | Painel |
+| UP-173 | 2043 | "Cores" | BreakdownCard | Painel |
+| UP-174 | 2055 | "Tamanhos" | BreakdownCard | Painel |
+| UP-175 | 2068 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-176 | 2200 | "Vendedores ativos" | Configuração de KPI | Métrica configurada |
+| UP-177 | 2210 | "Faturamento" | Configuração de KPI | Métrica configurada |
+| UP-178 | 2220 | "Ticket médio" | Configuração de KPI | Métrica configurada |
+| UP-179 | 2230 | "Clientes atendidos" | Configuração de KPI | Métrica configurada |
+| UP-180 | 2245 | "Ranking de vendedores" | BreakdownCard | Painel |
+| UP-181 | 2251 | "Desempenho por loja" | BreakdownCard | Painel |
+| UP-182 | 2258 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-183 | 2341 | "Geografia de compradores" | BreakdownCard | Painel |
+| UP-184 | 2342 | Painel / conteúdo | Card | Tabela / lista / detalhe |
 
 ## extractions
 
@@ -247,23 +247,23 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-190 | 246 | Painel / conteúdo | ActivationAnalysisCard | Painel |
-| UP-191 | 267 | {visitStepHidden ? "Leads → Compras" : "Visitantes → Compras"} | Card | Painel |
-| UP-192 | 309 | {visibleSteps[0]?.label ?? "Topo do funil"} | MiniStat | Métrica |
-| UP-193 | 317 | "Compras" | MiniStat | Métrica |
-| UP-194 | 325 | {biggestDrop ? Perda em ${biggestDrop.to.label} : "Maior perda"} | MiniStat | Métrica |
-| UP-195 | 334 | "Média de eventos antes da compra" | MiniStat | Métrica |
-| UP-196 | 350 | Painel / conteúdo | ActivationAnalysisCard | Painel |
-| UP-197 | 362 | <TrendingUp className="h-3.5 w-3.5 text-primary" />Visitas diárias ao site e taxa de conversão | Card | Gráfico |
-| UP-198 | 500 | <span className="h-1.5 w-1.5 rounded-full bg-primary" />Fluxo por etapa | Card | Gráfico |
-| UP-199 | 568 | Painel / conteúdo | Card | Painel |
-| UP-200 | 585 | Painel / conteúdo | Card | Painel |
-| UP-201 | 745 | Cadastro aprovado → primeira compra | Card | Painel |
-| UP-202 | 767 | "Aprovados" | ActivationMetric | Métrica |
-| UP-203 | 768 | "Ativação em 30 dias" | ActivationMetric | Métrica |
-| UP-204 | 773 | "Ticket 1ª compra" | ActivationMetric | Métrica |
-| UP-205 | 897 | {label} | GlassMetricCard | Métrica |
-| UP-206 | 984 | {label} | GlassMetricCard | Métrica |
+| UP-190 | 250 | Painel / conteúdo | ActivationAnalysisCard | Painel |
+| UP-191 | 271 | {visitStepHidden ? "Leads → Compras" : "Visitantes → Compras"} | Card | Painel |
+| UP-192 | 319 | {visibleSteps[0]?.label ?? "Topo do funil"} | MiniStat | Métrica |
+| UP-193 | 327 | "Compras" | MiniStat | Métrica |
+| UP-194 | 335 | {biggestDrop ? Perda em ${biggestDrop.to.label} : "Maior perda"} | MiniStat | Métrica |
+| UP-195 | 344 | "Média de eventos antes da compra" | MiniStat | Métrica |
+| UP-196 | 361 | Painel / conteúdo | ActivationAnalysisCard | Painel |
+| UP-197 | 373 | <TrendingUp className="h-3.5 w-3.5 text-primary" />Visitas diárias ao site e taxa de conversão | Card | Gráfico |
+| UP-198 | 511 | <span className="h-1.5 w-1.5 rounded-full bg-primary" />Fluxo por etapa | Card | Gráfico |
+| UP-199 | 579 | Painel / conteúdo | Card | Painel |
+| UP-200 | 596 | Painel / conteúdo | Card | Painel |
+| UP-201 | 756 | Cadastro aprovado → primeira compra | Card | Painel |
+| UP-202 | 783 | "Aprovados" | ActivationMetric | Métrica |
+| UP-203 | 784 | "Ativação em 30 dias" | ActivationMetric | Métrica |
+| UP-204 | 789 | "Ticket 1ª compra" | ActivationMetric | Métrica |
+| UP-205 | 914 | {label} | GlassMetricCard | Métrica |
+| UP-206 | 1001 | {label} | GlassMetricCard | Métrica |
 
 ## geography
 
@@ -283,16 +283,16 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-216 | 53 | {label} | GlassMetricCard | Métrica |
-| UP-217 | 155 | Painel / conteúdo | Card | Painel |
-| UP-218 | 197 | "Média de eventos antes da compra" | KpiCard | Métrica |
-| UP-219 | 204 | "Tempo médio até a primeira compra" | KpiCard | Métrica |
-| UP-220 | 211 | "Tempo médio entre compras" | KpiCard | Métrica |
-| UP-221 | 218 | "Compradores na primeira sessão" | KpiCard | Métrica |
-| UP-222 | 231 | <span className="h-1.5 w-1.5 rounded-full bg-primary" />Fluxo de eventos | Card | Painel |
-| UP-223 | 250 | <span className="h-1.5 w-1.5 rounded-full bg-chart-3" />Principais caminhos até a compra | Card | Painel |
-| UP-224 | 298 | <span className="h-1.5 w-1.5 rounded-full bg-chart-4" />Compradores e não compradores — comparação de eventos | Card | Gráfico |
-| UP-225 | 395 | Painel / conteúdo | Card | Painel |
+| UP-216 | 56 | {label} | GlassMetricCard | Métrica |
+| UP-217 | 166 | Painel / conteúdo | Card | Painel |
+| UP-218 | 209 | "Média de eventos antes da compra" | KpiCard | Métrica |
+| UP-219 | 216 | "Tempo médio até a primeira compra" | KpiCard | Métrica |
+| UP-220 | 223 | "Tempo médio entre compras" | KpiCard | Métrica |
+| UP-221 | 230 | "Compradores na primeira sessão" | KpiCard | Métrica |
+| UP-222 | 244 | <span className="h-1.5 w-1.5 rounded-full bg-primary" />Fluxo de eventos | Card | Painel |
+| UP-223 | 263 | <span className="h-1.5 w-1.5 rounded-full bg-chart-3" />Principais caminhos até a compra | Card | Painel |
+| UP-224 | 311 | <span className="h-1.5 w-1.5 rounded-full bg-chart-4" />Compradores e não compradores — comparação de eventos | Card | Gráfico |
+| UP-225 | 408 | Painel / conteúdo | Card | Painel |
 
 ## login
 
@@ -307,32 +307,32 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-230 | 202 | {label} | GlassMetricCard | Métrica |
-| UP-231 | 373 | Painel / conteúdo | Card | Painel |
-| UP-232 | 382 | "CTR" | GlassMetricCard | Métrica |
-| UP-233 | 383 | {costLabel} | GlassMetricCard | Métrica |
-| UP-234 | 384 | "Leads" | GlassMetricCard | Métrica |
-| UP-235 | 385 | "Investimento" | GlassMetricCard | Métrica |
-| UP-236 | 415 | <Sparkles className="h-4 w-4 text-muted-foreground" />{title} | Card | Painel |
-| UP-237 | 425 | Painel / conteúdo | TopCreativeCard | Painel |
-| UP-238 | 454 | Painel / conteúdo | Card | Painel |
-| UP-239 | 754 | Sem dados de canais pagos | Card | Painel |
-| UP-240 | 790 | "Investimento em anúncios" | MktKpiCard | Métrica |
-| UP-241 | 802 | "Faturamento" | MktKpiCard | Métrica |
-| UP-242 | 814 | "ROA" | MktKpiCard | Métrica |
-| UP-243 | 826 | "Taxa de aprovação" | MktKpiCard | Métrica |
-| UP-244 | 838 | "Total de leads" | MktKpiCard | Métrica |
-| UP-245 | 850 | {isB2C ? "Compras" : "Leads aprovados"} | MktKpiCard | Métrica |
-| UP-246 | 862 | {isB2C ? "Custo por Compra" : "CPL"} | MktKpiCard | Métrica |
-| UP-247 | 876 | "CPA" | MktKpiCard | Métrica |
-| UP-248 | 904 | Painel / conteúdo | Card | Painel |
-| UP-249 | 924 | <BarChart3 className="h-4 w-4 text-muted-foreground" />Investimento e leads | Card | Gráfico |
-| UP-250 | 956 | <TrendingUp className="h-4 w-4 text-muted-foreground" />Evolução do ROAS | Card | Gráfico |
-| UP-251 | 994 | <DollarSign className="h-4 w-4 text-muted-foreground" />Investimento e faturamento | Card | Gráfico |
-| UP-252 | 1040 | <Megaphone className="h-4 w-4 text-muted-foreground" />Por plataforma | Card | Painel |
-| UP-253 | 1059 | <MapPin className="h-4 w-4 text-muted-foreground" />Principais estados por ROAS | Card | Painel |
-| UP-254 | 1082 | <PersonStanding className="h-4 w-4 text-muted-foreground" />Faixa etária dos clientes (leads pagos) | Card | Painel |
-| UP-255 | 1123 | Desempenho de campanhas | Card | Painel |
+| UP-230 | 203 | {label} | GlassMetricCard | Métrica |
+| UP-231 | 376 | Painel / conteúdo | Card | Painel |
+| UP-232 | 385 | "CTR" | GlassMetricCard | Métrica |
+| UP-233 | 386 | {costLabel} | GlassMetricCard | Métrica |
+| UP-234 | 387 | "Leads" | GlassMetricCard | Métrica |
+| UP-235 | 388 | "Investimento" | GlassMetricCard | Métrica |
+| UP-236 | 420 | <Sparkles className="h-4 w-4 text-muted-foreground" />{title} | Card | Painel |
+| UP-237 | 430 | Painel / conteúdo | TopCreativeCard | Painel |
+| UP-238 | 460 | Painel / conteúdo | Card | Painel |
+| UP-239 | 762 | Sem dados de canais pagos | Card | Painel |
+| UP-240 | 798 | "Investimento em anúncios" | MktKpiCard | Métrica |
+| UP-241 | 810 | "Faturamento" | MktKpiCard | Métrica |
+| UP-242 | 822 | "ROA" | MktKpiCard | Métrica |
+| UP-243 | 834 | "Taxa de aprovação" | MktKpiCard | Métrica |
+| UP-244 | 846 | "Total de leads" | MktKpiCard | Métrica |
+| UP-245 | 858 | {isB2C ? "Compras" : "Leads aprovados"} | MktKpiCard | Métrica |
+| UP-246 | 870 | {isB2C ? "Custo por Compra" : "CPL"} | MktKpiCard | Métrica |
+| UP-247 | 884 | "CPA" | MktKpiCard | Métrica |
+| UP-248 | 912 | Painel / conteúdo | Card | Painel |
+| UP-249 | 932 | <BarChart3 className="h-4 w-4 text-muted-foreground" />Investimento e leads | Card | Gráfico |
+| UP-250 | 964 | <TrendingUp className="h-4 w-4 text-muted-foreground" />Evolução do ROAS | Card | Gráfico |
+| UP-251 | 1002 | <DollarSign className="h-4 w-4 text-muted-foreground" />Investimento e faturamento | Card | Gráfico |
+| UP-252 | 1048 | <Megaphone className="h-4 w-4 text-muted-foreground" />Por plataforma | Card | Painel |
+| UP-253 | 1067 | <MapPin className="h-4 w-4 text-muted-foreground" />Principais estados por ROAS | Card | Painel |
+| UP-254 | 1090 | <PersonStanding className="h-4 w-4 text-muted-foreground" />Faixa etária dos clientes (leads pagos) | Card | Painel |
+| UP-255 | 1131 | Desempenho de campanhas | Card | Painel |
 
 ## monthly-history
 
@@ -394,25 +394,25 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-292 | 284 | {t("orders.selectBrand.title", "Selecione uma marca")} | Card | Painel |
-| UP-293 | 310 | {isB2C ? "Faturamento faturado" : t("orders.kpi.requestedRevenue", "Faturamento solicitado")} | DashboardKpiCard | Métrica |
-| UP-294 | 325 | {isB2C ? "Faturamento pago" : t("orders.kpi.fulfilledRevenue", "Faturamento atendido")} | DashboardKpiCard | Métrica |
-| UP-295 | 339 | {isB2C ? "Peças faturadas" : t("orders.kpi.requestedQuantity", "Peças solicitadas")} | DashboardKpiCard | Métrica |
-| UP-296 | 353 | {isB2C ? "Peças pagas" : t("orders.kpi.fulfilledQuantity", "Peças atendidas")} | DashboardKpiCard | Métrica |
-| UP-297 | 367 | {isB2C ? "% Pago" : t("orders.kpi.fulfilledPct", "% de atendido")} | DashboardKpiCard | Métrica |
-| UP-298 | 382 | {t("orders.kpi.orders", "Qtd de pedidos")} | DashboardKpiCard | Métrica |
-| UP-299 | 396 | {isB2C ? "Novos compradores" : t("orders.kpi.newCustomers", "Clientes novos")} | DashboardKpiCard | Métrica |
-| UP-300 | 410 | {isB2C ? "Recompradores" : t("orders.kpi.returningCustomers", "Clientes recorrentes")} | DashboardKpiCard | Métrica |
-| UP-301 | 424 | {t("orders.kpi.retentionPct", "% de retenção")} | DashboardKpiCard | Métrica |
-| UP-302 | 439 | {t("orders.kpi.conversionPct", "% de conversão")} | DashboardKpiCard | Métrica |
-| UP-303 | 458 | <ShoppingBag className="h-4 w-4 text-primary" />{t("orders.list.title", "Lista de pedidos")} | Card | Tabela / lista / detalhe |
-| UP-304 | 609 | {isB2C ? "Valor faturado" : "Valor solicitado"} | GlassMetricCard | Métrica |
-| UP-305 | 610 | {isB2C ? "Valor pago" : "Valor atendido"} | GlassMetricCard | Métrica |
-| UP-306 | 611 | {isB2C ? "Peças faturadas" : "Peças solicitadas"} | GlassMetricCard | Métrica |
-| UP-307 | 612 | {isB2C ? "Peças pagas" : "Peças atendidas"} | GlassMetricCard | Métrica |
-| UP-308 | 662 | {isB2C ? "Faturada" : "Solicitada"} | GlassMetricCard | Métrica |
-| UP-309 | 663 | {isB2C ? "Paga" : "Atendida"} | GlassMetricCard | Métrica |
-| UP-310 | 664 | "Valor" | GlassMetricCard | Métrica |
+| UP-292 | 287 | {t("orders.selectBrand.title", "Selecione uma marca")} | Card | Painel |
+| UP-293 | 313 | {isB2C ? "Faturamento faturado" : t("orders.kpi.requestedRevenue", "Faturamento solicitado")} | DashboardKpiCard | Métrica |
+| UP-294 | 329 | {isB2C ? "Faturamento pago" : t("orders.kpi.fulfilledRevenue", "Faturamento atendido")} | DashboardKpiCard | Métrica |
+| UP-295 | 344 | {isB2C ? "Peças faturadas" : t("orders.kpi.requestedQuantity", "Peças solicitadas")} | DashboardKpiCard | Métrica |
+| UP-296 | 359 | {isB2C ? "Peças pagas" : t("orders.kpi.fulfilledQuantity", "Peças atendidas")} | DashboardKpiCard | Métrica |
+| UP-297 | 374 | {isB2C ? "% Pago" : t("orders.kpi.fulfilledPct", "% de atendido")} | DashboardKpiCard | Métrica |
+| UP-298 | 390 | {t("orders.kpi.orders", "Qtd de pedidos")} | DashboardKpiCard | Métrica |
+| UP-299 | 405 | {isB2C ? "Novos compradores" : t("orders.kpi.newCustomers", "Clientes novos")} | DashboardKpiCard | Métrica |
+| UP-300 | 420 | {isB2C ? "Recompradores" : t("orders.kpi.returningCustomers", "Clientes recorrentes")} | DashboardKpiCard | Métrica |
+| UP-301 | 435 | {t("orders.kpi.retentionPct", "% de retenção")} | DashboardKpiCard | Métrica |
+| UP-302 | 451 | {t("orders.kpi.conversionPct", "% de conversão")} | DashboardKpiCard | Métrica |
+| UP-303 | 471 | <ShoppingBag className="h-4 w-4 text-primary" />{t("orders.list.title", "Lista de pedidos")} | Card | Tabela / lista / detalhe |
+| UP-304 | 622 | {isB2C ? "Valor faturado" : "Valor solicitado"} | GlassMetricCard | Métrica |
+| UP-305 | 623 | {isB2C ? "Valor pago" : "Valor atendido"} | GlassMetricCard | Métrica |
+| UP-306 | 624 | {isB2C ? "Peças faturadas" : "Peças solicitadas"} | GlassMetricCard | Métrica |
+| UP-307 | 625 | {isB2C ? "Peças pagas" : "Peças atendidas"} | GlassMetricCard | Métrica |
+| UP-308 | 675 | {isB2C ? "Faturada" : "Solicitada"} | GlassMetricCard | Métrica |
+| UP-309 | 676 | {isB2C ? "Paga" : "Atendida"} | GlassMetricCard | Métrica |
+| UP-310 | 677 | "Valor" | GlassMetricCard | Métrica |
 
 ## organized-pages
 
@@ -423,10 +423,10 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 | UP-313 | 52 | {pick("approved", "approvedConverted", "approvedConversion")} | Metrics | Métrica |
 | UP-314 | 57 | {pick("firstPurchaseAverage", "firstPurchaseMedian")} | Metrics | Métrica |
 | UP-315 | 68 | {title} | Card | Gráfico |
-| UP-316 | 140 | {pick( "spend", "requestedRoas", "paidRoas", "approvedConversion", )} | Metrics | Métrica |
-| UP-317 | 156 | Etapas operacionais | Card | Painel |
-| UP-318 | 160 | {stage.label} | GlassMetricCard | Métrica |
-| UP-319 | 184 | {pick( "metaSpend", "impressions", "reach", "frequency", "clicks", "ctr", "cpc", "cpm", "metaPurchases", "metaCpa", "metaRoas", )} | Metrics | Métrica |
+| UP-316 | 142 | {pick( "spend", "requestedRoas", "paidRoas", "approvedConversion", )} | Metrics | Métrica |
+| UP-317 | 158 | Etapas operacionais | Card | Painel |
+| UP-318 | 162 | {stage.label} | GlassMetricCard | Métrica |
+| UP-319 | 189 | {pick( "metaSpend", "impressions", "reach", "frequency", "clicks", "ctr", "cpc", "cpm", "metaPurchases", "metaCpa", "metaRoas", )} | Metrics | Métrica |
 
 ## overview
 
@@ -454,78 +454,78 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-337 | 210 | {title} | GlassMetricCard | Métrica |
-| UP-338 | 410 | Painel / conteúdo | PeriodCalendarCard | Painel |
-| UP-339 | 713 | Painel / conteúdo | Card | Painel |
-| UP-340 | 794 | "Resultado de recompra" | RecompraBlockCard | Métrica |
-| UP-341 | 805 | "Vendas de recompra" | Configuração de KPI | Métrica configurada |
-| UP-342 | 806 | "Ticket médio" | Configuração de KPI | Métrica configurada |
-| UP-343 | 807 | "Clientes em recompra" | Configuração de KPI | Métrica configurada |
-| UP-344 | 810 | "Clientes recorrentes" | RecompraBlockCard | Métrica |
-| UP-345 | 821 | "Vendas recorrentes" | Configuração de KPI | Métrica configurada |
-| UP-346 | 822 | "Faturamento recorrente" | Configuração de KPI | Métrica configurada |
-| UP-347 | 823 | "Ticket médio recorrente" | Configuração de KPI | Métrica configurada |
-| UP-348 | 826 | "Clientes reativados" | RecompraBlockCard | Métrica |
-| UP-349 | 837 | "Vendas reativadas" | Configuração de KPI | Métrica configurada |
-| UP-350 | 838 | "Faturamento reativado" | Configuração de KPI | Métrica configurada |
-| UP-351 | 839 | "Ticket médio reativado" | Configuração de KPI | Métrica configurada |
-| UP-352 | 842 | "Ciclo de recompra" | RecompraBlockCard | Métrica |
-| UP-353 | 854 | "Mediana entre compras" | Configuração de KPI | Métrica configurada |
-| UP-354 | 855 | "% recorrente" | Configuração de KPI | Métrica configurada |
-| UP-355 | 856 | "% reativado" | Configuração de KPI | Métrica configurada |
-| UP-356 | 878 | Resultado de recompra | Card | Gráfico |
-| UP-357 | 902 | Volume de recompra | Card | Gráfico |
-| UP-358 | 925 | Recorrentes x Reativados | Card | Gráfico |
-| UP-359 | 952 | Intervalo entre compras | Card | Gráfico |
-| UP-360 | 1000 | Retenção acumulada por prazo | Card | Tabela / lista / detalhe |
-| UP-361 | 1041 | Retenção por número de compra | Card | Gráfico |
-| UP-362 | 1074 | Desempenho por vendedora | Card | Tabela / lista / detalhe |
-| UP-363 | 1122 | Detalhamento de recompra | Card | Tabela / lista / detalhe |
+| UP-337 | 216 | {title} | GlassMetricCard | Métrica |
+| UP-338 | 414 | Painel / conteúdo | PeriodCalendarCard | Painel |
+| UP-339 | 719 | Painel / conteúdo | Card | Painel |
+| UP-340 | 800 | "Resultado de recompra" | RecompraBlockCard | Métrica |
+| UP-341 | 812 | "Vendas de recompra" | Configuração de KPI | Métrica configurada |
+| UP-342 | 813 | "Ticket médio" | Configuração de KPI | Métrica configurada |
+| UP-343 | 814 | "Clientes em recompra" | Configuração de KPI | Métrica configurada |
+| UP-344 | 817 | "Clientes recorrentes" | RecompraBlockCard | Métrica |
+| UP-345 | 829 | "Vendas recorrentes" | Configuração de KPI | Métrica configurada |
+| UP-346 | 830 | "Faturamento recorrente" | Configuração de KPI | Métrica configurada |
+| UP-347 | 831 | "Ticket médio recorrente" | Configuração de KPI | Métrica configurada |
+| UP-348 | 834 | "Clientes reativados" | RecompraBlockCard | Métrica |
+| UP-349 | 846 | "Vendas reativadas" | Configuração de KPI | Métrica configurada |
+| UP-350 | 847 | "Faturamento reativado" | Configuração de KPI | Métrica configurada |
+| UP-351 | 848 | "Ticket médio reativado" | Configuração de KPI | Métrica configurada |
+| UP-352 | 851 | "Ciclo de recompra" | RecompraBlockCard | Métrica |
+| UP-353 | 864 | "Mediana entre compras" | Configuração de KPI | Métrica configurada |
+| UP-354 | 865 | "% recorrente" | Configuração de KPI | Métrica configurada |
+| UP-355 | 866 | "% reativado" | Configuração de KPI | Métrica configurada |
+| UP-356 | 888 | Resultado de recompra | Card | Gráfico |
+| UP-357 | 912 | Volume de recompra | Card | Gráfico |
+| UP-358 | 935 | Recorrentes x Reativados | Card | Gráfico |
+| UP-359 | 962 | Intervalo entre compras | Card | Gráfico |
+| UP-360 | 1010 | Retenção acumulada por prazo | Card | Tabela / lista / detalhe |
+| UP-361 | 1051 | Retenção por número de compra | Card | Gráfico |
+| UP-362 | 1084 | Desempenho por vendedora | Card | Tabela / lista / detalhe |
+| UP-363 | 1132 | Detalhamento de recompra | Card | Tabela / lista / detalhe |
 
 ## performance
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-364 | 453 | {title} | Card | Gráfico |
-| UP-365 | 694 | "Faturamento ERP" | Configuração de KPI | Métrica configurada |
-| UP-366 | 703 | "Receita atribuída" | Configuração de KPI | Métrica configurada |
-| UP-367 | 717 | "Investimento" | Configuração de KPI | Métrica configurada |
-| UP-368 | 726 | "ROAS atribuído" | Configuração de KPI | Métrica configurada |
-| UP-369 | 735 | "MER geral" | Configuração de KPI | Métrica configurada |
-| UP-370 | 744 | "Lucro bruto" | Configuração de KPI | Métrica configurada |
-| UP-371 | 756 | "ROI final" | Configuração de KPI | Métrica configurada |
-| UP-372 | 770 | "Ticket médio" | Configuração de KPI | Métrica configurada |
-| UP-373 | 784 | "Pedidos ERP" | Configuração de KPI | Métrica configurada |
-| UP-374 | 793 | "Pedidos atribuídos" | Configuração de KPI | Métrica configurada |
-| UP-375 | 808 | "Compradores únicos" | Configuração de KPI | Métrica configurada |
-| UP-376 | 819 | "Clientes novos" | Configuração de KPI | Métrica configurada |
-| UP-377 | 833 | "Clientes recorrentes" | Configuração de KPI | Métrica configurada |
-| UP-378 | 844 | "CAC" | Configuração de KPI | Métrica configurada |
-| UP-379 | 853 | "CTR" | Configuração de KPI | Métrica configurada |
-| UP-380 | 862 | "CPL" | Configuração de KPI | Métrica configurada |
-| UP-381 | 1028 | Painel / conteúdo | DashboardKpiCard | Métrica |
-| UP-382 | 1046 | Painel / conteúdo | Card | Gráfico |
-| UP-383 | 1110 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-384 | 1150 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-385 | 1187 | {COHORT_LABEL[cohort]} | GlassMetricCard | Métrica |
-| UP-386 | 1286 | Painel / conteúdo | DashboardKpiCard | Métrica |
-| UP-387 | 1308 | Painel / conteúdo | DashboardKpiCard | Métrica |
-| UP-388 | 1322 | Painel / conteúdo | Card | Painel |
-| UP-389 | 1371 | {item.label} | GlassMetricCard | Métrica |
-| UP-390 | 1379 | Painel / conteúdo | Card | Painel |
-| UP-391 | 1388 | {stage.label} | GlassMetricCard | Métrica |
-| UP-392 | 1402 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-393 | 1498 | "Vendas por cor" | BreakdownCard | Painel |
-| UP-394 | 1503 | "Vendas por tamanho" | BreakdownCard | Painel |
-| UP-395 | 1508 | "Vendas por estado" | BreakdownCard | Painel |
-| UP-396 | 1515 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-397 | 1611 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-398 | 1702 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-399 | 1761 | "Pedidos no período" | GlassMetricCard | Métrica |
-| UP-400 | 1762 | "Valor total" | GlassMetricCard | Métrica |
-| UP-401 | 1763 | "Pedidos atribuídos" | GlassMetricCard | Métrica |
-| UP-402 | 1764 | "Receita atribuída" | GlassMetricCard | Métrica |
-| UP-403 | 1766 | "Faturamento pago atribuído" | GlassMetricCard | Métrica |
+| UP-364 | 454 | {title} | Card | Gráfico |
+| UP-365 | 697 | "Faturamento ERP" | Configuração de KPI | Métrica configurada |
+| UP-366 | 709 | "Receita atribuída" | Configuração de KPI | Métrica configurada |
+| UP-367 | 726 | "Investimento" | Configuração de KPI | Métrica configurada |
+| UP-368 | 738 | "ROAS atribuído" | Configuração de KPI | Métrica configurada |
+| UP-369 | 750 | "MER geral" | Configuração de KPI | Métrica configurada |
+| UP-370 | 762 | "Lucro bruto" | Configuração de KPI | Métrica configurada |
+| UP-371 | 777 | "ROI final" | Configuração de KPI | Métrica configurada |
+| UP-372 | 794 | "Ticket médio" | Configuração de KPI | Métrica configurada |
+| UP-373 | 811 | "Pedidos ERP" | Configuração de KPI | Métrica configurada |
+| UP-374 | 823 | "Pedidos atribuídos" | Configuração de KPI | Métrica configurada |
+| UP-375 | 841 | "Compradores únicos" | Configuração de KPI | Métrica configurada |
+| UP-376 | 855 | "Clientes novos" | Configuração de KPI | Métrica configurada |
+| UP-377 | 872 | "Clientes recorrentes" | Configuração de KPI | Métrica configurada |
+| UP-378 | 886 | "CAC" | Configuração de KPI | Métrica configurada |
+| UP-379 | 898 | "CTR" | Configuração de KPI | Métrica configurada |
+| UP-380 | 910 | "CPL" | Configuração de KPI | Métrica configurada |
+| UP-381 | 1079 | Painel / conteúdo | DashboardKpiCard | Métrica |
+| UP-382 | 1097 | Painel / conteúdo | Card | Gráfico |
+| UP-383 | 1161 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-384 | 1201 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-385 | 1238 | {COHORT_LABEL[cohort]} | GlassMetricCard | Métrica |
+| UP-386 | 1337 | Painel / conteúdo | DashboardKpiCard | Métrica |
+| UP-387 | 1359 | Painel / conteúdo | DashboardKpiCard | Métrica |
+| UP-388 | 1373 | Painel / conteúdo | Card | Painel |
+| UP-389 | 1422 | {item.label} | GlassMetricCard | Métrica |
+| UP-390 | 1430 | Painel / conteúdo | Card | Painel |
+| UP-391 | 1439 | {stage.label} | GlassMetricCard | Métrica |
+| UP-392 | 1453 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-393 | 1549 | "Vendas por cor" | BreakdownCard | Painel |
+| UP-394 | 1554 | "Vendas por tamanho" | BreakdownCard | Painel |
+| UP-395 | 1559 | "Vendas por estado" | BreakdownCard | Painel |
+| UP-396 | 1566 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-397 | 1662 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-398 | 1753 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-399 | 1812 | "Pedidos no período" | GlassMetricCard | Métrica |
+| UP-400 | 1813 | "Valor total" | GlassMetricCard | Métrica |
+| UP-401 | 1814 | "Pedidos atribuídos" | GlassMetricCard | Métrica |
+| UP-402 | 1815 | "Receita atribuída" | GlassMetricCard | Métrica |
+| UP-403 | 1817 | "Faturamento pago atribuído" | GlassMetricCard | Métrica |
 
 ## product-detail
 
@@ -545,34 +545,34 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-413 | 412 | "Sales Power" | GlassMetricCard | Métrica |
-| UP-414 | 413 | "Faturamento por SKU/dia" | GlassMetricCard | Métrica |
-| UP-415 | 414 | "SKUs ativos" | GlassMetricCard | Métrica |
-| UP-416 | 415 | "Período" | GlassMetricCard | Métrica |
-| UP-417 | 424 | {insight.headline} | Card | Painel |
-| UP-418 | 486 | Painel / conteúdo | Card | Painel |
-| UP-419 | 579 | Painel / conteúdo | Card | Tabela / lista / detalhe |
-| UP-420 | 724 | "Vendidos" | GlassMetricCard | Métrica |
-| UP-421 | 725 | "Receita" | GlassMetricCard | Métrica |
-| UP-422 | 726 | "Estoque" | GlassMetricCard | Métrica |
+| UP-413 | 415 | "Sales Power" | GlassMetricCard | Métrica |
+| UP-414 | 416 | "Faturamento por SKU/dia" | GlassMetricCard | Métrica |
+| UP-415 | 417 | "SKUs ativos" | GlassMetricCard | Métrica |
+| UP-416 | 418 | "Período" | GlassMetricCard | Métrica |
+| UP-417 | 427 | {insight.headline} | Card | Painel |
+| UP-418 | 489 | Painel / conteúdo | Card | Painel |
+| UP-419 | 582 | Painel / conteúdo | Card | Tabela / lista / detalhe |
+| UP-420 | 727 | "Vendidos" | GlassMetricCard | Métrica |
+| UP-421 | 728 | "Receita" | GlassMetricCard | Métrica |
+| UP-422 | 729 | "Estoque" | GlassMetricCard | Métrica |
 
 ## rfm
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-423 | 161 | {title} | GlassMetricCard | Métrica |
-| UP-424 | 285 | Painel / conteúdo | Card | Painel |
-| UP-425 | 327 | "Recência" | RfmLogicCard | Métrica |
-| UP-426 | 334 | "Frequência" | RfmLogicCard | Métrica |
-| UP-427 | 341 | "Monetário" | RfmLogicCard | Métrica |
-| UP-428 | 364 | {meta.label} | GlassMetricCard | Métrica |
-| UP-429 | 380 | <span className="h-1.5 w-1.5 rounded-full bg-primary" />Evolução da composição dos segmentos | Card | Gráfico |
-| UP-430 | 442 | <span className="h-1.5 w-1.5 rounded-full bg-chart-3" />Compradoras RFM <span className="text-muted-foreground font-normal">({formatNumber(total)})</span><InfoHint text="A lista mostra clientes que solicitaram pedidos no período filtrado. Por padrão entram todos os pedidos; use o filtro de status para analisar somente aprovados, pendentes ou recusados." /> | Card | Tabela / lista / detalhe |
-| UP-431 | 679 | Painel / conteúdo | Card | Painel |
-| UP-432 | 720 | "Solicitado" | GlassMetricCard | Métrica |
-| UP-433 | 721 | "Atendido" | GlassMetricCard | Métrica |
-| UP-434 | 722 | "Peças solicitadas" | GlassMetricCard | Métrica |
-| UP-435 | 723 | "Peças atendidas" | GlassMetricCard | Métrica |
+| UP-423 | 164 | {title} | GlassMetricCard | Métrica |
+| UP-424 | 296 | Painel / conteúdo | Card | Painel |
+| UP-425 | 339 | "Recência" | RfmLogicCard | Métrica |
+| UP-426 | 346 | "Frequência" | RfmLogicCard | Métrica |
+| UP-427 | 353 | "Monetário" | RfmLogicCard | Métrica |
+| UP-428 | 377 | {meta.label} | GlassMetricCard | Métrica |
+| UP-429 | 393 | <span className="h-1.5 w-1.5 rounded-full bg-primary" />Evolução da composição dos segmentos | Card | Gráfico |
+| UP-430 | 455 | <span className="h-1.5 w-1.5 rounded-full bg-chart-3" />Compradoras RFM <span className="text-muted-foreground font-normal">({formatNumber(total)})</span><InfoHint text="A lista mostra clientes que solicitaram pedidos no período filtrado. Por padrão entram todos os pedidos; use o filtro de status para analisar somente aprovados, pendentes ou recusados." /> | Card | Tabela / lista / detalhe |
+| UP-431 | 692 | Painel / conteúdo | Card | Painel |
+| UP-432 | 733 | "Solicitado" | GlassMetricCard | Métrica |
+| UP-433 | 734 | "Atendido" | GlassMetricCard | Métrica |
+| UP-434 | 735 | "Peças solicitadas" | GlassMetricCard | Métrica |
+| UP-435 | 736 | "Peças atendidas" | GlassMetricCard | Métrica |
 
 ## sales-agent
 
@@ -679,18 +679,18 @@ Referência única de métricas: **DashboardKpiCard**, o componente de Visão Ge
 
 | ID | Linha | Título / label | Componente | Família |
 |---|---:|---|---|---|
-| UP-512 | 75 | {label} | GlassMetricCard | Métrica |
-| UP-513 | 344 | "Sessões" | KpiCard | Métrica |
-| UP-514 | 351 | "Cadastros" | KpiCard | Métrica |
-| UP-515 | 357 | "% de aprovação" | KpiCard | Métrica |
-| UP-516 | 364 | "Compradores" | KpiCard | Métrica |
-| UP-517 | 370 | "Faturamento" | KpiCard | Métrica |
-| UP-518 | 377 | "% de conversão" | KpiCard | Métrica |
-| UP-519 | 384 | "ROAS" | KpiCard | Métrica |
-| UP-520 | 397 | {insight.headline} | Card | Painel |
-| UP-521 | 471 | Faturamento por {GROUP_LABELS[groupBy]} | Card | Gráfico |
-| UP-522 | 527 | % de conversão por {GROUP_LABELS[groupBy]} | Card | Gráfico |
-| UP-523 | 599 | Painel / conteúdo | Card | Painel |
+| UP-512 | 78 | {label} | GlassMetricCard | Métrica |
+| UP-513 | 359 | "Sessões" | KpiCard | Métrica |
+| UP-514 | 366 | "Cadastros" | KpiCard | Métrica |
+| UP-515 | 372 | "% de aprovação" | KpiCard | Métrica |
+| UP-516 | 379 | "Compradores" | KpiCard | Métrica |
+| UP-517 | 385 | "Faturamento" | KpiCard | Métrica |
+| UP-518 | 392 | "% de conversão" | KpiCard | Métrica |
+| UP-519 | 399 | "ROAS" | KpiCard | Métrica |
+| UP-520 | 413 | {insight.headline} | Card | Painel |
+| UP-521 | 487 | Faturamento por {GROUP_LABELS[groupBy]} | Card | Gráfico |
+| UP-522 | 543 | % de conversão por {GROUP_LABELS[groupBy]} | Card | Gráfico |
+| UP-523 | 615 | Painel / conteúdo | Card | Painel |
 
 ## whatsapp-connections
 

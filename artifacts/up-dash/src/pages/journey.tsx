@@ -1,3 +1,6 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { MetricDataProvider, metricBindings } from "@/components/metric-data-context";
+import { getGetJourneyUrl } from "@workspace/api-client-react";
 import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo } from "react";
@@ -79,6 +82,14 @@ export default function JourneyPage() {
       query: queryOpts({ enabled, placeholderData: (prev) => prev }),
     }
   );
+
+  const previous = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetJourneyUrl({ clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, state: filters.state || undefined, city: filters.city || undefined, product: filters.product || undefined }), enabled);
+  const metricComparisons = metricBindings(data?.kpis, previous.data?.kpis, {
+    "metric-média-de-eventos-antes-da-compra": { field: "avgEventsBeforePurchase", format: v => v.toFixed(1) },
+    "metric-tempo-médio-até-a-primeira-compra": { field: "avgTimeToFirstPurchaseDays", format: v => `${v.toFixed(1)} dias` },
+    "metric-tempo-médio-entre-compras": { field: "avgTimeBetweenPurchasesDays", format: v => `${v.toFixed(1)} dias` },
+    "metric-compradores-na-primeira-sessão": { field: "pctBuyersFromFirstSession", format: v => `${v.toFixed(1)}%` }
+  });
 
   const insightParams = {
     clientId,
@@ -191,6 +202,7 @@ export default function JourneyPage() {
             </motion.div>
           )}
 
+<MetricDataProvider source="UP Zero · jornada e atribuição" comparisons={metricComparisons}>
           {/* KPI Strip */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -224,6 +236,7 @@ export default function JourneyPage() {
               />
             </div>
           </motion.div>
+</MetricDataProvider>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Event Flow Graph */}

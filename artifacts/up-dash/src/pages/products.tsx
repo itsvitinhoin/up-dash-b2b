@@ -1,3 +1,5 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { getGetProductsSummaryUrl } from "@workspace/api-client-react";
 import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -200,6 +202,7 @@ export default function ProductsPage() {
     { query: queryOpts({ enabled: queryEnabled }) },
   );
 
+  const previousSummary = usePreviousPeriodQuery<NonNullable<typeof summary>>(getGetProductsSummaryUrl(periodParams), queryEnabled);
   const stockSalesValue = (summary as typeof summary & { availableStockSalesValue?: number })?.availableStockSalesValue;
 
   // AI Insight
@@ -409,10 +412,10 @@ export default function ProductsPage() {
             ))
           ) : (
             <>
-              <GlassMetricCard testId="kpi-sales-power" label="Sales Power" value={stockSalesValue == null ? "—" : formatCurrencySmart(stockSalesValue)} footer={<div className="space-y-2"><span className="text-xs text-muted-foreground">Estoque disponível × preço de venda · catálogo completo</span></div>} />
-              <GlassMetricCard label="Faturamento por SKU/dia" value={summary ? formatCurrency(summary.salesPower) : "—"} change={summary?.salesPowerChangePct} footer={<span>Faturamento / SKUs com venda / dias</span>} />
-              <GlassMetricCard  label="SKUs ativos" value={<>{formatNumber(summary?.activeSkus ?? 0)}</>} footer={<div className="space-y-2"><span className="text-xs text-muted-foreground">SKUs com vendas no período</span></div>} />
-              <GlassMetricCard  label="Período" value={<>{summary?.periodDays ?? 30}d</>} footer={<div className="space-y-2"><span className="text-xs text-muted-foreground">Dias no período analisado</span></div>} />
+              <GlassMetricCard testId="kpi-sales-power" label="Sales Power" value={stockSalesValue == null ? "—" : formatCurrencySmart(stockSalesValue)} info="Soma do estoque disponível de todo o catálogo multiplicado pelo preço de venda de cada SKU." source="Catálogo e estoque conectado" comparisonUnavailable="O catálogo não fornece o estoque histórico da janela anterior." />
+              <GlassMetricCard label="Faturamento por SKU/dia" comparisonValue={summary?.salesPower ?? null} previousValue={previousSummary.data?.salesPower} format={formatCurrency} value={summary ? formatCurrency(summary.salesPower) : "—"} change={summary?.salesPowerChangePct} info="Faturamento / SKUs com venda / dias." source="Ecommerce · resumo de produtos" />
+              <GlassMetricCard  label="SKUs ativos" comparisonValue={summary?.activeSkus ?? null} previousValue={previousSummary.data?.activeSkus} value={<>{formatNumber(summary?.activeSkus ?? 0)}</>} info="SKUs com vendas no período selecionado." source="Ecommerce · resumo de produtos" />
+              <GlassMetricCard  label="Período" comparisonValue={summary?.periodDays ?? null} previousValue={previousSummary.data?.periodDays} format={v => `${v} dias`} value={<>{summary?.periodDays ?? 30}d</>} info="Quantidade de dias do período analisado." source="Filtro de período" />
             </>
           )}
         </div>

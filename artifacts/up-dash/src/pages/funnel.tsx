@@ -1,3 +1,6 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { type FunnelResponse, getGetFunnelUrl } from "@workspace/api-client-react";
+import { MetricDataProvider } from "@/components/metric-data-context";
 import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo } from "react";
@@ -94,7 +97,7 @@ interface FunnelActivationAnalysis {
   }>;
 }
 
-type FunnelDataWithActivation = NonNullable<ReturnType<typeof useGetFunnel>["data"]> & {
+type FunnelDataWithActivation = FunnelResponse & {
   activation?: FunnelActivationAnalysis | null;
 };
 
@@ -149,6 +152,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
       query: queryOpts({ enabled: queryEnabled, placeholderData: (prev) => prev }),
     }
   );
+  const previous = usePreviousPeriodQuery<FunnelDataWithActivation>(getGetFunnelUrl({ clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, utmCampaign: filters.utmCampaign || undefined }), queryEnabled);
   const activation = (data as FunnelDataWithActivation | undefined)?.activation ?? null;
 
   // Hide the VISIT step from the visual funnel when its count is zero.
@@ -243,7 +247,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
         </Button>
       </div>
 
-      {organization === "acquisition" && activation && <ActivationAnalysisCard activation={activation} />}
+      {organization === "acquisition" && activation && <ActivationAnalysisCard activation={activation} previousActivation={previous.data?.activation ?? undefined} />}
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -305,6 +309,12 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
 
                 </div>
                 </div>
+<MetricDataProvider source="Ecommerce · eventos do funil" comparisons={{
+  [`metric-${(visibleSteps[0]?.label ?? "Topo do funil").toLowerCase().replace(/\s+/g, "-")}`]: { current: visibleSteps[0]?.count, previous: previous.data?.steps.find(step => step.step === visibleSteps[0]?.step)?.count },
+  [`metric-${(biggestDrop ? `Perda em ${biggestDrop.to.label}` : "Maior perda").toLowerCase().replace(/\s+/g, "-")}`]: { current: biggestDrop?.dropPct, previous: previous.data?.steps.find(step => step.step === biggestDrop?.to.step)?.dropOffRate, format: v => `${v.toFixed(1)}%` },
+  "metric-compras": { current: visibleSteps[visibleSteps.length - 1]?.count, previous: previous.data?.steps.find(step => step.step === visibleSteps[visibleSteps.length - 1]?.step)?.count },
+  "metric-média-de-eventos-antes-da-compra": { current: data.avgEventsBeforePurchase, previous: previous.data?.avgEventsBeforePurchase, format: v => v.toFixed(1) },
+}}>
                   <div className="up-metric-grid">
                     <MiniStat
                       icon={Users}
@@ -341,13 +351,14 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                       reduced={reduced}
                     />
                   </div>
+</MetricDataProvider>
               </CardContent>
             </Card>
           </motion.div>
 
           {organization !== "acquisition" && selectedDashboardMode === "B2B" && activation && (
             <motion.div initial="hidden" animate="visible" variants={variants}>
-              <ActivationAnalysisCard activation={activation} />
+              <ActivationAnalysisCard activation={activation} previousActivation={previous.data?.activation ?? undefined} />
             </motion.div>
           )}
 
@@ -705,7 +716,7 @@ function toneClasses(tone: string) {
   return "border-primary/40 bg-primary/10 text-primary";
 }
 
-export function ActivationAnalysisCard({ activation }: { activation: FunnelActivationAnalysis }) {
+export function ActivationAnalysisCard({ activation, previousActivation }: { activation: FunnelActivationAnalysis; previousActivation?: FunnelActivationAnalysis }) {
   const thirtyDay = activation.windows.find((window) => window.key === "within_30d");
   const primaryWindow = thirtyDay ?? activation.windows[activation.windows.length - 1];
   const postApprovalSteps = [
@@ -763,6 +774,11 @@ export function ActivationAnalysisCard({ activation }: { activation: FunnelActiv
             </p>
           </div>
 
+<MetricDataProvider source="Ecommerce · cadastros aprovados e primeira compra" comparisons={{
+  "metric-aprovados": { current: activation.approvedCustomers, previous: previousActivation?.approvedCustomers, format: formatNumber },
+  "metric-ativação-em-30-dias": { current: activation.thirtyDayActivationRate, previous: previousActivation?.thirtyDayActivationRate, format: v => `${v.toFixed(1)}%` },
+  "metric-ticket-1ª-compra": { current: activation.firstPurchaseAov, previous: previousActivation?.firstPurchaseAov, format: formatCurrency },
+}}>
           <div className="up-metric-grid">
             <ActivationMetric label="Aprovados" value={formatNumber(activation.approvedCustomers)} />
             <ActivationMetric
@@ -775,6 +791,7 @@ export function ActivationAnalysisCard({ activation }: { activation: FunnelActiv
               value={formatCurrency(activation.firstPurchaseAov)}
             />
           </div>
+</MetricDataProvider>
         </div>
 
         <div className="grid gap-3 md:grid-cols-5">

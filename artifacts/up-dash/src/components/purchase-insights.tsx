@@ -5,7 +5,7 @@ import { formatCurrency, formatNumber } from "@/lib/formatters";
 import type { PurchaseInsights } from "@/lib/purchase-insights";
 const pct = (value: number | null | undefined) => value == null ? "—" : `${value.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
 const days = (value: number | null | undefined) => value == null ? "—" : `${value.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} dias`;
-export function PurchaseInsightsPanels({ data, loading, error }: { data?: PurchaseInsights; loading: boolean; error: boolean }) {
+export function PurchaseInsightsPanels({ data, previousData, loading, error }: { data?: PurchaseInsights; previousData?: PurchaseInsights; loading: boolean; error: boolean }) {
   const steps = data?.baseEvolution, velocity = data?.conversionVelocity;
   const unavailable = error ? "Não foi possível carregar esta análise. Tente atualizar a página." : "Análise indisponível nesta fonte.";
   return <div className="space-y-8">
@@ -39,9 +39,9 @@ export function PurchaseInsightsPanels({ data, loading, error }: { data?: Purcha
             </div>}
           </CardContent></Card>
           <div className="up-velocity-summary">
-            <GlassMetricCard label="Compram na primeira semana" value={pct(velocity.firstWeekPct)} footer={`${formatNumber(velocity.firstWeekCount)} lojistas`} />
-            <GlassMetricCard label="Compram em até 30 dias" value={pct(velocity.within30Pct)} footer={`${formatNumber(velocity.within30Count)} lojistas`} />
-            <GlassMetricCard label="Mediana até o pedido" value={days(velocity.medianDays)} footer={`Média de ${days(velocity.averageDays)}`} />
+            <GlassMetricCard label="Compram na primeira semana" value={pct(velocity.firstWeekPct)} comparisonValue={velocity.firstWeekPct} previousValue={previousData?.conversionVelocity?.firstWeekPct} format={pct} source="Ecommerce · primeira compra e data de aprovação" footer={`${formatNumber(velocity.firstWeekCount)} lojistas`} />
+            <GlassMetricCard label="Compram em até 30 dias" value={pct(velocity.within30Pct)} comparisonValue={velocity.within30Pct} previousValue={previousData?.conversionVelocity?.within30Pct} format={pct} source="Ecommerce · primeira compra e data de aprovação" footer={`${formatNumber(velocity.within30Count)} lojistas`} />
+            <GlassMetricCard label="Mediana até o pedido" value={days(velocity.medianDays)} comparisonValue={velocity.medianDays} previousValue={previousData?.conversionVelocity?.medianDays} format={days} source="Ecommerce · primeira compra e data de aprovação" footer={`Média de ${days(velocity.averageDays)}`} />
           </div>
         </div>
         <p className="up-analysis-note">Mesma base de novos compradores do período. {velocity.missingApproval > 0 && `${formatNumber(velocity.missingApproval)} sem data de aprovação foram excluídos. `}{velocity.invalidChronology > 0 && `${formatNumber(velocity.invalidChronology)} com pedido anterior à aprovação foram excluídos. `}O prazo usa a data do pedido pago registrada na origem, que pode diferir da data de pagamento.</p>

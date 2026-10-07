@@ -1,3 +1,4 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
@@ -227,6 +228,8 @@ export default function OrdersPage() {
     queryFn: () => customFetch<OrdersPageResponse>(`/api/analytics/orders-page?${queryString}`),
   });
 
+  const previous = usePreviousPeriodQuery<OrdersPageResponse>(`/api/analytics/orders-page?${queryString}`, enabled);
+
   const exportXlsx = async () => {
     setExporting(true);
     try {
@@ -320,6 +323,7 @@ export default function OrdersPage() {
               sparkColor="#afc4ff"
               isLoading={false}
               testId="orders-kpi-requested-revenue"
+              comparisonValue={data?.kpis.requestedRevenue ?? null} previousValue={previous.data?.kpis.requestedRevenue} source="Ecommerce · pedidos"
               valueAccent
             />
             <DashboardKpiCard
@@ -335,6 +339,7 @@ export default function OrdersPage() {
               sparkColor="#87adff"
               isLoading={false}
               testId="orders-kpi-fulfilled-revenue"
+              comparisonValue={data?.kpis.fulfilledRevenue ?? null} previousValue={previous.data?.kpis.fulfilledRevenue} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={isB2C ? "Peças faturadas" : t("orders.kpi.requestedQuantity", "Peças solicitadas")}
@@ -349,6 +354,7 @@ export default function OrdersPage() {
               sparkColor="#5b8dff"
               isLoading={false}
               testId="orders-kpi-requested-quantity"
+              comparisonValue={data?.kpis.requestedQuantity ?? null} previousValue={previous.data?.kpis.requestedQuantity} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={isB2C ? "Peças pagas" : t("orders.kpi.fulfilledQuantity", "Peças atendidas")}
@@ -363,6 +369,7 @@ export default function OrdersPage() {
               sparkColor="#0458fe"
               isLoading={false}
               testId="orders-kpi-fulfilled-quantity"
+              comparisonValue={data?.kpis.fulfilledQuantity ?? null} previousValue={previous.data?.kpis.fulfilledQuantity} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={isB2C ? "% Pago" : t("orders.kpi.fulfilledPct", "% de atendido")}
@@ -378,6 +385,7 @@ export default function OrdersPage() {
               ringValue={data?.kpis.fulfilledPct ?? 0}
               isLoading={false}
               testId="orders-kpi-fulfilled-pct"
+              comparisonValue={data?.kpis.fulfilledPct ?? null} previousValue={previous.data?.kpis.fulfilledPct} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={t("orders.kpi.orders", "Qtd de pedidos")}
@@ -392,6 +400,7 @@ export default function OrdersPage() {
               sparkColor="#afc4ff"
               isLoading={false}
               testId="orders-kpi-orders"
+              comparisonValue={data?.kpis.orders ?? null} previousValue={previous.data?.kpis.orders} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={isB2C ? "Novos compradores" : t("orders.kpi.newCustomers", "Clientes novos")}
@@ -406,6 +415,7 @@ export default function OrdersPage() {
               sparkColor="#87adff"
               isLoading={false}
               testId="orders-kpi-new-customers"
+              comparisonValue={data?.kpis.newCustomers ?? null} previousValue={previous.data?.kpis.newCustomers} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={isB2C ? "Recompradores" : t("orders.kpi.returningCustomers", "Clientes recorrentes")}
@@ -420,6 +430,7 @@ export default function OrdersPage() {
               sparkColor="#5b8dff"
               isLoading={false}
               testId="orders-kpi-returning-customers"
+              comparisonValue={data?.kpis.returningCustomers ?? null} previousValue={previous.data?.kpis.returningCustomers} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={t("orders.kpi.retentionPct", "% de retenção")}
@@ -435,6 +446,7 @@ export default function OrdersPage() {
               ringValue={data?.kpis.retentionPct ?? 0}
               isLoading={false}
               testId="orders-kpi-retention-pct"
+              comparisonValue={data?.kpis.retentionPct ?? null} previousValue={previous.data?.kpis.retentionPct} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={t("orders.kpi.conversionPct", "% de conversão")}
@@ -450,6 +462,7 @@ export default function OrdersPage() {
               ringValue={data?.kpis.conversionPct ?? 0}
               isLoading={false}
               testId="orders-kpi-conversion-pct"
+              comparisonValue={data?.kpis.conversionPct ?? null} previousValue={previous.data?.kpis.conversionPct} source="Ecommerce · pedidos"
             />
           </>
         )}

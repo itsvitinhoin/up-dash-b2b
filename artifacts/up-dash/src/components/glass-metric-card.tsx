@@ -1,15 +1,13 @@
 import type { ElementType, ReactNode } from "react";
-import { BarChart3, Info } from "lucide-react";
+import { BarChart3 } from "lucide-react";
 import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatNumber } from "@/lib/formatters";
 
 /** One metric template for every page. Formatting and values stay with the source. */
 export function GlassMetricCard({
   label, value, icon = BarChart3, format = formatNumber, unit, loading = false,
   change = null, changeLabel = "vs. período anterior", changePositive,
-  sub = [], sparkValues = [], info, footer, deltaContent, className, testId,
+  sub = [], sparkValues = [], info, source, previousValue, comparisonValue, comparisonUnavailable, footer, deltaContent, className, testId,
 }: {
   label: string;
   value: ReactNode;
@@ -22,7 +20,11 @@ export function GlassMetricCard({
   changePositive?: boolean;
   sub?: Array<{ label: string; value: string }>;
   sparkValues?: number[];
-  info?: string;
+  info?: ReactNode;
+  source?: string;
+  previousValue?: number | null;
+  comparisonValue?: number | null;
+  comparisonUnavailable?: string;
   footer?: ReactNode;
   deltaContent?: ReactNode;
   className?: string;
@@ -37,13 +39,6 @@ export function GlassMetricCard({
     sparkColor="var(--up-chart-line)" isLoading={loading}
     testId={testId ?? `metric-${label.toLowerCase().replace(/\s+/g, "-")}`}
     className={className} footer={footer} deltaContent={deltaContent}
-    labelAccessory={info ? <Tooltip>
-      <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" className="up-metric-info h-6 w-6 shrink-0" aria-label={`Explicação: ${label}`}>
-          <Info className="h-3.5 w-3.5" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-xs">{info}</TooltipContent>
-    </Tooltip> : undefined}
+    info={info} source={source} previousValue={previousValue} comparisonValue={comparisonValue} comparisonUnavailable={comparisonUnavailable}
   />;
 }

@@ -1,3 +1,5 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { getGetMarketingUrl } from "@workspace/api-client-react";
 import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState, useEffect } from "react";
@@ -120,7 +122,7 @@ interface MetaTopCreative {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function computeChange(current: number, previous: number): number | null {
-  if (previous === 0) return current > 0 ? 100 : null;
+  if (previous === 0) return current === 0 ? 0 : null;
   return ((current - previous) / previous) * 100;
 }
 
@@ -174,6 +176,7 @@ interface KpiCardProps {
   format: (v: number) => string;
   unit?: string;
   change: number | null;
+  previousValue?: number;
   sparkValues: number[];
   sparkColor: string;
   isLoading: boolean;
@@ -193,13 +196,11 @@ function MktKpiCard({
   sparkColor,
   isLoading,
   testId,
-  invertChange = false,
+  invertChange = false, previousValue,
 }: KpiCardProps) {
   const reduced = useReducedMotion();
   const variants = withReducedMotion(cardEntry, reduced);
-  const effectiveChange = invertChange && change !== null ? -change : change;
-  const isUp = effectiveChange !== null && effectiveChange >= 0;
-  return (<GlassMetricCard label={label} value={value} icon={Icon} format={fmt} unit={unit} change={effectiveChange} sparkValues={sparkValues} loading={isLoading} testId={testId} />);
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={fmt} unit={unit} change={change} previousValue={previousValue} changePositive={change !== null ? (invertChange ? change <= 0 : change >= 0) : undefined} source="Meta Ads · Google Ads · UP Zero" sparkValues={sparkValues} loading={isLoading} testId={testId} />);
 }
 
 // ── Platform bar ─────────────────────────────────────────────────────────────
@@ -360,11 +361,13 @@ function CreativeMediaPreview({ creative }: { creative: MetaTopCreative }) {
 
 function TopCreativeCard({
   creative,
+  previous,
   metricLabel,
   metricValue,
   costLabel = "CPL",
 }: {
   creative: MetaTopCreative;
+  previous?: Pick<MetaTopCreative, "id" | "ctr" | "cpa" | "cpl" | "leads" | "spend">;
   metricLabel: string;
   metricValue: string;
   costLabel?: string;
@@ -379,10 +382,10 @@ function TopCreativeCard({
         </div>
       </div>
       <div className="up-metric-grid up-creative-metrics">
-        <GlassMetricCard label="CTR" value={formatPercentage(creative.ctr)} />
-        <GlassMetricCard label={costLabel} value={formatCurrency(costLabel === "Custo/Compra" ? creative.cpa : creative.cpl)} />
-        <GlassMetricCard label="Leads" value={formatNumber(creative.leads)} />
-        <GlassMetricCard label="Investimento" value={formatCurrency(creative.spend)} />
+        <GlassMetricCard label="CTR" value={creative.ctr} format={formatPercentage} previousValue={previous?.ctr} source="Meta Ads · criativo" />
+        <GlassMetricCard label={costLabel} value={costLabel === "Custo/Compra" ? creative.cpa : creative.cpl} format={formatCurrency} previousValue={costLabel === "Custo/Compra" ? previous?.cpa : previous?.cpl} source="Meta Ads · criativo" />
+        <GlassMetricCard label="Leads" value={creative.leads} format={formatNumber} previousValue={previous?.leads} source="Meta Ads · criativo" />
+        <GlassMetricCard label="Investimento" value={creative.spend} format={formatCurrency} previousValue={previous?.spend} source="Meta Ads · criativo" />
       </div>
     </Card>
   );
@@ -391,11 +394,13 @@ function TopCreativeCard({
 function TopCreativesColumn({
   title,
   items,
+  previousItems,
   metric,
   costLabel,
 }: {
   title: string;
   items: MetaTopCreative[];
+  previousItems?: Array<Pick<MetaTopCreative, "id" | "ctr" | "cpa" | "cpl" | "leads" | "spend">>;
   metric: "ctr" | "cpl" | "cpa" | "leads" | "purchases";
   costLabel?: string;
 }) {
@@ -425,6 +430,7 @@ function TopCreativesColumn({
             <TopCreativeCard
               key={`${metric}-${creative.id}`}
               creative={creative}
+              previous={previousItems?.find(item => item.id === creative.id)}
               metricLabel={metricLabel}
               metricValue={metricValue(creative)}
               costLabel={costLabel}
@@ -556,6 +562,8 @@ export default function MarketingPage() {
   });
 
   // ── KPI changes ──────────────────────────────────────────────────────────
+  const previousMarketing = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetMarketingUrl({ clientId, ...dateParams, creativesPage, creativesPageSize: CREATIVES_PAGE_SIZE, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, creative: filters.creative || undefined }), enabled);
+  const previousCreatives = [ ...(previousMarketing.data?.creatives ?? []), ...(previousMarketing.data?.topCreatives.ctr ?? []), ...(previousMarketing.data?.topCreatives.cpl ?? []), ...(previousMarketing.data?.topCreatives.leads ?? []) ];
   const spendChange = useMemo(() => data ? computeChange(data.kpis.totalSpend, data.prevKpis.totalSpend) : null, [data]);
   const revenueChange = useMemo(() => data ? computeChange(data.kpis.attributedRevenue, data.prevKpis.attributedRevenue) : null, [data]);
   const roasChange = useMemo(() => data ? computeChange(data.kpis.roas, data.prevKpis.roas) : null, [data]);
@@ -800,7 +808,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-revenue"
+            testId="kpi-revenue" previousValue={data?.prevKpis.attributedRevenue}
             icon={DollarSign}
             iconClass="bg-teal-500/15 text-teal-400"
             label="Faturamento"
@@ -812,7 +820,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-roas"
+            testId="kpi-roas" previousValue={data?.prevKpis.roas}
             icon={TrendingUp}
             iconClass="bg-emerald-500/15 text-emerald-400"
             label="ROA"
@@ -824,7 +832,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-approval-rate"
+            testId="kpi-approval-rate" previousValue={data?.prevKpis.approvalRate}
             icon={CheckCircle2}
             iconClass="bg-indigo-500/15 text-indigo-400"
             label="Taxa de aprovação"
@@ -836,7 +844,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-leads"
+            testId="kpi-leads" previousValue={data?.prevKpis.totalLeads}
             icon={Users}
             iconClass="bg-sky-500/15 text-sky-400"
             label="Total de leads"
@@ -848,7 +856,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-approved-leads"
+            testId="kpi-approved-leads" previousValue={data?.prevKpis.approvedLeads}
             icon={CheckCircle2}
             iconClass="bg-green-500/15 text-green-400"
             label={isB2C ? "Compras" : "Leads aprovados"}
@@ -860,7 +868,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-cpl"
+            testId="kpi-cpl" previousValue={isB2C ? data?.prevKpis.cpa : data?.prevKpis.cpl}
             icon={Target}
             iconClass="bg-orange-500/15 text-orange-400"
             label={isB2C ? "Custo por Compra" : "CPL"}
@@ -874,7 +882,7 @@ export default function MarketingPage() {
           />
           {!isB2C && (
             <MktKpiCard
-              testId="kpi-cpa"
+              testId="kpi-cpa" previousValue={data?.prevKpis.cpa}
               icon={Sparkles}
               iconClass="bg-amber-500/15 text-amber-400"
               label="CPA"
@@ -909,9 +917,9 @@ export default function MarketingPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 2xl:grid-cols-3 gap-4">
-              <TopCreativesColumn title="Melhor CTR" items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn title={isB2C ? "Menor custo por compra" : "Menor CPL"} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn title={isB2C ? "Mais compras" : "Mais leads"} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn previousItems={previousCreatives} title="Melhor CTR" items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn previousItems={previousCreatives} title={isB2C ? "Menor custo por compra" : "Menor CPL"} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn previousItems={previousCreatives} title={isB2C ? "Mais compras" : "Mais leads"} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
             </div>
           )}
         </motion.div>

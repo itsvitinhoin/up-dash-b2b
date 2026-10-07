@@ -13,6 +13,8 @@ export type OrganizedMetric = {
   value: number | null | undefined;
   format?: "currency" | "number" | "percent" | "ratio" | "days";
   source?: string;
+  previousValue?: number | null;
+  info?: string;
   series?: number[];
   loading?: boolean;
 };
@@ -69,20 +71,17 @@ export function ExistingMetricCard({ metric }: { metric: OrganizedMetric }) {
       label={metric.label}
       value={metric.value ?? 0}
       format={format}
+      comparisonValue={metric.value ?? null}
+      previousValue={metric.previousValue}
+      source={metric.source}
+      info={metric.info ?? (present ? undefined : "Esta métrica não está disponível na fonte conectada.")}
       change={null}
       changeLabel=""
       sparkValues={metric.series ?? []}
       sparkColor="hsl(var(--chart-1))"
       isLoading={metric.loading ?? false}
       testId={`organized-${metric.key}`}
-      sub={[
-        {
-          label: present ? "Fonte" : "Disponibilidade",
-          value: present
-            ? (metric.source ?? "Dados conectados")
-            : "Sem dado nesta fonte",
-        },
-      ]}
+      sub={[]}
     />
   );
 }

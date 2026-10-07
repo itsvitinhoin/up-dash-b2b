@@ -1,3 +1,4 @@
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
 import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { PerformanceSummarySections, MediaInvestmentCards } from "@/components/overview-organization";
@@ -689,11 +690,16 @@ export default function PerformancePage() {
   );
   useEffect(() => setOrdersPage(1), [cohortFilter]);
 
+  const previous = usePreviousPeriodQuery<PerformanceResponse>(periodQuery("/api/analytics/performance", { ...commonParams, page: ordersPage, limit: PAGE_SIZE }), enabled);
+  const pk = previous.data?.kpis;
   const k = data?.kpis;
   const financialMetrics = [
     {
       label: "Faturamento ERP",
       value: k?.netRevenue ?? 0,
+      comparisonValue: k?.netRevenue ?? null,
+      previousValue: pk?.netRevenue,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: CircleDollarSign,
       iconClass: "bg-blue-500/10 text-blue-400",
@@ -703,6 +709,9 @@ export default function PerformancePage() {
     {
       label: "Receita atribuída",
       value: k?.attributedRevenue ?? 0,
+      comparisonValue: k?.attributedRevenue ?? null,
+      previousValue: pk?.attributedRevenue,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: Target,
       iconClass: "bg-violet-500/10 text-violet-400",
@@ -717,6 +726,9 @@ export default function PerformancePage() {
     {
       label: "Investimento",
       value: k?.mediaSpend ?? 0,
+      comparisonValue: k?.mediaSpend ?? null,
+      previousValue: pk?.mediaSpend,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: Megaphone,
       iconClass: "bg-amber-500/10 text-amber-400",
@@ -726,7 +738,10 @@ export default function PerformancePage() {
     {
       label: "ROAS atribuído",
       value: k?.roas ?? 0,
-      format: () => (k?.roas == null ? "—" : `${k.roas.toFixed(2)}x`),
+      comparisonValue: k?.roas ?? null,
+      previousValue: pk?.roas,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.roas == null ? "—" : `${v.toFixed(2)}x`),
       icon: TrendingUp,
       iconClass: "bg-emerald-500/10 text-emerald-400",
       sparkColor: "#87adff",
@@ -735,7 +750,10 @@ export default function PerformancePage() {
     {
       label: "MER geral",
       value: k?.mer ?? 0,
-      format: () => (k?.mer == null ? "—" : `${k.mer.toFixed(2)}x`),
+      comparisonValue: k?.mer ?? null,
+      previousValue: pk?.mer,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.mer == null ? "—" : `${v.toFixed(2)}x`),
       icon: Gauge,
       iconClass: "bg-cyan-500/10 text-cyan-400",
       sparkColor: "#afc4ff",
@@ -744,8 +762,11 @@ export default function PerformancePage() {
     {
       label: "Lucro bruto",
       value: k?.grossProfit ?? 0,
-      format: () =>
-        k?.roiStatus === "available" ? formatCurrency(k.grossProfit) : "—",
+      comparisonValue: k?.roiStatus === "available" ? k.grossProfit : null,
+      previousValue: pk?.roiStatus === "available" ? pk.grossProfit : null,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) =>
+        k?.roiStatus === "available" ? formatCurrency(v) : "—",
       icon: Boxes,
       iconClass: "bg-fuchsia-500/10 text-fuchsia-400",
       sparkColor: "#b3caff",
@@ -756,7 +777,10 @@ export default function PerformancePage() {
     {
       label: "ROI final",
       value: k?.roi ?? 0,
-      format: () => (k?.roi == null ? "—" : formatPercentage(k.roi)),
+      comparisonValue: k?.roi ?? null,
+      previousValue: pk?.roi,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.roi == null ? "—" : formatPercentage(v)),
       icon: BadgeDollarSign,
       iconClass: "bg-lime-500/10 text-lime-400",
       sparkColor: "#87adff",
@@ -770,6 +794,9 @@ export default function PerformancePage() {
     {
       label: "Ticket médio",
       value: k?.averageTicket ?? 0,
+      comparisonValue: k?.averageTicket ?? null,
+      previousValue: pk?.averageTicket,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: ReceiptText,
       iconClass: "bg-blue-500/10 text-blue-400",
@@ -784,6 +811,9 @@ export default function PerformancePage() {
     {
       label: "Pedidos ERP",
       value: k?.orders ?? 0,
+      comparisonValue: k?.orders ?? null,
+      previousValue: pk?.orders,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: ReceiptText,
       iconClass: "bg-blue-500/10 text-blue-400",
@@ -793,6 +823,9 @@ export default function PerformancePage() {
     {
       label: "Pedidos atribuídos",
       value: k?.attributedOrders ?? 0,
+      comparisonValue: k?.attributedOrders ?? null,
+      previousValue: pk?.attributedOrders,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: PackageCheck,
       iconClass: "bg-emerald-500/10 text-emerald-400",
@@ -808,6 +841,9 @@ export default function PerformancePage() {
     {
       label: "Compradores únicos",
       value: k?.uniqueBuyers ?? 0,
+      comparisonValue: k?.uniqueBuyers ?? null,
+      previousValue: pk?.uniqueBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: Users,
       iconClass: "bg-purple-500/10 text-purple-400",
@@ -819,6 +855,9 @@ export default function PerformancePage() {
     {
       label: "Clientes novos",
       value: k?.newBuyers ?? 0,
+      comparisonValue: k?.newBuyers ?? null,
+      previousValue: pk?.newBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-lime-500/10 text-lime-400",
@@ -833,6 +872,9 @@ export default function PerformancePage() {
     {
       label: "Clientes recorrentes",
       value: k?.returningBuyers ?? 0,
+      comparisonValue: k?.returningBuyers ?? null,
+      previousValue: pk?.returningBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: ShoppingBag,
       iconClass: "bg-rose-500/10 text-rose-400",
@@ -844,6 +886,9 @@ export default function PerformancePage() {
     {
       label: "CAC",
       value: k?.cac ?? 0,
+      comparisonValue: k?.cac ?? null,
+      previousValue: pk?.cac,
+      source: "ERP · Ecommerce · Meta Ads",
       format: () => (k?.cac == null ? "—" : formatCurrency(k.cac)),
       icon: BadgeDollarSign,
       iconClass: "bg-orange-500/10 text-orange-400",
@@ -853,6 +898,9 @@ export default function PerformancePage() {
     {
       label: "CTR",
       value: k?.ctr ?? 0,
+      comparisonValue: k?.ctr ?? null,
+      previousValue: pk?.ctr,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatPercentage,
       icon: MousePointerClick,
       iconClass: "bg-sky-500/10 text-sky-400",
@@ -862,6 +910,9 @@ export default function PerformancePage() {
     {
       label: "CPL",
       value: k?.cpl ?? 0,
+      comparisonValue: k?.cpl ?? null,
+      previousValue: pk?.cpl,
+      source: "ERP · Ecommerce · Meta Ads",
       format: () => (k?.cpl == null ? "—" : formatCurrency(k.cpl)),
       icon: Target,
       iconClass: "bg-violet-500/10 text-violet-400",

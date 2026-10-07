@@ -10,6 +10,8 @@ import {
 import { useAuth } from "@/lib/auth";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { queryOpts } from "@/lib/query-opts";
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
+import { precedingPeriod } from "@/lib/metric-comparison";
 import type { OrganizedMetric } from "@/components/metric-section";
 
 type RecompraTotals = {
@@ -19,6 +21,7 @@ type RecompraTotals = {
   ticketMedio: number | null;
 };
 type RecompraResponse = {
+  blocksP2?: RecompraResponse["blocks"] | null;
   blocks: {
     recompra: RecompraTotals;
     recorrentes: RecompraTotals;
@@ -82,6 +85,7 @@ export function useOrganizationData() {
   );
   const recompraParams = new URLSearchParams({
     ...period,
+    ...Object.fromEntries(Object.entries(precedingPeriod(period.dateFrom, period.dateTo)).map(([key, value]) => [key === "dateFrom" ? "compareDateFrom" : "compareDateTo", value])),
     status: "pago",
     tipo: "ecommerce",
     estado: filters.state || "todos",
@@ -117,6 +121,11 @@ export function useOrganizationData() {
     staleTime: 120000,
     refetchOnWindowFocus: false,
   });
+  const previousDashboard = usePreviousPeriodQuery<NonNullable<typeof dashboard.data>>(periodQuery("/api/analytics/dashboard", { ...period, category: filters.category ?? undefined, sellerId: filters.sellerId ?? undefined, channel: filters.channel ?? undefined, color: filters.color ?? undefined, segment: filters.segment ?? undefined, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, utmCampaign: filters.utmCampaign || undefined, compare: true }), enabled);
+  const previousMarketing = usePreviousPeriodQuery<NonNullable<typeof marketing.data>>(periodQuery("/api/analytics/marketing", period), enabled);
+  const previousPerformance = usePreviousPeriodQuery<PerformanceMetrics>(periodQuery("/api/analytics/performance", period), enabled && selectedDashboardMode !== "B2C");
+  const previousOrders = usePreviousPeriodQuery<OrderTotals>(periodQuery("/api/analytics/orders-page", { ...period, page: 1, limit: 1 }), enabled);
+  const previousFunnel = usePreviousPeriodQuery<NonNullable<typeof funnel.data> & { activation?: Activation }>(periodQuery("/api/analytics/funnel", { ...period, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, utmCampaign: filters.utmCampaign || undefined }), enabled);
   const d = dashboard.data?.kpis,
     m = marketing.data?.kpis,
     c = customers.data?.kpis;
@@ -413,8 +422,25 @@ export function useOrganizationData() {
     "currency",
     "Meta · Performance",
   );
+  const pd = dashboard.data?.prevKpis, pm = marketing.data?.prevKpis, pc = customers.data?.prevKpis;
+  const pr = recompra.data?.blocksP2;
+  const previousMeta = previousMarketing.data?.platformBreakdown.find(row => row.platform === "META");
+  const previousGoogle = previousMarketing.data?.platformBreakdown.find(row => row.platform === "GOOGLE");
+  const previousValues: Record<string, number | null | undefined> = {
+    revenue: pd?.revenue, paidRevenue: pd?.revenue, requestedRevenue: pd?.requestedRevenue,
+    orders: pd?.orders, ticket: pd?.avgTicket, newCustomers: pd?.newBuyers,
+    spend: pm?.totalSpend, totalSpend: pm?.totalSpend, metaSpend: previousMeta?.spend, googleSpend: previousGoogle?.spend,
+    roas: pm?.roas, requestedRoas: selectedDashboardMode === "B2C" ? null : pm?.roas, paidRoas: selectedDashboardMode === "B2C" ? pm?.roas : null,
+    cac: previousPerformance.data?.kpis.cac, ctr: previousPerformance.data?.kpis.ctr, cpc: previousPerformance.data?.kpis.cpc,
+    repurchasers: pr?.recompra.clientes, retentionRevenue: pr?.recompra.faturamento, retentionOrders: pr?.recompra.vendas, retentionTicket: pr?.recompra.ticketMedio,
+    registrations: pc?.totalRegistrations, approved: pc?.approvedRegistrations, approvalRate: pc?.approvalRatePct, firstPurchaseAverage: pc?.avgTimeToFirstPurchaseDays,
+    pieces: previousOrders.data?.kpis.fulfilledQuantity, impressions: previousMeta?.impressions, clicks: previousMeta?.clicks,
+    approvedConversion: selectedDashboardMode === "B2C" ? null : previousFunnel.data?.overallConversion,
+    approvedConverted: previousFunnel.data?.activation?.postApproval.paymentConfirmed, costRegistration: pm?.cpl,
+  };
+  for (const metric of Object.values(measures)) metric.previousValue = previousValues[metric.key];
   function pick(...keys: string[]) {
     return keys.map((key) => measures[key]);
   }
-  return { measures, pick, dashboard, marketing, customers, funnel, recompra };
+  return { measures, pick, dashboard, marketing, customers, funnel, previousFunnel, previousDashboard, recompra };
 }

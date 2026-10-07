@@ -243,3 +243,10 @@ html, body, #root { max-width: 100%; overflow-x: clip; }
 }
 
 .up-page-content .up-cohort-table tbody tr:hover { background: transparent; }
+
+/* Metric source/definition lives in the accessible information popover. */
+.up-delta-neutral { color: var(--up-text-muted, #9ba8c2); background: rgba(128, 148, 190, .1); }
+.up-metric-comparison { min-height: 22px; line-height: 1.6; overflow-wrap: anywhere; }
+.up-metric-info { color: hsl(var(--muted-foreground)); }
+.up-metric-info:hover, .up-metric-info:focus-visible { color: var(--up-chart-line); background: rgba(4, 88, 254, .1); }
+.up-metric-information { max-height: min(420px, var(--radix-popover-content-available-height)); overflow-y: auto; overflow-wrap: anywhere; }

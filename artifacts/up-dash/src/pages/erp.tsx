@@ -1,3 +1,4 @@
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
 import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { Fragment, useDeferredValue, useMemo, useState } from "react";
@@ -266,6 +267,8 @@ type ErpProductsResponse = {
   };
 };
 type Metric = {
+  previousValue?: number | null;
+  comparisonValue?: number | null;
   label: string;
   value: number;
   format: (value: number) => string;
@@ -316,7 +319,8 @@ function usePeriod() {
 function useErpDashboard() {
   const { dateFrom, dateTo } = usePeriod();
   const { clientId, enabled } = useErpClientId();
-  return useQuery<ErpDashboardResponse>({
+  const previous = usePreviousPeriodQuery<ErpDashboardResponse>(periodQuery("/api/analytics/erp/dashboard", { clientId, dateFrom, dateTo }), enabled);
+  const query = useQuery<ErpDashboardResponse>({
     queryKey: ["erp-dashboard", clientId, dateFrom, dateTo],
     queryFn: () =>
       customFetch(
@@ -332,6 +336,7 @@ function useErpDashboard() {
     refetchOnWindowFocus: false,
     retry: 1,
   });
+  return { ...query, previousData: previous.data };
 }
 function SectionTitle({
   icon: Icon,
@@ -376,6 +381,9 @@ function KpiGrid({
           label={metric.label}
           value={metric.value}
           format={metric.format}
+          comparisonValue={metric.comparisonValue}
+          previousValue={metric.previousValue}
+          source="ERP · vendas e clientes"
           change={null}
           changeLabel=""
           sub={[{ label: metric.subLabel, value: metric.subValue }]}
@@ -602,7 +610,7 @@ function BreakdownCard({
 }
 
 function ErpOverview() {
-  const { data, isLoading } = useErpDashboard();
+  const { data, isLoading, previousData } = useErpDashboard();
   const { dateFrom, dateTo } = usePeriod();
   const { clientId, enabled } = useErpClientId();
   const { data: products } = useQuery<ErpProductsResponse>({
@@ -621,11 +629,14 @@ function ErpOverview() {
     staleTime: 120_000,
     refetchOnWindowFocus: false,
   });
+  const pk = previousData?.kpis;
   const k = data?.kpis;
   const metrics: Metric[] = [
     {
       label: "Faturamento líquido",
       value: k?.netRevenue ?? 0,
+      comparisonValue: k?.netRevenue ?? null,
+      previousValue: pk?.netRevenue,
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-blue-500/10 text-blue-500",
@@ -636,6 +647,8 @@ function ErpOverview() {
     {
       label: "Pedidos",
       value: k?.orders ?? 0,
+      comparisonValue: k?.orders ?? null,
+      previousValue: pk?.orders,
       format: formatNumber,
       icon: ReceiptText,
       iconClass: "bg-violet-500/10 text-violet-500",
@@ -646,6 +659,8 @@ function ErpOverview() {
     {
       label: "Compradores",
       value: k?.uniqueCustomers ?? 0,
+      comparisonValue: k?.uniqueCustomers ?? null,
+      previousValue: pk?.uniqueCustomers,
       format: formatNumber,
       icon: Users,
       iconClass: "bg-emerald-500/10 text-emerald-500",
@@ -656,6 +671,8 @@ function ErpOverview() {
     {
       label: "Retenção",
       value: k?.retentionPct ?? 0,
+      comparisonValue: k?.retentionPct ?? null,
+      previousValue: pk?.retentionPct,
       format: formatPercentage,
       icon: TrendingUp,
       iconClass: "bg-pink-500/10 text-pink-500",
@@ -667,6 +684,8 @@ function ErpOverview() {
     {
       label: "Peças vendidas",
       value: k?.totalQuantity ?? 0,
+      comparisonValue: k?.totalQuantity ?? null,
+      previousValue: pk?.totalQuantity,
       format: formatNumber,
       icon: Boxes,
       iconClass: "bg-amber-500/10 text-amber-500",
@@ -677,6 +696,8 @@ function ErpOverview() {
     {
       label: "Descontos",
       value: k?.discountAmount ?? 0,
+      comparisonValue: k?.discountAmount ?? null,
+      previousValue: pk?.discountAmount,
       format: formatCurrencySmart,
       icon: Percent,
       iconClass: "bg-cyan-500/10 text-cyan-500",
@@ -687,6 +708,8 @@ function ErpOverview() {
     {
       label: "Devoluções",
       value: k?.returnAmount ?? 0,
+      comparisonValue: k?.returnAmount ?? null,
+      previousValue: pk?.returnAmount,
       format: formatCurrencySmart,
       icon: AlertCircle,
       iconClass: "bg-orange-500/10 text-orange-500",
@@ -697,6 +720,8 @@ function ErpOverview() {
     {
       label: "Cancelamentos",
       value: k?.cancelledOrders ?? 0,
+      comparisonValue: k?.cancelledOrders ?? null,
+      previousValue: pk?.cancelledOrders,
       format: formatNumber,
       icon: AlertCircle,
       iconClass: "bg-red-500/10 text-red-500",
@@ -905,7 +930,7 @@ function ErpOrdersView() {
   const deferred = useDeferredValue(search.trim());
   const { dateFrom, dateTo } = usePeriod();
   const { clientId, enabled } = useErpClientId();
-  const { data: dashboard } = useErpDashboard();
+  const { data: dashboard, previousData } = useErpDashboard();
   const params = {
     clientId,
     dateFrom,
@@ -927,6 +952,7 @@ function ErpOrdersView() {
     staleTime: 120_000,
     refetchOnWindowFocus: false,
   });
+  const pk = previousData?.kpis;
   const k = dashboard?.kpis;
   const exportCsv = async () => {
     setExporting(true);
@@ -964,6 +990,8 @@ function ErpOrdersView() {
     {
       label: "Faturamento bruto",
       value: k?.grossRevenue ?? 0,
+      comparisonValue: k?.grossRevenue ?? null,
+      previousValue: pk?.grossRevenue,
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-blue-500/10 text-blue-500",
@@ -974,6 +1002,8 @@ function ErpOrdersView() {
     {
       label: "Pedidos únicos",
       value: k?.orders ?? 0,
+      comparisonValue: k?.orders ?? null,
+      previousValue: pk?.orders,
       format: formatNumber,
       icon: ReceiptText,
       iconClass: "bg-violet-500/10 text-violet-500",
@@ -984,6 +1014,8 @@ function ErpOrdersView() {
     {
       label: "Peças vendidas",
       value: k?.totalQuantity ?? 0,
+      comparisonValue: k?.totalQuantity ?? null,
+      previousValue: pk?.totalQuantity,
       format: formatNumber,
       icon: Boxes,
       iconClass: "bg-amber-500/10 text-amber-500",
@@ -994,6 +1026,8 @@ function ErpOrdersView() {
     {
       label: "Cancelamentos",
       value: k?.cancelledOrders ?? 0,
+      comparisonValue: k?.cancelledOrders ?? null,
+      previousValue: pk?.cancelledOrders,
       format: formatNumber,
       icon: AlertCircle,
       iconClass: "bg-red-500/10 text-red-500",
@@ -1339,7 +1373,7 @@ function ErpCustomersView() {
   const deferred = useDeferredValue(search.trim());
   const { dateFrom, dateTo } = usePeriod();
   const { clientId, enabled } = useErpClientId();
-  const { data: dashboard } = useErpDashboard();
+  const { data: dashboard, previousData } = useErpDashboard();
   const params = {
     clientId,
     dateFrom,
@@ -1391,11 +1425,14 @@ function ErpCustomersView() {
       setExporting(false);
     }
   };
+  const pk = previousData?.kpis;
   const k = dashboard?.kpis;
   const metrics: Metric[] = [
     {
       label: "Compradores",
       value: k?.uniqueCustomers ?? 0,
+      comparisonValue: k?.uniqueCustomers ?? null,
+      previousValue: pk?.uniqueCustomers,
       format: formatNumber,
       icon: Users,
       iconClass: "bg-blue-500/10 text-blue-500",
@@ -1406,6 +1443,8 @@ function ErpCustomersView() {
     {
       label: "Novos compradores",
       value: k?.newCustomers ?? 0,
+      comparisonValue: k?.newCustomers ?? null,
+      previousValue: pk?.newCustomers,
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-emerald-500/10 text-emerald-500",
@@ -1416,6 +1455,8 @@ function ErpCustomersView() {
     {
       label: "Recorrentes",
       value: k?.returningCustomers ?? 0,
+      comparisonValue: k?.returningCustomers ?? null,
+      previousValue: pk?.returningCustomers,
       format: formatNumber,
       icon: Users,
       iconClass: "bg-violet-500/10 text-violet-500",
@@ -1426,6 +1467,8 @@ function ErpCustomersView() {
     {
       label: "Retenção",
       value: k?.retentionPct ?? 0,
+      comparisonValue: k?.retentionPct ?? null,
+      previousValue: pk?.retentionPct,
       format: formatPercentage,
       icon: TrendingUp,
       iconClass: "bg-pink-500/10 text-pink-500",
@@ -2133,7 +2176,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
 }
 
 function ErpSellersView() {
-  const { data, isLoading } = useErpDashboard();
+  const { data, isLoading, previousData } = useErpDashboard();
   const [exporting, setExporting] = useState(false);
   const sellers = data?.breakdowns.sellers ?? [];
   const stores = data?.breakdowns.stores ?? [];
