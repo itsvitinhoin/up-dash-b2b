@@ -2,7 +2,7 @@ import { useI18n } from "@/lib/i18n";
 import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { MetricDataProvider, metricBindings } from "@/components/metric-data-context";
 import { getGetJourneyUrl } from "@workspace/api-client-react";
-import { displayLabel } from "@/lib/display-label";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo } from "react";
 import { format } from "date-fns";
@@ -444,6 +444,7 @@ interface FlowEdge {
 }
 
 function EventFlowDiagram({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEdge[] }) {
+  const displayLabel = useDisplayLabel();
   const { tx } = useI18n();
   if (nodes.length === 0) {
     return (

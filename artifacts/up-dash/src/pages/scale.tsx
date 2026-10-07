@@ -1,3 +1,6 @@
+import { useI18n } from "@/lib/i18n";
+import { useDisplayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -193,6 +196,7 @@ function BreakdownCard({
 }
 
 function ScenarioCard({ scenario }: { scenario: ScaleResponse["projection"]["scenarios"][number] }) {
+  const { tx } = useI18n();
   return (
     <Card className="p-4 bg-card border-border">
       <div className="flex items-center justify-between gap-3">
@@ -203,18 +207,9 @@ function ScenarioCard({ scenario }: { scenario: ScaleResponse["projection"]["sce
         <TrendingUp className="h-4 w-4 text-primary" />
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-        <div>
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Receita</p>
-          <p className="font-semibold tabular-nums">{formatCurrencySmart(scenario.revenue)}</p>
-        </div>
-        <div>
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Mídia</p>
-          <p className="font-semibold tabular-nums">{formatCurrencySmart(scenario.mediaSpend)}</p>
-        </div>
-        <div className="col-span-2">
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pedidos estimados</p>
-          <p className="font-semibold tabular-nums">{formatNumber(Math.round(scenario.orders))}</p>
-        </div>
+        <GlassMetricCard  label={tx("Receita")} value={<>{formatCurrencySmart(scenario.revenue)}</>} hideComparison />
+        <GlassMetricCard  label={tx("Mídia")} value={<>{formatCurrencySmart(scenario.mediaSpend)}</>} hideComparison />
+        <GlassMetricCard  label={tx("Pedidos estimados")} value={<>{formatNumber(Math.round(scenario.orders))}</>} hideComparison />
       </div>
     </Card>
   );
@@ -231,6 +226,8 @@ function ScaleLoadingState() {
 }
 
 export default function ScalePage() {
+  const displayLabel = useDisplayLabel();
+  const { tx, language } = useI18n();
   const { selectedClientId, user, selectedDashboardMode } = useAuth();
   const { dateRange } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -367,7 +364,7 @@ export default function ScalePage() {
                 { label: "Produtos ativos", value: formatNumber(kpis.activeProducts) },
               ]}
               sparkValues={[kpis.currentSalesPower, projection.requiredSalesPower]}
-              sparkColor="#60a5fa"
+              sparkColor="#afc4ff"
               isLoading={false}
               testId="scale-kpi-sales-power"
               valueAccent
@@ -385,7 +382,7 @@ export default function ScalePage() {
                 { label: "Ritmo mensal", value: formatCurrencySmart(kpis.monthlyRevenue) },
               ]}
               sparkValues={[benchmarks.monthlyRevenue, kpis.monthlyRevenue]}
-              sparkColor="#34d399"
+              sparkColor="#87adff"
               isLoading={false}
               testId="scale-kpi-revenue"
             />
@@ -402,7 +399,7 @@ export default function ScalePage() {
                 { label: "Ritmo mensal", value: formatNumber(Math.round(kpis.monthlyOrders)) },
               ]}
               sparkValues={[benchmarks.monthlyOrders, kpis.monthlyOrders]}
-              sparkColor="#a78bfa"
+              sparkColor="#5b8dff"
               isLoading={false}
               testId="scale-kpi-orders"
             />
@@ -419,7 +416,7 @@ export default function ScalePage() {
                 { label: "Pedidos", value: formatNumber(kpis.orders) },
               ]}
               sparkValues={[benchmarks.avgTicket, kpis.avgTicket]}
-              sparkColor="#f472b6"
+              sparkColor="#b3caff"
               isLoading={false}
               testId="scale-kpi-ticket"
             />
@@ -436,11 +433,11 @@ export default function ScalePage() {
                 { label: "Ritmo mensal", value: formatPercentage(kpis.monthlyTurnoverPct) },
               ]}
               sparkValues={[benchmarks.monthlyTurnoverPct, kpis.monthlyTurnoverPct]}
-              sparkColor="#f59e0b"
+              sparkColor="#0458fe"
               isLoading={false}
               testId="scale-kpi-turnover"
               ringValue={Math.min(100, kpis.periodTurnoverPct)}
-              ringColor="#f59e0b"
+              ringColor="#0458fe"
             />
             <DashboardKpiCard
               icon={Megaphone}
@@ -455,7 +452,7 @@ export default function ScalePage() {
                 { label: "Ritmo mensal", value: formatCurrencySmart(kpis.monthlyMediaSpend) },
               ]}
               sparkValues={[benchmarks.monthlyMediaSpend, kpis.monthlyMediaSpend]}
-              sparkColor="#38bdf8"
+              sparkColor="#afc4ff"
               isLoading={false}
               testId="scale-kpi-media"
             />
@@ -472,7 +469,7 @@ export default function ScalePage() {
                 { label: "Investimento", value: formatCurrencySmart(kpis.mediaSpend) },
               ]}
               sparkValues={[benchmarks.roas, kpis.roas]}
-              sparkColor="#84cc16"
+              sparkColor="#87adff"
               isLoading={false}
               testId="scale-kpi-roas"
             />
@@ -489,7 +486,7 @@ export default function ScalePage() {
                 { label: "Conversão", value: formatPercentage(kpis.conversionRate) },
               ]}
               sparkValues={[benchmarks.cpa, kpis.cpa]}
-              sparkColor="#fb923c"
+              sparkColor="#0458fe"
               isLoading={false}
               testId="scale-kpi-cpa"
             />
@@ -565,23 +562,14 @@ export default function ScalePage() {
                 ].map((item) => (
                   <div key={item.label} className="rounded-md border border-border bg-background/40 p-4">
                     <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{item.label}</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{displayLabel(item.label)}</p>
                       <item.icon className="h-4 w-4 text-primary" />
                     </div>
                     <div className="mt-3 space-y-2">
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Atual</p>
-                        <p className="text-lg font-semibold tabular-nums">{item.current}</p>
-                      </div>
+                      <GlassMetricCard  label={tx("Atual")} value={<>{item.current}</>} hideComparison />
                       <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Meta</p>
-                          <p className="truncate text-sm font-semibold tabular-nums">{item.target}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Gap</p>
-                          <p className="truncate text-sm font-semibold tabular-nums text-amber-400">{item.gap}</p>
-                        </div>
+                        <GlassMetricCard  label={{ pt: "Meta", en: "Target", ko: "목표" }[language]} value={<>{item.target}</>} hideComparison />
+                        <GlassMetricCard  label={tx("Intervalo")} value={<>{item.gap}</>} hideComparison />
                       </div>
                     </div>
                     <p className="mt-2 text-xs text-muted-foreground">{item.helper}</p>
@@ -590,22 +578,10 @@ export default function ScalePage() {
               </div>
 
               <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-4">
-                <div className="rounded-md border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Incremento de receita</p>
-                  <p className="mt-1 text-lg font-semibold text-emerald-400">{formatCurrencySmart(projection.revenueIncrement)}</p>
-                </div>
-                <div className="rounded-md border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Incremento de mídia</p>
-                  <p className="mt-1 text-lg font-semibold text-sky-400">{formatCurrencySmart(projection.mediaSpendIncrement)}</p>
-                </div>
-                <div className="rounded-md border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Gap de estoque</p>
-                  <p className="mt-1 text-lg font-semibold text-amber-400">{formatCurrencySmart(projection.salesPowerGap)}</p>
-                </div>
-                <div className="rounded-md border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Peças adicionais</p>
-                  <p className="mt-1 text-lg font-semibold text-blue-400">{formatNumber(additionalUnitsNeeded)}</p>
-                </div>
+                <GlassMetricCard  label={tx("Incremento de receita")} value={<>{formatCurrencySmart(projection.revenueIncrement)}</>} hideComparison />
+                <GlassMetricCard  label={tx("Incremento de mídia")} value={<>{formatCurrencySmart(projection.mediaSpendIncrement)}</>} hideComparison />
+                <GlassMetricCard  label={tx("Gap de estoque")} value={<>{formatCurrencySmart(projection.salesPowerGap)}</>} hideComparison />
+                <GlassMetricCard  label={tx("Peças adicionais")} value={<>{formatNumber(additionalUnitsNeeded)}</>} hideComparison />
               </div>
             </Card>
 

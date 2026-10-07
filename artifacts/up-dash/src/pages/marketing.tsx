@@ -1,6 +1,6 @@
 import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { getGetMarketingUrl } from "@workspace/api-client-react";
-import { displayLabel } from "@/lib/display-label";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState, useEffect } from "react";
 import { format } from "date-fns";
@@ -276,6 +276,7 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
 
 // ── Status badge ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
+  const displayLabel = useDisplayLabel();
   const isActive = status === "ACTIVE";
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium font-mono uppercase tracking-wide ${isActive ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>
