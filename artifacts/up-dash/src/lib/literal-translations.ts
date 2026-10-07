@@ -377,6 +377,9 @@ const entries: Array<[string, string, string]> = [
   ["Principais estados por ROAS", "Top States by ROAS", "ROAS 상위 지역"],
   ["clique nos títulos para ordenar", "click headers to sort", "제목을 눌러 정렬"],
   ["de", "of", "/"],
+  // ---- recompra
+  ["Comp.", "Comp.", "비교"],
+  ["Ecommerce · ERP · recompra", "Ecommerce · ERP · repurchase", "이커머스 · ERP · 재구매"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
