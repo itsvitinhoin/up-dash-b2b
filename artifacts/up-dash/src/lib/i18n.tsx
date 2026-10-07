@@ -1,4 +1,7 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { setDefaultOptions } from "date-fns";
+import { enUS, ko, ptBR } from "date-fns/locale";
+import { literalTranslations } from "@/lib/literal-translations";
 
 export type DashboardLanguage = "pt" | "en" | "ko";
 
@@ -6,6 +9,8 @@ type I18nContextValue = {
   language: DashboardLanguage;
   setLanguage: (language: DashboardLanguage) => void;
   t: (key: string, fallback?: string) => string;
+  /** Traduz um texto escrito em portugues no codigo (ver lib/literal-translations.ts). Em pt devolve o proprio texto. */
+  tx: (pt: string) => string;
 };
 
 const STORAGE_KEY = "updash-language";
@@ -18,16 +23,16 @@ export const LANGUAGE_OPTIONS: Array<{ value: DashboardLanguage; label: string; 
 
 const translations: Record<DashboardLanguage, Record<string, string>> = {
   pt: {
-    "nav.analytics": "Analytics",
-    "nav.workspace": "Workspace",
-    "nav.dashboard": "Dashboard",
+    "nav.analytics": "Painel",
+    "nav.workspace": "Plataforma",
+    "nav.dashboard": "Visão geral",
     "nav.daily": "Diário",
-    "nav.marketing": "Marketing",
+    "nav.marketing": "Anúncios",
     "nav.whatsapp": "WhatsApp",
     "nav.whatsapp.conversations": "Conversas",
     "nav.whatsapp.connections": "Conexões",
     "nav.whatsapp.sends": "Envios",
-    "nav.whatsapp.templates": "Templates",
+    "nav.whatsapp.templates": "Modelos",
     "nav.funnel": "Funil",
     "nav.journey": "Jornada",
     "nav.rfm": "RFM",
@@ -56,7 +61,7 @@ const translations: Record<DashboardLanguage, Record<string, string>> = {
     "empty.selectClient.body": "Esta página mostra dados de um cliente por vez. Escolha um cliente no seletor do topo ou abra a visão da plataforma para ver todas as marcas.",
     "empty.selectClient.overview": "Ir para visão da plataforma",
     "empty.selectClient.clients": "Ver todas as marcas",
-    "page.dashboard.title": "Overview",
+    "page.dashboard.title": "Visão geral",
     "page.dashboard.live": "dados ao vivo",
     "page.orders.title": "Pedidos",
     "page.orders.subtitle": "Pedidos, atendimento e origem",
@@ -549,12 +554,15 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, language);
     document.documentElement.lang = language === "ko" ? "ko" : language === "en" ? "en" : "pt-BR";
+    // Datas (mes, dia da semana) seguem o idioma escolhido, em todo o app.
+    setDefaultOptions({ locale: language === "ko" ? ko : language === "en" ? enUS : ptBR });
   }, [language]);
 
   const value = useMemo<I18nContextValue>(() => ({
     language,
     setLanguage: setLanguageState,
     t: (key, fallback) => translations[language][key] ?? translations.pt[key] ?? fallback ?? key,
+    tx: (pt) => (language === "pt" ? pt : (literalTranslations[pt]?.[language] ?? pt)),
   }), [language]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

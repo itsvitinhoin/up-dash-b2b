@@ -1,3 +1,4 @@
+import { useI18n } from "@/lib/i18n";
 import { useMemo } from "react";
 import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
@@ -23,6 +24,7 @@ import { useReducedMotion, fadeInUp, withReducedMotion } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 export function NotificationBell() {
+  const { tx } = useI18n();
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
   const reduced = useReducedMotion();
@@ -63,7 +65,7 @@ export function NotificationBell() {
           variant="ghost"
           size="icon"
           className="relative h-9 w-9 hover:bg-accent"
-          aria-label={`Notifications${unread > 0 ? `, ${unread} unread` : ""}`}
+          aria-label={`${tx("Notificações")}${unread > 0 ? `, ${unread} unread` : ""}`}
           data-testid="notification-bell"
         >
           {unread > 0 ? (
@@ -95,9 +97,9 @@ export function NotificationBell() {
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div>
-            <p className="text-sm font-semibold">Notifications</p>
+            <p className="text-sm font-semibold">{tx("Notificações")}</p>
             <p className="text-xs text-muted-foreground">
-              {unread > 0 ? `${unread} unread` : "You're all caught up"}
+              {unread > 0 ? `${unread} unread` : tx("Todas as notificações foram lidas")}
             </p>
           </div>
           <Button
@@ -109,14 +111,14 @@ export function NotificationBell() {
             className="h-7 text-xs"
           >
             <CheckCheck className="h-3.5 w-3.5 mr-1.5" />
-            Mark all read
+            Marcar todas como lidas
           </Button>
         </div>
 
         <ScrollArea className="max-h-[420px]">
           {!data || data.data.length === 0 ? (
             <div className="px-6 py-10 text-center text-sm text-muted-foreground">
-              No notifications yet. Check back soon.
+              Nenhuma notificação. Consulte novamente mais tarde.
             </div>
           ) : (
             <ul>
@@ -152,7 +154,7 @@ export function NotificationBell() {
             className="text-xs text-primary hover:underline"
             data-testid="notification-see-all"
           >
-            See all notifications →
+            Ver todas as notificações →
           </Link>
         </div>
       </PopoverContent>
