@@ -1,3 +1,4 @@
+import { OverviewOrganization } from "@/components/overview-organization";
 import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
 import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
@@ -1565,7 +1566,7 @@ function B2COrdersPanel({
   );
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({ organization = "executive" }: { organization?: "executive" | "ecommerce" } = {}) {
   const { t } = useI18n();
   const { selectedClientId, user, selectedDashboardMode } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
@@ -1941,239 +1942,237 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={containerVariants}
-        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"
-      >
-        <DashboardKpiCard
-          testId="kpi-revenue" comparisonValue={data?.kpis.revenue ?? null} previousValue={data?.prevKpis?.revenue}
-          icon={DollarSign}
-          iconClass="bg-blue-500/15 text-blue-400"
-          label={isB2C ? t("dashboard.kpi.totalRevenue.b2c") : t("dashboard.kpi.totalRevenue.b2b")}
-          value={data?.kpis.revenue ?? 0}
-          format={(v) => formatCurrencySmart(v)}
-          unit="BRL"
-          change={revenueChange}
-          changeLabel={t("dashboard.vsPreviousPeriod")}
-          sparkValues={sparkRevenue}
-          sparkColor="#afc4ff"
-          sub={[
-            { label: t("dashboard.kpi.avgTicket"), value: data ? formatCurrency(data.kpis.avgTicket) : "—" },
-            { label: t("dashboard.kpi.customers"), value: data ? formatNumber(data.kpis.customers) : "—" },
-          ]}
-          isLoading={isLoading}
-          valueAccent
-        />
-        <DashboardKpiCard
-          testId="kpi-orders" comparisonValue={data?.kpis.orders ?? null} previousValue={data?.prevKpis?.orders}
-          icon={Package}
-          iconClass="bg-violet-500/15 text-violet-400"
-          label={t("dashboard.kpi.orders")}
-          value={data?.kpis.orders ?? 0}
-          format={(v) => formatNumber(v)}
-          unit={inclusiveDays + "d"}
-          change={ordersChange}
-          changeLabel={t("dashboard.vsPreviousPeriod")}
-          sparkValues={sparkOrders}
-          sparkColor="#5b8dff"
-          sub={[
-            { label: isB2C ? t("dashboard.kpi.sessions") : isVesti ? t("dashboard.kpi.requestedOrdersVesti") : t("dashboard.kpi.leads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
-            { label: isB2C ? t("dashboard.kpi.orders") : isVesti ? t("dashboard.kpi.paidOrdersVesti") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.approvedLeads) : "—" },
-          ]}
-          isLoading={isLoading}
-        />
-        <DashboardKpiCard
-          testId="kpi-avgTicket" comparisonValue={data?.kpis.avgTicket ?? null} previousValue={data?.prevKpis?.avgTicket}
-          icon={Wallet}
-          iconClass="bg-emerald-500/15 text-emerald-400"
-          label={t("dashboard.kpi.avgTicket")}
-          value={data?.kpis.avgTicket ?? 0}
-          format={(v) => formatCurrencySmart(v)}
-          unit="BRL"
-          change={avgTicketChange}
-          changeLabel={t("dashboard.vsPreviousPeriod")}
-          sparkValues={sparkLeads}
-          sparkColor="#87adff"
-          sub={[
-            { label: t("dashboard.kpi.repeatCustomers"), value: data ? formatNumber(data.kpis.repeatCustomers) : "—" },
-            { label: isB2C ? t("dashboard.kpi.paidRate") : t("dashboard.kpi.approvalRate"), value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
-          ]}
-          isLoading={isLoading}
-        />
-        <DashboardKpiCard
-          testId="kpi-conversionRate" comparisonValue={data?.kpis.conversionRate ?? null} previousValue={data?.prevKpis?.conversionRate}
-          icon={Target}
-          iconClass="bg-sky-500/15 text-sky-400"
-          label={t("dashboard.kpi.conversionRate")}
-          value={data?.kpis.conversionRate ?? 0}
-          format={(v) => formatPercentage(v)}
-          change={conversionChange}
-          changeLabel={t("dashboard.vsPreviousPeriod")}
-          sparkValues={sparkConv}
-          sparkColor="#afc4ff"
-          sub={
-            isVesti && data?.orderStatusBreakdown
-              ? [
-                  { label: t("dashboard.orderStatus.total"), value: formatNumber(data.orderStatusBreakdown.total) },
-                  { label: t("dashboard.orderStatus.paid"), value: formatNumber(data.orderStatusBreakdown.paid) },
-                  { label: t("dashboard.orderStatus.separated"), value: formatNumber(data.orderStatusBreakdown.separated) },
-                  { label: t("dashboard.orderStatus.waiting"), value: formatNumber(data.orderStatusBreakdown.waiting) },
-                  { label: t("dashboard.orderStatus.cancelled"), value: formatNumber(data.orderStatusBreakdown.cancelled) },
-                ]
-              : [
-                  { label: isB2C ? t("dashboard.kpi.sessions") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
-                  { label: isB2C ? t("dashboard.kpi.orders") : t("dashboard.kpi.orders"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
-                ]
-          }
-          isLoading={isLoading}
-          ringValue={data?.kpis.conversionRate ?? 0}
-          ringColor="hsl(var(--chart-1))"
-        />
-      </motion.div>
-
-      {/* Marketing & buyer KPIs row */}
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={containerVariants}
-        className="grid grid-cols-1 sm:grid-cols-3 gap-4"
-      >
-        {/* Requested vs Approved Revenue */}
-        <GlassMetricCard
-          label={isB2C ? t("dashboard.kpi.invoicedValue") : t("dashboard.kpi.requestedRevenue")}
-          value={data?.kpis.requestedRevenue ?? 0}
-          format={(v) => formatCurrencySmart(v)}
-          loading={isLoading}
-          icon={DollarSign}
-          testId="kpi-requested-revenue"
-          comparisonValue={data?.kpis.requestedRevenue ?? null}
-          previousValue={data?.prevKpis?.requestedRevenue}
-          source="Ecommerce · pedidos"
-          footer={isLoading ? (
-            <Skeleton className="h-3 w-full mb-2" />
-          ) : (
-            <>
-              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                <span>{isB2C ? t("dashboard.kpi.paid") : t("dashboard.kpi.approved")}</span>
-                <span className="font-medium text-foreground tabular-nums">
-                  {formatCurrency(data?.kpis.revenue ?? 0)}
-                </span>
-              </div>
-              <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-blue-400 transition-all"
-                  style={{
-                    width: `${Math.min(100, (data?.kpis.requestedRevenue ?? 0) > 0
-                      ? ((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100
-                      : 0)}%`,
-                  }}
-                />
-              </div>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                {(data?.kpis.requestedRevenue ?? 0) > 0
-                  ? `${(((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100).toFixed(1)}% ${isB2C ? t("dashboard.kpi.paidRateSuffix") : t("dashboard.kpi.fulfillmentRate")}`
-                  : isB2C ? t("dashboard.kpi.noInvoicedRevenue") : t("dashboard.kpi.noRequestedRevenue")}
-              </p>
-            </>
-          )}
-        />
-
-        {/* New vs Returning Buyers */}
-        <GlassMetricCard
-          label={t("dashboard.kpi.buyersThisPeriod")}
-          value={(data?.kpis.newBuyers ?? 0) + (data?.kpis.returningBuyers ?? 0)}
-          format={(v) => formatNumber(v)}
-          loading={isLoading}
-          icon={Users}
-          testId="kpi-buyers"
-          comparisonValue={data ? (data.kpis.newBuyers ?? 0) + (data.kpis.returningBuyers ?? 0) : null}
-          previousValue={data?.prevKpis ? (data.prevKpis.newBuyers ?? 0) + (data.prevKpis.returningBuyers ?? 0) : undefined}
-          source="Ecommerce · pedidos"
-          footer={isLoading ? (
-            <div className="space-y-1.5">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-3 w-full mt-1" />
-            </div>
-          ) : (
-            <>
-              {/* Stacked sparkline: new (emerald) over returning (blue) */}
-              {sparkNewBuyers.length > 0 && (
-                <div className="h-10 w-full mb-2">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart
-                      data={sparkNewBuyers.map((v, i) => ({
-                        new: v,
-                        returning: sparkReturning[i] ?? 0,
-                      }))}
-                      margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                    >
-                      <Area
-                        type="monotone"
-                        dataKey="returning"
-                        stackId="buyers"
-                        stroke="#afc4ff"
-                        fill="#afc4ff"
-                        fillOpacity={0.35}
-                        strokeWidth={1}
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="new"
-                        stackId="buyers"
-                        stroke="#87adff"
-                        fill="#87adff"
-                        fillOpacity={0.35}
-                        strokeWidth={1}
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-              <div className="flex gap-3 text-xs">
-                <div className="flex-1 flex items-center gap-1.5">
-                  <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="text-muted-foreground">{t("dashboard.kpi.new")}</span>
-                  <span className="ml-auto font-semibold tabular-nums">
-                    {formatNumber(data?.kpis.newBuyers ?? 0)}
+      <OverviewOrganization
+        ecommerce={organization === "ecommerce"}
+        cards={{
+        revenue: (
+          <DashboardKpiCard
+            testId="kpi-revenue" comparisonValue={data?.kpis.revenue ?? null} previousValue={data?.prevKpis?.revenue}
+            icon={DollarSign}
+            iconClass="bg-blue-500/15 text-blue-400"
+            label={isB2C ? t("dashboard.kpi.totalRevenue.b2c") : t("dashboard.kpi.totalRevenue.b2b")}
+            value={data?.kpis.revenue ?? 0}
+            format={(v) => formatCurrencySmart(v)}
+            unit="BRL"
+            change={revenueChange}
+            changeLabel={t("dashboard.vsPreviousPeriod")}
+            sparkValues={sparkRevenue}
+            sparkColor="#afc4ff"
+            sub={[
+              { label: t("dashboard.kpi.avgTicket"), value: data ? formatCurrency(data.kpis.avgTicket) : "—" },
+              { label: t("dashboard.kpi.customers"), value: data ? formatNumber(data.kpis.customers) : "—" },
+            ]}
+            isLoading={isLoading}
+            valueAccent
+          />
+        ),
+        orders: (
+          <DashboardKpiCard
+            testId="kpi-orders" comparisonValue={data?.kpis.orders ?? null} previousValue={data?.prevKpis?.orders}
+            icon={Package}
+            iconClass="bg-violet-500/15 text-violet-400"
+            label={t("dashboard.kpi.orders")}
+            value={data?.kpis.orders ?? 0}
+            format={(v) => formatNumber(v)}
+            unit={inclusiveDays + "d"}
+            change={ordersChange}
+            changeLabel={t("dashboard.vsPreviousPeriod")}
+            sparkValues={sparkOrders}
+            sparkColor="#5b8dff"
+            sub={[
+              { label: isB2C ? t("dashboard.kpi.sessions") : isVesti ? t("dashboard.kpi.requestedOrdersVesti") : t("dashboard.kpi.leads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
+              { label: isB2C ? t("dashboard.kpi.orders") : isVesti ? t("dashboard.kpi.paidOrdersVesti") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.approvedLeads) : "—" },
+            ]}
+            isLoading={isLoading}
+          />
+        ),
+        ticket: (
+          <DashboardKpiCard
+            testId="kpi-avgTicket" comparisonValue={data?.kpis.avgTicket ?? null} previousValue={data?.prevKpis?.avgTicket}
+            icon={Wallet}
+            iconClass="bg-emerald-500/15 text-emerald-400"
+            label={t("dashboard.kpi.avgTicket")}
+            value={data?.kpis.avgTicket ?? 0}
+            format={(v) => formatCurrencySmart(v)}
+            unit="BRL"
+            change={avgTicketChange}
+            changeLabel={t("dashboard.vsPreviousPeriod")}
+            sparkValues={sparkLeads}
+            sparkColor="#87adff"
+            sub={[
+              { label: t("dashboard.kpi.repeatCustomers"), value: data ? formatNumber(data.kpis.repeatCustomers) : "—" },
+              { label: isB2C ? t("dashboard.kpi.paidRate") : t("dashboard.kpi.approvalRate"), value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
+            ]}
+            isLoading={isLoading}
+          />
+        ),
+        conversion: (
+          <DashboardKpiCard
+            testId="kpi-conversionRate" comparisonValue={data?.kpis.conversionRate ?? null} previousValue={data?.prevKpis?.conversionRate}
+            icon={Target}
+            iconClass="bg-sky-500/15 text-sky-400"
+            label={t("dashboard.kpi.conversionRate")}
+            value={data?.kpis.conversionRate ?? 0}
+            format={(v) => formatPercentage(v)}
+            change={conversionChange}
+            changeLabel={t("dashboard.vsPreviousPeriod")}
+            sparkValues={sparkConv}
+            sparkColor="#afc4ff"
+            sub={
+              isVesti && data?.orderStatusBreakdown
+                ? [
+                    { label: t("dashboard.orderStatus.total"), value: formatNumber(data.orderStatusBreakdown.total) },
+                    { label: t("dashboard.orderStatus.paid"), value: formatNumber(data.orderStatusBreakdown.paid) },
+                    { label: t("dashboard.orderStatus.separated"), value: formatNumber(data.orderStatusBreakdown.separated) },
+                    { label: t("dashboard.orderStatus.waiting"), value: formatNumber(data.orderStatusBreakdown.waiting) },
+                    { label: t("dashboard.orderStatus.cancelled"), value: formatNumber(data.orderStatusBreakdown.cancelled) },
+                  ]
+                : [
+                    { label: isB2C ? t("dashboard.kpi.sessions") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
+                    { label: isB2C ? t("dashboard.kpi.orders") : t("dashboard.kpi.orders"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
+                  ]
+            }
+            isLoading={isLoading}
+            ringValue={data?.kpis.conversionRate ?? 0}
+            ringColor="hsl(var(--chart-1))"
+          />
+        ),
+        requested: (
+          <GlassMetricCard
+            label={isB2C ? t("dashboard.kpi.invoicedValue") : t("dashboard.kpi.requestedRevenue")}
+            value={data?.kpis.requestedRevenue ?? 0}
+            format={(v) => formatCurrencySmart(v)}
+            loading={isLoading}
+            icon={DollarSign}
+            testId="kpi-requested-revenue"
+            comparisonValue={data?.kpis.requestedRevenue ?? null}
+            previousValue={data?.prevKpis?.requestedRevenue}
+            source="Ecommerce · pedidos"
+            footer={isLoading ? (
+              <Skeleton className="h-3 w-full mb-2" />
+            ) : (
+              <>
+                <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                  <span>{isB2C ? t("dashboard.kpi.paid") : t("dashboard.kpi.approved")}</span>
+                  <span className="font-medium text-foreground tabular-nums">
+                    {formatCurrency(data?.kpis.revenue ?? 0)}
                   </span>
                 </div>
-                <div className="flex-1 flex items-center gap-1.5">
-                  <span className="inline-block h-2 w-2 rounded-full bg-blue-400 shrink-0" />
-                  <span className="text-muted-foreground">{t("dashboard.kpi.returning")}</span>
-                  <span className="ml-auto font-semibold tabular-nums">
-                    {formatNumber(data?.kpis.returningBuyers ?? 0)}
-                  </span>
+                <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-blue-400 transition-all"
+                    style={{
+                      width: `${Math.min(100, (data?.kpis.requestedRevenue ?? 0) > 0
+                        ? ((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100
+                        : 0)}%`,
+                    }}
+                  />
                 </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {(data?.kpis.requestedRevenue ?? 0) > 0
+                    ? `${(((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100).toFixed(1)}% ${isB2C ? t("dashboard.kpi.paidRateSuffix") : t("dashboard.kpi.fulfillmentRate")}`
+                    : isB2C ? t("dashboard.kpi.noInvoicedRevenue") : t("dashboard.kpi.noRequestedRevenue")}
+                </p>
+              </>
+            )}
+          />
+        ),
+        buyers: (
+          <GlassMetricCard
+            label={t("dashboard.kpi.buyersThisPeriod")}
+            value={(data?.kpis.newBuyers ?? 0) + (data?.kpis.returningBuyers ?? 0)}
+            format={(v) => formatNumber(v)}
+            loading={isLoading}
+            icon={Users}
+            testId="kpi-buyers"
+            comparisonValue={data ? (data.kpis.newBuyers ?? 0) + (data.kpis.returningBuyers ?? 0) : null}
+            previousValue={data?.prevKpis ? (data.prevKpis.newBuyers ?? 0) + (data.prevKpis.returningBuyers ?? 0) : undefined}
+            source="Ecommerce · pedidos"
+            footer={isLoading ? (
+              <div className="space-y-1.5">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-3 w-full mt-1" />
               </div>
-            </>
-          )}
-        />
-
-        {/* Retention % */}
-        <DashboardKpiCard
-          testId="kpi-retention" comparisonValue={data?.kpis.retentionPct ?? null} previousValue={data?.prevKpis?.retentionPct}
-          icon={TrendingUp}
-          iconClass="bg-violet-500/15 text-violet-400"
-          label={t("dashboard.kpi.buyerRetention")}
-          value={data?.kpis.retentionPct ?? 0}
-          format={(v) => formatPercentage(v)}
-          change={retentionChange}
-          changeLabel={t("dashboard.vsPreviousPeriod")}
-          sparkValues={sparkReturning}
-          sparkColor="#5b8dff"
-          sub={[
-            { label: t("dashboard.kpi.newBuyers"), value: data ? formatNumber(data.kpis.newBuyers) : "—" },
-            { label: t("dashboard.kpi.returning"), value: data ? formatNumber(data.kpis.returningBuyers) : "—" },
-          ]}
-          isLoading={isLoading}
-        />
-      </motion.div>
+            ) : (
+              <>
+                {/* Stacked sparkline: new (emerald) over returning (blue) */}
+                {sparkNewBuyers.length > 0 && (
+                  <div className="h-10 w-full mb-2">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart
+                        data={sparkNewBuyers.map((v, i) => ({
+                          new: v,
+                          returning: sparkReturning[i] ?? 0,
+                        }))}
+                        margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
+                      >
+                        <Area
+                          type="monotone"
+                          dataKey="returning"
+                          stackId="buyers"
+                          stroke="#afc4ff"
+                          fill="#afc4ff"
+                          fillOpacity={0.35}
+                          strokeWidth={1}
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="new"
+                          stackId="buyers"
+                          stroke="#87adff"
+                          fill="#87adff"
+                          fillOpacity={0.35}
+                          strokeWidth={1}
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+                <div className="flex gap-3 text-xs">
+                  <div className="flex-1 flex items-center gap-1.5">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
+                    <span className="text-muted-foreground">{t("dashboard.kpi.new")}</span>
+                    <span className="ml-auto font-semibold tabular-nums">
+                      {formatNumber(data?.kpis.newBuyers ?? 0)}
+                    </span>
+                  </div>
+                  <div className="flex-1 flex items-center gap-1.5">
+                    <span className="inline-block h-2 w-2 rounded-full bg-blue-400 shrink-0" />
+                    <span className="text-muted-foreground">{t("dashboard.kpi.returning")}</span>
+                    <span className="ml-auto font-semibold tabular-nums">
+                      {formatNumber(data?.kpis.returningBuyers ?? 0)}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
+          />
+        ),
+        retention: (
+          <DashboardKpiCard
+            testId="kpi-retention" comparisonValue={data?.kpis.retentionPct ?? null} previousValue={data?.prevKpis?.retentionPct}
+            icon={TrendingUp}
+            iconClass="bg-violet-500/15 text-violet-400"
+            label={t("dashboard.kpi.buyerRetention")}
+            value={data?.kpis.retentionPct ?? 0}
+            format={(v) => formatPercentage(v)}
+            change={retentionChange}
+            changeLabel={t("dashboard.vsPreviousPeriod")}
+            sparkValues={sparkReturning}
+            sparkColor="#5b8dff"
+            sub={[
+              { label: t("dashboard.kpi.newBuyers"), value: data ? formatNumber(data.kpis.newBuyers) : "—" },
+              { label: t("dashboard.kpi.returning"), value: data ? formatNumber(data.kpis.returningBuyers) : "—" },
+            ]}
+            isLoading={isLoading}
+          />
+        ),
+        }}
+      />
 
       <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
         {isB2C ? (
