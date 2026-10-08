@@ -25,6 +25,8 @@ type RecompraResponse = {
     recompra: RecompraTotals;
     recorrentes: RecompraTotals;
     reativados: RecompraTotals;
+    // pedidos de clientes na 1ª compra (servidor novo; ausente em servidor antigo)
+    aquisicao?: RecompraTotals;
     ciclo: { tempoMedioDias: number | null; medianaDias: number | null };
   };
 };
@@ -129,6 +131,7 @@ export function useOrganizationData(
   // B2B (ERP/Vesti) usa "erp", B2C (Nuvemshop) usa "ecommerce" (nos dois casos é o total do cliente).
   const recompraTipo = selectedDashboardMode === "B2C" ? "ecommerce" : "erp";
   const recompraSource = recompraTipo === "erp" ? "Recompra · ERP pago" : "Recompra · Ecommerce pago";
+  const acquisitionSource = recompraTipo === "erp" ? "Aquisição · ERP pago" : "Aquisição · Ecommerce pago";
   const recompraQuery = {
     ...period,
     status: "pago",
@@ -305,9 +308,10 @@ export function useOrganizationData(
     dashboard.isLoading,
     dashboard.data?.newBuyersOverTime.map((p) => p.value),
   );
-  put("acquisitionRevenue", "Faturamento de Aquisição", null, "currency", "");
-  put("acquisitionOrders", "Pedidos de Aquisição", null, "number", "");
-  put("acquisitionTicket", "Ticket de Aquisição", null, "currency", "");
+  // Aquisição = pedidos pagos do período de clientes sem compra anterior (mesma base e filtros da Retenção).
+  put("acquisitionRevenue", "Faturamento de Aquisição", r?.aquisicao?.faturamento, "currency", acquisitionSource, recompra.isLoading);
+  put("acquisitionOrders", "Pedidos de Aquisição", r?.aquisicao?.vendas, "number", acquisitionSource, recompra.isLoading);
+  put("acquisitionTicket", "Ticket de Aquisição", r?.aquisicao?.ticketMedio, "currency", acquisitionSource, recompra.isLoading);
   put(
     "cac",
     "CAC",
@@ -474,6 +478,7 @@ export function useOrganizationData(
     spend: pm?.totalSpend, totalSpend: pm?.totalSpend, metaSpend: previousMeta?.spend, googleSpend: previousGoogle?.spend,
     roas: pm?.roas, requestedRoas: selectedDashboardMode === "B2C" ? null : pm?.roas, paidRoas: selectedDashboardMode === "B2C" ? pm?.roas : null,
     cac: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cac : null, ctr: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.ctr : null, cpc: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cpc : null,
+    acquisitionRevenue: pr?.aquisicao?.faturamento, acquisitionOrders: pr?.aquisicao?.vendas, acquisitionTicket: pr?.aquisicao?.ticketMedio,
     repurchasers: pr?.recompra.clientes, retentionRevenue: pr?.recompra.faturamento, retentionOrders: pr?.recompra.vendas, retentionTicket: pr?.recompra.ticketMedio,
     registrations: pc?.totalRegistrations, approved: pc?.approvedRegistrations, approvalRate: pc?.approvalRatePct, firstPurchaseAverage: pc?.avgTimeToFirstPurchaseDays,
     pieces: previousOrders.data?.kpis.fulfilledQuantity, impressions: previousMeta?.impressions, clicks: previousMeta?.clicks,
@@ -481,6 +486,8 @@ export function useOrganizationData(
     approvedConverted: previousFunnel.data?.activation?.postApproval.paymentConfirmed, costRegistration: pm?.cpl,
   };
   for (const metric of Object.values(measures)) metric.previousValue = previousValues[metric.key];
+  // Custos: subir é ruim (o cartão pinta de verde/vermelho conforme isso).
+  for (const key of ["cac", "costRegistration", "costApproved", "cpc", "cpm", "metaCpa"]) if (measures[key]) measures[key].lowerIsBetter = true;
   function pick(...keys: string[]) {
     return keys.map((key) => measures[key]);
   }

@@ -87,6 +87,7 @@ import { bigquery, vestiTable } from "../lib/bigquery";
 import { db, ordersTable, sellersTable, customersTable } from "@workspace/db";
 import { resolveErpCustomerIdentities, type ErpContactInfo } from "./erp-identity";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, standardTouchpointWindow, TOUCHPOINT_LOOKBACK_DAYS, type TouchpointCandidate } from "./paid-touchpoints";
+import { buildAcquisitionBlock, type RecompraBlockTotals } from "./recompra-acquisition";
 import { fetchVestiAttributionSets, isOnlyAttributed, type VestiAttributionSets } from "./vesti-attribution";
 
 const RECORRENTE_THRESHOLD_DAYS = 90;
@@ -847,7 +848,7 @@ export async function classifyRecompra(params: {
   dateFrom: string;
   dateTo: string; // último dia incluído
   filters: RecompraFilters;
-}): Promise<{ classifications: CustomerClassification[]; unmatchedErpCount: number; attributionUnavailable: boolean; touchpointFailures: number }> {
+}): Promise<{ classifications: CustomerClassification[]; unmatchedErpCount: number; attributionUnavailable: boolean; touchpointFailures: number; acquisition: RecompraBlockTotals }> {
   const dateToExclusive = new Date(`${params.dateTo}T00:00:00.000Z`);
   dateToExclusive.setUTCDate(dateToExclusive.getUTCDate() + 1);
   const isAnuncios = params.filters.tipo.startsWith("anuncios");
@@ -906,12 +907,17 @@ export async function classifyRecompra(params: {
   });
 
   const classifications: CustomerClassification[] = [];
+  const acquisitionEvents: PositiveEvent[][] = []; // clientes cuja 1ª compra positiva é neste recorte (Aquisição)
   for (const [customerId, identity] of candidates) {
     const events = eventsByCustomer.get(customerId) ?? [];
     if (events.length === 0) continue;
     const firstEvent = events[0]!; // já ordenado por requestedAt asc
     const priorPositives = (history.get(customerId) ?? []).filter((e) => e.requestedAt.getTime() < firstEvent.requestedAt.getTime());
-    if (priorPositives.length === 0) continue; // sem compra positiva anterior: não é recompra
+    if (priorPositives.length === 0) {
+      // sem compra positiva anterior: não é recompra -- é Aquisição (primeira compra no período)
+      acquisitionEvents.push(events);
+      continue;
+    }
 
     const lastBefore = priorPositives.reduce((latest, e) => (e.requestedAt.getTime() > latest.requestedAt.getTime() ? e : latest));
     const intervalDays = Math.round((firstEvent.requestedAt.getTime() - lastBefore.requestedAt.getTime()) / 86_400_000);
@@ -930,7 +936,7 @@ export async function classifyRecompra(params: {
     });
   }
 
-  return { classifications, unmatchedErpCount, attributionUnavailable, touchpointFailures };
+  return { classifications, unmatchedErpCount, attributionUnavailable, touchpointFailures, acquisition: buildAcquisitionBlock(acquisitionEvents) };
 }
 
 export type RecompraIntervalBucket = { faixa: string; clientes: number; grupo: RecompraSegment };
@@ -966,6 +972,7 @@ export type RecompraBlocks = {
   unmatchedErpCount: number;
   attributionUnavailable: boolean; // true quando Tipo=Anúncios foi pedido mas o cliente não tem chave UpZero
   touchpointFailures: number; // clientes cuja busca de touchpoint falhou (ficaram sem atribuição neste cálculo)
+  aquisicao: RecompraBlockTotals; // pedidos de clientes na 1ª compra (ver buildAcquisitionBlock)
 };
 
 function blockFor(classifications: CustomerClassification[]): { faturamento: number; vendas: number; clientes: number; ticketMedio: number | null } {
@@ -980,7 +987,7 @@ function blockFor(classifications: CustomerClassification[]): { faturamento: num
   return { faturamento, vendas, clientes: classifications.length, ticketMedio: vendas > 0 ? faturamento / vendas : null };
 }
 
-export function aggregateBlocks(classifications: CustomerClassification[], unmatchedErpCount: number, attributionUnavailable = false, touchpointFailures = 0): RecompraBlocks {
+export function aggregateBlocks(classifications: CustomerClassification[], unmatchedErpCount: number, attributionUnavailable = false, touchpointFailures = 0, acquisition: RecompraBlockTotals = { faturamento: 0, vendas: 0, clientes: 0, ticketMedio: null }): RecompraBlocks {
   const recorrentes = classifications.filter((c) => c.segment === "recorrente");
   const reativados = classifications.filter((c) => c.segment === "reativado");
   const intervals = classifications.map((c) => c.intervalDays);
@@ -1000,6 +1007,7 @@ export function aggregateBlocks(classifications: CustomerClassification[], unmat
     unmatchedErpCount,
     attributionUnavailable,
     touchpointFailures,
+    aquisicao: acquisition,
   };
 }
 

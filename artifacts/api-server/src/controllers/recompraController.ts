@@ -113,8 +113,8 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
   // duplicada a `classifyRecompra` que /dashboard fazia isolada. `blocks`
   // (via `aggregateBlocks`) já inclui `intervalBuckets` (gráfico "Intervalo
   // entre compras", segue P1/P2 igual ao resto dos blocos).
-  const { classifications, unmatchedErpCount, attributionUnavailable, touchpointFailures } = await fetchClassificationsCached(ctx, period.dateFromOnly, period.dateToOnly, filters);
-  const blocks = aggregateBlocks(classifications, unmatchedErpCount, attributionUnavailable, touchpointFailures);
+  const { classifications, unmatchedErpCount, attributionUnavailable, touchpointFailures, acquisition } = await fetchClassificationsCached(ctx, period.dateFromOnly, period.dateToOnly, filters);
+  const blocks = aggregateBlocks(classifications, unmatchedErpCount, attributionUnavailable, touchpointFailures, acquisition);
 
   // Comparação P1xP2 (opcional): P2 é um recorte independente escolhido
   // pelo usuário no front (ComparisonPeriodPicker), não necessariamente o
@@ -128,7 +128,7 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
 
   const blocksP2 = hasCompare
     ? await fetchClassificationsCached(ctx, compareDateFromRaw as string, compareDateToRaw as string, filters).then(
-        (r) => aggregateBlocks(r.classifications, r.unmatchedErpCount, r.attributionUnavailable, r.touchpointFailures),
+        (r) => aggregateBlocks(r.classifications, r.unmatchedErpCount, r.attributionUnavailable, r.touchpointFailures, r.acquisition),
       )
     : null;
 

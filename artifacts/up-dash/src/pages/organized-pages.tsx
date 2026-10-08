@@ -31,8 +31,8 @@ import { ErpGeographyView } from "@/pages/erp";
 import type { ArchitecturePage } from "@/lib/dashboard-architecture";
 
 // Cada página pede só as fontes que usa (ver useOrganizationData).
-const ACQUISITION_SOURCES = ["dashboard", "marketing", "performance", "customers", "funnel"] as const;
-const ACQUISITION_PREVIOUS = ["performance", "funnel"] as const;
+const ACQUISITION_SOURCES = ["dashboard", "marketing", "performance", "customers", "funnel", "recompra"] as const;
+const ACQUISITION_PREVIOUS = ["performance", "funnel", "recompra"] as const;
 const FUNNEL_SOURCES = ["dashboard", "marketing", "customers", "funnel", "performance"] as const;
 const FUNNEL_PREVIOUS = ["dashboard", "marketing", "funnel", "performance"] as const;
 const ADS_SOURCES = ["marketing", "performance"] as const;

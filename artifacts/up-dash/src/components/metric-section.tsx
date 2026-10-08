@@ -15,6 +15,7 @@ export type OrganizedMetric = {
   format?: "currency" | "number" | "percent" | "ratio" | "days";
   source?: string;
   previousValue?: number | null;
+  lowerIsBetter?: boolean; // custos: queda é boa
   info?: string;
   series?: number[];
   loading?: boolean;
@@ -75,6 +76,7 @@ export function ExistingMetricCard({ metric }: { metric: OrganizedMetric }) {
       format={format}
       comparisonValue={metric.value ?? null}
       previousValue={metric.previousValue}
+      lowerIsBetter={metric.lowerIsBetter}
       source={metric.source}
       info={metric.info ?? (present ? undefined : tx("Esta métrica não está disponível na fonte conectada."))}
       change={null}

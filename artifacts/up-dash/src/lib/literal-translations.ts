@@ -1055,6 +1055,9 @@ const entries: Array<[string, string, string]> = [
   ["Recompra · ERP pago", "Repurchase · paid ERP", "재구매 · 결제된 ERP"],
   // ---- aviso de carregamento
   ["Carregando informações", "Loading information", "정보를 불러오는 중"],
+  // ---- aquisicao (fonte)
+  ["Aquisição · ERP pago", "Acquisition · paid ERP", "신규 확보 · 결제된 ERP"],
+  ["Aquisição · Ecommerce pago", "Acquisition · paid Ecommerce", "신규 확보 · 결제된 이커머스"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
