@@ -249,7 +249,8 @@ export default function StockIntelligencePage() {
     query: queryOpts({ enabled, placeholderData: (prev) => prev }),
   });
 
-  const insightParams = { clientId, dateFrom, dateTo, screen: "stock" as const };
+  const { language: insightLanguage } = useI18n();
+  const insightParams = { clientId, dateFrom, dateTo, screen: "stock" as const, language: insightLanguage };
   const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
     query: queryOpts({ enabled, staleTime: 3_600_000, placeholderData: (prev) => prev }),
   });

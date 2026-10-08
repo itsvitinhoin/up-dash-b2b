@@ -203,7 +203,9 @@ export default function CustomersPage({organization}: {organization?: "registrat
     { query: queryOpts({ enabled, placeholderData: (prev) => prev }) },
   );
 
+  const { language: insightLanguage } = useI18n();
   const insightParams = {
+    language: insightLanguage,
     clientId,
     dateFrom: selectedDateFrom,
     dateTo: selectedDateTo,

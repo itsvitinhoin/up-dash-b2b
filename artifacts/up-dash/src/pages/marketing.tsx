@@ -540,7 +540,8 @@ export default function MarketingPage() {
   const dateTo = dateParams.dateTo;
   useEffect(() => { setCreativesPage(1); }, [clientId, dateFrom, dateTo]);
 
-  const insightParams = { clientId, ...dateParams, screen: "marketing" as const };
+  const { language: insightLanguage } = useI18n();
+  const insightParams = { clientId, ...dateParams, screen: "marketing" as const, language: insightLanguage };
 
   const { data, isLoading, isError, refetch } = useGetMarketing(
     {

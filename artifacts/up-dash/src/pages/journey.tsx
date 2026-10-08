@@ -93,7 +93,9 @@ export default function JourneyPage() {
     "metric-compradores-na-primeira-sessão": { field: "pctBuyersFromFirstSession", format: v => `${v.toFixed(1)}%` }
   });
 
+  const { language: insightLanguage } = useI18n();
   const insightParams = {
+    language: insightLanguage,
     clientId,
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
     dateTo: format(dateRange.to, "yyyy-MM-dd"),

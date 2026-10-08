@@ -210,7 +210,8 @@ export default function ProductsPage() {
   const stockSalesValue = (summary as typeof summary & { availableStockSalesValue?: number })?.availableStockSalesValue;
 
   // AI Insight
-  const insightParams = { ...periodParams, screen: "products" as const };
+  const { language: insightLanguage } = useI18n();
+  const insightParams = { ...periodParams, screen: "products" as const, language: insightLanguage };
   const { data: insight, isLoading: insightLoading, isFetching: insightFetching } = useGetInsight(
     insightParams,
     { query: queryOpts({ enabled: queryEnabled }) },

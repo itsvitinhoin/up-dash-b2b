@@ -1649,7 +1649,9 @@ export default function DashboardPage({ organization = "executive" }: { organiza
   );
 
   // ── AI insight (real LLM) ──────────────────────────────────────────────
+  const { language: insightLanguage } = useI18n();
   const insightParams = {
+    language: insightLanguage,
     clientId,
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
     dateTo: format(dateRange.to, "yyyy-MM-dd"),

@@ -63,7 +63,20 @@ import {
   GetUtmResponse,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
-import { getOpenAIClient, isAIConfigured } from "../lib/openai";
+import { getOpenAIClient, getInsightAI, isAIConfigured } from "../lib/openai";
+import {
+  customersInsight,
+  dashboardInsight,
+  journeyInsight,
+  marketingInsight,
+  normalizeInsightLanguage,
+  productsInsight,
+  rfmInsight,
+  sellersInsight,
+  stockInsight,
+  utmInsight,
+  type InsightLanguage,
+} from "../services/insight-text";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
 import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
 import * as vestiDashboardController from "../controllers/vestiDashboardController";
@@ -7134,29 +7147,6 @@ interface InsightCacheEntry {
 const insightCache = new Map<string, InsightCacheEntry>();
 const INSIGHT_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-function buildHeuristic(
-  kpis: { revenue: number; orders: number; conversionRate: number; avgTicket: number; approvalRate: number },
-  topCategory: { category: string; revenue: number } | null,
-  topSeller: { name: string; revenue: number } | null,
-  trend: number,
-): { headline: string; body: string; bullets: string[] } {
-  const trendPct = (trend * 100).toFixed(1);
-  const headline =
-    trend > 0.05
-      ? `Revenue trending up ${trendPct}% versus the prior window.`
-      : trend < -0.05
-        ? `Revenue dipping ${Math.abs(parseFloat(trendPct)).toFixed(1)}% versus the prior window.`
-        : `Revenue holding steady at ${kpis.revenue.toFixed(0)}.`;
-
-  const body = `Across the period the catalog generated ${kpis.orders} orders at an average ticket of ${kpis.avgTicket.toFixed(2)}, with a ${kpis.conversionRate.toFixed(1)}% visit-to-purchase conversion rate.`;
-
-  const bullets: string[] = [];
-  if (topCategory) bullets.push(`Top category: ${topCategory.category} (${topCategory.revenue.toFixed(0)}).`);
-  if (topSeller) bullets.push(`Top seller: ${topSeller.name} (${topSeller.revenue.toFixed(0)}).`);
-  if (kpis.approvalRate > 0) bullets.push(`Lead approval rate ${kpis.approvalRate.toFixed(1)}%.`);
-  return { headline, body, bullets };
-}
-
 async function buildInsightContext(
   clientId: string,
   from: Date,
@@ -7314,29 +7304,15 @@ async function buildMarketingInsightContext(clientId: string, from: Date, to: Da
   return { kpis, prevKpis, roasTrend, topPlatform, brand: brand?.name ?? "the brand" };
 }
 
-function buildMarketingHeuristic(ctx: Awaited<ReturnType<typeof buildMarketingInsightContext>>) {
-  const { kpis, roasTrend, topPlatform } = ctx;
-  const roasPct = (roasTrend * 100).toFixed(1);
-  const trending = roasTrend >= 0 ? "up" : "down";
-  return {
-    headline: `ROAS is ${trending} ${Math.abs(Number(roasPct))}% vs last period at ${kpis.roas.toFixed(2)}×`,
-    body: `You spent R$${kpis.totalSpend.toFixed(0)} on paid channels and generated R$${kpis.attributedRevenue.toFixed(0)} in attributed revenue. ${topPlatform} is your top-performing platform.`,
-    bullets: [
-      `${kpis.approvedLeads} approved leads at R$${kpis.cpa.toFixed(0)} CPA`,
-      `Cost per lead is R$${kpis.cpl.toFixed(0)} — ${kpis.approvalRate.toFixed(0)}% approval rate`,
-      roasTrend >= 0 ? "Paid channel ROAS is improving — consider scaling top creatives" : "ROAS is declining — review underperforming creatives and adjust bids",
-    ],
-  };
-}
-
 async function generateInsight(
   clientId: string,
   from: Date,
   to: Date,
   forceRefresh: boolean,
   screen: string = "dashboard",
+  language: InsightLanguage = "en",
 ): Promise<{ headline: string; body: string; bullets: string[]; generatedAt: string; cached: boolean; source: "ai" | "heuristic" }> {
-  const cacheKey = `${clientId}|${from.toISOString().slice(0, 10)}|${to.toISOString().slice(0, 10)}|${screen}`;
+  const cacheKey = `${clientId}|${from.toISOString().slice(0, 10)}|${to.toISOString().slice(0, 10)}|${screen}|${language}`;
   if (!forceRefresh) {
     const cached = insightCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
@@ -7347,12 +7323,12 @@ async function generateInsight(
   // Use marketing-specific context when requested
   if (screen === "marketing") {
     const mktCtx = await buildMarketingInsightContext(clientId, from, to);
-    const heuristic = buildMarketingHeuristic(mktCtx);
+    const heuristic = marketingInsight(language, mktCtx.kpis, mktCtx.roasTrend, mktCtx.topPlatform);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = {
       ...heuristic,
       source: "heuristic",
     };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const { kpis, roasTrend, topPlatform, brand } = mktCtx;
@@ -7431,21 +7407,13 @@ No markdown, no preamble.`;
       const vestiHighConv = vestiLevels.filter((l) => l === "High Conversion").length;
       const vestiTotal = vestiLevels.length;
       const vestiTop = vestiProducts[0];
-      const vestiHeuristic = {
-        headline: vestiTop
-          ? `Top product "${vestiTop.name}" has generated ${vestiTop.totalRevenue.toFixed(0)} in lifetime revenue`
-          : "No product sales recorded yet",
-        body: `${vestiHighConv} of ${vestiTotal} products are High Conversion (65%+ sell-through). ${vestiAtRisk > 0 ? `${vestiAtRisk} product${vestiAtRisk > 1 ? "s" : ""} are At Risk — never sold or very low turnover.` : vestiTotal > 0 ? "No products are At Risk." : "No catalog data available for this period."}`,
-        bullets: [
-          `High Conversion SKUs: ${vestiHighConv} of ${vestiTotal} — consider re-ordering your bestsellers`,
-          vestiAtRisk > 0
-            ? `${vestiAtRisk} At Risk SKU${vestiAtRisk > 1 ? "s" : ""} — these have never sold or have very poor turnover; consider markdown or discontinuation`
-            : vestiTotal > 0
-              ? "All SKUs have recorded at least one sale — good catalog health"
-              : "Add sales data to unlock product performance insights",
-          vestiTop ? `"${vestiTop.name}" leads with ${vestiTop.totalSold} units sold — study what drives its performance` : "Add sales data to unlock product performance insights",
-        ],
-      };
+      const vestiHeuristic = productsInsight(language, {
+        top: vestiTop ? { name: vestiTop.name, totalRevenue: vestiTop.totalRevenue, totalSold: vestiTop.totalSold } : null,
+        highConv: vestiHighConv,
+        atRisk: vestiAtRisk,
+        total: vestiTotal,
+        vesti: true,
+      });
       const vestiGeneratedAt = new Date().toISOString();
       insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt } });
       return { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt, cached: false };
@@ -7487,20 +7455,16 @@ No markdown, no preamble.`;
     const highConvCount = levels.filter((l) => l === "High Conversion").length;
     const totalProducts = levels.length;
 
-    const heuristic = {
-      headline: topProducts[0]
-        ? `Top product "${topProducts[0].name}" has generated ${topProducts[0].totalRevenue.toFixed(0)} in lifetime revenue`
-        : "No product sales recorded yet",
-      body: `${highConvCount} of ${totalProducts} products are High Conversion (65%+ sell-through). ${atRiskCount > 0 ? `${atRiskCount} product${atRiskCount > 1 ? "s" : ""} are At Risk — never sold or very low turnover.` : "No products are At Risk."}`,
-      bullets: [
-        `High Conversion SKUs: ${highConvCount} of ${totalProducts} — consider re-ordering your bestsellers`,
-        atRiskCount > 0 ? `${atRiskCount} At Risk SKU${atRiskCount > 1 ? "s" : ""} — these have never sold or have very poor turnover; consider markdown or discontinuation` : "All SKUs have recorded at least one sale — good catalog health",
-        topProducts[0] ? `"${topProducts[0].name}" leads with ${topProducts[0].totalSold} units sold — study what drives its performance` : "Add sales data to unlock product performance insights",
-      ],
-    };
+    const heuristic = productsInsight(language, {
+      top: topProducts[0] ? { name: topProducts[0].name, totalRevenue: topProducts[0].totalRevenue, totalSold: topProducts[0].totalSold } : null,
+      highConv: highConvCount,
+      atRisk: atRiskCount,
+      total: totalProducts,
+      vesti: false,
+    });
 
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7536,26 +7500,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
   // Customers-specific insight
   if (screen === "customers") {
     const cKpis = await computeSummaryKpis(clientId, from, to);
-    const hasAttribution = cKpis.approvalRatePct < 40;
-    const heuristic = {
-      headline: cKpis.totalRegistrations > 0
-        ? `${cKpis.approvedRegistrations} of ${cKpis.totalRegistrations} registrations approved (${cKpis.approvalRatePct.toFixed(1)}%)`
-        : "No registrations in this period",
-      body: cKpis.totalBuyers > 0
-        ? `${cKpis.totalBuyers} customers made purchases, while ${cKpis.customersWithoutPurchase} registered but never bought.${cKpis.avgTimeToFirstPurchaseDays != null ? ` Average time to first purchase: ${cKpis.avgTimeToFirstPurchaseDays}d.` : ""}`
-        : "No purchases recorded in this period.",
-      bullets: [
-        `Approval rate: ${cKpis.approvalRatePct.toFixed(1)}% — ${hasAttribution ? "below 40%, consider improving your approval process" : "healthy conversion from registration to approval"}`,
-        cKpis.avgTimeToFirstPurchaseDays != null
-          ? `Avg ${cKpis.avgTimeToFirstPurchaseDays}d to first purchase — optimize post-approval activation flows to reduce this`
-          : "Track time to first purchase by enabling first-purchase attribution",
-        cKpis.customersWithoutPurchase > cKpis.totalBuyers
-          ? `${cKpis.customersWithoutPurchase} registered customers never purchased — consider targeted re-engagement campaigns`
-          : "Majority of registered customers have made at least one purchase — strong activation rate",
-      ],
-    };
+    const heuristic = customersInsight(language, cKpis);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7604,23 +7551,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
 
     const totalRevenue = topSellers.reduce((s, r) => s + r.totalRevenue, 0);
     const topRevShare = totalRevenue > 0 && topSellers[0] ? (topSellers[0].totalRevenue / totalRevenue) * 100 : 0;
-    const heuristic = {
-      headline: topSellers[0]
-        ? `${topSellers[0].name} leads with ${topSellers[0].totalOrders} orders and ${topSellers[0].totalRevenue.toFixed(0)} in lifetime revenue`
-        : "No seller activity recorded yet",
-      body: topSellers.length > 0
-        ? `Top seller ${topSellers[0]?.name} accounts for ${topRevShare.toFixed(1)}% of total seller revenue. ${topSellers.length > 1 ? `The next ${topSellers.length - 1} sellers share the remaining ${(100 - topRevShare).toFixed(1)}%.` : ""}`
-        : "Add seller attribution to unlock performance insights.",
-      bullets: [
-        topSellers[0] ? `${topSellers[0].name} — ${topSellers[0].totalOrders} orders · ${topRevShare.toFixed(1)}% revenue share` : "No seller data available",
-        topSellers[1] ? `${topSellers[1].name} — ${topSellers[1].totalOrders} orders · ${totalRevenue > 0 ? ((topSellers[1].totalRevenue / totalRevenue) * 100).toFixed(1) : 0}% revenue share` : "Only one seller on record",
-        topSellers.length > 2
-          ? `${topSellers.length} sellers active — compare their avg ticket to identify coaching opportunities`
-          : "Add more sellers to enable benchmarking",
-      ],
-    };
+    const heuristic = sellersInsight(language, topSellers, totalRevenue, topRevShare);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7670,19 +7603,7 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
       const vSellThrough = vestiStock.kpis.sellThroughRate.toFixed(1);
       const vStockoutNames = vestiStock.stockoutRisk.slice(0, 3).map((r) => r.name);
       const vTotalSold = vestiStock.skus.reduce((s, r) => s + r.unitsSold, 0);
-      const vestiHeuristic = {
-        headline: vStockout > 0
-          ? `${vStockout} SKU${vStockout > 1 ? "s are" : " is"} at critical stockout risk this week`
-          : vOverstock > 0
-            ? `${vOverstock} SKU${vOverstock > 1 ? "s have" : " has"} excess inventory — review pricing or promotions`
-            : `Inventory is healthy with a ${vSellThrough}% sell-through rate`,
-        body: `In the selected period, ${vTotalSold} units were sold across ${vestiStock.total} active SKUs. Sell-through rate stands at ${vSellThrough}%. ${vStockout > 0 ? `${vStockout} product${vStockout > 1 ? "s need" : " needs"} urgent replenishment.` : vOverstock > 0 ? `${vOverstock} product${vOverstock > 1 ? "s are" : " is"} overstocked.` : "No critical risk items detected."}`,
-        bullets: [
-          vStockoutNames.length > 0 ? `Stockout risk: ${vStockoutNames.join(", ")}` : "No stockout-risk products in this period",
-          vOverstock > 0 ? `${vOverstock} SKU${vOverstock > 1 ? "s" : ""} with >90 days coverage — consider markdowns` : "No overstock issues detected",
-          `Current sell-through rate: ${vSellThrough}% — aim for 60–80% for fashion`,
-        ],
-      };
+      const vestiHeuristic = stockInsight(language, { stockout: vStockout, overstock: vOverstock, sellThrough: vSellThrough, names: vStockoutNames, totalSold: vTotalSold, totalSkus: vestiStock.total });
       const vestiGeneratedAt = new Date().toISOString();
       insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt } });
       return { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt, cached: false };
@@ -7744,21 +7665,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
     }
 
     const sellThrough = totalSold + totalUnits > 0 ? ((totalSold / (totalSold + totalUnits)) * 100).toFixed(1) : "0";
-    const heuristic = {
-      headline: stockoutCount > 0
-        ? `${stockoutCount} SKU${stockoutCount > 1 ? "s are" : " is"} at critical stockout risk this week`
-        : overstockCount > 0
-          ? `${overstockCount} SKU${overstockCount > 1 ? "s have" : " has"} excess inventory — review pricing or promotions`
-          : `Inventory is healthy with a ${sellThrough}% sell-through rate`,
-      body: `In the selected period, ${totalSold} units were sold across ${prods.length} active SKUs. Sell-through rate stands at ${sellThrough}%. ${stockoutCount > 0 ? `${stockoutCount} product${stockoutCount > 1 ? "s need" : " needs"} urgent replenishment.` : overstockCount > 0 ? `${overstockCount} product${overstockCount > 1 ? "s are" : " is"} overstocked.` : "No critical risk items detected."}`,
-      bullets: [
-        stockoutNames.length > 0 ? `Stockout risk: ${stockoutNames.join(", ")}` : `No stockout-risk products in this period`,
-        overstockCount > 0 ? `${overstockCount} SKU${overstockCount > 1 ? "s" : ""} with >90 days coverage — consider markdowns` : "No overstock issues detected",
-        `Current sell-through rate: ${sellThrough}% — aim for 60–80% for fashion`,
-      ],
-    };
+    const heuristic = stockInsight(language, { stockout: stockoutCount, overstock: overstockCount, sellThrough, names: stockoutNames, totalSold, totalSkus: prods.length });
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7798,21 +7707,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
   // Journey-specific insight
   if (screen === "journey") {
     const jCtx = await buildJourneyInsightContext(clientId, from, to);
-    const heuristic = {
-      headline: jCtx.avgEventsBeforePurchase > 0
-        ? `Buyers average ${jCtx.avgEventsBeforePurchase.toFixed(1)} events before purchasing`
-        : "No purchase journey data available for this period",
-      body: `Customers who converted touched an average of ${jCtx.avgEventsBeforePurchase.toFixed(1)} events before completing a purchase.${jCtx.avgTimeToFirstPurchaseDays > 0 ? ` Time from registration to first purchase averages ${jCtx.avgTimeToFirstPurchaseDays.toFixed(1)} days.` : ""}`,
-      bullets: [
-        `Avg events before purchase: ${jCtx.avgEventsBeforePurchase.toFixed(1)} — consider shortening the path to reduce drop-off`,
-        jCtx.avgTimeToFirstPurchaseDays > 0
-          ? `Avg time to first purchase: ${jCtx.avgTimeToFirstPurchaseDays.toFixed(1)} days — post-registration nurture can reduce this`
-          : "Enable first-purchase attribution to track activation time",
-        "Compare buyers vs non-buyers to identify the key events that differentiate converters",
-      ],
-    };
+    const heuristic = journeyInsight(language, jCtx);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const prompt = `You are a senior UX/CRO analyst writing a weekly journey analytics insight for "${jCtx.brand}". Period: ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}.
@@ -7851,19 +7748,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
     const champions = segMap["Champions"] ?? { count: 0, revenue: 0 };
     const atRisk = segMap["At Risk"] ?? { count: 0, revenue: 0 };
     const lost = segMap["Lost"] ?? { count: 0, revenue: 0 };
-    const heuristic = {
-      headline: champions.count > 0
-        ? `Champions represent ${((champions.count / Math.max(1, total)) * 100).toFixed(1)}% of your customer base`
-        : "No RFM segments computed yet for this brand",
-      body: `Your customer base is segmented into ${total} customers. Champions (${champions.count}) drive the highest lifetime value. ${atRisk.count > 0 ? `${atRisk.count} customers are At Risk — re-engagement can recover their revenue.` : ""}${lost.count > 0 ? ` ${lost.count} customers are Lost — consider win-back campaigns.` : ""}`,
-      bullets: [
-        `Champions: ${champions.count} customers, R$${champions.revenue.toFixed(0)} total revenue`,
-        atRisk.count > 0 ? `At Risk: ${atRisk.count} customers — launch re-engagement campaigns` : "No At Risk customers right now — keep up retention efforts",
-        lost.count > 0 ? `Lost: ${lost.count} customers — consider win-back offers` : "No Lost customers detected",
-      ],
-    };
+    const heuristic = rfmInsight(language, { champions, atRisk, lost, total });
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const segSummary = Object.entries(segMap).map(([s, v]) => `${s}: ${v.count} customers, R$${v.revenue.toFixed(0)}`).join(" | ");
@@ -7923,21 +7810,15 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
         })()
       : await buildUtmAnalytics(clientId, from, to, "source");
     const topRow = utmData.rows[0];
-    const heuristic = {
-      headline: topRow
-        ? `${topRow.key} drives ${topRow.revenue > 0 ? `R$${topRow.revenue.toFixed(0)} in revenue` : `${topRow.registrations} registrations`} this period`
-        : "No UTM attribution data available for this period",
-      body: `UTM attribution for this period shows ${utmData.kpis.totalRegistrations} registrations across ${utmData.rows.length} acquisition sources. ${topRow ? `Top source "${topRow.key}" converts ${topRow.conversionPct.toFixed(1)}% of registrations into buyers.` : ""} Overall approval rate: ${utmData.kpis.approvalPct.toFixed(1)}%.`,
-      bullets: [
-        topRow
-          ? `Top source: ${topRow.key} — ${topRow.buyers} buyers, R$${topRow.revenue.toFixed(0)} revenue${topRow.roas != null ? `, ROAS ${topRow.roas.toFixed(2)}x` : ""}`
-          : "No source data available for this period",
-        `Conversion rate: ${utmData.kpis.conversionPct.toFixed(1)}% of registrations become buyers — compare channels to find your highest-quality traffic`,
-        `Approval rate: ${utmData.kpis.approvalPct.toFixed(1)}% overall — low approval on a high-spend source signals lead quality issues`,
-      ],
-    };
+    const heuristic = utmInsight(language, {
+      topRow: topRow ? { key: topRow.key, revenue: topRow.revenue, registrations: topRow.registrations, conversionPct: topRow.conversionPct, buyers: topRow.buyers, roas: topRow.roas ?? null } : null,
+      totalRegistrations: utmData.kpis.totalRegistrations,
+      sources: utmData.rows.length,
+      approvalPct: utmData.kpis.approvalPct,
+      conversionPct: utmData.kpis.conversionPct,
+    });
     let utmPayload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const aiUtm = getOpenAIClient();
+    const aiUtm = getInsightAI(language);
     if (aiUtm && isAIConfigured() && topRow) {
       try {
         const sourceSummary = utmData.rows.slice(0, 6)
@@ -7970,14 +7851,14 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
   }
 
   const ctx = await buildInsightContext(clientId, from, to);
-  const heuristic = buildHeuristic(ctx.kpis, ctx.topCategory, ctx.topSeller, ctx.trend);
+  const heuristic = dashboardInsight(language, ctx.kpis, ctx.topCategory, ctx.topSeller, ctx.trend);
 
   let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = {
     ...heuristic,
     source: "heuristic",
   };
 
-  const ai = getOpenAIClient();
+  const ai = getInsightAI(language);
   if (ai && isAIConfigured()) {
     try {
       const userPrompt = `You are a senior fashion-retail analyst writing one weekly insight card for the brand "${ctx.brand}". Speak directly to the brand owner. Use the following metrics for the period ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}:
@@ -9859,7 +9740,7 @@ router.get("/analytics/insight", async (req, res): Promise<void> => {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const screen = (parsed.data as Record<string, unknown>).screen as string | undefined ?? "dashboard";
 
-  const insight = await generateInsight(clientId, from, to, false, screen);
+  const insight = await generateInsight(clientId, from, to, false, screen, normalizeInsightLanguage(req.query.language));
   res.json(GetInsightResponse.parse(insight));
 });
 
@@ -9876,7 +9757,7 @@ router.post("/analytics/insight", async (req, res): Promise<void> => {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const screen = (parsed.data as Record<string, unknown>).screen as string | undefined ?? "dashboard";
 
-  const insight = await generateInsight(clientId, from, to, true, screen);
+  const insight = await generateInsight(clientId, from, to, true, screen, normalizeInsightLanguage(req.query.language));
   res.json(GetInsightResponse.parse(insight));
 });
 

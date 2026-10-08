@@ -198,7 +198,8 @@ export default function UtmPage() {
     "metric-roas": { field: "totalRoas", format: v => `${v.toFixed(2)}x` }
   });
 
-  const insightParams = { clientId, dateFrom, dateTo, screen: "utm" as const };
+  const { language: insightLanguage } = useI18n();
+  const insightParams = { clientId, dateFrom, dateTo, screen: "utm" as const, language: insightLanguage };
   const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
     query: queryOpts({ enabled }),
   });

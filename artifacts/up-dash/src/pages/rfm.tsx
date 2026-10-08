@@ -210,7 +210,9 @@ export default function RfmPage() {
   );
 
   const previous = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetRfmUrl({ clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), segment: segmentFilter && segmentFilter !== "all" ? segmentFilter : undefined, page, limit, sortBy, sortDir, orderStatus: orderStatusFilter, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, state: filters.state || undefined, city: filters.city || undefined, product: filters.product || undefined }), enabled);
+  const { language: insightLanguage } = useI18n();
   const insightParams = {
+    language: insightLanguage,
     clientId,
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
     dateTo: format(dateRange.to, "yyyy-MM-dd"),
