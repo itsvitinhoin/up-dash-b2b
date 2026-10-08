@@ -515,40 +515,7 @@ async function buildTopCreatives(accessToken: string, ads: MetaAdMetric[]): Prom
   };
 }
 
-// Achado 08/10/2026 (MX Fashion, comparando telas): o Marketing mostrou Investimento R$ 228 em vez de
-// R$ 2.904. Quando a Meta devolve erro (limite de chamadas por conta de anúncios, comum quando várias
-// telas pedem a mesma conta ao mesmo tempo -- Marketing, Clientes atribuídos, Performance), quem chama
-// engole o erro e cai num valor parcial dos criativos, sem avisar. Duas defesas aqui, sem mudar nenhum
-// cálculo: (1) a mesma conta/período pedida por várias telas vira UMA chamada (e fica 90 s guardada);
-// (2) uma nova tentativa depois de uma pausa curta antes de desistir. Falha nunca fica guardada.
-const META_MARKETING_TTL_MS = 90_000;
-const META_RETRY_DELAY_MS = 1_500;
-const metaMarketingCache = new Map<string, { promise: Promise<MetaMarketingData>; expiresAt: number }>();
-
-export function fetchMetaMarketingData(params: {
-  accessToken: string;
-  adAccountId: string;
-  since: string;
-  until: string;
-}): Promise<MetaMarketingData> {
-  const key = `${normalizeMetaAdAccountId(params.adAccountId)}:${params.since}:${params.until}`;
-  const hit = metaMarketingCache.get(key);
-  if (hit && hit.expiresAt > Date.now()) return hit.promise;
-  const promise = fetchMetaMarketingDataOnce(params)
-    .catch(async (firstError) => {
-      console.warn("[meta-ads] insights failed, retrying once:", firstError instanceof Error ? firstError.message : firstError);
-      await new Promise((resolve) => setTimeout(resolve, META_RETRY_DELAY_MS));
-      return fetchMetaMarketingDataOnce(params);
-    })
-    .catch((error) => {
-      metaMarketingCache.delete(key);
-      throw error;
-    });
-  metaMarketingCache.set(key, { promise, expiresAt: Date.now() + META_MARKETING_TTL_MS });
-  return promise;
-}
-
-async function fetchMetaMarketingDataOnce(params: {
+export async function fetchMetaMarketingData(params: {
   accessToken: string;
   adAccountId: string;
   since: string;
