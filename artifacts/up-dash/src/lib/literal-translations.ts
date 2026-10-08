@@ -1063,6 +1063,9 @@ const entries: Array<[string, string, string]> = [
   ["Aquisição · Vesti pago", "Acquisition · paid Vesti", "신규 확보 · 결제된 Vesti"],
   // ---- roas atribuido
   ["Clientes atribuídos às campanhas · atendido / investimento", "Customers attributed to campaigns · fulfilled / investment", "캠페인 귀속 고객 · 처리 금액 / 투자"],
+  // ---- lead sem dados
+  ["Lead sem dados", "Lead without data", "데이터 없는 리드"],
+  ["Sem nome nem e-mail", "No name or e-mail", "이름·이메일 없음"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(

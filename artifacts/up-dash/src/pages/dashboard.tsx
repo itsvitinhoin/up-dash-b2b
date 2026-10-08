@@ -623,6 +623,11 @@ function CampaignCustomersPanel({
   dateFrom: string;
   dateTo: string;
 }) {
+  const { tx } = useI18n();
+  // Nome e e-mail de enchimento que o sync cria quando a UP Zero só devolve o ID do visitante (ver extraction-runner).
+  const isPlaceholder = (r: { name?: string | null; email?: string | null }) => /@noemail\.internal$/i.test(r.email ?? "") || /^UP Zero #\d+$/.test(r.name ?? "");
+  const rowLabel = (r: { name?: string | null; email?: string | null; userId?: number | string | null }) =>
+    isPlaceholder(r) ? `${tx("Lead sem dados")} #${r.userId}` : r.name || r.email || `UP Zero ${r.userId}`;
   const [search, setSearch] = useState("");
   const previous = usePreviousPeriodQuery<CampaignCustomersResponse>(periodQuery("/api/analytics/campaign-customers", { clientId, dateFrom, dateTo, limit: 500 }), Boolean(data));
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -1020,10 +1025,10 @@ function CampaignCustomersPanel({
                       {row.customerId ? (
                         <Link href={`/customers/${row.customerId}`} className="block min-w-0">
                           <div className="font-medium hover:text-primary truncate">
-                            {row.name || row.email || `UP Zero ${row.userId}`}
+                            {rowLabel(row)}
                           </div>
                           <div className="text-xs text-muted-foreground truncate">
-                            {[row.email, `UP Zero ${row.userId}`].filter(Boolean).join(" · ")}
+                            {[isPlaceholder(row) ? tx("Sem nome nem e-mail") : row.email, `UP Zero ${row.userId}`].filter(Boolean).join(" · ")}
                           </div>
                         </Link>
                       ) : (
@@ -1154,7 +1159,7 @@ function CampaignCustomersPanel({
         <DialogContent className="max-h-[84vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              Timeline de {timelineRow?.name || timelineRow?.email || `UP Zero ${timelineRow?.userId ?? ""}`}
+              Timeline de {timelineRow ? rowLabel(timelineRow) : ""}
             </DialogTitle>
             <DialogDescription>
               Eventos identificados pelo user.id da UP Zero no período selecionado.
