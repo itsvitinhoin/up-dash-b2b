@@ -306,7 +306,6 @@ export function useOrganizationData(
     "number",
     "Primeira compra no período",
     dashboard.isLoading,
-    dashboard.data?.newBuyersOverTime.map((p) => p.value),
   );
   // Aquisição = pedidos pagos do período de clientes sem compra anterior (mesma base e filtros da Retenção).
   put("acquisitionRevenue", "Faturamento de Aquisição", r?.aquisicao?.faturamento, "currency", acquisitionSource, recompra.isLoading);
