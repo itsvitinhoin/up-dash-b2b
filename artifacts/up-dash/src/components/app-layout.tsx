@@ -536,7 +536,8 @@ function readCachedAdminClients(): AdminClientOption[] {
 
 function isBackgroundQueryKey(queryKey: readonly unknown[]): boolean {
   const first = String(queryKey[0] ?? "");
-  return first.includes("/api/healthz") || first.includes("/api/notifications");
+  // "metric-previous-period" = busca do periodo anterior dos cartoes: pode demorar e nao deve travar a tela com o carregador global
+  return first.includes("/api/healthz") || first.includes("/api/notifications") || first === "metric-previous-period";
 }
 
 function getUserDisplayName(user: ReturnType<typeof useAuth>["user"]) {
