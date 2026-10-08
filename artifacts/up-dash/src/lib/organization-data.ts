@@ -6,6 +6,7 @@ import {
   useGetMarketing,
   useGetCustomerSummary,
   useGetFunnel,
+  useGetClient,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
@@ -120,18 +121,22 @@ export function useOrganizationData(
     query: queryOpts({ enabled: enabled && wants("funnel"), placeholderData: (previous) => previous }),
   });
 
-  // Buscas pesadas: esperam o Dashboard principal (quando a seção o usa) para não competir com ele.
-  const mainSettled = !wants("dashboard") || dashboard.data !== undefined || dashboard.isError;
-  const heavyEnabled = enabled && mainSettled;
+  // Universo da Recompra = o MESMO dos cartões do topo do Dashboard (conferido em 10 clientes, 09/set a 08/out):
+  // cliente Vesti vende pela Vesti (tipo "erp" da Recompra, o único que enxerga a Vesti); UpZero e Nuvemshop vendem
+  // pelo site (tipo "ecommerce"). Usar "erp" em cliente UpZero com ERP (MX Fashion) misturava o ERP (R$ 434 mil) com
+  // o site (R$ 55 mil) e a Retenção ficava maior que o faturamento total. Achado extra no PR: ele mandava
+  // estado="todos", que o servidor entendia como um estado chamado "todos" (resultado 0) -- só mandamos estado se houver.
+  const { data: clientDetail } = useGetClient(selectedClientId ?? "", { query: queryOpts({ enabled: !!selectedClientId }) });
+  const platform = clientDetail?.commercePlatform;
+  const platformReady = !selectedClientId || platform !== undefined;
+  const recompraTipo = platform ? (platform === "VESTI" ? "erp" : "ecommerce") : selectedDashboardMode === "B2C" ? "ecommerce" : "erp";
+  const recompraSource = platform === "VESTI" ? "Recompra · Vesti pago" : "Recompra · Ecommerce pago";
+  const acquisitionSource = platform === "VESTI" ? "Aquisição · Vesti pago" : "Aquisição · Ecommerce pago";
 
-  // Achado 08/10/2026 (banco real): o PR fixava tipo="ecommerce" e estado="todos". "todos" não é um
-  // estado -- o servidor entendia como um estado chamado "todos" e devolvia 0 para qualquer cliente
-  // (a página de Recompra simplesmente não manda o parâmetro). E tipo="ecommerce" é só o canal site:
-  // dá 0 em TODOS os clientes Vesti (e em ERP puro); a recompra deles está em tipo="erp". Então:
-  // B2B (ERP/Vesti) usa "erp", B2C (Nuvemshop) usa "ecommerce" (nos dois casos é o total do cliente).
-  const recompraTipo = selectedDashboardMode === "B2C" ? "ecommerce" : "erp";
-  const recompraSource = recompraTipo === "erp" ? "Recompra · ERP pago" : "Recompra · Ecommerce pago";
-  const acquisitionSource = recompraTipo === "erp" ? "Aquisição · ERP pago" : "Aquisição · Ecommerce pago";
+  // Buscas pesadas: esperam o Dashboard principal (quando a seção o usa) e a plataforma do cliente.
+  const mainSettled = !wants("dashboard") || dashboard.data !== undefined || dashboard.isError;
+  const heavyEnabled = enabled && mainSettled && platformReady;
+
   const recompraQuery = {
     ...period,
     status: "pago",

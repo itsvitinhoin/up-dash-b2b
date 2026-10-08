@@ -1058,6 +1058,9 @@ const entries: Array<[string, string, string]> = [
   // ---- aquisicao (fonte)
   ["Aquisição · ERP pago", "Acquisition · paid ERP", "신규 확보 · 결제된 ERP"],
   ["Aquisição · Ecommerce pago", "Acquisition · paid Ecommerce", "신규 확보 · 결제된 이커머스"],
+  // ---- tipo por plataforma
+  ["Recompra · Vesti pago", "Repurchase · paid Vesti", "재구매 · 결제된 Vesti"],
+  ["Aquisição · Vesti pago", "Acquisition · paid Vesti", "신규 확보 · 결제된 Vesti"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
