@@ -447,6 +447,10 @@ const pageMeta: Record<string, PageMeta> = {
 const PLATFORM_PICK = "__platform__";
 const ADMIN_DISPLAY_EMAIL = "admin@updash.com";
 const GLOBAL_SWITCH_MIN_MS = 650;
+// A tela embacada cobre a pagina no maximo este tempo. Depois disso vira o aviso pequeno do canto e a pagina
+// fica utilizavel (os cartoes que ainda carregam mostram o proprio esqueleto). Sem esse teto, uma busca lenta
+// (ex.: "Clientes atribuidos", ~34 s a frio) mantinha a pagina inteira embacada, mesmo com tudo ja pronto atras.
+const GLOBAL_OVERLAY_MAX_MS = 3500;
 const GLOBAL_SWITCH_MAX_MS = 12000;
 const ADMIN_CLIENTS_CACHE_KEY = "updash.adminClientOptions.v1";
 const DESIGN_DEMO =
@@ -793,6 +797,15 @@ export function AppLayout({ children }: AppLayoutProps) {
 
     return () => window.clearTimeout(settleTimer);
   }, [activeDataLoads, isGlobalSwitchLoading, globalContext]);
+
+  const overlayWanted = isGlobalSwitchLoading || activeDataLoads > 0;
+  const [overlayExpired, setOverlayExpired] = useState(false);
+  useEffect(() => {
+    setOverlayExpired(false);
+    if (!overlayWanted) return;
+    const expireTimer = window.setTimeout(() => setOverlayExpired(true), GLOBAL_OVERLAY_MAX_MS);
+    return () => window.clearTimeout(expireTimer);
+  }, [overlayWanted, location, globalContext]);
 
   const architecture = architectureForPath(location);
   const breadcrumbArchitecture =
@@ -1710,9 +1723,15 @@ export function AppLayout({ children }: AppLayoutProps) {
         </main>
       </div>
 
-      {(isGlobalSwitchLoading || activeDataLoads > 0) && (
+      {overlayWanted && !overlayExpired && (
         <div className="up-loading-overlay fixed inset-0 z-[80] flex items-center justify-center bg-background/40 px-4 backdrop-blur-[10px] no-print" role="status" aria-live="polite" aria-label="Carregando dados atualizados" data-testid="global-loader">
           <DashLoader label={tx("Carregando dados atualizados")} description={globalLoadingDescription} />
+        </div>
+      )}
+
+      {overlayWanted && overlayExpired && activeDataLoads > 0 && (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-50 hidden rounded-lg border border-border bg-card/95 px-4 py-3 shadow-lg backdrop-blur sm:block no-print" data-testid="global-loader-compact">
+          <DashLoader compact label={tx("Carregando informações")} />
         </div>
       )}
 

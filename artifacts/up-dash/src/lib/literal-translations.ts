@@ -1053,6 +1053,8 @@ const entries: Array<[string, string, string]> = [
   ["COHORT DE ATIVAÇÃO E DIAGNÓSTICOS", "ACTIVATION COHORT AND DIAGNOSTICS", "활성화 코호트 및 진단"],
   // ---- organizacao (recompra erp)
   ["Recompra · ERP pago", "Repurchase · paid ERP", "재구매 · 결제된 ERP"],
+  // ---- aviso de carregamento
+  ["Carregando informações", "Loading information", "정보를 불러오는 중"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
