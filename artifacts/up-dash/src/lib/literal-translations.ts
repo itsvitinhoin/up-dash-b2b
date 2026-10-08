@@ -1051,6 +1051,8 @@ const entries: Array<[string, string, string]> = [
   ["Investimento × CAC", "Investment × CAC", "투자 × CAC"],
   ["Cadastros Aprovados × Conversão", "Approved Registrations × Conversion", "승인된 가입 × 전환"],
   ["COHORT DE ATIVAÇÃO E DIAGNÓSTICOS", "ACTIVATION COHORT AND DIAGNOSTICS", "활성화 코호트 및 진단"],
+  // ---- organizacao (recompra erp)
+  ["Recompra · ERP pago", "Repurchase · paid ERP", "재구매 · 결제된 ERP"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(

@@ -119,14 +119,21 @@ export function useOrganizationData(
   const mainSettled = !wants("dashboard") || dashboard.data !== undefined || dashboard.isError;
   const heavyEnabled = enabled && mainSettled;
 
+  // Achado 08/10/2026 (banco real): o PR fixava tipo="ecommerce" e estado="todos". "todos" não é um
+  // estado -- o servidor entendia como um estado chamado "todos" e devolvia 0 para qualquer cliente
+  // (a página de Recompra simplesmente não manda o parâmetro). E tipo="ecommerce" é só o canal site:
+  // dá 0 em TODOS os clientes Vesti (e em ERP puro); a recompra deles está em tipo="erp". Então:
+  // B2B (ERP/Vesti) usa "erp", B2C (Nuvemshop) usa "ecommerce" (nos dois casos é o total do cliente).
+  const recompraTipo = selectedDashboardMode === "B2C" ? "ecommerce" : "erp";
+  const recompraSource = recompraTipo === "erp" ? "Recompra · ERP pago" : "Recompra · Ecommerce pago";
   const recompraQuery = {
     ...period,
     status: "pago",
-    tipo: "ecommerce",
-    estado: filters.state || "todos",
+    tipo: recompraTipo,
+    estado: filters.state || undefined,
   };
   const recompra = useQuery<RecompraResponse>({
-    queryKey: ["organization-recompra", period, filters.state],
+    queryKey: ["organization-recompra", period, filters.state, recompraTipo],
     queryFn: () => customFetch(periodQuery("/api/analytics/recompra/dashboard", recompraQuery)),
     enabled: heavyEnabled && wants("recompra"),
     staleTime: 120000,
@@ -311,7 +318,7 @@ export function useOrganizationData(
     "Clientes que Recompraram",
     r?.recompra.clientes,
     "number",
-    "Recompra · Ecommerce pago",
+    recompraSource,
     recompra.isLoading,
   );
   put(
@@ -319,7 +326,7 @@ export function useOrganizationData(
     "Faturamento de Recompra",
     r?.recompra.faturamento,
     "currency",
-    "Recompra · Ecommerce pago",
+    recompraSource,
     recompra.isLoading,
   );
   put(
@@ -327,7 +334,7 @@ export function useOrganizationData(
     "Pedidos de Recompra",
     r?.recompra.vendas,
     "number",
-    "Recompra · Ecommerce pago",
+    recompraSource,
     recompra.isLoading,
   );
   put(
@@ -335,7 +342,7 @@ export function useOrganizationData(
     "Ticket de Recompra",
     r?.recompra.ticketMedio,
     "currency",
-    "Recompra · Ecommerce pago",
+    recompraSource,
     recompra.isLoading,
   );
   put(
