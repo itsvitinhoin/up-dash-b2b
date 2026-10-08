@@ -1570,8 +1570,22 @@ function B2COrdersPanel({
   );
 }
 
+/** Frase do alerta de estoque no idioma da tela (o servidor só manda em inglês; os números vêm do próprio alerta). */
+function stockAlertMessage(
+  alert: { type: string; message: string; daysOfCover?: number | null; stock: number; restockThreshold: number },
+  tx: (text: string) => string,
+): string {
+  if (alert.type === "OUT_OF_STOCK") return tx("Sem estoque — repor imediatamente.");
+  if (alert.type === "PREDICTED_STOCKOUT") {
+    const days = Math.max(1, Math.round(alert.daysOfCover ?? 1));
+    return tx(days === 1 ? "Previsão de esgotar em ~{n} dia no ritmo recente de vendas." : "Previsão de esgotar em ~{n} dias no ritmo recente de vendas.").replace("{n}", String(days));
+  }
+  if (alert.type === "LOW_STOCK") return tx("Estoque ({stock}) igual ou abaixo do limite de reposição ({limit}).").replace("{stock}", String(alert.stock)).replace("{limit}", String(alert.restockThreshold));
+  return alert.message;
+}
+
 export default function DashboardPage({ organization = "executive" }: { organization?: "executive" | "ecommerce" } = {}) {
-  const { t } = useI18n();
+  const { t, tx } = useI18n();
   const { selectedClientId, user, selectedDashboardMode } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const queryClient = useQueryClient();
@@ -2623,7 +2637,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                         </div>
                         <p className="text-xs text-muted-foreground truncate">
                           {alert.sku}
-                          {alert.category ? ` · ${alert.category}` : ""} · {alert.message}
+                          {alert.category ? ` · ${alert.category}` : ""} · {stockAlertMessage(alert, tx)}
                         </p>
                       </div>
                     </div>

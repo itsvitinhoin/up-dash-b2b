@@ -1066,6 +1066,11 @@ const entries: Array<[string, string, string]> = [
   // ---- lead sem dados
   ["Lead sem dados", "Lead without data", "데이터 없는 리드"],
   ["Sem nome nem e-mail", "No name or e-mail", "이름·이메일 없음"],
+  // ---- alertas de estoque
+  ["Sem estoque — repor imediatamente.", "Out of stock — restock immediately.", "품절 — 즉시 재입고하세요."],
+  ["Previsão de esgotar em ~{n} dia no ritmo recente de vendas.", "Projected to sell out in ~{n} day at recent demand.", "최근 수요 기준 약 {n}일 내 품절이 예상됩니다."],
+  ["Previsão de esgotar em ~{n} dias no ritmo recente de vendas.", "Projected to sell out in ~{n} days at recent demand.", "최근 수요 기준 약 {n}일 내 품절이 예상됩니다."],
+  ["Estoque ({stock}) igual ou abaixo do limite de reposição ({limit}).", "Stock ({stock}) is at or below restock threshold ({limit}).", "재고({stock})가 재입고 기준({limit}) 이하입니다."],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
