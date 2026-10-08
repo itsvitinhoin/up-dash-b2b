@@ -1,5 +1,6 @@
 import { displayLabel } from "@/lib/display-label";
 import { useI18n } from "@/lib/i18n";
+import { useIsFetching } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import type { ReactNode, ElementType } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus, Info } from "lucide-react";
@@ -129,6 +130,7 @@ export function DashboardKpiCard({
   const reduced = useReducedMotion();
   const { language, tx } = useI18n();
   const numberLocale = language === "ko" ? "ko-KR" : language === "en" ? "en-US" : "pt-BR";
+  const loadingPrevious = useIsFetching({ queryKey: ["metric-previous-period"] }) > 0;
   const contextual = useMetricData(testId);
   const previous = previousValue !== undefined ? previousValue : contextual.previous;
   const comparison = metricComparison(comparisonValue !== undefined ? comparisonValue : contextual.current !== undefined ? contextual.current : (displayValue === undefined ? value : undefined), previous);
@@ -211,7 +213,7 @@ export function DashboardKpiCard({
           {effectiveChange !== null && Number.isFinite(effectiveChange) ? <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${effectiveChange === 0 ? "up-delta-neutral" : positive ? "up-delta-positive" : "up-delta-negative"}`}>
             {effectiveChange === 0 ? <Minus className="h-3 w-3" /> : rising ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
             {effectiveChange > 0 ? "+" : ""}{effectiveChange.toLocaleString(numberLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
-          </span> : <span className="up-delta-neutral rounded-full px-2 py-0.5">{comparison.status === "zero-base" ? tx("Sem base percentual") : tx("Indisponível")}</span>}
+          </span> : <span className="up-delta-neutral rounded-full px-2 py-0.5">{comparison.status === "zero-base" ? tx("Sem base percentual") : previous === undefined && loadingPrevious ? tx("Calculando…") : tx("Indisponível")}</span>}
           <span className="text-muted-foreground">{tx(changeLabel || "vs. período anterior")}</span>
           {previous != null && Number.isFinite(previous) && <span className="basis-full text-muted-foreground">{tx("Anterior")}: <span className="text-foreground tabular-nums">{(contextual.format ?? fmt)(previous)}</span></span>}
           {deltaContent !== undefined && <div className="basis-full">{deltaContent}</div>}

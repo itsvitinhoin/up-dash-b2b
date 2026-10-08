@@ -517,14 +517,15 @@ function recompraFilterQueryParams(filters: RecompraFilterParams) {
   };
 }
 
-function useRecompraDashboard(dateFrom: string, dateTo: string, filters: RecompraFilterParams, compareDateFrom?: string, compareDateTo?: string) {
+/** background = busca da comparacao padrao (periodo anterior): roda depois da principal e aparece como "calculando" nos cartoes. */
+function useRecompraDashboard(dateFrom: string, dateTo: string, filters: RecompraFilterParams, compareDateFrom?: string, compareDateTo?: string, options: { background?: boolean; enabled?: boolean } = {}) {
   const { clientId, enabled } = useRecompraClientId();
   const filterParams = recompraFilterQueryParams(filters);
   return useQuery<RecompraDashboardResponse>({
-    queryKey: ["recompra-dashboard", clientId, dateFrom, dateTo, filterParams, compareDateFrom, compareDateTo],
+    queryKey: [...(options.background ? ["metric-previous-period"] : []), "recompra-dashboard", clientId, dateFrom, dateTo, filterParams, compareDateFrom, compareDateTo],
     queryFn: () =>
       customFetch(buildRecompraUrl("/api/analytics/recompra/dashboard", { clientId, dateFrom, dateTo, ...filterParams, compareDateFrom, compareDateTo })),
-    enabled,
+    enabled: enabled && (options.enabled ?? true),
     staleTime: 120_000,
     refetchOnWindowFocus: false,
   });
@@ -638,13 +639,15 @@ export default function PerformanceRecompraPage() {
   const dateFrom = format(range.from, "yyyy-MM-dd");
   const dateTo = format(range.to, "yyyy-MM-dd");
   const defaultComparison = precedingPeriod(dateFrom, dateTo);
-  const compareDateFrom = comparing ? format(comparisonRange.from, "yyyy-MM-dd") : defaultComparison.dateFrom;
-  const compareDateTo = comparing ? format(comparisonRange.to, "yyyy-MM-dd") : defaultComparison.dateTo;
+  const compareDateFrom = comparing ? format(comparisonRange.from, "yyyy-MM-dd") : undefined;
+  const compareDateTo = comparing ? format(comparisonRange.to, "yyyy-MM-dd") : undefined;
   const recompraFilters: RecompraFilterParams = { status, tipo, estado, vendedora, origem };
   const { data: recompraData, isLoading: blocksLoading } = useRecompraDashboard(dateFrom, dateTo, recompraFilters, compareDateFrom, compareDateTo);
+  // Periodo anterior padrao: so depois que os numeros principais chegaram (a comparacao leva ~20 s no servidor).
+  const { data: previousDefaultData } = useRecompraDashboard(dateFrom, dateTo, recompraFilters, defaultComparison.dateFrom, defaultComparison.dateTo, { background: true, enabled: !comparing && Boolean(recompraData) });
   const { data: detailData, isLoading: detailLoading } = useRecompraDetail(dateFrom, dateTo, recompraFilters);
   const { data: sellersData, isLoading: sellersLoading } = useRecompraSellers(dateFrom, dateTo, status, tipo, origem, estado);
-  const blocksP2 = recompraData?.blocksP2 ?? null;
+  const blocksP2 = (comparing ? recompraData?.blocksP2 : previousDefaultData?.blocksP2) ?? null;
   // Fase 5 -- gráficos mensais (janela fixa, reage aos filtros da página) e
   // Coorte/Funil (visão geral, sem filtro nenhum).
   const { data: monthlyTrendData, isLoading: monthlyTrendLoading } = useRecompraMonthlyTrend(recompraFilters);

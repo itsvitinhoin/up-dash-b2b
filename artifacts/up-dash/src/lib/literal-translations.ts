@@ -861,6 +861,8 @@ const entries: Array<[string, string, string]> = [
   // ---- performance (funil)
   ["da etapa anterior", "of the previous stage", "이전 단계 대비"],
   ["Entrada do funil", "Funnel entry", "퍼널 시작"],
+  // ---- carregamento do periodo anterior
+  ["Calculando…", "Calculating…", "계산 중…"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
