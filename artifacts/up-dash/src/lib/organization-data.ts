@@ -36,7 +36,10 @@ type Activation = {
 type OrderTotals = { kpis: { fulfilledQuantity: number } };
 type PerformanceMetrics = {
   kpis: { cac: number | null; ctr: number; cpc: number | null };
+  // Sem Meta conectada a Performance devolve gasto 0 e CAC 0: isso nao e "custo zero", e "sem dado".
+  sources?: { media?: { status?: string } };
 };
+const mediaConnected = (data?: PerformanceMetrics) => data?.sources?.media?.status === "connected";
 
 /** Fontes de dados que uma seção pode precisar. Cada seção pede só as suas: o resto nem é buscado. */
 export type OrganizationSource =
@@ -308,7 +311,7 @@ export function useOrganizationData(
   put(
     "cac",
     "CAC",
-    performance.data?.kpis.cac,
+    mediaConnected(performance.data) ? performance.data?.kpis.cac : null,
     "currency",
     "Novos atribuídos · Performance",
     performance.isLoading && enabled && selectedDashboardMode !== "B2C",
@@ -450,14 +453,14 @@ export function useOrganizationData(
   put(
     "ctr",
     "CTR",
-    performance.data?.kpis.ctr,
+    mediaConnected(performance.data) ? performance.data?.kpis.ctr : null,
     "percent",
     "Meta · Performance",
   );
   put(
     "cpc",
     "CPC",
-    performance.data?.kpis.cpc,
+    mediaConnected(performance.data) ? performance.data?.kpis.cpc : null,
     "currency",
     "Meta · Performance",
   );
@@ -470,7 +473,7 @@ export function useOrganizationData(
     orders: pd?.orders, ticket: pd?.avgTicket, newCustomers: pd?.newBuyers,
     spend: pm?.totalSpend, totalSpend: pm?.totalSpend, metaSpend: previousMeta?.spend, googleSpend: previousGoogle?.spend,
     roas: pm?.roas, requestedRoas: selectedDashboardMode === "B2C" ? null : pm?.roas, paidRoas: selectedDashboardMode === "B2C" ? pm?.roas : null,
-    cac: previousPerformance.data?.kpis.cac, ctr: previousPerformance.data?.kpis.ctr, cpc: previousPerformance.data?.kpis.cpc,
+    cac: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cac : null, ctr: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.ctr : null, cpc: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cpc : null,
     repurchasers: pr?.recompra.clientes, retentionRevenue: pr?.recompra.faturamento, retentionOrders: pr?.recompra.vendas, retentionTicket: pr?.recompra.ticketMedio,
     registrations: pc?.totalRegistrations, approved: pc?.approvedRegistrations, approvalRate: pc?.approvalRatePct, firstPurchaseAverage: pc?.avgTimeToFirstPurchaseDays,
     pieces: previousOrders.data?.kpis.fulfilledQuantity, impressions: previousMeta?.impressions, clicks: previousMeta?.clicks,
