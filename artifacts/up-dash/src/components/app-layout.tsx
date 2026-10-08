@@ -874,7 +874,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     "/utm": "nav.utm",
   };
   const titleText =
-    architecture?.title ??
+    (architecture ? tx(architecture.title) : undefined) ??
     (pageTranslationKey
       ? t(`page.${pageTranslationKey}.title`, tx(meta.title))
       : navTitleKeys[location]
@@ -945,128 +945,130 @@ export function AppLayout({ children }: AppLayoutProps) {
     children?: Array<{ name: string; href: string; icon: typeof Users }>;
   };
 
-  // Fatia 2: menu e URLs de HOJE (a reorganizacao do menu entra em outra fatia).
-  const analyticsNav = [
-    {
-      name: t("nav.dashboard", "Dashboard"),
-      href: "/dashboard",
-      icon: LayoutDashboard,
-    },
-    { name: t("nav.daily", "Daily"), href: "/daily", icon: CalendarDays },
-    { name: t("nav.scale", "Escala"), href: "/scale", icon: Scale },
-    {
-      name: t("nav.erp", "ERP"),
-      href: "/erp",
-      icon: Store,
-      children: [
-        {
-          name: t("nav.erp.overview", "Visão Geral"),
-          href: "/erp",
-          icon: LayoutDashboard,
-        },
-        {
-          name: t("nav.erp.orders", "Pedidos"),
-          href: "/erp/pedidos",
-          icon: ReceiptText,
-        },
-        {
-          name: t("nav.erp.customers", "Clientes"),
-          href: "/erp/clientes",
-          icon: Users,
-        },
-        {
-          name: t("nav.erp.products", "Produtos"),
-          href: "/erp/produtos",
-          icon: Package,
-        },
-        {
-          name: t("nav.erp.stock", "Estoque"),
-          href: "/erp/estoque",
-          icon: PackageSearch,
-        },
-        {
-          name: t("nav.erp.sellers", "Vendedores e lojas"),
-          href: "/erp/vendedores",
-          icon: Users,
-        },
-      ],
-    },
-    {
-      name: t("nav.performance", "Performance"),
-      href: "/performance",
-      icon: Gauge,
-      // Achado 11/09/2026: primeiro submenu da nova arquitetura de
-      // Performance (ver pageMeta["/performance/recompra"]) -- clicar em
-      // "Performance" continua indo direto pro /performance de hoje
-      // (NavItem sempre linka pro item.href do pai); o filho só aparece
-      // quando o usuário já está em /performance ou /performance/recompra.
-      children: [
-        {
-          name: t("nav.performance.recompra", "Recompra"),
-          href: "/performance/recompra",
-          icon: RefreshCw,
-        },
-      ],
-    },
-    {
-      name: t("nav.marketing", "Marketing"),
-      href: "/marketing",
-      icon: Megaphone,
-    },
-    {
-      name: t("nav.whatsapp", "WhatsApp"),
-      href: "/whatsapp",
-      icon: MessageCircle,
-      children: [
-        {
-          name: t("nav.whatsapp.conversations", "Conversas"),
-          href: "/whatsapp/conversas",
-          icon: MessageSquareText,
-        },
-        {
-          name: t("nav.whatsapp.connections", "Conexões"),
-          href: "/whatsapp/conexoes",
-          icon: PlugZap,
-        },
-        {
-          name: t("nav.whatsapp.sends", "Envios"),
-          href: "/whatsapp/envios",
-          icon: Send,
-        },
-        {
-          name: t("nav.whatsapp.templates", "Templates"),
-          href: "/whatsapp/templates",
-          icon: FileText,
-        },
-      ],
-    },
-    { name: t("nav.funnel", "Funnel"), href: "/funnel", icon: Filter },
-    { name: t("nav.journey", "Journey"), href: "/journey", icon: Route },
-    { name: t("nav.rfm", "RFM"), href: "/rfm", icon: BarChart3 },
-    { name: t("nav.utm", "UTM"), href: "/utm", icon: Link2 },
-    { name: t("nav.customers", "Customers"), href: "/customers", icon: Users },
-    { name: t("nav.orders", "Orders"), href: "/orders", icon: ReceiptText },
-    { name: t("nav.products", "Products"), href: "/products", icon: Package },
-    { name: t("nav.sellers", "Sellers"), href: "/sellers", icon: ShoppingBag },
-    { name: t("nav.stock", "Stock"), href: "/stock", icon: PackageSearch },
-  ].filter((item) => {
-    if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(item.href))
+  const visibleNav = (item: { href: string }) => {
+    const source = legacyPath(item.href);
+    if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(source))
       return false;
     if (
       effectiveDashboardMode === "B2B" &&
-      b2cOnlyRoutes.has(item.href) &&
-      !(isVestiClient && vestiEnabledB2cRoutes.has(item.href))
+      b2cOnlyRoutes.has(source) &&
+      !(isVestiClient && vestiEnabledB2cRoutes.has(source))
     )
       return false;
-    // Aba escondida manualmente pra esse client (admin, tela /clients —
-    // pedido 11/08/2026: clients sem ERP configurado, por ex., não
-    // precisam ver a aba levando pra uma tela sempre vazia/com erro).
-    if (activeClient?.hiddenNavItems?.includes(item.href)) return false;
-    return true;
-  });
+    return (
+      !activeClient?.hiddenNavItems?.includes(source) &&
+      !activeClient?.hiddenNavItems?.includes(item.href)
+    );
+  };
+  const analyticsNav: NavEntry[] = [
+    { name: "Visão Geral", href: "/dashboard", icon: LayoutDashboard },
+    {
+      name: "ERP",
+      href: "/erp",
+      icon: Store,
+      children: [
+        { name: "Visão Geral", href: "/erp", icon: LayoutDashboard },
+        { name: "Pedidos", href: "/erp/pedidos", icon: ReceiptText },
+        { name: "Clientes", href: "/erp/clientes", icon: Users },
+        { name: "Produtos", href: "/erp/produtos", icon: Package },
+        { name: "Estoque", href: "/erp/estoque", icon: PackageSearch },
+        { name: "Vendedoras e Lojas", href: "/erp/vendedores", icon: Users },
+        { name: "Geografia", href: "/erp/geografia", icon: MapPin },
+      ],
+    },
+    {
+      name: "Desempenho",
+      href: "/performance",
+      icon: Gauge,
+      children: [
+        { name: "Visão Geral", href: "/performance", icon: LayoutDashboard },
+        {
+          name: "Funil de Conversão",
+          href: "/performance/funil",
+          icon: Filter,
+        },
+        {
+          name: "Novos Clientes",
+          href: "/performance/novos-clientes",
+          icon: UserRoundCheck,
+        },
+        { name: "Recompra", href: "/performance/recompra", icon: RefreshCw },
+        { name: "Cadastros", href: "/performance/cadastros", icon: Users },
+        { name: "Anúncios", href: "/performance/anuncios", icon: Megaphone },
+        {
+          name: "Jornada & Atribuição",
+          href: "/performance/jornada",
+          icon: Route,
+        },
+      ],
+    },
+    {
+      name: "E-commerce",
+      href: "/ecommerce",
+      icon: ShoppingBag,
+      children: [
+        { name: "Visão Geral", href: "/ecommerce", icon: LayoutDashboard },
+        { name: "Pedidos", href: "/ecommerce/pedidos", icon: ReceiptText },
+        { name: "Cadastros", href: "/ecommerce/cadastros", icon: Users },
+        { name: "Produtos", href: "/ecommerce/produtos", icon: Package },
+        { name: "Estoque", href: "/ecommerce/estoque", icon: PackageSearch },
+        { name: "Vendedores", href: "/ecommerce/vendedores", icon: Users },
+        { name: "Geografia", href: "/ecommerce/geografia", icon: MapPin },
+        {
+          name: "Inteligência de Clientes",
+          href: "/ecommerce/inteligencia-clientes",
+          icon: BarChart3,
+        },
+        {
+          name: "Histórico Mensal",
+          href: "/ecommerce/historico-mensal",
+          icon: CalendarDays,
+        },
+      ],
+    },
+    {
+      name: "WhatsApp",
+      href: "/whatsapp",
+      icon: MessageCircle,
+      children: [
+        { name: "Análise de Atendimento", href: "/whatsapp", icon: BarChart3 },
+        {
+          name: "Conversas",
+          href: "/whatsapp/conversas",
+          icon: MessageSquareText,
+        },
+        { name: "Conexões", href: "/whatsapp/conexoes", icon: PlugZap },
+      ],
+    },
+  ]
+    .map((item) => {
+      const children = item.children?.filter(visibleNav);
+      return {
+        ...item,
+        children,
+        href:
+          item.href === "/performance" && !visibleNav(item) && children?.length
+            ? children[0].href
+            : item.href,
+      };
+    })
+    .filter((item) => {
+      // A group can retain eligible children even when its legacy overview is restricted.
+      if (item.name === "Performance" && item.children?.length) return true;
+      return visibleNav(item);
+    });
 
   const workspaceNav: NavEntry[] = [
-    { name: t("nav.geography", "Geography"), href: "/geography", icon: MapPin },
+    ...[
+      { name: t("nav.daily", "Diário"), href: "/daily", icon: CalendarDays },
+      { name: t("nav.scale", "Escala"), href: "/scale", icon: Scale },
+      { name: "Envios WhatsApp", href: "/whatsapp/envios", icon: Send },
+      {
+        name: "Modelos WhatsApp",
+        href: "/whatsapp/templates",
+        icon: FileText,
+      },
+    ].filter(visibleNav),
     {
       name: t("nav.notifications", "Notifications"),
       href: "/notifications",
@@ -1196,7 +1198,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             className="up-nav-link"
           >
             <item.icon className="h-[18px] w-[18px] shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{item.name}</span>
+            <span className="min-w-0 flex-1 truncate">{tx(item.name)}</span>
           </Link>
           {item.children && (
             <button
@@ -1231,7 +1233,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 className="up-nav-sub-link"
               >
                 <child.icon className="h-3.5 w-3.5 shrink-0" />
-                {child.name}
+                {tx(child.name)}
               </Link>
             ))}
           </div>
@@ -1445,7 +1447,7 @@ export function AppLayout({ children }: AppLayoutProps) {
 
           <div className="up-breadcrumb hidden min-w-0 items-center gap-2 2xl:flex">
             <span>
-              {breadcrumbArchitecture?.group ??
+              {(breadcrumbArchitecture ? tx(breadcrumbArchitecture.group) : undefined) ??
                 (location.startsWith("/erp")
                   ? "ERP"
                   : location.startsWith("/performance")
