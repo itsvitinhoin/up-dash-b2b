@@ -135,7 +135,9 @@ const VESTI_STATUS_CLAUSE_BY_FILTER: Record<RecompraStatusFilter, string | null>
 
 // Valores idênticos aos já usados pelo <TipoFilter> do front (performance-
 // recompra.tsx) -- sem camada de mapeamento entre os dois.
-export type RecompraTipoFilter = "erp" | "ecommerce" | "anuncios-todos" | "anuncios-ecommerce" | "anuncios-erp";
+// "vesti" (UP Glass, 08/10/2026): só pedidos do canal Vesti. Existe porque "erp" é, na prática, "todos os canais" (e no
+// Vogabox, que tem Vesti + ERP, junta os dois); o Dashboard precisa só da Vesti para bater com os cartões do topo.
+export type RecompraTipoFilter = "erp" | "ecommerce" | "vesti" | "anuncios-todos" | "anuncios-ecommerce" | "anuncios-erp";
 
 export type RecompraFilters = {
   status: RecompraStatusFilter;
@@ -796,6 +798,10 @@ function applyTipoAndOrigemFilter(
         if (event.channel === "site") kept.push(event);
         continue;
       }
+      if (filters.tipo === "vesti") {
+        if (event.channel === "vesti") kept.push(event);
+        continue;
+      }
       // A partir daqui, algum "anuncios-*".
       let origem: string;
       if (vestiAttribution) {
@@ -849,6 +855,11 @@ export async function classifyRecompra(params: {
   dateTo: string; // último dia incluído
   filters: RecompraFilters;
 }): Promise<{ classifications: CustomerClassification[]; unmatchedErpCount: number; attributionUnavailable: boolean; touchpointFailures: number; acquisition: RecompraBlockTotals }> {
+  // Tipo "vesti": o universo é a tabela de vendas da Vesti SOZINHA (a mesma que alimenta o Dashboard). Não lê o ERP:
+  // no Vogabox (Vesti + ERP) o cruzamento descarta a cópia da Vesti de toda venda que também está no ERP, e o total
+  // não bateria com o topo da tela (93 em vez de 134).
+  if (params.filters.tipo === "vesti" && params.dataset) params = { ...params, dataset: null };
+
   const dateToExclusive = new Date(`${params.dateTo}T00:00:00.000Z`);
   dateToExclusive.setUTCDate(dateToExclusive.getUTCDate() + 1);
   const isAnuncios = params.filters.tipo.startsWith("anuncios");

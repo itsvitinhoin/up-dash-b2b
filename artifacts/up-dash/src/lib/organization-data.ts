@@ -122,14 +122,14 @@ export function useOrganizationData(
   });
 
   // Universo da Recompra = o MESMO dos cartões do topo do Dashboard (conferido em 10 clientes, 09/set a 08/out):
-  // cliente Vesti vende pela Vesti (tipo "erp" da Recompra, o único que enxerga a Vesti); UpZero e Nuvemshop vendem
+  // cliente Vesti vende pela Vesti (tipo "vesti" da Recompra: só o canal Vesti, sem o ERP do Vogabox); UpZero e Nuvemshop vendem
   // pelo site (tipo "ecommerce"). Usar "erp" em cliente UpZero com ERP (MX Fashion) misturava o ERP (R$ 434 mil) com
   // o site (R$ 55 mil) e a Retenção ficava maior que o faturamento total. Achado extra no PR: ele mandava
   // estado="todos", que o servidor entendia como um estado chamado "todos" (resultado 0) -- só mandamos estado se houver.
   const { data: clientDetail } = useGetClient(selectedClientId ?? "", { query: queryOpts({ enabled: !!selectedClientId }) });
   const platform = clientDetail?.commercePlatform;
   const platformReady = !selectedClientId || platform !== undefined;
-  const recompraTipo = platform ? (platform === "VESTI" ? "erp" : "ecommerce") : selectedDashboardMode === "B2C" ? "ecommerce" : "erp";
+  const recompraTipo = platform ? (platform === "VESTI" ? "vesti" : "ecommerce") : selectedDashboardMode === "B2C" ? "ecommerce" : "erp";
   const recompraSource = platform === "VESTI" ? "Recompra · Vesti pago" : "Recompra · Ecommerce pago";
   const acquisitionSource = platform === "VESTI" ? "Aquisição · Vesti pago" : "Aquisição · Ecommerce pago";
 

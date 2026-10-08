@@ -70,7 +70,7 @@ async function parsedDateRange(req: Request, res: Response): Promise<{ dateFromO
   };
 }
 
-const RECOMPRA_TIPO_VALUES = ["erp", "ecommerce", "anuncios-todos", "anuncios-ecommerce", "anuncios-erp"] as const;
+const RECOMPRA_TIPO_VALUES = ["erp", "ecommerce", "vesti", "anuncios-todos", "anuncios-ecommerce", "anuncios-erp"] as const;
 
 const GetRecompraFiltersQueryParams = z.object({
   status: z.enum(["solicitado", "pago", "espera", "cancelado"]).default("pago"),
