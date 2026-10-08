@@ -193,7 +193,7 @@ function RecompraBlockCard({
   changeLabel,
   comparisonValue,
   stats,
-  comparing,
+  comparing, comparisonOff,
   rawValue, previousValue, formatValue = formatNumber,
 }: {
   icon: LucideIcon;
@@ -210,10 +210,11 @@ function RecompraBlockCard({
   comparisonValue?: string;
   stats: RecompraStat[];
   comparing: boolean;
+  comparisonOff?: boolean;
 }) {
   const { tx } = useI18n();
   const mainDelta = change !== null ? formatDelta(change, changeType) : null;
-  return (<GlassMetricCard label={title} value={mainValue} icon={Icon}
+  return (<GlassMetricCard hideComparison={comparisonOff} label={title} value={mainValue} icon={Icon}
   comparisonValue={rawValue} previousValue={previousValue} format={formatValue} info={mainLabel} source="Ecommerce · ERP · recompra" changeLabel={changeLabel}
   footer={<div className="space-y-2">
     {stats.map((stat) => {
@@ -633,6 +634,8 @@ export default function PerformanceRecompraPage() {
   const { dateRange } = useDashboardFilters();
   const range: SimpleRange = dateRange;
   const [comparing, setComparing] = useState(false);
+  // Comparacao com o periodo anterior e opcional (no servidor leva de ~25 s a ~1 min com Tipo=Anuncios): so calcula quando o usuario pede.
+  const [comparePrevious, setComparePrevious] = useState(false);
   const [comparisonRange, setComparisonRange] = useState<SimpleRange>(() => {
     const days = differenceInDays(range.to, range.from) + 1;
     return { from: subDays(range.from, days), to: subDays(range.to, days) };
@@ -648,7 +651,7 @@ export default function PerformanceRecompraPage() {
   const recompraFilters: RecompraFilterParams = { status, tipo, estado, vendedora, origem };
   const { data: recompraData, isLoading: blocksLoading } = useRecompraDashboard(dateFrom, dateTo, recompraFilters, compareDateFrom, compareDateTo);
   // Periodo anterior padrao: so depois que os numeros principais chegaram (a comparacao leva ~20 s no servidor).
-  const { data: previousDefaultData } = useRecompraDashboard(dateFrom, dateTo, recompraFilters, defaultComparison.dateFrom, defaultComparison.dateTo, { background: true, enabled: !comparing && Boolean(recompraData) });
+  const { data: previousDefaultData } = useRecompraDashboard(dateFrom, dateTo, recompraFilters, defaultComparison.dateFrom, defaultComparison.dateTo, { background: true, enabled: !comparing && comparePrevious && Boolean(recompraData) });
   const { data: detailData, isLoading: detailLoading } = useRecompraDetail(dateFrom, dateTo, recompraFilters);
   const { data: sellersData, isLoading: sellersLoading } = useRecompraSellers(dateFrom, dateTo, status, tipo, origem, estado);
   const blocksP2 = (comparing ? recompraData?.blocksP2 : previousDefaultData?.blocksP2) ?? null;
@@ -800,7 +803,12 @@ export default function PerformanceRecompraPage() {
           </Select>
           </div>
 
-          <div className="ml-auto flex w-full justify-end sm:w-auto">
+          <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+            {!comparing && (
+              <Button variant="outline" size="sm" onClick={() => setComparePrevious((v) => !v)} aria-pressed={comparePrevious} title={tx("Pode levar até 1 minuto para calcular.")} data-testid="recompra-compare-previous">
+                {comparePrevious ? tx("Ocultar comparação com o período anterior") : tx("Comparar com o período anterior")}
+              </Button>
+            )}
             <ComparisonPeriodPicker
               enabled={comparing}
               range={range}
@@ -827,7 +835,7 @@ export default function PerformanceRecompraPage() {
           change={blocksP2 ? computeDelta(recompraData!.blocks.recompra.faturamento, blocksP2.recompra.faturamento, "percent", formatCurrencySmart)?.value ?? null : null}
           comparisonValue={blocksP2 ? formatCurrencySmart(blocksP2.recompra.faturamento) : undefined}
           changeLabel="vs. período anterior"
-          comparing={Boolean(blocksP2)}
+          comparing={Boolean(blocksP2)} comparisonOff={!comparing && !comparePrevious}
           rawValue={recompraData?.blocks.recompra.faturamento ?? null} previousValue={blocksP2?.recompra.faturamento} formatValue={formatCurrencySmart}
           stats={[
             { icon: ShoppingBag, label: "Vendas de recompra", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.recompra.vendas ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.recompra.vendas, blocksP2.recompra.vendas, "percent", formatNumber) : undefined },
@@ -844,7 +852,7 @@ export default function PerformanceRecompraPage() {
           change={blocksP2 ? computeDelta(recompraData!.blocks.recorrentes.clientes, blocksP2.recorrentes.clientes, "percent", formatNumber)?.value ?? null : null}
           comparisonValue={blocksP2 ? formatNumber(blocksP2.recorrentes.clientes) : undefined}
           changeLabel="vs. período anterior"
-          comparing={Boolean(blocksP2)}
+          comparing={Boolean(blocksP2)} comparisonOff={!comparing && !comparePrevious}
           rawValue={recompraData?.blocks.recorrentes.clientes ?? null} previousValue={blocksP2?.recorrentes.clientes} formatValue={formatNumber}
           stats={[
             { icon: ShoppingBag, label: "Vendas recorrentes", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.recorrentes.vendas ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.recorrentes.vendas, blocksP2.recorrentes.vendas, "percent", formatNumber) : undefined },
@@ -861,7 +869,7 @@ export default function PerformanceRecompraPage() {
           change={blocksP2 ? computeDelta(recompraData!.blocks.reativados.clientes, blocksP2.reativados.clientes, "percent", formatNumber)?.value ?? null : null}
           comparisonValue={blocksP2 ? formatNumber(blocksP2.reativados.clientes) : undefined}
           changeLabel="vs. período anterior"
-          comparing={Boolean(blocksP2)}
+          comparing={Boolean(blocksP2)} comparisonOff={!comparing && !comparePrevious}
           rawValue={recompraData?.blocks.reativados.clientes ?? null} previousValue={blocksP2?.reativados.clientes} formatValue={formatNumber}
           stats={[
             { icon: ShoppingBag, label: "Vendas reativadas", value: blocksLoading ? "…" : formatNumber(recompraData?.blocks.reativados.vendas ?? 0), delta: blocksP2 ? computeDelta(recompraData!.blocks.reativados.vendas, blocksP2.reativados.vendas, "percent", formatNumber) : undefined },
@@ -879,7 +887,7 @@ export default function PerformanceRecompraPage() {
           changeType="days"
           comparisonValue={blocksP2 ? formatMaybeDays(blocksP2.ciclo.tempoMedioDias) : undefined}
           changeLabel="vs. período anterior"
-          comparing={Boolean(blocksP2)}
+          comparing={Boolean(blocksP2)} comparisonOff={!comparing && !comparePrevious}
           rawValue={recompraData?.blocks.ciclo.tempoMedioDias ?? null} previousValue={blocksP2?.ciclo.tempoMedioDias} formatValue={formatMaybeDays}
           stats={[
             { icon: Hourglass, label: "Mediana entre compras", value: blocksLoading ? "…" : formatMaybeDays(recompraData?.blocks.ciclo.medianaDias ?? null), delta: blocksP2 ? maybeDelta(recompraData!.blocks.ciclo.medianaDias, blocksP2.ciclo.medianaDias, "days", formatMaybeDays) : undefined },

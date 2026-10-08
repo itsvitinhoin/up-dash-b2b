@@ -937,6 +937,10 @@ const entries: Array<[string, string, string]> = [
   // ---- recompra (secoes novas)
   ["Ver retenção acumulada por prazo (30, 60, 90 e 180 dias)", "See cumulative retention by term (30, 60, 90 and 180 days)", "기간별 누적 재구매율 보기 (30, 60, 90, 180일)"],
   ["Retenção acumulada por prazo", "Cumulative retention by term", "기간별 누적 재구매율"],
+  // ---- recompra (comparacao opcional)
+  ["Comparar com o período anterior", "Compare with the previous period", "이전 기간과 비교"],
+  ["Ocultar comparação com o período anterior", "Hide comparison with the previous period", "이전 기간 비교 숨기기"],
+  ["Pode levar até 1 minuto para calcular.", "It can take up to 1 minute to calculate.", "계산에 최대 1분이 걸릴 수 있습니다."],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
