@@ -7,6 +7,9 @@
 // cupcake"). Fase 5 (23/09/2026) ligou os 3 gráficos mensais, "Intervalo
 // entre compras", Coorte e Funil de retenção -- nada mock resta na página.
 import { precedingPeriod } from "@/lib/metric-comparison";
+import { usePurchaseInsights } from "@/lib/purchase-insights";
+import { CohortHeatmap } from "@/components/cohort-heatmap";
+import { PurchaseInsightsPanels } from "@/components/purchase-insights";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useI18n } from "@/lib/i18n";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
@@ -618,6 +621,7 @@ function formatMaybePercentage(value: number | null): string {
 }
 
 export default function PerformanceRecompraPage() {
+  const { tx } = useI18n();
   const [tipo, setTipo] = useState("anuncios-todos");
   const [status, setStatus] = useState("pago");
   const [origem, setOrigem] = useState("todos");
@@ -651,7 +655,9 @@ export default function PerformanceRecompraPage() {
   // Fase 5 -- gráficos mensais (janela fixa, reage aos filtros da página) e
   // Coorte/Funil (visão geral, sem filtro nenhum).
   const { data: monthlyTrendData, isLoading: monthlyTrendLoading } = useRecompraMonthlyTrend(recompraFilters);
-  const { data: historyInsightsData, isLoading: historyInsightsLoading } = useRecompraHistoryInsights();
+  const { data: historyInsightsData, isLoading: historyInsightsLoading, isError: historyInsightsError } = usePurchaseInsights();
+  // periodo anterior das analises: so depois que as principais chegaram
+  const { data: previousHistoryInsights } = usePurchaseInsights("previous", Boolean(historyInsightsData));
 
   const revenueByMonth = useMemo(
     () => (monthlyTrendData?.months ?? []).map((m) => ({ month: formatMonthLabel(m.month), faturamento: m.faturamento, ticket: m.vendas > 0 ? m.faturamento / m.vendas : 0 })),
@@ -893,6 +899,8 @@ export default function PerformanceRecompraPage() {
         </p>
       )}
 
+      <PurchaseInsightsPanels previousData={previousHistoryInsights} data={historyInsightsData} loading={historyInsightsLoading} error={historyInsightsError} />
+
       {/* Gráficos 1-3: séries mensais -- sempre os últimos 12 meses corridos
           até hoje (Fase 5), independente do período (P1) escolhido no topo.
           Por isso NÃO têm comparação P1×P2 (não tem um "P2" natural pra uma
@@ -1014,41 +1022,13 @@ export default function PerformanceRecompraPage() {
         </Card>
       </div>
 
-      {/* Gráfico 5: retenção por número de compra -- Coorte e Funil (Fase 5)
-          são "visão geral", sem os filtros Status/Tipo/Origem/Estado/
-          Vendedora da página (decisão do usuário). */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Retenção por número de compra</CardTitle>
-        </CardHeader>
-        <CardContent className="h-80">
-          {historyInsightsLoading ? (
-            <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Carregando…</div>
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={retentionSteps} margin={{ top: 24, right: 8, left: 8, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="opacity-20" />
-                <XAxis dataKey="compra" fontSize={12} />
-                <YAxis yAxisId="left" fontSize={12} />
-                <YAxis yAxisId="right" orientation="right" fontSize={12} tickFormatter={(v) => `${v}%`} />
-                <Tooltip formatter={chartTooltipFormatter} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={{ color: "hsl(var(--foreground))" }} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar yAxisId="left" dataKey="clientes" name="Clientes" fill={CHART_PRIMARY} radius={[3, 3, 0, 0]}>
-                  <LabelList dataKey="clientes" position="insideTop" fill="#fff" fontSize={12} formatter={(v: number) => formatNumber(v)} />
-                </Bar>
-                <Line yAxisId="right" dataKey="retencao" name="Retenção acumulada" stroke={CHART_SECONDARY} strokeWidth={2} dot={{ r: 4, fill: CHART_SECONDARY }}>
-                  <LabelList dataKey="retencao" position="top" fill={CHART_SECONDARY} fontSize={12} formatter={(v: number) => `${v}%`} />
-                </Line>
-              </ComposedChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+      <CohortHeatmap data={historyInsightsData?.monthlyCohort} loading={historyInsightsLoading} error={historyInsightsError} />
 
-      {/* Coorte */}
+      <details className="up-cohort-legacy">
+        <summary>{tx("Ver retenção acumulada por prazo (30, 60, 90 e 180 dias)")}</summary>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Análise de coorte de recompra</CardTitle>
+          <CardTitle className="text-sm">{tx("Retenção acumulada por prazo")}</CardTitle>
         </CardHeader>
         <CardContent>
           {historyInsightsLoading ? (
@@ -1082,6 +1062,38 @@ export default function PerformanceRecompraPage() {
               </TableBody>
             </Table>
           </div>
+          )}
+        </CardContent>
+      </Card>
+      </details>
+
+      {/* Gráfico 5: retenção por número de compra -- Coorte e Funil (Fase 5)
+          são "visão geral", sem os filtros Status/Tipo/Origem/Estado/
+          Vendedora da página (decisão do usuário). */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Retenção por número de compra</CardTitle>
+        </CardHeader>
+        <CardContent className="h-80">
+          {historyInsightsLoading ? (
+            <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Carregando…</div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={retentionSteps} margin={{ top: 24, right: 8, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="opacity-20" />
+                <XAxis dataKey="compra" fontSize={12} />
+                <YAxis yAxisId="left" fontSize={12} />
+                <YAxis yAxisId="right" orientation="right" fontSize={12} tickFormatter={(v) => `${v}%`} />
+                <Tooltip formatter={chartTooltipFormatter} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={{ color: "hsl(var(--foreground))" }} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Bar yAxisId="left" dataKey="clientes" name="Clientes" fill={CHART_PRIMARY} radius={[3, 3, 0, 0]}>
+                  <LabelList dataKey="clientes" position="insideTop" fill="#fff" fontSize={12} formatter={(v: number) => formatNumber(v)} />
+                </Bar>
+                <Line yAxisId="right" dataKey="retencao" name="Retenção acumulada" stroke={CHART_SECONDARY} strokeWidth={2} dot={{ r: 4, fill: CHART_SECONDARY }}>
+                  <LabelList dataKey="retencao" position="top" fill={CHART_SECONDARY} fontSize={12} formatter={(v: number) => `${v}%`} />
+                </Line>
+              </ComposedChart>
+            </ResponsiveContainer>
           )}
         </CardContent>
       </Card>

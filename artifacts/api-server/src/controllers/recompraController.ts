@@ -256,14 +256,20 @@ export async function getHistoryInsights(req: Request, res: Response): Promise<v
   const ctx = await resolveRecompraContext(req, res);
   if (!ctx) return;
 
+  const period = await parsedDateRange(req, res);
+  if (!period) return;
+  if (period.dateFromOnly > period.dateToOnly) { res.status(400).json({ error: true, message: "O início do período deve ser anterior ao fim.", status: 400 }); return; }
+
   const insights = await cached(
-    `recompra:history-insights:${ctx.clientId}:${ctx.dataset ?? "no-erp"}:${ctx.vestiDataset ?? "no-vesti"}`,
+    `recompra:history-insights:v3:${ctx.clientId}:${ctx.dataset ?? "no-erp"}:${ctx.vestiDataset ?? "no-vesti"}:${period.dateFromOnly}:${period.dateToOnly}`,
     RECOMPRA_CACHE_TTL_MS,
     () =>
       fetchRecompraHistoryInsights({
         clientId: ctx.clientId,
         dataset: ctx.dataset,
         vestiDataset: ctx.vestiDataset,
+        dateFrom: period.dateFromOnly,
+        dateTo: period.dateToOnly,
       }),
   );
 

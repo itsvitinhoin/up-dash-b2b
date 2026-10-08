@@ -1,3 +1,5 @@
+import { buildMonthlyCohort } from "./monthly-cohort";
+import { buildPurchaseProgression } from "./purchase-progression";
 // Criado 21/09/2026 -- Fase 1 da integração de dado real de Performance >
 // Recompra (ver "00 - Especificação técnica.pdf" v1.0). Fase 2 (21/09/2026)
 // ligou Status/Estado/Vendedora de verdade + tabela de vendedora. Fase 3
@@ -1401,7 +1403,9 @@ export async function fetchRecompraHistoryInsights(params: {
   dataset: string | null;
   vestiDataset: string | null;
   cohortMonths?: number; // default 6
-}): Promise<{ funnel: RecompraFunnelStep[]; cohort: RecompraCohortRow[] }> {
+  dateFrom: string;
+  dateTo: string;
+}) {
   const cohortMonths = params.cohortMonths ?? 6;
   // A busca de eventos NÃO pode ser limitada aos últimos `cohortMonths` --
   // Coorte/Funil precisam saber a 1ª compra DE VERDADE (e a sequência
@@ -1419,8 +1423,12 @@ export async function fetchRecompraHistoryInsights(params: {
     vestiDataset: params.vestiDataset,
     sinceDate,
   });
+  const approvals = await db.select({ id: customersTable.id, approvalDate: customersTable.approvalDate })
+    .from(customersTable).where(and(eq(customersTable.clientId, params.clientId), eq(customersTable.registrationStatus, "APPROVED")));
   return {
+    ...buildPurchaseProgression(eventsByCustomer, new Map(approvals.map(row => [row.id, row.approvalDate])), params.dateFrom, params.dateTo),
     funnel: buildPurchaseFunnel(eventsByCustomer),
     cohort: buildCohortRows(eventsByCustomer, cohortMonths),
+    monthlyCohort: buildMonthlyCohort(eventsByCustomer, params.dateTo),
   };
 }

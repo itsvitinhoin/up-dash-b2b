@@ -1776,6 +1776,22 @@ export async function fetchVestiProductsSummary(
   };
 }
 
+/** Valor de venda de todo o estoque disponível do catálogo ativo, sem recorte de vendas. */
+export async function fetchVestiAvailableStockSalesValue(dataset: string): Promise<number> {
+  const produtos = vestiTable(dataset, "produtos_vesti");
+  const estoques = vestiTable(dataset, "estoques_vesti");
+  const [rows] = await bigquery.query({ query: `
+    WITH stock_agg AS (
+      SELECT product_id, SUM(GREATEST(COALESCE(quantity, 0), 0)) AS available_stock
+      FROM ${estoques} GROUP BY product_id
+    )
+    SELECT COALESCE(SUM(st.available_stock * GREATEST(COALESCE(p.price, 0), 0)), 0) AS stock_sales_value
+    FROM ${produtos} p JOIN stock_agg st ON st.product_id = p.id
+    WHERE p.active IS NOT FALSE
+  ` });
+  return Number((rows as Array<Record<string, unknown>>)[0]?.stock_sales_value) || 0;
+}
+
 export type VestiProductDetail = {
   product: VestiProductRow;
   kpis: { totalRevenue: number; totalUnitsSold: number; avgTicket: number; uniqueBuyers: number; percentSold: number };
