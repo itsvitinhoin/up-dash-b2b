@@ -662,8 +662,9 @@ function getTouchpointsForCustomerDeduped(params: {
   externalUserId: number;
   from: string;
   to: string;
+  needUntil?: string;
 }): Promise<TouchpointCandidate[]> {
-  const key = `${params.clientId}:${params.customerId}:${params.from}:${params.to}`;
+  const key = `${params.clientId}:${params.customerId}:${params.from}:${params.to}:${params.needUntil ?? ""}`;
   const inFlight = inFlightTouchpointFetches.get(key);
   if (inFlight) return inFlight;
   const promise = getTouchpointsForCustomerCached(params).finally(() => {
@@ -694,8 +695,12 @@ async function fetchTouchpointsForCandidates(params: {
   // fixos) -- passa um teto bem mais conservador pra não somar pressão em
   // cima do que já existia. Default preserva o comportamento antigo.
   concurrency?: number;
-}): Promise<Map<string, TouchpointCandidate[]>> {
+  // Data do último evento de cada cliente: o touchpoint só precisa estar
+  // sincronizado até ali (ver getTouchpointsForCustomerCached).
+  needUntilByCustomer?: Map<string, Date>;
+}): Promise<{ touchpointsByCustomer: Map<string, TouchpointCandidate[]>; failures: number }> {
   const touchpointsByCustomer = new Map<string, TouchpointCandidate[]>();
+  let failures = 0;
   const entries = [...params.candidates.entries()].filter(([, identity]) => {
     const externalUserId = Number.parseInt(identity.externalId ?? "", 10);
     return Number.isFinite(externalUserId) && externalUserId > 0;
@@ -714,18 +719,33 @@ async function fetchTouchpointsForCandidates(params: {
           externalUserId,
           from: params.lookbackFrom,
           to: params.lookbackTo,
+          needUntil: params.needUntilByCustomer?.get(customerId)?.toISOString(),
         });
         touchpointsByCustomer.set(customerId, touchpoints);
       } catch {
         // Cliente com erro de busca fica sem touchpoint -- não trava o
-        // resto do relatório (mesma postura de erp-attribution.ts).
+        // resto do relatório (mesma postura de erp-attribution.ts). Desde
+        // 08/10/2026 a falha é CONTADA e devolvida: antes ela sumia em
+        // silêncio e o número de "Anúncios" mudava de uma chamada pra outra.
+        failures++;
         touchpointsByCustomer.set(customerId, []);
       }
     }
   }
   const concurrency = params.concurrency ?? TOUCHPOINT_CONCURRENCY;
   await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, () => worker()));
-  return touchpointsByCustomer;
+  return { touchpointsByCustomer, failures };
+}
+
+// Último evento de cada cliente no recorte: é até aí que o touchpoint importa.
+function lastEventDateByCustomer(eventsByCustomer: Map<string, PositiveEvent[]>): Map<string, Date> {
+  const out = new Map<string, Date>();
+  for (const [customerId, events] of eventsByCustomer) {
+    let last: Date | null = null;
+    for (const e of events) if (!last || e.requestedAt.getTime() > last.getTime()) last = e.requestedAt;
+    if (last) out.set(customerId, last);
+  }
+  return out;
 }
 
 // `standardTouchpointWindow()` (janela de touchpoint ancorada em "agora",
@@ -827,7 +847,7 @@ export async function classifyRecompra(params: {
   dateFrom: string;
   dateTo: string; // último dia incluído
   filters: RecompraFilters;
-}): Promise<{ classifications: CustomerClassification[]; unmatchedErpCount: number; attributionUnavailable: boolean }> {
+}): Promise<{ classifications: CustomerClassification[]; unmatchedErpCount: number; attributionUnavailable: boolean; touchpointFailures: number }> {
   const dateToExclusive = new Date(`${params.dateTo}T00:00:00.000Z`);
   dateToExclusive.setUTCDate(dateToExclusive.getUTCDate() + 1);
   const isAnuncios = params.filters.tipo.startsWith("anuncios");
@@ -855,18 +875,22 @@ export async function classifyRecompra(params: {
   // relatório.
   let touchpointsByCustomer: Map<string, TouchpointCandidate[]> | null = null;
   let attributionUnavailable = false;
+  let touchpointFailures = 0;
   if (isAnuncios && !vestiAttribution) {
     if (!params.upZeroApiKey) {
       attributionUnavailable = true;
     } else {
       const { lookbackFrom, lookbackTo } = standardTouchpointWindow();
-      touchpointsByCustomer = await fetchTouchpointsForCandidates({
+      const fetched = await fetchTouchpointsForCandidates({
         clientId: params.clientId,
         upZeroApiKey: params.upZeroApiKey,
         candidates,
         lookbackFrom,
         lookbackTo,
+        needUntilByCustomer: lastEventDateByCustomer(rawEventsByCustomer),
       });
+      touchpointsByCustomer = fetched.touchpointsByCustomer;
+      touchpointFailures = fetched.failures;
     }
   }
   const eventsByCustomer = attributionUnavailable
@@ -906,7 +930,7 @@ export async function classifyRecompra(params: {
     });
   }
 
-  return { classifications, unmatchedErpCount, attributionUnavailable };
+  return { classifications, unmatchedErpCount, attributionUnavailable, touchpointFailures };
 }
 
 export type RecompraIntervalBucket = { faixa: string; clientes: number; grupo: RecompraSegment };
@@ -941,6 +965,7 @@ export type RecompraBlocks = {
   intervalBuckets: RecompraIntervalBucket[]; // Fase 5 -- gráfico "Intervalo entre compras", segue P1/P2 igual aos blocos
   unmatchedErpCount: number;
   attributionUnavailable: boolean; // true quando Tipo=Anúncios foi pedido mas o cliente não tem chave UpZero
+  touchpointFailures: number; // clientes cuja busca de touchpoint falhou (ficaram sem atribuição neste cálculo)
 };
 
 function blockFor(classifications: CustomerClassification[]): { faturamento: number; vendas: number; clientes: number; ticketMedio: number | null } {
@@ -955,7 +980,7 @@ function blockFor(classifications: CustomerClassification[]): { faturamento: num
   return { faturamento, vendas, clientes: classifications.length, ticketMedio: vendas > 0 ? faturamento / vendas : null };
 }
 
-export function aggregateBlocks(classifications: CustomerClassification[], unmatchedErpCount: number, attributionUnavailable = false): RecompraBlocks {
+export function aggregateBlocks(classifications: CustomerClassification[], unmatchedErpCount: number, attributionUnavailable = false, touchpointFailures = 0): RecompraBlocks {
   const recorrentes = classifications.filter((c) => c.segment === "recorrente");
   const reativados = classifications.filter((c) => c.segment === "reativado");
   const intervals = classifications.map((c) => c.intervalDays);
@@ -974,6 +999,7 @@ export function aggregateBlocks(classifications: CustomerClassification[], unmat
     intervalBuckets: buildIntervalBuckets(classifications),
     unmatchedErpCount,
     attributionUnavailable,
+    touchpointFailures,
   };
 }
 
@@ -1119,14 +1145,17 @@ export async function classifyRecompraMonthly(params: {
       attributionUnavailable = true;
     } else {
       const { lookbackFrom, lookbackTo } = standardTouchpointWindow();
-      touchpointsByCustomer = await fetchTouchpointsForCandidates({
-        clientId: params.clientId,
-        upZeroApiKey: params.upZeroApiKey,
-        candidates,
-        lookbackFrom,
-        lookbackTo,
-        concurrency: MONTHLY_TOUCHPOINT_CONCURRENCY,
-      });
+      touchpointsByCustomer = (
+        await fetchTouchpointsForCandidates({
+          clientId: params.clientId,
+          upZeroApiKey: params.upZeroApiKey,
+          candidates,
+          lookbackFrom,
+          lookbackTo,
+          concurrency: MONTHLY_TOUCHPOINT_CONCURRENCY,
+          needUntilByCustomer: lastEventDateByCustomer(rawEventsByCustomer),
+        })
+      ).touchpointsByCustomer;
     }
   }
   const eventsByCustomer = attributionUnavailable

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
 import { DATE_ONLY_RE, coerceDateQuery, dateRange, queryDateOnly, requireClient } from "../lib/httpQuery";
-import { cached } from "../lib/queryCache";
+import { cached, invalidateCached } from "../lib/queryCache";
 import {
   classifyRecompra,
   classifyRecompraMonthly,
@@ -113,8 +113,8 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
   // duplicada a `classifyRecompra` que /dashboard fazia isolada. `blocks`
   // (via `aggregateBlocks`) já inclui `intervalBuckets` (gráfico "Intervalo
   // entre compras", segue P1/P2 igual ao resto dos blocos).
-  const { classifications, unmatchedErpCount, attributionUnavailable } = await fetchClassificationsCached(ctx, period.dateFromOnly, period.dateToOnly, filters);
-  const blocks = aggregateBlocks(classifications, unmatchedErpCount, attributionUnavailable);
+  const { classifications, unmatchedErpCount, attributionUnavailable, touchpointFailures } = await fetchClassificationsCached(ctx, period.dateFromOnly, period.dateToOnly, filters);
+  const blocks = aggregateBlocks(classifications, unmatchedErpCount, attributionUnavailable, touchpointFailures);
 
   // Comparação P1xP2 (opcional): P2 é um recorte independente escolhido
   // pelo usuário no front (ComparisonPeriodPicker), não necessariamente o
@@ -128,7 +128,7 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
 
   const blocksP2 = hasCompare
     ? await fetchClassificationsCached(ctx, compareDateFromRaw as string, compareDateToRaw as string, filters).then(
-        (r) => aggregateBlocks(r.classifications, r.unmatchedErpCount, r.attributionUnavailable),
+        (r) => aggregateBlocks(r.classifications, r.unmatchedErpCount, r.attributionUnavailable, r.touchpointFailures),
       )
     : null;
 
@@ -151,20 +151,22 @@ async function fetchClassificationsCached(
   dateTo: string,
   filters: RecompraFilters,
 ) {
-  return cached(
-    `recompra:classifications:${ctx.clientId}:${ctx.dataset ?? "no-erp"}:${ctx.vestiDataset ?? "no-vesti"}:${dateFrom}:${dateTo}:${filtersCacheKey(filters)}`,
-    RECOMPRA_CACHE_TTL_MS,
-    async () =>
-      classifyRecompra({
-        clientId: ctx.clientId,
-        dataset: ctx.dataset,
-        vestiDataset: ctx.vestiDataset,
-        upZeroApiKey: ctx.upZeroApiKey,
-        dateFrom,
-        dateTo,
-        filters,
-      }),
+  const key = `recompra:classifications:${ctx.clientId}:${ctx.dataset ?? "no-erp"}:${ctx.vestiDataset ?? "no-vesti"}:${dateFrom}:${dateTo}:${filtersCacheKey(filters)}`;
+  const result = await cached(key, RECOMPRA_CACHE_TTL_MS, async () =>
+    classifyRecompra({
+      clientId: ctx.clientId,
+      dataset: ctx.dataset,
+      vestiDataset: ctx.vestiDataset,
+      upZeroApiKey: ctx.upZeroApiKey,
+      dateFrom,
+      dateTo,
+      filters,
+    }),
   );
+  // Resultado com falha de touchpoint é parcial: não fica guardado, a próxima
+  // chamada tenta de novo (as que deram certo já estão no cache do Postgres).
+  if (result.touchpointFailures > 0) invalidateCached(key);
+  return result;
 }
 
 export async function getDetail(req: Request, res: Response): Promise<void> {

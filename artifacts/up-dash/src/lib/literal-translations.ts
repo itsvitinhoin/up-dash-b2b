@@ -941,6 +941,8 @@ const entries: Array<[string, string, string]> = [
   ["Comparar com o período anterior", "Compare with the previous period", "이전 기간과 비교"],
   ["Ocultar comparação com o período anterior", "Hide comparison with the previous period", "이전 기간 비교 숨기기"],
   ["Pode levar até 1 minuto para calcular.", "It can take up to 1 minute to calculate.", "계산에 최대 1분이 걸릴 수 있습니다."],
+  // ---- recompra (falha de touchpoint)
+  ["Não foi possível verificar a atribuição de {n} cliente(s) agora; eles ficaram de fora de Anúncios nesta leitura. Recarregue em instantes para tentar de novo.", "Could not check the attribution of {n} customer(s) right now; they were left out of Ads in this reading. Reload in a moment to try again.", "지금은 고객 {n}명의 어트리뷰션을 확인하지 못해 이번 조회에서 광고 집계에서 제외되었습니다. 잠시 후 다시 불러오세요."],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(

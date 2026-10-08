@@ -460,6 +460,8 @@ type RecompraBlocksPayload = {
   // true quando Tipo=Anúncios foi pedido mas o client não tem chave UpZero
   // configurada -- backend degrada pra universo vazio em vez de quebrar.
   attributionUnavailable: boolean;
+  // clientes cuja busca de touchpoint falhou neste cálculo (ficaram sem atribuição)
+  touchpointFailures?: number;
 };
 type RecompraDashboardResponse = {
   period: { from: string; to: string };
@@ -899,6 +901,11 @@ export default function PerformanceRecompraPage() {
       {recompraData?.blocks.attributionUnavailable && (
         <p className="text-xs text-amber-500">
           Este cliente não tem chave UpZero configurada — Tipo=Anúncios não pode ser calculado (sem touchpoint pago pra atribuir) e os blocos/tabela abaixo estão vazios.
+        </p>
+      )}
+      {recompraData && (recompraData.blocks.touchpointFailures ?? 0) > 0 && (
+        <p className="text-xs text-amber-500">
+          {tx("Não foi possível verificar a atribuição de {n} cliente(s) agora; eles ficaram de fora de Anúncios nesta leitura. Recarregue em instantes para tentar de novo.").replace("{n}", String(recompraData.blocks.touchpointFailures))}
         </p>
       )}
       {recompraData && recompraData.blocks.unmatchedErpCount > 0 && (
