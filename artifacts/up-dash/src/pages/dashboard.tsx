@@ -795,7 +795,6 @@ function CampaignCustomersPanel({
         {data && (
           <div className="up-metric-grid">
             <GlassMetricCard label="Clientes" value={data.summary.impactedCustomers ?? 0} format={formatNumber} previousValue={previous.data?.summary.impactedCustomers} source="UP Zero · campanhas pagas" />
-            <GlassMetricCard label="Solicitado" value={data.summary.requestedValue ?? data.summary.attributedRevenue ?? 0} format={formatCurrency} previousValue={previous.data?.summary.requestedValue ?? previous.data?.summary.attributedRevenue} source="UP Zero · campanhas pagas" />
             <GlassMetricCard label="Pedidos" value={data.summary.orders ?? 0} format={formatNumber} previousValue={previous.data?.summary.orders} source="UP Zero · campanhas pagas" />
             <GlassMetricCard label="Cadastros" value={data.summary.registrations ?? 0} format={formatNumber} previousValue={previous.data?.summary.registrations} source="UP Zero · campanhas pagas" />
           </div>
