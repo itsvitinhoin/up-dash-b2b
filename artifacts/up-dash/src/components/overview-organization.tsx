@@ -4,8 +4,8 @@ import { useI18n } from "@/lib/i18n";
 import { useOrganizationData } from "@/lib/organization-data";
 
 // Cada seção pede só as fontes que usa (ver useOrganizationData): o resto nem é buscado.
-const EXECUTIVE_SOURCES = ["dashboard", "marketing", "performance", "recompra"] as const;
-const EXECUTIVE_PREVIOUS = ["performance", "recompra"] as const;
+const EXECUTIVE_SOURCES = ["dashboard", "marketing", "recompra"] as const;
+const EXECUTIVE_PREVIOUS = ["recompra"] as const;
 const ECOMMERCE_SOURCES = ["customers", "orders"] as const;
 const ECOMMERCE_PREVIOUS = ["orders"] as const;
 const PERFORMANCE_SOURCES = ["recompra", "funnel", "performance", "customers"] as const;
@@ -53,14 +53,13 @@ export function OverviewOrganization({
         <Metrics metrics={pick("spend", "roas")} />
         {cards.ticket}
       </MetricSection>
-      <MetricSection title={tx("AQUISIÇÃO")} columns={5} id="executive-acquisition">
+      <MetricSection title={tx("AQUISIÇÃO")} columns={4} id="executive-acquisition">
         <Metrics
           metrics={pick(
             "newCustomers",
             "acquisitionRevenue",
             "acquisitionOrders",
             "acquisitionTicket",
-            "cac",
           )}
         />
       </MetricSection>
