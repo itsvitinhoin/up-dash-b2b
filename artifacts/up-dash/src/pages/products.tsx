@@ -345,7 +345,7 @@ export default function ProductsPage() {
               · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
             </span>
             <span className="ml-2 text-muted-foreground/70">
-              · {formatNumber(inStockCount)} Em estoque
+              · {formatNumber(inStockCount)} {tx("Em estoque")}
             </span>
             {lowStockCount > 0 && (
               <span className="ml-2 text-amber-500/90">
@@ -434,7 +434,7 @@ export default function ProductsPage() {
               <div className="flex items-center justify-between mb-3">
                 <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
                   <Sparkles className="h-3 w-3" />
-                  UP Insight · Catálogo · {insight?.source === "ai" ? "IA" : "Auto"}
+                  UP Insight · {tx("Catálogo")} · {insight?.source === "ai" ? "IA" : "Auto"}
                 </span>
                 <Button variant="ghost" size="sm"
                   type="button"
@@ -532,7 +532,7 @@ export default function ProductsPage() {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground flex items-center gap-1">
-                <ArrowDownUp className="h-3 w-3" /> Ordenar por
+                <ArrowDownUp className="h-3 w-3" /> {tx("Ordenar por")}
               </span>
               <ToggleGroup
                 type="single"

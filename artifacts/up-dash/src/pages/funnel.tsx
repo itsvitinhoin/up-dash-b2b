@@ -314,7 +314,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                 </div>
 <MetricDataProvider source={tx("Ecommerce · eventos do funil")} comparisons={{
   [`metric-${(visibleSteps[0]?.label ?? "Topo do funil").toLowerCase().replace(/\s+/g, "-")}`]: { current: visibleSteps[0]?.count, previous: previous.data?.steps.find(step => step.step === visibleSteps[0]?.step)?.count },
-  [`metric-${(biggestDrop ? `Perda em ${biggestDrop.to.label}` : "Maior perda").toLowerCase().replace(/\s+/g, "-")}`]: { current: biggestDrop?.dropPct, previous: previous.data?.steps.find(step => step.step === biggestDrop?.to.step)?.dropOffRate, format: v => `${v.toFixed(1)}%` },
+  [`metric-${(biggestDrop ? `${tx("Perda em")} ${biggestDrop.to.label}` : tx("Maior perda")).toLowerCase().replace(/\s+/g, "-")}`]: { current: biggestDrop?.dropPct, previous: previous.data?.steps.find(step => step.step === biggestDrop?.to.step)?.dropOffRate, format: v => `${v.toFixed(1)}%` },
   "metric-compras": { current: visibleSteps[visibleSteps.length - 1]?.count, previous: previous.data?.steps.find(step => step.step === visibleSteps[visibleSteps.length - 1]?.step)?.count },
   "metric-média-de-eventos-antes-da-compra": { current: data.avgEventsBeforePurchase, previous: previous.data?.avgEventsBeforePurchase, format: v => v.toFixed(1) },
 }}>
@@ -337,7 +337,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     />
                     <MiniStat
                       icon={TrendingUp}
-                      label={biggestDrop ? `Perda em ${biggestDrop.to.label}` : "Maior perda"}
+                      label={biggestDrop ? `${tx("Perda em")} ${biggestDrop.to.label}` : tx("Maior perda")}
                       value={biggestDrop?.dropPct ?? 0}
                       format={(v) => `${v.toFixed(1)}%`}
                       tone="warn"
@@ -524,7 +524,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   </div>
                   {funnelChartData.length > 0 && funnelChartData[0].value > 0 ? (
                     <div className="space-y-5">
-                      <AcquisitionFunnel title={tx("Etapas de conversão")} stages={funnelChartData.map((step, index) => ({ label: step.label, value: step.value, connector: funnelChartData[index+1] && step.value > 0 ? `${formatPercentage(funnelChartData[index+1].value / step.value * 100)} seguem para a próxima etapa` : undefined }))} />
+                      <AcquisitionFunnel title={tx("Etapas de conversão")} stages={funnelChartData.map((step, index) => ({ label: step.label, value: step.value, connector: funnelChartData[index+1] && step.value > 0 ? `${formatPercentage(funnelChartData[index+1].value / step.value * 100)} ${tx("seguem para a próxima etapa")}` : undefined }))} />
                       <div className="grid gap-2 sm:grid-cols-2">
                         {visibleSteps.map((step, index) => (
                           <div key={step.step} className="rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -538,7 +538,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                                   <p className="truncate text-sm font-medium">{displayLabel(step.label)}</p>
                                 </div>
                                 <p className="mt-1 text-xs text-muted-foreground">
-                                  {formatPercentage(step.conversionRate)} conversão · {formatPercentage(step.dropOffRate)} queda
+                                  {formatPercentage(step.conversionRate)} {tx("conversão")} · {formatPercentage(step.dropOffRate)} {tx("queda")}
                                 </p>
                               </div>
                               <p className="text-sm font-semibold tabular-nums">{formatNumber(step.count)}</p>

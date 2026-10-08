@@ -846,6 +846,21 @@ const entries: Array<[string, string, string]> = [
   ["Nenhum produto para exibir", "No products to show", "표시할 상품이 없습니다"],
   ["Não há produtos no catálogo com os filtros atuais. Limpe os filtros ou sincronize o catálogo da loja.", "There are no products in the catalog for the current filters. Try clearing filters or syncing the store catalog.", "카탈로그에 현재 필터에 맞는 상품이 없습니다. 필터를 지우거나 매장 카탈로그를 동기화해 보세요."],
   ["Vendidos", "Sold", "판매"],
+  // ---- lote 5 (manual)
+  ["seguem para a próxima etapa", "continue to the next stage", "다음 단계로 진행"],
+  ["queda", "drop-off", "이탈"],
+  ["Perda em", "Drop @", "이탈 위치:"],
+  ["Maior perda", "Biggest drop", "최대 이탈"],
+  ["Em estoque", "In stock", "재고 있음"],
+  ["Catálogo", "Catalog", "카탈로그"],
+  ["Ordenar por", "Sort by", "정렬 기준"],
+  ["dias de cobertura", "days of coverage", "일 커버리지"],
+  ["Sem velocidade disponível", "No velocity available", "판매 속도 정보 없음"],
+  ["vendidos", "sold", "판매"],
+  ["Nenhum produto com risco de excesso de estoque neste período.", "No overstock-risk products in this period.", "이 기간에 과잉 재고 위험 상품이 없습니다."],
+  // ---- performance (funil)
+  ["da etapa anterior", "of the previous stage", "이전 단계 대비"],
+  ["Entrada do funil", "Funnel entry", "퍼널 시작"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(

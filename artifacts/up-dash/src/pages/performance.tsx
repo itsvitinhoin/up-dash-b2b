@@ -1,3 +1,4 @@
+import { useI18n } from "@/lib/i18n";
 import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
@@ -539,6 +540,7 @@ function Pagination({
 }
 
 export default function PerformancePage() {
+  const { tx } = useI18n();
   const { selectedClientId, user } = useAuth();
   const { dateRange } = useDashboardFilters();
   const [ordersPage, setOrdersPage] = useState(1);
@@ -1196,8 +1198,8 @@ export default function PerformancePage() {
                   </p>
                   <p className="mt-2 text-[11px] text-muted-foreground">
                     {stage.previousRate == null
-                      ? "Entrada do funil"
-                      : `${formatPercentage(stage.previousRate)} da etapa anterior`}
+                      ? tx("Entrada do funil")
+                      : `${formatPercentage(stage.previousRate)} ${tx("da etapa anterior")}`}
                   </p>
                   {index < (data?.funnel.length ?? 0) - 1 && (
                     <span className="absolute -right-2.5 top-1/2 z-10 text-muted-foreground">

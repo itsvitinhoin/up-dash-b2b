@@ -157,6 +157,7 @@ function SkuTile({
   }>;
   emptyText: string;
 }) {
+  const { tx } = useI18n();
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2 mb-3">
@@ -182,9 +183,9 @@ function SkuTile({
                 </p>
                 <p className="text-muted-foreground tabular-nums">
                   {r.coverageDays !== null && r.coverageDays !== undefined
-                    ? `${r.coverageDays.toFixed(0)}dias de cobertura`
-                    : "Sem velocidade disponível"}{" "}
-                  · {formatNumber(r.unitsSold)} sold
+                    ? `${r.coverageDays.toFixed(0)} ${tx("dias de cobertura")}`
+                    : tx("Sem velocidade disponível")}{" "}
+                  · {formatNumber(r.unitsSold)} {tx("vendidos")}
                 </p>
               </div>
               <Badge
@@ -534,7 +535,7 @@ export default function StockIntelligencePage() {
                 icon={Package}
                 color="bg-amber-500/15 text-amber-400"
                 rows={data.overstockRisk}
-                emptyText="Nenhum produto com risco de excesso de estoque neste período."
+                emptyText={tx("Nenhum produto com risco de excesso de estoque neste período.")}
               />
               <SkuTile
                 title={tx("Maior giro · 10 principais")}
