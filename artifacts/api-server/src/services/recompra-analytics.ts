@@ -137,7 +137,7 @@ const VESTI_STATUS_CLAUSE_BY_FILTER: Record<RecompraStatusFilter, string | null>
 // recompra.tsx) -- sem camada de mapeamento entre os dois.
 // "vesti" (UP Glass, 08/10/2026): só pedidos do canal Vesti. Existe porque "erp" é, na prática, "todos os canais" (e no
 // Vogabox, que tem Vesti + ERP, junta os dois); o Dashboard precisa só da Vesti para bater com os cartões do topo.
-export type RecompraTipoFilter = "erp" | "ecommerce" | "vesti" | "anuncios-todos" | "anuncios-ecommerce" | "anuncios-erp";
+export type RecompraTipoFilter = "erp" | "ecommerce" | "vesti" | "site" | "anuncios-todos" | "anuncios-ecommerce" | "anuncios-erp";
 
 export type RecompraFilters = {
   status: RecompraStatusFilter;
@@ -798,8 +798,8 @@ function applyTipoAndOrigemFilter(
         if (event.channel === "site") kept.push(event);
         continue;
       }
-      if (filters.tipo === "vesti") {
-        if (event.channel === "vesti") kept.push(event);
+      if (filters.tipo === "vesti" || filters.tipo === "site") {
+        if (event.channel === filters.tipo) kept.push(event);
         continue;
       }
       // A partir daqui, algum "anuncios-*".
@@ -858,7 +858,8 @@ export async function classifyRecompra(params: {
   // Tipo "vesti": o universo é a tabela de vendas da Vesti SOZINHA (a mesma que alimenta o Dashboard). Não lê o ERP:
   // no Vogabox (Vesti + ERP) o cruzamento descarta a cópia da Vesti de toda venda que também está no ERP, e o total
   // não bateria com o topo da tela (93 em vez de 134).
-  if (params.filters.tipo === "vesti" && params.dataset) params = { ...params, dataset: null };
+  // "site" idem: só os pedidos do site (UpZero/Nuvemshop), sem o ERP -- é o universo dos cartões do topo do Dashboard.
+  if ((params.filters.tipo === "vesti" || params.filters.tipo === "site") && params.dataset) params = { ...params, dataset: null };
 
   const dateToExclusive = new Date(`${params.dateTo}T00:00:00.000Z`);
   dateToExclusive.setUTCDate(dateToExclusive.getUTCDate() + 1);
@@ -975,9 +976,9 @@ function buildIntervalBuckets(classifications: CustomerClassification[]): Recomp
 }
 
 export type RecompraBlocks = {
-  recompra: { faturamento: number; vendas: number; clientes: number; ticketMedio: number | null };
-  recorrentes: { faturamento: number; vendas: number; clientes: number; ticketMedio: number | null };
-  reativados: { faturamento: number; vendas: number; clientes: number; ticketMedio: number | null };
+  recompra: { faturamento: number; faturamentoBruto: number; vendas: number; clientes: number; ticketMedio: number | null };
+  recorrentes: { faturamento: number; faturamentoBruto: number; vendas: number; clientes: number; ticketMedio: number | null };
+  reativados: { faturamento: number; faturamentoBruto: number; vendas: number; clientes: number; ticketMedio: number | null };
   ciclo: { tempoMedioDias: number | null; medianaDias: number | null; pctRecorrente: number | null; pctReativado: number | null };
   intervalBuckets: RecompraIntervalBucket[]; // Fase 5 -- gráfico "Intervalo entre compras", segue P1/P2 igual aos blocos
   unmatchedErpCount: number;
@@ -986,19 +987,21 @@ export type RecompraBlocks = {
   aquisicao: RecompraBlockTotals; // pedidos de clientes na 1ª compra (ver buildAcquisitionBlock)
 };
 
-function blockFor(classifications: CustomerClassification[]): { faturamento: number; vendas: number; clientes: number; ticketMedio: number | null } {
+function blockFor(classifications: CustomerClassification[]): { faturamento: number; faturamentoBruto: number; vendas: number; clientes: number; ticketMedio: number | null } {
   let faturamento = 0;
+  let faturamentoBruto = 0;
   let vendas = 0;
   for (const c of classifications) {
     for (const e of c.qualifyingEvents) {
       faturamento += e.paidValue;
+      faturamentoBruto += e.grossValue;
       vendas += 1;
     }
   }
-  return { faturamento, vendas, clientes: classifications.length, ticketMedio: vendas > 0 ? faturamento / vendas : null };
+  return { faturamento, faturamentoBruto, vendas, clientes: classifications.length, ticketMedio: vendas > 0 ? faturamento / vendas : null };
 }
 
-export function aggregateBlocks(classifications: CustomerClassification[], unmatchedErpCount: number, attributionUnavailable = false, touchpointFailures = 0, acquisition: RecompraBlockTotals = { faturamento: 0, vendas: 0, clientes: 0, ticketMedio: null }): RecompraBlocks {
+export function aggregateBlocks(classifications: CustomerClassification[], unmatchedErpCount: number, attributionUnavailable = false, touchpointFailures = 0, acquisition: RecompraBlockTotals = { faturamento: 0, faturamentoBruto: 0, vendas: 0, clientes: 0, ticketMedio: null }): RecompraBlocks {
   const recorrentes = classifications.filter((c) => c.segment === "recorrente");
   const reativados = classifications.filter((c) => c.segment === "reativado");
   const intervals = classifications.map((c) => c.intervalDays);

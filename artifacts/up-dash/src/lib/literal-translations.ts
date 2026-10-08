@@ -1061,6 +1061,8 @@ const entries: Array<[string, string, string]> = [
   // ---- tipo por plataforma
   ["Recompra · Vesti pago", "Repurchase · paid Vesti", "재구매 · 결제된 Vesti"],
   ["Aquisição · Vesti pago", "Acquisition · paid Vesti", "신규 확보 · 결제된 Vesti"],
+  // ---- roas atribuido
+  ["Clientes atribuídos às campanhas · atendido / investimento", "Customers attributed to campaigns · fulfilled / investment", "캠페인 귀속 고객 · 처리 금액 / 투자"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(

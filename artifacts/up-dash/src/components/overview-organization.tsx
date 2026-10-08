@@ -12,15 +12,20 @@ const PERFORMANCE_SOURCES = ["recompra", "funnel", "performance", "customers"] a
 const PERFORMANCE_PREVIOUS = ["recompra", "funnel", "performance"] as const;
 const MEDIA_SOURCES = ["marketing"] as const;
 
+/** ROAS dos clientes que vieram de campanhas (o mesmo do painel "Clientes atribuídos às campanhas"). */
+export type AttributedRoas = { value: number | null | undefined; previous?: number | null; loading?: boolean };
+
 export function OverviewOrganization({
   cards,
   ecommerce,
+  attributedRoas,
 }: {
   cards: Record<string, ReactNode>;
   ecommerce: boolean;
+  attributedRoas?: AttributedRoas;
 }) {
   const { tx } = useI18n();
-  const { pick } = useOrganizationData(
+  const { pick, measures } = useOrganizationData(
     ecommerce ? ECOMMERCE_SOURCES : EXECUTIVE_SOURCES,
     ecommerce ? ECOMMERCE_PREVIOUS : EXECUTIVE_PREVIOUS,
   );
@@ -50,7 +55,14 @@ export function OverviewOrganization({
       <MetricSection title={tx("RESULTADO GERAL")} columns={5} id="executive-result">
         {cards.revenue}
         {cards.orders}
-        <Metrics metrics={pick("spend", "roas")} />
+        <Metrics
+          metrics={[
+            ...pick("spend"),
+            attributedRoas
+              ? { key: "roas", label: tx("ROAS"), value: attributedRoas.value, format: "ratio" as const, source: tx("Clientes atribuídos às campanhas · atendido / investimento"), previousValue: attributedRoas.previous, loading: attributedRoas.loading }
+              : measures.roas,
+          ]}
+        />
         {cards.ticket}
       </MetricSection>
       <MetricSection title={tx("AQUISIÇÃO")} columns={4} id="executive-acquisition">

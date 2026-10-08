@@ -1706,6 +1706,12 @@ export default function DashboardPage({ organization = "executive" }: { organiza
     placeholderData: (previous) => previous,
   });
 
+  // Mesma busca do período anterior que o painel "Clientes atribuídos" já faz (mesma chave: não gera requisição nova).
+  const campaignPrevious = usePreviousPeriodQuery<CampaignCustomersResponse>(
+    periodQuery("/api/analytics/campaign-customers", { clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), limit: 500 }),
+    Boolean(campaignCustomers),
+  );
+
   // Compute changes from API-provided prior-period KPIs
   const revenueChange = useMemo(
     () => computeChange(data?.kpis.revenue, data?.prevKpis?.revenue),
@@ -1944,6 +1950,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
 
       <OverviewOrganization
         ecommerce={organization === "ecommerce"}
+        attributedRoas={isB2C ? undefined : { value: campaignCustomers?.summary?.roas, previous: campaignPrevious.data?.summary?.roas, loading: campaignCustomersLoading }}
         cards={{
         revenue: (
           <DashboardKpiCard

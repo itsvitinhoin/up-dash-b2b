@@ -17,6 +17,7 @@ import type { OrganizedMetric } from "@/components/metric-section";
 
 type RecompraTotals = {
   faturamento: number;
+  faturamentoBruto?: number; // valor do pedido aprovado (servidor novo)
   vendas: number;
   clientes: number;
   ticketMedio: number | null;
@@ -129,7 +130,11 @@ export function useOrganizationData(
   const { data: clientDetail } = useGetClient(selectedClientId ?? "", { query: queryOpts({ enabled: !!selectedClientId }) });
   const platform = clientDetail?.commercePlatform;
   const platformReady = !selectedClientId || platform !== undefined;
-  const recompraTipo = platform ? (platform === "VESTI" ? "vesti" : "ecommerce") : selectedDashboardMode === "B2C" ? "ecommerce" : "erp";
+  const recompraTipo = platform ? (platform === "VESTI" ? "vesti" : "site") : selectedDashboardMode === "B2C" ? "ecommerce" : "erp";
+  // Valor em R$: o topo do Dashboard soma o valor do pedido aprovado nos clientes de site; na Vesti soma "valor reservado"
+  // (a coluna que a Recompra chama de faturamento). Assim Aquisição + Retenção fecham com o Faturamento total.
+  const money = (t?: RecompraTotals | null) => (t == null ? undefined : platform === "VESTI" ? t.faturamento : (t.faturamentoBruto ?? t.faturamento));
+  const ticketOf = (t?: RecompraTotals | null) => (t == null ? undefined : t.vendas > 0 ? (money(t) ?? 0) / t.vendas : null);
   const recompraSource = platform === "VESTI" ? "Recompra · Vesti pago" : "Recompra · Ecommerce pago";
   const acquisitionSource = platform === "VESTI" ? "Aquisição · Vesti pago" : "Aquisição · Ecommerce pago";
 
@@ -313,9 +318,9 @@ export function useOrganizationData(
     dashboard.isLoading,
   );
   // Aquisição = pedidos pagos do período de clientes sem compra anterior (mesma base e filtros da Retenção).
-  put("acquisitionRevenue", "Faturamento de Aquisição", r?.aquisicao?.faturamento, "currency", acquisitionSource, recompra.isLoading);
+  put("acquisitionRevenue", "Faturamento de Aquisição", money(r?.aquisicao), "currency", acquisitionSource, recompra.isLoading);
   put("acquisitionOrders", "Pedidos de Aquisição", r?.aquisicao?.vendas, "number", acquisitionSource, recompra.isLoading);
-  put("acquisitionTicket", "Ticket de Aquisição", r?.aquisicao?.ticketMedio, "currency", acquisitionSource, recompra.isLoading);
+  put("acquisitionTicket", "Ticket de Aquisição", ticketOf(r?.aquisicao), "currency", acquisitionSource, recompra.isLoading);
   put(
     "cac",
     "CAC",
@@ -335,7 +340,7 @@ export function useOrganizationData(
   put(
     "retentionRevenue",
     "Faturamento de Recompra",
-    r?.recompra.faturamento,
+    money(r?.recompra),
     "currency",
     recompraSource,
     recompra.isLoading,
@@ -351,7 +356,7 @@ export function useOrganizationData(
   put(
     "retentionTicket",
     "Ticket de Recompra",
-    r?.recompra.ticketMedio,
+    ticketOf(r?.recompra),
     "currency",
     recompraSource,
     recompra.isLoading,
@@ -482,8 +487,8 @@ export function useOrganizationData(
     spend: pm?.totalSpend, totalSpend: pm?.totalSpend, metaSpend: previousMeta?.spend, googleSpend: previousGoogle?.spend,
     roas: pm?.roas, requestedRoas: selectedDashboardMode === "B2C" ? null : pm?.roas, paidRoas: selectedDashboardMode === "B2C" ? pm?.roas : null,
     cac: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cac : null, ctr: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.ctr : null, cpc: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cpc : null,
-    acquisitionRevenue: pr?.aquisicao?.faturamento, acquisitionOrders: pr?.aquisicao?.vendas, acquisitionTicket: pr?.aquisicao?.ticketMedio,
-    repurchasers: pr?.recompra.clientes, retentionRevenue: pr?.recompra.faturamento, retentionOrders: pr?.recompra.vendas, retentionTicket: pr?.recompra.ticketMedio,
+    acquisitionRevenue: money(pr?.aquisicao), acquisitionOrders: pr?.aquisicao?.vendas, acquisitionTicket: ticketOf(pr?.aquisicao),
+    repurchasers: pr?.recompra.clientes, retentionRevenue: money(pr?.recompra), retentionOrders: pr?.recompra.vendas, retentionTicket: ticketOf(pr?.recompra),
     registrations: pc?.totalRegistrations, approved: pc?.approvedRegistrations, approvalRate: pc?.approvalRatePct, firstPurchaseAverage: pc?.avgTimeToFirstPurchaseDays,
     pieces: previousOrders.data?.kpis.fulfilledQuantity, impressions: previousMeta?.impressions, clicks: previousMeta?.clicks,
     approvedConversion: selectedDashboardMode === "B2C" ? null : previousFunnel.data?.overallConversion,
