@@ -111,8 +111,8 @@ export function FloatingAiAssistant() {
         }`}
         onClick={() => setIsChatOpen((open) => !open)}
         style={{
-          background: "linear-gradient(135deg, rgba(59,130,246,0.95) 0%, rgba(124,58,237,0.95) 100%)",
-          boxShadow: "0 0 18px rgba(59,130,246,0.45), 0 0 38px rgba(124,58,237,0.28)",
+          background: "linear-gradient(135deg, rgba(59,130,246,0.95) 0%, rgba(4,88,254,0.95) 100%)",
+          boxShadow: "0 0 18px rgba(59,130,246,0.45), 0 0 38px rgba(4,88,254,0.28)",
         }}
         aria-label={isChatOpen ? "Fechar assistente" : "Abrir assistente"}
       >
@@ -220,7 +220,7 @@ export function FloatingAiAssistant() {
 
             <div
               className="pointer-events-none absolute inset-0 rounded-2xl"
-              style={{ background: "linear-gradient(135deg, rgba(59,130,246,0.06), transparent, rgba(147,51,234,0.05))" }}
+              style={{ background: "linear-gradient(135deg, rgba(59,130,246,0.06), transparent, rgba(4,88,254,0.05))" }}
             />
           </div>
         </div>

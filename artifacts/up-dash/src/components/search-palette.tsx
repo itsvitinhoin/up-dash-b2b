@@ -1,3 +1,5 @@
+import { useI18n } from "@/lib/i18n";
+import { displayLabel } from "@/lib/display-label";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Package, Tag, Users, Store } from "lucide-react";
@@ -37,6 +39,7 @@ function fuzzyMatch(haystack: string | null | undefined, needle: string): boolea
 }
 
 export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
+  const { language, tx } = useI18n();
   const [, setLocation] = useLocation();
   const { user, selectedClientId, selectedDashboardMode } = useAuth();
   const [query, setQuery] = useState("");
@@ -141,7 +144,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
       commandProps={{ shouldFilter: false }}
     >
       <CommandInput
-        placeholder="Search SKUs, products, categories, customers..."
+        placeholder={tx("Buscar SKUs, produtos, categorias e clientes…")}
         value={query}
         onValueChange={setQuery}
         data-testid="search-palette-input"
@@ -149,12 +152,12 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
       <CommandList>
         {!hasAnyResults && (
           <CommandEmpty>
-            {query ? "No results found." : "Start typing to search."}
+            {query ? tx("Nenhum resultado encontrado.") : tx("Digite para buscar.")}
           </CommandEmpty>
         )}
 
         {filteredProducts.length > 0 && (
-          <CommandGroup heading="Products">
+          <CommandGroup heading="Produtos">
             {filteredProducts.map((product) => (
               <CommandItem
                 key={product.id}
@@ -209,7 +212,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
             {(filteredProducts.length > 0 || filteredCategories.length > 0) && (
               <CommandSeparator />
             )}
-            <CommandGroup heading="Sellers">
+            <CommandGroup heading="Vendedoras">
               {filteredSellers.map((seller) => (
                 <CommandItem
                   key={seller.id}
@@ -240,7 +243,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
             {(filteredProducts.length > 0 || filteredCategories.length > 0 || filteredSellers.length > 0) && (
               <CommandSeparator />
             )}
-            <CommandGroup heading="Customers">
+            <CommandGroup heading="Clientes">
               {customers.map((customer) => (
                 <CommandItem
                   key={customer.id}
@@ -261,7 +264,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
                   </div>
                   {customer.rfmSegment && (
                     <span className="ml-auto text-xs text-muted-foreground">
-                      {customer.rfmSegment}
+                      {language === "pt" ? displayLabel(customer.rfmSegment) : customer.rfmSegment}
                     </span>
                   )}
                 </CommandItem>

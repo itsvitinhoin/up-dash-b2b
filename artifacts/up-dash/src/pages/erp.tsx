@@ -1,3 +1,7 @@
+import { useI18n } from "@/lib/i18n";
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
+import { useDisplayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { Fragment, useDeferredValue, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -80,6 +84,7 @@ import { exportRowsAsXlsx } from "@/lib/xlsx-export";
 import {
   formatCurrency,
   formatCurrencySmart,
+  formatErpDate,
   formatNumber,
   formatPercentage,
 } from "@/lib/formatters";
@@ -264,6 +269,8 @@ type ErpProductsResponse = {
   };
 };
 type Metric = {
+  previousValue?: number | null;
+  comparisonValue?: number | null;
   label: string;
   value: number;
   format: (value: number) => string;
@@ -314,7 +321,8 @@ function usePeriod() {
 function useErpDashboard() {
   const { dateFrom, dateTo } = usePeriod();
   const { clientId, enabled } = useErpClientId();
-  return useQuery<ErpDashboardResponse>({
+  const previous = usePreviousPeriodQuery<ErpDashboardResponse>(periodQuery("/api/analytics/erp/dashboard", { clientId, dateFrom, dateTo }), enabled);
+  const query = useQuery<ErpDashboardResponse>({
     queryKey: ["erp-dashboard", clientId, dateFrom, dateTo],
     queryFn: () =>
       customFetch(
@@ -330,6 +338,7 @@ function useErpDashboard() {
     refetchOnWindowFocus: false,
     retry: 1,
   });
+  return { ...query, previousData: previous.data };
 }
 function SectionTitle({
   icon: Icon,
@@ -364,6 +373,7 @@ function KpiGrid({
   metrics: Metric[];
   loading: boolean;
 }) {
+  const { tx } = useI18n();
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {metrics.map((metric) => (
@@ -374,6 +384,9 @@ function KpiGrid({
           label={metric.label}
           value={metric.value}
           format={metric.format}
+          comparisonValue={metric.comparisonValue}
+          previousValue={metric.previousValue}
+          source={tx("ERP · vendas e clientes")}
           change={null}
           changeLabel=""
           sub={[{ label: metric.subLabel, value: metric.subValue }]}
@@ -600,7 +613,8 @@ function BreakdownCard({
 }
 
 function ErpOverview() {
-  const { data, isLoading } = useErpDashboard();
+  const { tx } = useI18n();
+  const { data, isLoading, previousData } = useErpDashboard();
   const { dateFrom, dateTo } = usePeriod();
   const { clientId, enabled } = useErpClientId();
   const { data: products } = useQuery<ErpProductsResponse>({
@@ -619,45 +633,54 @@ function ErpOverview() {
     staleTime: 120_000,
     refetchOnWindowFocus: false,
   });
+  const pk = previousData?.kpis;
   const k = data?.kpis;
   const metrics: Metric[] = [
     {
       label: "Faturamento líquido",
       value: k?.netRevenue ?? 0,
+      comparisonValue: k?.netRevenue ?? null,
+      previousValue: pk?.netRevenue,
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-blue-500/10 text-blue-500",
-      sparkColor: "#3b82f6",
+      sparkColor: "#5b8dff",
       subLabel: "Bruto",
       subValue: formatCurrency(k?.grossRevenue ?? 0),
     },
     {
-      label: "Pedidos",
+      label: tx("Pedidos"),
       value: k?.orders ?? 0,
+      comparisonValue: k?.orders ?? null,
+      previousValue: pk?.orders,
       format: formatNumber,
       icon: ReceiptText,
       iconClass: "bg-violet-500/10 text-violet-500",
-      sparkColor: "#8b5cf6",
+      sparkColor: "#5b8dff",
       subLabel: "Ticket médio",
       subValue: formatCurrency(k?.avgTicket ?? 0),
     },
     {
       label: "Compradores",
       value: k?.uniqueCustomers ?? 0,
+      comparisonValue: k?.uniqueCustomers ?? null,
+      previousValue: pk?.uniqueCustomers,
       format: formatNumber,
       icon: Users,
       iconClass: "bg-emerald-500/10 text-emerald-500",
-      sparkColor: "#10b981",
+      sparkColor: "#87adff",
       subLabel: "Recorrentes",
       subValue: formatNumber(k?.returningCustomers ?? 0),
     },
     {
       label: "Retenção",
       value: k?.retentionPct ?? 0,
+      comparisonValue: k?.retentionPct ?? null,
+      previousValue: pk?.retentionPct,
       format: formatPercentage,
       icon: TrendingUp,
       iconClass: "bg-pink-500/10 text-pink-500",
-      sparkColor: "#ec4899",
+      sparkColor: "#b3caff",
       subLabel: "Novos",
       subValue: formatNumber(k?.newCustomers ?? 0),
       ringValue: k?.retentionPct ?? 0,
@@ -665,40 +688,48 @@ function ErpOverview() {
     {
       label: "Peças vendidas",
       value: k?.totalQuantity ?? 0,
+      comparisonValue: k?.totalQuantity ?? null,
+      previousValue: pk?.totalQuantity,
       format: formatNumber,
       icon: Boxes,
       iconClass: "bg-amber-500/10 text-amber-500",
-      sparkColor: "#f59e0b",
+      sparkColor: "#0458fe",
       subLabel: "Média / pedido",
       subValue: (k?.avgItemsPerOrder ?? 0).toFixed(1),
     },
     {
       label: "Descontos",
       value: k?.discountAmount ?? 0,
+      comparisonValue: k?.discountAmount ?? null,
+      previousValue: pk?.discountAmount,
       format: formatCurrencySmart,
       icon: Percent,
       iconClass: "bg-cyan-500/10 text-cyan-500",
-      sparkColor: "#06b6d4",
+      sparkColor: "#afc4ff",
       subLabel: "% do bruto",
       subValue: formatPercentage(k?.discountRatePct ?? 0),
     },
     {
       label: "Devoluções",
       value: k?.returnAmount ?? 0,
+      comparisonValue: k?.returnAmount ?? null,
+      previousValue: pk?.returnAmount,
       format: formatCurrencySmart,
       icon: AlertCircle,
       iconClass: "bg-orange-500/10 text-orange-500",
-      sparkColor: "#f97316",
+      sparkColor: "#0458fe",
       subLabel: "% do bruto",
       subValue: formatPercentage(k?.returnRatePct ?? 0),
     },
     {
       label: "Cancelamentos",
       value: k?.cancelledOrders ?? 0,
+      comparisonValue: k?.cancelledOrders ?? null,
+      previousValue: pk?.cancelledOrders,
       format: formatNumber,
       icon: AlertCircle,
       iconClass: "bg-red-500/10 text-red-500",
-      sparkColor: "#ef4444",
+      sparkColor: "#b3caff",
       subLabel: "Valor",
       subValue: formatCurrency(k?.cancelledAmount ?? 0),
     },
@@ -751,7 +782,7 @@ function ErpOverview() {
                   stroke="var(--color-revenue)"
                   fill="url(#erp-fill)"
                   strokeWidth={2}
-                />
+                 name={tx("Faturamento")} />
               </AreaChart>
             </ChartContainer>
           </CardContent>
@@ -827,8 +858,8 @@ function ErpOverview() {
           data={data?.breakdowns.sellers ?? []}
         />
         <BreakdownCard
-          title="Geografia de compradores"
-          description="Receita por estado do cadastro."
+          title={tx("Geografia de compradores")}
+          description={tx("Receita por estado do cadastro.")}
           icon={MapPin}
           data={data?.breakdowns.states ?? []}
         />
@@ -848,7 +879,7 @@ function ErpOverview() {
                   <TableHead>Categoria</TableHead>
                   <TableHead className="text-right">Variantes</TableHead>
                   <TableHead className="text-right">Peças</TableHead>
-                  <TableHead className="text-right">Faturamento</TableHead>
+                  <TableHead className="text-right">{tx("Faturamento")}</TableHead>
                   <TableHead className="text-right">Margem</TableHead>
                   <TableHead className="text-right">Giro</TableHead>
                   <TableHead className="text-right">Poder de venda</TableHead>
@@ -895,6 +926,7 @@ function ErpOverview() {
 }
 
 function ErpOrdersView() {
+  const { tx } = useI18n();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
@@ -903,7 +935,7 @@ function ErpOrdersView() {
   const deferred = useDeferredValue(search.trim());
   const { dateFrom, dateTo } = usePeriod();
   const { clientId, enabled } = useErpClientId();
-  const { data: dashboard } = useErpDashboard();
+  const { data: dashboard, previousData } = useErpDashboard();
   const params = {
     clientId,
     dateFrom,
@@ -925,6 +957,7 @@ function ErpOrdersView() {
     staleTime: 120_000,
     refetchOnWindowFocus: false,
   });
+  const pk = previousData?.kpis;
   const k = dashboard?.kpis;
   const exportCsv = async () => {
     setExporting(true);
@@ -936,9 +969,9 @@ function ErpOrdersView() {
           limit: 5000,
         }),
       );
-      exportRowsAsXlsx(`pedidos-erp-${dateFrom}-${dateTo}.xlsx`, "Pedidos", result.rows, [
+      exportRowsAsXlsx(`pedidos-erp-${dateFrom}-${dateTo}.xlsx`, tx("Pedidos"), result.rows, [
         { header: "Pedido", accessor: (r) => r.id },
-        { header: "Data", accessor: (r) => r.createdAt },
+        { header: "Data", accessor: (r) => (r.createdAt ? r.createdAt.slice(0, 10) : r.createdAt) },
         { header: "Cliente", accessor: (r) => r.customerName },
         { header: "Documento", accessor: (r) => r.document },
         { header: "Loja", accessor: (r) => r.store },
@@ -962,40 +995,48 @@ function ErpOrdersView() {
     {
       label: "Faturamento bruto",
       value: k?.grossRevenue ?? 0,
+      comparisonValue: k?.grossRevenue ?? null,
+      previousValue: pk?.grossRevenue,
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-blue-500/10 text-blue-500",
-      sparkColor: "#3b82f6",
+      sparkColor: "#5b8dff",
       subLabel: "Líquido",
       subValue: formatCurrency(k?.netRevenue ?? 0),
     },
     {
       label: "Pedidos únicos",
       value: k?.orders ?? 0,
+      comparisonValue: k?.orders ?? null,
+      previousValue: pk?.orders,
       format: formatNumber,
       icon: ReceiptText,
       iconClass: "bg-violet-500/10 text-violet-500",
-      sparkColor: "#8b5cf6",
+      sparkColor: "#5b8dff",
       subLabel: "Ticket médio",
       subValue: formatCurrency(k?.avgTicket ?? 0),
     },
     {
       label: "Peças vendidas",
       value: k?.totalQuantity ?? 0,
+      comparisonValue: k?.totalQuantity ?? null,
+      previousValue: pk?.totalQuantity,
       format: formatNumber,
       icon: Boxes,
       iconClass: "bg-amber-500/10 text-amber-500",
-      sparkColor: "#f59e0b",
+      sparkColor: "#0458fe",
       subLabel: "Média / pedido",
       subValue: (k?.avgItemsPerOrder ?? 0).toFixed(1),
     },
     {
       label: "Cancelamentos",
       value: k?.cancelledOrders ?? 0,
+      comparisonValue: k?.cancelledOrders ?? null,
+      previousValue: pk?.cancelledOrders,
       format: formatNumber,
       icon: AlertCircle,
       iconClass: "bg-red-500/10 text-red-500",
-      sparkColor: "#ef4444",
+      sparkColor: "#b3caff",
       subLabel: "Valor",
       subValue: formatCurrency(k?.cancelledAmount ?? 0),
     },
@@ -1092,10 +1133,7 @@ function ErpOrdersView() {
                           <div>
                             <p className="font-medium">#{order.id}</p>
                             <p className="text-xs text-muted-foreground">
-                              {format(
-                                new Date(order.createdAt),
-                                "dd/MM/yy HH:mm",
-                              )}
+                              {formatErpDate(order.createdAt, true)}
                             </p>
                           </div>
                         </div>
@@ -1225,6 +1263,7 @@ function BuyerOrderHistoryDialog({
   onPageChange: (page: number) => void;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { tx } = useI18n();
   const { clientId, enabled } = useErpClientId();
   const document = customer?.document ?? customer?.id;
   const { data, isLoading } = useQuery<ErpOrdersResponse>({
@@ -1256,33 +1295,14 @@ function BuyerOrderHistoryDialog({
         </DialogHeader>
 
         <div className="grid gap-3 border-y py-4 sm:grid-cols-3">
-          <div>
-            <p className="text-xs text-muted-foreground">Pedidos históricos</p>
-            <p className="mt-1 text-lg font-semibold">
-              {formatNumber(customer?.historicalOrders ?? 0)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">
-              Valor total comprado
-            </p>
-            <p className="mt-1 text-lg font-semibold">
-              {formatCurrency(customer?.lifetimeValue ?? 0)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">
-              Ticket médio histórico
-            </p>
-            <p className="mt-1 text-lg font-semibold">
-              {formatCurrency(
+          <GlassMetricCard  label={tx("Pedidos históricos")} value={<>{formatNumber(customer?.historicalOrders ?? 0)}</>} hideComparison />
+          <GlassMetricCard  label={tx("Valor total comprado")} value={<>{formatCurrency(customer?.lifetimeValue ?? 0)}</>} hideComparison />
+          <GlassMetricCard  label={tx("Ticket médio histórico")} value={<>{formatCurrency(
                 (customer?.historicalOrders ?? 0) > 0
                   ? (customer?.lifetimeValue ?? 0) /
                       (customer?.historicalOrders ?? 1)
                   : 0,
-              )}
-            </p>
-          </div>
+              )}</>}  />
         </div>
 
         <div className="overflow-x-auto">
@@ -1309,9 +1329,7 @@ function BuyerOrderHistoryDialog({
                     </p>
                   </TableCell>
                   <TableCell>
-                    {order.createdAt
-                      ? format(new Date(order.createdAt), "dd/MM/yyyy")
-                      : "—"}
+                    {formatErpDate(order.createdAt)}
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={order.status} />
@@ -1346,6 +1364,8 @@ function BuyerOrderHistoryDialog({
 }
 
 function ErpCustomersView() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const [search, setSearch] = useState("");
   const [buyerType, setBuyerType] = useState("all");
   const [page, setPage] = useState(1);
@@ -1356,7 +1376,7 @@ function ErpCustomersView() {
   const deferred = useDeferredValue(search.trim());
   const { dateFrom, dateTo } = usePeriod();
   const { clientId, enabled } = useErpClientId();
-  const { data: dashboard } = useErpDashboard();
+  const { data: dashboard, previousData } = useErpDashboard();
   const params = {
     clientId,
     dateFrom,
@@ -1400,53 +1420,62 @@ function ErpCustomersView() {
         { header: "Segmento", accessor: (r) => r.segment },
         { header: "Pedidos no período", accessor: (r) => r.orders },
         { header: "Comprado no período", accessor: (r) => r.totalSpent },
-        { header: "Pedidos históricos", accessor: (r) => r.historicalOrders },
+        { header: tx("Pedidos históricos"), accessor: (r) => r.historicalOrders },
         { header: "LTV", accessor: (r) => r.lifetimeValue },
-        { header: "Último pedido", accessor: (r) => r.lastOrderAt },
+        { header: "Último pedido", accessor: (r) => (r.lastOrderAt ? r.lastOrderAt.slice(0, 10) : r.lastOrderAt) },
       ]);
     } finally {
       setExporting(false);
     }
   };
+  const pk = previousData?.kpis;
   const k = dashboard?.kpis;
   const metrics: Metric[] = [
     {
       label: "Compradores",
       value: k?.uniqueCustomers ?? 0,
+      comparisonValue: k?.uniqueCustomers ?? null,
+      previousValue: pk?.uniqueCustomers,
       format: formatNumber,
       icon: Users,
       iconClass: "bg-blue-500/10 text-blue-500",
-      sparkColor: "#3b82f6",
+      sparkColor: "#5b8dff",
       subLabel: "No período",
       subValue: `${dateFrom} a ${dateTo}`,
     },
     {
       label: "Novos compradores",
       value: k?.newCustomers ?? 0,
+      comparisonValue: k?.newCustomers ?? null,
+      previousValue: pk?.newCustomers,
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-emerald-500/10 text-emerald-500",
-      sparkColor: "#10b981",
+      sparkColor: "#87adff",
       subLabel: "Regra",
       subValue: "Primeira compra histórica",
     },
     {
       label: "Recorrentes",
       value: k?.returningCustomers ?? 0,
+      comparisonValue: k?.returningCustomers ?? null,
+      previousValue: pk?.returningCustomers,
       format: formatNumber,
       icon: Users,
       iconClass: "bg-violet-500/10 text-violet-500",
-      sparkColor: "#8b5cf6",
+      sparkColor: "#5b8dff",
       subLabel: "Regra",
       subValue: "Já compraram antes",
     },
     {
       label: "Retenção",
       value: k?.retentionPct ?? 0,
+      comparisonValue: k?.retentionPct ?? null,
+      previousValue: pk?.retentionPct,
       format: formatPercentage,
       icon: TrendingUp,
       iconClass: "bg-pink-500/10 text-pink-500",
-      sparkColor: "#ec4899",
+      sparkColor: "#b3caff",
       subLabel: "Cálculo",
       subValue: "Recorrentes / compradores",
       ringValue: k?.retentionPct ?? 0,
@@ -1504,7 +1533,7 @@ function ErpCustomersView() {
                   <TableHead className="text-right">Pedidos período</TableHead>
                   <TableHead className="text-right">Valor período</TableHead>
                   <TableHead className="text-right">
-                    Pedidos históricos
+                    {tx("Pedidos históricos")}
                   </TableHead>
                   <TableHead className="text-right">LTV</TableHead>
                   <TableHead>Última compra</TableHead>
@@ -1552,7 +1581,7 @@ function ErpCustomersView() {
                         {c.buyerType === "NEW" ? "Novo" : "Recorrente"}
                       </Badge>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {c.segment}
+                        {displayLabel(c.segment)}
                       </p>
                     </TableCell>
                     <TableCell>{c.seller ?? "—"}</TableCell>
@@ -1568,9 +1597,7 @@ function ErpCustomersView() {
                     </TableCell>
                     <TableCell>
                       <p>
-                        {c.lastOrderAt
-                          ? format(new Date(c.lastOrderAt), "dd/MM/yyyy")
-                          : "—"}
+                        {formatErpDate(c.lastOrderAt)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {c.daysSinceLastOrder === null
@@ -1656,6 +1683,7 @@ function ProductTable({
   setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>;
   stockMode?: boolean;
 }) {
+  const { tx } = useI18n();
   const columnCount = stockMode ? 10 : 9;
 
   return (
@@ -1667,7 +1695,7 @@ function ProductTable({
             <TableHead>Categoria</TableHead>
             <TableHead className="text-right">SKUs</TableHead>
             <TableHead className="text-right">Vendidas</TableHead>
-            <TableHead className="text-right">Faturamento</TableHead>
+            <TableHead className="text-right">{tx("Faturamento")}</TableHead>
             <TableHead className="text-right">
               {stockMode ? "Margem" : "Dias restantes"}
             </TableHead>
@@ -1826,6 +1854,7 @@ function ProductTable({
   );
 }
 function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
+  const { tx } = useI18n();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [stockStatus, setStockStatus] = useState(
@@ -1914,7 +1943,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatNumber,
           icon: Boxes,
           iconClass: "bg-blue-500/10 text-blue-500",
-          sparkColor: "#3b82f6",
+          sparkColor: "#5b8dff",
           subLabel: "SKUs",
           subValue: formatNumber(data?.totalSkus ?? 0),
         },
@@ -1924,7 +1953,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatCurrencySmart,
           icon: CircleDollarSign,
           iconClass: "bg-emerald-500/10 text-emerald-500",
-          sparkColor: "#10b981",
+          sparkColor: "#87adff",
           subLabel: "Base",
           subValue: "Estoque × preço atual",
         },
@@ -1934,7 +1963,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: (v) => `${Math.round(v)} dias`,
           icon: Clock3,
           iconClass: "bg-violet-500/10 text-violet-500",
-          sparkColor: "#8b5cf6",
+          sparkColor: "#5b8dff",
           subLabel: "Base",
           subValue: "Ritmo do período",
         },
@@ -1944,19 +1973,19 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatNumber,
           icon: AlertCircle,
           iconClass: "bg-red-500/10 text-red-500",
-          sparkColor: "#ef4444",
+          sparkColor: "#b3caff",
           subLabel: "Negativos",
           subValue: formatNumber(data?.negativeStockCount ?? 0),
         },
       ]
     : [
         {
-          label: "Faturamento",
+          label: tx("Faturamento"),
           value: data?.totalRevenue ?? 0,
           format: formatCurrencySmart,
           icon: WalletCards,
           iconClass: "bg-blue-500/10 text-blue-500",
-          sparkColor: "#3b82f6",
+          sparkColor: "#5b8dff",
           subLabel: "Peças",
           subValue: formatNumber(data?.totalUnits ?? 0),
         },
@@ -1966,7 +1995,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatCurrencySmart,
           icon: CircleDollarSign,
           iconClass: "bg-emerald-500/10 text-emerald-500",
-          sparkColor: "#10b981",
+          sparkColor: "#87adff",
           subLabel: "Margem",
           subValue: formatPercentage(data?.grossMarginPct ?? 0),
         },
@@ -1976,7 +2005,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatPercentage,
           icon: TrendingUp,
           iconClass: "bg-cyan-500/10 text-cyan-500",
-          sparkColor: "#06b6d4",
+          sparkColor: "#afc4ff",
           subLabel: "Cobertura",
           subValue:
             data?.coverageDays == null
@@ -1990,7 +2019,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           format: formatCurrencySmart,
           icon: PackageCheck,
           iconClass: "bg-violet-500/10 text-violet-500",
-          sparkColor: "#8b5cf6",
+          sparkColor: "#5b8dff",
           subLabel: "Estoque",
           subValue: formatNumber(data?.totalStock ?? 0),
         },
@@ -2150,7 +2179,9 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
 }
 
 function ErpSellersView() {
-  const { data, isLoading } = useErpDashboard();
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
+  const { data, isLoading, previousData } = useErpDashboard();
   const [exporting, setExporting] = useState(false);
   const sellers = data?.breakdowns.sellers ?? [];
   const stores = data?.breakdowns.stores ?? [];
@@ -2158,9 +2189,9 @@ function ErpSellersView() {
     setExporting(true);
     exportRowsAsCsv("vendedores-erp.csv", sellers, [
       { header: "Vendedor", accessor: (r) => r.label },
-      { header: "Pedidos", accessor: (r) => r.orders },
+      { header: tx("Pedidos"), accessor: (r) => r.orders },
       { header: "Clientes", accessor: (r) => r.customers },
-      { header: "Faturamento", accessor: (r) => r.revenue },
+      { header: tx("Faturamento"), accessor: (r) => r.revenue },
       {
         header: "Ticket médio",
         accessor: (r) => (r.orders ? r.revenue / r.orders : 0),
@@ -2177,18 +2208,18 @@ function ErpSellersView() {
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-blue-500/10 text-blue-500",
-      sparkColor: "#3b82f6",
+      sparkColor: "#5b8dff",
       subLabel: "Lojas",
       subValue: formatNumber(stores.length),
     },
     {
-      label: "Faturamento",
+      label: tx("Faturamento"),
       value: totalRevenue,
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-emerald-500/10 text-emerald-500",
-      sparkColor: "#10b981",
-      subLabel: "Pedidos",
+      sparkColor: "#87adff",
+      subLabel: tx("Pedidos"),
       subValue: formatNumber(totalOrders),
     },
     {
@@ -2197,7 +2228,7 @@ function ErpSellersView() {
       format: formatCurrencySmart,
       icon: CircleDollarSign,
       iconClass: "bg-violet-500/10 text-violet-500",
-      sparkColor: "#8b5cf6",
+      sparkColor: "#5b8dff",
       subLabel: "Base",
       subValue: "Por pedido",
     },
@@ -2207,7 +2238,7 @@ function ErpSellersView() {
       format: formatNumber,
       icon: Users,
       iconClass: "bg-amber-500/10 text-amber-500",
-      sparkColor: "#f59e0b",
+      sparkColor: "#0458fe",
       subLabel: "Base",
       subValue: "Soma por vendedor",
     },
@@ -2242,9 +2273,9 @@ function ErpSellersView() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Vendedor</TableHead>
-                  <TableHead className="text-right">Pedidos</TableHead>
+                  <TableHead className="text-right">{tx("Pedidos")}</TableHead>
                   <TableHead className="text-right">Clientes</TableHead>
-                  <TableHead className="text-right">Faturamento</TableHead>
+                  <TableHead className="text-right">{tx("Faturamento")}</TableHead>
                   <TableHead className="text-right">Ticket médio</TableHead>
                   <TableHead className="text-right">Participação</TableHead>
                 </TableRow>
@@ -2252,7 +2283,7 @@ function ErpSellersView() {
               <TableBody>
                 {sellers.map((s) => (
                   <TableRow key={s.label}>
-                    <TableCell className="font-medium">{s.label}</TableCell>
+                    <TableCell className="font-medium">{displayLabel(s.label)}</TableCell>
                     <TableCell className="text-right">{s.orders}</TableCell>
                     <TableCell className="text-right">
                       {s.customers ?? 0}
@@ -2305,4 +2336,22 @@ export default function ErpPage() {
       {view === "sellers" && <ErpSellersView />}
     </div>
   );
+}
+
+
+export function ErpGeographyView() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
+  const {data, isLoading} = useErpDashboard();
+  const states = data?.breakdowns.states ?? [];
+  return <div className="space-y-6" data-testid="erp-geography-page">
+    <BreakdownCard title={tx("Geografia de compradores")} description={tx("Receita por estado do cadastro.")} icon={MapPin} data={states} />
+    <Card><CardContent className="p-5"><SectionTitle icon={MapPin} title={tx("Estados")} description={tx("Pedidos e faturamento da fonte ERP.")} />
+      <div className="mt-5 overflow-x-auto"><Table><TableHeader><TableRow>
+        <TableHead>{tx("Estado")}</TableHead><TableHead className="text-right">{tx("Pedidos")}</TableHead><TableHead className="text-right">{tx("Faturamento")}</TableHead>
+      </TableRow></TableHeader><TableBody>{states.map(state => <TableRow key={state.label}>
+        <TableCell>{displayLabel(state.label)}</TableCell><TableCell className="text-right">{formatNumber(state.orders)}</TableCell><TableCell className="text-right">{formatCurrency(state.revenue)}</TableCell>
+      </TableRow>)}{!states.length && <EmptyRow colSpan={3} loading={isLoading} />}</TableBody></Table></div>
+    </CardContent></Card>
+  </div>;
 }

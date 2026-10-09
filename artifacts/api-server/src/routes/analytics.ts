@@ -63,7 +63,20 @@ import {
   GetUtmResponse,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
-import { getOpenAIClient, isAIConfigured } from "../lib/openai";
+import { getOpenAIClient, getInsightAI, isAIConfigured } from "../lib/openai";
+import {
+  customersInsight,
+  dashboardInsight,
+  journeyInsight,
+  marketingInsight,
+  normalizeInsightLanguage,
+  productsInsight,
+  rfmInsight,
+  sellersInsight,
+  stockInsight,
+  utmInsight,
+  type InsightLanguage,
+} from "../services/insight-text";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
 import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
 import * as vestiDashboardController from "../controllers/vestiDashboardController";
@@ -79,14 +92,17 @@ import {
   getUpzeroAnalyticsMetrics,
   type UpzeroAnalyticsMetric,
 } from "../services/upzero/analytics-metrics";
-import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-facts";
+import { getUpzeroAnalyticsFactsAsMetrics, getUpzeroAnalyticsFactsByEvent, getUpzeroFactActorsByDay } from "../services/upzero/analytics-facts";
+import { buildFunnelSteps, countFunnelPeople, FUNNEL_EVENT_NAMES, funnelActorKey, worstFunnelStep, type FunnelStepKey } from "../services/funnel-people";
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
 import { normalizeCampaignText, isPaidCampaignSignal, latestCampaignEvidenceBefore } from "../services/campaign-attribution";
 import { syncPaidTouchpointsForCustomer } from "../services/paid-touchpoints";
 import { computeErpPaidAttribution } from "../services/erp-attribution";
-import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
+import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiAvailableStockSalesValue, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
+
+import { buildProductSalesBreakdowns } from "../services/product-sales-breakdowns";
 
 const router: IRouter = Router();
 
@@ -445,6 +461,78 @@ async function getUpzeroTrackingRows(params: {
     const metrics = await getUpzeroAnalyticsMetrics(params);
     return { rows: metrics.data, source: "metrics" };
   }
+}
+
+// Funil: lê só os tipos de evento que o funil usa, um por vez (ver getUpzeroAnalyticsFactsByEvent).
+// Achado 09/10/2026 (medido na UP Zero): cada tipo lê inteiro em 1-2 s, exceto `page_view` -- 13 mil+ eventos em
+// 7 dias e a página 14 do cursor nem respondeu em 40 s. As VISITAS são lidas em fatias de 1 dia (pessoas distintas).
+// Se uma fatia/tipo falhar ou estourar o limite, esse tipo usa as métricas por hora, que SÓ ESTIMAM: a soma de
+// sessões por hora conta a mesma pessoa várias vezes (medido: 2.526 contra ~1.016 pessoas reais em 2 dias).
+const FUNNEL_SLICED_EVENTS: readonly string[] = ["page_view"];
+
+// A análise "Ativação B2B" (cadastro aprovado -> 1ª compra) nunca chegou na tela (o contrato da API a descartava).
+// Achado 09/10/2026: ligá-la agora mostraria 0,2% na MX Fashion, porque o sincronizador das 00:03 recria clientes que já
+// tinham pedido com cadastro e aprovação carimbados com a HORA DO SYNC (52 clientes, todos compradores): para eles o 1º
+// pedido sempre "vem antes" da aprovação. Só liga com FUNNEL_ACTIVATION=1, depois que o sync gravar as datas reais.
+const FUNNEL_ACTIVATION_ENABLED = process.env.FUNNEL_ACTIVATION === "1";
+
+async function getFunnelTrackingRows(params: {
+  from: string;
+  to: string;
+  apiKey?: string | null;
+}): Promise<{ rows: UpzeroAnalyticsMetric[]; source: "facts" | "metrics"; complete: boolean }> {
+  let factRows: UpzeroAnalyticsMetric[] = [];
+  let source: "facts" | "metrics" = "facts";
+  const viaMetrics = new Set<string>();
+  try {
+    const [byEvent, sliced] = await Promise.all([
+      getUpzeroAnalyticsFactsByEvent({
+        ...params,
+        eventNames: FUNNEL_EVENT_NAMES.filter((name) => !FUNNEL_SLICED_EVENTS.includes(name)),
+      }),
+      Promise.all(
+        FUNNEL_SLICED_EVENTS.map(async (eventName) => ({
+          eventName,
+          ...(await getUpzeroFactActorsByDay({
+            ...params,
+            eventName,
+            actorKey: (row) => funnelActorKey(row),
+            isIdentified: (row) => getMetricUser(row) !== null,
+          })),
+        })),
+      ),
+    ]);
+    for (const name of [...byEvent.truncatedEvents, ...byEvent.failedEvents]) viaMetrics.add(name);
+    for (const slice of sliced) if (!slice.complete) viaMetrics.add(slice.eventName);
+    // linhas parciais de um tipo cortado/falho são descartadas: esse tipo será lido pelas métricas
+    factRows = bridgeAnonymousRowsToIdentifiedUsers(
+      [...byEvent.rows, ...sliced.flatMap((slice) => slice.rows)].filter((row) => !viaMetrics.has(row.event_name)),
+    );
+  } catch (err) {
+    console.warn(
+      "[upzero:funnel] facts por evento indisponível; usando só métricas por hora:",
+      err instanceof Error ? err.message : err,
+    );
+    source = "metrics";
+    for (const name of FUNNEL_EVENT_NAMES) viaMetrics.add(name);
+  }
+  let complete = true;
+  const metricRows: UpzeroAnalyticsMetric[] = [];
+  await Promise.all(
+    [...viaMetrics].map(async (eventName) => {
+      try {
+        const metrics = await getUpzeroAnalyticsMetrics({ ...params, eventName });
+        metricRows.push(...metrics.data);
+      } catch (err) {
+        complete = false;
+        console.warn(
+          "[upzero:funnel] métricas indisponíveis para", eventName + ":",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }),
+  );
+  return { rows: [...factRows, ...metricRows], source, complete };
 }
 
 function bridgeKeysForRow(row: UpzeroAnalyticsMetric): string[] {
@@ -3355,102 +3443,92 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     }
   }
 
+  const hasUtmFilter = Boolean(utmSource || utmMedium || utmCampaign);
+  const utmCustomerConditions = (): SQL[] => {
+    const parts: SQL[] = [];
+    if (utmSource) parts.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
+    if (utmMedium) parts.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
+    if (utmCampaign) parts.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
+    return parts;
+  };
+  // Cadastros e aprovados vêm da base de clientes (é a fonte de verdade); compradores, dos pedidos pagos.
+  // Mesma janela da página Cadastros (customerDateQueryRange): antes o funil dava 748 onde Cadastros dava 749.
+  const customerWindow = (() => {
+    const range = customerDateQueryRange(rawQuery, parsed.data.dateFrom, parsed.data.dateTo);
+    return dateRange(range.from, range.to);
+  })();
+  const loadCustomerTotals = async () => {
+    const [row] = await db
+      .select({
+        registrations: sql<number>`COUNT(*)::int`,
+        approved: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
+      })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId),
+          gte(customersTable.createdAt, customerWindow.from),
+          lte(customersTable.createdAt, customerWindow.to),
+          ...utmCustomerConditions(),
+        ),
+      );
+    return { registrations: Number(row?.registrations ?? 0), approved: Number(row?.approved ?? 0) };
+  };
+  const loadPaidBuyers = async (): Promise<number | null> => {
+    if (hasUtmFilter) return null;
+    const [row] = await db
+      .select({ buyers: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, from),
+          lte(ordersTable.createdAt, to),
+          sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`,
+        ),
+      );
+    return Number(row?.buyers ?? 0);
+  };
+  // Achado 09/10/2026: estes campos extras ficam FORA do `GetFunnelResponse.parse` de propósito -- o contrato
+  // gerado não conhece `activation` (o parse o descartava e a análise "Ativação B2B" nunca chegava na tela).
+  const sendFunnel = (
+    body: unknown,
+    extra: { activation?: unknown; dataSource: "upzero-events" | "upzero-hourly" | "local"; dataComplete: boolean },
+  ): void => {
+    res.json({
+      ...GetFunnelResponse.parse(body),
+      ...(extra.activation ? { activation: extra.activation } : {}),
+      dataSource: extra.dataSource,
+      dataComplete: extra.dataComplete,
+    });
+  };
+
   try {
     const [client] = await db
       .select({ upZeroApiKey: clientsTable.upZeroApiKey })
       .from(clientsTable)
       .where(eq(clientsTable.id, clientId));
     const upzeroRange = upzeroIsoRange(req.query as Record<string, unknown>, from, to);
-    const tracking = await getUpzeroTrackingRows({
-      ...upzeroRange,
-      apiKey: client?.upZeroApiKey,
-      context: "funnel",
-    });
+    const tracking = await getFunnelTrackingRows({ ...upzeroRange, apiKey: client?.upZeroApiKey });
     const scopedMetrics = tracking.rows.filter((row) => {
       if (utmSource && row.utm_source?.toLowerCase() !== utmSource.toLowerCase()) return false;
       if (utmMedium && row.utm_medium?.toLowerCase() !== utmMedium.toLowerCase()) return false;
       if (utmCampaign && row.utm_campaign?.toLowerCase() !== utmCampaign.toLowerCase()) return false;
       return true;
     });
-    const counts: Record<string, number> = {
-      VISIT: 0,
-      CATEGORY_VIEW: 0,
-      PRODUCT_VIEW: 0,
-      FORM_START: 0,
-      REGISTER_START: 0,
-      REGISTRATION: 0,
-      APPROVED_REGISTRATION: 0,
-      LOGIN: 0,
-      ADD_TO_CART: 0,
-      CHECKOUT_STARTED: 0,
-      ORDER_CREATED: 0,
-      PURCHASE: 0,
-      PAYMENT_APPROVED: 0,
+    // Cada etapa conta PESSOAS distintas (ver services/funnel-people.ts).
+    const people = countFunnelPeople(scopedMetrics);
+    const [customerTotals, paidBuyers] = await Promise.all([loadCustomerTotals(), loadPaidBuyers()]);
+    const counts: Partial<Record<FunnelStepKey, number>> = {
+      ...people.counts,
+      // O cadastro da base nunca pode ficar abaixo do que foi rastreado nem dos aprovados; compra, idem com os pedidos pagos.
+      REGISTRATION: Math.max(people.counts.REGISTRATION, customerTotals.registrations),
+      APPROVED_REGISTRATION: customerTotals.approved,
+      PURCHASE: Math.max(people.counts.PURCHASE, paidBuyers ?? 0),
     };
-    for (const row of scopedMetrics) {
-      const value = row.total_events || 0;
-      switch (row.event_name) {
-        case "page_view":
-          counts.VISIT += value;
-          break;
-        case "category_view":
-          counts.CATEGORY_VIEW += value;
-          break;
-        case "product_view":
-        case "product_item_impression":
-          counts.PRODUCT_VIEW += value;
-          break;
-        case "form_start":
-          counts.FORM_START += value;
-          break;
-        case "register_start":
-          counts.REGISTER_START += value;
-          break;
-        case "register_submitted":
-          counts.REGISTRATION += value;
-          break;
-        case "login":
-          counts.LOGIN += value;
-          break;
-        case "add_to_cart":
-          counts.ADD_TO_CART += value;
-          break;
-        case "initiate_checkout":
-        case "checkout_start":
-          counts.CHECKOUT_STARTED += value;
-          break;
-        case "order_created":
-          counts.ORDER_CREATED += value;
-          break;
-        case "purchase":
-          counts.PURCHASE += value;
-          break;
-        case "order_paid":
-        case "payment_approved":
-          counts.PAYMENT_APPROVED += value;
-          break;
-        default:
-          break;
-      }
-    }
 
-    const approvedConditions: SQL[] = [
-      eq(customersTable.clientId, clientId),
-      eq(customersTable.registrationStatus, "APPROVED"),
-      gte(customersTable.createdAt, from),
-      lte(customersTable.createdAt, to),
-    ];
-    if (utmSource) approvedConditions.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
-    if (utmMedium) approvedConditions.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
-    if (utmCampaign) approvedConditions.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
-    const [approvedRegistrations] = await db
-      .select({ count: sql<number>`COUNT(*)::int` })
-      .from(customersTable)
-      .where(and(...approvedConditions));
-    counts.APPROVED_REGISTRATION = Number(approvedRegistrations?.count ?? 0);
-
-    const funnelOrder: Array<{ step: string; label: string }> = [
-      { step: "VISIT", label: "Visualizações de página" },
+    const funnelOrder: Array<{ step: FunnelStepKey; label: string }> = [
+      { step: "VISIT", label: "Visitas ao site" },
       { step: "CATEGORY_VIEW", label: "Categorias vistas" },
       { step: "PRODUCT_VIEW", label: "Produtos vistos" },
       { step: "FORM_START", label: "Formulários iniciados" },
@@ -3465,47 +3543,23 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       { step: "PAYMENT_APPROVED", label: "Pagamentos aprovados" },
     ];
     const approvedBaseline = counts.APPROVED_REGISTRATION ?? 0;
-    const postApprovalSteps = new Set(["LOGIN", "ADD_TO_CART", "CHECKOUT_STARTED", "ORDER_CREATED", "PURCHASE", "PAYMENT_APPROVED"]);
-    const steps = funnelOrder.map((step, index) => {
-      const count = counts[step.step] ?? 0;
-      const previous = index === 0 ? count : counts[funnelOrder[index - 1].step] ?? 0;
-      const conversionRate =
-        index === 0
-          ? 100
-          : step.step === "APPROVED_REGISTRATION"
-            ? previous > 0
-              ? (count / previous) * 100
-              : count > 0
-                ? 100
-                : 0
-            : postApprovalSteps.has(step.step) && approvedBaseline > 0
-              ? (count / approvedBaseline) * 100
-              : previous > 0
-                ? (count / previous) * 100
-                : 0;
-      return {
-        ...step,
-        count,
-        conversionRate,
-        dropOffRate: index === 0 ? 0 : 100 - conversionRate,
-      };
-    });
+    const steps = buildFunnelSteps(funnelOrder, counts, approvedBaseline);
     const conversionCount = counts.PAYMENT_APPROVED || counts.PURCHASE || counts.ORDER_CREATED || 0;
-    const overallConversion = approvedBaseline > 0 ? (conversionCount / approvedBaseline) * 100 : 0;
-    let worst = { idx: -1, drop: -1 };
-    for (let i = 1; i < steps.length; i++) {
-      if (steps[i].dropOffRate > worst.drop) worst = { idx: i, drop: steps[i].dropOffRate };
-    }
+    const overallConversion = approvedBaseline > 0 ? Math.min(100, (conversionCount / approvedBaseline) * 100) : 0;
+    const worst = worstFunnelStep(steps);
+    const complete = tracking.complete;
     const insights = [
       tracking.source === "facts"
-        ? `Funil alimentado pela UP Zero com ${scopedMetrics.length} eventos granulares no período.`
-        : `Funil alimentado pela UP Zero com ${scopedMetrics.length} linhas agregadas por hora no período.`,
+        ? `Funil alimentado pela UP Zero: etapas contadas por pessoa distinta (visitas por sessão), a partir de ${scopedMetrics.length} registros do período.`
+        : `Funil alimentado pela UP Zero com ${scopedMetrics.length} linhas agregadas por hora; sem como separar pessoas, essas etapas somam sessões.`,
       `Conversão geral de ${overallConversion.toFixed(2)}% calculada sobre ${approvedBaseline} cadastros aprovados.`,
     ];
+    if (!complete) {
+      insights.push("A UP Zero não respondeu para algumas etapas neste período; elas podem estar abaixo do real.");
+    }
     if (worst.idx > 0) {
-      insights.unshift(
-        `Maior queda (${worst.drop.toFixed(1)}%) entre ${steps[worst.idx - 1].label} e ${steps[worst.idx].label}.`,
-      );
+      const fromStep = steps.slice(0, worst.idx).reverse().find((step) => step.count > 0) ?? steps[worst.idx - 1];
+      insights.unshift(`Maior queda (${worst.drop.toFixed(1)}%) entre ${fromStep.label} e ${steps[worst.idx].label}.`);
     }
     const avgEventsBeforePurchase = (() => {
       const byUser = new Map<number, UpzeroAnalyticsMetric[]>();
@@ -3528,7 +3582,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       }
       return perBuyer.length > 0 ? perBuyer.reduce((sum, value) => sum + value, 0) / perBuyer.length : 0;
     })();
-    const activation = funnelClient?.dashboardType === "B2B"
+    const activation = FUNNEL_ACTIVATION_ENABLED && funnelClient?.dashboardType === "B2B"
       ? await buildApprovedCustomerActivationAnalysis({
           clientId,
           from,
@@ -3540,39 +3594,38 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
         })
       : null;
 
-    res.json(GetFunnelResponse.parse({
-      steps,
-      overallConversion,
-      insights,
-      avgEventsBeforePurchase,
-      topPaths: [],
-      suggestedActions: buildFunnelSuggestedActions(worst, steps),
-      hasSiteVisitData: counts.VISIT > 0,
-      activation,
-    }));
+    sendFunnel(
+      {
+        steps,
+        overallConversion,
+        insights,
+        avgEventsBeforePurchase,
+        topPaths: [],
+        suggestedActions: buildFunnelSuggestedActions(worst, steps),
+        hasSiteVisitData: (counts.VISIT ?? 0) > 0,
+      },
+      { activation, dataSource: tracking.source === "facts" ? "upzero-events" : "upzero-hourly", dataComplete: complete },
+    );
     return;
   } catch (err) {
     console.warn("[funnel] UP Zero analytics metrics unavailable; falling back to local events:", err);
   }
 
+  // Caminho local (a UP Zero não respondeu): conta pessoas distintas nas tabelas do próprio painel.
   // If UTM filters are active, build a scoped customer list and restrict events to those customers.
   let scopedCustomerCond: SQL | undefined;
-  if (utmSource || utmMedium || utmCampaign) {
-    const custParts: SQL[] = [eq(customersTable.clientId, clientId)];
-    if (utmSource) custParts.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
-    if (utmMedium) custParts.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
-    if (utmCampaign) custParts.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
+  if (hasUtmFilter) {
     const scopedIds = await db
       .select({ id: customersTable.id })
       .from(customersTable)
-      .where(and(...custParts));
+      .where(and(eq(customersTable.clientId, clientId), ...utmCustomerConditions()));
     if (scopedIds.length === 0) {
       const emptySteps = [
-        { step: "VISIT", label: "Site Visits" },
-        { step: "REGISTRATION", label: "Registrations" },
-        { step: "APPROVED_REGISTRATION", label: "Approved Leads" },
-        { step: "ADD_TO_CART", label: "Added to Cart" },
-        { step: "PURCHASE", label: "Purchases" },
+        { step: "VISIT", label: "Visitas ao site" },
+        { step: "REGISTRATION", label: "Cadastros enviados" },
+        { step: "APPROVED_REGISTRATION", label: "Cadastros aprovados" },
+        { step: "ADD_TO_CART", label: "Adições ao carrinho" },
+        { step: "PURCHASE", label: "Compras" },
       ].map((s, i) => ({ ...s, count: 0, conversionRate: i === 0 ? 100 : 0, dropOffRate: i === 0 ? 0 : 100 }));
       // Check hasSiteVisitData even on the early-return path so the notice logic is correct
       const hasSiteVisitDataRowsEarly = await db
@@ -3580,25 +3633,25 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
         .from(siteVisitsTable)
         .where(eq(siteVisitsTable.clientId, clientId));
       const hasSiteVisitDataEarly = Number(hasSiteVisitDataRowsEarly[0]?.count ?? 0) > 0;
-      res.json(GetFunnelResponse.parse({
-        steps: emptySteps,
-        overallConversion: 0,
-        insights: [],
-        avgEventsBeforePurchase: 0,
-        topPaths: [],
-        suggestedActions: [],
-        hasSiteVisitData: hasSiteVisitDataEarly,
-        activation: funnelClient?.dashboardType === "B2B"
-          ? await buildApprovedCustomerActivationAnalysis({
-              clientId,
-              from,
-              to,
-              utmSource,
-              utmMedium,
-              utmCampaign,
-            })
-          : null,
-      }));
+      sendFunnel(
+        {
+          steps: emptySteps,
+          overallConversion: 0,
+          insights: [],
+          avgEventsBeforePurchase: 0,
+          topPaths: [],
+          suggestedActions: [],
+          hasSiteVisitData: hasSiteVisitDataEarly,
+        },
+        {
+          activation:
+            FUNNEL_ACTIVATION_ENABLED && funnelClient?.dashboardType === "B2B"
+              ? await buildApprovedCustomerActivationAnalysis({ clientId, from, to, utmSource, utmMedium, utmCampaign })
+              : null,
+          dataSource: "local",
+          dataComplete: true,
+        },
+      );
       return;
     }
     scopedCustomerCond = inArray(eventsTable.customerId, scopedIds.map((r) => r.id));
@@ -3608,7 +3661,8 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     db
       .select({
         eventType: eventsTable.eventType,
-        count: sql<number>`COUNT(*)::int`,
+        // pessoas distintas (e não eventos): quem não tem cliente associado conta como uma pessoa por evento
+        count: sql<number>`COUNT(DISTINCT COALESCE(${eventsTable.customerId}, ${eventsTable.id}))::int`,
       })
       .from(eventsTable)
       .where(
@@ -3622,7 +3676,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       .groupBy(eventsTable.eventType),
     // Only pull site_visit totals when there are no UTM filters
     // (visit data is not UTM-scoped — it represents total site traffic)
-    !utmSource && !utmMedium && !utmCampaign
+    !hasUtmFilter
       ? db
           .select({ total: sql<number>`COALESCE(SUM(${siteVisitsTable.visitCount}), 0)::int` })
           .from(siteVisitsTable)
@@ -3636,99 +3690,44 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       : Promise.resolve([{ total: 0 }]),
   ]);
 
-  const counts: Record<string, number> = {};
+  const counts: Partial<Record<FunnelStepKey, number>> = {};
   for (const row of eventCounts) {
-    counts[row.eventType] = Number(row.count);
+    counts[row.eventType as FunnelStepKey] = Number(row.count);
   }
-  const approvedCustomerConditions: SQL[] = [
-    eq(customersTable.clientId, clientId),
-    eq(customersTable.registrationStatus, "APPROVED"),
-    gte(customersTable.createdAt, from),
-    lte(customersTable.createdAt, to),
-  ];
-  if (utmSource) approvedCustomerConditions.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
-  if (utmMedium) approvedCustomerConditions.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
-  if (utmCampaign) approvedCustomerConditions.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
-  const [approvedCustomerRow] = await db
-    .select({ count: sql<number>`COUNT(*)::int` })
-    .from(customersTable)
-    .where(and(...approvedCustomerConditions));
-  counts.APPROVED_REGISTRATION = Number(approvedCustomerRow?.count ?? counts.APPROVED_REGISTRATION ?? 0);
+  const [customerTotals, paidBuyers] = await Promise.all([loadCustomerTotals(), loadPaidBuyers()]);
+  counts.REGISTRATION = Math.max(counts.REGISTRATION ?? 0, customerTotals.registrations);
+  counts.APPROVED_REGISTRATION = customerTotals.approved;
+  counts.PURCHASE = Math.max(counts.PURCHASE ?? 0, paidBuyers ?? 0);
 
   // Overlay site-visit data from the dedicated table (takes priority over any
   // VISIT events that might exist, since the table represents real web traffic)
   const siteVisitTotal = Number(visitTotals[0]?.total ?? 0);
   if (siteVisitTotal > 0) {
-    counts["VISIT"] = siteVisitTotal;
+    counts.VISIT = siteVisitTotal;
   }
 
-  const funnelOrder: Array<{ step: string; label: string }> = [
-    { step: "VISIT", label: "Site Visits" },
-    { step: "REGISTRATION", label: "Registrations" },
-    { step: "APPROVED_REGISTRATION", label: "Approved Leads" },
-    { step: "ADD_TO_CART", label: "Added to Cart" },
-    { step: "PURCHASE", label: "Purchases" },
+  const funnelOrder: Array<{ step: FunnelStepKey; label: string }> = [
+    { step: "VISIT", label: "Visitas ao site" },
+    { step: "REGISTRATION", label: "Cadastros enviados" },
+    { step: "APPROVED_REGISTRATION", label: "Cadastros aprovados" },
+    { step: "ADD_TO_CART", label: "Adições ao carrinho" },
+    { step: "PURCHASE", label: "Compras" },
   ];
-
-  // Enforce monotonic funnel: each step cannot exceed the previous step's count.
-  // Special case: steps with no data (count = 0) — such as VISIT when the data
-  // source doesn't track site visits — must not zero out all downstream steps.
-  // We track `prev` as the last *non-zero* step count so that an absent step is
-  // skipped in the monotonic chain (it has no data to constrain the next step).
-  // Conversion rates are expressed relative to the last non-zero ancestor.
-  let prev = Number.MAX_SAFE_INTEGER; // sentinel = "no data seen yet"
   const approvedBaseline = counts.APPROVED_REGISTRATION ?? 0;
-  const postApprovalSteps = new Set(["ADD_TO_CART", "PURCHASE"]);
-  const steps = funnelOrder.map((s, i) => {
-    const raw = counts[s.step] ?? 0;
-    // When prev is still MAX_SAFE_INTEGER we haven't seen any data yet,
-    // so treat the current step as unconstrained (use raw directly).
-    const effectivePrev = prev === Number.MAX_SAFE_INTEGER ? raw : prev;
-    const count = Math.min(raw, effectivePrev);
-    let conversionRate = 100;
-    if (i > 0) {
-      if (postApprovalSteps.has(s.step) && approvedBaseline > 0) {
-        conversionRate = (count / approvedBaseline) * 100;
-      } else if (prev > 0 && prev < Number.MAX_SAFE_INTEGER) {
-        // Normal case: previous non-zero step exists — compute real conversion.
-        conversionRate = (count / prev) * 100;
-      } else if (count > 0) {
-        // First step with actual data: it is its own baseline (100%).
-        conversionRate = 100;
-      } else {
-        conversionRate = 0;
-      }
-    }
-    const dropOffRate = i === 0 ? 0 : 100 - conversionRate;
-    // Only advance prev when this step has actual data; zero steps are skipped.
-    if (count > 0) prev = count;
-    return {
-      step: s.step,
-      label: s.label,
-      count,
-      conversionRate,
-      dropOffRate,
-    };
-  });
+  const steps = buildFunnelSteps(funnelOrder, counts, approvedBaseline);
 
-  // Overall conversion: purchases over approved registrations.
+  // Overall conversion: buyers over approved registrations.
   const purchaseCount = counts.PURCHASE ?? 0;
-  const overallConversion = approvedBaseline > 0 ? (purchaseCount / approvedBaseline) * 100 : 0;
+  const overallConversion = approvedBaseline > 0 ? Math.min(100, (purchaseCount / approvedBaseline) * 100) : 0;
 
-  let worst = { idx: -1, drop: -1 };
-  for (let i = 1; i < steps.length; i++) {
-    if (steps[i].dropOffRate > worst.drop) {
-      worst = { idx: i, drop: steps[i].dropOffRate };
-    }
-  }
+  const worst = worstFunnelStep(steps);
   const insights: string[] = [];
   if (worst.idx > 0) {
-    insights.push(
-      `Highest drop-off (${worst.drop.toFixed(1)}%) occurs between ${steps[worst.idx - 1].label} and ${steps[worst.idx].label}.`,
-    );
+    const fromStep = steps.slice(0, worst.idx).reverse().find((step) => step.count > 0) ?? steps[worst.idx - 1];
+    insights.push(`Maior queda (${worst.drop.toFixed(1)}%) entre ${fromStep.label} e ${steps[worst.idx].label}.`);
   }
   insights.push(
-    `Overall funnel conversion is ${overallConversion.toFixed(2)}% from approved leads to purchase.`,
+    `Conversão geral de ${overallConversion.toFixed(2)}% de cadastros aprovados até compra (pessoas distintas).`,
   );
 
   // Average events per customer that occurred BEFORE their first purchase in the window
@@ -3769,7 +3768,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     .from(siteVisitsTable)
     .where(eq(siteVisitsTable.clientId, clientId));
   const hasSiteVisitData = Number(hasSiteVisitDataRows[0]?.count ?? 0) > 0;
-  const activation = funnelClient?.dashboardType === "B2B"
+  const activation = FUNNEL_ACTIVATION_ENABLED && funnelClient?.dashboardType === "B2B"
     ? await buildApprovedCustomerActivationAnalysis({
         clientId,
         from,
@@ -3780,7 +3779,10 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       })
     : null;
 
-  res.json(GetFunnelResponse.parse({ steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions, hasSiteVisitData, activation }));
+  sendFunnel(
+    { steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions, hasSiteVisitData },
+    { activation, dataSource: "local", dataComplete: true },
+  );
 });
 
 // ─── Site Visits: GET ────────────────────────────────────────────────────────
@@ -5432,6 +5434,51 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
   res.json(GetProductsResponse.parse(enriched));
 });
 
+// Full-period sales partitions, independent of the product table's display limit.
+router.get("/analytics/products/sales-breakdowns", async (req, res): Promise<void> => {
+  const parsed = GetProductsQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const clientId = requireClient(req, res);
+  if (!clientId) return;
+  const { dateFrom, dateTo, search, sku, category, state, size, color } = parsed.data;
+  const { from, to } = dateRange(dateFrom, dateTo);
+  const conditions: SQL[] = [
+    eq(ordersTable.clientId, clientId),
+    eq(productsTable.clientId, clientId),
+    gte(ordersTable.createdAt, from),
+    lte(ordersTable.createdAt, to),
+  ];
+  if (search?.trim()) {
+    const term = `%${search.trim()}%`;
+    conditions.push(or(ilike(productsTable.sku, term), ilike(productsTable.name, term))!);
+  }
+  if (sku?.trim()) conditions.push(ilike(productsTable.sku, `%${sku.trim()}%`));
+  if (category?.trim()) conditions.push(eq(productsTable.category, category.trim()));
+  if (state?.trim()) conditions.push(eq(ordersTable.state, state.trim()));
+  if (size?.trim()) conditions.push(ilike(orderItemsTable.size, size.trim()));
+  if (color?.trim()) conditions.push(ilike(orderItemsTable.color, color.trim()));
+
+  const rows = await db.select({
+    category: productsTable.category,
+    color: orderItemsTable.color,
+    size: orderItemsTable.size,
+    units: sql<number>`COALESCE(SUM(${orderItemsTable.quantity}), 0)::float`,
+    revenue: sql<number>`COALESCE(SUM(${orderItemsTable.quantity} * ${orderItemsTable.priceAtSale}), 0)::float`,
+  })
+    .from(orderItemsTable)
+    .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
+    .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
+    .where(and(...conditions))
+    .groupBy(productsTable.category, orderItemsTable.color, orderItemsTable.size);
+
+  res.json(buildProductSalesBreakdowns(rows.map(row => ({
+    ...row, units: Number(row.units), revenue: Number(row.revenue),
+  }))));
+});
+
 router.get("/analytics/products/summary", async (req, res): Promise<void> => {
   const parsed = GetProductsSummaryQueryParams.safeParse(coerceDateQuery(req.query as Record<string, unknown>));
   if (!parsed.success) {
@@ -5451,13 +5498,15 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
 
   const vestiDataset = await resolveVestiDataset(clientId);
   if (vestiDataset) {
-    const [current, prev] = await Promise.all([
+    const [current, prev, availableStockSalesValue] = await Promise.all([
       fetchVestiProductsSummary(vestiDataset, saoPauloDateOnly(dateFrom), saoPauloDateOnly(dateTo)),
       fetchVestiProductsSummary(vestiDataset, saoPauloDateOnly(prevFrom), saoPauloDateOnly(prevTo)),
+      fetchVestiAvailableStockSalesValue(vestiDataset),
     ]);
     const salesPower = current.activeSkus > 0 ? current.totalRevenue / current.activeSkus / periodDays : 0;
     const prevSalesPower = prev.activeSkus > 0 ? prev.totalRevenue / prev.activeSkus / periodDays : 0;
     res.json({
+      availableStockSalesValue,
       salesPower,
       prevSalesPower,
       salesPowerChangePct: prevSalesPower > 0 ? ((salesPower - prevSalesPower) / prevSalesPower) * 100 : null,
@@ -5467,7 +5516,7 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
     return;
   }
 
-  const [currentRows, prevRows] = await Promise.all([
+  const [currentRows, prevRows, stockRows] = await Promise.all([
     db
       .select({
         productId: orderItemsTable.productId,
@@ -5498,6 +5547,8 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
         ),
       )
       .groupBy(orderItemsTable.productId),
+    db.select({ value: sql<number>`COALESCE(SUM(GREATEST(${productsTable.stock}, 0) * GREATEST(${productsTable.price}, 0)), 0)` })
+      .from(productsTable).where(and(eq(productsTable.clientId, clientId), eq(productsTable.status, "ACTIVE"))),
   ]);
 
   const activeSkus = currentRows.length;
@@ -5512,7 +5563,7 @@ router.get("/analytics/products/summary", async (req, res): Promise<void> => {
     ? ((salesPower - prevSalesPower) / prevSalesPower) * 100
     : null;
 
-  res.json({ salesPower, prevSalesPower, salesPowerChangePct, activeSkus, periodDays });
+  res.json({ availableStockSalesValue: Number(stockRows[0]?.value ?? 0), salesPower, prevSalesPower, salesPowerChangePct, activeSkus, periodDays });
 });
 
 router.get("/analytics/products/:productId/customers", async (req, res): Promise<void> => {
@@ -7083,29 +7134,6 @@ interface InsightCacheEntry {
 const insightCache = new Map<string, InsightCacheEntry>();
 const INSIGHT_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-function buildHeuristic(
-  kpis: { revenue: number; orders: number; conversionRate: number; avgTicket: number; approvalRate: number },
-  topCategory: { category: string; revenue: number } | null,
-  topSeller: { name: string; revenue: number } | null,
-  trend: number,
-): { headline: string; body: string; bullets: string[] } {
-  const trendPct = (trend * 100).toFixed(1);
-  const headline =
-    trend > 0.05
-      ? `Revenue trending up ${trendPct}% versus the prior window.`
-      : trend < -0.05
-        ? `Revenue dipping ${Math.abs(parseFloat(trendPct)).toFixed(1)}% versus the prior window.`
-        : `Revenue holding steady at ${kpis.revenue.toFixed(0)}.`;
-
-  const body = `Across the period the catalog generated ${kpis.orders} orders at an average ticket of ${kpis.avgTicket.toFixed(2)}, with a ${kpis.conversionRate.toFixed(1)}% visit-to-purchase conversion rate.`;
-
-  const bullets: string[] = [];
-  if (topCategory) bullets.push(`Top category: ${topCategory.category} (${topCategory.revenue.toFixed(0)}).`);
-  if (topSeller) bullets.push(`Top seller: ${topSeller.name} (${topSeller.revenue.toFixed(0)}).`);
-  if (kpis.approvalRate > 0) bullets.push(`Lead approval rate ${kpis.approvalRate.toFixed(1)}%.`);
-  return { headline, body, bullets };
-}
-
 async function buildInsightContext(
   clientId: string,
   from: Date,
@@ -7263,29 +7291,15 @@ async function buildMarketingInsightContext(clientId: string, from: Date, to: Da
   return { kpis, prevKpis, roasTrend, topPlatform, brand: brand?.name ?? "the brand" };
 }
 
-function buildMarketingHeuristic(ctx: Awaited<ReturnType<typeof buildMarketingInsightContext>>) {
-  const { kpis, roasTrend, topPlatform } = ctx;
-  const roasPct = (roasTrend * 100).toFixed(1);
-  const trending = roasTrend >= 0 ? "up" : "down";
-  return {
-    headline: `ROAS is ${trending} ${Math.abs(Number(roasPct))}% vs last period at ${kpis.roas.toFixed(2)}×`,
-    body: `You spent R$${kpis.totalSpend.toFixed(0)} on paid channels and generated R$${kpis.attributedRevenue.toFixed(0)} in attributed revenue. ${topPlatform} is your top-performing platform.`,
-    bullets: [
-      `${kpis.approvedLeads} approved leads at R$${kpis.cpa.toFixed(0)} CPA`,
-      `Cost per lead is R$${kpis.cpl.toFixed(0)} — ${kpis.approvalRate.toFixed(0)}% approval rate`,
-      roasTrend >= 0 ? "Paid channel ROAS is improving — consider scaling top creatives" : "ROAS is declining — review underperforming creatives and adjust bids",
-    ],
-  };
-}
-
 async function generateInsight(
   clientId: string,
   from: Date,
   to: Date,
   forceRefresh: boolean,
   screen: string = "dashboard",
+  language: InsightLanguage = "en",
 ): Promise<{ headline: string; body: string; bullets: string[]; generatedAt: string; cached: boolean; source: "ai" | "heuristic" }> {
-  const cacheKey = `${clientId}|${from.toISOString().slice(0, 10)}|${to.toISOString().slice(0, 10)}|${screen}`;
+  const cacheKey = `${clientId}|${from.toISOString().slice(0, 10)}|${to.toISOString().slice(0, 10)}|${screen}|${language}`;
   if (!forceRefresh) {
     const cached = insightCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
@@ -7296,12 +7310,12 @@ async function generateInsight(
   // Use marketing-specific context when requested
   if (screen === "marketing") {
     const mktCtx = await buildMarketingInsightContext(clientId, from, to);
-    const heuristic = buildMarketingHeuristic(mktCtx);
+    const heuristic = marketingInsight(language, mktCtx.kpis, mktCtx.roasTrend, mktCtx.topPlatform);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = {
       ...heuristic,
       source: "heuristic",
     };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const { kpis, roasTrend, topPlatform, brand } = mktCtx;
@@ -7380,21 +7394,13 @@ No markdown, no preamble.`;
       const vestiHighConv = vestiLevels.filter((l) => l === "High Conversion").length;
       const vestiTotal = vestiLevels.length;
       const vestiTop = vestiProducts[0];
-      const vestiHeuristic = {
-        headline: vestiTop
-          ? `Top product "${vestiTop.name}" has generated ${vestiTop.totalRevenue.toFixed(0)} in lifetime revenue`
-          : "No product sales recorded yet",
-        body: `${vestiHighConv} of ${vestiTotal} products are High Conversion (65%+ sell-through). ${vestiAtRisk > 0 ? `${vestiAtRisk} product${vestiAtRisk > 1 ? "s" : ""} are At Risk — never sold or very low turnover.` : vestiTotal > 0 ? "No products are At Risk." : "No catalog data available for this period."}`,
-        bullets: [
-          `High Conversion SKUs: ${vestiHighConv} of ${vestiTotal} — consider re-ordering your bestsellers`,
-          vestiAtRisk > 0
-            ? `${vestiAtRisk} At Risk SKU${vestiAtRisk > 1 ? "s" : ""} — these have never sold or have very poor turnover; consider markdown or discontinuation`
-            : vestiTotal > 0
-              ? "All SKUs have recorded at least one sale — good catalog health"
-              : "Add sales data to unlock product performance insights",
-          vestiTop ? `"${vestiTop.name}" leads with ${vestiTop.totalSold} units sold — study what drives its performance` : "Add sales data to unlock product performance insights",
-        ],
-      };
+      const vestiHeuristic = productsInsight(language, {
+        top: vestiTop ? { name: vestiTop.name, totalRevenue: vestiTop.totalRevenue, totalSold: vestiTop.totalSold } : null,
+        highConv: vestiHighConv,
+        atRisk: vestiAtRisk,
+        total: vestiTotal,
+        vesti: true,
+      });
       const vestiGeneratedAt = new Date().toISOString();
       insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt } });
       return { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt, cached: false };
@@ -7436,20 +7442,16 @@ No markdown, no preamble.`;
     const highConvCount = levels.filter((l) => l === "High Conversion").length;
     const totalProducts = levels.length;
 
-    const heuristic = {
-      headline: topProducts[0]
-        ? `Top product "${topProducts[0].name}" has generated ${topProducts[0].totalRevenue.toFixed(0)} in lifetime revenue`
-        : "No product sales recorded yet",
-      body: `${highConvCount} of ${totalProducts} products are High Conversion (65%+ sell-through). ${atRiskCount > 0 ? `${atRiskCount} product${atRiskCount > 1 ? "s" : ""} are At Risk — never sold or very low turnover.` : "No products are At Risk."}`,
-      bullets: [
-        `High Conversion SKUs: ${highConvCount} of ${totalProducts} — consider re-ordering your bestsellers`,
-        atRiskCount > 0 ? `${atRiskCount} At Risk SKU${atRiskCount > 1 ? "s" : ""} — these have never sold or have very poor turnover; consider markdown or discontinuation` : "All SKUs have recorded at least one sale — good catalog health",
-        topProducts[0] ? `"${topProducts[0].name}" leads with ${topProducts[0].totalSold} units sold — study what drives its performance` : "Add sales data to unlock product performance insights",
-      ],
-    };
+    const heuristic = productsInsight(language, {
+      top: topProducts[0] ? { name: topProducts[0].name, totalRevenue: topProducts[0].totalRevenue, totalSold: topProducts[0].totalSold } : null,
+      highConv: highConvCount,
+      atRisk: atRiskCount,
+      total: totalProducts,
+      vesti: false,
+    });
 
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7485,26 +7487,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
   // Customers-specific insight
   if (screen === "customers") {
     const cKpis = await computeSummaryKpis(clientId, from, to);
-    const hasAttribution = cKpis.approvalRatePct < 40;
-    const heuristic = {
-      headline: cKpis.totalRegistrations > 0
-        ? `${cKpis.approvedRegistrations} of ${cKpis.totalRegistrations} registrations approved (${cKpis.approvalRatePct.toFixed(1)}%)`
-        : "No registrations in this period",
-      body: cKpis.totalBuyers > 0
-        ? `${cKpis.totalBuyers} customers made purchases, while ${cKpis.customersWithoutPurchase} registered but never bought.${cKpis.avgTimeToFirstPurchaseDays != null ? ` Average time to first purchase: ${cKpis.avgTimeToFirstPurchaseDays}d.` : ""}`
-        : "No purchases recorded in this period.",
-      bullets: [
-        `Approval rate: ${cKpis.approvalRatePct.toFixed(1)}% — ${hasAttribution ? "below 40%, consider improving your approval process" : "healthy conversion from registration to approval"}`,
-        cKpis.avgTimeToFirstPurchaseDays != null
-          ? `Avg ${cKpis.avgTimeToFirstPurchaseDays}d to first purchase — optimize post-approval activation flows to reduce this`
-          : "Track time to first purchase by enabling first-purchase attribution",
-        cKpis.customersWithoutPurchase > cKpis.totalBuyers
-          ? `${cKpis.customersWithoutPurchase} registered customers never purchased — consider targeted re-engagement campaigns`
-          : "Majority of registered customers have made at least one purchase — strong activation rate",
-      ],
-    };
+    const heuristic = customersInsight(language, cKpis);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7553,23 +7538,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
 
     const totalRevenue = topSellers.reduce((s, r) => s + r.totalRevenue, 0);
     const topRevShare = totalRevenue > 0 && topSellers[0] ? (topSellers[0].totalRevenue / totalRevenue) * 100 : 0;
-    const heuristic = {
-      headline: topSellers[0]
-        ? `${topSellers[0].name} leads with ${topSellers[0].totalOrders} orders and ${topSellers[0].totalRevenue.toFixed(0)} in lifetime revenue`
-        : "No seller activity recorded yet",
-      body: topSellers.length > 0
-        ? `Top seller ${topSellers[0]?.name} accounts for ${topRevShare.toFixed(1)}% of total seller revenue. ${topSellers.length > 1 ? `The next ${topSellers.length - 1} sellers share the remaining ${(100 - topRevShare).toFixed(1)}%.` : ""}`
-        : "Add seller attribution to unlock performance insights.",
-      bullets: [
-        topSellers[0] ? `${topSellers[0].name} — ${topSellers[0].totalOrders} orders · ${topRevShare.toFixed(1)}% revenue share` : "No seller data available",
-        topSellers[1] ? `${topSellers[1].name} — ${topSellers[1].totalOrders} orders · ${totalRevenue > 0 ? ((topSellers[1].totalRevenue / totalRevenue) * 100).toFixed(1) : 0}% revenue share` : "Only one seller on record",
-        topSellers.length > 2
-          ? `${topSellers.length} sellers active — compare their avg ticket to identify coaching opportunities`
-          : "Add more sellers to enable benchmarking",
-      ],
-    };
+    const heuristic = sellersInsight(language, topSellers, totalRevenue, topRevShare);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7619,19 +7590,7 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
       const vSellThrough = vestiStock.kpis.sellThroughRate.toFixed(1);
       const vStockoutNames = vestiStock.stockoutRisk.slice(0, 3).map((r) => r.name);
       const vTotalSold = vestiStock.skus.reduce((s, r) => s + r.unitsSold, 0);
-      const vestiHeuristic = {
-        headline: vStockout > 0
-          ? `${vStockout} SKU${vStockout > 1 ? "s are" : " is"} at critical stockout risk this week`
-          : vOverstock > 0
-            ? `${vOverstock} SKU${vOverstock > 1 ? "s have" : " has"} excess inventory — review pricing or promotions`
-            : `Inventory is healthy with a ${vSellThrough}% sell-through rate`,
-        body: `In the selected period, ${vTotalSold} units were sold across ${vestiStock.total} active SKUs. Sell-through rate stands at ${vSellThrough}%. ${vStockout > 0 ? `${vStockout} product${vStockout > 1 ? "s need" : " needs"} urgent replenishment.` : vOverstock > 0 ? `${vOverstock} product${vOverstock > 1 ? "s are" : " is"} overstocked.` : "No critical risk items detected."}`,
-        bullets: [
-          vStockoutNames.length > 0 ? `Stockout risk: ${vStockoutNames.join(", ")}` : "No stockout-risk products in this period",
-          vOverstock > 0 ? `${vOverstock} SKU${vOverstock > 1 ? "s" : ""} with >90 days coverage — consider markdowns` : "No overstock issues detected",
-          `Current sell-through rate: ${vSellThrough}% — aim for 60–80% for fashion`,
-        ],
-      };
+      const vestiHeuristic = stockInsight(language, { stockout: vStockout, overstock: vOverstock, sellThrough: vSellThrough, names: vStockoutNames, totalSold: vTotalSold, totalSkus: vestiStock.total });
       const vestiGeneratedAt = new Date().toISOString();
       insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt } });
       return { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt, cached: false };
@@ -7693,21 +7652,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
     }
 
     const sellThrough = totalSold + totalUnits > 0 ? ((totalSold / (totalSold + totalUnits)) * 100).toFixed(1) : "0";
-    const heuristic = {
-      headline: stockoutCount > 0
-        ? `${stockoutCount} SKU${stockoutCount > 1 ? "s are" : " is"} at critical stockout risk this week`
-        : overstockCount > 0
-          ? `${overstockCount} SKU${overstockCount > 1 ? "s have" : " has"} excess inventory — review pricing or promotions`
-          : `Inventory is healthy with a ${sellThrough}% sell-through rate`,
-      body: `In the selected period, ${totalSold} units were sold across ${prods.length} active SKUs. Sell-through rate stands at ${sellThrough}%. ${stockoutCount > 0 ? `${stockoutCount} product${stockoutCount > 1 ? "s need" : " needs"} urgent replenishment.` : overstockCount > 0 ? `${overstockCount} product${overstockCount > 1 ? "s are" : " is"} overstocked.` : "No critical risk items detected."}`,
-      bullets: [
-        stockoutNames.length > 0 ? `Stockout risk: ${stockoutNames.join(", ")}` : `No stockout-risk products in this period`,
-        overstockCount > 0 ? `${overstockCount} SKU${overstockCount > 1 ? "s" : ""} with >90 days coverage — consider markdowns` : "No overstock issues detected",
-        `Current sell-through rate: ${sellThrough}% — aim for 60–80% for fashion`,
-      ],
-    };
+    const heuristic = stockInsight(language, { stockout: stockoutCount, overstock: overstockCount, sellThrough, names: stockoutNames, totalSold, totalSkus: prods.length });
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7747,21 +7694,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
   // Journey-specific insight
   if (screen === "journey") {
     const jCtx = await buildJourneyInsightContext(clientId, from, to);
-    const heuristic = {
-      headline: jCtx.avgEventsBeforePurchase > 0
-        ? `Buyers average ${jCtx.avgEventsBeforePurchase.toFixed(1)} events before purchasing`
-        : "No purchase journey data available for this period",
-      body: `Customers who converted touched an average of ${jCtx.avgEventsBeforePurchase.toFixed(1)} events before completing a purchase.${jCtx.avgTimeToFirstPurchaseDays > 0 ? ` Time from registration to first purchase averages ${jCtx.avgTimeToFirstPurchaseDays.toFixed(1)} days.` : ""}`,
-      bullets: [
-        `Avg events before purchase: ${jCtx.avgEventsBeforePurchase.toFixed(1)} — consider shortening the path to reduce drop-off`,
-        jCtx.avgTimeToFirstPurchaseDays > 0
-          ? `Avg time to first purchase: ${jCtx.avgTimeToFirstPurchaseDays.toFixed(1)} days — post-registration nurture can reduce this`
-          : "Enable first-purchase attribution to track activation time",
-        "Compare buyers vs non-buyers to identify the key events that differentiate converters",
-      ],
-    };
+    const heuristic = journeyInsight(language, jCtx);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const prompt = `You are a senior UX/CRO analyst writing a weekly journey analytics insight for "${jCtx.brand}". Period: ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}.
@@ -7800,19 +7735,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
     const champions = segMap["Champions"] ?? { count: 0, revenue: 0 };
     const atRisk = segMap["At Risk"] ?? { count: 0, revenue: 0 };
     const lost = segMap["Lost"] ?? { count: 0, revenue: 0 };
-    const heuristic = {
-      headline: champions.count > 0
-        ? `Champions represent ${((champions.count / Math.max(1, total)) * 100).toFixed(1)}% of your customer base`
-        : "No RFM segments computed yet for this brand",
-      body: `Your customer base is segmented into ${total} customers. Champions (${champions.count}) drive the highest lifetime value. ${atRisk.count > 0 ? `${atRisk.count} customers are At Risk — re-engagement can recover their revenue.` : ""}${lost.count > 0 ? ` ${lost.count} customers are Lost — consider win-back campaigns.` : ""}`,
-      bullets: [
-        `Champions: ${champions.count} customers, R$${champions.revenue.toFixed(0)} total revenue`,
-        atRisk.count > 0 ? `At Risk: ${atRisk.count} customers — launch re-engagement campaigns` : "No At Risk customers right now — keep up retention efforts",
-        lost.count > 0 ? `Lost: ${lost.count} customers — consider win-back offers` : "No Lost customers detected",
-      ],
-    };
+    const heuristic = rfmInsight(language, { champions, atRisk, lost, total });
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const segSummary = Object.entries(segMap).map(([s, v]) => `${s}: ${v.count} customers, R$${v.revenue.toFixed(0)}`).join(" | ");
@@ -7872,21 +7797,15 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
         })()
       : await buildUtmAnalytics(clientId, from, to, "source");
     const topRow = utmData.rows[0];
-    const heuristic = {
-      headline: topRow
-        ? `${topRow.key} drives ${topRow.revenue > 0 ? `R$${topRow.revenue.toFixed(0)} in revenue` : `${topRow.registrations} registrations`} this period`
-        : "No UTM attribution data available for this period",
-      body: `UTM attribution for this period shows ${utmData.kpis.totalRegistrations} registrations across ${utmData.rows.length} acquisition sources. ${topRow ? `Top source "${topRow.key}" converts ${topRow.conversionPct.toFixed(1)}% of registrations into buyers.` : ""} Overall approval rate: ${utmData.kpis.approvalPct.toFixed(1)}%.`,
-      bullets: [
-        topRow
-          ? `Top source: ${topRow.key} — ${topRow.buyers} buyers, R$${topRow.revenue.toFixed(0)} revenue${topRow.roas != null ? `, ROAS ${topRow.roas.toFixed(2)}x` : ""}`
-          : "No source data available for this period",
-        `Conversion rate: ${utmData.kpis.conversionPct.toFixed(1)}% of registrations become buyers — compare channels to find your highest-quality traffic`,
-        `Approval rate: ${utmData.kpis.approvalPct.toFixed(1)}% overall — low approval on a high-spend source signals lead quality issues`,
-      ],
-    };
+    const heuristic = utmInsight(language, {
+      topRow: topRow ? { key: topRow.key, revenue: topRow.revenue, registrations: topRow.registrations, conversionPct: topRow.conversionPct, buyers: topRow.buyers, roas: topRow.roas ?? null } : null,
+      totalRegistrations: utmData.kpis.totalRegistrations,
+      sources: utmData.rows.length,
+      approvalPct: utmData.kpis.approvalPct,
+      conversionPct: utmData.kpis.conversionPct,
+    });
     let utmPayload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const aiUtm = getOpenAIClient();
+    const aiUtm = getInsightAI(language);
     if (aiUtm && isAIConfigured() && topRow) {
       try {
         const sourceSummary = utmData.rows.slice(0, 6)
@@ -7919,14 +7838,14 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
   }
 
   const ctx = await buildInsightContext(clientId, from, to);
-  const heuristic = buildHeuristic(ctx.kpis, ctx.topCategory, ctx.topSeller, ctx.trend);
+  const heuristic = dashboardInsight(language, ctx.kpis, ctx.topCategory, ctx.topSeller, ctx.trend);
 
   let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = {
     ...heuristic,
     source: "heuristic",
   };
 
-  const ai = getOpenAIClient();
+  const ai = getInsightAI(language);
   if (ai && isAIConfigured()) {
     try {
       const userPrompt = `You are a senior fashion-retail analyst writing one weekly insight card for the brand "${ctx.brand}". Speak directly to the brand owner. Use the following metrics for the period ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}:
@@ -9808,7 +9727,7 @@ router.get("/analytics/insight", async (req, res): Promise<void> => {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const screen = (parsed.data as Record<string, unknown>).screen as string | undefined ?? "dashboard";
 
-  const insight = await generateInsight(clientId, from, to, false, screen);
+  const insight = await generateInsight(clientId, from, to, false, screen, normalizeInsightLanguage(req.query.language));
   res.json(GetInsightResponse.parse(insight));
 });
 
@@ -9825,7 +9744,7 @@ router.post("/analytics/insight", async (req, res): Promise<void> => {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const screen = (parsed.data as Record<string, unknown>).screen as string | undefined ?? "dashboard";
 
-  const insight = await generateInsight(clientId, from, to, true, screen);
+  const insight = await generateInsight(clientId, from, to, true, screen, normalizeInsightLanguage(req.query.language));
   res.json(GetInsightResponse.parse(insight));
 });
 
@@ -10202,37 +10121,37 @@ function buildFunnelSuggestedActions(
 ): string[] {
   const STEP_ACTIONS: Record<string, string[]> = {
     REGISTRATION: [
-      "Simplify the registration form — fewer required fields can lift signups significantly.",
-      "Add social login options to reduce friction at registration.",
-      "A/B test the registration CTA copy and placement.",
+      "Simplifique o formulário de cadastro: menos campos obrigatórios costumam aumentar os cadastros.",
+      "Ofereça login social para reduzir o atrito no cadastro.",
+      "Faça teste A/B do texto e da posição do botão de cadastro.",
     ],
     APPROVED_REGISTRATION: [
-      "Review approval criteria — if the approval rate is below 50%, consider loosening them.",
-      "Send an immediate approval-notification email/SMS to keep momentum.",
-      "Set up an automated follow-up sequence for pending applications.",
+      "Revise os critérios de aprovação: se a taxa de aprovação estiver abaixo de 50%, considere flexibilizá-los.",
+      "Envie e-mail/SMS de aprovação imediatamente para manter o interesse do cliente.",
+      "Crie uma sequência automática de acompanhamento para cadastros pendentes.",
     ],
     ADD_TO_CART: [
-      "Add urgency signals (limited stock badges, countdown timers) to product pages.",
-      "Improve product page visuals and descriptions to drive cart adds.",
-      "Introduce a 'Recently Viewed' or 'Recommended' section to surface relevant products.",
+      "Use sinais de urgência (selo de estoque limitado, contagem regressiva) nas páginas de produto.",
+      "Melhore as imagens e as descrições das páginas de produto para aumentar as adições ao carrinho.",
+      "Inclua uma seção de 'Vistos recentemente' ou 'Recomendados' para destacar produtos relevantes.",
     ],
     CHECKOUT_STARTED: [
-      "Reduce the number of checkout steps — a single-page checkout converts better.",
-      "Enable guest checkout to remove the login barrier.",
-      "Show trust signals (SSL badge, return policy) prominently at checkout.",
+      "Reduza o número de etapas do checkout: o checkout em uma só página converte melhor.",
+      "Permita comprar sem login para remover a barreira de acesso.",
+      "Mostre selos de confiança (SSL, política de troca) em destaque no checkout.",
     ],
     PURCHASE: [
-      "Investigate payment failures — high drop-off here often signals payment method gaps.",
-      "Offer Buy-Now-Pay-Later (BNPL) options if not already available.",
-      "Add an order-review step with a clear CTA to reduce last-second abandonment.",
+      "Investigue falhas de pagamento: queda alta aqui costuma indicar falta de formas de pagamento.",
+      "Ofereça compra parcelada ou pague depois (BNPL), se ainda não houver.",
+      "Inclua uma etapa de revisão do pedido com botão claro para reduzir o abandono na última hora.",
     ],
   };
 
   const worstStep = worst.idx > 0 ? steps[worst.idx]?.step : null;
   const specific = worstStep ? (STEP_ACTIONS[worstStep] ?? []) : [];
   const generic = [
-    "Invest in re-engagement campaigns targeting customers who dropped off mid-funnel.",
-    "Review mobile UX — mobile sessions often have higher drop-off rates.",
+    "Invista em campanhas de reengajamento para clientes que saíram no meio do funil.",
+    "Revise a experiência no celular: sessões mobile costumam ter mais abandono.",
   ];
   return [...specific.slice(0, 2), ...generic].slice(0, 3);
 }

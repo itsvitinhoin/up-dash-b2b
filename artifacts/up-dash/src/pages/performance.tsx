@@ -1,3 +1,8 @@
+import { PerformanceSummarySections, MediaInvestmentCards } from "@/components/overview-organization";
+import { OrganizationHeading } from "@/components/metric-section";
+import { useI18n } from "@/lib/i18n";
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -63,6 +68,7 @@ import { exportRowsAsXlsx } from "@/lib/xlsx-export";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
   formatCurrency,
+  formatErpDate,
   formatNumber,
   formatPercentage,
 } from "@/lib/formatters";
@@ -316,13 +322,13 @@ const COHORT_BADGE_CLASS: Record<CohortLabel, string> = {
 };
 
 const trendConfig = {
-  revenue: { label: "Faturamento ERP", color: "#3b82f6" },
-  attributedRevenue: { label: "Receita atribuída", color: "#8b5cf6" },
-  spend: { label: "Investimento", color: "#f59e0b" },
+  revenue: { label: "Faturamento ERP", color: "#5b8dff" },
+  attributedRevenue: { label: "Receita atribuída", color: "#5b8dff" },
+  spend: { label: "Investimento", color: "#0458fe" },
 } satisfies ChartConfig;
 
 const breakdownConfig = {
-  value: { label: "Participação", color: "#3b82f6" },
+  value: { label: "Participação", color: "#5b8dff" },
 } satisfies ChartConfig;
 
 const PAGE_SIZE = 10;
@@ -407,11 +413,12 @@ function SectionHeader({
   description: string;
   action?: React.ReactNode;
 }) {
+  const { tx } = useI18n();
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <h2 className="text-base font-semibold">{title}</h2>
-        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        <h2 className="text-base font-semibold">{tx(title)}</h2>
+        <p className="mt-1 text-xs text-muted-foreground">{tx(description)}</p>
       </div>
       {action}
     </div>
@@ -537,6 +544,7 @@ function Pagination({
 }
 
 export default function PerformancePage() {
+  const { tx } = useI18n();
   const { selectedClientId, user } = useAuth();
   const { dateRange } = useDashboardFilters();
   const [ordersPage, setOrdersPage] = useState(1);
@@ -685,24 +693,33 @@ export default function PerformancePage() {
   );
   useEffect(() => setOrdersPage(1), [cohortFilter]);
 
+  const previous = usePreviousPeriodQuery<PerformanceResponse>(periodQuery("/api/analytics/performance", { ...commonParams, page: 1, limit: PAGE_SIZE }), enabled);
+  const pk = previous.data?.kpis;
   const k = data?.kpis;
   const financialMetrics = [
     {
       label: "Faturamento ERP",
       value: k?.netRevenue ?? 0,
+      comparisonValue: k?.netRevenue ?? null,
+      previousValue: pk?.netRevenue,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: CircleDollarSign,
       iconClass: "bg-blue-500/10 text-blue-400",
-      sparkColor: "#3b82f6",
+      sparkColor: "#5b8dff",
       sub: [{ label: "Bruto", value: formatCurrency(k?.grossRevenue ?? 0) }],
     },
     {
       label: "Receita atribuída",
+      info: tx("Faturamento líquido (já descontadas as devoluções) dos compradores do ERP que a UP Zero reconhece como vindos de mídia paga. Conta pelo cliente, não pelo pedido: por isso pode diferir de “Receita com clique pago”, mais abaixo."),
       value: k?.attributedRevenue ?? 0,
+      comparisonValue: k?.attributedRevenue ?? null,
+      previousValue: pk?.attributedRevenue,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: Target,
       iconClass: "bg-violet-500/10 text-violet-400",
-      sparkColor: "#8b5cf6",
+      sparkColor: "#5b8dff",
       sub: [
         {
           label: "Cobertura",
@@ -713,38 +730,50 @@ export default function PerformancePage() {
     {
       label: "Investimento",
       value: k?.mediaSpend ?? 0,
+      comparisonValue: k?.mediaSpend ?? null,
+      previousValue: pk?.mediaSpend,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: Megaphone,
       iconClass: "bg-amber-500/10 text-amber-400",
-      sparkColor: "#f59e0b",
+      sparkColor: "#0458fe",
       sub: [{ label: "Fonte", value: "Meta Ads" }],
     },
     {
       label: "ROAS atribuído",
       value: k?.roas ?? 0,
-      format: () => (k?.roas == null ? "—" : `${k.roas.toFixed(2)}x`),
+      comparisonValue: k?.roas ?? null,
+      previousValue: pk?.roas,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.roas == null ? "—" : `${v.toFixed(2)}x`),
       icon: TrendingUp,
       iconClass: "bg-emerald-500/10 text-emerald-400",
-      sparkColor: "#34d399",
+      sparkColor: "#87adff",
       sub: [{ label: "Cálculo", value: "Atribuído / mídia" }],
     },
     {
       label: "MER geral",
       value: k?.mer ?? 0,
-      format: () => (k?.mer == null ? "—" : `${k.mer.toFixed(2)}x`),
+      comparisonValue: k?.mer ?? null,
+      previousValue: pk?.mer,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.mer == null ? "—" : `${v.toFixed(2)}x`),
       icon: Gauge,
       iconClass: "bg-cyan-500/10 text-cyan-400",
-      sparkColor: "#22d3ee",
+      sparkColor: "#afc4ff",
       sub: [{ label: "Cálculo", value: "ERP / mídia" }],
     },
     {
       label: "Lucro bruto",
       value: k?.grossProfit ?? 0,
-      format: () =>
-        k?.roiStatus === "available" ? formatCurrency(k.grossProfit) : "—",
+      comparisonValue: k?.roiStatus === "available" ? k.grossProfit : null,
+      previousValue: pk?.roiStatus === "available" ? pk.grossProfit : null,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) =>
+        k?.roiStatus === "available" ? formatCurrency(v) : "—",
       icon: Boxes,
       iconClass: "bg-fuchsia-500/10 text-fuchsia-400",
-      sparkColor: "#d946ef",
+      sparkColor: "#b3caff",
       sub: [
         { label: "Margem", value: formatPercentage(k?.grossMarginPct ?? 0) },
       ],
@@ -752,10 +781,13 @@ export default function PerformancePage() {
     {
       label: "ROI final",
       value: k?.roi ?? 0,
-      format: () => (k?.roi == null ? "—" : formatPercentage(k.roi)),
+      comparisonValue: k?.roi ?? null,
+      previousValue: pk?.roi,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.roi == null ? "—" : formatPercentage(v)),
       icon: BadgeDollarSign,
       iconClass: "bg-lime-500/10 text-lime-400",
-      sparkColor: "#84cc16",
+      sparkColor: "#87adff",
       sub: [
         {
           label: "Custo coberto",
@@ -766,10 +798,13 @@ export default function PerformancePage() {
     {
       label: "Ticket médio",
       value: k?.averageTicket ?? 0,
+      comparisonValue: k?.averageTicket ?? null,
+      previousValue: pk?.averageTicket,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: ReceiptText,
       iconClass: "bg-blue-500/10 text-blue-400",
-      sparkColor: "#60a5fa",
+      sparkColor: "#afc4ff",
       sub: [
         { label: "Peças/pedido", value: (k?.avgItemsPerOrder ?? 0).toFixed(1) },
       ],
@@ -779,20 +814,28 @@ export default function PerformancePage() {
   const acquisitionMetrics = [
     {
       label: "Pedidos ERP",
+      info: tx("Documentos de pedido do ERP no período. O ERP registra cada devolução como um pedido de valor zero, e eles entram nesta contagem."),
       value: k?.orders ?? 0,
+      comparisonValue: k?.orders ?? null,
+      previousValue: pk?.orders,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: ReceiptText,
       iconClass: "bg-blue-500/10 text-blue-400",
-      sparkColor: "#60a5fa",
+      sparkColor: "#afc4ff",
       sub: [{ label: "Peças", value: formatNumber(k?.totalQuantity ?? 0) }],
     },
     {
       label: "Pedidos atribuídos",
+      info: tx("Pedidos do ERP dos compradores reconhecidos como vindos de mídia paga (conta por cliente). Devoluções registradas como pedido no ERP entram nesta contagem."),
       value: k?.attributedOrders ?? 0,
+      comparisonValue: k?.attributedOrders ?? null,
+      previousValue: pk?.attributedOrders,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: PackageCheck,
       iconClass: "bg-emerald-500/10 text-emerald-400",
-      sparkColor: "#10b981",
+      sparkColor: "#87adff",
       sub: [
         {
           label: "Cobertura",
@@ -804,10 +847,13 @@ export default function PerformancePage() {
     {
       label: "Compradores únicos",
       value: k?.uniqueBuyers ?? 0,
+      comparisonValue: k?.uniqueBuyers ?? null,
+      previousValue: pk?.uniqueBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: Users,
       iconClass: "bg-purple-500/10 text-purple-400",
-      sparkColor: "#c084fc",
+      sparkColor: "#5b8dff",
       sub: [
         { label: "Atribuídos", value: formatNumber(k?.attributedBuyers ?? 0) },
       ],
@@ -815,10 +861,13 @@ export default function PerformancePage() {
     {
       label: "Clientes novos",
       value: k?.newBuyers ?? 0,
+      comparisonValue: k?.newBuyers ?? null,
+      previousValue: pk?.newBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-lime-500/10 text-lime-400",
-      sparkColor: "#84cc16",
+      sparkColor: "#87adff",
       sub: [
         {
           label: "Novos atribuídos",
@@ -829,10 +878,13 @@ export default function PerformancePage() {
     {
       label: "Clientes recorrentes",
       value: k?.returningBuyers ?? 0,
+      comparisonValue: k?.returningBuyers ?? null,
+      previousValue: pk?.returningBuyers,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatNumber,
       icon: ShoppingBag,
       iconClass: "bg-rose-500/10 text-rose-400",
-      sparkColor: "#fb7185",
+      sparkColor: "#b3caff",
       sub: [
         { label: "Retenção", value: formatPercentage(k?.retentionPct ?? 0) },
       ],
@@ -840,28 +892,39 @@ export default function PerformancePage() {
     {
       label: "CAC",
       value: k?.cac ?? 0,
-      format: () => (k?.cac == null ? "—" : formatCurrency(k.cac)),
+      comparisonValue: k?.cac ?? null,
+      previousValue: pk?.cac,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.cac == null ? "—" : formatCurrency(v)),
+      lowerIsBetter: true,
       icon: BadgeDollarSign,
       iconClass: "bg-orange-500/10 text-orange-400",
-      sparkColor: "#fb923c",
+      sparkColor: "#0458fe",
       sub: [{ label: "Base", value: "Novos atribuídos" }],
     },
     {
       label: "CTR",
       value: k?.ctr ?? 0,
+      comparisonValue: k?.ctr ?? null,
+      previousValue: pk?.ctr,
+      source: "ERP · Ecommerce · Meta Ads",
       format: formatPercentage,
       icon: MousePointerClick,
       iconClass: "bg-sky-500/10 text-sky-400",
-      sparkColor: "#38bdf8",
+      sparkColor: "#afc4ff",
       sub: [{ label: "Cliques", value: formatNumber(k?.clicks ?? 0) }],
     },
     {
       label: "CPL",
       value: k?.cpl ?? 0,
-      format: () => (k?.cpl == null ? "—" : formatCurrency(k.cpl)),
+      comparisonValue: k?.cpl ?? null,
+      previousValue: pk?.cpl,
+      source: "ERP · Ecommerce · Meta Ads",
+      format: (v: number) => (k?.cpl == null ? "—" : formatCurrency(v)),
+      lowerIsBetter: true,
       icon: Target,
       iconClass: "bg-violet-500/10 text-violet-400",
-      sparkColor: "#a78bfa",
+      sparkColor: "#5b8dff",
       sub: [{ label: "Leads Meta", value: formatNumber(k?.leads ?? 0) }],
     },
   ];
@@ -910,7 +973,7 @@ export default function PerformancePage() {
       filteredOrders,
       [
         { header: "Pedido", accessor: (row) => row.orderId },
-        { header: "Data", accessor: (row) => row.dataCriado },
+        { header: "Data", accessor: (row) => (row.channel === "erp" ? row.dataCriado.slice(0, 10) : row.dataCriado) },
         { header: "Cliente", accessor: (row) => row.customerName },
         { header: "Documento", accessor: (row) => row.document },
         { header: "Canal", accessor: (row) => (row.channel === "erp" ? "ERP" : "Site") },
@@ -1016,11 +1079,11 @@ export default function PerformancePage() {
 
       <section className="space-y-4">
         <SectionHeader
-          title="Resumo financeiro"
+          title="RESULTADO GERAL"
           description="Resultado oficial do ERP conciliado com mídia e atribuição do e-commerce."
         />
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {financialMetrics.map((metric, index) => (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          {[0, 3].map((index) => { const metric = financialMetrics[index]; return (
             <DashboardKpiCard
               key={metric.label}
               {...metric}
@@ -1032,7 +1095,269 @@ export default function PerformancePage() {
               testId={`performance-financial-kpi-${index}`}
               valueAccent={index === 0}
             />
-          ))}
+          ); })}
+          <MediaInvestmentCards />
+        </div>
+      </section>
+
+      <PerformanceSummarySections />
+
+      <OrganizationHeading>{tx("FATURAMENTO × INVESTIMENTO")}</OrganizationHeading>
+
+      <div className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
+        <Card>
+          <CardContent className="p-5">
+            <SectionHeader
+              title="Faturamento, atribuição e mídia"
+              description="A receita atribuída é um recorte do faturamento oficial do ERP."
+            />
+            <ChartContainer
+              config={trendConfig}
+              className="mt-5 h-[320px] w-full aspect-auto"
+            >
+              <AreaChart accessibilityLayer data={data?.daily ?? []}>
+                <CartesianGrid vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={10}
+                />
+                <YAxis
+                  tickLine={false}
+                  axisLine={false}
+                  width={62}
+                  tickFormatter={(value) =>
+                    `R$ ${Math.round(Number(value) / 1000)}k`
+                  }
+                />
+                <ChartTooltip
+                  cursor={false}
+                  content={
+                    <ChartTooltipContent
+                      formatter={(value) => formatCurrency(Number(value))}
+                    />
+                  }
+                />
+                <Area
+                  dataKey="revenue"
+                  type="monotone"
+                  fill="var(--color-revenue)"
+                  fillOpacity={0.16}
+                  stroke="var(--color-revenue)"
+                  strokeWidth={2}
+                />
+                <Area
+                  dataKey="attributedRevenue"
+                  type="monotone"
+                  fill="var(--color-attributedRevenue)"
+                  fillOpacity={0.12}
+                  stroke="var(--color-attributedRevenue)"
+                  strokeWidth={2}
+                />
+                <Area
+                  dataKey="spend"
+                  type="monotone"
+                  fill="var(--color-spend)"
+                  fillOpacity={0.08}
+                  stroke="var(--color-spend)"
+                  strokeWidth={2}
+                />
+                <ChartLegend content={<ChartLegendContent />} />
+              </AreaChart>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-5">
+            <SectionHeader
+              title="Performance por canal"
+              description="ROAS aparece quando o canal possui investimento conectado."
+            />
+            <Table className="mt-4">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Canal</TableHead>
+                  <TableHead className="text-right">Invest.</TableHead>
+                  <TableHead className="text-right">Receita</TableHead>
+                  <TableHead className="text-right">ROAS</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(data?.channels ?? []).map((channel) => (
+                  <TableRow key={channel.channel}>
+                    <TableCell className="font-medium">
+                      {channel.channel}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatCurrency(channel.spend)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatCurrency(channel.revenue)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {channel.roas == null
+                        ? "—"
+                        : `${channel.roas.toFixed(2)}x`}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+
+      <OrganizationHeading>{tx("AQUISIÇÃO × RETENÇÃO")}</OrganizationHeading>
+
+      <Card>
+        <CardContent className="p-5">
+          <SectionHeader
+            title="Novos, recorrentes e reativados"
+            description="Coorte pela última compra concluída antes da 1ª compra que a mídia influenciou. Sem compra anterior = novo · até 90 dias = recorrente · acima = reativado."
+          />
+          {attributionQuery.isLoading ? (
+            <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
+          ) : isVestiWithoutUpZero ? (
+            <Alert className="mt-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Não disponível para este cliente</AlertTitle>
+              <AlertDescription>
+                Essa seção usa dados de clique da UpZero, que este cliente (Vesti nativo) não tem configurado.
+              </AlertDescription>
+            </Alert>
+          ) : attributionQuery.isError ? (
+            <Alert variant="destructive" className="mt-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Não foi possível carregar a atribuição</AlertTitle>
+              <AlertDescription>
+                Tente novamente em alguns instantes.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <>
+              <div className="mt-4 up-metric-grid">
+                {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
+                  const summary = attributionQuery.data?.cohortSummary.find(
+                    (c) => c.cohort === cohort,
+                  );
+                  const totalClientes = attributionQuery.data?.influencedCustomers ?? 0;
+                  const pct =
+                    totalClientes > 0 && summary
+                      ? (summary.clientes / totalClientes) * 100
+                      : 0;
+                  return (
+                    <GlassMetricCard key={cohort} label={COHORT_LABEL[cohort]} value={<>{formatNumber(summary?.clientes ?? 0)}</>} sub={[{ label: "% dos clientes atribuídos", value: formatPercentage(pct) }]} hideComparison />
+                  );
+                })}
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Coorte</TableHead>
+                      <TableHead className="text-right">Clientes</TableHead>
+                      <TableHead className="text-right">Pedidos</TableHead>
+                      <TableHead className="text-right">Pedidos pagos</TableHead>
+                      <TableHead className="text-right">Fat. gerado</TableHead>
+                      <TableHead className="text-right">Fat. pago</TableHead>
+                      <TableHead className="text-right">Ticket médio</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
+                      const summary = attributionQuery.data?.cohortSummary.find(
+                        (c) => c.cohort === cohort,
+                      );
+                      return (
+                        <TableRow key={cohort}>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={COHORT_BADGE_CLASS[cohort]}
+                            >
+                              {COHORT_LABEL[cohort]}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(summary?.clientes ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(summary?.pedidos ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(summary?.pedidosPagos ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(summary?.faturamentoGerado ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(summary?.faturamentoPago ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(summary?.ticketMedio ?? 0)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {(() => {
+                      const rows = attributionQuery.data?.cohortSummary ?? [];
+                      const totalPedidos = rows.reduce((s, r) => s + r.pedidos, 0);
+                      const totalPedidosPagos = rows.reduce((s, r) => s + r.pedidosPagos, 0);
+                      const totalFatPago = rows.reduce((s, r) => s + r.faturamentoPago, 0);
+                      const totalFatGerado = attributionQuery.data?.influencedTotal ?? 0;
+                      return (
+                        <TableRow className="bg-muted/30 font-semibold">
+                          <TableCell>Total</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(attributionQuery.data?.influencedCustomers ?? 0)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(totalPedidos)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(totalPedidosPagos)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(totalFatGerado)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(totalFatPago)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(totalPedidos > 0 ? totalFatGerado / totalPedidos : 0)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })()}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <section className="space-y-4">
+        <SectionHeader
+          title="CONCILIAÇÃO FINANCEIRA"
+          description="Resultado oficial do ERP conciliado com mídia e atribuição do e-commerce."
+        />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {[1, 2, 4, 5, 6, 7].map((index) => { const metric = financialMetrics[index]; return (
+            <DashboardKpiCard
+              key={metric.label}
+              {...metric}
+              change={null}
+              changeLabel=""
+              sparkValues={[]}
+              ringColor={metric.sparkColor}
+              isLoading={isLoading}
+              testId={`performance-financial-kpi-${index}`}
+              valueAccent={index === 0}
+            />
+          ); })}
         </div>
       </section>
 
@@ -1142,8 +1467,8 @@ export default function PerformancePage() {
                   </p>
                   <p className="mt-2 text-[11px] text-muted-foreground">
                     {stage.previousRate == null
-                      ? "Entrada do funil"
-                      : `${formatPercentage(stage.previousRate)} da etapa anterior`}
+                      ? tx("Entrada do funil")
+                      : `${formatPercentage(stage.previousRate)} ${tx("da etapa anterior")}`}
                   </p>
                   {index < (data?.funnel.length ?? 0) - 1 && (
                     <span className="absolute -right-2.5 top-1/2 z-10 text-muted-foreground">
@@ -1156,111 +1481,6 @@ export default function PerformancePage() {
           </div>
         </CardContent>
       </Card>
-
-      <div className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
-        <Card>
-          <CardContent className="p-5">
-            <SectionHeader
-              title="Faturamento, atribuição e mídia"
-              description="A receita atribuída é um recorte do faturamento oficial do ERP."
-            />
-            <ChartContainer
-              config={trendConfig}
-              className="mt-5 h-[320px] w-full aspect-auto"
-            >
-              <AreaChart accessibilityLayer data={data?.daily ?? []}>
-                <CartesianGrid vertical={false} />
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={10}
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  width={62}
-                  tickFormatter={(value) =>
-                    `R$ ${Math.round(Number(value) / 1000)}k`
-                  }
-                />
-                <ChartTooltip
-                  cursor={false}
-                  content={
-                    <ChartTooltipContent
-                      formatter={(value) => formatCurrency(Number(value))}
-                    />
-                  }
-                />
-                <Area
-                  dataKey="revenue"
-                  type="monotone"
-                  fill="var(--color-revenue)"
-                  fillOpacity={0.16}
-                  stroke="var(--color-revenue)"
-                  strokeWidth={2}
-                />
-                <Area
-                  dataKey="attributedRevenue"
-                  type="monotone"
-                  fill="var(--color-attributedRevenue)"
-                  fillOpacity={0.12}
-                  stroke="var(--color-attributedRevenue)"
-                  strokeWidth={2}
-                />
-                <Area
-                  dataKey="spend"
-                  type="monotone"
-                  fill="var(--color-spend)"
-                  fillOpacity={0.08}
-                  stroke="var(--color-spend)"
-                  strokeWidth={2}
-                />
-                <ChartLegend content={<ChartLegendContent />} />
-              </AreaChart>
-            </ChartContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-5">
-            <SectionHeader
-              title="Performance por canal"
-              description="ROAS aparece quando o canal possui investimento conectado."
-            />
-            <Table className="mt-4">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Canal</TableHead>
-                  <TableHead className="text-right">Invest.</TableHead>
-                  <TableHead className="text-right">Receita</TableHead>
-                  <TableHead className="text-right">ROAS</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(data?.channels ?? []).map((channel) => (
-                  <TableRow key={channel.channel}>
-                    <TableCell className="font-medium">
-                      {channel.channel}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatCurrency(channel.spend)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatCurrency(channel.revenue)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {channel.roas == null
-                        ? "—"
-                        : `${channel.roas.toFixed(2)}x`}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </div>
 
       <Card>
         <CardContent className="p-5">
@@ -1620,54 +1840,12 @@ export default function PerformancePage() {
                   </AlertDescription>
                 </Alert>
               )}
-              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-5">
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Pedidos no período
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatNumber(filteredStats.pedidosNoPeriodo)}
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Valor total
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatCurrency(filteredStats.valorTotal)}
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Pedidos atribuídos
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatNumber(filteredStats.pedidosAtribuidos)}
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Receita atribuída
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {formatCurrency(filteredStats.receitaAtribuida)}{" "}
-                    <span className="text-xs font-normal text-muted-foreground">
-                      {formatPercentage(
-                        filteredStats.valorTotal > 0
-                          ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100
-                          : 0,
-                      )}
-                    </span>
-                  </p>
-                </div>
-                <div className="bg-card px-4 py-3">
-                  <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                    Faturamento pago atribuído
-                  </p>
-                  <p className="mt-1 text-lg font-semibold text-primary">
-                    {formatCurrency(filteredStats.faturamentoPago)}
-                  </p>
-                </div>
+              <div className="mt-4 up-metric-grid">
+                <GlassMetricCard label="Pedidos no período" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>} hideComparison />
+                <GlassMetricCard label="Valor total" value={<>{formatCurrency(filteredStats.valorTotal)}</>} hideComparison />
+                <GlassMetricCard label="Pedidos com clique pago" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>} info={tx("Pedidos (ERP + site) em que o mesmo cliente teve um clique pago antes da compra.")} hideComparison />
+                <GlassMetricCard label="Receita com clique pago" value={<>{formatCurrency(filteredStats.receitaAtribuida)}</>} info={tx("Valor desses pedidos, contado por pedido. Pode diferir de “Receita atribuída” (Conciliação financeira), que conta por cliente sobre o faturamento líquido do ERP.")} sub={[{ label: "% do valor total", value: formatPercentage(filteredStats.valorTotal > 0 ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100 : 0) }]} hideComparison />
+                <GlassMetricCard label="Pago desses pedidos" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>} info={tx("Parte do valor desses pedidos que já foi paga.")} hideComparison />
               </div>
               <div className="mt-4 overflow-x-auto">
                 <Table>
@@ -1687,7 +1865,7 @@ export default function PerformancePage() {
                         <TableCell>
                           <p className="font-medium">#{order.orderId}</p>
                           <p className="text-xs text-muted-foreground">
-                            {new Date(order.dataCriado).toLocaleString("pt-BR")}
+                            {order.channel === "erp" ? formatErpDate(order.dataCriado) : new Date(order.dataCriado).toLocaleString("pt-BR")}
                           </p>
                         </TableCell>
                         <TableCell>
@@ -1704,7 +1882,7 @@ export default function PerformancePage() {
                               {COHORT_LABEL[order.cohort]}
                             </Badge>
                           ) : (
-                            <Badge variant="outline">Não identificado</Badge>
+                            <span className="text-muted-foreground" title={tx("A coorte só é calculada para pedidos com clique pago antes da compra.")}>—</span>
                           )}
                         </TableCell>
                         <TableCell>
@@ -1739,144 +1917,6 @@ export default function PerformancePage() {
                 loading={attributionQuery.isFetching}
                 onPage={setOrdersPage}
               />
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="p-5">
-          <SectionHeader
-            title="Novos, recorrentes e reativados"
-            description="Coorte pela última compra concluída antes da 1ª compra que a mídia influenciou. Sem compra anterior = novo · até 90 dias = recorrente · acima = reativado."
-          />
-          {attributionQuery.isLoading ? (
-            <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
-          ) : isVestiWithoutUpZero ? (
-            <Alert className="mt-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Não disponível para este cliente</AlertTitle>
-              <AlertDescription>
-                Essa seção usa dados de clique da UpZero, que este cliente (Vesti nativo) não tem configurado.
-              </AlertDescription>
-            </Alert>
-          ) : attributionQuery.isError ? (
-            <Alert variant="destructive" className="mt-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Não foi possível carregar a atribuição</AlertTitle>
-              <AlertDescription>
-                Tente novamente em alguns instantes.
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <>
-              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-3">
-                {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
-                  const summary = attributionQuery.data?.cohortSummary.find(
-                    (c) => c.cohort === cohort,
-                  );
-                  const totalClientes = attributionQuery.data?.influencedCustomers ?? 0;
-                  const pct =
-                    totalClientes > 0 && summary
-                      ? (summary.clientes / totalClientes) * 100
-                      : 0;
-                  return (
-                    <div key={cohort} className="bg-card px-4 py-3">
-                      <p className="text-[10px] font-mono uppercase text-muted-foreground">
-                        {COHORT_LABEL[cohort]}
-                      </p>
-                      <p className="mt-1 text-lg font-semibold">
-                        {formatNumber(summary?.clientes ?? 0)}{" "}
-                        <span className="text-xs font-normal text-muted-foreground">
-                          {formatPercentage(pct)}
-                        </span>
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-4 overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Coorte</TableHead>
-                      <TableHead className="text-right">Clientes</TableHead>
-                      <TableHead className="text-right">Pedidos</TableHead>
-                      <TableHead className="text-right">Pedidos pagos</TableHead>
-                      <TableHead className="text-right">Fat. gerado</TableHead>
-                      <TableHead className="text-right">Fat. pago</TableHead>
-                      <TableHead className="text-right">Ticket médio</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
-                      const summary = attributionQuery.data?.cohortSummary.find(
-                        (c) => c.cohort === cohort,
-                      );
-                      return (
-                        <TableRow key={cohort}>
-                          <TableCell>
-                            <Badge
-                              variant="outline"
-                              className={COHORT_BADGE_CLASS[cohort]}
-                            >
-                              {COHORT_LABEL[cohort]}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(summary?.clientes ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(summary?.pedidos ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(summary?.pedidosPagos ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(summary?.faturamentoGerado ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(summary?.faturamentoPago ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(summary?.ticketMedio ?? 0)}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                    {(() => {
-                      const rows = attributionQuery.data?.cohortSummary ?? [];
-                      const totalPedidos = rows.reduce((s, r) => s + r.pedidos, 0);
-                      const totalPedidosPagos = rows.reduce((s, r) => s + r.pedidosPagos, 0);
-                      const totalFatPago = rows.reduce((s, r) => s + r.faturamentoPago, 0);
-                      const totalFatGerado = attributionQuery.data?.influencedTotal ?? 0;
-                      return (
-                        <TableRow className="bg-muted/30 font-semibold">
-                          <TableCell>Total</TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(attributionQuery.data?.influencedCustomers ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(totalPedidos)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(totalPedidosPagos)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(totalFatGerado)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(totalFatPago)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(totalPedidos > 0 ? totalFatGerado / totalPedidos : 0)}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })()}
-                  </TableBody>
-                </Table>
-              </div>
             </>
           )}
         </CardContent>

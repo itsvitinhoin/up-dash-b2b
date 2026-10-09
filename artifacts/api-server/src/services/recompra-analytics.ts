@@ -1,3 +1,5 @@
+import { buildMonthlyCohort } from "./monthly-cohort";
+import { buildPurchaseProgression } from "./purchase-progression";
 // Criado 21/09/2026 -- Fase 1 da integração de dado real de Performance >
 // Recompra (ver "00 - Especificação técnica.pdf" v1.0). Fase 2 (21/09/2026)
 // ligou Status/Estado/Vendedora de verdade + tabela de vendedora. Fase 3
@@ -85,6 +87,7 @@ import { bigquery, vestiTable } from "../lib/bigquery";
 import { db, ordersTable, sellersTable, customersTable } from "@workspace/db";
 import { resolveErpCustomerIdentities, type ErpContactInfo } from "./erp-identity";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, standardTouchpointWindow, TOUCHPOINT_LOOKBACK_DAYS, type TouchpointCandidate } from "./paid-touchpoints";
+import { buildAcquisitionBlock, type RecompraBlockTotals } from "./recompra-acquisition";
 import { fetchVestiAttributionSets, isOnlyAttributed, type VestiAttributionSets } from "./vesti-attribution";
 
 const RECORRENTE_THRESHOLD_DAYS = 90;
@@ -132,7 +135,9 @@ const VESTI_STATUS_CLAUSE_BY_FILTER: Record<RecompraStatusFilter, string | null>
 
 // Valores idênticos aos já usados pelo <TipoFilter> do front (performance-
 // recompra.tsx) -- sem camada de mapeamento entre os dois.
-export type RecompraTipoFilter = "erp" | "ecommerce" | "anuncios-todos" | "anuncios-ecommerce" | "anuncios-erp";
+// "vesti" (UP Glass, 08/10/2026): só pedidos do canal Vesti. Existe porque "erp" é, na prática, "todos os canais" (e no
+// Vogabox, que tem Vesti + ERP, junta os dois); o Dashboard precisa só da Vesti para bater com os cartões do topo.
+export type RecompraTipoFilter = "erp" | "ecommerce" | "vesti" | "site" | "anuncios-todos" | "anuncios-ecommerce" | "anuncios-erp";
 
 export type RecompraFilters = {
   status: RecompraStatusFilter;
@@ -660,8 +665,9 @@ function getTouchpointsForCustomerDeduped(params: {
   externalUserId: number;
   from: string;
   to: string;
+  needUntil?: string;
 }): Promise<TouchpointCandidate[]> {
-  const key = `${params.clientId}:${params.customerId}:${params.from}:${params.to}`;
+  const key = `${params.clientId}:${params.customerId}:${params.from}:${params.to}:${params.needUntil ?? ""}`;
   const inFlight = inFlightTouchpointFetches.get(key);
   if (inFlight) return inFlight;
   const promise = getTouchpointsForCustomerCached(params).finally(() => {
@@ -692,8 +698,12 @@ async function fetchTouchpointsForCandidates(params: {
   // fixos) -- passa um teto bem mais conservador pra não somar pressão em
   // cima do que já existia. Default preserva o comportamento antigo.
   concurrency?: number;
-}): Promise<Map<string, TouchpointCandidate[]>> {
+  // Data do último evento de cada cliente: o touchpoint só precisa estar
+  // sincronizado até ali (ver getTouchpointsForCustomerCached).
+  needUntilByCustomer?: Map<string, Date>;
+}): Promise<{ touchpointsByCustomer: Map<string, TouchpointCandidate[]>; failures: number }> {
   const touchpointsByCustomer = new Map<string, TouchpointCandidate[]>();
+  let failures = 0;
   const entries = [...params.candidates.entries()].filter(([, identity]) => {
     const externalUserId = Number.parseInt(identity.externalId ?? "", 10);
     return Number.isFinite(externalUserId) && externalUserId > 0;
@@ -712,18 +722,33 @@ async function fetchTouchpointsForCandidates(params: {
           externalUserId,
           from: params.lookbackFrom,
           to: params.lookbackTo,
+          needUntil: params.needUntilByCustomer?.get(customerId)?.toISOString(),
         });
         touchpointsByCustomer.set(customerId, touchpoints);
       } catch {
         // Cliente com erro de busca fica sem touchpoint -- não trava o
-        // resto do relatório (mesma postura de erp-attribution.ts).
+        // resto do relatório (mesma postura de erp-attribution.ts). Desde
+        // 08/10/2026 a falha é CONTADA e devolvida: antes ela sumia em
+        // silêncio e o número de "Anúncios" mudava de uma chamada pra outra.
+        failures++;
         touchpointsByCustomer.set(customerId, []);
       }
     }
   }
   const concurrency = params.concurrency ?? TOUCHPOINT_CONCURRENCY;
   await Promise.all(Array.from({ length: Math.min(concurrency, entries.length) }, () => worker()));
-  return touchpointsByCustomer;
+  return { touchpointsByCustomer, failures };
+}
+
+// Último evento de cada cliente no recorte: é até aí que o touchpoint importa.
+function lastEventDateByCustomer(eventsByCustomer: Map<string, PositiveEvent[]>): Map<string, Date> {
+  const out = new Map<string, Date>();
+  for (const [customerId, events] of eventsByCustomer) {
+    let last: Date | null = null;
+    for (const e of events) if (!last || e.requestedAt.getTime() > last.getTime()) last = e.requestedAt;
+    if (last) out.set(customerId, last);
+  }
+  return out;
 }
 
 // `standardTouchpointWindow()` (janela de touchpoint ancorada em "agora",
@@ -771,6 +796,10 @@ function applyTipoAndOrigemFilter(
     for (const event of events) {
       if (filters.tipo === "ecommerce") {
         if (event.channel === "site") kept.push(event);
+        continue;
+      }
+      if (filters.tipo === "vesti" || filters.tipo === "site") {
+        if (event.channel === filters.tipo) kept.push(event);
         continue;
       }
       // A partir daqui, algum "anuncios-*".
@@ -825,7 +854,13 @@ export async function classifyRecompra(params: {
   dateFrom: string;
   dateTo: string; // último dia incluído
   filters: RecompraFilters;
-}): Promise<{ classifications: CustomerClassification[]; unmatchedErpCount: number; attributionUnavailable: boolean }> {
+}): Promise<{ classifications: CustomerClassification[]; unmatchedErpCount: number; attributionUnavailable: boolean; touchpointFailures: number; acquisition: RecompraBlockTotals }> {
+  // Tipo "vesti": o universo é a tabela de vendas da Vesti SOZINHA (a mesma que alimenta o Dashboard). Não lê o ERP:
+  // no Vogabox (Vesti + ERP) o cruzamento descarta a cópia da Vesti de toda venda que também está no ERP, e o total
+  // não bateria com o topo da tela (93 em vez de 134).
+  // "site" idem: só os pedidos do site (UpZero/Nuvemshop), sem o ERP -- é o universo dos cartões do topo do Dashboard.
+  if ((params.filters.tipo === "vesti" || params.filters.tipo === "site") && params.dataset) params = { ...params, dataset: null };
+
   const dateToExclusive = new Date(`${params.dateTo}T00:00:00.000Z`);
   dateToExclusive.setUTCDate(dateToExclusive.getUTCDate() + 1);
   const isAnuncios = params.filters.tipo.startsWith("anuncios");
@@ -853,18 +888,22 @@ export async function classifyRecompra(params: {
   // relatório.
   let touchpointsByCustomer: Map<string, TouchpointCandidate[]> | null = null;
   let attributionUnavailable = false;
+  let touchpointFailures = 0;
   if (isAnuncios && !vestiAttribution) {
     if (!params.upZeroApiKey) {
       attributionUnavailable = true;
     } else {
       const { lookbackFrom, lookbackTo } = standardTouchpointWindow();
-      touchpointsByCustomer = await fetchTouchpointsForCandidates({
+      const fetched = await fetchTouchpointsForCandidates({
         clientId: params.clientId,
         upZeroApiKey: params.upZeroApiKey,
         candidates,
         lookbackFrom,
         lookbackTo,
+        needUntilByCustomer: lastEventDateByCustomer(rawEventsByCustomer),
       });
+      touchpointsByCustomer = fetched.touchpointsByCustomer;
+      touchpointFailures = fetched.failures;
     }
   }
   const eventsByCustomer = attributionUnavailable
@@ -880,12 +919,17 @@ export async function classifyRecompra(params: {
   });
 
   const classifications: CustomerClassification[] = [];
+  const acquisitionEvents: PositiveEvent[][] = []; // clientes cuja 1ª compra positiva é neste recorte (Aquisição)
   for (const [customerId, identity] of candidates) {
     const events = eventsByCustomer.get(customerId) ?? [];
     if (events.length === 0) continue;
     const firstEvent = events[0]!; // já ordenado por requestedAt asc
     const priorPositives = (history.get(customerId) ?? []).filter((e) => e.requestedAt.getTime() < firstEvent.requestedAt.getTime());
-    if (priorPositives.length === 0) continue; // sem compra positiva anterior: não é recompra
+    if (priorPositives.length === 0) {
+      // sem compra positiva anterior: não é recompra -- é Aquisição (primeira compra no período)
+      acquisitionEvents.push(events);
+      continue;
+    }
 
     const lastBefore = priorPositives.reduce((latest, e) => (e.requestedAt.getTime() > latest.requestedAt.getTime() ? e : latest));
     const intervalDays = Math.round((firstEvent.requestedAt.getTime() - lastBefore.requestedAt.getTime()) / 86_400_000);
@@ -904,7 +948,7 @@ export async function classifyRecompra(params: {
     });
   }
 
-  return { classifications, unmatchedErpCount, attributionUnavailable };
+  return { classifications, unmatchedErpCount, attributionUnavailable, touchpointFailures, acquisition: buildAcquisitionBlock(acquisitionEvents) };
 }
 
 export type RecompraIntervalBucket = { faixa: string; clientes: number; grupo: RecompraSegment };
@@ -932,28 +976,32 @@ function buildIntervalBuckets(classifications: CustomerClassification[]): Recomp
 }
 
 export type RecompraBlocks = {
-  recompra: { faturamento: number; vendas: number; clientes: number; ticketMedio: number | null };
-  recorrentes: { faturamento: number; vendas: number; clientes: number; ticketMedio: number | null };
-  reativados: { faturamento: number; vendas: number; clientes: number; ticketMedio: number | null };
+  recompra: { faturamento: number; faturamentoBruto: number; vendas: number; clientes: number; ticketMedio: number | null };
+  recorrentes: { faturamento: number; faturamentoBruto: number; vendas: number; clientes: number; ticketMedio: number | null };
+  reativados: { faturamento: number; faturamentoBruto: number; vendas: number; clientes: number; ticketMedio: number | null };
   ciclo: { tempoMedioDias: number | null; medianaDias: number | null; pctRecorrente: number | null; pctReativado: number | null };
   intervalBuckets: RecompraIntervalBucket[]; // Fase 5 -- gráfico "Intervalo entre compras", segue P1/P2 igual aos blocos
   unmatchedErpCount: number;
   attributionUnavailable: boolean; // true quando Tipo=Anúncios foi pedido mas o cliente não tem chave UpZero
+  touchpointFailures: number; // clientes cuja busca de touchpoint falhou (ficaram sem atribuição neste cálculo)
+  aquisicao: RecompraBlockTotals; // pedidos de clientes na 1ª compra (ver buildAcquisitionBlock)
 };
 
-function blockFor(classifications: CustomerClassification[]): { faturamento: number; vendas: number; clientes: number; ticketMedio: number | null } {
+function blockFor(classifications: CustomerClassification[]): { faturamento: number; faturamentoBruto: number; vendas: number; clientes: number; ticketMedio: number | null } {
   let faturamento = 0;
+  let faturamentoBruto = 0;
   let vendas = 0;
   for (const c of classifications) {
     for (const e of c.qualifyingEvents) {
       faturamento += e.paidValue;
+      faturamentoBruto += e.grossValue;
       vendas += 1;
     }
   }
-  return { faturamento, vendas, clientes: classifications.length, ticketMedio: vendas > 0 ? faturamento / vendas : null };
+  return { faturamento, faturamentoBruto, vendas, clientes: classifications.length, ticketMedio: vendas > 0 ? faturamento / vendas : null };
 }
 
-export function aggregateBlocks(classifications: CustomerClassification[], unmatchedErpCount: number, attributionUnavailable = false): RecompraBlocks {
+export function aggregateBlocks(classifications: CustomerClassification[], unmatchedErpCount: number, attributionUnavailable = false, touchpointFailures = 0, acquisition: RecompraBlockTotals = { faturamento: 0, faturamentoBruto: 0, vendas: 0, clientes: 0, ticketMedio: null }): RecompraBlocks {
   const recorrentes = classifications.filter((c) => c.segment === "recorrente");
   const reativados = classifications.filter((c) => c.segment === "reativado");
   const intervals = classifications.map((c) => c.intervalDays);
@@ -972,6 +1020,8 @@ export function aggregateBlocks(classifications: CustomerClassification[], unmat
     intervalBuckets: buildIntervalBuckets(classifications),
     unmatchedErpCount,
     attributionUnavailable,
+    touchpointFailures,
+    aquisicao: acquisition,
   };
 }
 
@@ -1117,14 +1167,17 @@ export async function classifyRecompraMonthly(params: {
       attributionUnavailable = true;
     } else {
       const { lookbackFrom, lookbackTo } = standardTouchpointWindow();
-      touchpointsByCustomer = await fetchTouchpointsForCandidates({
-        clientId: params.clientId,
-        upZeroApiKey: params.upZeroApiKey,
-        candidates,
-        lookbackFrom,
-        lookbackTo,
-        concurrency: MONTHLY_TOUCHPOINT_CONCURRENCY,
-      });
+      touchpointsByCustomer = (
+        await fetchTouchpointsForCandidates({
+          clientId: params.clientId,
+          upZeroApiKey: params.upZeroApiKey,
+          candidates,
+          lookbackFrom,
+          lookbackTo,
+          concurrency: MONTHLY_TOUCHPOINT_CONCURRENCY,
+          needUntilByCustomer: lastEventDateByCustomer(rawEventsByCustomer),
+        })
+      ).touchpointsByCustomer;
     }
   }
   const eventsByCustomer = attributionUnavailable
@@ -1401,7 +1454,9 @@ export async function fetchRecompraHistoryInsights(params: {
   dataset: string | null;
   vestiDataset: string | null;
   cohortMonths?: number; // default 6
-}): Promise<{ funnel: RecompraFunnelStep[]; cohort: RecompraCohortRow[] }> {
+  dateFrom: string;
+  dateTo: string;
+}) {
   const cohortMonths = params.cohortMonths ?? 6;
   // A busca de eventos NÃO pode ser limitada aos últimos `cohortMonths` --
   // Coorte/Funil precisam saber a 1ª compra DE VERDADE (e a sequência
@@ -1419,8 +1474,12 @@ export async function fetchRecompraHistoryInsights(params: {
     vestiDataset: params.vestiDataset,
     sinceDate,
   });
+  const approvals = await db.select({ id: customersTable.id, approvalDate: customersTable.approvalDate })
+    .from(customersTable).where(and(eq(customersTable.clientId, params.clientId), eq(customersTable.registrationStatus, "APPROVED")));
   return {
+    ...buildPurchaseProgression(eventsByCustomer, new Map(approvals.map(row => [row.id, row.approvalDate])), params.dateFrom, params.dateTo),
     funnel: buildPurchaseFunnel(eventsByCustomer),
     cohort: buildCohortRows(eventsByCustomer, cohortMonths),
+    monthlyCohort: buildMonthlyCohort(eventsByCustomer, params.dateTo),
   };
 }

@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/display-label";
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { useQueryClient } from "@tanstack/react-query";
@@ -11,6 +12,7 @@ import {
   useGetClient,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
+import { useI18n } from "@/lib/i18n";
 import { queryOpts } from "@/lib/query-opts";
 import {
   useDashboardFilters,
@@ -31,7 +33,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Bookmark, BookmarkPlus, X, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
+import {
+  Bookmark,
+  BookmarkPlus,
+  X,
+  RotateCcw,
+  Save,
+  SlidersHorizontal,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const CHANNEL_OPTIONS = [
@@ -60,10 +69,10 @@ const VESTI_CHANNEL_OPTIONS = [
 
 const SEGMENT_OPTIONS = [
   { value: "VIP", label: "VIP" },
-  { value: "Loyal", label: "Loyal" },
-  { value: "Promising", label: "Promising" },
-  { value: "At-Risk", label: "At Risk" },
-  { value: "Hibernating", label: "Hibernating" },
+  { value: "Loyal", label: "Fiéis" },
+  { value: "Promising", label: "Promissores" },
+  { value: "At-Risk", label: "Em risco" },
+  { value: "Hibernating", label: "Inativos" },
 ];
 
 const UTM_SOURCE_OPTIONS = [
@@ -72,27 +81,51 @@ const UTM_SOURCE_OPTIONS = [
   { value: "tiktok", label: "TikTok" },
   { value: "facebook", label: "Facebook" },
   { value: "youtube", label: "YouTube" },
-  { value: "email", label: "Email" },
-  { value: "organic", label: "Organic" },
-  { value: "referral", label: "Referral" },
-  { value: "(direct)", label: "(direct)" },
+  { value: "email", label: "E-mail" },
+  { value: "organic", label: "Orgânico" },
+  { value: "referral", label: "Indicação" },
+  { value: "(direct)", label: "(direto)" },
 ];
 
 const UTM_MEDIUM_OPTIONS = [
   { value: "cpc", label: "CPC" },
   { value: "cpm", label: "CPM" },
   { value: "social", label: "Social" },
-  { value: "email", label: "Email" },
-  { value: "organic", label: "Organic" },
-  { value: "affiliate", label: "Affiliate" },
-  { value: "display", label: "Display" },
-  { value: "referral", label: "Referral" },
+  { value: "email", label: "E-mail" },
+  { value: "organic", label: "Orgânico" },
+  { value: "affiliate", label: "Afiliado" },
+  { value: "display", label: "Exibir" },
+  { value: "referral", label: "Indicação" },
 ];
 
 const BRAZIL_STATES = [
-  "AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG",
-  "MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR",
-  "RS","SC","SE","SP","TO",
+  "AC",
+  "AL",
+  "AM",
+  "AP",
+  "BA",
+  "CE",
+  "DF",
+  "ES",
+  "GO",
+  "MA",
+  "MG",
+  "MS",
+  "MT",
+  "PA",
+  "PB",
+  "PE",
+  "PI",
+  "PR",
+  "RJ",
+  "RN",
+  "RO",
+  "RR",
+  "RS",
+  "SC",
+  "SE",
+  "SP",
+  "TO",
 ].map((s) => ({ value: s, label: s }));
 
 const SIZE_OPTIONS = [
@@ -122,20 +155,37 @@ const EXTRA_FILTER_LABELS: Partial<Record<keyof DashboardFilters, string>> = {
   creative: "Creative",
 };
 
+const FILTER_LABELS_PT: Record<string, string> = {
+  Category: "Categoria",
+  Channel: "Canal",
+  Segment: "Segmento",
+  Seller: "Vendedora",
+  "UTM Source": "Origem UTM",
+  State: "Estado",
+  City: "Cidade",
+  Product: "Produto",
+  Size: "Tamanho",
+  Color: "Cor",
+  Creative: "Criativo",
+};
 export function FilterBar() {
+  const { language, tx } = useI18n();
+  const label = (english: string, portuguese: string) =>
+    language === "pt" ? portuguese : english;
   const { user, selectedClientId, selectedDashboardMode } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { dateRange, filters, setFilter, resetFilters, applyView, hasAny } =
     useDashboardFilters();
 
-  const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
-  const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+  const clientId =
+    user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
+  const enabled =
+    user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
 
-  const { data: clientDetail } = useGetClient(
-    selectedClientId ?? "",
-    { query: queryOpts({ enabled: !!selectedClientId }) },
-  );
+  const { data: clientDetail } = useGetClient(selectedClientId ?? "", {
+    query: queryOpts({ enabled: !!selectedClientId }),
+  });
   const isVesti = clientDetail?.commercePlatform === "VESTI";
   const channelOptions = isVesti ? VESTI_CHANNEL_OPTIONS : CHANNEL_OPTIONS;
 
@@ -146,7 +196,9 @@ export function FilterBar() {
 
   const { data: sellers } = useGetSellers(
     { clientId, limit: 50 },
-    { query: queryOpts({ enabled: enabled && selectedDashboardMode === "B2B" }) },
+    {
+      query: queryOpts({ enabled: enabled && selectedDashboardMode === "B2B" }),
+    },
   );
   const sellerOptions = useMemo(
     () => (sellers ?? []).map((s) => ({ value: s.id, label: s.name })),
@@ -196,13 +248,19 @@ export function FilterBar() {
   const createView = useCreateSavedView({
     mutation: {
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getListSavedViewsQueryKey({ clientId }) });
-        toast({ title: "View saved", description: "Your filter set is now available as a chip." });
+        queryClient.invalidateQueries({
+          queryKey: getListSavedViewsQueryKey({ clientId }),
+        });
+        toast({
+          title: label("View saved", "Visualização salva"),
+          description: label("Your filter set is now available as a chip.", "Seus filtros estão disponíveis como um atalho."),
+        });
       },
       onError: (err) => {
         toast({
-          title: "Could not save view",
-          description: (err as { message?: string }).message ?? "Try a different name.",
+          title: label("Could not save view", "Não foi possível salvar a visualização"),
+          description:
+            (err as { message?: string }).message ?? label("Try a different name.", "Tente outro nome."),
           variant: "destructive",
         });
       },
@@ -211,7 +269,9 @@ export function FilterBar() {
   const deleteView = useDeleteSavedView({
     mutation: {
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getListSavedViewsQueryKey({ clientId }) });
+        queryClient.invalidateQueries({
+          queryKey: getListSavedViewsQueryKey({ clientId }),
+        });
       },
     },
   });
@@ -240,40 +300,102 @@ export function FilterBar() {
   ]);
 
   const activeChips = useMemo(() => {
-    const chips: { key: keyof DashboardFilters; label: string; value: string }[] = [];
+    const chips: {
+      key: keyof DashboardFilters;
+      label: string;
+      value: string;
+    }[] = [];
     if (filters.category)
-      chips.push({ key: "category", label: "Category", value: labelFor(categoryOptions, filters.category) });
+      chips.push({
+        key: "category",
+        label: "Categoria",
+        value: labelFor(categoryOptions, filters.category),
+      });
     if (filters.channel)
-      chips.push({ key: "channel", label: "Channel", value: labelFor(channelOptions, filters.channel) });
+      chips.push({
+        key: "channel",
+        label: "Canal",
+        value: labelFor(channelOptions, filters.channel),
+      });
     if (filters.segment)
-      chips.push({ key: "segment", label: "Segment", value: labelFor(SEGMENT_OPTIONS, filters.segment) });
+      chips.push({
+        key: "segment",
+        label: "Segmento",
+        value: labelFor(SEGMENT_OPTIONS, filters.segment),
+      });
     if (selectedDashboardMode === "B2B" && filters.sellerId)
-      chips.push({ key: "sellerId", label: "Seller", value: labelFor(sellerOptions, filters.sellerId) });
+      chips.push({
+        key: "sellerId",
+        label: "Vendedora",
+        value: labelFor(sellerOptions, filters.sellerId),
+      });
     if (selectedDashboardMode === "B2B" && filters.utmSource)
-      chips.push({ key: "utmSource", label: "UTM Source", value: labelFor(UTM_SOURCE_OPTIONS, filters.utmSource) });
+      chips.push({
+        key: "utmSource",
+        label: "Origem UTM",
+        value: labelFor(UTM_SOURCE_OPTIONS, filters.utmSource),
+      });
     if (selectedDashboardMode === "B2B" && filters.utmMedium)
-      chips.push({ key: "utmMedium", label: "UTM Medium", value: labelFor(UTM_MEDIUM_OPTIONS, filters.utmMedium) });
+      chips.push({
+        key: "utmMedium",
+        label: "UTM Medium",
+        value: labelFor(UTM_MEDIUM_OPTIONS, filters.utmMedium),
+      });
     if (selectedDashboardMode === "B2B" && filters.utmCampaign)
-      chips.push({ key: "utmCampaign", label: "UTM Campaign", value: filters.utmCampaign });
+      chips.push({
+        key: "utmCampaign",
+        label: "UTM Campaign",
+        value: filters.utmCampaign,
+      });
     if (filters.state)
       chips.push({ key: "state", label: "State", value: filters.state });
     if (filters.city)
-      chips.push({ key: "city", label: "City", value: filters.city });
+      chips.push({ key: "city", label: "Cidade", value: filters.city });
     if (filters.product)
-      chips.push({ key: "product", label: "Product", value: filters.product });
+      chips.push({ key: "product", label: "Produto", value: filters.product });
     if (filters.size)
-      chips.push({ key: "size", label: "Size", value: labelFor(SIZE_OPTIONS, filters.size) });
+      chips.push({
+        key: "size",
+        label: "Tamanho",
+        value: labelFor(SIZE_OPTIONS, filters.size),
+      });
     if (filters.color)
-      chips.push({ key: "color", label: "Color", value: labelFor(colorOptions, filters.color) });
+      chips.push({
+        key: "color",
+        label: "Cor",
+        value: labelFor(colorOptions, filters.color),
+      });
     if (filters.creative)
-      chips.push({ key: "creative", label: "Creative", value: filters.creative });
+      chips.push({
+        key: "creative",
+        label: "Criativo",
+        value: filters.creative,
+      });
     return chips;
-  }, [filters, selectedDashboardMode, sellerOptions, categoryOptions, channelOptions, colorOptions]);
+  }, [
+    filters,
+    selectedDashboardMode,
+    sellerOptions,
+    categoryOptions,
+    channelOptions,
+    colorOptions,
+  ]);
 
   const extraActiveCount = useMemo(() => {
-    const extraKeys: (keyof DashboardFilters)[] = selectedDashboardMode === "B2B"
-      ? ["utmSource","utmMedium","utmCampaign","state","city","product","size","color","creative"]
-      : ["state","city","product","size","color","creative"];
+    const extraKeys: (keyof DashboardFilters)[] =
+      selectedDashboardMode === "B2B"
+        ? [
+            "utmSource",
+            "utmMedium",
+            "utmCampaign",
+            "state",
+            "city",
+            "product",
+            "size",
+            "color",
+            "creative",
+          ]
+        : ["state", "city", "product", "size", "color", "creative"];
     return extraKeys.filter((k) => !!filters[k]).length;
   }, [filters, selectedDashboardMode]);
 
@@ -297,7 +419,9 @@ export function FilterBar() {
 
   return (
     <div
-      className="border-b border-border bg-card/30 px-4 sm:px-6 py-2.5 flex flex-wrap items-center gap-2"
+      className="up-filter-bar up-glass-panel p-3 flex flex-wrap items-center gap-2"
+      role="region"
+      aria-label="Filtros do dashboard"
       data-testid="filter-bar"
     >
       <FilterSelect
@@ -341,7 +465,7 @@ export function FilterBar() {
             data-testid="filter-more"
           >
             <SlidersHorizontal className="h-3.5 w-3.5" />
-            More filters
+            {label("More filters", "Mais filtros")}
             {extraActiveCount > 0 && (
               <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground font-bold">
                 {extraActiveCount}
@@ -349,11 +473,17 @@ export function FilterBar() {
             )}
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-96 p-4" data-testid="filter-more-popover">
+        <PopoverContent
+          align="start"
+          className="w-96 p-4"
+          data-testid="filter-more-popover"
+        >
           <div className="space-y-4">
             {selectedDashboardMode === "B2B" && (
               <div>
-                <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Attribution</p>
+                <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+                  Atribuição
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <FilterSelect
                     placeholder="UTM Source"
@@ -381,7 +511,7 @@ export function FilterBar() {
                   </div>
                   <div className="col-span-2">
                     <FilterInput
-                      placeholder="Creative name..."
+                      placeholder={label("Creative name...", "Nome do criativo…")}
                       value={filters.creative}
                       onChange={(v) => setFilter("creative", v)}
                       testId="filter-creative"
@@ -393,9 +523,11 @@ export function FilterBar() {
 
             {selectedDashboardMode === "B2C" && (
               <div>
-                <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Performance</p>
+                <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+                  Desempenho
+                </p>
                 <FilterInput
-                  placeholder="Creative name..."
+                  placeholder={label("Creative name...", "Nome do criativo…")}
                   value={filters.creative}
                   onChange={(v) => setFilter("creative", v)}
                   testId="filter-creative"
@@ -405,7 +537,9 @@ export function FilterBar() {
 
             {/* Geography group */}
             <div>
-              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Geography</p>
+              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+                Geografia
+              </p>
               <div className="grid grid-cols-2 gap-2">
                 <FilterSelect
                   placeholder="State"
@@ -416,7 +550,7 @@ export function FilterBar() {
                   fullWidth
                 />
                 <FilterInput
-                  placeholder="City…"
+                  placeholder={label("City…", "Cidade…")}
                   value={filters.city}
                   onChange={(v) => setFilter("city", v)}
                   testId="filter-city"
@@ -426,11 +560,13 @@ export function FilterBar() {
 
             {/* Catalog group */}
             <div>
-              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Catalog</p>
+              <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+                Catálogo
+              </p>
               <div className="grid grid-cols-2 gap-2">
                 <div className="col-span-2">
                   <FilterInput
-                    placeholder="Product (SKU or name)…"
+                    placeholder={label("Product (SKU or name)…", "Produto (SKU ou nome)…")}
                     value={filters.product}
                     onChange={(v) => setFilter("product", v)}
                     testId="filter-product"
@@ -461,14 +597,32 @@ export function FilterBar() {
                 size="sm"
                 className="w-full h-7 text-xs text-muted-foreground"
                 onClick={() => {
-                  const extraKeys: (keyof DashboardFilters)[] = selectedDashboardMode === "B2B"
-                    ? ["utmSource","utmMedium","utmCampaign","state","city","product","size","color","creative"]
-                    : ["state","city","product","size","color","creative"];
+                  const extraKeys: (keyof DashboardFilters)[] =
+                    selectedDashboardMode === "B2B"
+                      ? [
+                          "utmSource",
+                          "utmMedium",
+                          "utmCampaign",
+                          "state",
+                          "city",
+                          "product",
+                          "size",
+                          "color",
+                          "creative",
+                        ]
+                      : [
+                          "state",
+                          "city",
+                          "product",
+                          "size",
+                          "color",
+                          "creative",
+                        ];
                   for (const k of extraKeys) setFilter(k, null);
                 }}
               >
                 <RotateCcw className="h-3 w-3 mr-1" />
-                Clear extra filters
+                Limpar filtros adicionais
               </Button>
             )}
           </div>
@@ -484,13 +638,15 @@ export function FilterBar() {
               className="gap-1 pl-2 pr-1 py-0.5 bg-primary/15 text-primary border-primary/20"
               data-testid={`chip-${chip.key}`}
             >
-              <span className="text-[10px] uppercase tracking-wider opacity-70">{chip.label}</span>
+              <span className="text-[10px] uppercase tracking-wider opacity-70">
+                {tx(displayLabel(chip.label))}
+              </span>
               <span className="font-medium">{chip.value}</span>
               <button
                 type="button"
                 onClick={() => setFilter(chip.key, null)}
                 className="rounded hover:bg-primary/20 p-0.5"
-                aria-label={`Remove ${chip.label} filter`}
+                aria-label={`${label("Remove", "Remover")} ${tx(chip.label)}`}
               >
                 <X className="h-3 w-3" />
               </button>
@@ -504,28 +660,30 @@ export function FilterBar() {
             data-testid="filter-reset"
           >
             <RotateCcw className="h-3 w-3 mr-1" />
-            Clear
+            {label("Clear filters", "Limpar filtros")}
           </Button>
         </div>
       )}
 
       <div className="ml-auto flex items-center gap-1.5 flex-wrap">
         {views?.slice(0, 6).map((view) => {
-          const viewFilterSummary = ([
-            ["Category", view.filters.category],
-            ["Channel", view.filters.channel],
-            ["Segment", view.filters.segment],
-            ["UTM Source", view.filters.utmSource],
-            ["UTM Medium", view.filters.utmMedium],
-            ["UTM Campaign", view.filters.utmCampaign],
-            ["State", view.filters.state],
-            ["City", view.filters.city],
-            ["Product", view.filters.product],
-            ["Size", view.filters.size],
-            ["Color", view.filters.color],
-            ["Seller", view.filters.sellerId],
-            ["Creative", view.filters.creative],
-          ] as [string, string | null | undefined][])
+          const viewFilterSummary = (
+            [
+              ["Category", view.filters.category],
+              ["Channel", view.filters.channel],
+              ["Segment", view.filters.segment],
+              ["UTM Source", view.filters.utmSource],
+              ["UTM Medium", view.filters.utmMedium],
+              ["UTM Campaign", view.filters.utmCampaign],
+              ["State", view.filters.state],
+              ["City", view.filters.city],
+              ["Product", view.filters.product],
+              ["Size", view.filters.size],
+              ["Color", view.filters.color],
+              ["Seller", view.filters.sellerId],
+              ["Creative", view.filters.creative],
+            ] as [string, string | null | undefined][]
+          )
             .filter(([, v]) => v)
             .map(([k, v]) => `${k}: ${v}`)
             .join(" · ");
@@ -533,54 +691,58 @@ export function FilterBar() {
             ? `${view.name} — ${viewFilterSummary}`
             : view.name;
           return (
-          <Badge
-            key={view.id}
-            variant="outline"
-            className="gap-1 pl-2 pr-1 py-0.5 cursor-pointer hover:bg-accent/40"
-            data-testid={`saved-view-${view.id}`}
-            title={tooltipText}
-          >
-            <button
-              type="button"
-              className="flex items-center gap-1"
-              onClick={() =>
-                applyView({
-                  id: view.id,
-                  name: view.name,
-                  dateRange: {
-                    from: view.filters.dateFrom ? new Date(view.filters.dateFrom) : dateRange.from,
-                    to: view.filters.dateTo ? new Date(view.filters.dateTo) : dateRange.to,
-                  },
-                  filters: {
-                    category: view.filters.category ?? null,
-                    sellerId: view.filters.sellerId ?? null,
-                    channel: view.filters.channel ?? null,
-                    segment: view.filters.segment ?? null,
-                    utmSource: view.filters.utmSource ?? null,
-                    utmMedium: view.filters.utmMedium ?? null,
-                    utmCampaign: view.filters.utmCampaign ?? null,
-                    state: view.filters.state ?? null,
-                    city: view.filters.city ?? null,
-                    product: view.filters.product ?? null,
-                    size: view.filters.size ?? null,
-                    color: view.filters.color ?? null,
-                    creative: view.filters.creative ?? null,
-                  },
-                })
-              }
+            <Badge
+              key={view.id}
+              variant="outline"
+              className="gap-1 pl-2 pr-1 py-0.5 cursor-pointer hover:bg-accent/40"
+              data-testid={`saved-view-${view.id}`}
+              title={tooltipText}
             >
-              <Bookmark className="h-3 w-3" />
-              {view.name}
-            </button>
-            <button
-              type="button"
-              onClick={() => deleteView.mutate({ viewId: view.id })}
-              className="rounded hover:bg-destructive/20 p-0.5"
-              aria-label={`Delete view ${view.name}`}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </Badge>
+              <button
+                type="button"
+                className="flex items-center gap-1"
+                onClick={() =>
+                  applyView({
+                    id: view.id,
+                    name: view.name,
+                    dateRange: {
+                      from: view.filters.dateFrom
+                        ? new Date(view.filters.dateFrom)
+                        : dateRange.from,
+                      to: view.filters.dateTo
+                        ? new Date(view.filters.dateTo)
+                        : dateRange.to,
+                    },
+                    filters: {
+                      category: view.filters.category ?? null,
+                      sellerId: view.filters.sellerId ?? null,
+                      channel: view.filters.channel ?? null,
+                      segment: view.filters.segment ?? null,
+                      utmSource: view.filters.utmSource ?? null,
+                      utmMedium: view.filters.utmMedium ?? null,
+                      utmCampaign: view.filters.utmCampaign ?? null,
+                      state: view.filters.state ?? null,
+                      city: view.filters.city ?? null,
+                      product: view.filters.product ?? null,
+                      size: view.filters.size ?? null,
+                      color: view.filters.color ?? null,
+                      creative: view.filters.creative ?? null,
+                    },
+                  })
+                }
+              >
+                <Bookmark className="h-3 w-3" />
+                {view.name}
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteView.mutate({ viewId: view.id })}
+                className="rounded hover:bg-destructive/20 p-0.5"
+                aria-label={`Excluir visualização ${view.name}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
           );
         })}
 
@@ -592,27 +754,42 @@ export function FilterBar() {
               className="h-7 px-2 text-xs"
               data-testid="filter-save-view"
               disabled={!hasAny && activeChips.length === 0}
-              title={hasAny || activeChips.length > 0 ? "Save current filters" : "Apply at least one filter to save"}
+              title={
+                hasAny || activeChips.length > 0
+                  ? label("Save current filters", "Salvar filtros atuais")
+                  : label(
+                      "Aplique pelo menos um filtro para salvar",
+                      "Aplique pelo menos um filtro para salvar",
+                    )
+              }
             >
               <BookmarkPlus className="h-3.5 w-3.5 mr-1" />
-              Save view
+              {label("Save view", "Salvar visão")}
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-72">
-            <p className="text-sm font-medium mb-1">Name this view</p>
+            <p className="text-sm font-medium mb-1">
+              {label("Name of this view", "Nome da visão")}
+            </p>
             <p className="text-xs text-muted-foreground mb-3">
-              Snapshot of your current date range and filters.
+              {label(
+                "Período e filtros selecionados.",
+                "Salve o período e os filtros atuais.",
+              )}
             </p>
             <Input
               autoFocus
-              placeholder="e.g. VIP — last 30 days"
+              placeholder={label("e.g. VIP — last 30 days", "Ex.: VIP — últimos 30 dias")}
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && newName.trim()) {
                   createView.mutate({
                     params: { clientId },
-                    data: { name: newName.trim(), filters: saveCurrentFilters() },
+                    data: {
+                      name: newName.trim(),
+                      filters: saveCurrentFilters(),
+                    },
                   });
                   setPopoverOpen(false);
                 }
@@ -633,7 +810,7 @@ export function FilterBar() {
               data-testid="filter-save-confirm"
             >
               <Save className="h-3.5 w-3.5 mr-1.5" />
-              Save view
+              {label("Save view", "Salvar visão")}
             </Button>
           </PopoverContent>
         </Popover>
@@ -651,7 +828,19 @@ interface FilterSelectProps {
   fullWidth?: boolean;
 }
 
-function FilterSelect({ placeholder, value, options, onChange, testId, fullWidth }: FilterSelectProps) {
+function FilterSelect({
+  placeholder,
+  value,
+  options,
+  onChange,
+  testId,
+  fullWidth,
+}: FilterSelectProps) {
+  const { language, tx } = useI18n();
+  const localizedPlaceholder =
+    language === "pt"
+      ? (FILTER_LABELS_PT[placeholder] ?? placeholder)
+      : placeholder;
   return (
     <Select
       value={value ?? "__all"}
@@ -660,14 +849,19 @@ function FilterSelect({ placeholder, value, options, onChange, testId, fullWidth
       <SelectTrigger
         className={`h-7 text-xs bg-background ${fullWidth ? "w-full" : "w-[140px]"}`}
         data-testid={testId}
+        aria-label={localizedPlaceholder}
       >
-        <SelectValue placeholder={placeholder} />
+        <SelectValue placeholder={localizedPlaceholder} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__all">All {pluralize(placeholder)}</SelectItem>
+        <SelectItem value="__all">
+          {language === "pt"
+            ? `Todos · ${localizedPlaceholder}`
+            : `All ${pluralize(placeholder)}`}
+        </SelectItem>
         {options.map((opt) => (
           <SelectItem key={opt.value} value={opt.value}>
-            {opt.label}
+            {tx(displayLabel(opt.label))}
           </SelectItem>
         ))}
       </SelectContent>
@@ -682,7 +876,12 @@ interface FilterInputProps {
   testId: string;
 }
 
-function FilterInput({ placeholder, value, onChange, testId }: FilterInputProps) {
+function FilterInput({
+  placeholder,
+  value,
+  onChange,
+  testId,
+}: FilterInputProps) {
   return (
     <Input
       className="h-7 text-xs"

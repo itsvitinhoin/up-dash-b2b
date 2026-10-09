@@ -1,3 +1,7 @@
+import { OverviewOrganization } from "@/components/overview-organization";
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
+import { useDisplayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { addDays, differenceInDays, format, subDays } from "date-fns";
@@ -87,7 +91,7 @@ import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
 
 function computeChange(current: number | undefined, previous: number | undefined): number | null {
   if (current === undefined || previous === undefined) return null;
-  if (previous === 0) return current > 0 ? 100 : null;
+  if (previous === 0) return current === 0 ? 0 : null;
   return ((current - previous) / previous) * 100;
 }
 
@@ -619,7 +623,13 @@ function CampaignCustomersPanel({
   dateFrom: string;
   dateTo: string;
 }) {
+  const { tx } = useI18n();
+  // Nome e e-mail de enchimento que o sync cria quando a UP Zero só devolve o ID do visitante (ver extraction-runner).
+  const isPlaceholder = (r: { name?: string | null; email?: string | null }) => /@noemail\.internal$/i.test(r.email ?? "") || /^UP Zero #\d+$/.test(r.name ?? "");
+  const rowLabel = (r: { name?: string | null; email?: string | null; userId?: number | string | null }) =>
+    isPlaceholder(r) ? `${tx("Lead sem dados")} #${r.userId}` : r.name || r.email || `UP Zero ${r.userId}`;
   const [search, setSearch] = useState("");
+  const previous = usePreviousPeriodQuery<CampaignCustomersResponse>(periodQuery("/api/analytics/campaign-customers", { clientId, dateFrom, dateTo, limit: 500 }), Boolean(data));
   const [sourceFilter, setSourceFilter] = useState("all");
   const [campaignFilter, setCampaignFilter] = useState("all");
   const [documentFilter, setDocumentFilter] = useState("all");
@@ -777,7 +787,7 @@ function CampaignCustomersPanel({
 
   return (
     <Card className="p-5 bg-card border-border" data-testid="campaign-customers-panel">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+      <div className="space-y-4 mb-4">
         <div>
           <h2 className="text-base font-semibold leading-tight flex items-center gap-2">
             <Megaphone className="h-4 w-4 text-primary" />
@@ -788,30 +798,10 @@ function CampaignCustomersPanel({
           </p>
         </div>
         {data && (
-          // flex-wrap em vez de grid de 4 colunas fixas: com colunas
-          // iguais, "R$ 588.083,12" (~102px) não cabia nos ~62px que
-          // sobravam por coluna em telas de notebook comuns (~1024-1280px
-          // de largura útil, depois da sidebar) e vazava por cima da
-          // coluna "Clientes" vizinha. Cada item agora tem sua própria
-          // largura mínima e quebra de linha se precisar, em vez de
-          // sobrepor o vizinho.
-          <div className="flex flex-wrap justify-end gap-x-4 gap-y-2 text-right">
-            <div className="min-w-[56px]">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Clientes</p>
-              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatNumber(data.summary.impactedCustomers)}</p>
-            </div>
-            <div className="min-w-[110px]">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Solicitado</p>
-              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatCurrency(data.summary.requestedValue ?? data.summary.attributedRevenue)}</p>
-            </div>
-            <div className="min-w-[56px]">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pedidos</p>
-              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatNumber(data.summary.orders)}</p>
-            </div>
-            <div className="min-w-[56px]">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Cadastros</p>
-              <p className="text-sm font-semibold tabular-nums whitespace-nowrap">{formatNumber(data.summary.registrations)}</p>
-            </div>
+          <div className="up-metric-grid">
+            <GlassMetricCard label="Clientes" value={data.summary.impactedCustomers ?? 0} format={formatNumber} previousValue={previous.data?.summary.impactedCustomers} source="UP Zero · campanhas pagas" />
+            <GlassMetricCard label="Pedidos" value={data.summary.orders ?? 0} format={formatNumber} previousValue={previous.data?.summary.orders} source="UP Zero · campanhas pagas" />
+            <GlassMetricCard label="Cadastros" value={data.summary.registrations ?? 0} format={formatNumber} previousValue={previous.data?.summary.registrations} source="UP Zero · campanhas pagas" />
           </div>
         )}
       </div>
@@ -828,9 +818,9 @@ function CampaignCustomersPanel({
             changeLabel=""
             sub={[{ label: "Base", value: "Pedidos atribuídos" }]}
             sparkValues={[]}
-            sparkColor="#60a5fa"
+            sparkColor="#afc4ff"
             isLoading={false}
-            testId="campaign-customers-kpi-requested-value"
+            testId="campaign-customers-kpi-requested-value" comparisonValue={data.summary.requestedValue ?? data.summary.attributedRevenue ?? null} previousValue={previous.data?.summary.requestedValue ?? previous.data?.summary.attributedRevenue} source="UP Zero · Meta Ads"
             valueAccent
           />
           <DashboardKpiCard
@@ -843,9 +833,9 @@ function CampaignCustomersPanel({
             changeLabel=""
             sub={[{ label: "Base", value: "Atendido atribuído" }]}
             sparkValues={[]}
-            sparkColor="#34d399"
+            sparkColor="#87adff"
             isLoading={false}
-            testId="campaign-customers-kpi-fulfilled-value"
+            testId="campaign-customers-kpi-fulfilled-value" comparisonValue={data.summary.fulfilledValue ?? null} previousValue={previous.data?.summary.fulfilledValue} source="UP Zero · Meta Ads"
           />
           <DashboardKpiCard
             label="Investimento"
@@ -857,9 +847,9 @@ function CampaignCustomersPanel({
             changeLabel=""
             sub={[{ label: "Fonte", value: "Meta Ads" }]}
             sparkValues={[]}
-            sparkColor="#a78bfa"
+            sparkColor="#5b8dff"
             isLoading={false}
-            testId="campaign-customers-kpi-investment"
+            testId="campaign-customers-kpi-investment" comparisonValue={data.summary.investment ?? null} previousValue={previous.data?.summary.investment} source="UP Zero · Meta Ads"
           />
           <DashboardKpiCard
             label="ROAS"
@@ -871,9 +861,9 @@ function CampaignCustomersPanel({
             changeLabel=""
             sub={[{ label: "Cálculo", value: "Atendido / investimento" }]}
             sparkValues={[]}
-            sparkColor="#f59e0b"
+            sparkColor="#0458fe"
             isLoading={false}
-            testId="campaign-customers-kpi-roas"
+            testId="campaign-customers-kpi-roas" comparisonValue={data.summary.roas ?? null} previousValue={previous.data?.summary.roas} source="UP Zero · Meta Ads"
           />
         </div>
       )}
@@ -1035,10 +1025,10 @@ function CampaignCustomersPanel({
                       {row.customerId ? (
                         <Link href={`/customers/${row.customerId}`} className="block min-w-0">
                           <div className="font-medium hover:text-primary truncate">
-                            {row.name || row.email || `UP Zero ${row.userId}`}
+                            {rowLabel(row)}
                           </div>
                           <div className="text-xs text-muted-foreground truncate">
-                            {[row.email, `UP Zero ${row.userId}`].filter(Boolean).join(" · ")}
+                            {[isPlaceholder(row) ? tx("Sem nome nem e-mail") : row.email, `UP Zero ${row.userId}`].filter(Boolean).join(" · ")}
                           </div>
                         </Link>
                       ) : (
@@ -1169,7 +1159,7 @@ function CampaignCustomersPanel({
         <DialogContent className="max-h-[84vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              Timeline de {timelineRow?.name || timelineRow?.email || `UP Zero ${timelineRow?.userId ?? ""}`}
+              Timeline de {timelineRow ? rowLabel(timelineRow) : ""}
             </DialogTitle>
             <DialogDescription>
               Eventos identificados pelo user.id da UP Zero no período selecionado.
@@ -1206,22 +1196,10 @@ function CampaignCustomersPanel({
               </div>
 
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-lg border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Eventos</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatNumber(timelineData.summary.totalEvents)}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Produtos vistos</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatNumber(timelineData.summary.productViews)}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Carrinhos</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatNumber(timelineData.summary.addToCartEvents)}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-muted/20 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor comprado</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatCurrency(timelineData.summary.totalPurchaseValue)}</p>
-                </div>
+                <GlassMetricCard label="Eventos" value={<>{formatNumber(timelineData.summary.totalEvents)}</>} hideComparison />
+                <GlassMetricCard label="Produtos vistos" value={<>{formatNumber(timelineData.summary.productViews)}</>} hideComparison />
+                <GlassMetricCard label="Carrinhos" value={<>{formatNumber(timelineData.summary.addToCartEvents)}</>} hideComparison />
+                <GlassMetricCard label="Valor comprado" value={<>{formatCurrency(timelineData.summary.totalPurchaseValue)}</>} hideComparison />
               </div>
 
               <div className="space-y-6">
@@ -1397,9 +1375,11 @@ function B2COrdersPanel({
   dateTo: string;
   enabled: boolean;
 }) {
+  const displayLabel = useDisplayLabel();
   const [page, setPage] = useState(1);
   const [selectedOrder, setSelectedOrder] = useState<B2COrderRow | null>(null);
   const limit = 10;
+  const previousOrders = usePreviousPeriodQuery<B2COrdersResponse>(periodQuery("/api/analytics/b2c/orders", { clientId, dateFrom, dateTo, page: 1, limit: 1 }), enabled);
 
   const { data, isLoading, isError } = useQuery<B2COrdersResponse>({
     queryKey: ["b2c-orders", clientId, dateFrom, dateTo, page],
@@ -1429,7 +1409,7 @@ function B2COrdersPanel({
 
   return (
     <Card className="p-5 bg-card border-border" data-testid="b2c-orders-panel">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+      <div className="space-y-4 mb-4">
         <div>
           <h2 className="text-base font-semibold leading-tight flex items-center gap-2">
             <ShoppingBag className="h-4 w-4 text-primary" />
@@ -1439,9 +1419,8 @@ function B2COrdersPanel({
             Lista paginada com detalhes de cliente, valores, frete, desconto e produtos.
           </p>
         </div>
-        <div className="text-right">
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</p>
-          <p className="text-sm font-semibold tabular-nums">{formatNumber(data?.total ?? 0)} pedidos</p>
+        <div className="up-metric-grid">
+          <GlassMetricCard label="Pedidos no período" value={data?.total ?? 0} previousValue={previousOrders.data?.total} source="Ecommerce · pedidos" />
         </div>
       </div>
 
@@ -1491,7 +1470,7 @@ function B2COrdersPanel({
                     <td className="py-3 px-3 text-right tabular-nums">{formatCurrency(order.shippingAmount)}</td>
                     <td className="py-3 px-3">
                       <span className="inline-flex rounded-md bg-muted px-2 py-0.5 text-[10px] font-semibold">
-                        {order.status}
+                        {displayLabel(order.status)}
                       </span>
                     </td>
                     <td className="py-3 pl-3 text-right">
@@ -1536,22 +1515,10 @@ function B2COrdersPanel({
           ) : (
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pago</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.fulfilledAmount)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Bruto</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.grossAmount)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Desconto</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.discountAmount)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Frete</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.shippingAmount)}</p>
-                </div>
+                <GlassMetricCard label="Pago" value={<>{formatCurrency(details.order.fulfilledAmount)}</>} hideComparison />
+                <GlassMetricCard label="Bruto" value={<>{formatCurrency(details.order.grossAmount)}</>} hideComparison />
+                <GlassMetricCard label="Desconto" value={<>{formatCurrency(details.order.discountAmount)}</>} hideComparison />
+                <GlassMetricCard label="Frete" value={<>{formatCurrency(details.order.shippingAmount)}</>} hideComparison />
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">
@@ -1567,7 +1534,7 @@ function B2COrdersPanel({
                 <div className="rounded-lg border border-border p-4">
                   <h3 className="text-sm font-semibold mb-2">Pedido</h3>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    <span className="text-muted-foreground">Status</span><span>{details.order.status}</span>
+                    <span className="text-muted-foreground">Status</span><span>{displayLabel(details.order.status)}</span>
                     <span className="text-muted-foreground">Criado em</span><span>{formatTimelineDate(details.order.createdAt)}</span>
                     <span className="text-muted-foreground">Itens</span><span>{formatNumber(details.order.requestedQuantity)}</span>
                     <span className="text-muted-foreground">Cancelado</span><span>{formatCurrency(details.order.cancelledAmount)}</span>
@@ -1603,8 +1570,22 @@ function B2COrdersPanel({
   );
 }
 
-export default function DashboardPage() {
-  const { t } = useI18n();
+/** Frase do alerta de estoque no idioma da tela (o servidor só manda em inglês; os números vêm do próprio alerta). */
+function stockAlertMessage(
+  alert: { type: string; message: string; daysOfCover?: number | null; stock: number; restockThreshold: number },
+  tx: (text: string) => string,
+): string {
+  if (alert.type === "OUT_OF_STOCK") return tx("Sem estoque — repor imediatamente.");
+  if (alert.type === "PREDICTED_STOCKOUT") {
+    const days = Math.max(1, Math.round(alert.daysOfCover ?? 1));
+    return tx(days === 1 ? "Previsão de esgotar em ~{n} dia no ritmo recente de vendas." : "Previsão de esgotar em ~{n} dias no ritmo recente de vendas.").replace("{n}", String(days));
+  }
+  if (alert.type === "LOW_STOCK") return tx("Estoque ({stock}) igual ou abaixo do limite de reposição ({limit}).").replace("{stock}", String(alert.stock)).replace("{limit}", String(alert.restockThreshold));
+  return alert.message;
+}
+
+export default function DashboardPage({ organization = "executive" }: { organization?: "executive" | "ecommerce" } = {}) {
+  const { t, tx } = useI18n();
   const { selectedClientId, user, selectedDashboardMode } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const queryClient = useQueryClient();
@@ -1682,7 +1663,9 @@ export default function DashboardPage() {
   );
 
   // ── AI insight (real LLM) ──────────────────────────────────────────────
+  const { language: insightLanguage } = useI18n();
   const insightParams = {
+    language: insightLanguage,
     clientId,
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
     dateTo: format(dateRange.to, "yyyy-MM-dd"),
@@ -1742,6 +1725,12 @@ export default function DashboardPage() {
     refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,
   });
+
+  // Mesma busca do período anterior que o painel "Clientes atribuídos" já faz (mesma chave: não gera requisição nova).
+  const campaignPrevious = usePreviousPeriodQuery<CampaignCustomersResponse>(
+    periodQuery("/api/analytics/campaign-customers", { clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), limit: 500 }),
+    Boolean(campaignCustomers),
+  );
 
   // Compute changes from API-provided prior-period KPIs
   const revenueChange = useMemo(
@@ -1979,256 +1968,238 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={containerVariants}
-        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"
-      >
-        <DashboardKpiCard
-          testId="kpi-revenue"
-          icon={DollarSign}
-          iconClass="bg-blue-500/15 text-blue-400"
-          label={isB2C ? t("dashboard.kpi.totalRevenue.b2c") : t("dashboard.kpi.totalRevenue.b2b")}
-          value={data?.kpis.revenue ?? 0}
-          format={(v) => formatCurrencySmart(v)}
-          unit="BRL"
-          change={revenueChange}
-          changeLabel={t("dashboard.vsPreviousPeriod")}
-          sparkValues={sparkRevenue}
-          sparkColor="#60a5fa"
-          sub={[
-            { label: t("dashboard.kpi.avgTicket"), value: data ? formatCurrency(data.kpis.avgTicket) : "—" },
-            { label: t("dashboard.kpi.customers"), value: data ? formatNumber(data.kpis.customers) : "—" },
-          ]}
-          isLoading={isLoading}
-          valueAccent
-        />
-        <DashboardKpiCard
-          testId="kpi-orders"
-          icon={Package}
-          iconClass="bg-violet-500/15 text-violet-400"
-          label={t("dashboard.kpi.orders")}
-          value={data?.kpis.orders ?? 0}
-          format={(v) => formatNumber(v)}
-          unit={inclusiveDays + "d"}
-          change={ordersChange}
-          changeLabel={t("dashboard.vsPreviousPeriod")}
-          sparkValues={sparkOrders}
-          sparkColor="#a78bfa"
-          sub={[
-            { label: isB2C ? t("dashboard.kpi.sessions") : isVesti ? t("dashboard.kpi.requestedOrdersVesti") : t("dashboard.kpi.leads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
-            { label: isB2C ? t("dashboard.kpi.orders") : isVesti ? t("dashboard.kpi.paidOrdersVesti") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.approvedLeads) : "—" },
-          ]}
-          isLoading={isLoading}
-        />
-        <DashboardKpiCard
-          testId="kpi-avgTicket"
-          icon={Wallet}
-          iconClass="bg-emerald-500/15 text-emerald-400"
-          label={t("dashboard.kpi.avgTicket")}
-          value={data?.kpis.avgTicket ?? 0}
-          format={(v) => formatCurrencySmart(v)}
-          unit="BRL"
-          change={avgTicketChange}
-          changeLabel={t("dashboard.vsPreviousPeriod")}
-          sparkValues={sparkLeads}
-          sparkColor="#34d399"
-          sub={[
-            { label: t("dashboard.kpi.repeatCustomers"), value: data ? formatNumber(data.kpis.repeatCustomers) : "—" },
-            { label: isB2C ? t("dashboard.kpi.paidRate") : t("dashboard.kpi.approvalRate"), value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
-          ]}
-          isLoading={isLoading}
-        />
-        <DashboardKpiCard
-          testId="kpi-conversionRate"
-          icon={Target}
-          iconClass="bg-sky-500/15 text-sky-400"
-          label={t("dashboard.kpi.conversionRate")}
-          value={data?.kpis.conversionRate ?? 0}
-          format={(v) => formatPercentage(v)}
-          change={conversionChange}
-          changeLabel={t("dashboard.vsPreviousPeriod")}
-          sparkValues={sparkConv}
-          sparkColor="#38bdf8"
-          sub={
-            isVesti && data?.orderStatusBreakdown
-              ? [
-                  { label: t("dashboard.orderStatus.total"), value: formatNumber(data.orderStatusBreakdown.total) },
-                  { label: t("dashboard.orderStatus.paid"), value: formatNumber(data.orderStatusBreakdown.paid) },
-                  { label: t("dashboard.orderStatus.separated"), value: formatNumber(data.orderStatusBreakdown.separated) },
-                  { label: t("dashboard.orderStatus.waiting"), value: formatNumber(data.orderStatusBreakdown.waiting) },
-                  { label: t("dashboard.orderStatus.cancelled"), value: formatNumber(data.orderStatusBreakdown.cancelled) },
-                ]
-              : [
-                  { label: isB2C ? t("dashboard.kpi.sessions") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
-                  { label: isB2C ? t("dashboard.kpi.orders") : t("dashboard.kpi.orders"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
-                ]
-          }
-          isLoading={isLoading}
-          ringValue={data?.kpis.conversionRate ?? 0}
-          ringColor="hsl(var(--chart-1))"
-        />
-      </motion.div>
-
-      {/* Marketing & buyer KPIs row */}
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={containerVariants}
-        className="grid grid-cols-1 sm:grid-cols-3 gap-4"
-      >
-        {/* Requested vs Approved Revenue */}
-        <Card className="p-5 bg-card border-border" data-testid="kpi-requested-revenue">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/15 shrink-0">
-              <DollarSign className="h-4 w-4 text-blue-400" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground leading-none">
-                {isB2C ? t("dashboard.kpi.invoicedValue") : t("dashboard.kpi.requestedRevenue")}
-              </p>
-              {isLoading ? (
-                <Skeleton className="h-6 w-24 mt-1" />
-              ) : (
-                <p className="text-xl font-bold tabular-nums mt-0.5">
-                  <CountUp value={data?.kpis.requestedRevenue ?? 0} format={(v) => formatCurrencySmart(v)} />
-                </p>
-              )}
-            </div>
-          </div>
-          {isLoading ? (
-            <Skeleton className="h-3 w-full mb-2" />
-          ) : (
-            <>
-              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                <span>{isB2C ? t("dashboard.kpi.paid") : t("dashboard.kpi.approved")}</span>
-                <span className="font-medium text-foreground tabular-nums">
-                  {formatCurrency(data?.kpis.revenue ?? 0)}
-                </span>
-              </div>
-              <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-blue-400 transition-all"
-                  style={{
-                    width: `${Math.min(100, (data?.kpis.requestedRevenue ?? 0) > 0
-                      ? ((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100
-                      : 0)}%`,
-                  }}
-                />
-              </div>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                {(data?.kpis.requestedRevenue ?? 0) > 0
-                  ? `${(((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100).toFixed(1)}% ${isB2C ? t("dashboard.kpi.paidRateSuffix") : t("dashboard.kpi.fulfillmentRate")}`
-                  : isB2C ? t("dashboard.kpi.noInvoicedRevenue") : t("dashboard.kpi.noRequestedRevenue")}
-              </p>
-            </>
-          )}
-        </Card>
-
-        {/* New vs Returning Buyers */}
-        <Card className="p-5 bg-card border-border" data-testid="kpi-buyers">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/15 shrink-0">
-              <Users className="h-4 w-4 text-emerald-400" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground leading-none">{t("dashboard.kpi.buyersThisPeriod")}</p>
-              {isLoading ? (
-                <Skeleton className="h-6 w-24 mt-1" />
-              ) : (
-                <p className="text-xl font-bold tabular-nums mt-0.5">
-                  <CountUp
-                    value={(data?.kpis.newBuyers ?? 0) + (data?.kpis.returningBuyers ?? 0)}
-                    format={(v) => formatNumber(v)}
+      <OverviewOrganization
+        ecommerce={organization === "ecommerce"}
+        attributedRoas={isB2C ? undefined : { value: campaignCustomers?.summary?.roas, previous: campaignPrevious.data?.summary?.roas, loading: campaignCustomersLoading }}
+        cards={{
+        revenue: (
+          <DashboardKpiCard
+            testId="kpi-revenue" comparisonValue={data?.kpis.revenue ?? null} previousValue={data?.prevKpis?.revenue}
+            icon={DollarSign}
+            iconClass="bg-blue-500/15 text-blue-400"
+            label={isB2C ? t("dashboard.kpi.totalRevenue.b2c") : t("dashboard.kpi.totalRevenue.b2b")}
+            value={data?.kpis.revenue ?? 0}
+            format={(v) => formatCurrencySmart(v)}
+            unit="BRL"
+            change={revenueChange}
+            changeLabel={t("dashboard.vsPreviousPeriod")}
+            sparkValues={sparkRevenue}
+            sparkColor="#afc4ff"
+            sub={[
+              { label: t("dashboard.kpi.avgTicket"), value: data ? formatCurrency(data.kpis.avgTicket) : "—" },
+              { label: t("dashboard.kpi.customers"), value: data ? formatNumber(data.kpis.customers) : "—" },
+            ]}
+            isLoading={isLoading}
+            valueAccent
+          />
+        ),
+        orders: (
+          <DashboardKpiCard
+            testId="kpi-orders" comparisonValue={data?.kpis.orders ?? null} previousValue={data?.prevKpis?.orders}
+            icon={Package}
+            iconClass="bg-violet-500/15 text-violet-400"
+            label={t("dashboard.kpi.orders")}
+            value={data?.kpis.orders ?? 0}
+            format={(v) => formatNumber(v)}
+            unit={inclusiveDays + "d"}
+            change={ordersChange}
+            changeLabel={t("dashboard.vsPreviousPeriod")}
+            sparkValues={sparkOrders}
+            sparkColor="#5b8dff"
+            sub={[
+              { label: isB2C ? t("dashboard.kpi.sessions") : isVesti ? t("dashboard.kpi.requestedOrdersVesti") : t("dashboard.kpi.leads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.leads) : "—" },
+              { label: isB2C ? t("dashboard.kpi.orders") : isVesti ? t("dashboard.kpi.paidOrdersVesti") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.approvedLeads) : "—" },
+            ]}
+            isLoading={isLoading}
+          />
+        ),
+        ticket: (
+          <DashboardKpiCard
+            testId="kpi-avgTicket" comparisonValue={data?.kpis.avgTicket ?? null} previousValue={data?.prevKpis?.avgTicket}
+            icon={Wallet}
+            iconClass="bg-emerald-500/15 text-emerald-400"
+            label={t("dashboard.kpi.avgTicket")}
+            value={data?.kpis.avgTicket ?? 0}
+            format={(v) => formatCurrencySmart(v)}
+            unit="BRL"
+            change={avgTicketChange}
+            changeLabel={t("dashboard.vsPreviousPeriod")}
+            sparkValues={sparkLeads}
+            sparkColor="#87adff"
+            sub={[
+              { label: t("dashboard.kpi.repeatCustomers"), value: data ? formatNumber(data.kpis.repeatCustomers) : "—" },
+              { label: isB2C ? t("dashboard.kpi.paidRate") : t("dashboard.kpi.approvalRate"), value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
+            ]}
+            isLoading={isLoading}
+          />
+        ),
+        conversion: (
+          <DashboardKpiCard
+            testId="kpi-conversionRate" comparisonValue={data?.kpis.conversionRate ?? null} previousValue={data?.prevKpis?.conversionRate}
+            icon={Target}
+            iconClass="bg-sky-500/15 text-sky-400"
+            label={t("dashboard.kpi.conversionRate")}
+            value={data?.kpis.conversionRate ?? 0}
+            format={(v) => formatPercentage(v)}
+            change={conversionChange}
+            changeLabel={t("dashboard.vsPreviousPeriod")}
+            sparkValues={sparkConv}
+            sparkColor="#afc4ff"
+            sub={
+              isVesti && data?.orderStatusBreakdown
+                ? [
+                    { label: t("dashboard.orderStatus.total"), value: formatNumber(data.orderStatusBreakdown.total) },
+                    { label: t("dashboard.orderStatus.paid"), value: formatNumber(data.orderStatusBreakdown.paid) },
+                    { label: t("dashboard.orderStatus.separated"), value: formatNumber(data.orderStatusBreakdown.separated) },
+                    { label: t("dashboard.orderStatus.waiting"), value: formatNumber(data.orderStatusBreakdown.waiting) },
+                    { label: t("dashboard.orderStatus.cancelled"), value: formatNumber(data.orderStatusBreakdown.cancelled) },
+                  ]
+                : [
+                    { label: isB2C ? t("dashboard.kpi.sessions") : t("dashboard.kpi.approvedLeads"), value: data ? formatNumber(isB2C ? data.traffic?.sessions ?? 0 : data.kpis.approvedLeads) : "—" },
+                    { label: isB2C ? t("dashboard.kpi.orders") : t("dashboard.kpi.orders"), value: data ? formatNumber(isB2C ? data.traffic?.orders ?? data.kpis.orders : data.kpis.orders) : "—" },
+                  ]
+            }
+            isLoading={isLoading}
+            ringValue={data?.kpis.conversionRate ?? 0}
+            ringColor="hsl(var(--chart-1))"
+          />
+        ),
+        requested: (
+          <GlassMetricCard
+            label={isB2C ? t("dashboard.kpi.invoicedValue") : t("dashboard.kpi.requestedRevenue")}
+            value={data?.kpis.requestedRevenue ?? 0}
+            format={(v) => formatCurrencySmart(v)}
+            loading={isLoading}
+            icon={DollarSign}
+            testId="kpi-requested-revenue"
+            comparisonValue={data?.kpis.requestedRevenue ?? null}
+            previousValue={data?.prevKpis?.requestedRevenue}
+            source="Ecommerce · pedidos"
+            footer={isLoading ? (
+              <Skeleton className="h-3 w-full mb-2" />
+            ) : (
+              <>
+                <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                  <span>{isB2C ? t("dashboard.kpi.paid") : t("dashboard.kpi.approved")}</span>
+                  <span className="font-medium text-foreground tabular-nums">
+                    {formatCurrency(data?.kpis.revenue ?? 0)}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-blue-400 transition-all"
+                    style={{
+                      width: `${Math.min(100, (data?.kpis.requestedRevenue ?? 0) > 0
+                        ? ((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100
+                        : 0)}%`,
+                    }}
                   />
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {(data?.kpis.requestedRevenue ?? 0) > 0
+                    ? `${(((data?.kpis.revenue ?? 0) / (data?.kpis.requestedRevenue ?? 1)) * 100).toFixed(1)}% ${isB2C ? t("dashboard.kpi.paidRateSuffix") : t("dashboard.kpi.fulfillmentRate")}`
+                    : isB2C ? t("dashboard.kpi.noInvoicedRevenue") : t("dashboard.kpi.noRequestedRevenue")}
                 </p>
-              )}
-            </div>
-          </div>
-          {isLoading ? (
-            <div className="space-y-1.5">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-3 w-full mt-1" />
-            </div>
-          ) : (
-            <>
-              {/* Stacked sparkline: new (emerald) over returning (blue) */}
-              {sparkNewBuyers.length > 0 && (
-                <div className="h-10 w-full mb-2">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart
-                      data={sparkNewBuyers.map((v, i) => ({
-                        new: v,
-                        returning: sparkReturning[i] ?? 0,
-                      }))}
-                      margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                    >
-                      <Area
-                        type="monotone"
-                        dataKey="returning"
-                        stackId="buyers"
-                        stroke="#60a5fa"
-                        fill="#60a5fa"
-                        fillOpacity={0.35}
-                        strokeWidth={1}
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="new"
-                        stackId="buyers"
-                        stroke="#34d399"
-                        fill="#34d399"
-                        fillOpacity={0.35}
-                        strokeWidth={1}
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-              <div className="flex gap-3 text-xs">
-                <div className="flex-1 flex items-center gap-1.5">
-                  <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="text-muted-foreground">{t("dashboard.kpi.new")}</span>
-                  <span className="ml-auto font-semibold tabular-nums">
-                    {formatNumber(data?.kpis.newBuyers ?? 0)}
-                  </span>
-                </div>
-                <div className="flex-1 flex items-center gap-1.5">
-                  <span className="inline-block h-2 w-2 rounded-full bg-blue-400 shrink-0" />
-                  <span className="text-muted-foreground">{t("dashboard.kpi.returning")}</span>
-                  <span className="ml-auto font-semibold tabular-nums">
-                    {formatNumber(data?.kpis.returningBuyers ?? 0)}
-                  </span>
-                </div>
+              </>
+            )}
+          />
+        ),
+        buyers: (
+          <GlassMetricCard
+            label={t("dashboard.kpi.buyersThisPeriod")}
+            value={(data?.kpis.newBuyers ?? 0) + (data?.kpis.returningBuyers ?? 0)}
+            format={(v) => formatNumber(v)}
+            loading={isLoading}
+            icon={Users}
+            testId="kpi-buyers"
+            comparisonValue={data ? (data.kpis.newBuyers ?? 0) + (data.kpis.returningBuyers ?? 0) : null}
+            previousValue={data?.prevKpis ? (data.prevKpis.newBuyers ?? 0) + (data.prevKpis.returningBuyers ?? 0) : undefined}
+            source="Ecommerce · pedidos"
+            footer={isLoading ? (
+              <div className="space-y-1.5">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-3 w-full mt-1" />
               </div>
-            </>
-          )}
-        </Card>
-
-        {/* Retention % */}
-        <DashboardKpiCard
-          testId="kpi-retention"
-          icon={TrendingUp}
-          iconClass="bg-violet-500/15 text-violet-400"
-          label={t("dashboard.kpi.buyerRetention")}
-          value={data?.kpis.retentionPct ?? 0}
-          format={(v) => formatPercentage(v)}
-          change={retentionChange}
-          changeLabel={t("dashboard.vsPreviousPeriod")}
-          sparkValues={sparkReturning}
-          sparkColor="#a78bfa"
-          sub={[
-            { label: t("dashboard.kpi.newBuyers"), value: data ? formatNumber(data.kpis.newBuyers) : "—" },
-            { label: t("dashboard.kpi.returning"), value: data ? formatNumber(data.kpis.returningBuyers) : "—" },
-          ]}
-          isLoading={isLoading}
-        />
-      </motion.div>
+            ) : (
+              <>
+                {/* Stacked sparkline: new (emerald) over returning (blue) */}
+                {sparkNewBuyers.length > 0 && (
+                  <div className="h-10 w-full mb-2">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart
+                        data={sparkNewBuyers.map((v, i) => ({
+                          new: v,
+                          returning: sparkReturning[i] ?? 0,
+                        }))}
+                        margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
+                      >
+                        <Area
+                          type="monotone"
+                          dataKey="returning"
+                          stackId="buyers"
+                          stroke="#afc4ff"
+                          fill="#afc4ff"
+                          fillOpacity={0.35}
+                          strokeWidth={1}
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="new"
+                          stackId="buyers"
+                          stroke="#87adff"
+                          fill="#87adff"
+                          fillOpacity={0.35}
+                          strokeWidth={1}
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+                <div className="flex gap-3 text-xs">
+                  <div className="flex-1 flex items-center gap-1.5">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
+                    <span className="text-muted-foreground">{t("dashboard.kpi.new")}</span>
+                    <span className="ml-auto font-semibold tabular-nums">
+                      {formatNumber(data?.kpis.newBuyers ?? 0)}
+                    </span>
+                  </div>
+                  <div className="flex-1 flex items-center gap-1.5">
+                    <span className="inline-block h-2 w-2 rounded-full bg-blue-400 shrink-0" />
+                    <span className="text-muted-foreground">{t("dashboard.kpi.returning")}</span>
+                    <span className="ml-auto font-semibold tabular-nums">
+                      {formatNumber(data?.kpis.returningBuyers ?? 0)}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
+          />
+        ),
+        retention: (
+          <DashboardKpiCard
+            testId="kpi-retention" comparisonValue={data?.kpis.retentionPct ?? null} previousValue={data?.prevKpis?.retentionPct}
+            icon={TrendingUp}
+            iconClass="bg-violet-500/15 text-violet-400"
+            label={t("dashboard.kpi.buyerRetention")}
+            value={data?.kpis.retentionPct ?? 0}
+            format={(v) => formatPercentage(v)}
+            change={retentionChange}
+            changeLabel={t("dashboard.vsPreviousPeriod")}
+            sparkValues={sparkReturning}
+            sparkColor="#5b8dff"
+            sub={[
+              { label: t("dashboard.kpi.newBuyers"), value: data ? formatNumber(data.kpis.newBuyers) : "—" },
+              { label: t("dashboard.kpi.returning"), value: data ? formatNumber(data.kpis.returningBuyers) : "—" },
+            ]}
+            isLoading={isLoading}
+          />
+        ),
+        }}
+      />
 
       <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
         {isB2C ? (
@@ -2366,7 +2337,7 @@ export default function DashboardPage() {
                       x={a.date}
                       y={a.value}
                       r={5}
-                      stroke="#fbbf24"
+                      stroke="#0458fe"
                       strokeWidth={2}
                       fill="hsl(var(--background))"
                       ifOverflow="extendDomain"
@@ -2605,7 +2576,7 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div>
-            <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
+            <div className="up-alert-header grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
               <div className="col-span-5">{t("dashboard.alerts.col.product")}</div>
               <div className="col-span-2 text-right">{t("dashboard.alerts.col.stock")}</div>
               <div className="col-span-2 text-right">{t("dashboard.alerts.col.threshold")}</div>
@@ -2640,7 +2611,7 @@ export default function DashboardPage() {
                 return (
                   <div
                     key={alert.productId}
-                    className="grid grid-cols-12 gap-4 items-center px-2 py-3"
+                    className="up-alert-row grid grid-cols-12 gap-4 items-center px-2 py-3"
                     data-testid={`alert-row-${alert.sku}`}
                   >
                     <div className="col-span-5 flex items-center gap-3 min-w-0">
@@ -2666,17 +2637,20 @@ export default function DashboardPage() {
                         </div>
                         <p className="text-xs text-muted-foreground truncate">
                           {alert.sku}
-                          {alert.category ? ` · ${alert.category}` : ""} · {alert.message}
+                          {alert.category ? ` · ${alert.category}` : ""} · {stockAlertMessage(alert, tx)}
                         </p>
                       </div>
                     </div>
                     <div className="col-span-2 text-right tabular-nums text-sm">
+                      <span className="up-alert-label">{t("dashboard.alerts.col.stock")}</span>
                       {formatNumber(alert.stock)}
                     </div>
                     <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                      <span className="up-alert-label">{t("dashboard.alerts.col.threshold")}</span>
                       {formatNumber(alert.restockThreshold)}
                     </div>
                     <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                      <span className="up-alert-label">{t("dashboard.alerts.col.daysOfCover")}</span>
                       {daysCover}
                     </div>
                     <div className="col-span-1 flex justify-end">
@@ -2724,7 +2698,7 @@ export default function DashboardPage() {
             </p>
           ) : (
             <div>
-              <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
+              <div className="up-category-header grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
                 <div className="col-span-5">{t("dashboard.categories.col.category")}</div>
                 <div className="col-span-3 text-right">{t("dashboard.common.revenue")}</div>
                 <div className="col-span-2 text-right">{t("dashboard.kpi.orders")}</div>
@@ -2737,7 +2711,7 @@ export default function DashboardPage() {
                   return (
                     <div
                       key={cat.category}
-                      className="grid grid-cols-12 gap-4 items-center px-2 py-3"
+                      className="up-category-row grid grid-cols-12 gap-4 items-center px-2 py-3"
                       data-testid={`category-row-${cat.category}`}
                     >
                       <div className="col-span-5 flex items-center gap-3">
@@ -2747,12 +2721,15 @@ export default function DashboardPage() {
                         <span className="font-medium text-sm">{cat.category}</span>
                       </div>
                       <div className="col-span-3 text-right tabular-nums text-sm">
+                        <span className="up-alert-label">{t("dashboard.common.revenue")}</span>
                         {formatCurrency(cat.revenue)}
                       </div>
                       <div className="col-span-2 text-right tabular-nums text-sm text-muted-foreground">
+                        <span className="up-alert-label">{t("dashboard.kpi.orders")}</span>
                         {formatNumber(cat.orders)}
                       </div>
                       <div className="col-span-2 text-right">
+                        <span className="up-alert-label">{t("dashboard.common.share")}</span>
                         <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
                           <TrendingUp className="h-3 w-3" />
                           {share.toFixed(1)}%
@@ -2791,6 +2768,10 @@ export default function DashboardPage() {
                 <Skeleton key={i} className="h-10 w-full" />
               ))}
             </div>
+          ) : topSellersData && topSellersData.every((seller) => seller.totalRevenue === 0 && seller.totalOrders === 0) ? (
+            <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground" data-testid="dashboard-top-sellers-empty">
+              {tx("Os pedidos do site deste cliente não têm vendedora registrada, por isso o ranking está zerado. Se o cliente usa ERP, as vendas por vendedora ficam em ERP › Vendedoras e Lojas.")}
+            </p>
           ) : (
             <div>
               <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
@@ -2813,7 +2794,7 @@ export default function DashboardPage() {
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          {idx === 0 && <span className="text-[10px] text-amber-400 font-bold">#1</span>}
+                          {idx === 0 && seller.totalRevenue > 0 && <span className="text-[10px] text-amber-400 font-bold">#1</span>}
                           <span className="font-medium text-sm truncate">{seller.name}</span>
                         </div>
                       </div>

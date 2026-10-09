@@ -1,3 +1,5 @@
+import { useI18n } from "@/lib/i18n";
+import { useDisplayLabel } from "@/lib/display-label";
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -76,9 +78,9 @@ import {
 
 const CURRENCY_OPTIONS: Array<{ code: string; locale: string; label: string }> = [
   { code: "BRL", locale: "pt-BR", label: "Real (BRL) — Português (Brasil)" },
-  { code: "USD", locale: "en-US", label: "Dollar (USD) — English (US)" },
+  { code: "USD", locale: "en-US", label: "Dólar (USD) — formato americano" },
   { code: "EUR", locale: "pt-PT", label: "Euro (EUR) — Português (Portugal)" },
-  { code: "GBP", locale: "en-GB", label: "Pound (GBP) — English (UK)" },
+  { code: "GBP", locale: "en-GB", label: "Libra (GBP) — formato britânico" },
   { code: "MXN", locale: "es-MX", label: "Peso (MXN) — Español (México)" },
 ];
 
@@ -87,8 +89,8 @@ const CURRENCY_OPTIONS: Array<{ code: string; locale: string; label: string }> =
 // escondê-lo deixaria o client sem nenhuma página ao logar).
 const NAV_ITEM_OPTIONS: Array<{ href: string; label: string }> = [
   { href: "/erp", label: "ERP" },
-  { href: "/performance", label: "Performance" },
-  { href: "/marketing", label: "Marketing" },
+  { href: "/performance", label: "Desempenho" },
+  { href: "/marketing", label: "Anúncios" },
   { href: "/whatsapp", label: "WhatsApp" },
   { href: "/funnel", label: "Funil" },
   { href: "/journey", label: "Jornada" },
@@ -100,7 +102,7 @@ const NAV_ITEM_OPTIONS: Array<{ href: string; label: string }> = [
   { href: "/sellers", label: "Vendedores" },
   { href: "/stock", label: "Estoque" },
   { href: "/geography", label: "Geografia" },
-  { href: "/daily", label: "Daily (B2C)" },
+  { href: "/daily", label: "Diário (B2C)" },
   { href: "/scale", label: "Escala (B2C)" },
 ];
 
@@ -217,6 +219,7 @@ function GrowthCell({ value }: { value: number | null | undefined }) {
 }
 
 function CopyButton({ text }: { text: string }) {
+  const { tx } = useI18n();
   const [copied, setCopied] = useState(false);
   const handleCopy = async () => {
     await navigator.clipboard.writeText(text);
@@ -230,7 +233,7 @@ function CopyButton({ text }: { text: string }) {
       size="icon"
       className="h-7 w-7 shrink-0"
       onClick={handleCopy}
-      title="Copy to clipboard"
+      title={tx("Copiar")}
     >
       {copied ? (
         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
@@ -242,6 +245,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientName: string }) {
+  const { tx } = useI18n();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<Array<{ visitDate: string; visitCount: string }>>([
     { visitDate: new Date().toISOString().slice(0, 10), visitCount: "" },
@@ -308,20 +312,19 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
           variant="ghost"
           size="sm"
           className="h-7 gap-1 text-xs"
-          title="Enter daily site visit counts"
+          title={tx("Informe o número de visitas diárias ao site")}
         >
           <BarChart2 className="h-3 w-3" />
-          Site Visits
+          {tx("Visitas ao site")}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <BarChart2 className="h-4 w-4" /> Site Visit Data
+            <BarChart2 className="h-4 w-4" /> Dados de visitas ao site
           </DialogTitle>
           <DialogDescription>
-            Enter daily website visit counts for <strong>{clientName}</strong>. These populate
-            the top-of-funnel "Site Visits" step. Existing entries for the same date are overwritten.
+            Informe as visitas diárias ao site de <strong>{clientName}</strong>. Estes valores alimentam a etapa tx("Visitas ao site"). Valores existentes para a mesma data serão substituídos.
           </DialogDescription>
         </DialogHeader>
 
@@ -337,7 +340,7 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
               <Input
                 type="number"
                 min={0}
-                placeholder="Visits"
+                placeholder={tx("Visitas")}
                 value={row.visitCount}
                 onChange={(e) => updateRow(i, "visitCount", e.target.value)}
                 className="flex-1 text-sm"
@@ -358,25 +361,25 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
         </div>
 
         <Button variant="outline" size="sm" className="w-full" onClick={addRow}>
-          <Plus className="h-3.5 w-3.5 mr-1.5" /> Add another day
+          <Plus className="h-3.5 w-3.5 mr-1.5" /> Adicionar outro dia
         </Button>
 
         {upsertMutation.isError && (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>Failed to save. Please try again.</AlertDescription>
+            <AlertDescription>{tx("Não foi possível salvar. Tente novamente.")}</AlertDescription>
           </Alert>
         )}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={upsertMutation.isPending}>
-            Cancel
+            {tx("Cancelar")}
           </Button>
           <Button onClick={handleSave} disabled={upsertMutation.isPending}>
             {upsertMutation.isPending ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx("Salvando…")}</>
             ) : (
-              "Save Visit Data"
+              "Salvar visitas"
             )}
           </Button>
         </DialogFooter>
@@ -386,6 +389,7 @@ function SiteVisitsDialog({ clientId, clientName }: { clientId: string; clientNa
 }
 
 function RotateKeyDialog({ clientId, clientName }: { clientId: string; clientName: string }) {
+  const { tx } = useI18n();
   const [open, setOpen] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
   const rotateMutation = useRotateClientApiKey();
@@ -416,52 +420,52 @@ function RotateKeyDialog({ clientId, clientName }: { clientId: string; clientNam
           variant="ghost"
           size="sm"
           className="h-7 gap-1 text-xs"
-          title="Rotate API key"
+          title={tx("Renovar chave de API")}
         >
           <RefreshCw className="h-3 w-3" />
-          Rotate Key
+          {tx("Renovar chave")}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="h-4 w-4" /> Rotate API Key
+            <KeyRound className="h-4 w-4" /> Renovar chave de API
           </DialogTitle>
           <DialogDescription>
             {newKey
-              ? "The API key has been rotated. Copy the new key now — it won't be shown again."
-              : `Rotating the key for "${clientName}" will immediately invalidate the current key. Any integrations using it will stop working until updated.`}
+              ? "A chave de API foi renovada. Copie a nova chave agora, pois ela não será exibida novamente."
+              : `Renovar a chave de "${clientName}" invalidará imediatamente a chave atual. As integrações que a utilizam pararão de funcionar até serem atualizadas.`}
           </DialogDescription>
         </DialogHeader>
 
         {newKey ? (
           <div className="space-y-2">
-            <Label>New API Key</Label>
+            <Label>{tx("Nova chave de API")}</Label>
             <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
               <code className="flex-1 break-all text-xs font-mono">{newKey}</code>
               <CopyButton text={newKey} />
             </div>
             <p className="text-xs text-amber-400 flex items-center gap-1">
               <AlertCircle className="h-3 w-3 shrink-0" />
-              Store this key securely — it cannot be retrieved after closing this dialog.
+              {tx("Guarde a chave em um local seguro. Ela não poderá ser consultada após fechar esta janela.")}
             </p>
           </div>
         ) : (
           rotateMutation.isError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Failed to rotate key. Please try again.</AlertDescription>
+              <AlertDescription>{tx("Não foi possível renovar a chave. Tente novamente.")}</AlertDescription>
             </Alert>
           )
         )}
 
         <DialogFooter>
           {newKey ? (
-            <Button onClick={handleClose}>Done</Button>
+            <Button onClick={handleClose}>{tx("Concluído")}</Button>
           ) : (
             <>
               <Button variant="outline" onClick={handleClose} disabled={rotateMutation.isPending}>
-                Cancel
+                {tx("Cancelar")}
               </Button>
               <Button
                 variant="destructive"
@@ -474,7 +478,7 @@ function RotateKeyDialog({ clientId, clientName }: { clientId: string; clientNam
                     Rotating…
                   </>
                 ) : (
-                  "Rotate Key"
+                  tx("Renovar chave")
                 )}
               </Button>
             </>
@@ -498,12 +502,13 @@ function ClientCredentialsDialog({
   loginEmail?: string | null;
   loginName?: string | null;
 }) {
+  const { tx } = useI18n();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState(loginEmail ?? clientEmail);
   const [password, setPassword] = useState("");
   const initialNameParts = (loginName || clientName).trim().split(/\s+/);
   const [firstName, setFirstName] = useState(initialNameParts[0] || clientName);
-  const [lastName, setLastName] = useState(initialNameParts.slice(1).join(" ") || "Cliente");
+  const [lastName, setLastName] = useState(initialNameParts.slice(1).join(" ") || tx("Cliente"));
   const [showPassword, setShowPassword] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const queryClient = useQueryClient();
@@ -514,7 +519,7 @@ function ClientCredentialsDialog({
       setEmail(loginEmail ?? clientEmail);
       setPassword("");
       setFirstName(nameParts[0] || clientName);
-      setLastName(nameParts.slice(1).join(" ") || "Cliente");
+      setLastName(nameParts.slice(1).join(" ") || tx("Cliente"));
       setShowPassword(false);
       setIsSaving(false);
     }
@@ -575,7 +580,7 @@ function ClientCredentialsDialog({
         <div className="grid gap-3">
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-2">
-              <Label htmlFor={`client-first-${clientId}`}>Nome</Label>
+              <Label htmlFor={`client-first-${clientId}`}>{tx("Nome")}</Label>
               <Input id={`client-first-${clientId}`} value={firstName} onChange={(e) => setFirstName(e.target.value)} />
             </div>
             <div className="space-y-2">
@@ -584,7 +589,7 @@ function ClientCredentialsDialog({
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor={`client-email-${clientId}`}>E-mail</Label>
+            <Label htmlFor={`client-email-${clientId}`}>{tx("E-mail")}</Label>
             <Input
               id={`client-email-${clientId}`}
               type="email"
@@ -605,14 +610,14 @@ function ClientCredentialsDialog({
                   placeholder="Mínimo 8 caracteres"
                   className="pr-9"
                 />
-                <button
+                <Button variant="ghost" size="sm"
                   type="button"
                   className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
                   onClick={() => setShowPassword((v) => !v)}
                   tabIndex={-1}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+                </Button>
               </div>
               <Button
                 type="button"
@@ -635,10 +640,10 @@ function ClientCredentialsDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={isSaving}>
-            Cancelar
+            {tx("Cancelar")}
           </Button>
           <Button onClick={handleSave} disabled={isSaving}>
-            {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</> : "Salvar Login"}
+            {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx("Salvando…")}</> : "Salvar Login"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -655,6 +660,7 @@ function MetaAdsKeyDialog({
   clientName: string;
   currentAdAccountId: string | null | undefined;
 }) {
+  const { tx } = useI18n();
   const [open, setOpen] = useState(false);
   const [adAccountId, setAdAccountId] = useState("");
   const [accounts, setAccounts] = useState<MetaAdAccountOption[]>([]);
@@ -739,7 +745,7 @@ function MetaAdsKeyDialog({
             <Network className="h-4 w-4" /> Meta Ads
           </DialogTitle>
           <DialogDescription>
-            Select the ad account for <strong>{clientName}</strong>. The Meta API key is global and fixed for all clients.
+            Selecione a conta de anúncios de <strong>{clientName}</strong>. A chave de API Meta é global para todos os clientes.
           </DialogDescription>
         </DialogHeader>
 
@@ -747,11 +753,11 @@ function MetaAdsKeyDialog({
           <div className="grid gap-2 pt-2">
             <div className="flex items-end gap-2">
               <div className="flex-1 space-y-2">
-                <Label htmlFor="meta-ad-account">Ad Account</Label>
+                <Label htmlFor="meta-ad-account">{tx("Conta de anúncios")}</Label>
                 {accounts.length > 0 ? (
                   <Select value={adAccountId} onValueChange={setAdAccountId}>
                     <SelectTrigger id="meta-ad-account">
-                      <SelectValue placeholder="Select ad account" />
+                      <SelectValue placeholder={tx("Selecione a conta de anúncios")} />
                     </SelectTrigger>
                     <SelectContent>
                       {accounts.map((account) => (
@@ -780,32 +786,32 @@ function MetaAdsKeyDialog({
                 disabled={isDetecting}
               >
                 {isDetecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Network className="h-3.5 w-3.5" />}
-                Detect
+                {tx("Detectar")}
               </Button>
             </div>
             {adAccountId && (
               <p className="text-xs text-muted-foreground">
-                Selected account: <span className="font-mono">{adAccountId}</span>
+                Conta selecionada: <span className="font-mono">{adAccountId}</span>
               </p>
             )}
           </div>
           {updateMutation.isError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Failed to save. Please try again.</AlertDescription>
+              <AlertDescription>{tx("Não foi possível salvar. Tente novamente.")}</AlertDescription>
             </Alert>
           )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
-            Cancel
+            {tx("Cancelar")}
           </Button>
           <Button onClick={handleSave} disabled={updateMutation.isPending}>
             {updateMutation.isPending ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx("Salvando…")}</>
             ) : (
-              "Save Meta"
+              "Salvar Meta"
             )}
           </Button>
         </DialogFooter>
@@ -825,6 +831,8 @@ function PlatformDialog({
   currentPlatform: "UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI" | null | undefined;
   currentDataset: string | null | undefined;
 }) {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const [open, setOpen] = useState(false);
   const [platform, setPlatform] = useState<"UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI">("UPZERO");
   const [dataset, setDataset] = useState("");
@@ -890,7 +898,7 @@ function PlatformDialog({
               <SelectContent>
                 {COMMERCE_PLATFORM_OPTIONS.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
+                    {tx(displayLabel(opt.label))}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -921,11 +929,11 @@ function PlatformDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
-            Cancelar
+            {tx("Cancelar")}
           </Button>
           <Button onClick={handleSave} disabled={updateMutation.isPending}>
             {updateMutation.isPending ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</>
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx("Salvando…")}</>
             ) : (
               "Salvar"
             )}
@@ -945,6 +953,8 @@ function VisibleTabsDialog({
   clientName: string;
   currentHidden: string[] | null | undefined;
 }) {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const [open, setOpen] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const updateMutation = useUpdateClient();
@@ -1023,7 +1033,7 @@ function VisibleTabsDialog({
                 checked={!hidden.has(item.href)}
                 onCheckedChange={(checked) => toggle(item.href, checked === true)}
               />
-              {item.label}
+              {tx(displayLabel(item.label))}
             </label>
           ))}
         </div>
@@ -1036,11 +1046,11 @@ function VisibleTabsDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
-            Cancelar
+            {tx("Cancelar")}
           </Button>
           <Button onClick={handleSave} disabled={updateMutation.isPending}>
             {updateMutation.isPending ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</>
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx("Salvando…")}</>
             ) : (
               "Salvar"
             )}
@@ -1060,6 +1070,7 @@ function UpZeroKeyDialog({
   clientName: string;
   currentKey: string | null | undefined;
 }) {
+  const { tx } = useI18n();
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
   const [showValue, setShowValue] = useState(false);
@@ -1100,26 +1111,24 @@ function UpZeroKeyDialog({
           variant="ghost"
           size="sm"
           className={`h-7 gap-1 text-xs ${hasKey ? "text-blue-400 hover:text-blue-300" : ""}`}
-          title="Set UP Zero API key"
+          title={tx("Configurar chave de API UP Zero")}
         >
           <CloudDownload className="h-3 w-3" />
-          {hasKey ? "UPZ Key ✓" : "Add UPZ Key"}
+          {hasKey ? "Chave UPZ ✓" : "Adicionar chave UPZ"}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <CloudDownload className="h-4 w-4" /> UP Zero API Key
+            <CloudDownload className="h-4 w-4" /> Chave de API UP Zero
           </DialogTitle>
           <DialogDescription>
-            Set the UP Zero API key for <strong>{clientName}</strong>. This
-            key is used to pull live orders and customers directly from their
-            UP Zero store. Leave blank to clear the existing key.
+            Configure a chave de API UP Zero para <strong>{clientName}</strong>. Esta chave consulta pedidos e clientes da loja UP Zero. Deixe em branco para remover a chave existente.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2">
-          <Label htmlFor="upzero-key">API Key</Label>
+          <Label htmlFor="upzero-key">{tx("Chave de API")}</Label>
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <Input
@@ -1127,42 +1136,42 @@ function UpZeroKeyDialog({
                 type={showValue ? "text" : "password"}
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                placeholder="Paste your UP Zero API key…"
+                placeholder={tx("Cole sua chave de API UP Zero…")}
                 className="pr-9 font-mono text-xs"
               />
-              <button
+              <Button variant="ghost" size="sm"
                 type="button"
                 className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
                 onClick={() => setShowValue((v) => !v)}
                 tabIndex={-1}
               >
                 {showValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+              </Button>
             </div>
           </div>
           {hasKey && !value && (
             <p className="text-xs text-amber-400 flex items-center gap-1">
               <AlertCircle className="h-3 w-3 shrink-0" />
-              Saving with an empty field will remove the existing key.
+              {tx("Salvar com o campo vazio removerá a chave existente.")}
             </p>
           )}
           {updateMutation.isError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Failed to save. Please try again.</AlertDescription>
+              <AlertDescription>{tx("Não foi possível salvar. Tente novamente.")}</AlertDescription>
             </Alert>
           )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
-            Cancel
+            {tx("Cancelar")}
           </Button>
           <Button onClick={handleSave} disabled={updateMutation.isPending}>
             {updateMutation.isPending ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx("Salvando…")}</>
             ) : (
-              "Save Key"
+              "Salvar chave"
             )}
           </Button>
         </DialogFooter>
@@ -1178,6 +1187,7 @@ function UpZeroSyncButton({
   clientId: string;
   clientName: string;
 }) {
+  const { tx } = useI18n();
   const syncMutation = useSyncUpZero();
   const queryClient = useQueryClient();
   const [lastSync, setLastSync] = useState<Date | null>(null);
@@ -1261,14 +1271,14 @@ function UpZeroSyncButton({
         className="h-7 gap-1 text-xs text-blue-400 hover:text-blue-300"
         onClick={handleSync}
         disabled={isBusy}
-        title="Sync from UP Zero"
+        title={tx("Sincronizar UP Zero")}
       >
         {isBusy ? (
           <Loader2 className="h-3 w-3 animate-spin" />
         ) : (
           <RefreshCw className="h-3 w-3" />
         )}
-        {isBusy ? "Syncing…" : "Sync"}
+        {isBusy ? "Sincronizando…" : "Sincronizar"}
       </Button>
       {lastSync && (
         <span className="text-[10px] text-muted-foreground whitespace-nowrap">
@@ -1303,6 +1313,7 @@ function NuvemshopSyncButton({
   clientId: string;
   clientName: string;
 }) {
+  const { tx } = useI18n();
   const [isSyncing, setIsSyncing] = useState(false);
   const queryClient = useQueryClient();
 
@@ -1311,7 +1322,7 @@ function NuvemshopSyncButton({
     const toastId = `nuvemshop-sync-${clientId}`;
     toast.loading(`Syncing ${clientName} from Nuvemshop...`, {
       id: toastId,
-      description: "Importing orders, customers, products and paid revenue.",
+      description: tx("Importando pedidos, clientes, produtos e faturamento pago."),
     });
     try {
       const data = await customFetch<NuvemshopSyncResponse>(
@@ -1358,19 +1369,21 @@ function NuvemshopSyncButton({
       className="h-7 gap-1 text-xs text-blue-400 hover:text-blue-300"
       onClick={handleSync}
       disabled={isSyncing}
-      title="Sync from Nuvemshop"
+      title={tx("Sincronizar Nuvemshop")}
     >
       {isSyncing ? (
         <Loader2 className="h-3 w-3 animate-spin" />
       ) : (
         <RefreshCw className="h-3 w-3" />
       )}
-      {isSyncing ? "Syncing..." : "Sync"}
+      {isSyncing ? "Sincronizando…" : "Sincronizar"}
     </Button>
   );
 }
 
 export default function ClientsPage() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { user, selectedDashboardMode, setSelectedDashboardMode } = useAuth();
   const queryClient = useQueryClient();
   const { dateRange } = useDashboardFilters();
@@ -1481,7 +1494,7 @@ export default function ClientsPage() {
           toast.success("Import complete", { description: desc });
         },
         onError() {
-          toast.error("Import failed", { description: "Server error — please try again." });
+          toast.error("Import failed", { description: tx("Erro no servidor. Tente novamente.") });
         },
       }
     );
@@ -1579,10 +1592,9 @@ export default function ClientsPage() {
       }}>
         <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Preview CSV Import</DialogTitle>
+            <DialogTitle>{tx("Prévia da importação CSV")}</DialogTitle>
             <DialogDescription>
-              Review the rows below before importing. Invalid rows (highlighted
-              in red) will be skipped automatically.
+              {tx("Revise as linhas antes de importar. Linhas inválidas destacadas em vermelho serão ignoradas.")}
             </DialogDescription>
           </DialogHeader>
 
@@ -1600,7 +1612,7 @@ export default function ClientsPage() {
               download="clients_template.csv"
               className="ml-auto text-xs underline text-muted-foreground hover:text-foreground"
             >
-              Download template
+              {tx("Baixar modelo")}
             </a>
           </div>
 
@@ -1609,10 +1621,10 @@ export default function ClientsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8">#</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>API Key</TableHead>
-                  <TableHead>Currency</TableHead>
+                  <TableHead>{tx("Nome")}</TableHead>
+                  <TableHead>{tx("E-mail")}</TableHead>
+                  <TableHead>{tx("Chave de API")}</TableHead>
+                  <TableHead>{tx("Moeda")}</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1644,16 +1656,16 @@ export default function ClientsPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => { setIsImportOpen(false); setCsvRows([]); }}>
-              Cancel
+              {tx("Cancelar")}
             </Button>
             <Button
               onClick={handleImportConfirm}
               disabled={validCsvRows.length === 0 || importMutation.isPending}
             >
               {importMutation.isPending ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing…</>
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx("Importando…")}</>
               ) : (
-                `Import ${validCsvRows.length} row${validCsvRows.length !== 1 ? "s" : ""}`
+                `Importar ${validCsvRows.length} row${validCsvRows.length !== 1 ? "s" : ""}`
               )}
             </Button>
           </DialogFooter>
@@ -1662,7 +1674,7 @@ export default function ClientsPage() {
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
-          <Upload className="mr-2 h-4 w-4" /> Import CSV
+          <Upload className="mr-2 h-4 w-4" /> Importar CSV
         </Button>
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
           setIsDialogOpen(open);
@@ -1686,23 +1698,23 @@ export default function ClientsPage() {
         }}>
           <DialogTrigger asChild>
             <Button>
-              <Plus className="mr-2 h-4 w-4" /> New Client
+              <Plus className="mr-2 h-4 w-4" /> {tx("Novo cliente")}
             </Button>
           </DialogTrigger>
           <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-[520px]">
             <form onSubmit={handleCreate}>
               <DialogHeader>
-                <DialogTitle>Create New Client</DialogTitle>
+                <DialogTitle>{tx("Criar novo cliente")}</DialogTitle>
                 <DialogDescription>
-                  Add a new client organization to the platform.
+                  {tx("Adicione uma nova empresa cliente à plataforma.")}
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="dashboardType">Dashboard</Label>
+                  <Label htmlFor="dashboardType">{tx("Painel")}</Label>
                   <Select value={newDashboardType} onValueChange={(value) => setNewDashboardType(value === "B2C" ? "B2C" : "B2B")}>
                     <SelectTrigger id="dashboardType">
-                      <SelectValue placeholder="Select dashboard" />
+                      <SelectValue placeholder={tx("Selecione o painel")} />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="B2B">B2B · UP Zero</SelectItem>
@@ -1711,7 +1723,7 @@ export default function ClientsPage() {
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="name">Company Name</Label>
+                  <Label htmlFor="name">{tx("Nome da empresa")}</Label>
                   <Input
                     id="name"
                     value={newName}
@@ -1721,7 +1733,7 @@ export default function ClientsPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="email">Primary Contact Email</Label>
+                  <Label htmlFor="email">{tx("E-mail do contato principal")}</Label>
                   <Input
                     id="email"
                     type="email"
@@ -1732,7 +1744,7 @@ export default function ClientsPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="apiKey">API Key {newDashboardType === "B2C" ? "(Internal)" : "(Integration)"}</Label>
+                  <Label htmlFor="apiKey">Chave de API {newDashboardType === "B2C" ? "(Interno)" : "(Integração)"}</Label>
                   <div className="flex gap-2">
                     <div className="relative flex-1">
                       <Input
@@ -1761,20 +1773,20 @@ export default function ClientsPage() {
                       }}
                     >
                       <Wand2 className="h-3.5 w-3.5" />
-                      Generate Key
+                      {tx("Gerar chave")}
                     </Button>
                   </div>
                   {lookupMatch && (
                     <p className="flex items-center gap-1 text-xs text-emerald-400">
                       <CheckCircle2 className="h-3 w-3 shrink-0" />
-                      Found: {lookupMatch} — fields pre-filled
+                      Encontrados: {lookupMatch} — campos preenchidos
                     </p>
                   )}
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="metaAdAccountId">
                     Meta Ad Account{" "}
-                    <span className="text-xs text-muted-foreground font-normal">(optional)</span>
+                    <span className="text-xs text-muted-foreground font-normal">{tx("(opcional)")}</span>
                   </Label>
                   <Input
                     id="metaAdAccountId"
@@ -1784,20 +1796,20 @@ export default function ClientsPage() {
                     className="font-mono text-xs"
                   />
                   <p className="text-xs text-muted-foreground">
-                    If a global Meta token is not configured, paste a client-specific token below.
+                    {tx("Se não houver um token global da Meta configurado, cole abaixo um token específico do cliente.")}
                   </p>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="metaAdsApiKey">
                     Meta access token{" "}
-                    <span className="text-xs text-muted-foreground font-normal">(optional)</span>
+                    <span className="text-xs text-muted-foreground font-normal">{tx("(opcional)")}</span>
                   </Label>
                   <Input
                     id="metaAdsApiKey"
                     type={showB2CSecrets ? "text" : "password"}
                     value={newMetaAdsApiKey}
                     onChange={(e) => setNewMetaAdsApiKey(e.target.value)}
-                    placeholder="Paste token if no global token is configured"
+                    placeholder={tx("Cole o token se não houver um token global configurado")}
                     className="font-mono text-xs"
                   />
                 </div>
@@ -1807,7 +1819,7 @@ export default function ClientsPage() {
                       <div>
                         <p className="text-sm font-medium">B2C integrations</p>
                         <p className="text-xs text-muted-foreground">
-                          Nuvemshop and GA4 credentials are stored server-side.
+                          {tx("As credenciais da Nuvemshop e GA4 são armazenadas no servidor.")}
                         </p>
                       </div>
                       <Button
@@ -1816,14 +1828,14 @@ export default function ClientsPage() {
                         size="icon"
                         className="h-8 w-8"
                         onClick={() => setShowB2CSecrets((value) => !value)}
-                        title={showB2CSecrets ? "Hide secrets" : "Show secrets"}
+                        title={showB2CSecrets ? "Ocultar chaves" : "Mostrar chaves"}
                       >
                         {showB2CSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </Button>
                     </div>
                     <div className="grid gap-3">
                       <div className="grid gap-2">
-                        <Label htmlFor="nuvemshopStoreId">Nuvemshop store ID</Label>
+                        <Label htmlFor="nuvemshopStoreId">{tx("ID da loja Nuvemshop")}</Label>
                         <Input
                           id="nuvemshopStoreId"
                           value={newNuvemshopStoreId}
@@ -1833,18 +1845,18 @@ export default function ClientsPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="nuvemshopAccessToken">Nuvemshop access token</Label>
+                        <Label htmlFor="nuvemshopAccessToken">{tx("Token de acesso Nuvemshop")}</Label>
                         <Input
                           id="nuvemshopAccessToken"
                           type={showB2CSecrets ? "text" : "password"}
                           value={newNuvemshopAccessToken}
                           onChange={(e) => setNewNuvemshopAccessToken(e.target.value)}
-                          placeholder="Paste access token"
+                          placeholder={tx("Cole o token de acesso")}
                           className="font-mono text-xs"
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="ga4MeasurementId">GA4 measurement ID</Label>
+                        <Label htmlFor="ga4MeasurementId">{tx("ID de medição GA4")}</Label>
                         <Input
                           id="ga4MeasurementId"
                           value={newGa4MeasurementId}
@@ -1854,7 +1866,7 @@ export default function ClientsPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="ga4PropertyId">GA4 property ID</Label>
+                        <Label htmlFor="ga4PropertyId">{tx("ID da propriedade GA4")}</Label>
                         <Input
                           id="ga4PropertyId"
                           value={newGa4PropertyId}
@@ -1879,22 +1891,21 @@ export default function ClientsPage() {
                   </div>
                 )}
                 <div className="grid gap-2">
-                  <Label htmlFor="currency">Currency &amp; Locale</Label>
+                  <Label htmlFor="currency">{tx("Moeda e formato regional")}</Label>
                   <Select value={newCurrencyCode} onValueChange={setNewCurrencyCode}>
                     <SelectTrigger id="currency">
-                      <SelectValue placeholder="Select currency" />
+                      <SelectValue placeholder={tx("Selecione a moeda")} />
                     </SelectTrigger>
                     <SelectContent>
                       {CURRENCY_OPTIONS.map((opt) => (
                         <SelectItem key={opt.code} value={opt.code}>
-                          {opt.label}
+                          {tx(displayLabel(opt.label))}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    All revenue numbers in this client&apos;s dashboards will be
-                    formatted with these settings.
+                    {tx("Todos os valores deste cliente serão formatados com estas configurações.")}
                   </p>
                 </div>
               </div>
@@ -1914,7 +1925,7 @@ export default function ClientsPage() {
                         !newGa4ApiSecret.trim()))
                   }
                 >
-                  {createMutation.isPending ? "Creating..." : "Save Client"}
+                  {createMutation.isPending ? "Criando…" : "Salvar cliente"}
                 </Button>
               </DialogFooter>
             </form>
@@ -1944,7 +1955,7 @@ export default function ClientsPage() {
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder={`Search ${selectedDashboardMode} clients...`}
+                placeholder={`${tx("Buscar")} ${selectedDashboardMode} ${tx("clientes")}…`}
                 className="pl-9"
                 value={search}
                 onChange={(e) => {
@@ -1985,11 +1996,11 @@ export default function ClientsPage() {
                 {clients.map((client) => (
                   <div
                     key={`access-${client.id}`}
-                    className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-card/50 p-3"
+                    className="up-client-access up-glass-card"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-medium">{client.name}</p>
+                        <p className="text-sm font-medium">{client.name}</p>
                         <Badge
                           variant={client.hasClientLogin ? "default" : "secondary"}
                           className="shrink-0 text-[10px]"
@@ -1997,7 +2008,7 @@ export default function ClientsPage() {
                           {client.hasClientLogin ? `${client.clientLoginCount ?? 1} acesso${(client.clientLoginCount ?? 1) > 1 ? "s" : ""}` : "Sem login"}
                         </Badge>
                       </div>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {client.clientLoginEmail ?? "Crie o primeiro acesso deste cliente"}
                       </p>
                     </div>
@@ -2020,34 +2031,38 @@ export default function ClientsPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription className="flex items-center justify-between">
-            Failed to load clients.
-            <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+            {tx("Não foi possível carregar os clientes.")}
+            <Button variant="outline" size="sm" onClick={() => refetch()}>{tx("Tentar novamente")}</Button>
           </AlertDescription>
         </Alert>
       ) : (
-        <Card>
-          <div className="overflow-x-auto">
+        <Card className="up-client-table">
+          <CardContent>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div><h2 className="text-base font-medium">{tx("Clientes cadastrados")}</h2><p className="text-xs text-muted-foreground">{tx("Role a tabela para consultar todas as métricas e ações.")}</p></div>
+              <Badge variant="outline">{formatNumber(clients.length)} {tx("clientes")}</Badge>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Client</TableHead>
+                  <TableHead>{tx("Cliente")}</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Dashboard</TableHead>
+                  <TableHead>{tx("Painel")}</TableHead>
                   <TableHead>Login</TableHead>
-                  <TableHead className="text-right">Revenue</TableHead>
-                  <TableHead className="text-right">Orders</TableHead>
-                  <TableHead className="text-right">Avg order</TableHead>
+                  <TableHead className="text-right">{tx("Faturamento")}</TableHead>
+                  <TableHead className="text-right">{tx("Pedidos")}</TableHead>
+                  <TableHead className="text-right">{tx("Pedido médio")}</TableHead>
                   <TableHead className="text-right">Conv. %</TableHead>
-                  <TableHead className="text-right">Growth</TableHead>
+                  <TableHead className="text-right">{tx("Crescimento")}</TableHead>
                   <TableHead className="text-right">ROAS</TableHead>
                   <TableHead className="text-right">
                     {selectedDashboardMode === "B2C" ? "Qtd de Compras" : "Leads"}
                   </TableHead>
                   <TableHead className="text-right">
-                    {selectedDashboardMode === "B2C" ? "Sessões (GA4)" : "Approval"}
+                    {selectedDashboardMode === "B2C" ? tx("Sessões (GA4)") : tx("Aprovação")}
                   </TableHead>
-                  <TableHead className="text-right">Created</TableHead>
-                  <TableHead />
+                  <TableHead className="text-right">{tx("Criado")}</TableHead>
+                  <TableHead className="text-right">{tx("Ações")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2075,7 +2090,7 @@ export default function ClientsPage() {
                     <TableCell colSpan={14} className="h-32 text-center text-muted-foreground">
                       <div className="flex flex-col items-center justify-center">
                         <Building2 className="h-8 w-8 mb-2 text-muted-foreground/50" />
-                        No {selectedDashboardMode} clients found.
+                        {tx("Nenhum cliente {mode} encontrado.").replace("{mode}", selectedDashboardMode)}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2088,7 +2103,7 @@ export default function ClientsPage() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={client.isActive ? 'default' : 'secondary'}>
-                          {client.isActive ? 'Active' : 'Inactive'}
+                          {client.isActive ? "Ativo" : "Inativo"}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -2244,11 +2259,11 @@ export default function ClientsPage() {
                 )}
               </TableBody>
             </Table>
-          </div>
+          </CardContent>
           {data && data.pages > 1 && (
             <div className="p-4 border-t flex items-center justify-between">
               <div className="text-sm text-muted-foreground">
-                Showing page {data.page} of {data.pages} ({formatNumber(data.total)} total)
+                Exibindo página {data.page} de {data.pages} ({formatNumber(data.total)} total)
               </div>
               <div className="flex gap-2">
                 <Button
@@ -2257,7 +2272,7 @@ export default function ClientsPage() {
                   disabled={page === 1}
                   onClick={() => setPage(p => p - 1)}
                 >
-                  Previous
+                  {tx("Anterior")}
                 </Button>
                 <Button
                   variant="outline"
@@ -2265,7 +2280,7 @@ export default function ClientsPage() {
                   disabled={page === data.pages}
                   onClick={() => setPage(p => p + 1)}
                 >
-                  Next
+                  {tx("Próximo")}
                 </Button>
               </div>
             </div>

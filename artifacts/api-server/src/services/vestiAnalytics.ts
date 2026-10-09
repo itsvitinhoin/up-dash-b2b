@@ -745,7 +745,7 @@ export async function fetchVestiOrdersPage(
     SELECT p.*, ca.email IS NOT NULL AS is_attributed
     FROM pedidos p
     LEFT JOIN ${clientesAtribuidos} ca ON LOWER(ca.email) = LOWER(p.customer_email)
-    ORDER BY created_at DESC
+    ORDER BY created_at DESC, pedido_id DESC
     LIMIT @limit OFFSET @offset
   `;
 
@@ -1033,7 +1033,7 @@ export async function fetchVestiCustomersPage(
     ${baseQuery}
     SELECT * FROM base
     ${whereClause}
-    ORDER BY ${sortColumn} ${sortDir === "asc" ? "ASC" : "DESC"}
+    ORDER BY ${sortColumn} ${sortDir === "asc" ? "ASC" : "DESC"}, id
     LIMIT @limit OFFSET @offset
   `;
   const countQuery = `${baseQuery} SELECT COUNT(*) AS total FROM base ${whereClause}`;
@@ -1774,6 +1774,22 @@ export async function fetchVestiProductsSummary(
     activeSkus: Number(row?.active_skus) || 0,
     totalRevenue: Number(row?.total_revenue) || 0,
   };
+}
+
+/** Valor de venda de todo o estoque disponível do catálogo ativo, sem recorte de vendas. */
+export async function fetchVestiAvailableStockSalesValue(dataset: string): Promise<number> {
+  const produtos = vestiTable(dataset, "produtos_vesti");
+  const estoques = vestiTable(dataset, "estoques_vesti");
+  const [rows] = await bigquery.query({ query: `
+    WITH stock_agg AS (
+      SELECT product_id, SUM(GREATEST(COALESCE(quantity, 0), 0)) AS available_stock
+      FROM ${estoques} GROUP BY product_id
+    )
+    SELECT COALESCE(SUM(st.available_stock * GREATEST(COALESCE(p.price, 0), 0)), 0) AS stock_sales_value
+    FROM ${produtos} p JOIN stock_agg st ON st.product_id = p.id
+    WHERE p.active IS NOT FALSE
+  ` });
+  return Number((rows as Array<Record<string, unknown>>)[0]?.stock_sales_value) || 0;
 }
 
 export type VestiProductDetail = {
@@ -2763,7 +2779,7 @@ export async function fetchVestiSellerOrders(
           GROUP BY pedido_id
         )
         SELECT * FROM pedidos
-        ORDER BY data_ref DESC
+        ORDER BY data_ref DESC, pedido_id DESC
         LIMIT @limit OFFSET @offset
       `,
       params: { sellerName, dateFrom, dateTo, limit, offset },

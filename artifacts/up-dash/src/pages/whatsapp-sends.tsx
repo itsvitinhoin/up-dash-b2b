@@ -194,7 +194,7 @@ export default function WhatsappSendsPage() {
               </Select>
               {selectedNumber && (
                 <p className="text-xs text-muted-foreground">
-                  Phone Number ID: <span className="font-mono">{selectedNumber.phoneNumberId}</span>
+                  ID do número de telefone: <span className="font-mono">{selectedNumber.phoneNumberId}</span>
                 </p>
               )}
             </div>

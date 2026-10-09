@@ -1,3 +1,5 @@
+import { useI18n } from "@/lib/i18n";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, startOfDay, subDays } from "date-fns";
@@ -140,56 +142,11 @@ function DailyKpiCard({
   const reduced = useReducedMotion();
   const variants = withReducedMotion(cardEntry, reduced);
 
-  return (
-    <motion.div variants={variants}>
-      <Card className="flex flex-col p-5 bg-card border-border hover-elevate transition-shadow">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconClass}`}>
-              <Icon className="h-4 w-4" />
-            </div>
-            <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-              {label}
-            </span>
-          </div>
-          <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
-        </div>
-
-        <div className="mb-3 flex items-end justify-between gap-3">
-          <div className="flex items-baseline gap-2">
-            <span
-              className={`text-2xl font-semibold tracking-tight tabular-nums ${
-                valueAccent
-                  ? "bg-gradient-to-br from-foreground via-foreground to-primary bg-clip-text text-transparent"
-                  : ""
-              }`}
-            >
-              <CountUp value={value} format={formatValue} />
-            </span>
-            {unit && <span className="text-xs font-medium text-muted-foreground">{unit}</span>}
-          </div>
-          {sparkValues.length > 1 && (
-            <Sparkline
-              values={sparkValues}
-              stroke={sparkColor}
-              fill={`${sparkColor}22`}
-              width={88}
-              height={28}
-              ariaLabel={`${label} trend`}
-            />
-          )}
-        </div>
-
-        <div className="mt-auto flex items-center justify-between gap-2 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-          <span>vs período anterior</span>
-          <TrendPill value={change} inverse={inverse} />
-        </div>
-      </Card>
-    </motion.div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={formatValue} unit={unit} change={change} changePositive={change !== null ? (inverse ? change <= 0 : change >= 0) : undefined} sparkValues={sparkValues} />);
 }
 
 function DailyLoadingState() {
+  const { tx } = useI18n();
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -198,7 +155,7 @@ function DailyLoadingState() {
       data-testid="daily-loading"
     >
       <DashLoadingCard
-        label="Carregando Daily"
+        label={tx("Carregando relatório diário")}
         description="Buscando vendas, mídia, produtos e insights do período selecionado."
       />
 
@@ -229,6 +186,7 @@ function EmptyRow({ label, colSpan }: { label: string; colSpan: number }) {
 }
 
 export default function DailyPage() {
+  const { tx } = useI18n();
   const { selectedClientId, user, selectedDashboardMode } = useAuth();
   const { dateRange, setDateRange } = useDashboardFilters();
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
@@ -323,7 +281,7 @@ export default function DailyPage() {
     return (
       <Alert data-testid="page-daily-b2b-warning">
         <FileText className="h-4 w-4" />
-        <AlertTitle>Daily não disponível para este cliente</AlertTitle>
+        <AlertTitle>{tx("Relatório diário não disponível para este cliente")}</AlertTitle>
         <AlertDescription>Relatório diário disponível para clientes B2C (Nuvemshop) ou Vesti.</AlertDescription>
       </Alert>
     );
@@ -332,7 +290,7 @@ export default function DailyPage() {
   if (isError) {
     return (
       <Alert variant="destructive" data-testid="page-daily-error">
-        <AlertTitle>Não foi possível carregar o Daily.</AlertTitle>
+        <AlertTitle>{tx("Não foi possível carregar o relatório diário.")}</AlertTitle>
         <AlertDescription>
           Verifique se o cliente é B2C ou Vesti e se as integrações necessárias estão configuradas.
         </AlertDescription>
@@ -357,7 +315,7 @@ export default function DailyPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Daily · {periodLabel}
+            Diário · {periodLabel}
             {data?.client.name && <span className="ml-2 text-muted-foreground/70">{data.client.name}</span>}
           </span>
         </motion.div>
@@ -373,16 +331,7 @@ export default function DailyPage() {
         </div>
       </div>
 
-      <Card className="hidden p-5 bg-card border-border print:block">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-medium uppercase text-muted-foreground">UP Dash · Relatório Daily</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal">{data?.client.name ?? "B2C"}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Período {periodLabel}</p>
-          </div>
-          <img src="/up-dash-logo.png" alt="UP Dash" className="h-9 w-auto" />
-        </div>
-      </Card>
+      <GlassMetricCard label={tx("UP Dash · Relatório diário")} value={<>{data?.client.name ?? "B2C"}</>} footer={<div className="space-y-2"><p className="mt-1 text-sm text-muted-foreground">Período {periodLabel}</p></div>} hideComparison />
 
       {isLoading || !kpis ? (
         <DailyLoadingState />
@@ -403,7 +352,7 @@ export default function DailyPage() {
               icon={Wallet}
               iconClass="bg-blue-500/15 text-blue-400"
               sparkValues={sparkValues.approvedRevenue}
-              sparkColor="#60a5fa"
+              sparkColor="#afc4ff"
               valueAccent
             />
             <DailyKpiCard
@@ -415,7 +364,7 @@ export default function DailyPage() {
               icon={ShoppingCart}
               iconClass="bg-violet-500/15 text-violet-400"
               sparkValues={sparkValues.sales}
-              sparkColor="#a78bfa"
+              sparkColor="#5b8dff"
             />
             <DailyKpiCard
               label="Ticket médio"
@@ -426,7 +375,7 @@ export default function DailyPage() {
               icon={Receipt}
               iconClass="bg-emerald-500/15 text-emerald-400"
               sparkValues={sparkValues.avgTicket}
-              sparkColor="#34d399"
+              sparkColor="#87adff"
             />
             <DailyKpiCard
               label="Custo por compra"
@@ -437,7 +386,7 @@ export default function DailyPage() {
               icon={Tags}
               iconClass="bg-amber-500/15 text-amber-400"
               sparkValues={sparkValues.costPerPurchase}
-              sparkColor="#f59e0b"
+              sparkColor="#0458fe"
               inverse
             />
             <DailyKpiCard
@@ -449,7 +398,7 @@ export default function DailyPage() {
               icon={Megaphone}
               iconClass="bg-sky-500/15 text-sky-400"
               sparkValues={sparkValues.mediaSpend}
-              sparkColor="#38bdf8"
+              sparkColor="#afc4ff"
             />
             <DailyKpiCard
               label="ROAS"
@@ -480,13 +429,10 @@ export default function DailyPage() {
               <div className="absolute -top-12 -right-12 h-40 w-40 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
               <div className="relative z-10">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium uppercase text-muted-foreground">Análise geral</p>
-                  <h3 className="mt-1 text-lg font-semibold tracking-normal">Leitura do período</h3>
-                </div>
+                <GlassMetricCard  label={tx("Análise geral")} value={<>{tx("Leitura do período")}</>} hideComparison />
                 <span className="inline-flex items-center gap-1.5 rounded-md bg-primary/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
                   <Sparkles className="h-3 w-3" />
-                  Insights
+                  {tx("Análises")}
                 </span>
               </div>
               <p className="text-sm leading-relaxed text-foreground/85">{data.analysis.generalAnalysis}</p>
@@ -495,10 +441,7 @@ export default function DailyPage() {
             </Card>
 
             <Card className="p-5 bg-card border-border" data-testid="daily-summary-insights">
-              <div className="mb-4">
-                <p className="text-xs font-medium uppercase text-muted-foreground">Resumo do relatório</p>
-                <h3 className="mt-1 text-lg font-semibold tracking-normal">Insights para envio</h3>
-              </div>
+              <GlassMetricCard  label={tx("Resumo do relatório")} value={<>{tx("Insights para envio")}</>} hideComparison />
               <ol className="space-y-3">
                 {data.analysis.reportSummary.map((item, index) => (
                   <li key={`${item}-${index}`} className="flex gap-3 text-sm leading-relaxed">

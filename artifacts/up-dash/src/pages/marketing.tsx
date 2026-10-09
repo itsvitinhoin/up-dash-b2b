@@ -1,8 +1,13 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { getGetMarketingUrl } from "@workspace/api-client-react";
+import { useDisplayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState, useEffect } from "react";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import { useI18n } from "@/lib/i18n";
 import { queryOpts } from "@/lib/query-opts";
 import {
   useGetMarketing,
@@ -118,7 +123,7 @@ interface MetaTopCreative {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function computeChange(current: number, previous: number): number | null {
-  if (previous === 0) return current > 0 ? 100 : null;
+  if (previous === 0) return current === 0 ? 0 : null;
   return ((current - previous) / previous) * 100;
 }
 
@@ -142,9 +147,9 @@ function joinSeries(
 }
 
 const PLATFORM_COLORS: Record<string, string> = {
-  META: "#1877F2",
-  GOOGLE: "#EA4335",
-  TIKTOK: "#25F4EE",
+  META: "#5b8dff",
+  GOOGLE: "#0458fe",
+  TIKTOK: "#afc4ff",
 };
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -172,6 +177,7 @@ interface KpiCardProps {
   format: (v: number) => string;
   unit?: string;
   change: number | null;
+  previousValue?: number;
   sparkValues: number[];
   sparkColor: string;
   isLoading: boolean;
@@ -191,61 +197,11 @@ function MktKpiCard({
   sparkColor,
   isLoading,
   testId,
-  invertChange = false,
+  invertChange = false, previousValue,
 }: KpiCardProps) {
   const reduced = useReducedMotion();
   const variants = withReducedMotion(cardEntry, reduced);
-  const effectiveChange = invertChange && change !== null ? -change : change;
-  const isUp = effectiveChange !== null && effectiveChange >= 0;
-  return (
-    <motion.div variants={variants}>
-      <Card data-testid={testId} className="flex flex-col p-5 bg-card border-border hover:shadow-md transition-shadow">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2.5">
-            <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconClass}`}>
-              <Icon className="h-4 w-4" />
-            </div>
-            <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-              {label}
-            </span>
-          </div>
-          <button className="text-muted-foreground hover:text-foreground" aria-label="More options">
-            <MoreHorizontal className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="flex items-end justify-between gap-3 mb-3">
-          <div className="flex items-baseline gap-1.5">
-            {isLoading ? (
-              <Skeleton className="h-9 w-32" />
-            ) : (
-              <>
-                <span className="text-2xl font-semibold tracking-tight tabular-nums">
-                  <CountUp value={value} format={fmt} />
-                </span>
-                {unit && <span className="text-xs text-muted-foreground font-medium">{unit}</span>}
-              </>
-            )}
-          </div>
-          {!isLoading && sparkValues.length > 1 && (
-            <Sparkline values={sparkValues} stroke={sparkColor} fill={sparkColor + "22"} width={88} height={28} ariaLabel={`${label} sparkline`} />
-          )}
-        </div>
-
-        {!isLoading && effectiveChange !== null && (
-          <span
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium w-fit ${
-              isUp ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
-            }`}
-          >
-            {isUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-            {isUp ? "+" : ""}{effectiveChange.toFixed(1)}%
-            <span className="ml-1 text-muted-foreground font-normal">vs prev</span>
-          </span>
-        )}
-      </Card>
-    </motion.div>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={fmt} unit={unit} change={change} previousValue={previousValue} changePositive={change !== null ? (invertChange ? change <= 0 : change >= 0) : undefined} source="Meta Ads · Google Ads · UP Zero" sparkValues={sparkValues} loading={isLoading} testId={testId} />);
 }
 
 // ── Platform bar ─────────────────────────────────────────────────────────────
@@ -253,20 +209,20 @@ function PlatformRow({ platform, spend, roas, leads, clicks, maxSpend }: {
   platform: string; spend: number; roas: number; leads: number; clicks: number; maxSpend: number;
 }) {
   const pct = maxSpend > 0 ? (spend / maxSpend) * 100 : 0;
-  const color = PLATFORM_COLORS[platform] ?? "#6366f1";
+  const color = PLATFORM_COLORS[platform] ?? "#5b8dff";
   const label = PLATFORM_LABELS[platform] ?? platform;
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-sm">
+      <div className="up-channel-row space-y-2 text-sm">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
           <span className="font-medium">{label}</span>
         </div>
-        <div className="flex items-center gap-4 text-muted-foreground text-xs tabular-nums">
+        <div className="up-channel-summary text-muted-foreground text-xs tabular-nums">
           <span>{formatCurrency(spend)}</span>
-          <span className="w-14 text-right">ROAS {roas.toFixed(2)}×</span>
-          <span className="w-16 text-right">{formatNumber(leads)} leads</span>
-          <span className="w-18 text-right">{formatNumber(clicks)} clicks</span>
+          <span>ROAS {roas.toFixed(2)}×</span>
+          <span>{formatNumber(leads)} leads</span>
+          <span>{formatNumber(clicks)} cliques</span>
         </div>
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
@@ -289,15 +245,15 @@ function StateRow({ state, leads, attributedRevenue, roas, maxLeads }: {
   const pct = maxLeads > 0 ? (leads / maxLeads) * 100 : 0;
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-sm">
+      <div className="up-channel-row space-y-2 text-sm">
         <div className="flex items-center gap-2">
           <MapPin className="h-3 w-3 text-muted-foreground" />
           <span className="font-medium">{state}</span>
         </div>
-        <div className="flex items-center gap-4 text-muted-foreground text-xs tabular-nums">
+        <div className="up-channel-summary text-muted-foreground text-xs tabular-nums">
           <span>{formatNumber(leads)} leads</span>
-          <span className="w-24 text-right">{formatCurrency(attributedRevenue)}</span>
-          <span className="w-20 text-right">ROAS {roas.toFixed(2)}×</span>
+          <span>{formatCurrency(attributedRevenue)}</span>
+          <span>ROAS {roas.toFixed(2)}×</span>
         </div>
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
@@ -320,18 +276,19 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
 
 // ── Status badge ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
+  const displayLabel = useDisplayLabel();
   const isActive = status === "ACTIVE";
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium font-mono uppercase tracking-wide ${isActive ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${isActive ? "bg-emerald-500" : "bg-amber-500"}`} />
-      {status.toLowerCase()}
+      {displayLabel(status)}
     </span>
   );
 }
 
 // ── Platform chip ─────────────────────────────────────────────────────────────
 function PlatformChip({ platform }: { platform: string }) {
-  const color = PLATFORM_COLORS[platform] ?? "#6366f1";
+  const color = PLATFORM_COLORS[platform] ?? "#5b8dff";
   const short = platform === "GOOGLE" ? "G" : platform === "TIKTOK" ? "TT" : "META";
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold font-mono" style={{ color, backgroundColor: color + "20" }}>
@@ -342,7 +299,7 @@ function PlatformChip({ platform }: { platform: string }) {
 
 // ── Creative thumbnail ────────────────────────────────────────────────────────
 function CreativeThumbnail({ imageUrl, platform, name }: { imageUrl: string | null; platform: string; name: string }) {
-  const color = PLATFORM_COLORS[platform] ?? "#6366f1";
+  const color = PLATFORM_COLORS[platform] ?? "#5b8dff";
   if (imageUrl) {
     return (
       <div className="w-10 h-10 rounded-md overflow-hidden border border-border shrink-0">
@@ -395,7 +352,7 @@ function CreativeMediaPreview({ creative }: { creative: MetaTopCreative }) {
           target="_blank"
           rel="noreferrer"
           className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white hover:bg-black/75"
-          aria-label={`Open ${creative.name} preview`}
+          aria-label={`Abrir ${creative.name} preview`}
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </a>
@@ -406,62 +363,51 @@ function CreativeMediaPreview({ creative }: { creative: MetaTopCreative }) {
 
 function TopCreativeCard({
   creative,
+  previous,
   metricLabel,
   metricValue,
   costLabel = "CPL",
 }: {
   creative: MetaTopCreative;
+  previous?: Pick<MetaTopCreative, "id" | "ctr" | "cpa" | "cpl" | "leads" | "spend">;
   metricLabel: string;
   metricValue: string;
   costLabel?: string;
 }) {
   return (
-    <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3 rounded-md border border-border bg-background/40 p-3">
-      <CreativeMediaPreview creative={creative} />
-      <div className="min-w-0 space-y-2">
-        <div>
-          <p className="truncate text-sm font-medium text-foreground" title={creative.name}>
-            {creative.name}
-          </p>
-          <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-            {metricLabel} · {metricValue}
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div>
-            <p className="text-muted-foreground">CTR</p>
-            <p className="font-medium tabular-nums">{formatPercentage(creative.ctr)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">{costLabel}</p>
-            <p className="font-medium tabular-nums">{formatCurrency(costLabel === "Custo/Compra" ? creative.cpa : creative.cpl)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Leads</p>
-            <p className="font-medium tabular-nums">{formatNumber(creative.leads)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Spend</p>
-            <p className="font-medium tabular-nums">{formatCurrency(creative.spend)}</p>
-          </div>
+    <Card className="up-creative-card" data-testid="top-creative-card">
+      <div className="up-creative-head">
+        <CreativeMediaPreview creative={creative} />
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground" title={creative.name}>{creative.name}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{metricLabel} · {metricValue}</p>
         </div>
       </div>
-    </div>
+      <div className="up-metric-grid up-creative-metrics">
+        <GlassMetricCard label="CTR" value={creative.ctr} format={formatPercentage} previousValue={previous?.ctr} source="Meta Ads · criativo" />
+        <GlassMetricCard lowerIsBetter label={costLabel} value={costLabel === "Custo/Compra" ? creative.cpa : creative.cpl} format={formatCurrency} previousValue={costLabel === "Custo/Compra" ? previous?.cpa : previous?.cpl} source="Meta Ads · criativo" />
+        <GlassMetricCard label="Leads" value={creative.leads} format={formatNumber} previousValue={previous?.leads} source="Meta Ads · criativo" />
+        <GlassMetricCard label="Investimento" value={creative.spend} format={formatCurrency} previousValue={previous?.spend} source="Meta Ads · criativo" />
+      </div>
+    </Card>
   );
 }
 
 function TopCreativesColumn({
   title,
   items,
+  previousItems,
   metric,
   costLabel,
 }: {
   title: string;
   items: MetaTopCreative[];
+  previousItems?: Array<Pick<MetaTopCreative, "id" | "ctr" | "cpa" | "cpl" | "leads" | "spend">>;
   metric: "ctr" | "cpl" | "cpa" | "leads" | "purchases";
   costLabel?: string;
 }) {
-  const metricLabel = metric === "ctr" ? "CTR" : metric === "cpl" ? "CPL" : metric === "cpa" ? "Custo/Compra" : metric === "purchases" ? "Compras" : "Leads";
+  const { tx } = useI18n();
+  const metricLabel = metric === "ctr" ? "CTR" : metric === "cpl" ? "CPL" : metric === "cpa" ? "Custo/Compra" : metric === "purchases" ? tx("Compras") : "Leads";
   const metricValue = (creative: MetaTopCreative) =>
     metric === "ctr"
       ? formatPercentage(creative.ctr)
@@ -481,12 +427,13 @@ function TopCreativesColumn({
       </h3>
       <div className="space-y-3">
         {items.length === 0 ? (
-          <EmptyState icon={ImageIcon} title="No creatives" description="No Meta creative data in this period." className="h-36" />
+          <EmptyState icon={ImageIcon} title={tx("Nenhum criativo")} description={tx("Sem dados de criativos da Meta neste período.")} className="h-36" />
         ) : (
           items.slice(0, 3).map((creative) => (
             <TopCreativeCard
               key={`${metric}-${creative.id}`}
               creative={creative}
+              previous={previousItems?.find(item => item.id === creative.id)}
               metricLabel={metricLabel}
               metricValue={metricValue(creative)}
               costLabel={costLabel}
@@ -510,6 +457,7 @@ function InsightBlock({
   isRegenerating: boolean;
   onRegenerate: () => void;
 }) {
+  const { tx } = useI18n();
   if (!isLoading && !insight) return null;
   return (
     <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
@@ -520,7 +468,7 @@ function InsightBlock({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-mono uppercase tracking-wider text-violet-400">AI Marketing Insight</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider text-violet-400">{tx("Análise de anúncios com IA")}</span>
               <Button
                 variant="ghost"
                 size="sm"
@@ -530,7 +478,7 @@ function InsightBlock({
                 data-testid="insight-regenerate"
               >
                 <RefreshCw className={`h-3 w-3 mr-1.5 ${isRegenerating ? "animate-spin" : ""}`} />
-                Refresh
+                {tx("Atualizar")}
               </Button>
             </div>
             {isLoading ? (
@@ -567,6 +515,7 @@ const AXIS_TICK = { fontSize: 10, fill: "hsl(var(--muted-foreground))" };
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function MarketingPage() {
+  const { tx } = useI18n();
   const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -591,7 +540,8 @@ export default function MarketingPage() {
   const dateTo = dateParams.dateTo;
   useEffect(() => { setCreativesPage(1); }, [clientId, dateFrom, dateTo]);
 
-  const insightParams = { clientId, ...dateParams, screen: "marketing" as const };
+  const { language: insightLanguage } = useI18n();
+  const insightParams = { clientId, ...dateParams, screen: "marketing" as const, language: insightLanguage };
 
   const { data, isLoading, isError, refetch } = useGetMarketing(
     {
@@ -618,6 +568,8 @@ export default function MarketingPage() {
   });
 
   // ── KPI changes ──────────────────────────────────────────────────────────
+  const previousMarketing = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetMarketingUrl({ clientId, ...dateParams, creativesPage, creativesPageSize: CREATIVES_PAGE_SIZE, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, creative: filters.creative || undefined }), enabled);
+  const previousCreatives = [ ...(previousMarketing.data?.creatives ?? []), ...(previousMarketing.data?.topCreatives.ctr ?? []), ...(previousMarketing.data?.topCreatives.cpl ?? []), ...(previousMarketing.data?.topCreatives.leads ?? []) ];
   const spendChange = useMemo(() => data ? computeChange(data.kpis.totalSpend, data.prevKpis.totalSpend) : null, [data]);
   const revenueChange = useMemo(() => data ? computeChange(data.kpis.attributedRevenue, data.prevKpis.attributedRevenue) : null, [data]);
   const roasChange = useMemo(() => data ? computeChange(data.kpis.roas, data.prevKpis.roas) : null, [data]);
@@ -730,30 +682,30 @@ export default function MarketingPage() {
       `marketing-campaigns-${format(dateRange.from, "yyyyMMdd")}-${format(dateRange.to, "yyyyMMdd")}.csv`,
       sortedCreatives,
       isB2C ? [
-        { header: "Name", accessor: (r) => r.name },
-        { header: "Platform", accessor: (r) => r.platform },
+        { header: tx("Nome"), accessor: (r) => r.name },
+        { header: tx("Plataforma"), accessor: (r) => r.platform },
         { header: "Status", accessor: (r) => r.status },
-        { header: "Spend", accessor: (r) => r.spend },
-        { header: "Purchases", accessor: (r) => r.approvedLeads },
+        { header: "Investimento", accessor: (r) => r.spend },
+        { header: tx("Compras"), accessor: (r) => r.approvedLeads },
         { header: "Custo por Compra", accessor: (r) => r.cpa.toFixed(2) },
-        { header: "Attributed Revenue", accessor: (r) => r.attributedRevenue.toFixed(2) },
+        { header: tx("Faturamento atribuído"), accessor: (r) => r.attributedRevenue.toFixed(2) },
         { header: "ROAS", accessor: (r) => r.roas.toFixed(2) },
-        { header: "Clicks", accessor: (r) => r.clicks },
-        { header: "Impressions", accessor: (r) => r.impressions },
+        { header: tx("Cliques"), accessor: (r) => r.clicks },
+        { header: tx("Impressões"), accessor: (r) => r.impressions },
         { header: "CTR %", accessor: (r) => r.ctr.toFixed(2) },
       ] : [
-        { header: "Name", accessor: (r) => r.name },
-        { header: "Platform", accessor: (r) => r.platform },
+        { header: tx("Nome"), accessor: (r) => r.name },
+        { header: tx("Plataforma"), accessor: (r) => r.platform },
         { header: "Status", accessor: (r) => r.status },
-        { header: "Spend", accessor: (r) => r.spend },
+        { header: "Investimento", accessor: (r) => r.spend },
         { header: "Leads", accessor: (r) => r.leads },
-        { header: "Approved Leads", accessor: (r) => r.approvedLeads },
+        { header: tx("Leads aprovados"), accessor: (r) => r.approvedLeads },
         { header: "CPL", accessor: (r) => r.cpl.toFixed(2) },
         { header: "CPA", accessor: (r) => r.cpa.toFixed(2) },
-        { header: "Attributed Revenue", accessor: (r) => r.attributedRevenue.toFixed(2) },
+        { header: tx("Faturamento atribuído"), accessor: (r) => r.attributedRevenue.toFixed(2) },
         { header: "ROAS", accessor: (r) => r.roas.toFixed(2) },
-        { header: "Clicks", accessor: (r) => r.clicks },
-        { header: "Impressions", accessor: (r) => r.impressions },
+        { header: tx("Cliques"), accessor: (r) => r.clicks },
+        { header: tx("Impressões"), accessor: (r) => r.impressions },
         { header: "CTR %", accessor: (r) => r.ctr.toFixed(2) },
       ],
     );
@@ -778,11 +730,11 @@ export default function MarketingPage() {
     return (
       <Alert variant="destructive" data-testid="page-marketing">
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Error</AlertTitle>
+        <AlertTitle>{tx("Erro")}</AlertTitle>
         <AlertDescription className="flex items-center justify-between">
-          Failed to load marketing data.
+          {tx("Não foi possível carregar os anúncios.")}
           <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="mr-2 h-4 w-4" /> Retry
+            <RefreshCw className="mr-2 h-4 w-4" /> {tx("Tentar novamente")}
           </Button>
         </AlertDescription>
       </Alert>
@@ -801,12 +753,12 @@ export default function MarketingPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-violet-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Paid channels · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            {tx("Canais pagos")} · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
           </span>
         </div>
         <Button variant="outline" size="sm" onClick={handleExport} disabled={!data} data-testid="marketing-export-csv">
           <Download className="h-4 w-4 mr-1.5" />
-          Export CSV
+          {tx("Exportar CSV")}
         </Button>
       </motion.div>
 
@@ -818,14 +770,14 @@ export default function MarketingPage() {
               <Link2 className="h-7 w-7 text-violet-400" />
             </div>
             <div>
-              <h3 className="text-base font-semibold mb-1">No paid channel data yet</h3>
+              <h3 className="text-base font-semibold mb-1">{tx("Sem dados de canais pagos")}</h3>
               <p className="text-sm text-muted-foreground max-w-sm">
-                Connect your ad accounts (Meta, Google, TikTok) to start tracking spend, ROA, and campaign performance in this period.
+                {tx("Conecte suas contas de anúncios (Meta, Google, TikTok) para acompanhar investimento, ROAS e desempenho das campanhas neste período.")}
               </p>
             </div>
             <Button variant="outline" size="sm" className="gap-2">
               <Link2 className="h-4 w-4" />
-              Connect ad accounts
+              {tx("Conectar contas de anúncios")}
             </Button>
           </Card>
         </motion.div>
@@ -853,28 +805,28 @@ export default function MarketingPage() {
             testId="kpi-ad-spend"
             icon={Wallet}
             iconClass="bg-violet-500/15 text-violet-400"
-            label="Ad Spend"
+            label="Investimento em anúncios"
             value={data?.kpis.totalSpend ?? 0}
             format={formatCurrency}
             change={spendChange}
             sparkValues={sparkSpend}
-            sparkColor="#a78bfa"
+            sparkColor="#5b8dff"
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-revenue"
+            testId="kpi-revenue" previousValue={data?.prevKpis.attributedRevenue}
             icon={DollarSign}
             iconClass="bg-teal-500/15 text-teal-400"
-            label="Revenue"
+            label="Faturamento"
             value={data?.kpis.attributedRevenue ?? 0}
             format={formatCurrency}
             change={revenueChange}
             sparkValues={sparkRevenue}
-            sparkColor="#2dd4bf"
+            sparkColor="#87adff"
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-roas"
+            testId="kpi-roas" previousValue={data?.prevKpis.roas}
             icon={TrendingUp}
             iconClass="bg-emerald-500/15 text-emerald-400"
             label="ROA"
@@ -882,47 +834,47 @@ export default function MarketingPage() {
             format={(v) => `${v.toFixed(2)}×`}
             change={roasChange}
             sparkValues={sparkRevenue}
-            sparkColor="#34d399"
+            sparkColor="#87adff"
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-approval-rate"
+            testId="kpi-approval-rate" previousValue={data?.prevKpis.approvalRate}
             icon={CheckCircle2}
             iconClass="bg-indigo-500/15 text-indigo-400"
-            label="Approval Rate"
+            label="Taxa de aprovação"
             value={data?.kpis.approvalRate ?? 0}
             format={formatPercentage}
             change={approvalRateChange}
             sparkValues={sparkLeads}
-            sparkColor="#818cf8"
+            sparkColor="#5b8dff"
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-leads"
+            testId="kpi-leads" previousValue={data?.prevKpis.totalLeads}
             icon={Users}
             iconClass="bg-sky-500/15 text-sky-400"
-            label="Total Leads"
+            label="Total de leads"
             value={data?.kpis.totalLeads ?? 0}
             format={formatNumber}
             change={leadsChange}
             sparkValues={sparkLeads}
-            sparkColor="#38bdf8"
+            sparkColor="#afc4ff"
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-approved-leads"
+            testId="kpi-approved-leads" previousValue={data?.prevKpis.approvedLeads}
             icon={CheckCircle2}
             iconClass="bg-green-500/15 text-green-400"
-            label={isB2C ? "Compras" : "Approved Leads"}
+            label={isB2C ? tx("Compras") : tx("Leads aprovados")}
             value={data?.kpis.approvedLeads ?? 0}
             format={formatNumber}
             change={approvedLeadsChange}
             sparkValues={sparkLeads}
-            sparkColor="#4ade80"
+            sparkColor="#87adff"
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-cpl"
+            testId="kpi-cpl" previousValue={isB2C ? data?.prevKpis.cpa : data?.prevKpis.cpl}
             icon={Target}
             iconClass="bg-orange-500/15 text-orange-400"
             label={isB2C ? "Custo por Compra" : "CPL"}
@@ -930,13 +882,13 @@ export default function MarketingPage() {
             format={formatCurrency}
             change={isB2C ? cpaChange : cplChange}
             sparkValues={sparkSpend}
-            sparkColor="#fb923c"
+            sparkColor="#0458fe"
             isLoading={isLoading}
             invertChange
           />
           {!isB2C && (
             <MktKpiCard
-              testId="kpi-cpa"
+              testId="kpi-cpa" previousValue={data?.prevKpis.cpa}
               icon={Sparkles}
               iconClass="bg-amber-500/15 text-amber-400"
               label="CPA"
@@ -944,7 +896,7 @@ export default function MarketingPage() {
               format={formatCurrency}
               change={cpaChange}
               sparkValues={sparkSpend}
-              sparkColor="#fbbf24"
+              sparkColor="#0458fe"
               isLoading={isLoading}
               invertChange
             />
@@ -955,13 +907,13 @@ export default function MarketingPage() {
       {!hasNoData && (
         <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">Top Meta Creatives</h2>
+            <h2 className="text-sm font-semibold text-foreground">{tx("Principais criativos da Meta")}</h2>
             <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
               {isB2C ? "CTR · Custo por Compra · Compras" : "CTR · CPL · Leads"}
             </span>
           </div>
           {isLoading ? (
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 2xl:grid-cols-3 gap-4">
               {Array.from({ length: 3 }).map((_, idx) => (
                 <Card key={idx} className="p-4">
                   <Skeleton className="h-4 w-32 mb-3" />
@@ -970,10 +922,10 @@ export default function MarketingPage() {
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-              <TopCreativesColumn title="Best CTR" items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn title={isB2C ? "Menor custo por compra" : "Lowest CPL"} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn title={isB2C ? "Mais compras" : "Most Leads"} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+            <div className="grid grid-cols-1 2xl:grid-cols-3 gap-4">
+              <TopCreativesColumn previousItems={previousCreatives} title={tx("Melhor CTR")} items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn previousItems={previousCreatives} title={isB2C ? tx("Menor custo por compra") : tx("Menor CPL")} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn previousItems={previousCreatives} title={isB2C ? tx("Mais compras") : tx("Mais leads")} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
             </div>
           )}
         </motion.div>
@@ -986,12 +938,12 @@ export default function MarketingPage() {
           <Card className="xl:col-span-2 p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
-              Spend vs Leads
+              {tx("Investimento e leads")}
             </h2>
             {isLoading ? (
               <Skeleton className="h-52 w-full" />
             ) : spendLeadsData.length === 0 ? (
-              <EmptyState icon={BarChart3} title="No data" description="No paid-channel activity in this period." className="h-52" />
+              <EmptyState icon={BarChart3} title={tx("Sem dados")} description={tx("Sem atividade de canais pagos neste período.")} className="h-52" />
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <ComposedChart data={spendLeadsData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
@@ -1007,8 +959,8 @@ export default function MarketingPage() {
                       name === "spend" ? "Ad Spend" : "Leads",
                     ]}
                   />
-                  <Bar yAxisId="left" dataKey="spend" fill="#a78bfa" opacity={0.8} radius={[2, 2, 0, 0]} name="spend" />
-                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#38bdf8" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="leads" />
+                  <Bar yAxisId="left" dataKey="spend" fill="#5b8dff" opacity={0.8} radius={[2, 2, 0, 0]} name={tx("Investimento")} />
+                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#afc4ff" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Leads" />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
@@ -1018,19 +970,19 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              ROAS Over Time
+              {tx("Evolução do ROAS")}
             </h2>
             {isLoading ? (
               <Skeleton className="h-52 w-full" />
             ) : roasData.length === 0 ? (
-              <EmptyState icon={TrendingUp} title="No data" description="No ROAS data in this period." className="h-52" />
+              <EmptyState icon={TrendingUp} title={tx("Sem dados")} description={tx("Sem dados de ROAS neste período.")} className="h-52" />
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={roasData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="roasGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#34d399" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#87adff" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#87adff" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
@@ -1041,8 +993,8 @@ export default function MarketingPage() {
                     labelFormatter={fmtDateLong}
                     formatter={(v: number) => [`${v.toFixed(2)}×`, "ROAS"]}
                   />
-                  <ReferenceLine y={2} stroke="#f97316" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: "Target 2×", position: "insideTopRight", fontSize: 9, fill: "#f97316" }} />
-                  <Area type="monotone" dataKey="roas" stroke="#34d399" strokeWidth={2} fill="url(#roasGrad)" dot={false} activeDot={{ r: 4, fill: "#34d399" }} />
+                  <ReferenceLine y={2} stroke="#0458fe" strokeDasharray="4 4" strokeOpacity={0.6} label={{ value: "Meta 2×", position: "insideTopRight", fontSize: 9, fill: "#0458fe" }} />
+                  <Area type="monotone" dataKey="roas" stroke="#87adff" strokeWidth={2} fill="url(#roasGrad)" dot={false} activeDot={{ r: 4, fill: "#87adff" }}  name="ROAS" />
                 </AreaChart>
               </ResponsiveContainer>
             )}
@@ -1057,24 +1009,24 @@ export default function MarketingPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
-                Spend vs Revenue
+                {tx("Investimento e faturamento")}
               </h2>
               <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
-                <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-6 rounded bg-violet-500/60" /> Spend</span>
-                <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-6 rounded bg-teal-400" /> Revenue</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-6 rounded bg-violet-500/60" /> {tx("Investimento")}</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-6 rounded bg-teal-400" /> {tx("Faturamento")}</span>
               </div>
             </div>
             {isLoading ? (
               <Skeleton className="h-48 w-full" />
             ) : spendVsRevenueData.length === 0 ? (
-              <EmptyState icon={DollarSign} title="No data" description="No paid-channel activity in this period." className="h-48" />
+              <EmptyState icon={DollarSign} title={tx("Sem dados")} description={tx("Sem atividade de canais pagos neste período.")} className="h-48" />
             ) : (
               <ResponsiveContainer width="100%" height={192}>
                 <ComposedChart data={spendVsRevenueData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="spendGrad2" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.7} />
-                      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.15} />
+                      <stop offset="5%" stopColor="#5b8dff" stopOpacity={0.7} />
+                      <stop offset="95%" stopColor="#5b8dff" stopOpacity={0.15} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
@@ -1086,8 +1038,8 @@ export default function MarketingPage() {
                     labelFormatter={fmtDateLong}
                     formatter={(v: number, name: string) => [formatCurrency(v), name === "spend" ? "Spend" : "Revenue"]}
                   />
-                  <Bar yAxisId="left" dataKey="spend" fill="url(#spendGrad2)" radius={[3, 3, 0, 0]} maxBarSize={32} />
-                  <Line yAxisId="right" type="monotone" dataKey="revenue" stroke="#2dd4bf" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                  <Bar yAxisId="left" dataKey="spend" fill="url(#spendGrad2)" radius={[3, 3, 0, 0]} maxBarSize={32}  name={tx("Investimento")} />
+                  <Line yAxisId="right" type="monotone" dataKey="revenue" stroke="#87adff" strokeWidth={2} dot={false} activeDot={{ r: 4 }}  name={tx("Faturamento")} />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
@@ -1102,12 +1054,12 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
               <Megaphone className="h-4 w-4 text-muted-foreground" />
-              By Platform
+              {tx("Por plataforma")}
             </h2>
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
             ) : platformRows.length === 0 ? (
-              <EmptyState icon={Megaphone} title="No campaigns" description="No active campaigns found for this brand." />
+              <EmptyState icon={Megaphone} title={tx("Nenhuma campanha")} description={tx("Nenhuma campanha ativa encontrada para esta marca.")} />
             ) : (
               <div className="space-y-5">
                 {platformRows.map((row) => (
@@ -1121,12 +1073,12 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
               <MapPin className="h-4 w-4 text-muted-foreground" />
-              Top States by ROAS
+              {tx("Principais estados por ROAS")}
             </h2>
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
             ) : stateRows.length === 0 ? (
-              <EmptyState icon={MapPin} title="No geographic data" description="No paid-channel leads with state data in this period." />
+              <EmptyState icon={MapPin} title={tx("Sem dados geográficos")} description={tx("Sem leads de canais pagos com estado informado neste período.")} />
             ) : (
               <div className="space-y-5">
                 {stateRows.map((row) => (
@@ -1144,13 +1096,13 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
               <PersonStanding className="h-4 w-4 text-muted-foreground" />
-              Customer Age Groups (Paid Leads)
+              Faixa etária dos clientes (leads pagos)
             </h2>
             <div className="space-y-5">
               {(data!.ageBreakdown).map((row, i) => {
                 const maxLeads = Math.max(...data!.ageBreakdown.map((r) => r.leads));
                 const pct = maxLeads > 0 ? (row.leads / maxLeads) * 100 : 0;
-                const colors = ["#a78bfa", "#38bdf8", "#34d399", "#fbbf24", "#f97316"];
+                const colors = ["#5b8dff", "#afc4ff", "#87adff", "#0458fe", "#0458fe"];
                 const color = colors[i % colors.length];
                 return (
                   <div key={row.ageGroup} className="space-y-1.5">
@@ -1184,9 +1136,9 @@ export default function MarketingPage() {
         <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
           <Card className="bg-card border-border overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-              <h2 className="text-sm font-semibold text-foreground">Campaign Performance</h2>
+              <h2 className="text-sm font-semibold text-foreground">{tx("Desempenho de campanhas")}</h2>
               <p className="text-xs text-muted-foreground">
-                {data ? `${Math.min((creativesPage - 1) * CREATIVES_PAGE_SIZE + 1, data.creativesTotal)}–${Math.min(creativesPage * CREATIVES_PAGE_SIZE, data.creativesTotal)} of ${data.creativesTotal}` : "—"} · click headers to sort
+                {data ? `${Math.min((creativesPage - 1) * CREATIVES_PAGE_SIZE + 1, data.creativesTotal)}–${Math.min(creativesPage * CREATIVES_PAGE_SIZE, data.creativesTotal)} ${tx("de")} ${data.creativesTotal}` : "—"} · {tx("clique nos títulos para ordenar")}
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -1195,21 +1147,21 @@ export default function MarketingPage() {
                   <tr className="border-b border-border bg-muted/30">
                     {(
                       [
-                        { key: "name" as SortKey, label: "Campaign", align: "left", wide: true },
-                        { key: "platform" as SortKey, label: "Platform", align: "left", wide: false },
+                        { key: "name" as SortKey, label: tx("Campanha"), align: "left", wide: true },
+                        { key: "platform" as SortKey, label: tx("Plataforma"), align: "left", wide: false },
                         { key: "status" as SortKey, label: "Status", align: "left", wide: false },
-                        { key: "spend" as SortKey, label: "Spend", align: "right", wide: false },
-                        { key: "attributedRevenue" as SortKey, label: "Revenue", align: "right", wide: false },
+                        { key: "spend" as SortKey, label: tx("Investimento"), align: "right", wide: false },
+                        { key: "attributedRevenue" as SortKey, label: tx("Faturamento"), align: "right", wide: false },
                         { key: "roas" as SortKey, label: "ROA", align: "right", wide: false },
                         { key: "leads" as SortKey, label: "Leads", align: "right", wide: false },
-                        { key: "approvedLeads" as SortKey, label: isB2C ? "Compras" : "Purchases", align: "right", wide: false },
+                        { key: "approvedLeads" as SortKey, label: isB2C ? tx("Compras") : tx("Compras"), align: "right", wide: false },
                         ...(isB2C
                           ? [{ key: "cpa" as SortKey, label: "Custo/Compra", align: "right" as const, wide: false }]
                           : [
                               { key: "cpl" as SortKey, label: "CPL", align: "right" as const, wide: false },
                               { key: "cpa" as SortKey, label: "CPA", align: "right" as const, wide: false },
                             ]),
-                        { key: "clicks" as SortKey, label: "Clicks", align: "right", wide: false },
+                        { key: "clicks" as SortKey, label: tx("Cliques"), align: "right", wide: false },
                         { key: "ctr" as SortKey, label: "CTR %", align: "right", wide: false },
                       ] as { key: SortKey; label: string; align: "left" | "right"; wide: boolean }[]
                     ).map(({ key, label, align, wide }) => (
@@ -1235,7 +1187,7 @@ export default function MarketingPage() {
                   ) : sortedCreatives.length === 0 ? (
                     <tr>
                       <td colSpan={isB2C ? 11 : 12} className="px-5 py-10 text-center text-muted-foreground text-sm">
-                        No campaigns found for this brand.
+                        {tx("Nenhuma campanha encontrada para esta marca.")}
                       </td>
                     </tr>
                   ) : (
@@ -1272,23 +1224,23 @@ export default function MarketingPage() {
             {data && data.creativesTotal > CREATIVES_PAGE_SIZE && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-border bg-muted/10">
                 <p className="text-xs text-muted-foreground">
-                  Page {creativesPage} of {Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE)}
+                  Página {creativesPage} de {Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE)}
                 </p>
                 <div className="flex items-center gap-2">
-                  <button
+                  <Button variant="outline" size="sm"
                     onClick={() => setCreativesPage((p) => Math.max(1, p - 1))}
                     disabled={creativesPage === 1}
                     className="px-3 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Previous
-                  </button>
-                  <button
+                    {tx("Anterior")}
+                  </Button>
+                  <Button variant="outline" size="sm"
                     onClick={() => setCreativesPage((p) => Math.min(Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE), p + 1))}
                     disabled={creativesPage * CREATIVES_PAGE_SIZE >= data.creativesTotal}
                     className="px-3 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Next
-                  </button>
+                    {tx("Próximo")}
+                  </Button>
                 </div>
               </div>
             )}

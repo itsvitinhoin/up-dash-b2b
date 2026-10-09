@@ -1,3 +1,5 @@
+import { useDisplayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -63,6 +65,7 @@ import {
   type WhatsappFunnelStage,
 } from "@/lib/whatsapp/mock-data";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 
 const ALL = "__all__";
 const SLA_MINUTES = 15;
@@ -103,13 +106,13 @@ const CHART_TOOLTIP_STYLE = {
 };
 
 const FUNNEL_COLORS = [
-  "#2563eb",
-  "#0ea5e9",
-  "#10b981",
-  "#84cc16",
-  "#f59e0b",
-  "#6366f1",
-  "#ef4444",
+  "#5b8dff",
+  "#afc4ff",
+  "#87adff",
+  "#87adff",
+  "#0458fe",
+  "#5b8dff",
+  "#b3caff",
 ];
 
 const KPI_INFO: Record<string, string> = {
@@ -193,12 +196,14 @@ function KpiCard({
   icon: Icon,
   info,
   tone = "primary",
+  loading = false,
 }: {
   label: string;
   value: string;
   icon: React.ComponentType<{ className?: string }>;
   info?: string;
   tone?: "primary" | "green" | "amber" | "red" | "blue";
+  loading?: boolean;
 }) {
   const toneClass = {
     primary: "bg-primary/10 text-primary",
@@ -208,42 +213,12 @@ function KpiCard({
     blue: "bg-blue-500/10 text-blue-500",
   }[tone];
 
-  return (
-    <Card className="bg-card border-border">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <p className="truncate text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-              {label}
-            </p>
-            {info && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label={`Explicação: ${label}`}
-                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <Info className="h-3.5 w-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs bg-popover text-popover-foreground">
-                  {info}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-          <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", toneClass)}>
-            <Icon className="h-4 w-4" />
-          </span>
-        </div>
-        <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">{value}</p>
-      </CardContent>
-    </Card>
-  );
+  return (<GlassMetricCard label={label} value={value} icon={Icon} info={info} loading={loading} hideComparison />);
 }
 
 export default function WhatsappPage() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { dateRange, setDateRange } = useDashboardFilters();
   const { user, selectedClientId } = useAuth();
 
@@ -259,7 +234,7 @@ export default function WhatsappPage() {
     params.set("limit", "5000");
     return `/api/whatsapp/conversations?${params.toString()}`;
   }, [dateRange, phoneFilter, selectedClientId, user?.role]);
-  const { data: realConversations } = useQuery<WhatsappConversationsResponse>({
+  const { data: realConversations, isLoading: conversationsLoading, isError: conversationsError } = useQuery<WhatsappConversationsResponse>({
     queryKey: ["whatsapp-dashboard-conversations", whatsappClientId, phoneFilter, dateRange.from.toISOString(), dateRange.to.toISOString()],
     queryFn: () => customFetch<WhatsappConversationsResponse>(conversationsQuery),
     enabled: Boolean(whatsappClientId),
@@ -515,18 +490,28 @@ export default function WhatsappPage() {
         </CardHeader>
       </Card>
 
+      {conversationsError && !realConversations ? (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert" data-testid="whatsapp-load-error">
+          {tx("Não foi possível carregar as conversas do WhatsApp. Os números abaixo não são zero: tente novamente em instantes.")}
+        </div>
+      ) : conversationsLoading ? (
+        <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 text-sm text-muted-foreground" data-testid="whatsapp-loading">
+          {tx("Carregando as conversas do WhatsApp… períodos longos podem levar alguns segundos.")}
+        </div>
+      ) : null}
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-        <KpiCard label="Total de conversas" value={formatNumber(kpis.total)} icon={MessageCircle} info={KPI_INFO["Total de conversas"]} />
-        <KpiCard label="Novos leads" value={formatNumber(kpis.newLeads)} icon={Users} tone="blue" info={KPI_INFO["Novos leads"]} />
-        <KpiCard label="Leads recorrentes" value={formatNumber(kpis.returningLeads)} icon={UserCheck} tone="green" info={KPI_INFO["Leads recorrentes"]} />
-        <KpiCard label="Mensagens recebidas" value={formatNumber(kpis.received)} icon={MessageSquareReply} info={KPI_INFO["Mensagens recebidas"]} />
-        <KpiCard label="Mensagens enviadas" value={formatNumber(kpis.sent)} icon={Send} info={KPI_INFO["Mensagens enviadas"]} />
-        <KpiCard label="Tempo 1ª resposta" value={formatMinutes(kpis.avgFirstResponse)} icon={Timer} tone="amber" info={KPI_INFO["Tempo 1ª resposta"]} />
-        <KpiCard label="SLA cumprido" value={formatPercent(kpis.sla)} icon={CheckCircle2} tone="green" info={KPI_INFO["SLA cumprido"]} />
-        <KpiCard label="Leads sem resposta" value={formatNumber(kpis.noResponse)} icon={AlertCircle} tone="red" info={KPI_INFO["Leads sem resposta"]} />
-        <KpiCard label="Aguardando resposta" value={formatNumber(kpis.awaiting)} icon={Clock3} tone="amber" info={KPI_INFO["Aguardando resposta"]} />
-        <KpiCard label="Encerradas" value={formatNumber(kpis.closed)} icon={CheckCircle2} tone="green" info={KPI_INFO.Encerradas} />
-        <KpiCard label="Perdidas" value={formatNumber(kpis.lost)} icon={XCircle} tone="red" info={KPI_INFO.Perdidas} />
+        <KpiCard label="Total de conversas" value={formatNumber(kpis.total)} icon={MessageCircle} info={KPI_INFO["Total de conversas"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Novos leads" value={formatNumber(kpis.newLeads)} icon={Users} tone="blue" info={KPI_INFO["Novos leads"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Leads recorrentes" value={formatNumber(kpis.returningLeads)} icon={UserCheck} tone="green" info={KPI_INFO["Leads recorrentes"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Mensagens recebidas" value={formatNumber(kpis.received)} icon={MessageSquareReply} info={KPI_INFO["Mensagens recebidas"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Mensagens enviadas" value={formatNumber(kpis.sent)} icon={Send} info={KPI_INFO["Mensagens enviadas"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Tempo 1ª resposta" value={formatMinutes(kpis.avgFirstResponse)} icon={Timer} tone="amber" info={KPI_INFO["Tempo 1ª resposta"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="SLA cumprido" value={formatPercent(kpis.sla)} icon={CheckCircle2} tone="green" info={KPI_INFO["SLA cumprido"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Leads sem resposta" value={formatNumber(kpis.noResponse)} icon={AlertCircle} tone="red" info={KPI_INFO["Leads sem resposta"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Aguardando resposta" value={formatNumber(kpis.awaiting)} icon={Clock3} tone="amber" info={KPI_INFO["Aguardando resposta"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Encerradas" value={formatNumber(kpis.closed)} icon={CheckCircle2} tone="green" info={KPI_INFO.Encerradas} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Perdidas" value={formatNumber(kpis.lost)} icon={XCircle} tone="red" info={KPI_INFO.Perdidas} loading={!realConversations && Boolean(whatsappClientId)} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -569,8 +554,8 @@ export default function WhatsappPage() {
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
                 <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} />
-                <Line type="monotone" dataKey="recebidas" stroke="#2563eb" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="enviadas" stroke="#10b981" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="recebidas" stroke="#5b8dff" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="enviadas" stroke="#87adff" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -585,7 +570,7 @@ export default function WhatsappPage() {
                 <XAxis type="number" tick={{ fontSize: 12 }} />
                 <YAxis type="category" dataKey="profile" tick={{ fontSize: 12 }} width={95} />
                 <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} />
-                <Bar dataKey="conversations" fill="#0ea5e9" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="conversations" fill="#afc4ff" radius={[0, 4, 4, 0]} />
               </RechartsBarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -634,16 +619,16 @@ export default function WhatsappPage() {
               <div key={row.stage} className="space-y-1.5">
                 <div className="flex items-center justify-between gap-3 text-sm">
                   <span className="flex items-center gap-1.5 text-muted-foreground">
-                    {row.label}
+                    {displayLabel(row.label)}
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <button
+                        <Button variant="ghost" size="sm"
                           type="button"
                           aria-label={`Explicação: ${row.label}`}
                           className="inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:text-foreground"
                         >
                           <Info className="h-3.5 w-3.5" />
-                        </button>
+                        </Button>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs bg-popover text-popover-foreground">
                         {FUNNEL_STAGE_INFO[row.stage]}
@@ -670,7 +655,7 @@ export default function WhatsappPage() {
               <XAxis dataKey="profile" tick={{ fontSize: 12 }} />
               <YAxis tickFormatter={(value) => `${value}m`} tick={{ fontSize: 12 }} />
               <RechartsTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => formatMinutes(Number(value))} />
-              <Bar dataKey="avgResponse" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="avgResponse" fill="#0458fe" radius={[4, 4, 0, 0]} />
             </RechartsBarChart>
           </ResponsiveContainer>
         </CardContent>

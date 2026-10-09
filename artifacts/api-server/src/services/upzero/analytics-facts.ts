@@ -312,3 +312,139 @@ export async function getUpzeroAnalyticsFactsAsMetrics(
 
   return rows;
 }
+
+export type UpzeroFactsByEventResult = {
+  rows: UpzeroAnalyticsMetric[];
+  /** Tipos de evento que não foram lidos até o fim (limite de páginas ou de tempo). */
+  truncatedEvents: string[];
+  /** Tipos de evento que deram erro (tempo esgotado etc.); quem chama decide o plano B. */
+  failedEvents: string[];
+};
+
+/**
+ * Lê os eventos da UP Zero UM TIPO POR VEZ (em paralelo) em vez de uma leitura única de tudo.
+ * Achado 09/10/2026: a leitura única parava em 50 páginas x 1.000 = 50.000 eventos e cortava o resto em silêncio
+ * (num cliente grande, 7 dias já passam disso, e a maior parte era `product_item_impression`). Filtrando por
+ * `event_name` o volume cai muito e cada tipo é lido até o fim; o que não couber no limite volta em `truncatedEvents`.
+ */
+export async function getUpzeroAnalyticsFactsByEvent(
+  params: Omit<GetUpzeroAnalyticsFactsParams, "cursor" | "eventName"> & {
+    eventNames: readonly string[];
+    maxPagesPerEvent?: number;
+    concurrency?: number;
+    deadlineMs?: number;
+  },
+): Promise<UpzeroFactsByEventResult> {
+  const { eventNames, maxPagesPerEvent = 60, concurrency = 6, deadlineMs = 25_000, ...base } = params;
+  const startedAt = Date.now();
+  const rows: UpzeroAnalyticsMetric[] = [];
+  const truncatedEvents: string[] = [];
+  const failedEvents: string[] = [];
+  let firstError: unknown = null;
+  const queue = [...eventNames];
+
+  async function readEvent(eventName: string): Promise<void> {
+    let cursor: string | null = null;
+    const seenCursors = new Set<string>();
+    for (let page = 0; page < maxPagesPerEvent; page += 1) {
+      if (Date.now() - startedAt > deadlineMs) {
+        truncatedEvents.push(eventName);
+        return;
+      }
+      const response: UpzeroAnalyticsFactsResponse = await getUpzeroAnalyticsFacts({ ...base, eventName, cursor, limit: base.limit ?? 1000 });
+      for (const fact of response.data) rows.push(factToAnalyticsMetric(fact));
+      if (!response.next_cursor || seenCursors.has(response.next_cursor)) return;
+      seenCursors.add(response.next_cursor);
+      cursor = response.next_cursor;
+    }
+    truncatedEvents.push(eventName);
+  }
+
+  async function worker(): Promise<void> {
+    for (let eventName = queue.shift(); eventName !== undefined; eventName = queue.shift()) {
+      try {
+        await readEvent(eventName);
+      } catch (err) {
+        failedEvents.push(eventName);
+        firstError ??= err;
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, eventNames.length) }, () => worker()));
+  // Se NADA deu certo (chave inválida, UP Zero fora do ar), propaga o erro em vez de devolver um resultado vazio.
+  if (eventNames.length > 0 && failedEvents.length === eventNames.length) throw firstError;
+  return { rows, truncatedEvents, failedEvents };
+}
+
+/**
+ * Lê UM tipo de evento em fatias de 1 dia (em paralelo) e guarda só um registro por PESSOA (mais todos os registros de
+ * usuários identificados, que a jornada precisa). Achado 09/10/2026: `page_view` tem 13 mil+ eventos em 7 dias e a
+ * página 14 do cursor não respondeu em 40 s; fatiado por dia, cada fatia fica rasa e rápida. `complete=false` quando
+ * alguma fatia falhou ou estourou o limite de páginas/tempo (quem chama usa uma estimativa).
+ */
+export async function getUpzeroFactActorsByDay(params: {
+  from: string;
+  to: string;
+  apiKey?: string | null;
+  eventName: string;
+  actorKey: (row: UpzeroAnalyticsMetric) => string | null;
+  isIdentified: (row: UpzeroAnalyticsMetric) => boolean;
+  maxPagesPerSlice?: number;
+  concurrency?: number;
+  deadlineMs?: number;
+}): Promise<{ rows: UpzeroAnalyticsMetric[]; complete: boolean }> {
+  const { from, to, apiKey, eventName, actorKey, isIdentified, maxPagesPerSlice = 25, concurrency = 6, deadlineMs = 25_000 } = params;
+  const startedAt = Date.now();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const rangeStart = new Date(from).getTime();
+  const rangeEnd = new Date(to).getTime();
+  const slices: Array<{ from: string; to: string }> = [];
+  for (let start = rangeStart; start <= rangeEnd; start += DAY_MS) {
+    slices.push({
+      from: new Date(start).toISOString(),
+      to: new Date(Math.min(start + DAY_MS - 1000, rangeEnd)).toISOString(),
+    });
+  }
+  const seenActors = new Set<string>();
+  const rows: UpzeroAnalyticsMetric[] = [];
+  let complete = true;
+
+  async function readSlice(slice: { from: string; to: string }): Promise<void> {
+    let cursor: string | null = null;
+    const seenCursors = new Set<string>();
+    for (let page = 0; page < maxPagesPerSlice; page += 1) {
+      if (Date.now() - startedAt > deadlineMs) {
+        complete = false;
+        return;
+      }
+      let response: UpzeroAnalyticsFactsResponse;
+      try {
+        response = await getUpzeroAnalyticsFacts({ from: slice.from, to: slice.to, apiKey, eventName, cursor, limit: 1000 });
+      } catch {
+        complete = false;
+        return;
+      }
+      for (const fact of response.data) {
+        const metric = factToAnalyticsMetric(fact);
+        const key = actorKey(metric);
+        const identified = isIdentified(metric);
+        if (identified || (key && !seenActors.has(key))) {
+          if (key) seenActors.add(key);
+          rows.push(metric);
+        }
+      }
+      if (!response.next_cursor || seenCursors.has(response.next_cursor)) return;
+      seenCursors.add(response.next_cursor);
+      cursor = response.next_cursor;
+    }
+    complete = false;
+  }
+
+  const queue = [...slices];
+  async function worker(): Promise<void> {
+    for (let slice = queue.shift(); slice !== undefined; slice = queue.shift()) await readSlice(slice);
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, slices.length) }, () => worker()));
+  return { rows, complete };
+}

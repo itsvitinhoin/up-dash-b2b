@@ -1,19 +1,23 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { useI18n } from "@/lib/i18n"
 
 const Table = React.forwardRef<
   HTMLTableElement,
   React.HTMLAttributes<HTMLTableElement>
->(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
-    <table
-      ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
-      {...props}
-    />
-  </div>
-))
+>(({ className, ...props }, ref) => {
+  const { tx } = useI18n()
+  return (
+    <div data-up-table-scroll tabIndex={0} role="region" aria-label={tx("Tabela com rolagem horizontal")} className="relative min-w-0 max-w-full w-full overflow-auto">
+      <table
+        ref={ref}
+        className={cn("w-full caption-bottom text-sm", className)}
+        {...props}
+      />
+    </div>
+  )
+})
 Table.displayName = "Table"
 
 const TableHeader = React.forwardRef<

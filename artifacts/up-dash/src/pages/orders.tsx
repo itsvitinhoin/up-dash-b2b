@@ -1,3 +1,6 @@
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
+import { useDisplayLabel } from "@/lib/display-label";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
@@ -189,7 +192,8 @@ function originClass(origin: OrderOrigin) {
 }
 
 export default function OrdersPage() {
-  const { t } = useI18n();
+  const { t, tx } = useI18n();
+  const displayLabel = useDisplayLabel();
   const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange } = useDashboardFilters();
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
@@ -224,6 +228,8 @@ export default function OrdersPage() {
     queryKey: ["orders-page", queryString],
     queryFn: () => customFetch<OrdersPageResponse>(`/api/analytics/orders-page?${queryString}`),
   });
+
+  const previous = usePreviousPeriodQuery<OrdersPageResponse>(`/api/analytics/orders-page?${queryString}`, enabled);
 
   const exportXlsx = async () => {
     setExporting(true);
@@ -315,9 +321,10 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? "Não cancelados" : "Valor solicitado" }]}
               sparkValues={[]}
-              sparkColor="#60a5fa"
+              sparkColor="#afc4ff"
               isLoading={false}
               testId="orders-kpi-requested-revenue"
+              comparisonValue={data?.kpis.requestedRevenue ?? null} previousValue={previous.data?.kpis.requestedRevenue} source="Ecommerce · pedidos"
               valueAccent
             />
             <DashboardKpiCard
@@ -330,9 +337,10 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? "Pedidos pagos" : "Valor atendido" }]}
               sparkValues={[]}
-              sparkColor="#34d399"
+              sparkColor="#87adff"
               isLoading={false}
               testId="orders-kpi-fulfilled-revenue"
+              comparisonValue={data?.kpis.fulfilledRevenue ?? null} previousValue={previous.data?.kpis.fulfilledRevenue} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={isB2C ? "Peças faturadas" : t("orders.kpi.requestedQuantity", "Peças solicitadas")}
@@ -344,9 +352,10 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? "Qtd faturada" : "Qtd solicitada" }]}
               sparkValues={[]}
-              sparkColor="#a78bfa"
+              sparkColor="#5b8dff"
               isLoading={false}
               testId="orders-kpi-requested-quantity"
+              comparisonValue={data?.kpis.requestedQuantity ?? null} previousValue={previous.data?.kpis.requestedQuantity} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={isB2C ? "Peças pagas" : t("orders.kpi.fulfilledQuantity", "Peças atendidas")}
@@ -358,9 +367,10 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Base", value: isB2C ? "Qtd paga" : "Qtd atendida" }]}
               sparkValues={[]}
-              sparkColor="#f59e0b"
+              sparkColor="#0458fe"
               isLoading={false}
               testId="orders-kpi-fulfilled-quantity"
+              comparisonValue={data?.kpis.fulfilledQuantity ?? null} previousValue={previous.data?.kpis.fulfilledQuantity} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={isB2C ? "% Pago" : t("orders.kpi.fulfilledPct", "% de atendido")}
@@ -372,10 +382,11 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Cálculo", value: isB2C ? "Pago / faturado" : "Atendido / solicitado" }]}
               sparkValues={[]}
-              sparkColor="#22d3ee"
+              sparkColor="#afc4ff"
               ringValue={data?.kpis.fulfilledPct ?? 0}
               isLoading={false}
               testId="orders-kpi-fulfilled-pct"
+              comparisonValue={data?.kpis.fulfilledPct ?? null} previousValue={previous.data?.kpis.fulfilledPct} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={t("orders.kpi.orders", "Qtd de pedidos")}
@@ -387,9 +398,10 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Período", value: "Pedidos criados" }]}
               sparkValues={[]}
-              sparkColor="#38bdf8"
+              sparkColor="#afc4ff"
               isLoading={false}
               testId="orders-kpi-orders"
+              comparisonValue={data?.kpis.orders ?? null} previousValue={previous.data?.kpis.orders} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={isB2C ? "Novos compradores" : t("orders.kpi.newCustomers", "Clientes novos")}
@@ -401,9 +413,10 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Regra", value: "1 pedido no período" }]}
               sparkValues={[]}
-              sparkColor="#84cc16"
+              sparkColor="#87adff"
               isLoading={false}
               testId="orders-kpi-new-customers"
+              comparisonValue={data?.kpis.newCustomers ?? null} previousValue={previous.data?.kpis.newCustomers} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={isB2C ? "Recompradores" : t("orders.kpi.returningCustomers", "Clientes recorrentes")}
@@ -415,9 +428,10 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Regra", value: "2+ pedidos no período" }]}
               sparkValues={[]}
-              sparkColor="#c084fc"
+              sparkColor="#5b8dff"
               isLoading={false}
               testId="orders-kpi-returning-customers"
+              comparisonValue={data?.kpis.returningCustomers ?? null} previousValue={previous.data?.kpis.returningCustomers} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={t("orders.kpi.retentionPct", "% de retenção")}
@@ -429,10 +443,11 @@ export default function OrdersPage() {
               changeLabel=""
               sub={[{ label: "Cálculo", value: "Recorrentes / compradores" }]}
               sparkValues={[]}
-              sparkColor="#fb7185"
+              sparkColor="#b3caff"
               ringValue={data?.kpis.retentionPct ?? 0}
               isLoading={false}
               testId="orders-kpi-retention-pct"
+              comparisonValue={data?.kpis.retentionPct ?? null} previousValue={previous.data?.kpis.retentionPct} source="Ecommerce · pedidos"
             />
             <DashboardKpiCard
               label={t("orders.kpi.conversionPct", "% de conversão")}
@@ -442,12 +457,13 @@ export default function OrdersPage() {
               iconClass="bg-orange-500/10 text-orange-400"
               change={null}
               changeLabel=""
-              sub={[{ label: "Base", value: isB2C ? `${formatNumber(data?.kpis.sessions ?? 0)} sessões` : `${formatNumber(data?.kpis.approvedLeads ?? 0)} aprovados` }]}
+              sub={[{ label: "Base", value: isB2C ? `${formatNumber(data?.kpis.sessions ?? 0)} ${tx("sessões")}` : `${formatNumber(data?.kpis.approvedLeads ?? 0)} ${tx("aprovados")}` }]}
               sparkValues={[]}
-              sparkColor="#fb923c"
+              sparkColor="#0458fe"
               ringValue={data?.kpis.conversionPct ?? 0}
               isLoading={false}
               testId="orders-kpi-conversion-pct"
+              comparisonValue={data?.kpis.conversionPct ?? null} previousValue={previous.data?.kpis.conversionPct} source="Ecommerce · pedidos"
             />
           </>
         )}
@@ -541,7 +557,7 @@ export default function OrdersPage() {
                         <TableCell>
                           <div className="flex flex-col gap-1">
                             <Badge variant="outline" className={`w-fit max-w-[260px] justify-start truncate ${originClass(order.origin)}`}>
-                              {order.origin.label}
+                              {displayLabel(order.origin.label)}
                             </Badge>
                             <span className="truncate text-xs text-muted-foreground">
                               {order.origin.medium} · {order.origin.campaign}
@@ -550,7 +566,7 @@ export default function OrdersPage() {
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={statusClass(order.status)}>
-                            {order.status}
+                            {displayLabel(order.status)}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right">
@@ -565,7 +581,7 @@ export default function OrdersPage() {
                 </Table>
               </div>
 
-              <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
                 <span>
                   Página {formatNumber(page)} de {formatNumber(totalPages)} · {formatNumber(data.total)} pedidos
                 </span>
@@ -604,22 +620,10 @@ export default function OrdersPage() {
           ) : (
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Valor faturado" : "Valor solicitado"}</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.amount)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Valor pago" : "Valor atendido"}</p>
-                  <p className="text-lg font-semibold">{formatCurrency(details.order.fulfilledAmount)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Peças faturadas" : "Peças solicitadas"}</p>
-                  <p className="text-lg font-semibold">{formatNumber(details.order.requestedQuantity)}</p>
-                </div>
-                <div className="rounded-lg border border-border p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Peças pagas" : "Peças atendidas"}</p>
-                  <p className="text-lg font-semibold">{formatNumber(details.order.fulfilledQuantity)}</p>
-                </div>
+                <GlassMetricCard  label={isB2C ? "Valor faturado" : "Valor solicitado"} value={<>{formatCurrency(details.order.amount)}</>} hideComparison />
+                <GlassMetricCard  label={isB2C ? "Valor pago" : "Valor atendido"} value={<>{formatCurrency(details.order.fulfilledAmount)}</>} hideComparison />
+                <GlassMetricCard  label={isB2C ? "Peças faturadas" : "Peças solicitadas"} value={<>{formatNumber(details.order.requestedQuantity)}</>} hideComparison />
+                <GlassMetricCard  label={isB2C ? "Peças pagas" : "Peças atendidas"} value={<>{formatNumber(details.order.fulfilledQuantity)}</>} hideComparison />
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">
@@ -640,7 +644,7 @@ export default function OrdersPage() {
                 <div className="rounded-lg border border-border p-4">
                   <h3 className="mb-2 text-sm font-semibold">Pedido</h3>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    <span className="text-muted-foreground">Status</span><span>{details.order.status}</span>
+                    <span className="text-muted-foreground">Status</span><span>{displayLabel(details.order.status)}</span>
                     <span className="text-muted-foreground">Criado em</span><span>{formatDateTime(details.order.createdAt)}</span>
                     <span className="text-muted-foreground">Aprovado em</span><span>{formatDateTime(details.order.approvalDate)}</span>
                     <span className="text-muted-foreground">Frete</span><span>{formatCurrency(details.order.shippingAmount)}</span>
@@ -670,15 +674,15 @@ export default function OrdersPage() {
                       </div>
                       <div className="grid grid-cols-3 gap-4 text-right text-sm sm:min-w-[280px]">
                         <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Faturada" : "Solicitada"}</p>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{tx(isB2C ? "Faturada" : "Solicitada")}</p>
                           <p className="font-semibold tabular-nums">{formatNumber(item.quantity)}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isB2C ? "Paga" : "Atendida"}</p>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{tx(isB2C ? "Paga" : "Atendida")}</p>
                           <p className="font-semibold tabular-nums">{formatNumber(item.fulfilledQuantity)}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor</p>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{tx("Valor")}</p>
                           <p className="font-semibold tabular-nums">{formatCurrency(item.priceAtSale)}</p>
                         </div>
                       </div>
