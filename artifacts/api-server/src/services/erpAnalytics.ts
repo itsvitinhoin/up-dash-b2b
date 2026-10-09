@@ -865,7 +865,7 @@ export async function fetchErpOrdersPage(
 
   const [[listRows], [countRows]] = await Promise.all([
     bigquery.query({
-      query: `${baseQuery} SELECT * FROM base ${whereClause} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+      query: `${baseQuery} SELECT * FROM base ${whereClause} ORDER BY created_at DESC, pedido_id DESC LIMIT @limit OFFSET @offset`,
       params,
     }),
     bigquery.query({
@@ -1085,7 +1085,7 @@ export async function fetchErpCustomersPage(
 
   const [[listRows], [countRows]] = await Promise.all([
     bigquery.query({
-      query: `${baseQuery} SELECT * FROM base ${whereClause} ORDER BY total_spent DESC LIMIT @limit OFFSET @offset`,
+      query: `${baseQuery} SELECT * FROM base ${whereClause} ORDER BY total_spent DESC, id LIMIT @limit OFFSET @offset`,
       params,
     }),
     bigquery.query({
@@ -1375,7 +1375,7 @@ export async function fetchErpProductsPage(
         query: `
       ${baseCte}
       SELECT * FROM products
-      ORDER BY ${sortColumn} DESC
+      ORDER BY ${sortColumn} DESC, product_id
       LIMIT @limit OFFSET @offset
     `,
         params,

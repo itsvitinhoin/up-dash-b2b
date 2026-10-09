@@ -745,7 +745,7 @@ export async function fetchVestiOrdersPage(
     SELECT p.*, ca.email IS NOT NULL AS is_attributed
     FROM pedidos p
     LEFT JOIN ${clientesAtribuidos} ca ON LOWER(ca.email) = LOWER(p.customer_email)
-    ORDER BY created_at DESC
+    ORDER BY created_at DESC, pedido_id DESC
     LIMIT @limit OFFSET @offset
   `;
 
@@ -1033,7 +1033,7 @@ export async function fetchVestiCustomersPage(
     ${baseQuery}
     SELECT * FROM base
     ${whereClause}
-    ORDER BY ${sortColumn} ${sortDir === "asc" ? "ASC" : "DESC"}
+    ORDER BY ${sortColumn} ${sortDir === "asc" ? "ASC" : "DESC"}, id
     LIMIT @limit OFFSET @offset
   `;
   const countQuery = `${baseQuery} SELECT COUNT(*) AS total FROM base ${whereClause}`;
@@ -2779,7 +2779,7 @@ export async function fetchVestiSellerOrders(
           GROUP BY pedido_id
         )
         SELECT * FROM pedidos
-        ORDER BY data_ref DESC
+        ORDER BY data_ref DESC, pedido_id DESC
         LIMIT @limit OFFSET @offset
       `,
       params: { sellerName, dateFrom, dateTo, limit, offset },

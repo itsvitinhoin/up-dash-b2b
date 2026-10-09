@@ -92,7 +92,8 @@ import {
   getUpzeroAnalyticsMetrics,
   type UpzeroAnalyticsMetric,
 } from "../services/upzero/analytics-metrics";
-import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-facts";
+import { getUpzeroAnalyticsFactsAsMetrics, getUpzeroAnalyticsFactsByEvent, getUpzeroFactActorsByDay } from "../services/upzero/analytics-facts";
+import { buildFunnelSteps, countFunnelPeople, FUNNEL_EVENT_NAMES, funnelActorKey, worstFunnelStep, type FunnelStepKey } from "../services/funnel-people";
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
@@ -460,6 +461,78 @@ async function getUpzeroTrackingRows(params: {
     const metrics = await getUpzeroAnalyticsMetrics(params);
     return { rows: metrics.data, source: "metrics" };
   }
+}
+
+// Funil: lê só os tipos de evento que o funil usa, um por vez (ver getUpzeroAnalyticsFactsByEvent).
+// Achado 09/10/2026 (medido na UP Zero): cada tipo lê inteiro em 1-2 s, exceto `page_view` -- 13 mil+ eventos em
+// 7 dias e a página 14 do cursor nem respondeu em 40 s. As VISITAS são lidas em fatias de 1 dia (pessoas distintas).
+// Se uma fatia/tipo falhar ou estourar o limite, esse tipo usa as métricas por hora, que SÓ ESTIMAM: a soma de
+// sessões por hora conta a mesma pessoa várias vezes (medido: 2.526 contra ~1.016 pessoas reais em 2 dias).
+const FUNNEL_SLICED_EVENTS: readonly string[] = ["page_view"];
+
+// A análise "Ativação B2B" (cadastro aprovado -> 1ª compra) nunca chegou na tela (o contrato da API a descartava).
+// Achado 09/10/2026: ligá-la agora mostraria 0,2% na MX Fashion, porque o sincronizador das 00:03 recria clientes que já
+// tinham pedido com cadastro e aprovação carimbados com a HORA DO SYNC (52 clientes, todos compradores): para eles o 1º
+// pedido sempre "vem antes" da aprovação. Só liga com FUNNEL_ACTIVATION=1, depois que o sync gravar as datas reais.
+const FUNNEL_ACTIVATION_ENABLED = process.env.FUNNEL_ACTIVATION === "1";
+
+async function getFunnelTrackingRows(params: {
+  from: string;
+  to: string;
+  apiKey?: string | null;
+}): Promise<{ rows: UpzeroAnalyticsMetric[]; source: "facts" | "metrics"; complete: boolean }> {
+  let factRows: UpzeroAnalyticsMetric[] = [];
+  let source: "facts" | "metrics" = "facts";
+  const viaMetrics = new Set<string>();
+  try {
+    const [byEvent, sliced] = await Promise.all([
+      getUpzeroAnalyticsFactsByEvent({
+        ...params,
+        eventNames: FUNNEL_EVENT_NAMES.filter((name) => !FUNNEL_SLICED_EVENTS.includes(name)),
+      }),
+      Promise.all(
+        FUNNEL_SLICED_EVENTS.map(async (eventName) => ({
+          eventName,
+          ...(await getUpzeroFactActorsByDay({
+            ...params,
+            eventName,
+            actorKey: (row) => funnelActorKey(row),
+            isIdentified: (row) => getMetricUser(row) !== null,
+          })),
+        })),
+      ),
+    ]);
+    for (const name of [...byEvent.truncatedEvents, ...byEvent.failedEvents]) viaMetrics.add(name);
+    for (const slice of sliced) if (!slice.complete) viaMetrics.add(slice.eventName);
+    // linhas parciais de um tipo cortado/falho são descartadas: esse tipo será lido pelas métricas
+    factRows = bridgeAnonymousRowsToIdentifiedUsers(
+      [...byEvent.rows, ...sliced.flatMap((slice) => slice.rows)].filter((row) => !viaMetrics.has(row.event_name)),
+    );
+  } catch (err) {
+    console.warn(
+      "[upzero:funnel] facts por evento indisponível; usando só métricas por hora:",
+      err instanceof Error ? err.message : err,
+    );
+    source = "metrics";
+    for (const name of FUNNEL_EVENT_NAMES) viaMetrics.add(name);
+  }
+  let complete = true;
+  const metricRows: UpzeroAnalyticsMetric[] = [];
+  await Promise.all(
+    [...viaMetrics].map(async (eventName) => {
+      try {
+        const metrics = await getUpzeroAnalyticsMetrics({ ...params, eventName });
+        metricRows.push(...metrics.data);
+      } catch (err) {
+        complete = false;
+        console.warn(
+          "[upzero:funnel] métricas indisponíveis para", eventName + ":",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }),
+  );
+  return { rows: [...factRows, ...metricRows], source, complete };
 }
 
 function bridgeKeysForRow(row: UpzeroAnalyticsMetric): string[] {
@@ -3370,102 +3443,92 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     }
   }
 
+  const hasUtmFilter = Boolean(utmSource || utmMedium || utmCampaign);
+  const utmCustomerConditions = (): SQL[] => {
+    const parts: SQL[] = [];
+    if (utmSource) parts.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
+    if (utmMedium) parts.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
+    if (utmCampaign) parts.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
+    return parts;
+  };
+  // Cadastros e aprovados vêm da base de clientes (é a fonte de verdade); compradores, dos pedidos pagos.
+  // Mesma janela da página Cadastros (customerDateQueryRange): antes o funil dava 748 onde Cadastros dava 749.
+  const customerWindow = (() => {
+    const range = customerDateQueryRange(rawQuery, parsed.data.dateFrom, parsed.data.dateTo);
+    return dateRange(range.from, range.to);
+  })();
+  const loadCustomerTotals = async () => {
+    const [row] = await db
+      .select({
+        registrations: sql<number>`COUNT(*)::int`,
+        approved: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
+      })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId),
+          gte(customersTable.createdAt, customerWindow.from),
+          lte(customersTable.createdAt, customerWindow.to),
+          ...utmCustomerConditions(),
+        ),
+      );
+    return { registrations: Number(row?.registrations ?? 0), approved: Number(row?.approved ?? 0) };
+  };
+  const loadPaidBuyers = async (): Promise<number | null> => {
+    if (hasUtmFilter) return null;
+    const [row] = await db
+      .select({ buyers: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, from),
+          lte(ordersTable.createdAt, to),
+          sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`,
+        ),
+      );
+    return Number(row?.buyers ?? 0);
+  };
+  // Achado 09/10/2026: estes campos extras ficam FORA do `GetFunnelResponse.parse` de propósito -- o contrato
+  // gerado não conhece `activation` (o parse o descartava e a análise "Ativação B2B" nunca chegava na tela).
+  const sendFunnel = (
+    body: unknown,
+    extra: { activation?: unknown; dataSource: "upzero-events" | "upzero-hourly" | "local"; dataComplete: boolean },
+  ): void => {
+    res.json({
+      ...GetFunnelResponse.parse(body),
+      ...(extra.activation ? { activation: extra.activation } : {}),
+      dataSource: extra.dataSource,
+      dataComplete: extra.dataComplete,
+    });
+  };
+
   try {
     const [client] = await db
       .select({ upZeroApiKey: clientsTable.upZeroApiKey })
       .from(clientsTable)
       .where(eq(clientsTable.id, clientId));
     const upzeroRange = upzeroIsoRange(req.query as Record<string, unknown>, from, to);
-    const tracking = await getUpzeroTrackingRows({
-      ...upzeroRange,
-      apiKey: client?.upZeroApiKey,
-      context: "funnel",
-    });
+    const tracking = await getFunnelTrackingRows({ ...upzeroRange, apiKey: client?.upZeroApiKey });
     const scopedMetrics = tracking.rows.filter((row) => {
       if (utmSource && row.utm_source?.toLowerCase() !== utmSource.toLowerCase()) return false;
       if (utmMedium && row.utm_medium?.toLowerCase() !== utmMedium.toLowerCase()) return false;
       if (utmCampaign && row.utm_campaign?.toLowerCase() !== utmCampaign.toLowerCase()) return false;
       return true;
     });
-    const counts: Record<string, number> = {
-      VISIT: 0,
-      CATEGORY_VIEW: 0,
-      PRODUCT_VIEW: 0,
-      FORM_START: 0,
-      REGISTER_START: 0,
-      REGISTRATION: 0,
-      APPROVED_REGISTRATION: 0,
-      LOGIN: 0,
-      ADD_TO_CART: 0,
-      CHECKOUT_STARTED: 0,
-      ORDER_CREATED: 0,
-      PURCHASE: 0,
-      PAYMENT_APPROVED: 0,
+    // Cada etapa conta PESSOAS distintas (ver services/funnel-people.ts).
+    const people = countFunnelPeople(scopedMetrics);
+    const [customerTotals, paidBuyers] = await Promise.all([loadCustomerTotals(), loadPaidBuyers()]);
+    const counts: Partial<Record<FunnelStepKey, number>> = {
+      ...people.counts,
+      // O cadastro da base nunca pode ficar abaixo do que foi rastreado nem dos aprovados; compra, idem com os pedidos pagos.
+      REGISTRATION: Math.max(people.counts.REGISTRATION, customerTotals.registrations),
+      APPROVED_REGISTRATION: customerTotals.approved,
+      PURCHASE: Math.max(people.counts.PURCHASE, paidBuyers ?? 0),
     };
-    for (const row of scopedMetrics) {
-      const value = row.total_events || 0;
-      switch (row.event_name) {
-        case "page_view":
-          counts.VISIT += value;
-          break;
-        case "category_view":
-          counts.CATEGORY_VIEW += value;
-          break;
-        case "product_view":
-        case "product_item_impression":
-          counts.PRODUCT_VIEW += value;
-          break;
-        case "form_start":
-          counts.FORM_START += value;
-          break;
-        case "register_start":
-          counts.REGISTER_START += value;
-          break;
-        case "register_submitted":
-          counts.REGISTRATION += value;
-          break;
-        case "login":
-          counts.LOGIN += value;
-          break;
-        case "add_to_cart":
-          counts.ADD_TO_CART += value;
-          break;
-        case "initiate_checkout":
-        case "checkout_start":
-          counts.CHECKOUT_STARTED += value;
-          break;
-        case "order_created":
-          counts.ORDER_CREATED += value;
-          break;
-        case "purchase":
-          counts.PURCHASE += value;
-          break;
-        case "order_paid":
-        case "payment_approved":
-          counts.PAYMENT_APPROVED += value;
-          break;
-        default:
-          break;
-      }
-    }
 
-    const approvedConditions: SQL[] = [
-      eq(customersTable.clientId, clientId),
-      eq(customersTable.registrationStatus, "APPROVED"),
-      gte(customersTable.createdAt, from),
-      lte(customersTable.createdAt, to),
-    ];
-    if (utmSource) approvedConditions.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
-    if (utmMedium) approvedConditions.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
-    if (utmCampaign) approvedConditions.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
-    const [approvedRegistrations] = await db
-      .select({ count: sql<number>`COUNT(*)::int` })
-      .from(customersTable)
-      .where(and(...approvedConditions));
-    counts.APPROVED_REGISTRATION = Number(approvedRegistrations?.count ?? 0);
-
-    const funnelOrder: Array<{ step: string; label: string }> = [
-      { step: "VISIT", label: "Visualizações de página" },
+    const funnelOrder: Array<{ step: FunnelStepKey; label: string }> = [
+      { step: "VISIT", label: "Visitas ao site" },
       { step: "CATEGORY_VIEW", label: "Categorias vistas" },
       { step: "PRODUCT_VIEW", label: "Produtos vistos" },
       { step: "FORM_START", label: "Formulários iniciados" },
@@ -3480,47 +3543,23 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       { step: "PAYMENT_APPROVED", label: "Pagamentos aprovados" },
     ];
     const approvedBaseline = counts.APPROVED_REGISTRATION ?? 0;
-    const postApprovalSteps = new Set(["LOGIN", "ADD_TO_CART", "CHECKOUT_STARTED", "ORDER_CREATED", "PURCHASE", "PAYMENT_APPROVED"]);
-    const steps = funnelOrder.map((step, index) => {
-      const count = counts[step.step] ?? 0;
-      const previous = index === 0 ? count : counts[funnelOrder[index - 1].step] ?? 0;
-      const conversionRate =
-        index === 0
-          ? 100
-          : step.step === "APPROVED_REGISTRATION"
-            ? previous > 0
-              ? (count / previous) * 100
-              : count > 0
-                ? 100
-                : 0
-            : postApprovalSteps.has(step.step) && approvedBaseline > 0
-              ? (count / approvedBaseline) * 100
-              : previous > 0
-                ? (count / previous) * 100
-                : 0;
-      return {
-        ...step,
-        count,
-        conversionRate,
-        dropOffRate: index === 0 ? 0 : 100 - conversionRate,
-      };
-    });
+    const steps = buildFunnelSteps(funnelOrder, counts, approvedBaseline);
     const conversionCount = counts.PAYMENT_APPROVED || counts.PURCHASE || counts.ORDER_CREATED || 0;
-    const overallConversion = approvedBaseline > 0 ? (conversionCount / approvedBaseline) * 100 : 0;
-    let worst = { idx: -1, drop: -1 };
-    for (let i = 1; i < steps.length; i++) {
-      if (steps[i].dropOffRate > worst.drop) worst = { idx: i, drop: steps[i].dropOffRate };
-    }
+    const overallConversion = approvedBaseline > 0 ? Math.min(100, (conversionCount / approvedBaseline) * 100) : 0;
+    const worst = worstFunnelStep(steps);
+    const complete = tracking.complete;
     const insights = [
       tracking.source === "facts"
-        ? `Funil alimentado pela UP Zero com ${scopedMetrics.length} eventos granulares no período.`
-        : `Funil alimentado pela UP Zero com ${scopedMetrics.length} linhas agregadas por hora no período.`,
+        ? `Funil alimentado pela UP Zero: etapas contadas por pessoa distinta (visitas por sessão), a partir de ${scopedMetrics.length} registros do período.`
+        : `Funil alimentado pela UP Zero com ${scopedMetrics.length} linhas agregadas por hora; sem como separar pessoas, essas etapas somam sessões.`,
       `Conversão geral de ${overallConversion.toFixed(2)}% calculada sobre ${approvedBaseline} cadastros aprovados.`,
     ];
+    if (!complete) {
+      insights.push("A UP Zero não respondeu para algumas etapas neste período; elas podem estar abaixo do real.");
+    }
     if (worst.idx > 0) {
-      insights.unshift(
-        `Maior queda (${worst.drop.toFixed(1)}%) entre ${steps[worst.idx - 1].label} e ${steps[worst.idx].label}.`,
-      );
+      const fromStep = steps.slice(0, worst.idx).reverse().find((step) => step.count > 0) ?? steps[worst.idx - 1];
+      insights.unshift(`Maior queda (${worst.drop.toFixed(1)}%) entre ${fromStep.label} e ${steps[worst.idx].label}.`);
     }
     const avgEventsBeforePurchase = (() => {
       const byUser = new Map<number, UpzeroAnalyticsMetric[]>();
@@ -3543,7 +3582,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       }
       return perBuyer.length > 0 ? perBuyer.reduce((sum, value) => sum + value, 0) / perBuyer.length : 0;
     })();
-    const activation = funnelClient?.dashboardType === "B2B"
+    const activation = FUNNEL_ACTIVATION_ENABLED && funnelClient?.dashboardType === "B2B"
       ? await buildApprovedCustomerActivationAnalysis({
           clientId,
           from,
@@ -3555,39 +3594,38 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
         })
       : null;
 
-    res.json(GetFunnelResponse.parse({
-      steps,
-      overallConversion,
-      insights,
-      avgEventsBeforePurchase,
-      topPaths: [],
-      suggestedActions: buildFunnelSuggestedActions(worst, steps),
-      hasSiteVisitData: counts.VISIT > 0,
-      activation,
-    }));
+    sendFunnel(
+      {
+        steps,
+        overallConversion,
+        insights,
+        avgEventsBeforePurchase,
+        topPaths: [],
+        suggestedActions: buildFunnelSuggestedActions(worst, steps),
+        hasSiteVisitData: (counts.VISIT ?? 0) > 0,
+      },
+      { activation, dataSource: tracking.source === "facts" ? "upzero-events" : "upzero-hourly", dataComplete: complete },
+    );
     return;
   } catch (err) {
     console.warn("[funnel] UP Zero analytics metrics unavailable; falling back to local events:", err);
   }
 
+  // Caminho local (a UP Zero não respondeu): conta pessoas distintas nas tabelas do próprio painel.
   // If UTM filters are active, build a scoped customer list and restrict events to those customers.
   let scopedCustomerCond: SQL | undefined;
-  if (utmSource || utmMedium || utmCampaign) {
-    const custParts: SQL[] = [eq(customersTable.clientId, clientId)];
-    if (utmSource) custParts.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
-    if (utmMedium) custParts.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
-    if (utmCampaign) custParts.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
+  if (hasUtmFilter) {
     const scopedIds = await db
       .select({ id: customersTable.id })
       .from(customersTable)
-      .where(and(...custParts));
+      .where(and(eq(customersTable.clientId, clientId), ...utmCustomerConditions()));
     if (scopedIds.length === 0) {
       const emptySteps = [
-        { step: "VISIT", label: "Site Visits" },
-        { step: "REGISTRATION", label: "Registrations" },
-        { step: "APPROVED_REGISTRATION", label: "Approved Leads" },
-        { step: "ADD_TO_CART", label: "Added to Cart" },
-        { step: "PURCHASE", label: "Purchases" },
+        { step: "VISIT", label: "Visitas ao site" },
+        { step: "REGISTRATION", label: "Cadastros enviados" },
+        { step: "APPROVED_REGISTRATION", label: "Cadastros aprovados" },
+        { step: "ADD_TO_CART", label: "Adições ao carrinho" },
+        { step: "PURCHASE", label: "Compras" },
       ].map((s, i) => ({ ...s, count: 0, conversionRate: i === 0 ? 100 : 0, dropOffRate: i === 0 ? 0 : 100 }));
       // Check hasSiteVisitData even on the early-return path so the notice logic is correct
       const hasSiteVisitDataRowsEarly = await db
@@ -3595,25 +3633,25 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
         .from(siteVisitsTable)
         .where(eq(siteVisitsTable.clientId, clientId));
       const hasSiteVisitDataEarly = Number(hasSiteVisitDataRowsEarly[0]?.count ?? 0) > 0;
-      res.json(GetFunnelResponse.parse({
-        steps: emptySteps,
-        overallConversion: 0,
-        insights: [],
-        avgEventsBeforePurchase: 0,
-        topPaths: [],
-        suggestedActions: [],
-        hasSiteVisitData: hasSiteVisitDataEarly,
-        activation: funnelClient?.dashboardType === "B2B"
-          ? await buildApprovedCustomerActivationAnalysis({
-              clientId,
-              from,
-              to,
-              utmSource,
-              utmMedium,
-              utmCampaign,
-            })
-          : null,
-      }));
+      sendFunnel(
+        {
+          steps: emptySteps,
+          overallConversion: 0,
+          insights: [],
+          avgEventsBeforePurchase: 0,
+          topPaths: [],
+          suggestedActions: [],
+          hasSiteVisitData: hasSiteVisitDataEarly,
+        },
+        {
+          activation:
+            FUNNEL_ACTIVATION_ENABLED && funnelClient?.dashboardType === "B2B"
+              ? await buildApprovedCustomerActivationAnalysis({ clientId, from, to, utmSource, utmMedium, utmCampaign })
+              : null,
+          dataSource: "local",
+          dataComplete: true,
+        },
+      );
       return;
     }
     scopedCustomerCond = inArray(eventsTable.customerId, scopedIds.map((r) => r.id));
@@ -3623,7 +3661,8 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     db
       .select({
         eventType: eventsTable.eventType,
-        count: sql<number>`COUNT(*)::int`,
+        // pessoas distintas (e não eventos): quem não tem cliente associado conta como uma pessoa por evento
+        count: sql<number>`COUNT(DISTINCT COALESCE(${eventsTable.customerId}, ${eventsTable.id}))::int`,
       })
       .from(eventsTable)
       .where(
@@ -3637,7 +3676,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       .groupBy(eventsTable.eventType),
     // Only pull site_visit totals when there are no UTM filters
     // (visit data is not UTM-scoped — it represents total site traffic)
-    !utmSource && !utmMedium && !utmCampaign
+    !hasUtmFilter
       ? db
           .select({ total: sql<number>`COALESCE(SUM(${siteVisitsTable.visitCount}), 0)::int` })
           .from(siteVisitsTable)
@@ -3651,99 +3690,44 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       : Promise.resolve([{ total: 0 }]),
   ]);
 
-  const counts: Record<string, number> = {};
+  const counts: Partial<Record<FunnelStepKey, number>> = {};
   for (const row of eventCounts) {
-    counts[row.eventType] = Number(row.count);
+    counts[row.eventType as FunnelStepKey] = Number(row.count);
   }
-  const approvedCustomerConditions: SQL[] = [
-    eq(customersTable.clientId, clientId),
-    eq(customersTable.registrationStatus, "APPROVED"),
-    gte(customersTable.createdAt, from),
-    lte(customersTable.createdAt, to),
-  ];
-  if (utmSource) approvedCustomerConditions.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
-  if (utmMedium) approvedCustomerConditions.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
-  if (utmCampaign) approvedCustomerConditions.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
-  const [approvedCustomerRow] = await db
-    .select({ count: sql<number>`COUNT(*)::int` })
-    .from(customersTable)
-    .where(and(...approvedCustomerConditions));
-  counts.APPROVED_REGISTRATION = Number(approvedCustomerRow?.count ?? counts.APPROVED_REGISTRATION ?? 0);
+  const [customerTotals, paidBuyers] = await Promise.all([loadCustomerTotals(), loadPaidBuyers()]);
+  counts.REGISTRATION = Math.max(counts.REGISTRATION ?? 0, customerTotals.registrations);
+  counts.APPROVED_REGISTRATION = customerTotals.approved;
+  counts.PURCHASE = Math.max(counts.PURCHASE ?? 0, paidBuyers ?? 0);
 
   // Overlay site-visit data from the dedicated table (takes priority over any
   // VISIT events that might exist, since the table represents real web traffic)
   const siteVisitTotal = Number(visitTotals[0]?.total ?? 0);
   if (siteVisitTotal > 0) {
-    counts["VISIT"] = siteVisitTotal;
+    counts.VISIT = siteVisitTotal;
   }
 
-  const funnelOrder: Array<{ step: string; label: string }> = [
-    { step: "VISIT", label: "Site Visits" },
-    { step: "REGISTRATION", label: "Registrations" },
-    { step: "APPROVED_REGISTRATION", label: "Approved Leads" },
-    { step: "ADD_TO_CART", label: "Added to Cart" },
-    { step: "PURCHASE", label: "Purchases" },
+  const funnelOrder: Array<{ step: FunnelStepKey; label: string }> = [
+    { step: "VISIT", label: "Visitas ao site" },
+    { step: "REGISTRATION", label: "Cadastros enviados" },
+    { step: "APPROVED_REGISTRATION", label: "Cadastros aprovados" },
+    { step: "ADD_TO_CART", label: "Adições ao carrinho" },
+    { step: "PURCHASE", label: "Compras" },
   ];
-
-  // Enforce monotonic funnel: each step cannot exceed the previous step's count.
-  // Special case: steps with no data (count = 0) — such as VISIT when the data
-  // source doesn't track site visits — must not zero out all downstream steps.
-  // We track `prev` as the last *non-zero* step count so that an absent step is
-  // skipped in the monotonic chain (it has no data to constrain the next step).
-  // Conversion rates are expressed relative to the last non-zero ancestor.
-  let prev = Number.MAX_SAFE_INTEGER; // sentinel = "no data seen yet"
   const approvedBaseline = counts.APPROVED_REGISTRATION ?? 0;
-  const postApprovalSteps = new Set(["ADD_TO_CART", "PURCHASE"]);
-  const steps = funnelOrder.map((s, i) => {
-    const raw = counts[s.step] ?? 0;
-    // When prev is still MAX_SAFE_INTEGER we haven't seen any data yet,
-    // so treat the current step as unconstrained (use raw directly).
-    const effectivePrev = prev === Number.MAX_SAFE_INTEGER ? raw : prev;
-    const count = Math.min(raw, effectivePrev);
-    let conversionRate = 100;
-    if (i > 0) {
-      if (postApprovalSteps.has(s.step) && approvedBaseline > 0) {
-        conversionRate = (count / approvedBaseline) * 100;
-      } else if (prev > 0 && prev < Number.MAX_SAFE_INTEGER) {
-        // Normal case: previous non-zero step exists — compute real conversion.
-        conversionRate = (count / prev) * 100;
-      } else if (count > 0) {
-        // First step with actual data: it is its own baseline (100%).
-        conversionRate = 100;
-      } else {
-        conversionRate = 0;
-      }
-    }
-    const dropOffRate = i === 0 ? 0 : 100 - conversionRate;
-    // Only advance prev when this step has actual data; zero steps are skipped.
-    if (count > 0) prev = count;
-    return {
-      step: s.step,
-      label: s.label,
-      count,
-      conversionRate,
-      dropOffRate,
-    };
-  });
+  const steps = buildFunnelSteps(funnelOrder, counts, approvedBaseline);
 
-  // Overall conversion: purchases over approved registrations.
+  // Overall conversion: buyers over approved registrations.
   const purchaseCount = counts.PURCHASE ?? 0;
-  const overallConversion = approvedBaseline > 0 ? (purchaseCount / approvedBaseline) * 100 : 0;
+  const overallConversion = approvedBaseline > 0 ? Math.min(100, (purchaseCount / approvedBaseline) * 100) : 0;
 
-  let worst = { idx: -1, drop: -1 };
-  for (let i = 1; i < steps.length; i++) {
-    if (steps[i].dropOffRate > worst.drop) {
-      worst = { idx: i, drop: steps[i].dropOffRate };
-    }
-  }
+  const worst = worstFunnelStep(steps);
   const insights: string[] = [];
   if (worst.idx > 0) {
-    insights.push(
-      `Highest drop-off (${worst.drop.toFixed(1)}%) occurs between ${steps[worst.idx - 1].label} and ${steps[worst.idx].label}.`,
-    );
+    const fromStep = steps.slice(0, worst.idx).reverse().find((step) => step.count > 0) ?? steps[worst.idx - 1];
+    insights.push(`Maior queda (${worst.drop.toFixed(1)}%) entre ${fromStep.label} e ${steps[worst.idx].label}.`);
   }
   insights.push(
-    `Overall funnel conversion is ${overallConversion.toFixed(2)}% from approved leads to purchase.`,
+    `Conversão geral de ${overallConversion.toFixed(2)}% de cadastros aprovados até compra (pessoas distintas).`,
   );
 
   // Average events per customer that occurred BEFORE their first purchase in the window
@@ -3784,7 +3768,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     .from(siteVisitsTable)
     .where(eq(siteVisitsTable.clientId, clientId));
   const hasSiteVisitData = Number(hasSiteVisitDataRows[0]?.count ?? 0) > 0;
-  const activation = funnelClient?.dashboardType === "B2B"
+  const activation = FUNNEL_ACTIVATION_ENABLED && funnelClient?.dashboardType === "B2B"
     ? await buildApprovedCustomerActivationAnalysis({
         clientId,
         from,
@@ -3795,7 +3779,10 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       })
     : null;
 
-  res.json(GetFunnelResponse.parse({ steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions, hasSiteVisitData, activation }));
+  sendFunnel(
+    { steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions, hasSiteVisitData },
+    { activation, dataSource: "local", dataComplete: true },
+  );
 });
 
 // ─── Site Visits: GET ────────────────────────────────────────────────────────
@@ -10134,37 +10121,37 @@ function buildFunnelSuggestedActions(
 ): string[] {
   const STEP_ACTIONS: Record<string, string[]> = {
     REGISTRATION: [
-      "Simplify the registration form — fewer required fields can lift signups significantly.",
-      "Add social login options to reduce friction at registration.",
-      "A/B test the registration CTA copy and placement.",
+      "Simplifique o formulário de cadastro: menos campos obrigatórios costumam aumentar os cadastros.",
+      "Ofereça login social para reduzir o atrito no cadastro.",
+      "Faça teste A/B do texto e da posição do botão de cadastro.",
     ],
     APPROVED_REGISTRATION: [
-      "Review approval criteria — if the approval rate is below 50%, consider loosening them.",
-      "Send an immediate approval-notification email/SMS to keep momentum.",
-      "Set up an automated follow-up sequence for pending applications.",
+      "Revise os critérios de aprovação: se a taxa de aprovação estiver abaixo de 50%, considere flexibilizá-los.",
+      "Envie e-mail/SMS de aprovação imediatamente para manter o interesse do cliente.",
+      "Crie uma sequência automática de acompanhamento para cadastros pendentes.",
     ],
     ADD_TO_CART: [
-      "Add urgency signals (limited stock badges, countdown timers) to product pages.",
-      "Improve product page visuals and descriptions to drive cart adds.",
-      "Introduce a 'Recently Viewed' or 'Recommended' section to surface relevant products.",
+      "Use sinais de urgência (selo de estoque limitado, contagem regressiva) nas páginas de produto.",
+      "Melhore as imagens e as descrições das páginas de produto para aumentar as adições ao carrinho.",
+      "Inclua uma seção de 'Vistos recentemente' ou 'Recomendados' para destacar produtos relevantes.",
     ],
     CHECKOUT_STARTED: [
-      "Reduce the number of checkout steps — a single-page checkout converts better.",
-      "Enable guest checkout to remove the login barrier.",
-      "Show trust signals (SSL badge, return policy) prominently at checkout.",
+      "Reduza o número de etapas do checkout: o checkout em uma só página converte melhor.",
+      "Permita comprar sem login para remover a barreira de acesso.",
+      "Mostre selos de confiança (SSL, política de troca) em destaque no checkout.",
     ],
     PURCHASE: [
-      "Investigate payment failures — high drop-off here often signals payment method gaps.",
-      "Offer Buy-Now-Pay-Later (BNPL) options if not already available.",
-      "Add an order-review step with a clear CTA to reduce last-second abandonment.",
+      "Investigue falhas de pagamento: queda alta aqui costuma indicar falta de formas de pagamento.",
+      "Ofereça compra parcelada ou pague depois (BNPL), se ainda não houver.",
+      "Inclua uma etapa de revisão do pedido com botão claro para reduzir o abandono na última hora.",
     ],
   };
 
   const worstStep = worst.idx > 0 ? steps[worst.idx]?.step : null;
   const specific = worstStep ? (STEP_ACTIONS[worstStep] ?? []) : [];
   const generic = [
-    "Invest in re-engagement campaigns targeting customers who dropped off mid-funnel.",
-    "Review mobile UX — mobile sessions often have higher drop-off rates.",
+    "Invista em campanhas de reengajamento para clientes que saíram no meio do funil.",
+    "Revise a experiência no celular: sessões mobile costumam ter mais abandono.",
   ];
   return [...specific.slice(0, 2), ...generic].slice(0, 3);
 }
