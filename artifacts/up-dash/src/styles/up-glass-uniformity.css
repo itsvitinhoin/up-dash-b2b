@@ -110,7 +110,8 @@ code, pre, [data-up-code], .up-page-content .prod-sku {
 .up-funnel-intro > div:last-child { flex: 1; min-width: 0; }
 .up-creative-card { padding: 14px; }
 .up-creative-head { display: grid; grid-template-columns: 88px minmax(0,1fr); gap: 14px; align-items: center; margin-bottom: 14px; }
-.up-creative-metrics { --up-metric-min: 120px; }
+/* 190px: no cartao de criativo (~437px) fica 2x2; com 120px cabiam 3 e o 4o caia sozinho na linha de baixo. */
+.up-creative-metrics { --up-metric-min: 190px; }
 .up-creative-metrics .up-metric { padding: 12px; min-height: 116px; }
 .up-creative-metrics .up-metric-icon { width: 24px; height: 24px; }
 .up-creative-metrics .up-metric-label { font-size: 12px; }
