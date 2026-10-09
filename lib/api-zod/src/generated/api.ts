@@ -145,6 +145,12 @@ export const ListClientsResponse = zod.object({
         .describe(
           "True when both GA4 measurement id and API secret are configured.",
         ),
+      hasErpIntegration: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it).",
+        ),
       hasClientLogin: zod
         .boolean()
         .optional()
@@ -416,6 +422,12 @@ export const GetClientResponse = zod.object({
     .describe(
       "True when both GA4 measurement id and API secret are configured.",
     ),
+  hasErpIntegration: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it).",
+    ),
   hasClientLogin: zod
     .boolean()
     .optional()
@@ -605,6 +617,12 @@ export const UpdateClientResponse = zod.object({
     .boolean()
     .describe(
       "True when both GA4 measurement id and API secret are configured.",
+    ),
+  hasErpIntegration: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it).",
     ),
   hasClientLogin: zod
     .boolean()

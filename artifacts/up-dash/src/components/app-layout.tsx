@@ -488,6 +488,8 @@ type AdminClientOption = {
   // configura em /clients — ver VisibleTabsDialog). Null/vazio = mostra
   // tudo que já seria mostrado pelas regras de B2B/B2C/Vesti de sempre.
   hiddenNavItems: string[] | null;
+  // false = o cliente nao tem ERP configurado (esconde ERP e Desempenho > Visao Geral); null = nao se sabe, mostra.
+  hasErpIntegration: boolean | null;
 };
 
 function toAdminClientOption(client: Client): AdminClientOption {
@@ -499,6 +501,7 @@ function toAdminClientOption(client: Client): AdminClientOption {
     locale: client.locale,
     commercePlatform: client.commercePlatform ?? null,
     hiddenNavItems: client.hiddenNavItems ?? null,
+    hasErpIntegration: client.hasErpIntegration ?? null,
   };
 }
 
@@ -530,6 +533,10 @@ function readCachedAdminClients(): AdminClientOption[] {
           hiddenNavItems: Array.isArray(client?.hiddenNavItems)
             ? client.hiddenNavItems
             : null,
+          hasErpIntegration:
+            typeof client?.hasErpIntegration === "boolean"
+              ? client.hasErpIntegration
+              : null,
         }),
       )
       .filter((client) => client.id && client.name);
@@ -951,6 +958,12 @@ export function AppLayout({ children }: AppLayoutProps) {
       navigate("/dashboard");
     }
   }, [effectiveDashboardMode, isB2BOnlyRoute, location, navigate]);
+  // Cliente sem ERP que abre /erp... ou /performance por link ou favorito: leva para onde ha dados, em vez de uma tela de erro.
+  useEffect(() => {
+    if (activeClient?.hasErpIntegration !== false) return;
+    if (location === "/erp" || location.startsWith("/erp/")) navigate("/dashboard");
+    else if (location === "/performance") navigate("/performance/funil");
+  }, [activeClient?.hasErpIntegration, location, navigate]);
   type NavEntry = {
     name: string;
     href: string;
@@ -958,7 +971,13 @@ export function AppLayout({ children }: AppLayoutProps) {
     children?: Array<{ name: string; href: string; icon: typeof Users }>;
   };
 
+  // Cliente SEM ERP: some o grupo ERP e a "Visao Geral" do Desempenho (as duas respondem 404 NO_ERP_INTEGRATION).
+  // Compara o href exato: "Novos Clientes" tem a rota antiga /performance, mas funciona sem ERP.
+  const hasNoErp = activeClient?.hasErpIntegration === false;
+  const needsErp = (href: string) =>
+    href === "/erp" || href.startsWith("/erp/") || href === "/performance";
   const visibleNav = (item: { href: string }) => {
+    if (hasNoErp && needsErp(item.href)) return false;
     const source = legacyPath(item.href);
     if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(source))
       return false;

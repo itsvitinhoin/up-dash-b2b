@@ -56,6 +56,8 @@ function clientPublicFields<T extends typeof clientsTable.$inferSelect>(client: 
         client.ga4PropertyId?.trim() &&
         client.ga4ApiSecret?.trim(),
     ),
+    // As páginas ERP e "Desempenho > Visão Geral" respondem 404 NO_ERP_INTEGRATION sem dataset de ERP; a tela usa isto para esconder o menu.
+    hasErpIntegration: Boolean(client.erpDataset?.trim()),
   };
 }
 
