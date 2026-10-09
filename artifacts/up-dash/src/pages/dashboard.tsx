@@ -2768,6 +2768,10 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                 <Skeleton key={i} className="h-10 w-full" />
               ))}
             </div>
+          ) : topSellersData && topSellersData.every((seller) => seller.totalRevenue === 0 && seller.totalOrders === 0) ? (
+            <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground" data-testid="dashboard-top-sellers-empty">
+              {tx("Os pedidos do site deste cliente não têm vendedora registrada, por isso o ranking está zerado. Se o cliente usa ERP, as vendas por vendedora ficam em ERP › Vendedoras e Lojas.")}
+            </p>
           ) : (
             <div>
               <div className="grid grid-cols-12 gap-4 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border">
@@ -2790,7 +2794,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          {idx === 0 && <span className="text-[10px] text-amber-400 font-bold">#1</span>}
+                          {idx === 0 && seller.totalRevenue > 0 && <span className="text-[10px] text-amber-400 font-bold">#1</span>}
                           <span className="font-medium text-sm truncate">{seller.name}</span>
                         </div>
                       </div>

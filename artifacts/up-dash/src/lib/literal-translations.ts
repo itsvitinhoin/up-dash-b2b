@@ -1071,6 +1071,8 @@ const entries: Array<[string, string, string]> = [
   ["Previsão de esgotar em ~{n} dia no ritmo recente de vendas.", "Projected to sell out in ~{n} day at recent demand.", "최근 수요 기준 약 {n}일 내 품절이 예상됩니다."],
   ["Previsão de esgotar em ~{n} dias no ritmo recente de vendas.", "Projected to sell out in ~{n} days at recent demand.", "최근 수요 기준 약 {n}일 내 품절이 예상됩니다."],
   ["Estoque ({stock}) igual ou abaixo do limite de reposição ({limit}).", "Stock ({stock}) is at or below restock threshold ({limit}).", "재고({stock})가 재입고 기준({limit}) 이하입니다."],
+  // ---- vendedoras zeradas
+  ["Os pedidos do site deste cliente não têm vendedora registrada, por isso o ranking está zerado. Se o cliente usa ERP, as vendas por vendedora ficam em ERP › Vendedoras e Lojas.", "This client's site orders have no seller recorded, so the ranking is empty. If the client uses an ERP, sales by seller are under ERP › Sellers and Stores.", "이 고객의 사이트 주문에는 판매 담당자가 기록되어 있지 않아 순위가 비어 있습니다. ERP를 사용하는 경우 담당자별 매출은 ERP › 판매원 및 매장에서 확인할 수 있습니다."],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
