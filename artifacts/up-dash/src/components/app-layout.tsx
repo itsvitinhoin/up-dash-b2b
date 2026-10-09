@@ -1464,7 +1464,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 (location.startsWith("/erp")
                   ? "ERP"
                   : location.startsWith("/performance")
-                    ? "Performance"
+                    ? tx("Desempenho")
                     : location.startsWith("/whatsapp")
                       ? "WhatsApp"
                       : t("nav.analytics", "Painel"))}

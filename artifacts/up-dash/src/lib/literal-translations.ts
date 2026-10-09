@@ -1073,6 +1073,9 @@ const entries: Array<[string, string, string]> = [
   ["Estoque ({stock}) igual ou abaixo do limite de reposição ({limit}).", "Stock ({stock}) is at or below restock threshold ({limit}).", "재고({stock})가 재입고 기준({limit}) 이하입니다."],
   // ---- vendedoras zeradas
   ["Os pedidos do site deste cliente não têm vendedora registrada, por isso o ranking está zerado. Se o cliente usa ERP, as vendas por vendedora ficam em ERP › Vendedoras e Lojas.", "This client's site orders have no seller recorded, so the ranking is empty. If the client uses an ERP, sales by seller are under ERP › Sellers and Stores.", "이 고객의 사이트 주문에는 판매 담당자가 기록되어 있지 않아 순위가 비어 있습니다. ERP를 사용하는 경우 담당자별 매출은 ERP › 판매원 및 매장에서 확인할 수 있습니다."],
+  // ---- desempenho visao geral
+  ["% do valor total", "% of total value", "총 금액 대비 %"],
+  ["% dos clientes atribuídos", "% of attributed customers", "귀속 고객 대비 %"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(

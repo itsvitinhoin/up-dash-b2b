@@ -1244,7 +1244,7 @@ export default function PerformancePage() {
                       ? (summary.clientes / totalClientes) * 100
                       : 0;
                   return (
-                    <GlassMetricCard key={cohort} label={COHORT_LABEL[cohort]} value={<>{formatNumber(summary?.clientes ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">{formatPercentage(pct)}</span></>} hideComparison />
+                    <GlassMetricCard key={cohort} label={COHORT_LABEL[cohort]} value={<>{formatNumber(summary?.clientes ?? 0)}</>} sub={[{ label: "% dos clientes atribuídos", value: formatPercentage(pct) }]} hideComparison />
                   );
                 })}
               </div>
@@ -1840,7 +1840,7 @@ export default function PerformancePage() {
                 <GlassMetricCard label="Pedidos no período" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>} hideComparison />
                 <GlassMetricCard label="Valor total" value={<>{formatCurrency(filteredStats.valorTotal)}</>} hideComparison />
                 <GlassMetricCard label="Pedidos atribuídos" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>} hideComparison />
-                <GlassMetricCard label="Receita atribuída" value={<>{formatCurrency(filteredStats.receitaAtribuida)}{" "}<span className="text-xs font-normal text-muted-foreground">{formatPercentage(filteredStats.valorTotal > 0 ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100 : 0)}</span></>} hideComparison />
+                <GlassMetricCard label="Receita atribuída" value={<>{formatCurrency(filteredStats.receitaAtribuida)}</>} sub={[{ label: "% do valor total", value: formatPercentage(filteredStats.valorTotal > 0 ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100 : 0) }]} hideComparison />
                 <GlassMetricCard label="Faturamento pago atribuído" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>} hideComparison />
               </div>
               <div className="mt-4 overflow-x-auto">
