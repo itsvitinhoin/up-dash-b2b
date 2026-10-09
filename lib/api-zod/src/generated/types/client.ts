@@ -46,6 +46,8 @@ export interface Client {
   hasNuvemshopIntegration: boolean;
   /** True when both GA4 measurement id and API secret are configured. */
   hasGa4Integration: boolean;
+  /** True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it). */
+  hasErpIntegration?: boolean;
   /** True when this client has at least one CLIENT-role login. */
   hasClientLogin?: boolean;
   /**
