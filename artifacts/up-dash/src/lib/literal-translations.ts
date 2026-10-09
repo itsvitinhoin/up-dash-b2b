@@ -1124,6 +1124,10 @@ const entries: Array<[string, string, string]> = [
   ["Inclua uma etapa de revisão do pedido com botão claro para reduzir o abandono na última hora.", "Add an order-review step with a clear CTA to reduce last-second abandonment.", "막판 이탈을 줄이도록 명확한 버튼이 있는 주문 검토 단계를 추가하세요."],
   ["Invista em campanhas de reengajamento para clientes que saíram no meio do funil.", "Invest in re-engagement campaigns targeting customers who dropped off mid-funnel.", "퍼널 중간에 이탈한 고객을 대상으로 재참여 캠페인에 투자하세요."],
   ["Revise a experiência no celular: sessões mobile costumam ter mais abandono.", "Review mobile UX — mobile sessions often have higher drop-off rates.", "모바일 UX를 점검하세요. 모바일 세션은 이탈률이 더 높은 경우가 많습니다."],
+  // ---- geografia (correcoes 09/10)
+  ["Estados cobertos", "States covered", "커버된 주"],
+  ["Principal mercado", "Top market", "주요 시장"],
+  ["cidades", "cities", "도시"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(

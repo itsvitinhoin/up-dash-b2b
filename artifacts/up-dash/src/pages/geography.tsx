@@ -5,7 +5,7 @@ import { format } from "date-fns";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
-import { useGetGeography } from "@workspace/api-client-react";
+import { getGetGeographyUrl, useGetGeography } from "@workspace/api-client-react";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -37,6 +37,7 @@ import { exportRowsAsCsv } from "@/lib/csv-export";
 import { CountUp } from "@/components/count-up";
 import { BrazilHeatMap } from "@/components/brazil-heat-map";
 import { useReducedMotion, fadeInUp, withReducedMotion } from "@/lib/motion";
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
 
 export default function GeographyPage() {
   const { tx } = useI18n();
@@ -85,6 +86,28 @@ export default function GeographyPage() {
   );
   const topState = sortedStates[0];
   const topCity = sortedCities[0];
+
+  // Mesmo recorte do periodo imediatamente anterior, para os quatro numeros do topo mostrarem a variacao.
+  const previousGeography = usePreviousPeriodQuery<NonNullable<typeof data>>(
+    getGetGeographyUrl({
+      clientId,
+      dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+      dateTo: format(dateRange.to, "yyyy-MM-dd"),
+      utmSource: filters.utmSource || undefined,
+      utmMedium: filters.utmMedium || undefined,
+    }),
+    user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId),
+  );
+  const previousTotals = useMemo(() => {
+    const prev = previousGeography.data;
+    if (!prev) return undefined;
+    return {
+      revenue: prev.states.reduce((acc, s) => acc + s.revenue, 0),
+      states: prev.states.length,
+      cities: prev.cities.length,
+      top: prev.states.reduce((max, s) => Math.max(max, s.revenue), 0),
+    };
+  }, [previousGeography.data]);
 
   const handleExport = () => {
     if (!data) return;
@@ -191,7 +214,7 @@ export default function GeographyPage() {
               />
               <CardContent className="relative p-6 sm:p-8">
                 <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
-                  <div>
+                  <div className="lg:min-w-0 lg:flex-1">
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground backdrop-blur">
                       <Globe2 className="h-3 w-3 text-primary" />
                       {tx("Inteligência geográfica")}
@@ -206,11 +229,12 @@ export default function GeographyPage() {
                       {tx("Mapa do faturamento no Brasil. O tamanho das bolhas indica o número de clientes e os tons de azul indicam a intensidade do faturamento.")}
                     </p>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 lg:max-w-2xl">
+                  <div className="grid w-full grid-cols-2 gap-3 sm:grid-cols-4 lg:w-[56rem] lg:max-w-[62%] lg:shrink-0">
                     <HeroStat
                       icon={TrendingUp}
                       label={tx("Faturamento total")}
                       value={totalRevenue}
+                      previous={previousTotals?.revenue}
                       format={(v) => formatCurrencySmart(v)}
                       color="hsl(var(--chart-1))"
                       delay={0.05}
@@ -218,8 +242,9 @@ export default function GeographyPage() {
                     />
                     <HeroStat
                       icon={MapPin}
-                      label="States covered"
+                      label={tx("Estados cobertos")}
                       value={states.length}
+                      previous={previousTotals?.states}
                       color="hsl(var(--chart-3))"
                       delay={0.12}
                       reduced={reduced}
@@ -228,14 +253,16 @@ export default function GeographyPage() {
                       icon={Building2}
                       label={tx("Cidades")}
                       value={cities.length}
+                      previous={previousTotals?.cities}
                       color="hsl(var(--chart-4))"
                       delay={0.19}
                       reduced={reduced}
                     />
                     <HeroStat
                       icon={Trophy}
-                      label={topState ? `Top · ${topState.state}` : "Principal mercado"}
+                      label={topState ? `Top · ${topState.state}` : tx("Principal mercado")}
                       value={topState?.revenue ?? 0}
+                      previous={previousTotals?.top}
                       format={(v) => formatCurrencySmart(v)}
                       tone="hot"
                       delay={0.26}
@@ -263,7 +290,7 @@ export default function GeographyPage() {
                       {tx("Mapa de faturamento no Brasil")}
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {states.length} estados · {cities.length} cities
+                      {states.length} {tx("estados")} · {cities.length} {tx("cidades")}
                     </span>
                   </div>
                   {isLoading ? (
@@ -554,6 +581,7 @@ function HeroStat({
   tone,
   delay,
   reduced,
+  previous,
 }: {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   label: string;
@@ -563,7 +591,8 @@ function HeroStat({
   tone?: "hot";
   delay: number;
   reduced: boolean;
+  previous?: number | null;
 }) {
   const accent = tone === "hot" ? "hsl(var(--chart-1))" : color;
-  return (<GlassMetricCard label={label} value={value} icon={Icon} format={format ?? formatNumber} />);
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={format ?? formatNumber} previousValue={previous} />);
 }
