@@ -68,6 +68,7 @@ import { exportRowsAsXlsx } from "@/lib/xlsx-export";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
   formatCurrency,
+  formatErpDate,
   formatNumber,
   formatPercentage,
 } from "@/lib/formatters";
@@ -710,6 +711,7 @@ export default function PerformancePage() {
     },
     {
       label: "Receita atribuída",
+      info: tx("Faturamento líquido (já descontadas as devoluções) dos compradores do ERP que a UP Zero reconhece como vindos de mídia paga. Conta pelo cliente, não pelo pedido: por isso pode diferir de “Receita com clique pago”, mais abaixo."),
       value: k?.attributedRevenue ?? 0,
       comparisonValue: k?.attributedRevenue ?? null,
       previousValue: pk?.attributedRevenue,
@@ -812,6 +814,7 @@ export default function PerformancePage() {
   const acquisitionMetrics = [
     {
       label: "Pedidos ERP",
+      info: tx("Documentos de pedido do ERP no período. O ERP registra cada devolução como um pedido de valor zero, e eles entram nesta contagem."),
       value: k?.orders ?? 0,
       comparisonValue: k?.orders ?? null,
       previousValue: pk?.orders,
@@ -824,6 +827,7 @@ export default function PerformancePage() {
     },
     {
       label: "Pedidos atribuídos",
+      info: tx("Pedidos do ERP dos compradores reconhecidos como vindos de mídia paga (conta por cliente). Devoluções registradas como pedido no ERP entram nesta contagem."),
       value: k?.attributedOrders ?? 0,
       comparisonValue: k?.attributedOrders ?? null,
       previousValue: pk?.attributedOrders,
@@ -969,7 +973,7 @@ export default function PerformancePage() {
       filteredOrders,
       [
         { header: "Pedido", accessor: (row) => row.orderId },
-        { header: "Data", accessor: (row) => row.dataCriado },
+        { header: "Data", accessor: (row) => (row.channel === "erp" ? row.dataCriado.slice(0, 10) : row.dataCriado) },
         { header: "Cliente", accessor: (row) => row.customerName },
         { header: "Documento", accessor: (row) => row.document },
         { header: "Canal", accessor: (row) => (row.channel === "erp" ? "ERP" : "Site") },
@@ -1839,9 +1843,9 @@ export default function PerformancePage() {
               <div className="mt-4 up-metric-grid">
                 <GlassMetricCard label="Pedidos no período" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>} hideComparison />
                 <GlassMetricCard label="Valor total" value={<>{formatCurrency(filteredStats.valorTotal)}</>} hideComparison />
-                <GlassMetricCard label="Pedidos atribuídos" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>} hideComparison />
-                <GlassMetricCard label="Receita atribuída" value={<>{formatCurrency(filteredStats.receitaAtribuida)}</>} sub={[{ label: "% do valor total", value: formatPercentage(filteredStats.valorTotal > 0 ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100 : 0) }]} hideComparison />
-                <GlassMetricCard label="Faturamento pago atribuído" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>} hideComparison />
+                <GlassMetricCard label="Pedidos com clique pago" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>} info={tx("Pedidos (ERP + site) em que o mesmo cliente teve um clique pago antes da compra.")} hideComparison />
+                <GlassMetricCard label="Receita com clique pago" value={<>{formatCurrency(filteredStats.receitaAtribuida)}</>} info={tx("Valor desses pedidos, contado por pedido. Pode diferir de “Receita atribuída” (Conciliação financeira), que conta por cliente sobre o faturamento líquido do ERP.")} sub={[{ label: "% do valor total", value: formatPercentage(filteredStats.valorTotal > 0 ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100 : 0) }]} hideComparison />
+                <GlassMetricCard label="Pago desses pedidos" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>} info={tx("Parte do valor desses pedidos que já foi paga.")} hideComparison />
               </div>
               <div className="mt-4 overflow-x-auto">
                 <Table>
@@ -1861,7 +1865,7 @@ export default function PerformancePage() {
                         <TableCell>
                           <p className="font-medium">#{order.orderId}</p>
                           <p className="text-xs text-muted-foreground">
-                            {new Date(order.dataCriado).toLocaleString("pt-BR")}
+                            {order.channel === "erp" ? formatErpDate(order.dataCriado) : new Date(order.dataCriado).toLocaleString("pt-BR")}
                           </p>
                         </TableCell>
                         <TableCell>
@@ -1878,7 +1882,7 @@ export default function PerformancePage() {
                               {COHORT_LABEL[order.cohort]}
                             </Badge>
                           ) : (
-                            <Badge variant="outline">Não identificado</Badge>
+                            <span className="text-muted-foreground" title={tx("A coorte só é calculada para pedidos com clique pago antes da compra.")}>—</span>
                           )}
                         </TableCell>
                         <TableCell>

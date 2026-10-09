@@ -100,7 +100,14 @@ interface FunnelActivationAnalysis {
 
 type FunnelDataWithActivation = FunnelResponse & {
   activation?: FunnelActivationAnalysis | null;
+  /** De onde vieram os números: eventos da UP Zero por pessoa, totais por hora, ou a base local do painel. */
+  dataSource?: "upzero-events" | "upzero-hourly" | "local";
+  /** false quando a UP Zero não respondeu para alguma etapa. */
+  dataComplete?: boolean;
 };
+
+/** Etapas cujo número vem do banco: zero ali é real. As demais dependem de rastreamento (zero = sem dado). */
+const DATABASE_STEPS = new Set(["REGISTRATION", "APPROVED_REGISTRATION", "PURCHASE"]);
 
 const STAGE_PALETTE = [
   "hsl(var(--chart-1))",
@@ -157,6 +164,8 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
   );
   const previous = usePreviousPeriodQuery<FunnelDataWithActivation>(getGetFunnelUrl({ clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, utmCampaign: filters.utmCampaign || undefined }), queryEnabled);
   const activation = (data as FunnelDataWithActivation | undefined)?.activation ?? null;
+  const dataSource = (data as FunnelDataWithActivation | undefined)?.dataSource;
+  const dataComplete = (data as FunnelDataWithActivation | undefined)?.dataComplete;
 
   // Hide the VISIT step from the visual funnel when its count is zero.
   // The "About this data" notice is driven separately by hasSiteVisitData:
@@ -164,8 +173,14 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
   // even if the current date range shows zero visits.
   const visibleSteps = useMemo(() => {
     if (!data?.steps) return [];
+    // Só nos caminhos que informam a fonte (`dataSource`): etapa de rastreamento com 0 pessoas é "sem dado", não perda.
+    if (dataSource) return data.steps.filter((s) => s.count > 0 || (s.step !== "VISIT" && DATABASE_STEPS.has(s.step)));
     return data.steps.filter((s) => !(s.step === "VISIT" && s.count === 0));
-  }, [data]);
+  }, [data, dataSource]);
+  const untrackedSteps = useMemo(
+    () => (data && dataSource ? data.steps.filter((s) => s.count === 0 && s.step !== "VISIT" && !DATABASE_STEPS.has(s.step)) : []),
+    [data, dataSource],
+  );
 
   // visitStepHidden: VISIT bar is absent from the diagram (count = 0 for the range)
   const visitStepHidden = useMemo(
@@ -524,7 +539,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   </div>
                   {funnelChartData.length > 0 && funnelChartData[0].value > 0 ? (
                     <div className="space-y-5">
-                      <AcquisitionFunnel title={tx("Etapas de conversão")} stages={funnelChartData.map((step, index) => ({ label: step.label, value: step.value, connector: funnelChartData[index+1] && step.value > 0 ? `${formatPercentage(funnelChartData[index+1].value / step.value * 100)} ${tx("seguem para a próxima etapa")}` : undefined }))} />
+                      <AcquisitionFunnel title={tx("Etapas de conversão")} stages={funnelChartData.map((step, index) => ({ label: tx(displayLabel(step.label)), value: step.value, connector: funnelChartData[index+1] && step.value > 0 ? `${formatPercentage(Math.min(100, funnelChartData[index+1].value / step.value * 100))} ${tx("seguem para a próxima etapa")}` : undefined }))} />
                       <div className="grid gap-2 sm:grid-cols-2">
                         {visibleSteps.map((step, index) => (
                           <div key={step.step} className="rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -535,7 +550,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                                     className="h-2 w-2 rounded-full"
                                     style={{ backgroundColor: STAGE_PALETTE[index % STAGE_PALETTE.length] }}
                                   />
-                                  <p className="truncate text-sm font-medium">{displayLabel(step.label)}</p>
+                                  <p className="truncate text-sm font-medium">{tx(displayLabel(step.label))}</p>
                                 </div>
                                 <p className="mt-1 text-xs text-muted-foreground">
                                   {formatPercentage(step.conversionRate)} {tx("conversão")} · {formatPercentage(step.dropOffRate)} {tx("queda")}
@@ -654,17 +669,48 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
                     <p className="font-semibold text-sm flex items-center gap-1.5 mb-3">
                       <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                      Suggested actions
+                      {tx("Ações sugeridas")}
                     </p>
                     <ul className="space-y-2">
                       {data.suggestedActions.map((action, i) => (
                         <li key={i} className="flex items-start gap-2 text-xs text-foreground/80 leading-relaxed">
                           <span className="text-primary font-bold mt-0.5">→</span>
-                          {action}
+                          {tx(action)}
                         </li>
                       ))}
                     </ul>
                   </div>
+                </motion.div>
+              )}
+
+              {dataSource && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: reduced ? 0 : 0.38 }}
+                  className="rounded-lg border border-border/60 bg-muted/20 p-4 text-xs"
+                  data-testid="funnel-data-source"
+                >
+                  <p className="font-semibold text-foreground/80 mb-1.5 flex items-center gap-1.5">
+                    <Info className="h-3 w-3" /> {tx("Fonte dos dados")}
+                  </p>
+                  <p className="leading-relaxed text-muted-foreground">
+                    {dataSource === "upzero-events"
+                      ? tx("Eventos da UP Zero, contados por pessoa distinta.")
+                      : dataSource === "upzero-hourly"
+                        ? tx("Totais por hora da UP Zero: estas etapas somam sessões e podem contar a mesma pessoa mais de uma vez.")
+                        : tx("Base local do painel (a UP Zero não respondeu a tempo). Só cadastros, aprovações e compras são medidos aqui.")}
+                  </p>
+                  {dataComplete === false && (
+                    <p className="mt-1.5 leading-relaxed text-amber-500">
+                      {tx("A UP Zero não respondeu para algumas etapas; elas podem estar abaixo do real.")}
+                    </p>
+                  )}
+                  {untrackedSteps.length > 0 && (
+                    <p className="mt-1.5 leading-relaxed text-muted-foreground">
+                      {tx("Sem rastreamento neste período (não contam como perda)")}: {untrackedSteps.map((step) => tx(displayLabel(step.label))).join(", ")}
+                    </p>
+                  )}
                 </motion.div>
               )}
 
@@ -681,6 +727,11 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                 <p className="leading-relaxed">
                   {tx("Cada etapa mostra o volume de entrada, a conversão em relação à etapa anterior e as perdas. Priorize as etapas com maior perda de usuários.")}
                 </p>
+                {dataSource && (
+                  <p className="mt-1.5 leading-relaxed">
+                    {tx("Cada etapa conta pessoas distintas e a conversão nunca passa de 100%: quem fez a etapa antes do período também aparece nela.")}
+                  </p>
+                )}
               </motion.div>
 
               {/* Data availability notice — shown only when no visit data source has been set up */}

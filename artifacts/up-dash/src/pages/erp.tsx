@@ -84,6 +84,7 @@ import { exportRowsAsXlsx } from "@/lib/xlsx-export";
 import {
   formatCurrency,
   formatCurrencySmart,
+  formatErpDate,
   formatNumber,
   formatPercentage,
 } from "@/lib/formatters";
@@ -970,7 +971,7 @@ function ErpOrdersView() {
       );
       exportRowsAsXlsx(`pedidos-erp-${dateFrom}-${dateTo}.xlsx`, tx("Pedidos"), result.rows, [
         { header: "Pedido", accessor: (r) => r.id },
-        { header: "Data", accessor: (r) => r.createdAt },
+        { header: "Data", accessor: (r) => (r.createdAt ? r.createdAt.slice(0, 10) : r.createdAt) },
         { header: "Cliente", accessor: (r) => r.customerName },
         { header: "Documento", accessor: (r) => r.document },
         { header: "Loja", accessor: (r) => r.store },
@@ -1132,10 +1133,7 @@ function ErpOrdersView() {
                           <div>
                             <p className="font-medium">#{order.id}</p>
                             <p className="text-xs text-muted-foreground">
-                              {format(
-                                new Date(order.createdAt),
-                                "dd/MM/yy HH:mm",
-                              )}
+                              {formatErpDate(order.createdAt, true)}
                             </p>
                           </div>
                         </div>
@@ -1331,9 +1329,7 @@ function BuyerOrderHistoryDialog({
                     </p>
                   </TableCell>
                   <TableCell>
-                    {order.createdAt
-                      ? format(new Date(order.createdAt), "dd/MM/yyyy")
-                      : "—"}
+                    {formatErpDate(order.createdAt)}
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={order.status} />
@@ -1426,7 +1422,7 @@ function ErpCustomersView() {
         { header: "Comprado no período", accessor: (r) => r.totalSpent },
         { header: tx("Pedidos históricos"), accessor: (r) => r.historicalOrders },
         { header: "LTV", accessor: (r) => r.lifetimeValue },
-        { header: "Último pedido", accessor: (r) => r.lastOrderAt },
+        { header: "Último pedido", accessor: (r) => (r.lastOrderAt ? r.lastOrderAt.slice(0, 10) : r.lastOrderAt) },
       ]);
     } finally {
       setExporting(false);
@@ -1601,9 +1597,7 @@ function ErpCustomersView() {
                     </TableCell>
                     <TableCell>
                       <p>
-                        {c.lastOrderAt
-                          ? format(new Date(c.lastOrderAt), "dd/MM/yyyy")
-                          : "—"}
+                        {formatErpDate(c.lastOrderAt)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {c.daysSinceLastOrder === null

@@ -57,6 +57,8 @@ const METRIC_DESCRIPTIONS: Record<string, string> = {
   "CPL": "Custo médio por lead registrado pela fonte.",
   "CPA": "Custo médio por aquisição registrada pela fonte.",
   "ROAS": "Retorno da receita atribuída em relação ao investimento em mídia, conforme a base desta fonte.",
+  "ROAS Solicitado": "Faturamento solicitado de todos os pedidos do site no período (qualquer origem e qualquer status, inclusive recusados) dividido pelo investimento em mídia. Não é só a venda que veio de anúncio.",
+  "ROAS Pago": "Faturamento pago (pedidos aprovados, enviados ou entregues) dividido pelo investimento em mídia.",
   "Ticket Médio": "Valor médio dos pedidos considerados na fonte e nos filtros selecionados.",
 };
 

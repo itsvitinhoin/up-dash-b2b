@@ -97,6 +97,9 @@ function AcquisitionPage() {
     </div>
   );
 }
+/** Etapas do funil cujo número vem do banco: zero ali é real. Nas demais, zero pessoas = sem rastreamento ("—"). */
+const DATABASE_FUNNEL_STEPS = new Set(["REGISTRATION", "APPROVED_REGISTRATION", "PURCHASE"]);
+
 function PerformanceFunnelPage() {
   const { tx, language } = useI18n();
   const { pick, measures, funnel, previousFunnel, dashboard, previousDashboard } = useOrganizationData(FUNNEL_SOURCES, FUNNEL_PREVIOUS);
@@ -106,17 +109,27 @@ function PerformanceFunnelPage() {
   const acquisitionLeads = measures.registrations.value;
   const acquisitionApproved = measures.approved.value;
   const steps = funnel.data?.steps ?? [];
-  const count = (...keys: string[]) =>
-    steps.find((step) => keys.includes(step.step))?.count;
-  const previousCount = (...keys: string[]) => previousFunnel.data?.steps.find(step => keys.includes(step.step))?.count;
+  const trackedOnly = Boolean((funnel.data as { dataSource?: string } | undefined)?.dataSource);
+  const noData = (step: { step: string; count: number } | undefined) =>
+    Boolean(step && trackedOnly && step.count === 0 && !DATABASE_FUNNEL_STEPS.has(step.step));
+  const count = (...keys: string[]) => {
+    const step = steps.find((item) => keys.includes(item.step));
+    return noData(step) ? undefined : step?.count;
+  };
+  const previousCount = (...keys: string[]) => {
+    const step = previousFunnel.data?.steps.find((item) => keys.includes(item.step));
+    return noData(step) ? undefined : step?.count;
+  };
+  // Sessões do Dashboard só valem quando existe fonte de tráfego (GA4/eventos); com fonte "none" o 0 é falta de dado.
+  const trafficSessions = dashboard.data?.traffic && dashboard.data.traffic.source !== "none" ? dashboard.data.traffic.sessions : null;
   const stages = [
     { label: tx("Impressões"), value: measures.impressions.value, previous: measures.impressions.previousValue },
     { label: tx("Alcance"), value: measures.reach.value, previous: measures.reach.previousValue },
     { label: tx("Cliques no Link"), value: null, previous: undefined },
     {
       label: tx("Visitas / Sessões"),
-      value: dashboard.data?.traffic?.sessions ?? count("VISIT", "SESSIONS"),
-      previous: dashboard.data?.traffic?.sessions != null ? previousDashboard.data?.traffic?.sessions : previousCount("VISIT", "SESSIONS"),
+      value: trafficSessions ?? count("VISIT", "SESSIONS"),
+      previous: trafficSessions != null ? previousDashboard.data?.traffic?.sessions : previousCount("VISIT", "SESSIONS"),
     },
     { label: tx("Cadastros"), previous: previousCount("REGISTRATION"), value: count("REGISTRATION") },
     {
