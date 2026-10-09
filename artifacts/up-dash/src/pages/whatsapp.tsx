@@ -65,6 +65,7 @@ import {
   type WhatsappFunnelStage,
 } from "@/lib/whatsapp/mock-data";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 
 const ALL = "__all__";
 const SLA_MINUTES = 15;
@@ -195,12 +196,14 @@ function KpiCard({
   icon: Icon,
   info,
   tone = "primary",
+  loading = false,
 }: {
   label: string;
   value: string;
   icon: React.ComponentType<{ className?: string }>;
   info?: string;
   tone?: "primary" | "green" | "amber" | "red" | "blue";
+  loading?: boolean;
 }) {
   const toneClass = {
     primary: "bg-primary/10 text-primary",
@@ -210,11 +213,12 @@ function KpiCard({
     blue: "bg-blue-500/10 text-blue-500",
   }[tone];
 
-  return (<GlassMetricCard label={label} value={value} icon={Icon} info={info} />);
+  return (<GlassMetricCard label={label} value={value} icon={Icon} info={info} loading={loading} hideComparison />);
 }
 
 export default function WhatsappPage() {
   const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { dateRange, setDateRange } = useDashboardFilters();
   const { user, selectedClientId } = useAuth();
 
@@ -230,7 +234,7 @@ export default function WhatsappPage() {
     params.set("limit", "5000");
     return `/api/whatsapp/conversations?${params.toString()}`;
   }, [dateRange, phoneFilter, selectedClientId, user?.role]);
-  const { data: realConversations } = useQuery<WhatsappConversationsResponse>({
+  const { data: realConversations, isLoading: conversationsLoading, isError: conversationsError } = useQuery<WhatsappConversationsResponse>({
     queryKey: ["whatsapp-dashboard-conversations", whatsappClientId, phoneFilter, dateRange.from.toISOString(), dateRange.to.toISOString()],
     queryFn: () => customFetch<WhatsappConversationsResponse>(conversationsQuery),
     enabled: Boolean(whatsappClientId),
@@ -486,18 +490,28 @@ export default function WhatsappPage() {
         </CardHeader>
       </Card>
 
+      {conversationsError && !realConversations ? (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert" data-testid="whatsapp-load-error">
+          {tx("Não foi possível carregar as conversas do WhatsApp. Os números abaixo não são zero: tente novamente em instantes.")}
+        </div>
+      ) : conversationsLoading ? (
+        <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 text-sm text-muted-foreground" data-testid="whatsapp-loading">
+          {tx("Carregando as conversas do WhatsApp… períodos longos podem levar alguns segundos.")}
+        </div>
+      ) : null}
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-        <KpiCard label="Total de conversas" value={formatNumber(kpis.total)} icon={MessageCircle} info={KPI_INFO["Total de conversas"]} />
-        <KpiCard label="Novos leads" value={formatNumber(kpis.newLeads)} icon={Users} tone="blue" info={KPI_INFO["Novos leads"]} />
-        <KpiCard label="Leads recorrentes" value={formatNumber(kpis.returningLeads)} icon={UserCheck} tone="green" info={KPI_INFO["Leads recorrentes"]} />
-        <KpiCard label="Mensagens recebidas" value={formatNumber(kpis.received)} icon={MessageSquareReply} info={KPI_INFO["Mensagens recebidas"]} />
-        <KpiCard label="Mensagens enviadas" value={formatNumber(kpis.sent)} icon={Send} info={KPI_INFO["Mensagens enviadas"]} />
-        <KpiCard label="Tempo 1ª resposta" value={formatMinutes(kpis.avgFirstResponse)} icon={Timer} tone="amber" info={KPI_INFO["Tempo 1ª resposta"]} />
-        <KpiCard label="SLA cumprido" value={formatPercent(kpis.sla)} icon={CheckCircle2} tone="green" info={KPI_INFO["SLA cumprido"]} />
-        <KpiCard label="Leads sem resposta" value={formatNumber(kpis.noResponse)} icon={AlertCircle} tone="red" info={KPI_INFO["Leads sem resposta"]} />
-        <KpiCard label="Aguardando resposta" value={formatNumber(kpis.awaiting)} icon={Clock3} tone="amber" info={KPI_INFO["Aguardando resposta"]} />
-        <KpiCard label="Encerradas" value={formatNumber(kpis.closed)} icon={CheckCircle2} tone="green" info={KPI_INFO.Encerradas} />
-        <KpiCard label="Perdidas" value={formatNumber(kpis.lost)} icon={XCircle} tone="red" info={KPI_INFO.Perdidas} />
+        <KpiCard label="Total de conversas" value={formatNumber(kpis.total)} icon={MessageCircle} info={KPI_INFO["Total de conversas"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Novos leads" value={formatNumber(kpis.newLeads)} icon={Users} tone="blue" info={KPI_INFO["Novos leads"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Leads recorrentes" value={formatNumber(kpis.returningLeads)} icon={UserCheck} tone="green" info={KPI_INFO["Leads recorrentes"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Mensagens recebidas" value={formatNumber(kpis.received)} icon={MessageSquareReply} info={KPI_INFO["Mensagens recebidas"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Mensagens enviadas" value={formatNumber(kpis.sent)} icon={Send} info={KPI_INFO["Mensagens enviadas"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Tempo 1ª resposta" value={formatMinutes(kpis.avgFirstResponse)} icon={Timer} tone="amber" info={KPI_INFO["Tempo 1ª resposta"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="SLA cumprido" value={formatPercent(kpis.sla)} icon={CheckCircle2} tone="green" info={KPI_INFO["SLA cumprido"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Leads sem resposta" value={formatNumber(kpis.noResponse)} icon={AlertCircle} tone="red" info={KPI_INFO["Leads sem resposta"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Aguardando resposta" value={formatNumber(kpis.awaiting)} icon={Clock3} tone="amber" info={KPI_INFO["Aguardando resposta"]} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Encerradas" value={formatNumber(kpis.closed)} icon={CheckCircle2} tone="green" info={KPI_INFO.Encerradas} loading={!realConversations && Boolean(whatsappClientId)} />
+        <KpiCard label="Perdidas" value={formatNumber(kpis.lost)} icon={XCircle} tone="red" info={KPI_INFO.Perdidas} loading={!realConversations && Boolean(whatsappClientId)} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">

@@ -1128,6 +1128,9 @@ const entries: Array<[string, string, string]> = [
   ["Estados cobertos", "States covered", "커버된 주"],
   ["Principal mercado", "Top market", "주요 시장"],
   ["cidades", "cities", "도시"],
+  // ---- whatsapp: carregando/erro
+  ["Não foi possível carregar as conversas do WhatsApp. Os números abaixo não são zero: tente novamente em instantes.", "Could not load the WhatsApp conversations. The numbers below are not zero: please try again shortly.", "WhatsApp 대화를 불러오지 못했습니다. 아래 숫자는 0이 아닙니다. 잠시 후 다시 시도해 주세요."],
+  ["Carregando as conversas do WhatsApp… períodos longos podem levar alguns segundos.", "Loading WhatsApp conversations… long periods can take a few seconds.", "WhatsApp 대화를 불러오는 중… 기간이 길면 몇 초 걸릴 수 있습니다."],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(
