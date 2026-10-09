@@ -2256,7 +2256,8 @@ async function getWhatsappHistorySyncStatus(
 }
 
 type WhatsappCustomerMatch = {
-  customer: typeof customersTable.$inferSelect | null;
+  // só o que a tela e a automação usam (tipo do documento); o resto do cadastro não é lido
+  customer: Pick<typeof customersTable.$inferSelect, "id" | "phone" | "documentType"> | null;
   orderCount: number;
 };
 
@@ -2265,50 +2266,83 @@ async function getWhatsappCustomerMatches(clientId: string, phones: string[]) {
     new Set(phones.map(normalizeWhatsappRecipient).filter(Boolean)),
   );
   const result = new Map<string, WhatsappCustomerMatch>();
+  if (uniquePhones.length === 0) return result;
 
+  // Achado 09/10/2026: isto fazia 2 consultas por telefone, uma depois da outra (MX Fashion, 7 dias: 418 contatos =
+  // centenas de idas ao banco; a tela do WhatsApp ficava em branco). Agora: uma leitura dos clientes da marca e uma
+  // contagem de pedidos em lote. Regra de casamento igual à anterior: telefone igual ou com os mesmos 11 últimos dígitos
+  // (preferindo o igual quando houver os dois).
+  const customers = await db
+    .select({
+      id: customersTable.id,
+      phone: customersTable.phone,
+      documentType: customersTable.documentType,
+    })
+    .from(customersTable)
+    .where(eq(customersTable.clientId, clientId))
+    .orderBy(customersTable.id);
+
+  const byFullPhone = new Map<string, (typeof customers)[number]>();
+  const byLast11 = new Map<string, (typeof customers)[number]>();
+  for (const customer of customers) {
+    const digits = (customer.phone ?? "").replace(/[^0-9]/g, "");
+    if (!digits) continue;
+    if (!byFullPhone.has(digits)) byFullPhone.set(digits, customer);
+    const last11 = digits.slice(-11);
+    if (!byLast11.has(last11)) byLast11.set(last11, customer);
+  }
+
+  const matchedByPhone = new Map<string, (typeof customers)[number]>();
   for (const phone of uniquePhones) {
-    const phoneLast11 = phone.slice(-11);
-    const [customer] = await db
-      .select()
-      .from(customersTable)
-      .where(
-        and(
-          eq(customersTable.clientId, clientId),
-          sql`(
-            regexp_replace(coalesce(${customersTable.phone}, ''), '[^0-9]', '', 'g') = ${phone}
-            OR right(regexp_replace(coalesce(${customersTable.phone}, ''), '[^0-9]', '', 'g'), 11) = ${phoneLast11}
-          )`,
-        ),
-      )
-      .limit(1);
+    const customer = byFullPhone.get(phone) ?? byLast11.get(phone.slice(-11));
+    if (customer) matchedByPhone.set(phone, customer);
+  }
 
-    if (!customer) {
-      result.set(phone, { customer: null, orderCount: 0 });
-      continue;
-    }
-
-    const [orderStats] = await db
-      .select({ orderCount: sql<number>`count(*)` })
+  const matchedIds = Array.from(
+    new Set(Array.from(matchedByPhone.values(), (customer) => customer.id)),
+  );
+  const orderCounts = new Map<string, number>();
+  if (matchedIds.length > 0) {
+    const rows = await db
+      .select({
+        customerId: ordersTable.customerId,
+        orderCount: sql<number>`count(*)`,
+      })
       .from(ordersTable)
       .where(
         and(
           eq(ordersTable.clientId, clientId),
-          eq(ordersTable.customerId, customer.id),
+          inArray(ordersTable.customerId, matchedIds),
         ),
-      );
+      )
+      .groupBy(ordersTable.customerId);
+    for (const row of rows) {
+      if (row.customerId) orderCounts.set(row.customerId, Number(row.orderCount ?? 0));
+    }
+  }
 
-    result.set(phone, {
-      customer,
-      orderCount: Number(orderStats?.orderCount ?? 0),
-    });
+  for (const phone of uniquePhones) {
+    const customer = matchedByPhone.get(phone);
+    result.set(
+      phone,
+      customer
+        ? { customer, orderCount: orderCounts.get(customer.id) ?? 0 }
+        : { customer: null, orderCount: 0 },
+    );
   }
 
   return result;
 }
 
+// Só as colunas que a listagem e a automação realmente usam (o JSON bruto da Meta, `rawPayload`, fica de fora).
+type WhatsappMessageLite = Pick<
+  typeof whatsappMessagesTable.$inferSelect,
+  "id" | "conversationId" | "direction" | "messageType" | "body" | "sentAt"
+>;
+
 async function applyWhatsappConversationAutomation(params: {
   conversation: typeof whatsappConversationsTable.$inferSelect;
-  rows: Array<typeof whatsappMessagesTable.$inferSelect>;
+  rows: WhatsappMessageLite[];
   customerMatch: WhatsappCustomerMatch | null;
 }) {
   const sortedRows = [...params.rows].sort(
@@ -4295,9 +4329,18 @@ router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
     : [];
   const contactMap = new Map(contacts.map((contact) => [contact.id, contact]));
 
-  const messages = conversationIds.length
+  // Achado 09/10/2026: `.select()` trazia todas as colunas, inclusive `raw_payload` (JSON bruto da Meta), de todas as
+  // mensagens de até 5.000 conversas -- só para mostrar a última mensagem e detectar CNPJ/catálogo no texto.
+  const messages: WhatsappMessageLite[] = conversationIds.length
     ? await db
-        .select()
+        .select({
+          id: whatsappMessagesTable.id,
+          conversationId: whatsappMessagesTable.conversationId,
+          direction: whatsappMessagesTable.direction,
+          messageType: whatsappMessagesTable.messageType,
+          body: whatsappMessagesTable.body,
+          sentAt: whatsappMessagesTable.sentAt,
+        })
         .from(whatsappMessagesTable)
         .where(inArray(whatsappMessagesTable.conversationId, conversationIds))
         .orderBy(desc(whatsappMessagesTable.sentAt))
@@ -4327,13 +4370,17 @@ router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
       sql`${whatsappMessagesTable.sentAt} < ${toDate}`,
     );
 
+  // Contagem por dia (fuso de São Paulo) feita no banco: antes baixava uma linha por mensagem do período inteiro.
+  const messageDayKey = sql<string>`to_char(timezone('America/Sao_Paulo', ${whatsappMessagesTable.sentAt}), 'YYYY-MM-DD')`;
   const metricMessages = await db
     .select({
       direction: whatsappMessagesTable.direction,
-      sentAt: whatsappMessagesTable.sentAt,
+      day: messageDayKey,
+      total: sql<number>`COUNT(*)::int`,
     })
     .from(whatsappMessagesTable)
-    .where(and(...messageMetricConditions));
+    .where(and(...messageMetricConditions))
+    .groupBy(whatsappMessagesTable.direction, messageDayKey);
 
   const messagesByDayMap = new Map<
     string,
@@ -4342,18 +4389,19 @@ router.get("/whatsapp/conversations", async (req, res): Promise<void> => {
   let messagesReceived = 0;
   let messagesSent = 0;
   for (const message of metricMessages) {
-    const key = saoPauloDateKey(message.sentAt);
+    const key = message.day;
+    const count = Number(message.total) || 0;
     const current = messagesByDayMap.get(key) ?? {
       date: key,
       received: 0,
       sent: 0,
     };
     if (message.direction === "inbound") {
-      current.received += 1;
-      messagesReceived += 1;
+      current.received += count;
+      messagesReceived += count;
     } else if (message.direction === "outbound") {
-      current.sent += 1;
-      messagesSent += 1;
+      current.sent += count;
+      messagesSent += count;
     }
     messagesByDayMap.set(key, current);
   }
