@@ -1,12 +1,17 @@
 // Regras do arquivamento de clientes (puras, sem banco).
 //
-// Combinado com o time (13/10/2026): cliente que saiu NÃO é apagado na hora. Primeiro é ARQUIVADO: some do painel, sai das
-// atualizações diárias e perde o acesso, mas os dados ficam guardados e dá para restaurar. Só depois de ARCHIVE_RETENTION_DAYS
-// (90) a exclusão definitiva é liberada.
+// Combinado com o time (13/10/2026): para o usuário isso é "excluir cliente", mas por trás o cliente é ARQUIVADO: some do painel,
+// sai das atualizações diárias e perde o acesso, e os dados ficam guardados (dá para recuperar). Só depois de
+// ARCHIVE_RETENTION_DAYS (90) os dados são apagados de vez (job de limpeza ou botão "Apagar agora").
 
 export const ARCHIVE_RETENTION_DAYS = 90;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Arquivados há pelo menos este tempo já passaram do prazo: archived_at <= cutoff. */
+export function archivePurgeCutoff(now: Date = new Date(), retentionDays: number = ARCHIVE_RETENTION_DAYS): Date {
+  return new Date(now.getTime() - retentionDays * DAY_MS);
+}
 
 export type ArchivedListMode = "exclude" | "only" | "include";
 

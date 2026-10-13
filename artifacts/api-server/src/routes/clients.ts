@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, ilike, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   db,
@@ -36,6 +36,11 @@ import {
   canDeleteClient,
   parseArchivedMode,
 } from "../services/client-archive-rules";
+import {
+  deleteClientWithLogins,
+  exclusiveClientLoginUsers,
+  externalDatasetsOf,
+} from "../services/client-lifecycle";
 
 const router: IRouter = Router();
 
@@ -1006,49 +1011,10 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
 });
 
 // ---------------------------------------------------------------------------
-// Ciclo de vida do cliente: ARQUIVAR (reversivel) -> EXCLUIR de vez (so apos ARCHIVE_RETENTION_DAYS, com confirmacao).
-// Arquivado: some do painel, sai das atualizacoes diarias, o login do cliente e bloqueado e os dados ficam guardados.
+// Ciclo de vida do cliente. Para o time isso e "EXCLUIR" (com lixeira de ARCHIVE_RETENTION_DAYS); por tras, excluir = arquivar:
+// some do painel, sai das atualizacoes diarias, o login e bloqueado e os dados ficam guardados. Passado o prazo, e apagado
+// de vez (job de limpeza ou "apagar agora"). Helpers e limpeza automatica: services/client-lifecycle.ts.
 // ---------------------------------------------------------------------------
-
-type ClientLoginUser = { id: string; email: string };
-
-// Logins (papel CLIENT) que existem so para este cliente: sao os que saem junto quando o cliente e arquivado/excluido.
-// Quem tem acesso a outro cliente tambem fica de fora (nao pode perder o acesso a marca que continua ativa).
-async function exclusiveClientLoginUsers(clientId: string, ownerUserId: string | null): Promise<ClientLoginUser[]> {
-  const linked = await db
-    .select({ id: usersTable.id, email: usersTable.email, role: usersTable.role })
-    .from(clientUserAccessesTable)
-    .innerJoin(usersTable, eq(usersTable.id, clientUserAccessesTable.userId))
-    .where(eq(clientUserAccessesTable.clientId, clientId));
-  const candidates = new Map<string, ClientLoginUser>();
-  for (const user of linked) {
-    if (user.role === "CLIENT") candidates.set(user.id, { id: user.id, email: user.email });
-  }
-  if (ownerUserId && !candidates.has(ownerUserId)) {
-    const [owner] = await db
-      .select({ id: usersTable.id, email: usersTable.email, role: usersTable.role })
-      .from(usersTable)
-      .where(eq(usersTable.id, ownerUserId));
-    if (owner?.role === "CLIENT") candidates.set(owner.id, { id: owner.id, email: owner.email });
-  }
-  if (candidates.size === 0) return [];
-  const ids = [...candidates.keys()];
-  const [otherAccesses, otherOwned] = await Promise.all([
-    db
-      .select({ userId: clientUserAccessesTable.userId })
-      .from(clientUserAccessesTable)
-      .where(and(inArray(clientUserAccessesTable.userId, ids), ne(clientUserAccessesTable.clientId, clientId))),
-    db
-      .select({ userId: clientsTable.userId })
-      .from(clientsTable)
-      .where(and(inArray(clientsTable.userId, ids), ne(clientsTable.id, clientId))),
-  ]);
-  const shared = new Set<string>([
-    ...otherAccesses.map((row) => row.userId),
-    ...otherOwned.map((row) => row.userId).filter((id): id is string => Boolean(id)),
-  ]);
-  return [...candidates.values()].filter((user) => !shared.has(user.id));
-}
 
 router.post("/clients/:clientId/archive", requireAdmin, async (req, res): Promise<void> => {
   const paramParsed = GetClientParams.safeParse(req.params);
@@ -1080,7 +1046,7 @@ router.post("/clients/:clientId/archive", requireAdmin, async (req, res): Promis
       .set({ revokedAt: new Date() })
       .where(and(inArray(sessionsTable.userId, loginUsers.map((user) => user.id)), isNull(sessionsTable.revokedAt)));
   }
-  logger.warn({ clientId, name: existing.name, by: req.user?.email }, "Client archived");
+  logger.warn({ clientId, name: existing.name, by: req.user?.email }, "Client excluded (archived)");
   res.json(GetClientResponse.parse(clientPublicFields(updated ?? existing)));
 });
 
@@ -1100,7 +1066,7 @@ router.post("/clients/:clientId/restore", requireAdmin, async (req, res): Promis
     res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
     return;
   }
-  logger.warn({ clientId, name: updated.name, by: req.user?.email }, "Client restored");
+  logger.warn({ clientId, name: updated.name, by: req.user?.email }, "Client recovered (restored from archive)");
   res.json(GetClientResponse.parse(clientPublicFields(updated)));
 });
 
@@ -1145,10 +1111,7 @@ router.get("/clients/:clientId/deletion-preview", requireAdmin, async (req, res)
     counts: { orders, customers, events, creatives, syncJobs },
     loginUsers: loginUsers.map((user) => user.email),
     // Fora do banco do painel: NAO sao apagados por esta acao (ficam para limpeza manual).
-    external: {
-      bigqueryDataset: client.bigqueryDataset?.trim() || null,
-      erpDataset: client.erpDataset?.trim() || null,
-    },
+    external: externalDatasetsOf(client),
   });
 });
 
@@ -1184,28 +1147,21 @@ router.delete("/clients/:clientId", requireAdmin, async (req, res): Promise<void
     if (decision.code === "NAME_MISMATCH") {
       res.status(400).json({ error: true, code: "NAME_MISMATCH", message: "O nome digitado não confere com o do cliente.", status: 400 });
     } else if (decision.code === "NOT_ARCHIVED") {
-      res.status(409).json({ error: true, code: "NOT_ARCHIVED", message: "Arquive o cliente antes de excluir.", status: 409 });
+      res.status(409).json({ error: true, code: "NOT_ARCHIVED", message: "Exclua o cliente antes de apagar de vez.", status: 409 });
     } else {
       res.status(409).json({
         error: true,
         code: "RETENTION_NOT_ELAPSED",
-        message: `A exclusão só é liberada ${ARCHIVE_RETENTION_DAYS} dias depois de arquivar (faltam ${decision.daysLeft ?? 0}).`,
+        message: `O cliente só pode ser apagado de vez ${ARCHIVE_RETENTION_DAYS} dias depois de excluído (faltam ${decision.daysLeft ?? 0}).`,
         status: 409,
       });
     }
     return;
   }
-  const loginUsers = await exclusiveClientLoginUsers(clientId, client.userId);
-  // Apagar o cliente leva junto (ON DELETE CASCADE) pedidos, clientes finais, eventos, criativos, jobs, WhatsApp etc.
-  // Os logins exclusivos dele saem na mesma transacao: ou apaga tudo, ou nada.
-  await db.transaction(async (tx) => {
-    await tx.delete(clientsTable).where(eq(clientsTable.id, clientId));
-    if (loginUsers.length > 0) {
-      await tx.delete(usersTable).where(inArray(usersTable.id, loginUsers.map((user) => user.id)));
-    }
-  });
+  // Leva junto (cascata) tudo do cliente e os logins exclusivos dele, numa transacao so.
+  const deleted = await deleteClientWithLogins(client);
   logger.warn(
-    { clientId, name: client.name, early: decision.early, by: req.user?.email, loginUsers: loginUsers.length },
+    { clientId, name: client.name, early: decision.early, by: req.user?.email, loginUsers: deleted.deletedLoginUsers },
     "Client permanently deleted",
   );
   res.json({
@@ -1213,11 +1169,8 @@ router.delete("/clients/:clientId", requireAdmin, async (req, res): Promise<void
     clientId,
     name: client.name,
     early: decision.early,
-    deletedLoginUsers: loginUsers.length,
-    external: {
-      bigqueryDataset: client.bigqueryDataset?.trim() || null,
-      erpDataset: client.erpDataset?.trim() || null,
-    },
+    deletedLoginUsers: deleted.deletedLoginUsers,
+    external: deleted.external,
   });
 });
 

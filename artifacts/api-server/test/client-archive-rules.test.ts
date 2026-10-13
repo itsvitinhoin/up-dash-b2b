@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ARCHIVE_RETENTION_DAYS,
   archiveInfo,
+  archivePurgeCutoff,
   canDeleteClient,
   parseArchivedMode,
 } from "../src/services/client-archive-rules";
@@ -53,6 +54,19 @@ describe("archiveInfo", () => {
 
   it("aceita a data como texto ISO (vinda da API)", () => {
     expect(archiveInfo(daysAgo(10).toISOString(), now).daysLeft).toBe(80);
+  });
+});
+
+describe("archivePurgeCutoff", () => {
+  it("é agora menos 90 dias", () => {
+    expect(archivePurgeCutoff(now).getTime()).toBe(now.getTime() - 90 * DAY);
+  });
+
+  it("bate com archiveInfo: arquivado até o corte já pode ser apagado, depois dele ainda não", () => {
+    const cutoff = archivePurgeCutoff(now);
+    expect(archiveInfo(cutoff, now).canDelete).toBe(true);
+    expect(archiveInfo(new Date(cutoff.getTime() - 1), now).canDelete).toBe(true);
+    expect(archiveInfo(new Date(cutoff.getTime() + 1), now).canDelete).toBe(false);
   });
 });
 

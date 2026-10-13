@@ -56,7 +56,7 @@ import {
   Tag,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArchiveClientDialog, ArchivedClientsTable } from "@/components/client-archive";
+import { ExcludeClientDialog, ExcludedClientsTable } from "@/components/client-exclusion";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import {
@@ -1392,8 +1392,8 @@ export default function ClientsPage() {
   const debouncedSearch = useDebounce(search, 300);
   const [page, setPage] = useState(1);
   const limit = 20;
-  // Ativos = painel normal; Arquivados = clientes que sairam (ficam guardados 90 dias antes da exclusao definitiva).
-  const [view, setView] = useState<"active" | "archived">("active");
+  // Ativos = painel normal; Excluidos = clientes que sairam (por tras ficam arquivados 90 dias, recuperaveis, antes de serem apagados de vez).
+  const [view, setView] = useState<"active" | "excluded">("active");
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -1509,8 +1509,8 @@ export default function ClientsPage() {
       page,
       limit,
       dashboardType: selectedDashboardMode,
-      // Aba Arquivados: so os arquivados, sem janela de metricas (a tabela deles nao mostra numeros do periodo).
-      ...(view === "archived"
+      // Aba Excluidos: so os excluidos (arquivados), sem janela de metricas (a tabela deles nao mostra numeros do periodo).
+      ...(view === "excluded"
         ? { archived: "only" as const }
         : {
             dateFrom: format(dateRange.from, "yyyy-MM-dd"),
@@ -1524,9 +1524,9 @@ export default function ClientsPage() {
       }),
     }
   );
-  // Ao trocar de aba o react-query mostra a lista anterior ate a nova chegar: linha de outra aba nunca aparece (evita excluir/arquivar o cliente errado).
+  // Ao trocar de aba o react-query mostra a lista anterior ate a nova chegar: linha de outra aba nunca aparece (evita agir no cliente errado).
   const clients = (Array.isArray(data?.data) ? data.data : []).filter((client) =>
-    view === "archived" ? Boolean(client.archivedAt) : !client.archivedAt,
+    view === "excluded" ? Boolean(client.archivedAt) : !client.archivedAt,
   );
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -2051,15 +2051,15 @@ export default function ClientsPage() {
           <CardContent>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-medium">{view === "archived" ? tx("Clientes arquivados") : tx("Clientes cadastrados")}</h2>
+                <h2 className="text-base font-medium">{view === "excluded" ? tx("Clientes excluídos") : tx("Clientes cadastrados")}</h2>
                 <p className="text-xs text-muted-foreground">
-                  {view === "archived"
-                    ? tx("Ficam guardados por 90 dias. Restaure, ou exclua de vez quando o prazo permitir.")
+                  {view === "excluded"
+                    ? tx("Ficam guardados por 90 dias e depois são apagados de vez. Recupere quem foi excluído sem querer.")
                     : tx("Role a tabela para consultar todas as métricas e ações.")}
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <div className="inline-flex rounded-md border p-0.5" role="group" aria-label={tx("Ativos ou arquivados")}>
+                <div className="inline-flex rounded-md border p-0.5" role="group" aria-label={tx("Ativos ou excluídos")}>
                   <Button
                     type="button"
                     size="sm"
@@ -2072,21 +2072,21 @@ export default function ClientsPage() {
                   <Button
                     type="button"
                     size="sm"
-                    variant={view === "archived" ? "secondary" : "ghost"}
+                    variant={view === "excluded" ? "secondary" : "ghost"}
                     className="h-7 px-3 text-xs"
-                    onClick={() => { setView("archived"); setPage(1); }}
+                    onClick={() => { setView("excluded"); setPage(1); }}
                   >
-                    {tx("Arquivados")}
+                    {tx("Excluídos")}
                   </Button>
                 </div>
                 <Badge variant="outline">{formatNumber(clients.length)} {tx("clientes")}</Badge>
               </div>
             </div>
-            {view === "archived" ? (
-              <ArchivedClientsTable
+            {view === "excluded" ? (
+              <ExcludedClientsTable
                 clients={clients}
                 isLoading={(isLoading && !data) || isPlaceholderData}
-                emptyLabel={tx("Nenhum cliente {mode} arquivado.").replace("{mode}", selectedDashboardMode)}
+                emptyLabel={tx("Nenhum cliente {mode} excluído.").replace("{mode}", selectedDashboardMode)}
               />
             ) : (
             <Table>
@@ -2299,7 +2299,7 @@ export default function ClientsPage() {
                             clientName={client.name}
                             currentHidden={client.hiddenNavItems}
                           />
-                          <ArchiveClientDialog clientId={client.id} clientName={client.name} />
+                          <ExcludeClientDialog clientId={client.id} clientName={client.name} />
                         </div>
                       </TableCell>
                     </TableRow>
