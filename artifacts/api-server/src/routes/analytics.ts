@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, asc, desc, eq, gte, lte, sql, ilike, or, inArray, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, sql, ilike, or, inArray, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -857,6 +857,8 @@ router.get(
         locale: clientsTable.locale,
       })
       .from(clientsTable)
+      // Arquivados saem dos totais da plataforma (voltam se forem restaurados).
+      .where(isNull(clientsTable.archivedAt))
       .orderBy(clientsTable.name);
 
     const totalClients = clients.length;

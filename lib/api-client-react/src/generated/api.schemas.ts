@@ -152,6 +152,11 @@ export interface Client {
   hasGa4Integration: boolean;
   /** True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it). */
   hasErpIntegration?: boolean;
+  /**
+   * When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.
+   * @nullable
+   */
+  archivedAt?: string | null;
   /** True when this client has at least one CLIENT-role login. */
   hasClientLogin?: boolean;
   /**
@@ -1834,6 +1839,10 @@ export type ListClientsParams = {
    */
   dashboardType?: ListClientsDashboardType;
   /**
+   * Archived clients are hidden by default. `only` lists just the archived ones, `include` lists everyone.
+   */
+  archived?: ListClientsArchived;
+  /**
  * When both dateFrom and dateTo are provided, each client row in the
 response is enriched with `avgOrderValue`, `conversionRate`, and
 `periodGrowthPct` computed over that window (versus the previous
@@ -1843,6 +1852,14 @@ window of equal length for growth).
   dateFrom?: string;
   dateTo?: string;
 };
+
+export type ListClientsArchived =
+  (typeof ListClientsArchived)[keyof typeof ListClientsArchived];
+
+export const ListClientsArchived = {
+  only: "only",
+  include: "include",
+} as const;
 
 export type ListClientsDashboardType =
   (typeof ListClientsDashboardType)[keyof typeof ListClientsDashboardType];

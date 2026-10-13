@@ -48,6 +48,11 @@ export interface Client {
   hasGa4Integration: boolean;
   /** True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it). */
   hasErpIntegration?: boolean;
+  /**
+   * When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.
+   * @nullable
+   */
+  archivedAt?: Date | null;
   /** True when this client has at least one CLIENT-role login. */
   hasClientLogin?: boolean;
   /**

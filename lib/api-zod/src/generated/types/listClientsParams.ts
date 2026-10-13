@@ -5,6 +5,7 @@
  * UP Dash - B2B fashion analytics intelligence API
  * OpenAPI spec version: 0.1.0
  */
+import type { ListClientsArchived } from "./listClientsArchived";
 import type { ListClientsDashboardType } from "./listClientsDashboardType";
 
 export type ListClientsParams = {
@@ -15,6 +16,10 @@ export type ListClientsParams = {
    * Filter clients by the dashboard family selected by the admin.
    */
   dashboardType?: ListClientsDashboardType;
+  /**
+   * Archived clients are hidden by default. `only` lists just the archived ones, `include` lists everyone.
+   */
+  archived?: ListClientsArchived;
   /**
  * When both dateFrom and dateTo are provided, each client row in the
 response is enriched with `avgOrderValue`, `conversionRate`, and

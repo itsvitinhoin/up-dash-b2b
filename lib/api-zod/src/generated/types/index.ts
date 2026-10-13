@@ -106,6 +106,7 @@ export * from "./journeyEventNode";
 export * from "./journeyKpis";
 export * from "./journeyResponse";
 export * from "./journeyUtmSource";
+export * from "./listClientsArchived";
 export * from "./listClientsDashboardType";
 export * from "./listClientsParams";
 export * from "./listNotificationsParams";

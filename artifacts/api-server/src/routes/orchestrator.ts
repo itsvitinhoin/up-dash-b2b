@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request } from "express";
-import { and, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -635,7 +635,7 @@ async function getB2BClients() {
       createdAt: clientsTable.createdAt,
     })
     .from(clientsTable)
-    .where(eq(clientsTable.dashboardType, "B2B"))
+    .where(and(eq(clientsTable.dashboardType, "B2B"), isNull(clientsTable.archivedAt)))
     .orderBy(clientsTable.name);
 }
 

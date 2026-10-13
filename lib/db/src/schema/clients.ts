@@ -29,6 +29,9 @@ export const clientsTable = pgTable(
     leadsYtd: integer("leads_ytd").notNull().default(0),
     approvedLeads: integer("approved_leads").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
+    // Preenchido = cliente ARQUIVADO: some do painel, sai das atualizações diárias e não entra mais; os dados ficam guardados
+    // por ARCHIVE_RETENTION_DAYS (90) e só depois podem ser excluídos de vez. Null = cliente em uso.
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     metaAdsApiKey: text("meta_ads_api_key"),
     metaAdAccountId: text("meta_ad_account_id"),
     upZeroApiKey: text("up_zero_api_key"),

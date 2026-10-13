@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, eq, gte, ilike, inArray, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   db,
@@ -11,6 +11,7 @@ import {
   customersTable,
   usersTable,
   clientUserAccessesTable,
+  sessionsTable,
 } from "@workspace/db";
 import {
   CreateClientBody,
@@ -28,6 +29,13 @@ import { syncNuvemshopClient } from "../services/nuvemshop-sync";
 import { fetchMetaAdAccounts, normalizeMetaAdAccountId } from "../services/meta-ads";
 import { fetchGa4FunnelMetrics } from "../services/ga4";
 import { hashPassword } from "../lib/auth";
+import { logger } from "../lib/logger";
+import {
+  ARCHIVE_RETENTION_DAYS,
+  archiveInfo,
+  canDeleteClient,
+  parseArchivedMode,
+} from "../services/client-archive-rules";
 
 const router: IRouter = Router();
 
@@ -102,6 +110,10 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
   const filters: SQL[] = [];
   if (search) filters.push(ilike(clientsTable.name, `%${search}%`));
   if (dashboardType) filters.push(eq(clientsTable.dashboardType, dashboardType));
+  // Arquivados ficam fora por padrao (somem do painel); ?archived=only lista so eles, ?archived=include lista todos.
+  const archivedMode = parseArchivedMode(req.query.archived);
+  if (archivedMode === "exclude") filters.push(isNull(clientsTable.archivedAt));
+  else if (archivedMode === "only") filters.push(isNotNull(clientsTable.archivedAt));
   const where = filters.length > 0 ? and(...filters) : undefined;
 
   const offset = (page - 1) * limit;
@@ -991,6 +1003,222 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
     return;
   }
   res.json(GetClientResponse.parse(clientPublicFields(updated)));
+});
+
+// ---------------------------------------------------------------------------
+// Ciclo de vida do cliente: ARQUIVAR (reversivel) -> EXCLUIR de vez (so apos ARCHIVE_RETENTION_DAYS, com confirmacao).
+// Arquivado: some do painel, sai das atualizacoes diarias, o login do cliente e bloqueado e os dados ficam guardados.
+// ---------------------------------------------------------------------------
+
+type ClientLoginUser = { id: string; email: string };
+
+// Logins (papel CLIENT) que existem so para este cliente: sao os que saem junto quando o cliente e arquivado/excluido.
+// Quem tem acesso a outro cliente tambem fica de fora (nao pode perder o acesso a marca que continua ativa).
+async function exclusiveClientLoginUsers(clientId: string, ownerUserId: string | null): Promise<ClientLoginUser[]> {
+  const linked = await db
+    .select({ id: usersTable.id, email: usersTable.email, role: usersTable.role })
+    .from(clientUserAccessesTable)
+    .innerJoin(usersTable, eq(usersTable.id, clientUserAccessesTable.userId))
+    .where(eq(clientUserAccessesTable.clientId, clientId));
+  const candidates = new Map<string, ClientLoginUser>();
+  for (const user of linked) {
+    if (user.role === "CLIENT") candidates.set(user.id, { id: user.id, email: user.email });
+  }
+  if (ownerUserId && !candidates.has(ownerUserId)) {
+    const [owner] = await db
+      .select({ id: usersTable.id, email: usersTable.email, role: usersTable.role })
+      .from(usersTable)
+      .where(eq(usersTable.id, ownerUserId));
+    if (owner?.role === "CLIENT") candidates.set(owner.id, { id: owner.id, email: owner.email });
+  }
+  if (candidates.size === 0) return [];
+  const ids = [...candidates.keys()];
+  const [otherAccesses, otherOwned] = await Promise.all([
+    db
+      .select({ userId: clientUserAccessesTable.userId })
+      .from(clientUserAccessesTable)
+      .where(and(inArray(clientUserAccessesTable.userId, ids), ne(clientUserAccessesTable.clientId, clientId))),
+    db
+      .select({ userId: clientsTable.userId })
+      .from(clientsTable)
+      .where(and(inArray(clientsTable.userId, ids), ne(clientsTable.id, clientId))),
+  ]);
+  const shared = new Set<string>([
+    ...otherAccesses.map((row) => row.userId),
+    ...otherOwned.map((row) => row.userId).filter((id): id is string => Boolean(id)),
+  ]);
+  return [...candidates.values()].filter((user) => !shared.has(user.id));
+}
+
+router.post("/clients/:clientId/archive", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: paramParsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = paramParsed.data;
+  const [existing] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!existing) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  // Ja arquivado: devolve como esta (nao reinicia a contagem dos 90 dias).
+  if (existing.archivedAt) {
+    res.json(GetClientResponse.parse(clientPublicFields(existing)));
+    return;
+  }
+  const [updated] = await db
+    .update(clientsTable)
+    .set({ archivedAt: new Date() })
+    .where(and(eq(clientsTable.id, clientId), isNull(clientsTable.archivedAt)))
+    .returning();
+  // Derruba as sessoes abertas dos logins que so servem este cliente (o login novo ja e barrado em /auth/login e /auth/refresh).
+  const loginUsers = await exclusiveClientLoginUsers(clientId, existing.userId);
+  if (loginUsers.length > 0) {
+    await db
+      .update(sessionsTable)
+      .set({ revokedAt: new Date() })
+      .where(and(inArray(sessionsTable.userId, loginUsers.map((user) => user.id)), isNull(sessionsTable.revokedAt)));
+  }
+  logger.warn({ clientId, name: existing.name, by: req.user?.email }, "Client archived");
+  res.json(GetClientResponse.parse(clientPublicFields(updated ?? existing)));
+});
+
+router.post("/clients/:clientId/restore", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: paramParsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = paramParsed.data;
+  const [updated] = await db
+    .update(clientsTable)
+    .set({ archivedAt: null })
+    .where(eq(clientsTable.id, clientId))
+    .returning();
+  if (!updated) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  logger.warn({ clientId, name: updated.name, by: req.user?.email }, "Client restored");
+  res.json(GetClientResponse.parse(clientPublicFields(updated)));
+});
+
+// O que seria apagado se o cliente fosse excluido agora (alimenta a tela de confirmacao). Nao altera nada.
+router.get("/clients/:clientId/deletion-preview", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: paramParsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = paramParsed.data;
+  const [client] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  const countOf = async (table: typeof ordersTable | typeof customersTable | typeof eventsTable | typeof creativesTable | typeof syncJobsTable) => {
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(table)
+      .where(eq(table.clientId, clientId));
+    return row?.count ?? 0;
+  };
+  const [orders, customers, events, creatives, syncJobs, loginUsers] = await Promise.all([
+    countOf(ordersTable),
+    countOf(customersTable),
+    countOf(eventsTable),
+    countOf(creativesTable),
+    countOf(syncJobsTable),
+    exclusiveClientLoginUsers(clientId, client.userId),
+  ]);
+  const info = archiveInfo(client.archivedAt);
+  res.json({
+    clientId: client.id,
+    name: client.name,
+    archived: info.archived,
+    archivedAt: info.archivedAt,
+    deletableFrom: info.deletableFrom,
+    daysLeft: info.daysLeft,
+    canDelete: info.canDelete,
+    retentionDays: ARCHIVE_RETENTION_DAYS,
+    counts: { orders, customers, events, creatives, syncJobs },
+    loginUsers: loginUsers.map((user) => user.email),
+    // Fora do banco do painel: NAO sao apagados por esta acao (ficam para limpeza manual).
+    external: {
+      bigqueryDataset: client.bigqueryDataset?.trim() || null,
+      erpDataset: client.erpDataset?.trim() || null,
+    },
+  });
+});
+
+const DeleteClientBody = z.object({
+  confirmName: z.string().optional(),
+  force: z.boolean().optional(),
+});
+
+router.delete("/clients/:clientId", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: paramParsed.error.message, status: 400 });
+    return;
+  }
+  const bodyParsed = DeleteClientBody.safeParse(req.body ?? {});
+  if (!bodyParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: bodyParsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = paramParsed.data;
+  const [client] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  const decision = canDeleteClient({
+    archivedAt: client.archivedAt,
+    clientName: client.name,
+    confirmName: bodyParsed.data.confirmName,
+    force: bodyParsed.data.force,
+  });
+  if (!decision.ok) {
+    if (decision.code === "NAME_MISMATCH") {
+      res.status(400).json({ error: true, code: "NAME_MISMATCH", message: "O nome digitado não confere com o do cliente.", status: 400 });
+    } else if (decision.code === "NOT_ARCHIVED") {
+      res.status(409).json({ error: true, code: "NOT_ARCHIVED", message: "Arquive o cliente antes de excluir.", status: 409 });
+    } else {
+      res.status(409).json({
+        error: true,
+        code: "RETENTION_NOT_ELAPSED",
+        message: `A exclusão só é liberada ${ARCHIVE_RETENTION_DAYS} dias depois de arquivar (faltam ${decision.daysLeft ?? 0}).`,
+        status: 409,
+      });
+    }
+    return;
+  }
+  const loginUsers = await exclusiveClientLoginUsers(clientId, client.userId);
+  // Apagar o cliente leva junto (ON DELETE CASCADE) pedidos, clientes finais, eventos, criativos, jobs, WhatsApp etc.
+  // Os logins exclusivos dele saem na mesma transacao: ou apaga tudo, ou nada.
+  await db.transaction(async (tx) => {
+    await tx.delete(clientsTable).where(eq(clientsTable.id, clientId));
+    if (loginUsers.length > 0) {
+      await tx.delete(usersTable).where(inArray(usersTable.id, loginUsers.map((user) => user.id)));
+    }
+  });
+  logger.warn(
+    { clientId, name: client.name, early: decision.early, by: req.user?.email, loginUsers: loginUsers.length },
+    "Client permanently deleted",
+  );
+  res.json({
+    deleted: true,
+    clientId,
+    name: client.name,
+    early: decision.early,
+    deletedLoginUsers: loginUsers.length,
+    external: {
+      bigqueryDataset: client.bigqueryDataset?.trim() || null,
+      erpDataset: client.erpDataset?.trim() || null,
+    },
+  });
 });
 
 router.post("/clients/:clientId/meta/ad-accounts", requireAdmin, async (req, res): Promise<void> => {

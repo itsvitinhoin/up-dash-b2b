@@ -88,6 +88,12 @@ export const ListClientsQueryParams = zod.object({
     .enum(["B2B", "B2C"])
     .optional()
     .describe("Filter clients by the dashboard family selected by the admin."),
+  archived: zod
+    .enum(["only", "include"])
+    .optional()
+    .describe(
+      "Archived clients are hidden by default. `only` lists just the archived ones, `include` lists everyone.",
+    ),
   dateFrom: zod
     .date()
     .optional()
@@ -150,6 +156,12 @@ export const ListClientsResponse = zod.object({
         .optional()
         .describe(
           "True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it).",
+        ),
+      archivedAt: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          "When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.",
         ),
       hasClientLogin: zod
         .boolean()
@@ -428,6 +440,12 @@ export const GetClientResponse = zod.object({
     .describe(
       "True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it).",
     ),
+  archivedAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.",
+    ),
   hasClientLogin: zod
     .boolean()
     .optional()
@@ -623,6 +641,12 @@ export const UpdateClientResponse = zod.object({
     .optional()
     .describe(
       "True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it).",
+    ),
+  archivedAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.",
     ),
   hasClientLogin: zod
     .boolean()
