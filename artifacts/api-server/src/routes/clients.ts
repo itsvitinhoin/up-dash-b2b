@@ -12,6 +12,7 @@ import {
   usersTable,
   clientUserAccessesTable,
   sessionsTable,
+  commercialAutomationJobsTable,
 } from "@workspace/db";
 import {
   CreateClientBody,
@@ -1046,6 +1047,11 @@ router.post("/clients/:clientId/archive", requireAdmin, async (req, res): Promis
       .set({ revokedAt: new Date() })
       .where(and(inArray(sessionsTable.userId, loginUsers.map((user) => user.id)), isNull(sessionsTable.revokedAt)));
   }
+  // Mensagens de automacao ainda agendadas nao devem sair em nome de um cliente excluido (nem disparar em massa se ele voltar).
+  await db
+    .update(commercialAutomationJobsTable)
+    .set({ status: "cancelled", skipReason: "client_excluded", processedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(commercialAutomationJobsTable.clientId, clientId), eq(commercialAutomationJobsTable.status, "scheduled")));
   logger.warn({ clientId, name: existing.name, by: req.user?.email }, "Client excluded (archived)");
   res.json(GetClientResponse.parse(clientPublicFields(updated ?? existing)));
 });
