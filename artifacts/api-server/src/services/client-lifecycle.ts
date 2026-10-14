@@ -2,7 +2,7 @@
 // Para o time isso é "excluir"; por trás, excluir = arquivar (some do painel, sai das atualizações, login bloqueado) e só depois
 // de ARCHIVE_RETENTION_DAYS os dados são apagados de verdade. As regras de prazo ficam em client-archive-rules.ts.
 import { and, asc, eq, inArray, isNotNull, lte, ne } from "drizzle-orm";
-import { db, clientsTable, clientUserAccessesTable, usersTable } from "@workspace/db";
+import { db, clientsTable, clientUserAccessesTable, ordersTable, orderItemsTable, usersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { ARCHIVE_RETENTION_DAYS, archivePurgeCutoff } from "./client-archive-rules";
 import {
@@ -80,6 +80,10 @@ export type ClientToDelete = {
 export async function deleteClientWithLogins(client: Pick<ClientToDelete, "id" | "userId" | "bigqueryDataset" | "erpDataset">): Promise<{ deletedLoginUsers: number; external: ExternalDatasets }> {
   const loginUsers = await exclusiveClientLoginUsers(client.id, client.userId);
   await db.transaction(async (tx) => {
+    // order_items -> products não tem cascata (NO ACTION): sem apagar os itens antes, o banco recusa apagar os produtos do cliente.
+    await tx
+      .delete(orderItemsTable)
+      .where(inArray(orderItemsTable.orderId, tx.select({ id: ordersTable.id }).from(ordersTable).where(eq(ordersTable.clientId, client.id))));
     await tx.delete(clientsTable).where(eq(clientsTable.id, client.id));
     if (loginUsers.length > 0) {
       await tx.delete(usersTable).where(inArray(usersTable.id, loginUsers.map((user) => user.id)));

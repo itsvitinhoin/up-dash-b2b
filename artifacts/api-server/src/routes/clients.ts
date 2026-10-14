@@ -1181,7 +1181,7 @@ router.delete("/clients/:clientId", requireAdmin, async (req, res): Promise<void
     res.status(502).json({
       error: true,
       code: "PURGE_FAILED",
-      message: "Não foi possível apagar o cliente (falha ao limpar o BigQuery). Nada foi apagado do painel; tente de novo.",
+      message: "Não foi possível apagar o cliente. Nada foi apagado do painel; tente de novo e, se repetir, veja os logs.",
       status: 502,
     });
     return;
