@@ -13,7 +13,7 @@ import {
   type DatasetSkipReason,
   type ExcludedRow,
 } from "./excluded-clients-rules";
-import { deleteTenantRows, dropDataset, readTombstones, replaceExcludedRows, type BigQueryLike } from "./excluded-clients-bq";
+import { deleteTenantRows, dropDataset, dropGa4Tables, readTombstones, replaceExcludedRows, type BigQueryLike } from "./excluded-clients-bq";
 
 export type ClientLoginUser = { id: string; email: string };
 
@@ -98,9 +98,9 @@ export function bigQueryConfigured(): boolean {
   );
 }
 
-/** Apagar datasets e linhas consolidadas ao apagar de vez. Ligado por padrão; BQ_PURGE_ENABLED=false desliga (a lista de excluídos continua). */
+/** Apagar datasets, tabelas do GA4 e linhas consolidadas ao apagar de vez. DESLIGADO por padrão (apagar dataset não tem volta): liga com BQ_PURGE_ENABLED=true. A lista de excluídos continua sendo publicada. */
 export function bigQueryPurgeEnabled(): boolean {
-  return (process.env.BQ_PURGE_ENABLED ?? "").trim().toLowerCase() !== "false";
+  return ["true", "1", "yes", "sim"].includes((process.env.BQ_PURGE_ENABLED ?? "").trim().toLowerCase());
 }
 
 async function defaultBigQuery(): Promise<BigQueryLike> {
@@ -140,6 +140,7 @@ export type PurgeClientBigQuery = {
   enabled: boolean;
   tombstones: number;
   droppedDatasets: string[];
+  droppedGa4Tables: string[];
   skippedDatasets: Array<{ dataset: string; reason: DatasetSkipReason }>;
   deletedGlobalRows: number;
 };
@@ -177,6 +178,7 @@ export async function purgeClientCompletely(
     enabled: available && bigQueryPurgeEnabled(),
     tombstones: 0,
     droppedDatasets: [],
+    droppedGa4Tables: [],
     skippedDatasets: plan.skipped,
     deletedGlobalRows: 0,
   };
@@ -189,6 +191,7 @@ export async function purgeClientCompletely(
     if (bigquery.enabled) {
       for (const dataset of plan.targets) {
         bigquery.deletedGlobalRows += await deleteTenantRows(bq, dataset);
+        bigquery.droppedGa4Tables.push(...(await dropGa4Tables(bq, dataset)));
         if (await dropDataset(bq, dataset)) bigquery.droppedDatasets.push(dataset);
       }
     }

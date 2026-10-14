@@ -29,7 +29,7 @@
  *   TASK=paid_touchpoints     -> pré-aquece cache de touchpoint pago (evita
  *     primeiro carregamento lento do relatório de atribuição)
  *   TASK=purge_archived_clients -> apaga de vez os clientes excluídos (arquivados) há mais de 90 dias: banco do painel (cascata)
- *     + linhas dele na up_global + dataset do BigQuery (BQ_PURGE_ENABLED=false desliga só a parte do BigQuery) e, no fim, republica a
+ *     + linhas dele na up_global + dataset do BigQuery (a parte do BigQuery só roda com BQ_PURGE_ENABLED=true; sem isso só publica a lápide) e, no fim, republica a
  *     lista de excluídos. DRY_RUN=1 só lista quem seria apagado e quais datasets.
  *   TASK=sync_excluded_clients -> só republica a lista de excluídos em up_global.excluded_clients (os outros programas leem essa lista)
  *

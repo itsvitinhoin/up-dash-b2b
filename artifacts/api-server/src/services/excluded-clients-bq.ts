@@ -28,7 +28,10 @@ export type BigQueryLike = {
     },
     ...unknown[],
   ]>;
-  dataset(id: string): { delete(options?: { force?: boolean }): Promise<unknown> };
+  dataset(id: string): {
+    delete(options?: { force?: boolean }): Promise<unknown>;
+    getTables(): Promise<[Array<{ id?: string; delete(): Promise<unknown> }>, ...unknown[]]>;
+  };
 };
 
 async function runQuery(bq: BigQueryLike, options: Omit<QueryOptions, "location">) {
@@ -178,6 +181,33 @@ export async function deleteTenantRows(bq: BigQueryLike, tenant: string): Promis
     if (!isNotFound(err)) throw err;
   }
   return total;
+}
+
+// O script do GA4 grava uma tabela por propriedade em datasets COMPARTILHADOS, com o nome do cliente (ex.: analytics_ga4_traffic.beniah).
+const GA4_DATASETS = ["analytics_ga4_traffic", "analytics_ga4_view_item"];
+
+/** Apaga as tabelas do cliente nos datasets compartilhados do GA4 (a tabela e as sobras `<cliente>_staging_*`). Devolve "dataset.tabela" de cada uma. */
+export async function dropGa4Tables(bq: BigQueryLike, clientDataset: string): Promise<string[]> {
+  if (!isValidDatasetId(clientDataset) || isProtectedDataset(clientDataset)) throw new Error(`nome inválido para limpar o GA4: "${clientDataset}"`);
+  const name = clientDataset.toLowerCase();
+  const dropped: string[] = [];
+  for (const ga4Dataset of GA4_DATASETS) {
+    let tables: Array<{ id?: string; delete(): Promise<unknown> }>;
+    try {
+      [tables] = await bq.dataset(ga4Dataset).getTables();
+    } catch (err) {
+      if (isNotFound(err)) continue;
+      throw err;
+    }
+    for (const table of tables) {
+      const id = table.id ?? "";
+      if (id.toLowerCase() === name || id.toLowerCase().startsWith(`${name}_staging_`)) {
+        await table.delete();
+        dropped.push(`${ga4Dataset}.${id}`);
+      }
+    }
+  }
+  return dropped;
 }
 
 /** Apaga o dataset do cliente com tudo dentro. Devolve false se ele já não existia. */
