@@ -1160,7 +1160,6 @@ const entries: Array<[string, string, string]> = [
   ["Não foi possível carregar o que será apagado. Tente novamente.", "Could not load what will be erased. Please try again.", "삭제될 항목을 불러오지 못했습니다. 다시 시도해 주세요."],
   ["Será apagado do banco do painel:", "Will be erased from the dashboard database:", "대시보드 데이터베이스에서 삭제될 항목:"],
   ["Logins que saem junto:", "Logins removed with it:", "함께 삭제되는 로그인:"],
-  ["Os dados no BigQuery NÃO são apagados por aqui e continuam existindo:", "The data in BigQuery is NOT erased from here and still exists:", "BigQuery의 데이터는 여기서 삭제되지 않으며 그대로 남아 있습니다:"],
   ["Apague manualmente no BigQuery se for o caso.", "Erase it manually in BigQuery if needed.", "필요하면 BigQuery에서 직접 삭제하세요."],
   ["O apagamento acontece {days} dias depois de excluir (faltam {left}).", "The client is erased {days} days after being deleted ({left} left).", "고객사는 삭제 후 {days}일이 지나면 영구 삭제됩니다({left}일 남음)."],
   ["Apagar antes do prazo (ex.: cliente de teste ou cadastrado por engano)", "Erase before the deadline (e.g. a test client or one created by mistake)", "기한 전에 삭제(예: 테스트용 또는 잘못 등록한 고객사)"],
@@ -1177,6 +1176,9 @@ const entries: Array<[string, string, string]> = [
   ["Ativos", "Active", "활성"],
   ["Excluídos", "Deleted", "삭제됨"],
   ["Nenhum cliente {mode} excluído.", "No deleted {mode} clients.", "삭제된 {mode} 고객사가 없습니다."],
+  // ---- Apagar de vez inclui BigQuery
+  ["Também será apagado do BigQuery (o dataset inteiro e as linhas dele nas tabelas consolidadas):", "Will also be erased from BigQuery (the whole dataset and its rows in the consolidated tables):", "BigQuery에서도 삭제됩니다(데이터셋 전체와 통합 테이블의 해당 행):"],
+  ["Estes datasets do BigQuery NÃO serão apagados:", "These BigQuery datasets will NOT be erased:", "다음 BigQuery 데이터셋은 삭제되지 않습니다:"],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(

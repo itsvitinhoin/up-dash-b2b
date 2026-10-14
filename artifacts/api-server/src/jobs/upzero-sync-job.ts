@@ -28,8 +28,10 @@
  *   TASK=run_migrations       -> aplica as migrations pendentes de lib/db/migrations
  *   TASK=paid_touchpoints     -> pré-aquece cache de touchpoint pago (evita
  *     primeiro carregamento lento do relatório de atribuição)
- *   TASK=purge_archived_clients -> apaga de vez os clientes excluídos (arquivados) há mais de 90 dias
- *     (cascata no banco do painel; BigQuery NÃO é apagado). DRY_RUN=1 só lista quem seria apagado.
+ *   TASK=purge_archived_clients -> apaga de vez os clientes excluídos (arquivados) há mais de 90 dias: banco do painel (cascata)
+ *     + linhas dele na up_global + dataset do BigQuery (BQ_PURGE_ENABLED=false desliga só a parte do BigQuery) e, no fim, republica a
+ *     lista de excluídos. DRY_RUN=1 só lista quem seria apagado e quais datasets.
+ *   TASK=sync_excluded_clients -> só republica a lista de excluídos em up_global.excluded_clients (os outros programas leem essa lista)
  *
  *   TRIGGER=cron|manual   -> como fica registrado em sync_jobs (padrão: cron)
  *   CLIENT_ID=xxx         -> restringe a um cliente só (todas as tasks exceto hourly_bundle/daily_metrics)
@@ -71,7 +73,7 @@ import {
   runPaidTouchpointsSync,
   type ExtractionTrigger,
 } from "../services/extraction-runner";
-import { purgeExpiredClients } from "../services/client-lifecycle";
+import { purgeExpiredClients, reconcileExcludedClients } from "../services/client-lifecycle";
 
 // Achado 25/08/2026: as migrations do lib/db (drizzle-kit) nunca rodam
 // sozinhas no deploy da Vercel -- alguém precisa disparar isso à mão contra
@@ -191,8 +193,11 @@ async function main() {
     case "purge_archived_clients":
       result = await purgeExpiredClients({ dryRun: envBool("DRY_RUN") });
       break;
+    case "sync_excluded_clients":
+      result = await reconcileExcludedClients();
+      break;
     default:
-      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients.`);
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients.`);
       process.exit(1);
   }
 

@@ -150,6 +150,8 @@ type DeletionPreview = {
   counts: { orders: number; customers: number; events: number; creatives: number; syncJobs: number };
   loginUsers: string[];
   external: { bigqueryDataset: string | null; erpDataset: string | null };
+  // O que o servidor vai apagar no BigQuery (datasets inteiros + linhas nas tabelas consolidadas).
+  bigquery: { configured: boolean; enabled: boolean; willDrop: string[]; skippedDatasets: Array<{ dataset: string; reason: string }> };
 };
 
 // "Apagar agora": pula a espera (ou só confirma, se o prazo já passou). Pede o nome do cliente digitado.
@@ -210,7 +212,11 @@ export function PurgeClientDialog({ clientId, clientName }: ClientTarget) {
         [tx("Atualizações (jobs)"), data.counts.syncJobs],
       ]
     : [];
-  const externals = data ? [data.external.bigqueryDataset, data.external.erpDataset].filter((v): v is string => Boolean(v)) : [];
+  const willDrop = data?.bigquery?.willDrop ?? [];
+  // Datasets cadastrados no cliente que NAO serao apagados (compartilhados, protegidos ou limpeza do BigQuery desligada).
+  const keptDatasets = data
+    ? [data.external.bigqueryDataset, data.external.erpDataset].filter((v): v is string => Boolean(v) && !willDrop.includes(v as string))
+    : [];
 
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
@@ -256,11 +262,20 @@ export function PurgeClientDialog({ clientId, clientName }: ClientTarget) {
               )}
             </div>
 
-            {externals.length > 0 && (
+            {willDrop.length > 0 && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  {tx("Também será apagado do BigQuery (o dataset inteiro e as linhas dele nas tabelas consolidadas):")} <span className="font-mono text-xs">{willDrop.join(", ")}</span>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {keptDatasets.length > 0 && (
               <Alert>
                 <AlertTriangle className="h-4 w-4" />
                 <AlertDescription>
-                  {tx("Os dados no BigQuery NÃO são apagados por aqui e continuam existindo:")} <span className="font-mono text-xs">{externals.join(", ")}</span>. {tx("Apague manualmente no BigQuery se for o caso.")}
+                  {tx("Estes datasets do BigQuery NÃO serão apagados:")} <span className="font-mono text-xs">{keptDatasets.join(", ")}</span>. {tx("Apague manualmente no BigQuery se for o caso.")}
                 </AlertDescription>
               </Alert>
             )}

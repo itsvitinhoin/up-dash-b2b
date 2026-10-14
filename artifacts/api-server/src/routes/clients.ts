@@ -38,9 +38,11 @@ import {
   parseArchivedMode,
 } from "../services/client-archive-rules";
 import {
-  deleteClientWithLogins,
   exclusiveClientLoginUsers,
   externalDatasetsOf,
+  planBigQueryPurge,
+  purgeClientCompletely,
+  reconcileExcludedClients,
 } from "../services/client-lifecycle";
 
 const router: IRouter = Router();
@@ -1052,6 +1054,9 @@ router.post("/clients/:clientId/archive", requireAdmin, async (req, res): Promis
     .update(commercialAutomationJobsTable)
     .set({ status: "cancelled", skipReason: "client_excluded", processedAt: new Date(), updatedAt: new Date() })
     .where(and(eq(commercialAutomationJobsTable.clientId, clientId), eq(commercialAutomationJobsTable.status, "scheduled")));
+  // Avisa os outros programas (script-vesti-nuvem, backend-dash) para pararem de atualizar este cliente. O banco do painel manda:
+  // se a publicacao falhar, o cliente continua excluido e a limpeza noturna republica a lista.
+  await reconcileExcludedClients().catch((err) => logger.error({ err, clientId }, "Failed to publish excluded clients list"));
   logger.warn({ clientId, name: existing.name, by: req.user?.email }, "Client excluded (archived)");
   res.json(GetClientResponse.parse(clientPublicFields(updated ?? existing)));
 });
@@ -1072,6 +1077,7 @@ router.post("/clients/:clientId/restore", requireAdmin, async (req, res): Promis
     res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
     return;
   }
+  await reconcileExcludedClients().catch((err) => logger.error({ err, clientId }, "Failed to publish excluded clients list"));
   logger.warn({ clientId, name: updated.name, by: req.user?.email }, "Client recovered (restored from archive)");
   res.json(GetClientResponse.parse(clientPublicFields(updated)));
 });
@@ -1116,8 +1122,9 @@ router.get("/clients/:clientId/deletion-preview", requireAdmin, async (req, res)
     retentionDays: ARCHIVE_RETENTION_DAYS,
     counts: { orders, customers, events, creatives, syncJobs },
     loginUsers: loginUsers.map((user) => user.email),
-    // Fora do banco do painel: NAO sao apagados por esta acao (ficam para limpeza manual).
+    // Datasets cadastrados no cliente (o que sai do BigQuery esta em `bigquery`).
     external: externalDatasetsOf(client),
+    bigquery: await planBigQueryPurge(client),
   });
 });
 
@@ -1164,10 +1171,23 @@ router.delete("/clients/:clientId", requireAdmin, async (req, res): Promise<void
     }
     return;
   }
-  // Leva junto (cascata) tudo do cliente e os logins exclusivos dele, numa transacao so.
-  const deleted = await deleteClientWithLogins(client);
+  // Lapide na lista de excluidos + linhas da up_global + dataset do BigQuery + banco do painel (cascata e logins exclusivos).
+  // Se o BigQuery falhar, nada do painel e apagado: o cliente continua excluido e da para tentar de novo.
+  let deleted: Awaited<ReturnType<typeof purgeClientCompletely>>;
+  try {
+    deleted = await purgeClientCompletely(client);
+  } catch (err) {
+    logger.error({ err, clientId, name: client.name }, "Failed to permanently delete client");
+    res.status(502).json({
+      error: true,
+      code: "PURGE_FAILED",
+      message: "Não foi possível apagar o cliente (falha ao limpar o BigQuery). Nada foi apagado do painel; tente de novo.",
+      status: 502,
+    });
+    return;
+  }
   logger.warn(
-    { clientId, name: client.name, early: decision.early, by: req.user?.email, loginUsers: deleted.deletedLoginUsers },
+    { clientId, name: client.name, early: decision.early, by: req.user?.email, loginUsers: deleted.deletedLoginUsers, bigquery: deleted.bigquery },
     "Client permanently deleted",
   );
   res.json({
@@ -1177,6 +1197,7 @@ router.delete("/clients/:clientId", requireAdmin, async (req, res): Promise<void
     early: decision.early,
     deletedLoginUsers: deleted.deletedLoginUsers,
     external: deleted.external,
+    bigquery: deleted.bigquery,
   });
 });
 
