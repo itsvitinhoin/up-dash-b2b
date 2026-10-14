@@ -3,6 +3,7 @@ import {
   clientKeys,
   computeExcludedRows,
   datasetsToDrop,
+  isBigQueryAvailable,
   isProtectedDataset,
   normalizeAdAccountId,
   normalizeGa4PropertyId,
@@ -112,6 +113,25 @@ describe("computeExcludedRows", () => {
     const two = computeExcludedRows({ clients: [...clients].reverse(), tombstones: [] });
     expect(one).toEqual(two);
     expect(one.map((r) => r.value)).toEqual(["alfa", "zeta"]);
+  });
+});
+
+describe("isBigQueryAvailable", () => {
+  it("local, sem credencial nem plataforma: não", () => {
+    expect(isBigQueryAvailable({})).toBe(false);
+    expect(isBigQueryAvailable({ NODE_ENV: "development", DATABASE_URL: "x" })).toBe(false);
+  });
+
+  it("credencial em variável de ambiente: sim", () => {
+    expect(isBigQueryAvailable({ GOOGLE_APPLICATION_CREDENTIALS_JSON: "{}" })).toBe(true);
+    expect(isBigQueryAvailable({ GOOGLE_SERVICE_ACCOUNT_JSON: "{}" })).toBe(true);
+    expect(isBigQueryAvailable({ GOOGLE_APPLICATION_CREDENTIALS: "/x.json" })).toBe(true);
+  });
+
+  it("Cloud Run job/serviço e Vercel usam a credencial da plataforma (ADC): sim (foi o defeito do job que pulava tudo)", () => {
+    expect(isBigQueryAvailable({ CLOUD_RUN_JOB: "upzero-sync-job" })).toBe(true);
+    expect(isBigQueryAvailable({ K_SERVICE: "api" })).toBe(true);
+    expect(isBigQueryAvailable({ VERCEL: "1" })).toBe(true);
   });
 });
 

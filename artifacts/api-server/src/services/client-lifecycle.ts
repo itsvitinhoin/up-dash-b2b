@@ -8,6 +8,7 @@ import { ARCHIVE_RETENTION_DAYS, archivePurgeCutoff } from "./client-archive-rul
 import {
   computeExcludedRows,
   datasetsToDrop,
+  isBigQueryAvailable,
   tombstonesFor,
   type ClientKeySource,
   type DatasetSkipReason,
@@ -91,11 +92,9 @@ export async function deleteClientWithLogins(client: Pick<ClientToDelete, "id" |
 // BigQuery
 // ---------------------------------------------------------------------------------------------------------------------------------
 
-/** Este ambiente tem credencial do BigQuery? (sem ela, como no teste local, os passos do BigQuery são pulados) */
+/** Este ambiente fala com o BigQuery? (só o desenvolvimento/teste local, sem credencial nem plataforma, pula os passos do BigQuery) */
 export function bigQueryConfigured(): boolean {
-  return Boolean(
-    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS,
-  );
+  return isBigQueryAvailable();
 }
 
 /** Apagar datasets, tabelas do GA4 e linhas consolidadas ao apagar de vez. DESLIGADO por padrão (apagar dataset não tem volta): liga com BQ_PURGE_ENABLED=true. A lista de excluídos continua sendo publicada. */

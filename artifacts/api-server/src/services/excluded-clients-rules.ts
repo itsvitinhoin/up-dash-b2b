@@ -49,6 +49,22 @@ const PROTECTED_DATASETS = new Set([
   "e081e3cf_6261_4d17_8120_1ff040972c56",
 ]);
 
+/**
+ * Este ambiente consegue falar com o BigQuery? Sim quando há credencial em variável de ambiente OU quando roda numa plataforma que fornece a
+ * credencial sozinha (Cloud Run job/serviço, Vercel). Só o desenvolvimento/teste local, sem nada disso, pula os passos do BigQuery.
+ * Em produção nunca "pula": se a credencial faltar, a chamada falha e o cliente continua na lixeira (não apaga o painel sem a lápide).
+ */
+export function isBigQueryAvailable(env: Record<string, string | undefined> = process.env): boolean {
+  return Boolean(
+    env.GOOGLE_APPLICATION_CREDENTIALS_JSON ||
+      env.GOOGLE_SERVICE_ACCOUNT_JSON ||
+      env.GOOGLE_APPLICATION_CREDENTIALS ||
+      env.CLOUD_RUN_JOB ||
+      env.K_SERVICE ||
+      env.VERCEL,
+  );
+}
+
 export function isValidDatasetId(value: string | null | undefined): value is string {
   return typeof value === "string" && DATASET_RE.test(value);
 }
