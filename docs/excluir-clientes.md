@@ -1,0 +1,70 @@
+# Excluir clientes (lixeira de 90 dias)
+
+Combinado em 13/10/2026 (Victor + Marcelo). Para o time é **excluir**; por trás o cliente é **arquivado**: some do painel, sai das
+atualizações diárias, perde o login, e os dados ficam **90 dias**. Dentro do prazo dá para **recuperar**. Passado o prazo, é
+**apagado de vez** (banco do painel + BigQuery).
+
+## Na tela (Clientes)
+- Botão **Excluir** em cada cliente ativo. Aba **Excluídos** lista quem está na lixeira, com os dias que faltam.
+- **Recuperar** devolve tudo. **Apagar agora** pula a espera (pede o nome digitado; antes dos 90 dias exige marcar "apagar antes do prazo").
+- O diálogo de "Apagar agora" mostra o que sai do painel e **quais datasets saem do BigQuery**.
+
+## O que "excluir" faz
+1. `clients.archived_at = agora`. A API deixa de listar o cliente (padrão), o login e o refresh são barrados (`CLIENT_ARCHIVED`) e as sessões são revogadas.
+2. Todas as atualizações do dash (UpZero, Meta, Nuvemshop, métricas, touchpoints, automações do WhatsApp) ignoram o cliente
+   (`services/extraction-runner.ts` `clientsWith`, `services/scheduler.ts`, `routes/orchestrator.ts`, `services/portfolio-report.ts`).
+3. Automações de WhatsApp ainda agendadas são **canceladas**; o webhook de e-commerce do cliente responde 410.
+4. O dash **publica a lista de excluídos** no BigQuery: `up-vesti-report.up_global.excluded_clients`
+   (`kind` = `dataset` | `meta_ad_account` | `ga4_property`, `value`, `client_id`, `client_name`, `state` = `excluded` | `deleted`, `excluded_at`).
+   Os outros programas leem essa tabela e **pulam** quem está nela:
+   - `script-vesti-nuvem` (Vesti, Nuvemshop, Shopify, Braavo, Miredata, Manse, GA4) — branch `feature/lista-de-excluidos`;
+   - `backend-dash` / `up-dash-backend` (Facebook, Google Ads, relatório diário) — branch `feature/lista-de-excluidos`.
+   Os dois falham **abertos**: se a lista não puder ser lida, atualizam como sempre. `EXCLUDED_CLIENTS_DISABLED=1` desliga o filtro neles.
+5. A chave que liga os cadastros é o **ID do dataset do BigQuery** (o dash lê exatamente o que o script grava). Conta de anúncios (Facebook)
+   e propriedade GA4 entram como chaves extras.
+   Chave que pertence a um cliente **ativo** nunca entra na lista (dataset compartilhado não trava quem continua ativo).
+
+## O que "apagar de vez" faz (botão ou limpeza automática)
+Ordem pensada para não deixar lixo nem ressuscitar dataset (`services/client-lifecycle.ts` `purgeClientCompletely`):
+1. **Lápide** (`state=deleted`) na lista de excluídos. Sem ela o script, que ainda tem o cliente cadastrado, **recriaria** o dataset.
+2. Apaga as linhas do cliente nas tabelas consolidadas de `up_global` (as que têm coluna `tenant`; descobertas na hora, com o filtro de
+   partição que o BigQuery exige) e a linha dele em `up_global.dataset_tid_map`.
+3. Apaga o **dataset** do cliente (Vesti e ERP). Nunca apaga dataset protegido (`up_global`, `stape_*`, `vesti_dados`, `analytics_*`) nem
+   dataset que **outro cliente** também usa.
+4. Só então apaga do banco do painel (cascata em ~34 tabelas + logins que existiam só para esse cliente).
+Se o BigQuery falhar, **nada do painel é apagado**: o cliente continua na lixeira e a próxima limpeza tenta de novo.
+`BQ_PURGE_ENABLED=false` desliga só a parte do BigQuery (a lápide continua sendo publicada).
+
+### Limites conhecidos
+- `up_global.pagamentos_vesti` não tem coluna de cliente: as linhas de pagamento ficam (não dá para separar).
+- GA4 grava em datasets compartilhados (`analytics_ga4_traffic`, `analytics_ga4_view_item`, uma tabela por propriedade): essas tabelas NÃO são apagadas.
+- Durante os 90 dias o dataset continua existindo e as consultas agendadas do BigQuery (`*_global_att`, `att_*`) continuam consolidando os dados
+  parados dele. Isso some quando o dataset é apagado.
+- O painel antigo (`backend-dash`, tabela `User`) continua com o login do cliente até o dataset ser apagado.
+- Quem já estava logado mantém o token de acesso por até 1 h.
+
+## Jobs (Cloud Run Job `upzero-sync-job`, imagem `up-dash-b2b-upzero-sync-job`)
+- `TASK=purge_archived_clients` — apaga de vez quem passou de 90 dias e, no fim, republica a lista. `DRY_RUN=1` só lista quem seria apagado e quais datasets.
+- `TASK=sync_excluded_clients` — só republica a lista (idempotente).
+A lista também é republicada a cada exclusão/recuperação feita pela tela (se falhar, o job noturno corrige).
+
+## Ordem de publicação (nada disso foi feito ainda)
+1. **Coluna** no banco de produção (idempotente, aditiva; o código antigo ignora): no Cloud SQL Studio, banco `up_dash_b2b`:
+   `ALTER TABLE "clients" ADD COLUMN IF NOT EXISTS "archived_at" timestamp with time zone;`
+   (a migração `0040` está igual, com `IF NOT EXISTS`; rodar `migrate` depois é seguro).
+2. **Dash**: push na `main` (Vercel). Sem variável nova: usa a mesma credencial do BigQuery que o dash já tem (papel Editor).
+3. **Imagem do job** (build manual, como sempre) e atualizar o `upzero-sync-job` para o SHA novo.
+4. **Primeira execução manual**, para criar a tabela e validar permissões no job:
+   `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=sync_excluded_clients,TRIGGER=manual --wait`
+   e depois `...TASK=purge_archived_clients,DRY_RUN=1,TRIGGER=manual...` (no começo não deve haver ninguém vencido).
+5. **Agendar a limpeza** (Cloud Scheduler, ex.: todo dia 00:30 UTC, antes de qualquer sync de fonte), chamando `upzero-sync-job:run` com
+   `{"overrides":{"containerOverrides":[{"env":[{"name":"TASK","value":"purge_archived_clients"},{"name":"TRIGGER","value":"cron"}]}]}}`.
+6. **`script-vesti-nuvem`** (branch `feature/lista-de-excluidos`): build do `vesti-scheduler-job` (`cloudbuild.yaml`) e redeploy do serviço `api-vesti-report`.
+7. **`backend-dash`** (branch `feature/lista-de-excluidos`): deploy do `up-dash-backend` e da imagem do `up-jobs`.
+   Obs.: a cópia local tem alterações não commitadas em `dailyReport.ts` e `periodReport.ts`; a mudança desta branch mexe na mesma linha do `where`.
+
+## Como foi testado
+Banco Postgres descartável local (não o de produção): 55 checagens da API (arquivar, listar, bloquear login, recuperar, prévia, apagar em cascata),
+18 do job de limpeza, 12 das automações, 35 do fluxo com BigQuery simulado (ordem, falha que não apaga o painel, dataset compartilhado/protegido, lápides).
+Contra o BigQuery **real, só leitura**: lista das tabelas consolidadas e validação (dry run) do DDL e de todos os `DELETE`; os parâmetros do script de
+substituição foram conferidos offline. Python: 16 testes novos (27 no total). backend-dash: 10 testes novos.
