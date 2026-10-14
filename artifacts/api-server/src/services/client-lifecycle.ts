@@ -9,6 +9,7 @@ import {
   computeExcludedRows,
   datasetsToDrop,
   isBigQueryAvailable,
+  isBigQueryPurgeEnabled,
   tombstonesFor,
   type ClientKeySource,
   type DatasetSkipReason,
@@ -101,9 +102,9 @@ export function bigQueryConfigured(): boolean {
   return isBigQueryAvailable();
 }
 
-/** Apagar datasets, tabelas do GA4 e linhas consolidadas ao apagar de vez. DESLIGADO por padrão (apagar dataset não tem volta): liga com BQ_PURGE_ENABLED=true. A lista de excluídos continua sendo publicada. */
+/** Apagar datasets, tabelas do GA4 e linhas consolidadas ao apagar de vez. LIGADO por padrão; BQ_PURGE_ENABLED=false desliga (chave de emergência; a lista de excluídos continua sendo publicada). */
 export function bigQueryPurgeEnabled(): boolean {
-  return ["true", "1", "yes", "sim"].includes((process.env.BQ_PURGE_ENABLED ?? "").trim().toLowerCase());
+  return isBigQueryPurgeEnabled();
 }
 
 async function defaultBigQuery(): Promise<BigQueryLike> {

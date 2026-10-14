@@ -35,8 +35,8 @@ Ordem pensada para não deixar lixo nem ressuscitar dataset (`services/client-li
 4. Só então apaga do banco do painel (cascata em ~34 tabelas + logins que existiam só para esse cliente).
 Se o BigQuery falhar, **nada do painel é apagado**: o cliente continua na lixeira e a próxima limpeza tenta de novo.
 
-**Os passos 2 e 3 vêm DESLIGADOS** (apagar dataset não tem volta). Só rodam com `BQ_PURGE_ENABLED=true` (na Vercel, para o botão, e no Cloud Run Job, para a
-limpeza noturna). Desligados, a lápide continua sendo publicada (os outros programas já param de atualizar) e a tela avisa que os datasets NÃO serão apagados.
+**Os passos 2 e 3 vêm LIGADOS** (decisão do time, 14/10/2026: o dash apaga o dataset; apagar de vez é um ato explícito, com nome digitado e prévia que lista os datasets, ou o job dos 90 dias).
+`BQ_PURGE_ENABLED=false` (Vercel e/ou Cloud Run Job) é a chave de **emergência**: desliga só os passos 2 e 3. A lápide continua sendo publicada e a tela passa a avisar que os datasets NÃO serão apagados.
 
 ### Pontos de atenção
 - `up_global.pagamentos_vesti` não tem coluna de cliente, mas a consulta `pagamentos_vesti_global_att` faz `CREATE OR REPLACE` toda noite a partir dos
@@ -67,7 +67,7 @@ A lista também é republicada a cada exclusão/recuperação feita pela tela (s
 5. **Agendar a limpeza** (Cloud Scheduler, ex.: todo dia 00:30 UTC, antes de qualquer sync de fonte), chamando `upzero-sync-job:run` com
    `{"overrides":{"containerOverrides":[{"env":[{"name":"TASK","value":"purge_archived_clients"},{"name":"TRIGGER","value":"cron"}]}]}}`.
 6. **`script-vesti-nuvem`** (branch `feature/lista-de-excluidos`): build do `vesti-scheduler-job` (`cloudbuild.yaml`) e redeploy do serviço `api-vesti-report`.
-7. **Só depois de rodar `DRY_RUN=1` e conferir a lista**: ligar `BQ_PURGE_ENABLED=true` (Vercel e job) para passar a apagar os datasets.
+7. **Antes de agendar a limpeza automática**, rodar `TASK=purge_archived_clients` com `DRY_RUN=1` e conferir a lista de quem seria apagado e de quais datasets.
 8. **`backend-dash`** (branch `feature/lista-de-excluidos`): deploy do `up-dash-backend` e da imagem do `up-jobs`.
    Obs.: a cópia local tem alterações não commitadas em `dailyReport.ts` e `periodReport.ts`; a mudança desta branch mexe na mesma linha do `where`.
 
@@ -79,4 +79,4 @@ Contra o BigQuery **real, só leitura**: lista das tabelas consolidadas e valida
 substituição foram conferidos offline. Python: 19 testes novos (inclui os dois scripts do GA4 com a API simulada). backend-dash: 22 testes novos (inclui a rota `/refresh`).
 
 **Ainda não validado de verdade:** o script `BEGIN … COMMIT` que reescreve `up_global.excluded_clients` e o `DROP` real de dataset (a primeira execução manual de
-`sync_excluded_clients` valida o primeiro; o segundo só roda quando `BQ_PURGE_ENABLED=true`).
+`sync_excluded_clients` valida o primeiro; o segundo roda no primeiro "Apagar agora" de um cliente com dataset: o teste real é o Idrissi).

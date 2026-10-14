@@ -4,6 +4,7 @@ import {
   computeExcludedRows,
   datasetsToDrop,
   isBigQueryAvailable,
+  isBigQueryPurgeEnabled,
   isProtectedDataset,
   normalizeAdAccountId,
   normalizeGa4PropertyId,
@@ -113,6 +114,20 @@ describe("computeExcludedRows", () => {
     const two = computeExcludedRows({ clients: [...clients].reverse(), tombstones: [] });
     expect(one).toEqual(two);
     expect(one.map((r) => r.value)).toEqual(["alfa", "zeta"]);
+  });
+});
+
+describe("isBigQueryPurgeEnabled", () => {
+  it("ligado por padrão (sem a variável)", () => {
+    expect(isBigQueryPurgeEnabled({})).toBe(true);
+    expect(isBigQueryPurgeEnabled({ BQ_PURGE_ENABLED: "" })).toBe(true);
+    expect(isBigQueryPurgeEnabled({ BQ_PURGE_ENABLED: "true" })).toBe(true);
+  });
+
+  it("só desliga com valor explícito de desligar", () => {
+    for (const value of ["false", "FALSE", "0", "no", "nao", "não", " false "]) {
+      expect(isBigQueryPurgeEnabled({ BQ_PURGE_ENABLED: value })).toBe(false);
+    }
   });
 });
 

@@ -65,6 +65,15 @@ export function isBigQueryAvailable(env: Record<string, string | undefined> = pr
   );
 }
 
+/**
+ * Apagar datasets, tabelas do GA4 e linhas consolidadas do BigQuery ao apagar um cliente de vez. LIGADO por padrão (decisão do time, 14/10/2026):
+ * apagar de vez é um ato explícito (nome digitado + prévia que lista os datasets) ou o job dos 90 dias. `BQ_PURGE_ENABLED=false` desliga só esta
+ * parte, como chave de emergência (a lápide continua sendo publicada).
+ */
+export function isBigQueryPurgeEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return !["false", "0", "no", "nao", "não"].includes((env.BQ_PURGE_ENABLED ?? "").trim().toLowerCase());
+}
+
 export function isValidDatasetId(value: string | null | undefined): value is string {
   return typeof value === "string" && DATASET_RE.test(value);
 }
