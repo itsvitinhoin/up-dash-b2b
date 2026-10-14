@@ -55,21 +55,17 @@ Se o BigQuery falhar, **nada do painel é apagado**: o cliente continua na lixei
 - `TASK=sync_excluded_clients` — só republica a lista (idempotente).
 A lista também é republicada a cada exclusão/recuperação feita pela tela (se falhar, o job noturno corrige).
 
-## Ordem de publicação (nada disso foi feito ainda)
-1. **Coluna** no banco de produção (idempotente, aditiva; o código antigo ignora): no Cloud SQL Studio, banco `up_dash_b2b`:
-   `ALTER TABLE "clients" ADD COLUMN IF NOT EXISTS "archived_at" timestamp with time zone;`
-   (a migração `0040` está igual, com `IF NOT EXISTS`; rodar `migrate` depois é seguro).
-2. **Dash**: push na `main` (Vercel). Sem variável nova: usa a mesma credencial do BigQuery que o dash já tem (papel Editor).
-3. **Imagem do job** (build manual, como sempre) e atualizar o `upzero-sync-job` para o SHA novo. A conta do job (`...-compute@developer.gserviceaccount.com`) tem papel Editor no projeto, então já enxerga o BigQuery.
-4. **Primeira execução manual**, para criar a tabela e validar permissões no job:
-   `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=sync_excluded_clients,TRIGGER=manual --wait`
-   e depois `...TASK=purge_archived_clients,DRY_RUN=1,TRIGGER=manual...` (no começo não deve haver ninguém vencido).
-5. **Agendar a limpeza** (Cloud Scheduler, ex.: todo dia 00:30 UTC, antes de qualquer sync de fonte), chamando `upzero-sync-job:run` com
-   `{"overrides":{"containerOverrides":[{"env":[{"name":"TASK","value":"purge_archived_clients"},{"name":"TRIGGER","value":"cron"}]}]}}`.
-6. **`script-vesti-nuvem`** (branch `feature/lista-de-excluidos`): build do `vesti-scheduler-job` (`cloudbuild.yaml`) e redeploy do serviço `api-vesti-report`.
-7. **Antes de agendar a limpeza automática**, rodar `TASK=purge_archived_clients` com `DRY_RUN=1` e conferir a lista de quem seria apagado e de quais datasets.
-8. **`backend-dash`** (branch `feature/lista-de-excluidos`): deploy do `up-dash-backend` e da imagem do `up-jobs`.
-   Obs.: a cópia local tem alterações não commitadas em `dailyReport.ts` e `periodReport.ts`; a mudança desta branch mexe na mesma linha do `where`.
+## Estado da publicação (feito em 14/10/2026)
+- **Banco:** coluna `clients.archived_at` criada em produção (`up_dash_b2b`).
+- **Dash** (Vercel): no ar. **Job do dash** (`upzero-sync-job*`): imagem rebuildada (build manual: `git pull` no Cloud Shell +
+  `gcloud builds submit --config=artifacts/api-server/cloudbuild.job.yaml --substitutions=SHORT_SHA=$(git rev-parse --short HEAD) .`
+  + `gcloud run jobs update upzero-sync-job-hourly|upzero-sync-job-nuvemshop --image=...:latest`). **Depois de qualquer mudança no servidor repetir o build.**
+- **`script-vesti-nuvem`** e **`backend-dash`**: enviados para a `main` (os gatilhos do Cloud Build rebuildam sozinhos: job `vesti-scheduler-job`,
+  serviço `api-vesti-report` — que rebuilda em push de QUALQUER branch —, serviço `up-dash-backend` e job `up-jobs`).
+- **Limpeza automática:** Cloud Scheduler `upzero-sync-job-purge-schedule` (us-central1, `30 0 * * *` UTC) chama `upzero-sync-job:run` com
+  `{"overrides":{"containerOverrides":[{"env":[{"name":"TASK","value":"purge_archived_clients"},{"name":"TRIGGER","value":"cron"}]}]}}`.
+  Para ver sem apagar: `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=purge_archived_clients,DRY_RUN=1 --wait`.
+- **Teste real (Idrissi, cliente Vesti):** excluído e apagado de vez; o sync da Vesti o pulou, o dataset `idrissi` foi apagado do BigQuery e a lápide ficou na lista.
 
 ## Como foi testado
 Banco Postgres descartável local (não o de produção): 55 checagens da API (arquivar, listar, bloquear login, recuperar, prévia, apagar em cascata),
