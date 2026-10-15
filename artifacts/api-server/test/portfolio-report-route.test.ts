@@ -75,6 +75,73 @@ describe("GET /api/analytics/portfolio-report", () => {
     expect(response.body.code).toBe("VALIDATION_ERROR");
   });
 
+  describe("token de API de admin (upk_...) no mesmo cabeçalho", () => {
+    const VALID = `upk_${"A".repeat(43)}`;
+    const calls: string[] = [];
+
+    function appWithApiTokens(secret: string | undefined, accept: (token: string) => boolean | Error) {
+      const app = express();
+      app.use(
+        "/api",
+        createPortfolioReportRouter({
+          getToken: () => secret,
+          buildReport: async () => SAFE_REPORT,
+          verifyApiToken: async (token) => {
+            calls.push(token);
+            const result = accept(token);
+            if (result instanceof Error) throw result;
+            return result;
+          },
+        }),
+      );
+      return app;
+    }
+
+    const url = "/api/analytics/portfolio-report?dateFrom=2026-07-10&dateTo=2026-07-12";
+
+    it("aceita token de API ligado mesmo SEM o segredo fixo configurado (era 503)", async () => {
+      const response = await request(appWithApiTokens(undefined, (t) => t === VALID)).get(url).set("x-updash-reports-token", VALID);
+      expect(response.status).toBe(200);
+      expect(response.headers["cache-control"]).toContain("no-store");
+      expect(response.body.meta.read_only).toBe(true);
+    });
+
+    it("aceita token de API ligado também com o segredo fixo configurado", async () => {
+      const response = await request(appWithApiTokens("correct-secret", (t) => t === VALID)).get(url).set("x-updash-reports-token", VALID);
+      expect(response.status).toBe(200);
+    });
+
+    it("token de API desligado ou inexistente: 401", async () => {
+      expect((await request(appWithApiTokens("correct-secret", () => false)).get(url).set("x-updash-reports-token", VALID)).status).toBe(401);
+      expect((await request(appWithApiTokens(undefined, () => false)).get(url).set("x-updash-reports-token", VALID)).status).toBe(401);
+    });
+
+    it("falha ao conferir o token (banco fora): 500, nunca libera", async () => {
+      const response = await request(appWithApiTokens("correct-secret", () => new Error("db down"))).get(url).set("x-updash-reports-token", VALID);
+      expect(response.status).toBe(500);
+      expect(JSON.stringify(response.body)).not.toContain("db down");
+    });
+
+    it("o segredo fixo continua funcionando e NÃO passa pela conferência de token de API", async () => {
+      calls.length = 0;
+      const response = await request(appWithApiTokens("correct-secret", () => false)).get(url).set("x-updash-reports-token", "correct-secret");
+      expect(response.status).toBe(200);
+      expect(calls).toHaveLength(0);
+    });
+
+    it("cabeçalho errado sem prefixo upk_ segue como antes: 401 com segredo, 503 sem segredo", async () => {
+      calls.length = 0;
+      expect((await request(appWithApiTokens("correct-secret", () => true)).get(url).set("x-updash-reports-token", "wrong")).status).toBe(401);
+      expect((await request(appWithApiTokens(undefined, () => true)).get(url).set("x-updash-reports-token", "wrong")).status).toBe(503);
+      expect(calls).toHaveLength(0);
+    });
+
+    it("continua só GET: escrita com token de API é 405", async () => {
+      const response = await request(appWithApiTokens(undefined, () => true)).post("/api/analytics/portfolio-report").set("x-updash-reports-token", VALID);
+      expect(response.status).toBe(405);
+    });
+  });
+
   it("rejects every write method", async () => {
     const app = testApp("correct-secret");
     for (const method of ["post", "patch", "delete"] as const) {

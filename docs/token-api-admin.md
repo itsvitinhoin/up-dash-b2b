@@ -25,6 +25,8 @@ curl -H "Authorization: Bearer upk_SEU_TOKEN" https://SEU_DASH/api/clients
 
 Nada mais muda: mesmas rotas, mesmas respostas. Trate como senha (cofre de senhas, variável de ambiente; nunca em código público).
 
+**Rotina de relatórios automáticos:** o endpoint `GET /api/analytics/portfolio-report` também aceita o token de API, no cabeçalho `x-updash-reports-token` (em vez de `Authorization`). Assim o executor da rotina só precisa guardar o valor do token na variável `UPDASH_REPORTS_READ_TOKEN`, sem configurar nada na Vercel. Ver `docs/relatorios-automaticos-read-only.md`.
+
 ## Como funciona e o que protege
 
 - **No banco só fica o hash** (sha256, tabela `api_tokens`). Quem ler o banco não consegue usar nenhum token. O valor nunca é gravado nem registrado em log (o cabeçalho `authorization` já é ocultado nos logs).
