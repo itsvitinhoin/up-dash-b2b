@@ -59,7 +59,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ExcludeClientDialog, ExcludedClientsTable } from "@/components/client-exclusion";
 import { NewVestiClientDialog } from "@/components/vesti-client-onboarding";
 import { ApiTokensDialog } from "@/components/api-tokens";
-import { isAdsOnly, newClientPlatform, newClientProblem } from "@/lib/client-create-rules";
+import { isManualB2C, newClientPlatform, newClientProblem } from "@/lib/client-create-rules";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import {
@@ -1561,7 +1561,7 @@ export default function ClientsPage() {
     view === "excluded" ? Boolean(client.archivedAt) : !client.archivedAt,
   );
 
-  // Regras do formulário (lib/client-create-rules.ts): Nuvemshop e GA4 opcionais; mínimo = Nuvemshop completa OU conta Meta.
+  // Regras do formulário (lib/client-create-rules.ts): Nuvemshop e GA4 opcionais (tudo ou nada); a Meta se liga depois pelo botão da linha.
   const createForm = {
     dashboardType: newDashboardType,
     nuvemshopStoreId: newNuvemshopStoreId,
@@ -1569,10 +1569,9 @@ export default function ClientsPage() {
     ga4MeasurementId: newGa4MeasurementId,
     ga4PropertyId: newGa4PropertyId,
     ga4ApiSecret: newGa4ApiSecret,
-    metaAdAccountId: newMetaAdAccountId,
   };
   const createProblem = newClientProblem(createForm);
-  const createAdsOnly = isAdsOnly(createForm);
+  const createManual = isManualB2C(createForm);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1888,7 +1887,7 @@ export default function ClientsPage() {
                           {tx("As credenciais da Nuvemshop e GA4 são armazenadas no servidor.")}
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {tx("Nuvemshop e GA4 são opcionais: para um cliente só de anúncios, basta preencher a conta Meta acima.")}
+                          {tx("Nuvemshop e GA4 são opcionais. Para um cliente só de anúncios, deixe em branco e ligue a conta Meta depois, pelo botão Meta account da linha do cliente.")}
                         </p>
                       </div>
                       <Button
@@ -2006,9 +2005,9 @@ export default function ClientsPage() {
                 {createProblem && (
                   <p className="text-xs text-amber-400" role="status">{tx(createProblem)}</p>
                 )}
-                {createAdsOnly && !createProblem && (
+                {createManual && !createProblem && (
                   <p className="text-xs text-muted-foreground" role="status">
-                    {tx("Cliente só de anúncios: será criado com plataforma Manual. As telas de vendas ficam vazias; esconda as abas pelo botão Abas da linha do cliente.")}
+                    {tx("Sem Nuvemshop: o cliente será criado com plataforma Manual. Depois de salvar, use o botão Meta account da linha dele para escolher a conta de anúncios. As telas de vendas ficam vazias; esconda as abas pelo botão Abas.")}
                   </p>
                 )}
               </div>
