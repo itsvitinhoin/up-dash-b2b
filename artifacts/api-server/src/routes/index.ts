@@ -10,6 +10,7 @@ import whatsappRouter from "./whatsapp";
 import assistantRouter from "./assistant";
 import orchestratorRouter from "./orchestrator";
 import portfolioReportRouter from "./portfolio-report";
+import apiTokensRouter from "./api-tokens";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(extractionsRouter);
 router.use(whatsappRouter);
 router.use(assistantRouter);
 router.use(orchestratorRouter);
+router.use(apiTokensRouter);
 
 export default router;

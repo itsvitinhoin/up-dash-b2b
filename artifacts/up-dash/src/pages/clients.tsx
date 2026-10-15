@@ -58,6 +58,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { ExcludeClientDialog, ExcludedClientsTable } from "@/components/client-exclusion";
 import { NewVestiClientDialog } from "@/components/vesti-client-onboarding";
+import { ApiTokensDialog } from "@/components/api-tokens";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import {
@@ -1709,6 +1710,7 @@ export default function ClientsPage() {
         <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
           <Upload className="mr-2 h-4 w-4" /> Importar CSV
         </Button>
+        <ApiTokensDialog />
         <NewVestiClientDialog />
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
           setIsDialogOpen(open);
