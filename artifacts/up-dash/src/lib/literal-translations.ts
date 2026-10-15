@@ -1254,6 +1254,12 @@ const entries: Array<[string, string, string]> = [
   ["Desligado", "Turned off", "꺼짐"],
   ["Confirmar", "Confirm", "확인"],
   ["Desligar", "Turn off", "끄기"],
+  // ---- Cliente so de anuncios
+  ["Preencha o ID da loja e o token da Nuvemshop juntos, ou deixe os dois em branco.", "Fill in the Nuvemshop store ID and token together, or leave both empty.", "Nuvemshop 매장 ID와 토큰을 함께 입력하거나 둘 다 비워 두세요."],
+  ["Preencha os 3 campos do GA4 ou deixe todos em branco.", "Fill in all 3 GA4 fields or leave them all empty.", "GA4 필드 3개를 모두 입력하거나 모두 비워 두세요."],
+  ["Informe a Nuvemshop completa ou a conta de anúncios Meta (para cliente só de anúncios).", "Provide the full Nuvemshop credentials or the Meta ad account (for an ads-only client).", "Nuvemshop 정보 전체 또는 Meta 광고 계정을 입력하세요(광고 전용 고객의 경우)."],
+  ["Nuvemshop e GA4 são opcionais: para um cliente só de anúncios, basta preencher a conta Meta acima.", "Nuvemshop and GA4 are optional: for an ads-only client, just fill in the Meta account above.", "Nuvemshop과 GA4는 선택 사항입니다. 광고 전용 고객은 위의 Meta 계정만 입력하면 됩니다."],
+  ["Cliente só de anúncios: será criado com plataforma Manual. As telas de vendas ficam vazias; esconda as abas pelo botão Abas da linha do cliente.", "Ads-only client: it will be created with the Manual platform. Sales screens will be empty; hide the tabs with the Tabs button on the client row.", "광고 전용 고객: 수동(Manual) 플랫폼으로 생성됩니다. 판매 화면은 비어 있으니, 고객 행의 탭 버튼으로 탭을 숨기세요."],
 ];
 
 export const literalTranslations: Record<string, LiteralTranslation> = Object.fromEntries(

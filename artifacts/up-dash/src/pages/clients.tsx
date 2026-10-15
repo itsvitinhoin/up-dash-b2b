@@ -59,6 +59,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ExcludeClientDialog, ExcludedClientsTable } from "@/components/client-exclusion";
 import { NewVestiClientDialog } from "@/components/vesti-client-onboarding";
 import { ApiTokensDialog } from "@/components/api-tokens";
+import { isAdsOnly, newClientPlatform, newClientProblem } from "@/lib/client-create-rules";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import {
@@ -1552,8 +1553,22 @@ export default function ClientsPage() {
     view === "excluded" ? Boolean(client.archivedAt) : !client.archivedAt,
   );
 
+  // Regras do formulário (lib/client-create-rules.ts): Nuvemshop e GA4 opcionais; mínimo = Nuvemshop completa OU conta Meta.
+  const createForm = {
+    dashboardType: newDashboardType,
+    nuvemshopStoreId: newNuvemshopStoreId,
+    nuvemshopAccessToken: newNuvemshopAccessToken,
+    ga4MeasurementId: newGa4MeasurementId,
+    ga4PropertyId: newGa4PropertyId,
+    ga4ApiSecret: newGa4ApiSecret,
+    metaAdAccountId: newMetaAdAccountId,
+  };
+  const createProblem = newClientProblem(createForm);
+  const createAdsOnly = isAdsOnly(createForm);
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (createProblem) return;
     const picked =
       CURRENCY_OPTIONS.find((c) => c.code === newCurrencyCode) ??
       CURRENCY_OPTIONS[0];
@@ -1564,7 +1579,7 @@ export default function ClientsPage() {
           email: newEmail,
           apiKey: newApiKey,
           dashboardType: newDashboardType,
-          commercePlatform: newDashboardType === "B2C" ? "NUVEMSHOP" : "UPZERO",
+          commercePlatform: newClientPlatform(createForm),
           ...(newMetaAdsApiKey.trim() ? { metaAdsApiKey: newMetaAdsApiKey.trim() } : {}),
           ...(newMetaAdAccountId.trim() ? { metaAdAccountId: newMetaAdAccountId.trim() } : {}),
           ...(newDashboardType === "B2C" && newNuvemshopStoreId.trim()
@@ -1857,6 +1872,9 @@ export default function ClientsPage() {
                         <p className="text-xs text-muted-foreground">
                           {tx("As credenciais da Nuvemshop e GA4 são armazenadas no servidor.")}
                         </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {tx("Nuvemshop e GA4 são opcionais: para um cliente só de anúncios, basta preencher a conta Meta acima.")}
+                        </p>
                       </div>
                       <Button
                         type="button"
@@ -1944,6 +1962,14 @@ export default function ClientsPage() {
                     {tx("Todos os valores deste cliente serão formatados com estas configurações.")}
                   </p>
                 </div>
+                {createProblem && (
+                  <p className="text-xs text-amber-400" role="status">{tx(createProblem)}</p>
+                )}
+                {createAdsOnly && !createProblem && (
+                  <p className="text-xs text-muted-foreground" role="status">
+                    {tx("Cliente só de anúncios: será criado com plataforma Manual. As telas de vendas ficam vazias; esconda as abas pelo botão Abas da linha do cliente.")}
+                  </p>
+                )}
               </div>
               <DialogFooter>
                 <Button
@@ -1953,12 +1979,7 @@ export default function ClientsPage() {
                     !newName.trim() ||
                     !newEmail.trim() ||
                     !newApiKey.trim() ||
-                    (newDashboardType === "B2C" &&
-                      (!newNuvemshopStoreId.trim() ||
-                        !newNuvemshopAccessToken.trim() ||
-                        !newGa4MeasurementId.trim() ||
-                        !newGa4PropertyId.trim() ||
-                        !newGa4ApiSecret.trim()))
+                    createProblem !== null
                   }
                 >
                   {createMutation.isPending ? "Criando…" : "Salvar cliente"}
