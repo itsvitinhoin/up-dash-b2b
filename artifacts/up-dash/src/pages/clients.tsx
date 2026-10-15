@@ -1904,7 +1904,11 @@ export default function ClientsPage() {
                     </div>
                     <div className="grid gap-3">
                       <div className="grid gap-2">
-                        <Label htmlFor="nuvemshopStoreId">{tx("ID da loja Nuvemshop")}</Label>
+                        <Label htmlFor="nuvemshopStoreId">
+                          {tx("ID da loja Nuvemshop")}
+                          {" "}
+                          <span className="text-xs text-muted-foreground font-normal">{tx("(opcional)")}</span>
+                        </Label>
                         <Input
                           id="nuvemshopStoreId"
                           value={newNuvemshopStoreId}
@@ -1914,7 +1918,11 @@ export default function ClientsPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="nuvemshopAccessToken">{tx("Token de acesso Nuvemshop")}</Label>
+                        <Label htmlFor="nuvemshopAccessToken">
+                          {tx("Token de acesso Nuvemshop")}
+                          {" "}
+                          <span className="text-xs text-muted-foreground font-normal">{tx("(opcional)")}</span>
+                        </Label>
                         <Input
                           id="nuvemshopAccessToken"
                           type={showB2CSecrets ? "text" : "password"}
@@ -1928,7 +1936,11 @@ export default function ClientsPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="ga4MeasurementId">{tx("ID de medição GA4")}</Label>
+                        <Label htmlFor="ga4MeasurementId">
+                          {tx("ID de medição GA4")}
+                          {" "}
+                          <span className="text-xs text-muted-foreground font-normal">{tx("(opcional)")}</span>
+                        </Label>
                         <Input
                           id="ga4MeasurementId"
                           value={newGa4MeasurementId}
@@ -1938,7 +1950,11 @@ export default function ClientsPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="ga4PropertyId">{tx("ID da propriedade GA4")}</Label>
+                        <Label htmlFor="ga4PropertyId">
+                          {tx("ID da propriedade GA4")}
+                          {" "}
+                          <span className="text-xs text-muted-foreground font-normal">{tx("(opcional)")}</span>
+                        </Label>
                         <Input
                           id="ga4PropertyId"
                           value={newGa4PropertyId}
@@ -1949,7 +1965,11 @@ export default function ClientsPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="ga4ApiSecret">GA4 API secret</Label>
+                        <Label htmlFor="ga4ApiSecret">
+                          GA4 API secret
+                          {" "}
+                          <span className="text-xs text-muted-foreground font-normal">{tx("(opcional)")}</span>
+                        </Label>
                         <Input
                           id="ga4ApiSecret"
                           type={showB2CSecrets ? "text" : "password"}
