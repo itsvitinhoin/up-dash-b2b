@@ -5,7 +5,7 @@ import { stateFromPhoneDdd } from "../lib/phoneState";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { addDaysToDateOnly } from "../lib/httpQuery";
 import { isPaidCampaignSignal } from "./campaign-attribution";
-import { fetchVestiAttributionSets, isOnlyAttributed, resolveAttributionStartDate } from "./vesti-attribution";
+import { fetchVestiAttributionSets, isOnlyAttributed, resolveAttributionStartDateForDataset } from "./vesti-attribution";
 
 /**
  * Se o client for Vesti e tiver dataset configurado, devolve o dataset.
@@ -3258,7 +3258,7 @@ export async function fetchVestiMarketingData(dataset: string, dateFrom: string,
   const clientesVesti = vestiTable(dataset, "clientes_vesti");
   const view = vestiTable(dataset, "dashboard_vendas_view");
 
-  const startDate = resolveAttributionStartDate(dataset);
+  const startDate = await resolveAttributionStartDateForDataset(dataset);
   const startDateClause = startDate ? "AND pa.data_ref >= @startDate" : "";
   const attributedParams = startDate ? { dateFrom, dateTo, startDate } : { dateFrom, dateTo };
   const pedidosAttrCte = `
@@ -3388,7 +3388,7 @@ export async function fetchVestiUtmData(dataset: string, dateFrom: string, dateT
   const clientesVesti = vestiTable(dataset, "clientes_vesti");
   const view = vestiTable(dataset, "dashboard_vendas_view");
 
-  const startDate = resolveAttributionStartDate(dataset);
+  const startDate = await resolveAttributionStartDateForDataset(dataset);
   const startDateClause = startDate ? "AND pa.data_ref >= @startDate" : "";
   const attributedParams = startDate ? { dateFrom, dateTo, startDate } : { dateFrom, dateTo };
 

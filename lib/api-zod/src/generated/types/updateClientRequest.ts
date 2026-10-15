@@ -37,6 +37,11 @@ export interface UpdateClientRequest {
    */
   bigqueryDataset?: string | null;
   /**
+   * Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Pass null to clear it.
+   * @nullable
+   */
+  attributionStartDate?: string | null;
+  /**
    * Nuvemshop store id. Pass null to clear it.
    * @nullable
    */

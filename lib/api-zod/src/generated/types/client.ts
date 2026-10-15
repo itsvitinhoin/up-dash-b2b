@@ -53,6 +53,11 @@ export interface Client {
    * @nullable
    */
   archivedAt?: Date | null;
+  /**
+   * Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Null = use the legacy per-dataset list (or no floor).
+   * @nullable
+   */
+  attributionStartDate?: string | null;
   /** True when this client has at least one CLIENT-role login. */
   hasClientLogin?: boolean;
   /**

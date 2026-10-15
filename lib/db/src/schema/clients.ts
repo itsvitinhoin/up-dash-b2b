@@ -7,6 +7,7 @@ import {
   boolean,
   index,
   uniqueIndex,
+  date,
 } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 import { usersTable } from "./users";
@@ -60,6 +61,8 @@ export const clientsTable = pgTable(
     hiddenNavItems: text("hidden_nav_items").array(),
     ga4MeasurementId: text("ga4_measurement_id"),
     ga4PropertyId: text("ga4_property_id"),
+    // Cliente Vesti: a partir de que dia vale a atribuição paga (piso). Null = usa a lista antiga em services/vesti-attribution.ts (ou nenhum piso).
+    attributionStartDate: date("attribution_start_date"),
     ga4ApiSecret: text("ga4_api_secret"),
     currency: text("currency").notNull().default("BRL"),
     locale: text("locale").notNull().default("pt-BR"),

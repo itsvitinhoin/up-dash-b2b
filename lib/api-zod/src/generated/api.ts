@@ -163,6 +163,12 @@ export const ListClientsResponse = zod.object({
         .describe(
           "When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.",
         ),
+      attributionStartDate: zod
+        .string()
+        .nullish()
+        .describe(
+          "Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Null = use the legacy per-dataset list (or no floor).",
+        ),
       hasClientLogin: zod
         .boolean()
         .optional()
@@ -446,6 +452,12 @@ export const GetClientResponse = zod.object({
     .describe(
       "When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.",
     ),
+  attributionStartDate: zod
+    .string()
+    .nullish()
+    .describe(
+      "Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Null = use the legacy per-dataset list (or no floor).",
+    ),
   hasClientLogin: zod
     .boolean()
     .optional()
@@ -561,6 +573,11 @@ export const UpdateClientBody = zod
       .describe(
         "BigQuery dataset (project up-vesti-report) this client reads analytics from. Pass null to clear it.",
       ),
+    attributionStartDate: zod
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullish()
+      .describe("Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Pass null to clear it."),
     nuvemshopStoreId: zod
       .string()
       .nullish()
@@ -647,6 +664,12 @@ export const UpdateClientResponse = zod.object({
     .nullish()
     .describe(
       "When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.",
+    ),
+  attributionStartDate: zod
+    .string()
+    .nullish()
+    .describe(
+      "Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Null = use the legacy per-dataset list (or no floor).",
     ),
   hasClientLogin: zod
     .boolean()

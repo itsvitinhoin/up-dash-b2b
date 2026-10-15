@@ -288,6 +288,13 @@
       "when": 1791904558524,
       "tag": "0040_clients_archived_at",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792037773423,
+      "tag": "0041_clients_attribution_start_date",
+      "breakpoints": true
     }
   ]
 }

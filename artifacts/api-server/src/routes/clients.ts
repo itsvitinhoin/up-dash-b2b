@@ -44,6 +44,20 @@ import {
   purgeClientCompletely,
   reconcileExcludedClients,
 } from "../services/client-lifecycle";
+import {
+  OnboardingError,
+  groupSyncStoresByDataset,
+  isValidIsoDate,
+  runVestiOnboarding,
+} from "../services/vesti-onboarding-rules";
+import { createDbStore } from "../services/vesti-onboarding";
+import {
+  createVestiSyncStore,
+  deactivateVestiSyncStore,
+  isSyncServiceConfigured,
+  listVestiSyncStores,
+  setVestiSyncStoreActive,
+} from "../services/vesti-sync-service";
 
 const router: IRouter = Router();
 
@@ -642,6 +656,134 @@ const ClientAccessBody = ClientCredentialsBody.extend({
   clientId: z.string().min(1),
 });
 
+// ---------------------------------------------------------------------------
+// Cadastro completo de cliente Vesti ("Novo cliente Vesti"). Dois jeitos:
+//  - loja NOVA: `filiais` (chave da API Vesti, empresa e nº da filial) → cadastra no serviço de sync (que calcula o dataset do
+//    BigQuery a partir do nome da loja) e cria o cliente no painel;
+//  - loja que JÁ está no sync: `linkDataset` → só cria o cliente no painel ligado a ela, sem mexer no sync.
+// Opcionalmente cria o login do cliente no mesmo passo. Se algo falhar no meio, o que foi feito no sync é desfeito.
+// Regras e roteiro: services/vesti-onboarding-rules.ts.
+// ---------------------------------------------------------------------------
+
+const VestiFilialBody = z.object({
+  apiKey: z.string().trim().min(1),
+  companyId: z.string().trim().min(1),
+  filialNum: z.number().int().min(1),
+});
+
+const CreateVestiClientBody = z
+  .object({
+    name: z.string().trim().min(1),
+    email: z.string().trim().email(),
+    storeName: z.string().trim().nullish(),
+    filiais: z.array(VestiFilialBody).max(20).default([]),
+    linkDataset: z.string().trim().nullish(),
+    attributionStartDate: z.string().trim().nullish(),
+    metaAdAccountId: z.string().trim().nullish(),
+    login: ClientCredentialsBody.nullish(),
+  })
+  .superRefine((body, ctx) => {
+    const linking = Boolean(body.linkDataset);
+    if (linking && body.filiais.length > 0) {
+      ctx.addIssue({ code: "custom", path: ["filiais"], message: "Use filiais (loja nova) OU linkDataset (loja que já está no sync), não os dois" });
+    }
+    if (!linking && body.filiais.length === 0) {
+      ctx.addIssue({ code: "custom", path: ["filiais"], message: "Informe ao menos uma filial" });
+    }
+    const nums = body.filiais.map((filial) => filial.filialNum);
+    if (new Set(nums).size !== nums.length) {
+      ctx.addIssue({ code: "custom", path: ["filiais"], message: "Número de filial repetido" });
+    }
+    if (body.attributionStartDate && !isValidIsoDate(body.attributionStartDate)) {
+      ctx.addIssue({ code: "custom", path: ["attributionStartDate"], message: "Use uma data válida no formato AAAA-MM-DD" });
+    }
+  });
+
+// Lojas Vesti que já estão no serviço de sync, para o modo "ligar uma loja existente" (só nome, dataset, nº de filiais e se
+// já está ligada a algum cliente do painel — nunca chaves nem tokens).
+router.get("/clients/vesti/stores", requireAdmin, async (_req, res): Promise<void> => {
+  if (!isSyncServiceConfigured()) {
+    res.status(503).json({ error: true, code: "SYNC_SERVICE_NOT_CONFIGURED", message: "O serviço de sync da Vesti não está configurado neste ambiente.", status: 503 });
+    return;
+  }
+  let stores;
+  try {
+    stores = await listVestiSyncStores();
+  } catch {
+    res.status(502).json({ error: true, code: "SYNC_SERVICE_FAILED", message: "Não consegui falar com o serviço de sync da Vesti.", status: 502 });
+    return;
+  }
+  const linkedRows = await db
+    .select({ name: clientsTable.name, dataset: clientsTable.bigqueryDataset })
+    .from(clientsTable)
+    .where(isNotNull(clientsTable.bigqueryDataset));
+  const linked = new Map(linkedRows.map((row) => [row.dataset as string, row.name]));
+  res.json({
+    stores: groupSyncStoresByDataset(stores).map((group) => ({ ...group, linkedClientName: linked.get(group.dataset) ?? null })),
+  });
+});
+
+router.post("/clients/vesti", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = CreateVestiClientBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const body = parsed.data;
+  if (!isSyncServiceConfigured()) {
+    res.status(503).json({ error: true, code: "SYNC_SERVICE_NOT_CONFIGURED", message: "O serviço de sync da Vesti não está configurado neste ambiente (SYNC_SERVICE_URL / SYNC_SERVICE_TOKEN).", status: 503 });
+    return;
+  }
+  try {
+    const store = await createDbStore({
+      name: body.name,
+      email: body.email,
+      metaAdAccountId: body.metaAdAccountId,
+      attributionStartDate: body.attributionStartDate,
+      adminId: req.user?.sub ?? null,
+      login: body.login ?? null,
+    });
+    const result = await runVestiOnboarding(
+      {
+        name: body.name,
+        email: body.email,
+        storeName: body.storeName,
+        filiais: body.filiais,
+        linkDataset: body.linkDataset,
+        loginEmail: body.login?.email ?? null,
+      },
+      {
+        sync: {
+          list: () => listVestiSyncStores(),
+          create: (input) => createVestiSyncStore(input),
+          setActive: (id, active) => setVestiSyncStoreActive(id, active),
+          deactivate: (id) => deactivateVestiSyncStore(id),
+        },
+        store,
+      },
+    );
+    // Se a loja/conta já tinha lápide na lista de excluídos (cliente apagado antes), o cliente novo ativo a tira da lista.
+    // Falha aqui não desfaz o cadastro: o job de atualização da lista corrige na próxima rodada.
+    try {
+      await reconcileExcludedClients();
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : String(err) }, "cliente Vesti criado, mas não consegui atualizar a lista de excluídos");
+    }
+    res.status(201).json({
+      client: GetClientResponse.parse(clientPublicFields(result.created.client)),
+      dataset: result.dataset,
+      loginEmail: result.created.loginUserId ? body.login?.email ?? null : null,
+      syncStores: result.syncStores,
+    });
+  } catch (err) {
+    if (err instanceof OnboardingError) {
+      res.status(err.status).json({ error: true, code: err.code, message: err.message, status: err.status });
+      return;
+    }
+    throw err;
+  }
+});
+
 router.get("/accesses", requireAdmin, async (_req, res): Promise<void> => {
   const rows = await db
     .select({
@@ -962,6 +1104,20 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
   if ("bigqueryDataset" in bodyParsed.data) {
     const dataset = bodyParsed.data.bigqueryDataset?.trim();
     updates.bigqueryDataset = dataset || null;
+  }
+  // Cliente Vesti: dia a partir do qual a atribuição paga vale (vazio/null = volta para a lista antiga, ou nenhum piso).
+  if ("attributionStartDate" in bodyParsed.data) {
+    const day = bodyParsed.data.attributionStartDate?.trim();
+    if (day && !isValidIsoDate(day)) {
+      res.status(400).json({
+        error: true,
+        code: "VALIDATION_ERROR",
+        message: "attributionStartDate must be a valid date (YYYY-MM-DD)",
+        status: 400,
+      });
+      return;
+    }
+    updates.attributionStartDate = day || null;
   }
   if ("hiddenNavItems" in bodyParsed.data) {
     const items = bodyParsed.data.hiddenNavItems;

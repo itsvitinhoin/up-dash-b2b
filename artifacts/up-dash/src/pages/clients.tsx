@@ -57,6 +57,7 @@ import {
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ExcludeClientDialog, ExcludedClientsTable } from "@/components/client-exclusion";
+import { NewVestiClientDialog } from "@/components/vesti-client-onboarding";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import {
@@ -826,17 +827,20 @@ function PlatformDialog({
   clientName,
   currentPlatform,
   currentDataset,
+  currentAttributionStartDate,
 }: {
   clientId: string;
   clientName: string;
   currentPlatform: "UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI" | null | undefined;
   currentDataset: string | null | undefined;
+  currentAttributionStartDate?: string | null;
 }) {
   const displayLabel = useDisplayLabel();
   const { tx } = useI18n();
   const [open, setOpen] = useState(false);
   const [platform, setPlatform] = useState<"UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI">("UPZERO");
   const [dataset, setDataset] = useState("");
+  const [attributionStart, setAttributionStart] = useState("");
   const updateMutation = useUpdateClient();
   const queryClient = useQueryClient();
 
@@ -844,6 +848,7 @@ function PlatformDialog({
     if (o) {
       setPlatform(currentPlatform ?? "UPZERO");
       setDataset(currentDataset ?? "");
+      setAttributionStart(currentAttributionStartDate ?? "");
       updateMutation.reset();
     }
     setOpen(o);
@@ -856,6 +861,8 @@ function PlatformDialog({
         data: {
           commercePlatform: platform,
           bigqueryDataset: platform === "VESTI" ? dataset.trim() || null : null,
+          // Só mexe na data quando é Vesti (em branco = volta para a lista antiga ou nenhum piso).
+          ...(platform === "VESTI" ? { attributionStartDate: attributionStart || null } : {}),
         },
       },
       {
@@ -917,6 +924,21 @@ function PlatformDialog({
               />
               <p className="text-xs text-muted-foreground">
                 Dataset do projeto up-vesti-report (BigQuery) que esse client lê. Nunca digitar à mão sem confirmar — vem calculado pelo script-vesti-nuvem a partir do nome da loja.
+              </p>
+            </div>
+          )}
+          {platform === "VESTI" && (
+            <div className="space-y-2">
+              <Label htmlFor="attribution-start-date">{tx("Início da atribuição")}</Label>
+              <Input
+                id="attribution-start-date"
+                type="date"
+                value={attributionStart}
+                onChange={(e) => setAttributionStart(e.target.value)}
+                className="w-fit"
+              />
+              <p className="text-xs text-muted-foreground">
+                {tx("Pedidos de anúncios antes deste dia não contam como atribuídos. Em branco, vale a data já registrada para a loja (se houver).")}
               </p>
             </div>
           )}
@@ -1687,6 +1709,7 @@ export default function ClientsPage() {
         <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
           <Upload className="mr-2 h-4 w-4" /> Importar CSV
         </Button>
+        <NewVestiClientDialog />
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
           setIsDialogOpen(open);
           if (!open) {
@@ -2293,6 +2316,7 @@ export default function ClientsPage() {
                             clientName={client.name}
                             currentPlatform={client.commercePlatform}
                             currentDataset={client.bigqueryDataset}
+                            currentAttributionStartDate={client.attributionStartDate}
                           />
                           <VisibleTabsDialog
                             clientId={client.id}
