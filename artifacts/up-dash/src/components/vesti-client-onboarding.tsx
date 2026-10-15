@@ -215,7 +215,7 @@ export function NewVestiClientDialog() {
             </div>
             <div className="grid gap-2">
               <Label htmlFor="vesti-email">{tx("E-mail do cliente")}</Label>
-              <Input id="vesti-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="contato@marca.com" disabled={busy} />
+              <Input id="vesti-email" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="contato@marca.com" disabled={busy} />
             </div>
 
             {mode === "new" ? (
@@ -354,6 +354,9 @@ export function NewVestiClientDialog() {
               <Label htmlFor="vesti-meta">{tx("Conta de anúncios Meta (opcional)")}</Label>
               <Input
                 id="vesti-meta"
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
                 value={metaAdAccountId}
                 onChange={(e) => setMetaAdAccountId(e.target.value)}
                 placeholder="act_1234567890"
@@ -389,6 +392,7 @@ export function NewVestiClientDialog() {
                   </div>
                   <Input
                     type="email"
+                    autoComplete="off"
                     aria-label={tx("E-mail do login")}
                     placeholder={tx("E-mail do login")}
                     value={loginEmail}

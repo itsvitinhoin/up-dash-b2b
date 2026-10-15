@@ -597,6 +597,7 @@ function ClientCredentialsDialog({
             <Input
               id={`client-email-${clientId}`}
               type="email"
+              autoComplete="off"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="cliente@marca.com"
@@ -609,6 +610,7 @@ function ClientCredentialsDialog({
                 <Input
                   id={`client-password-${clientId}`}
                   type={showPassword ? "text" : "password"}
+                  autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Mínimo 8 caracteres"
@@ -774,6 +776,9 @@ function MetaAdsKeyDialog({
                 ) : (
                   <Input
                     id="meta-ad-account"
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
                     value={adAccountId}
                     onChange={(e) => setAdAccountId(e.target.value)}
                     placeholder="act_1234567890"
@@ -1159,6 +1164,9 @@ function UpZeroKeyDialog({
               <Input
                 id="upzero-key"
                 type={showValue ? "text" : "password"}
+                autoComplete="new-password"
+                data-1p-ignore
+                data-lpignore="true"
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 placeholder={tx("Cole sua chave de API UP Zero…")}
@@ -1788,6 +1796,7 @@ export default function ClientsPage() {
                   <Input
                     id="email"
                     type="email"
+                    autoComplete="off"
                     value={newEmail}
                     onChange={(e) => setNewEmail(e.target.value)}
                     placeholder="admin@acme.com"
@@ -1841,6 +1850,9 @@ export default function ClientsPage() {
                   </Label>
                   <Input
                     id="metaAdAccountId"
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
                     value={newMetaAdAccountId}
                     onChange={(e) => setNewMetaAdAccountId(e.target.value)}
                     placeholder="act_1234567890"
@@ -1858,6 +1870,9 @@ export default function ClientsPage() {
                   <Input
                     id="metaAdsApiKey"
                     type={showB2CSecrets ? "text" : "password"}
+                    autoComplete="new-password"
+                    data-1p-ignore
+                    data-lpignore="true"
                     value={newMetaAdsApiKey}
                     onChange={(e) => setNewMetaAdsApiKey(e.target.value)}
                     placeholder={tx("Cole o token se não houver um token global configurado")}
@@ -1903,6 +1918,9 @@ export default function ClientsPage() {
                         <Input
                           id="nuvemshopAccessToken"
                           type={showB2CSecrets ? "text" : "password"}
+                          autoComplete="new-password"
+                          data-1p-ignore
+                          data-lpignore="true"
                           value={newNuvemshopAccessToken}
                           onChange={(e) => setNewNuvemshopAccessToken(e.target.value)}
                           placeholder={tx("Cole o token de acesso")}
@@ -1935,6 +1953,9 @@ export default function ClientsPage() {
                         <Input
                           id="ga4ApiSecret"
                           type={showB2CSecrets ? "text" : "password"}
+                          autoComplete="new-password"
+                          data-1p-ignore
+                          data-lpignore="true"
                           value={newGa4ApiSecret}
                           onChange={(e) => setNewGa4ApiSecret(e.target.value)}
                           placeholder="Paste GA4 API secret"
