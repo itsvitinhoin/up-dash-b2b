@@ -1,4 +1,4 @@
-import { Router, type IRouter, type Request } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { eq, sql } from "drizzle-orm";
 import { db, usersTable, clientsTable, clientUserAccessesTable } from "@workspace/db";
 import {
@@ -16,11 +16,24 @@ import {
   issueRefreshToken,
   rotateRefreshToken,
   revokeRefreshToken,
+  REFRESH_TOKEN_TTL_SECONDS,
   type SessionContext,
 } from "../lib/auth";
+import { clearSessionCookieHeaders, parseCookies, pickRefreshToken, REFRESH_COOKIE, sessionCookieHeaders } from "../lib/session-cookie";
 import { authenticate } from "../middlewares/auth";
 
 const router: IRouter = Router();
+
+// Cookie "Secure" em HTTPS (produção); em http local (desenvolvimento/teste) o navegador descartaria um cookie Secure.
+function cookiesAreSecure(req: Request): boolean {
+  return req.secure || process.env.NODE_ENV === "production";
+}
+
+function setSessionCookies(req: Request, res: Response, refreshToken: string): void {
+  res.setHeader("Set-Cookie", sessionCookieHeaders({ refreshToken, maxAgeSeconds: REFRESH_TOKEN_TTL_SECONDS, secure: cookiesAreSecure(req) }));
+  // Resposta com token novo não pode ficar em cache de navegador nem de proxy.
+  res.setHeader("Cache-Control", "no-store");
+}
 
 function sessionContextFrom(req: Request): SessionContext {
   return {
@@ -118,6 +131,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     clientId,
   });
   const refreshToken = await issueRefreshToken(user.id, sessionContextFrom(req));
+  setSessionCookies(req, res, refreshToken);
 
   res.json(
     LoginResponse.parse({
@@ -146,31 +160,36 @@ router.post("/auth/logout", async (req, res): Promise<void> => {
     });
     return;
   }
-  const refreshToken = parsed.data.refreshToken;
-  if (refreshToken && refreshToken.length > 0) {
+  // Revoga o refresh token do corpo (tela) E o do cookie (sessão restaurada por cookie), se forem diferentes; depois apaga os cookies.
+  const cookieToken = parseCookies(req.get("cookie"))[REFRESH_COOKIE];
+  for (const token of new Set([parsed.data.refreshToken, cookieToken])) {
+    if (!token || token.length === 0) continue;
     try {
-      await revokeRefreshToken(refreshToken);
+      await revokeRefreshToken(token);
     } catch {
       /* best-effort */
     }
   }
+  res.setHeader("Set-Cookie", clearSessionCookieHeaders({ secure: cookiesAreSecure(req) }));
   res.json(LogoutResponse.parse({ message: "Logged out successfully" }));
 });
 
 router.post("/auth/refresh", async (req, res): Promise<void> => {
-  const parsed = RefreshTokenBody.safeParse(req.body);
-  if (!parsed.success) {
+  // O refresh token vem do corpo (tela e clientes antigos) ou, sem corpo, do cookie de sessão (tela que perdeu o localStorage).
+  const picked = pickRefreshToken({ body: req.body, cookieHeader: req.get("cookie") });
+  if (!picked) {
+    const parsed = RefreshTokenBody.safeParse(req.body);
     res.status(400).json({
       error: true,
       code: "VALIDATION_ERROR",
-      message: parsed.error.message,
+      message: parsed.success ? "refreshToken is required (body or session cookie)" : parsed.error.message,
       status: 400,
     });
     return;
   }
   try {
     const { userId, refreshToken } = await rotateRefreshToken(
-      parsed.data.refreshToken,
+      picked.token,
       sessionContextFrom(req),
     );
     const [user] = await db
@@ -202,6 +221,8 @@ router.post("/auth/refresh", async (req, res): Promise<void> => {
       role: user.role,
       clientId,
     });
+    // O token girou: o cookie leva o novo (senão o cookie ficaria com um token já morto).
+    setSessionCookies(req, res, refreshToken);
     res.json(RefreshTokenResponse.parse({ accessToken, refreshToken }));
   } catch {
     res.status(401).json({
