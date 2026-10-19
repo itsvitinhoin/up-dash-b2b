@@ -1,4 +1,5 @@
 import { isPaidCampaignSignal } from "../campaign-attribution";
+import { fetchUpzeroAnalytics } from "./analytics-availability";
 
 const UPZERO_ANALYTICS_METRICS_URL =
   "https://api.upzero.com.br/external/v1/analytics/metrics";
@@ -476,7 +477,7 @@ export async function getUpzeroAnalyticsMetrics({
 
     let response: Response;
     try {
-      response = await fetch(url.toString(), {
+      response = await fetchUpzeroAnalytics("metrics", apiKey, url.toString(), {
         method: "GET",
         headers: {
           "X-API-Key": apiKey,

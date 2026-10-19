@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("../src/services/upzero/analytics-availability", () => ({ fetchUpzeroAnalytics: (_endpoint: string, _apiKey: string, url: string, init: RequestInit) => fetch(url, init) }));
 import { isPaidCampaignSignal, latestCampaignEvidenceBefore } from "../src/services/campaign-attribution";
 import type { UpzeroAnalyticsMetric } from "../src/services/upzero/analytics-metrics";
 
@@ -51,13 +52,18 @@ describe("isPaidCampaignSignal", () => {
     ).toBe(true);
   });
 
-  it("still treats a named campaign from a Meta/Google source as paid when medium isn't bio", () => {
+  it("does not infer paid traffic from a social source or a named organic campaign", () => {
     expect(
       isPaidCampaignSignal(row({ utm_source: "facebook", utm_medium: "social", utm_campaign: "camp2026" })),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isPaidCampaignSignal(row({ utm_source: "google", utm_medium: "organic", utm_campaign: "brand" })),
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it("rejects a UP-named bio link and a standalone UP campaign without paid evidence", () => {
+    expect(isPaidCampaignSignal(row({ utm_source: "instagram", utm_medium: "bio", utm_campaign: "UP.S cadastro" }))).toBe(false);
+    expect(isPaidCampaignSignal(row({ utm_campaign: "UP.S [LEAD]" }))).toBe(false);
   });
 
   it("still treats a click identifier (fbclid/gclid/fbc) as paid regardless of everything else", () => {

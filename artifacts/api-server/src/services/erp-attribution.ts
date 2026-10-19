@@ -16,11 +16,12 @@
 //      Busca o touchpoint uma vez por cliente, reaproveitada pros
 //      pedidos das duas fontes desse mesmo cliente.
 import { bigquery, vestiTable } from "../lib/bigquery";
-import { db, customersTable, ordersTable, customerIdentityLinksTable, orderAttributionsTable } from "@workspace/db";
+import { db, customersTable, ordersTable, orderAttributionsTable } from "@workspace/db";
 import { and, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, standardTouchpointWindow, type TouchpointCandidate } from "./paid-touchpoints";
 import { ERP_CANCELLED_STATUSES } from "./erpAnalytics";
 import { resolveErpCustomerIdentities, type ErpContactInfo, type ResolvedErpCustomer } from "./erp-identity";
+import { cached, invalidateCached } from "../lib/queryCache";
 
 // Achado 08/09/2026: o Manse (MX Fashion) só produz status "CONCLUIDO"
 // pra tudo, então um filtro `= 'CONCLUIDO'` parecia certo -- mas quebra o
@@ -37,7 +38,7 @@ export const ERP_STATUS_FILTER = `status NOT IN (${ERP_CANCELLED_STATUSES.map((s
 // já subiu quando o teto de 90 dias do lookback saiu) -- toda linha
 // gravada com versão antiga fica "stale" e é recalculada na próxima vez
 // que o relatório rodar pra aquele pedido, sem precisar de migration.
-export const ATTRIBUTION_RULE_VERSION = "2026-09-10-no-lookback-cap";
+export const ATTRIBUTION_RULE_VERSION = "2026-10-19-unified-order-evidence";
 
 type OrderChannel = "erp" | "site";
 
@@ -83,6 +84,7 @@ export type ErpAttributedOrder = {
 // fazia (47 pedidos, a maioria "Sem origem", só alguns "Atribuído").
 // Mesma ideia, dado e critério corretos por baixo.
 export type ErpOrderRow = {
+  verificationStatus: "verified" | "pending" | "unmatched";
   orderId: string;
   channel: OrderChannel;
   customerName: string | null;
@@ -128,6 +130,11 @@ export type CohortSummary = {
 };
 
 export type ErpAttributionResult = {
+  revenueBasis: "erp_net" | "site";
+  ruleVersion: string;
+  complete: boolean;
+  pendingOrders: number;
+  generatedAt: string;
   totalErpRevenue: number;
   totalErpOrders: number;
   totalSiteRevenue: number;
@@ -158,6 +165,8 @@ export async function computeErpPaidAttribution(params: {
   upZeroApiKey: string;
   dateFrom: string; // YYYY-MM-DD
   dateTo: string; // YYYY-MM-DD, INCLUSIVO -- mesma convenção do resto do app (erpAnalytics.ts usa BETWEEN)
+  forceRefresh?: boolean;
+  refreshCustomerIds?: string[];
 }): Promise<ErpAttributionResult> {
   // Achado 08/09/2026: a query original comparava `data_criado < @dateTo`
   // com "2026-08-31" cru -- o BigQuery/Postgres tratam isso como meia-noite
@@ -183,21 +192,22 @@ export async function computeErpPaidAttribution(params: {
     const [rawErpRows] = await bigquery.query({
       query: `
         WITH orders AS (
-          SELECT pedido_id, customer_id, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
+          SELECT pedido_id, ANY_VALUE(customer_id) AS customer_id, ANY_VALUE(valor_liquido) AS valor, ANY_VALUE(data_criado) AS data_criado
           FROM ${pedidosTable}
           WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${ERP_STATUS_FILTER}
-          GROUP BY pedido_id, customer_id
-          -- Achado 08/09/2026: pedido totalmente devolvido fica com status
-          -- CONCLUIDO mas valor_total zerado (a devolução vira negativo no
-          -- valor_liquido, não no total) -- PDF teste 7 pede excluir pedido
-          -- zerado da receita; sem isso ele ainda contava como "pedido"
-          -- (inflava contagem e podia até virar a "1ª compra influenciada").
-          HAVING valor > 0
+          GROUP BY pedido_id
+          -- Inclui ajustes negativos e registros zerados para conciliar
+          -- a população e o valor líquido com o financeiro oficial.
         )
         SELECT o.*, c.nome AS customer_name, c.documento AS document,
           c.email AS erp_email, c.ddd AS erp_ddd, c.celular AS erp_celular, c.telefone AS erp_telefone
         FROM orders o
-        LEFT JOIN ${clientesTable} c ON c.documento = o.customer_id
+        LEFT JOIN (
+          SELECT * EXCEPT(rn) FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(CAST(documento AS STRING), r'[^0-9]', '') ORDER BY data_alterado DESC) AS rn
+            FROM ${clientesTable}
+          ) WHERE rn = 1
+        ) c ON REGEXP_REPLACE(CAST(c.documento AS STRING), r'[^0-9]', '') = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
       `,
       params: { dateFrom: params.dateFrom, dateToExclusive: dateToExclusiveIso.toISOString() },
     });
@@ -230,8 +240,11 @@ export async function computeErpPaidAttribution(params: {
   }
 
   // ── Fonte 2: pedidos online (Postgres `orders`), já ligados ao cliente ──
-  const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000Z`);
-  const siteOrderRows = await db
+  const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000-03:00`);
+  const siteDateTo = new Date(dateToExclusiveIso.getTime() + 3 * 3_600_000);
+  // ERP integrado é a fonte única do faturamento realizado. Pedidos do
+  // site são registros comerciais e não podem ser somados novamente.
+  const siteOrderRows = params.dataset ? [] : await db
     .select({
       id: ordersTable.id,
       customerId: ordersTable.customerId,
@@ -244,7 +257,7 @@ export async function computeErpPaidAttribution(params: {
       and(
         eq(ordersTable.clientId, params.clientId),
         gte(ordersTable.createdAt, dateFromDate),
-        lt(ordersTable.createdAt, dateToExclusiveIso),
+        lt(ordersTable.createdAt, siteDateTo),
         ne(ordersTable.status, "REJECTED"),
         gt(ordersTable.amount, 0), // mesmo motivo do HAVING valor > 0 do ERP acima
       ),
@@ -290,6 +303,7 @@ export async function computeErpPaidAttribution(params: {
     const dataCriado = toIsoString(r.data_criado);
 
     allOrders.push({
+      verificationStatus: isMatched ? "verified" : "unmatched",
       orderId,
       channel: "erp",
       customerName: (r.customer_name as string) || match?.name || null,
@@ -307,7 +321,7 @@ export async function computeErpPaidAttribution(params: {
       touchpointCampaign: null,
     });
 
-    if (!isMatched) continue;
+    if (!isMatched || valor === 0) continue;
     registerOrder(
       { upzeroCustomerId: match!.id, externalUserId, name: match!.name, createdAt: match!.createdAt },
       { orderId, channel: "erp", valor, valorPago: valor, dataCriado },
@@ -323,6 +337,7 @@ export async function computeErpPaidAttribution(params: {
     const dataCriadoIso = r.createdAt.toISOString();
 
     allOrders.push({
+      verificationStatus: isMatched ? "verified" : "unmatched",
       orderId: r.id,
       channel: "site",
       customerName: match?.name ?? null,
@@ -360,7 +375,8 @@ export async function computeErpPaidAttribution(params: {
   // só a busca de touchpoint muda de âncora (janela mais larga nunca perde
   // touchpoint válido, `latestTouchpointBefore` já filtra "anterior ao
   // pedido" por evento).
-  const { lookbackFrom: touchpointLookbackFrom, lookbackTo: touchpointLookbackTo } = standardTouchpointWindow();
+  const { lookbackFrom: touchpointLookbackFrom } = standardTouchpointWindow();
+  const touchpointLookbackTo = new Date().toISOString();
 
   const influencedOrders: ErpAttributedOrder[] = [];
   const fetchErrors: ErpAttributionResult["fetchErrors"] = [];
@@ -372,15 +388,8 @@ export async function computeErpPaidAttribution(params: {
   // como segurança: mesmo cliente + mesmo dia + mesmo valor = mesma venda,
   // mantém só a primeira (ERP é registrado antes do site em registerOrder
   // acima, então "primeira" == ERP quando as duas fontes colidem).
-  for (const entry of ordersByCustomer.values()) {
-    const seen = new Set<string>();
-    entry.orders = entry.orders.filter((order) => {
-      const key = `${order.dataCriado.slice(0, 10)}:${order.valor.toFixed(2)}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
+  // Não deduplicar por dia/valor: duas compras legítimas podem coincidir.
+  // A base ERP já é agrupada por pedido_id; site só entra sem ERP.
 
   // Achado 08/09/2026: cada cliente custa ~2s numa ida-e-volta na UpZero,
   // e é teto do LADO DELES -- paralelizar aqui (testado com concurrency 8
@@ -392,7 +401,7 @@ export async function computeErpPaidAttribution(params: {
   // só bate na UpZero se a janela pedida ainda não foi sincronizada --
   // reconsulta do mesmo período (ex: o Santiago reabrindo a tela) fica
   // instantânea, lendo do Postgres.
-  const CONCURRENCY = 8;
+  const CONCURRENCY = params.forceRefresh ? 2 : 6;
   const entries = [...ordersByCustomer.entries()];
   type BatchResult = {
     upzeroCustomerId: string;
@@ -417,6 +426,7 @@ export async function computeErpPaidAttribution(params: {
           to: touchpointLookbackTo,
           // Só importa touchpoint até o último pedido do cliente no relatório.
           needUntil: orders.reduce((latest, o) => (o.dataCriado > latest ? o.dataCriado : latest), orders[0]?.dataCriado ?? touchpointLookbackTo),
+          forceRefresh: params.forceRefresh && (!params.refreshCustomerIds || params.refreshCustomerIds.includes(upzeroCustomerId)),
         });
         results[i] = { upzeroCustomerId, customer, orders, touchpoints, error: null };
       } catch (err) {
@@ -429,6 +439,7 @@ export async function computeErpPaidAttribution(params: {
   for (const result of results) {
     if (result.error) {
       fetchErrors.push({ upzeroCustomerId: result.upzeroCustomerId, message: result.error });
+      for (const row of allOrders) if (row.upzeroCustomerId === result.upzeroCustomerId) row.verificationStatus = "pending";
       continue; // Cliente com erro de busca não trava o relatório inteiro.
     }
     const touchpoints = result.touchpoints!;
@@ -499,11 +510,11 @@ export async function computeErpPaidAttribution(params: {
   // pedido foi classificado da última vez que calculamos" sem re-rodar
   // tudo. onConflictDoUpdate: cada cálculo novo substitui o snapshot
   // anterior desse pedido (não é log histórico, é o estado mais recente).
-  if (allOrders.length > 0) {
+  if (allOrders.some((row) => row.verificationStatus !== "pending")) {
     await db
       .insert(orderAttributionsTable)
       .values(
-        allOrders.map((row) => ({
+        allOrders.filter((row) => row.verificationStatus !== "pending").map((row) => ({
           clientId: params.clientId,
           channel: row.channel,
           orderId: row.orderId,
@@ -550,6 +561,11 @@ export async function computeErpPaidAttribution(params: {
   }).length;
 
   return {
+    revenueBasis: params.dataset ? "erp_net" : "site",
+    ruleVersion: ATTRIBUTION_RULE_VERSION,
+    complete: fetchErrors.length === 0,
+    pendingOrders: allOrders.filter((row) => row.verificationStatus === "pending").length,
+    generatedAt: new Date().toISOString(),
     totalErpRevenue,
     totalErpOrders: erpRows.length,
     totalSiteRevenue,
@@ -565,6 +581,15 @@ export async function computeErpPaidAttribution(params: {
     cohortSummary,
     fetchErrors,
   };
+}
+
+// Ambos os blocos consomem a mesma decisão por pedido e o mesmo valor.
+export async function getErpPaidAttribution(params: Parameters<typeof computeErpPaidAttribution>[0]): Promise<ErpAttributionResult> {
+  const key = `paid-attribution:${ATTRIBUTION_RULE_VERSION}:${params.clientId}:${params.dataset}:${params.dateFrom}:${params.dateTo}`;
+  if (params.forceRefresh) invalidateCached(key);
+  const result = await cached(key, 2 * 60_000, () => computeErpPaidAttribution(params));
+  if (!result.complete) invalidateCached(key);
+  return result;
 }
 
 function maskDocument(value: string | null | undefined): string | null {
@@ -627,7 +652,7 @@ async function classifyCohorts(params: {
   }
 
   // Histórico site (qualquer data, não rejeitado) só dos clientes influenciados.
-  const siteHistoryRows = await db
+  const siteHistoryRows = params.dataset ? [] : await db
     .select({ customerId: ordersTable.customerId, createdAt: ordersTable.createdAt })
     .from(ordersTable)
     .where(

@@ -43,6 +43,10 @@ export function isPaidCampaignSignal(row: PaidSignalFields): boolean {
   const hasClickIdentifier = Boolean(row.fbc || row.fbclid || row.gclid);
   const hasMetaSource = ["fb", "facebook", "ig", "instagram", "meta"].includes(source);
   const hasGoogleSource = ["google", "google_ads", "googleads", "gads", "gc"].includes(source);
+  // Uma UTM explicitamente orgânica não vira mídia paga pelo nome da
+  // campanha. Identificadores reais de clique continuam sendo evidência.
+  const organicMedium = ["bio", "organic", "organico", "email", "newsletter", "linktree", "referral"].includes(medium);
+  if (organicMedium && !hasClickIdentifier) return false;
   const hasPaidMedium =
     medium.includes("paid") ||
     medium.includes("cpc") ||
@@ -55,14 +59,6 @@ export function isPaidCampaignSignal(row: PaidSignalFields): boolean {
     medium.includes("instagram_feed") ||
     medium.includes("instagram_stories") ||
     medium.includes("instagram_reels");
-  const hasUpCampaign =
-    campaign.includes("up.") ||
-    campaign.includes("upzero") ||
-    campaign.includes("up zero") ||
-    campaign.includes("rmkt") ||
-    campaign.includes("remarketing") ||
-    campaign.includes("frio") ||
-    campaign.includes("cadastro");
   const hasNumericMetaCampaign = hasMetaSource && /^[0-9]{8,}$/.test(campaign);
   const hasPaidChannel = channel.includes("paid") || channel.includes("ads") || rawSource.includes("ads");
 
@@ -79,11 +75,9 @@ export function isPaidCampaignSignal(row: PaidSignalFields): boolean {
     hasClickIdentifier ||
     hasPaidMedium ||
     hasMetaPlacement ||
-    hasUpCampaign ||
-    hasNumericMetaCampaign ||
     hasPaidChannel ||
-    (hasMetaSource && medium !== "bio" && campaign.length > 0 && campaign !== "linktree") ||
-    (hasGoogleSource && medium !== "bio" && campaign.length > 0)
+    // Campanha nomeada e origem social, sozinhas, não comprovam mídia paga.
+    (hasNumericMetaCampaign && (hasMetaSource || hasGoogleSource) && medium === "ad")
   );
 }
 

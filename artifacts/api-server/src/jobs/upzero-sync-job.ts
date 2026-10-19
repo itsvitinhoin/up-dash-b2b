@@ -26,6 +26,7 @@
  *   TASK=whatsapp_fix_phone_waba -> corrige o waba_id de UM número em
  *     whatsapp_phone_numbers (ver CLIENT_ID/PHONE_NUMBER_ID/WABA_ID abaixo)
  *   TASK=run_migrations       -> aplica as migrations pendentes de lib/db/migrations
+ *   TASK=setup_analytics_availability -> cria somente a tabela aditiva de pausa de analytics (migration 0043)
  *   TASK=paid_touchpoints     -> pré-aquece cache de touchpoint pago (evita
  *     primeiro carregamento lento do relatório de atribuição)
  *   TASK=purge_archived_clients -> apaga de vez os clientes excluídos (arquivados) há mais de 90 dias: banco do painel (cascata)
@@ -59,9 +60,10 @@
  */
 import "dotenv/config";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { and, eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { db, whatsappPhoneNumbersTable } from "@workspace/db";
+import { db, pool, whatsappPhoneNumbersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import {
   runUpzeroTransactionalExtraction,
@@ -187,6 +189,13 @@ async function main() {
     case "run_migrations":
       result = await runMigrations();
       break;
+    case "setup_analytics_availability": {
+      // Implantação aditiva e isolada: não aplica outras migrations pendentes.
+      const source = await readFile(path.resolve(process.cwd(), "lib/db/migrations/0043_upzero_analytics_availability.sql"), "utf8");
+      await pool.query(source);
+      result = { ok: true, table: "upzero_analytics_availability" };
+      break;
+    }
     case "paid_touchpoints":
       result = await runPaidTouchpointsSync(trigger, { clientId });
       break;
@@ -197,7 +206,7 @@ async function main() {
       result = await reconcileExcludedClients();
       break;
     default:
-      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients.`);
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, setup_analytics_availability, paid_touchpoints, purge_archived_clients, sync_excluded_clients.`);
       process.exit(1);
   }
 

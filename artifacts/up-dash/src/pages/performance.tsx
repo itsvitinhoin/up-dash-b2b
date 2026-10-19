@@ -4,7 +4,7 @@ import { useI18n } from "@/lib/i18n";
 import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   AlertCircle,
@@ -77,6 +77,7 @@ type AttributionState = "ATRIBUIDO" | "SEM_ORIGEM";
 type BuyerType = "NEW" | "RETURNING" | "UNKNOWN";
 
 type PerformanceResponse = {
+  paidAttribution?: ErpAttributionResponse;
   generatedAt: string;
   sources: {
     erp: { status: "connected"; label: string };
@@ -280,6 +281,7 @@ type CustomerCohort = {
 type PaidAttributionState = "PAID_ORIGIN" | "PAID_ASSISTED";
 
 type ErpOrderRow = {
+  verificationStatus: "verified" | "pending" | "unmatched";
   orderId: string;
   channel: "erp" | "site";
   customerName: string | null;
@@ -301,12 +303,23 @@ const ATTRIBUTION_STATE_LABEL: Record<PaidAttributionState, string> = {
 };
 
 type ErpAttributionResponse = {
+  reprocessing?: { siteOnlyCustomers: number; siteErrors: Array<{customerId:string;message:string}>; erpCustomers:number; pendingErpCustomers:number };
+  revenueBasis: "erp_net" | "site";
+  complete: boolean;
+  pendingOrders: number;
   allOrders: ErpOrderRow[];
   influencedTotal: number;
   influencedCustomers: number;
   cohortSummary: CohortSummary[];
   customerCohorts: CustomerCohort[];
   fetchErrors: Array<{ upzeroCustomerId: string; message: string }>;
+};
+
+type OrderComparison = {
+  erpOrderId: string;
+  customerName: string | null;
+  erp: { date: string; netAmount: number; discount: number; items: Array<{ sku: string; name: string; quantity: number; price: number }> };
+  siteItems: Array<{ id: string; external_id: string; sku: string; name: string; amount: number; fulfilled_amount: number; quantity: number; item_fulfilled_quantity: number; created_at: string }>;
 };
 
 const COHORT_LABEL: Record<CohortLabel, string> = {
@@ -543,7 +556,32 @@ function Pagination({
   );
 }
 
+function OrderComparisonPanel({ data }: { data: OrderComparison }) {
+  const normalize = (name: string) => name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const ids = [...new Set(data.siteItems.map((item) => item.id))];
+  return <div className="space-y-3 text-sm">
+    <p>{data.customerName} · ERP líquido {formatCurrency(data.erp.netAmount)} · Desconto {formatCurrency(data.erp.discount)} · {formatNumber(data.erp.items.reduce((sum, item) => sum + item.quantity, 0))} peça(s). O faturamento conta o ERP uma única vez.</p>
+    {ids.length === 0 && <p>Nenhum pedido do site foi encontrado para o comprador nos 14 dias anteriores ou posteriores.</p>}
+    {ids.map((id) => {
+      const items = data.siteItems.filter((item) => item.id === id);
+      const first = items[0];
+      const names = [...new Set([...data.erp.items.map((item) => normalize(item.name)), ...items.map((item) => normalize(item.name))])];
+      return <div key={id} className="overflow-x-auto"><p className="font-medium">Site #{first.external_id} · {new Date(first.created_at).toLocaleString("pt-BR")} · Solicitado {formatCurrency(first.amount)} · Atendido {formatCurrency(first.fulfilled_amount)}</p>
+        <Table><TableHeader><TableRow><TableHead>Produto</TableHead><TableHead>SKU ERP / site</TableHead><TableHead>Peças ERP</TableHead><TableHead>Peças site solicitadas</TableHead><TableHead>Peças site atendidas</TableHead></TableRow></TableHeader><TableBody>
+          {names.map((name) => {
+            const erp = data.erp.items.filter((item) => normalize(item.name) === name);
+            const site = items.filter((item) => normalize(item.name) === name);
+            return <TableRow key={name}><TableCell>{erp[0]?.name ?? site[0]?.name}</TableCell><TableCell>{erp.map(item=>item.sku).join(", ") || "—"} / {site.map(item=>item.sku).join(", ") || "—"}</TableCell><TableCell>{erp.reduce((sum, item) => sum + item.quantity, 0)}</TableCell><TableCell>{site.reduce((sum, item) => sum + item.quantity, 0)}</TableCell><TableCell>{site.reduce((sum, item) => sum + item.item_fulfilled_quantity, 0)}</TableCell></TableRow>;
+          })}
+        </TableBody></Table>
+      </div>;
+    })}
+  </div>;
+}
+
 export default function PerformancePage() {
+  const queryClient = useQueryClient();
+  const [comparisonOrderId, setComparisonOrderId] = useState<string | null>(null);
   const { tx } = useI18n();
   const { selectedClientId, user } = useAuth();
   const { dateRange } = useDashboardFilters();
@@ -647,7 +685,7 @@ export default function PerformancePage() {
       customFetch<ErpAttributionResponse>(
         buildUrl("/api/analytics/erp/attribution", commonParams),
       ),
-    enabled,
+    enabled: enabled && Boolean(data) && !data?.paidAttribution,
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: false,
     // Achado 09/09/2026: cliente Vesti nativo nunca tem chave da UpZero,
@@ -656,14 +694,32 @@ export default function PerformancePage() {
     retry: (failureCount, err) =>
       (err as { data?: { code?: string } })?.data?.code !== "NO_API_KEY" && failureCount < 1,
   });
+  const attributionData = data?.paidAttribution ?? attributionQuery.data;
+  const attributionLoading = !attributionData && (isLoading || attributionQuery.isLoading);
+  const reprocess = useMutation({
+    mutationFn: () => customFetch<ErpAttributionResponse>("/api/analytics/erp/attribution/reprocess", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...commonParams, clientId: clientId ?? user?.clientId, customerIds: attributionData?.fetchErrors.map((item) => item.upzeroCustomerId) }),
+    }),
+    onSuccess: async (result) => {
+      queryClient.setQueryData(["performance-attribution", clientId, dateFrom, dateTo], result);
+      await queryClient.invalidateQueries({ queryKey: ["performance", clientId, dateFrom, dateTo] });
+    },
+  });
+  const comparison = useQuery<OrderComparison>({
+    queryKey: ["attribution-order-comparison", clientId, comparisonOrderId],
+    queryFn: () => customFetch<OrderComparison>(buildUrl("/api/analytics/erp/attribution/order-comparison", { clientId, orderId: comparisonOrderId ?? undefined })),
+    enabled: Boolean(comparisonOrderId) && user?.role === "ADMIN",
+    retry: false,
+  });
   const attributionErrorCode = (attributionQuery.error as { data?: { code?: string } } | undefined)?.data?.code;
   const isVestiWithoutUpZero = attributionErrorCode === "NO_API_KEY";
   const filteredOrders = useMemo(() => {
-    const orders = attributionQuery.data?.allOrders ?? [];
+    const orders = attributionData?.allOrders ?? [];
     if (cohortFilter === "all") return orders;
     if (cohortFilter === "attributed") return orders.filter((order) => order.attributed);
     return orders.filter((order) => order.cohort === cohortFilter);
-  }, [attributionQuery.data, cohortFilter]);
+  }, [attributionData, cohortFilter]);
   const filteredStats = useMemo(() => {
     let attributedOrders = 0;
     let attributedCustomers = new Set<string>();
@@ -710,7 +766,7 @@ export default function PerformancePage() {
       sub: [{ label: "Bruto", value: formatCurrency(k?.grossRevenue ?? 0) }],
     },
     {
-      label: "Receita atribuída",
+      label: attributionData?.complete === false ? "Receita atribuída (parcial)" : "Receita atribuída",
       info: tx("Faturamento líquido (já descontadas as devoluções) dos compradores do ERP que a UP Zero reconhece como vindos de mídia paga. Conta pelo cliente, não pelo pedido: por isso pode diferir de “Receita com clique pago”, mais abaixo."),
       value: k?.attributedRevenue ?? 0,
       comparisonValue: k?.attributedRevenue ?? null,
@@ -978,12 +1034,12 @@ export default function PerformancePage() {
         { header: "Documento", accessor: (row) => row.document },
         { header: "Canal", accessor: (row) => (row.channel === "erp" ? "ERP" : "Site") },
         { header: "Coorte", accessor: (row) => (row.cohort ? COHORT_LABEL[row.cohort] : "") },
-        { header: "Atribuição", accessor: (row) => (row.attributed ? "Atribuído" : "Sem origem") },
+        { header: "Atribuição", accessor: (row) => row.verificationStatus === "pending" ? "Verificação pendente" : row.verificationStatus === "unmatched" ? "Identidade não conciliada" : row.attributed ? "Atribuído" : "Sem origem" },
         { header: "Tipo", accessor: (row) => (row.attributionState ? ATTRIBUTION_STATE_LABEL[row.attributionState] : "") },
         { header: "Touchpoint", accessor: (row) => row.touchpointAt },
         { header: "Origem do clique", accessor: (row) => row.touchpointSource },
         { header: "Valor", accessor: (row) => row.valor },
-        { header: "Valor pago", accessor: (row) => row.valorPago },
+        { header: "Valor atendido", accessor: (row) => row.valorPago },
       ],
     );
   };
@@ -1070,7 +1126,7 @@ export default function PerformancePage() {
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>ROI aguardando cobertura de custo</AlertTitle>
           <AlertDescription>
-            O ROAS e o MER estão válidos. O ROI final será exibido quando ao
+            {attributionData?.complete === false ? "O ROAS usa somente a receita verificada e permanece parcial. " : ""}O ROI final será exibido quando ao
             menos 95% das peças vendidas tiverem custo no ERP; cobertura atual:{" "}
             {formatPercentage(k?.costCoveragePct ?? 0)}.
           </AlertDescription>
@@ -1217,7 +1273,7 @@ export default function PerformancePage() {
             title="Novos, recorrentes e reativados"
             description="Coorte pela última compra concluída antes da 1ª compra que a mídia influenciou. Sem compra anterior = novo · até 90 dias = recorrente · acima = reativado."
           />
-          {attributionQuery.isLoading ? (
+          {attributionLoading ? (
             <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
           ) : isVestiWithoutUpZero ? (
             <Alert className="mt-4">
@@ -1239,10 +1295,10 @@ export default function PerformancePage() {
             <>
               <div className="mt-4 up-metric-grid">
                 {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
-                  const summary = attributionQuery.data?.cohortSummary.find(
+                  const summary = attributionData?.cohortSummary.find(
                     (c) => c.cohort === cohort,
                   );
-                  const totalClientes = attributionQuery.data?.influencedCustomers ?? 0;
+                  const totalClientes = attributionData?.influencedCustomers ?? 0;
                   const pct =
                     totalClientes > 0 && summary
                       ? (summary.clientes / totalClientes) * 100
@@ -1259,15 +1315,15 @@ export default function PerformancePage() {
                       <TableHead>Coorte</TableHead>
                       <TableHead className="text-right">Clientes</TableHead>
                       <TableHead className="text-right">Pedidos</TableHead>
-                      <TableHead className="text-right">Pedidos pagos</TableHead>
+                      <TableHead className="text-right">Pedidos atendidos</TableHead>
                       <TableHead className="text-right">Fat. gerado</TableHead>
-                      <TableHead className="text-right">Fat. pago</TableHead>
+                      <TableHead className="text-right">Valor atendido</TableHead>
                       <TableHead className="text-right">Ticket médio</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
-                      const summary = attributionQuery.data?.cohortSummary.find(
+                      const summary = attributionData?.cohortSummary.find(
                         (c) => c.cohort === cohort,
                       );
                       return (
@@ -1302,16 +1358,16 @@ export default function PerformancePage() {
                       );
                     })}
                     {(() => {
-                      const rows = attributionQuery.data?.cohortSummary ?? [];
+                      const rows = attributionData?.cohortSummary ?? [];
                       const totalPedidos = rows.reduce((s, r) => s + r.pedidos, 0);
                       const totalPedidosPagos = rows.reduce((s, r) => s + r.pedidosPagos, 0);
                       const totalFatPago = rows.reduce((s, r) => s + r.faturamentoPago, 0);
-                      const totalFatGerado = attributionQuery.data?.influencedTotal ?? 0;
+                      const totalFatGerado = attributionData?.influencedTotal ?? 0;
                       return (
                         <TableRow className="bg-muted/30 font-semibold">
                           <TableCell>Total</TableCell>
                           <TableCell className="text-right tabular-nums">
-                            {formatNumber(attributionQuery.data?.influencedCustomers ?? 0)}
+                            {formatNumber(attributionData?.influencedCustomers ?? 0)}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
                             {formatNumber(totalPedidos)}
@@ -1786,9 +1842,12 @@ export default function PerformancePage() {
         <CardContent className="p-5">
           <SectionHeader
             title="Pedidos e evidências de campanha"
-            description="Pedido é atribuído quando existe clique pago do mesmo cliente antes da compra (ERP + site). A origem acompanha o comprador conciliado pelo documento."
+            description={attributionData?.revenueBasis === "erp_net" ? "Mesma receita líquida e mesmos pedidos da conciliação financeira. Exige evidência paga do comprador anterior à compra; pedidos do site não são somados ao ERP." : "Atribuição por pedido com evidência paga do comprador anterior à compra."}
             action={
               <div className="flex flex-wrap items-center gap-2">
+                {user?.role === "ADMIN" && <Button variant="outline" size="sm" disabled={reprocess.isPending || attributionLoading} onClick={() => reprocess.mutate()}>
+                  {reprocess.isPending ? "Reprocessando…" : "Reprocessar atribuição"}
+                </Button>}
                 <Select
                   value={cohortFilter}
                   onValueChange={(value) => setCohortFilter(value as CohortLabel | "all" | "attributed")}
@@ -1811,7 +1870,7 @@ export default function PerformancePage() {
               </div>
             }
           />
-          {attributionQuery.isLoading ? (
+          {attributionLoading ? (
             <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
           ) : isVestiWithoutUpZero ? (
             <Alert className="mt-4">
@@ -1829,23 +1888,30 @@ export default function PerformancePage() {
             </Alert>
           ) : (
             <>
-              {attributionQuery.data && attributionQuery.data.fetchErrors.length > 0 && (
+              {attributionData && attributionData.fetchErrors.length > 0 && (
                 <Alert variant="destructive" className="mt-4">
                   <AlertCircle className="h-4 w-4" />
                   <AlertTitle>
-                    {attributionQuery.data.fetchErrors.length} cliente(s) não puderam ser verificados
+                    {attributionData.fetchErrors.length} cliente(s) não puderam ser verificados
                   </AlertTitle>
                   <AlertDescription>
-                    O restante do relatório está completo; esses clientes específicos falharam ao buscar touchpoints.
+                    Atribuição parcial: os valores incluem somente pedidos verificados. Há {attributionData.pendingOrders} pedido(s) pendente(s); falha de consulta não significa ausência de mídia paga.
+                    <details className="mt-2"><summary>Detalhes das consultas pendentes</summary><ul>{attributionData.fetchErrors.map((item) => <li key={item.upzeroCustomerId}>{item.upzeroCustomerId}: {item.message}</li>)}</ul></details>
                   </AlertDescription>
                 </Alert>
               )}
+              {reprocess.isError && <Alert variant="destructive" className="mt-4"><AlertTitle>Reprocessamento não concluído</AlertTitle><AlertDescription>As verificações pendentes continuam sinalizadas. Tente novamente.</AlertDescription></Alert>}
+              {reprocess.data?.reprocessing && <Alert className="mt-4"><AlertTitle>Conferência das duas fontes executada</AlertTitle><AlertDescription>
+                {reprocess.data.reprocessing.erpCustomers} comprador(es) conciliado(s) no ERP; {reprocess.data.reprocessing.siteOnlyCustomers} comprador(es) adicional(is) com pedidos apenas no site.
+                {" "}{reprocess.data.reprocessing.pendingErpCustomers} consulta(s) pendente(s) no ERP e {reprocess.data.reprocessing.siteErrors.length} no site.
+                {reprocess.data.reprocessing.siteErrors.length > 0 && <details><summary>Consultas do site pendentes</summary><ul>{reprocess.data.reprocessing.siteErrors.map((item)=><li key={item.customerId}>{item.customerId}: {item.message}</li>)}</ul></details>}
+              </AlertDescription></Alert>}
               <div className="mt-4 up-metric-grid">
-                <GlassMetricCard label="Pedidos no período" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>} hideComparison />
-                <GlassMetricCard label="Valor total" value={<>{formatCurrency(filteredStats.valorTotal)}</>} hideComparison />
-                <GlassMetricCard label="Pedidos com clique pago" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>} info={tx("Pedidos (ERP + site) em que o mesmo cliente teve um clique pago antes da compra.")} hideComparison />
-                <GlassMetricCard label="Receita com clique pago" value={<>{formatCurrency(filteredStats.receitaAtribuida)}</>} info={tx("Valor desses pedidos, contado por pedido. Pode diferir de “Receita atribuída” (Conciliação financeira), que conta por cliente sobre o faturamento líquido do ERP.")} sub={[{ label: "% do valor total", value: formatPercentage(filteredStats.valorTotal > 0 ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100 : 0) }]} hideComparison />
-                <GlassMetricCard label="Pago desses pedidos" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>} info={tx("Parte do valor desses pedidos que já foi paga.")} hideComparison />
+                <GlassMetricCard label="Pedidos exibidos" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>} hideComparison />
+                <GlassMetricCard label="Valor exibido" value={<>{formatCurrency(filteredStats.valorTotal)}</>} hideComparison />
+                <GlassMetricCard label="Pedidos atribuídos" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>} info={tx("Pedidos com evidência paga do comprador anterior à compra.")} hideComparison />
+                <GlassMetricCard label={attributionData?.complete === false ? "Receita atribuída verificada (parcial)" : "Receita atribuída"} value={<>{formatCurrency(filteredStats.receitaAtribuida)}</>} info={tx("Mesma decisão por pedido e mesma base de valor da conciliação financeira.")} sub={[{ label: "% do valor do período", value: formatPercentage((attributionData?.allOrders.reduce((sum, order) => sum + order.valor, 0) ?? 0) > 0 ? (filteredStats.receitaAtribuida / attributionData!.allOrders.reduce((sum, order) => sum + order.valor, 0)) * 100 : 0) }]} hideComparison />
+                <GlassMetricCard label="Valor atendido atribuído" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>} info={tx("Valor atendido informado pela origem. Não representa conciliação bancária de recebimentos.")} hideComparison />
               </div>
               <div className="mt-4 overflow-x-auto">
                 <Table>
@@ -1864,6 +1930,7 @@ export default function PerformancePage() {
                       <TableRow key={`${order.channel}-${order.orderId}`}>
                         <TableCell>
                           <p className="font-medium">#{order.orderId}</p>
+                          {order.channel === "erp" && user?.role === "ADMIN" && <Button variant="link" size="sm" className="h-auto px-0 py-1" onClick={() => setComparisonOrderId(order.orderId)}>Conferir com site</Button>}
                           <p className="text-xs text-muted-foreground">
                             {order.channel === "erp" ? formatErpDate(order.dataCriado) : new Date(order.dataCriado).toLocaleString("pt-BR")}
                           </p>
@@ -1896,7 +1963,7 @@ export default function PerformancePage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <AttributionBadge state={order.attributed ? "ATRIBUIDO" : "SEM_ORIGEM"} />
+                          {order.verificationStatus === "pending" ? <Badge variant="outline">Verificação pendente</Badge> : order.verificationStatus === "unmatched" ? <Badge variant="outline">Identidade não conciliada</Badge> : <AttributionBadge state={order.attributed ? "ATRIBUIDO" : "SEM_ORIGEM"} />}
                           {order.attributionState && (
                             <p className="mt-0.5 text-xs text-muted-foreground">
                               {ATTRIBUTION_STATE_LABEL[order.attributionState]}
@@ -1911,6 +1978,12 @@ export default function PerformancePage() {
                   </TableBody>
                 </Table>
               </div>
+              {comparisonOrderId && <div className="mt-4 rounded-lg border p-4">
+                <div className="flex items-center justify-between"><p className="font-medium">Conferência ERP #{comparisonOrderId} e site</p><Button variant="ghost" size="sm" onClick={() => setComparisonOrderId(null)}>Fechar conferência</Button></div>
+                {comparison.isLoading && <p>Carregando itens…</p>}
+                {comparison.isError && <p>Não foi possível conferir os itens agora.</p>}
+                {comparison.data && <OrderComparisonPanel data={comparison.data} />}
+              </div>}
               <Pagination
                 page={ordersPage}
                 total={filteredOrders.length}

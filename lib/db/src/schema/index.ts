@@ -20,3 +20,4 @@ export * from "./paidTouchpointsSync";
 export * from "./customerIdentityLinks";
 export * from "./orderAttributions";
 export * from "./api-tokens";
+export * from "./upzeroAnalyticsAvailability";

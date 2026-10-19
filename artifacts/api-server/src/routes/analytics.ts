@@ -99,7 +99,7 @@ import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow 
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
 import { normalizeCampaignText, isPaidCampaignSignal, latestCampaignEvidenceBefore } from "../services/campaign-attribution";
 import { syncPaidTouchpointsForCustomer } from "../services/paid-touchpoints";
-import { computeErpPaidAttribution } from "../services/erp-attribution";
+import { getErpPaidAttribution } from "../services/erp-attribution";
 import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiAvailableStockSalesValue, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
 
 import { buildProductSalesBreakdowns } from "../services/product-sales-breakdowns";
@@ -9825,7 +9825,7 @@ router.get("/analytics/erp/attribution", requireAdmin, async (req, res): Promise
   // junto -- não faz mais sentido variar por chamada.
 
   const [client] = await db
-    .select({ bigqueryDataset: clientsTable.bigqueryDataset, upZeroApiKey: clientsTable.upZeroApiKey })
+    .select({ erpDataset: clientsTable.erpDataset, upZeroApiKey: clientsTable.upZeroApiKey })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
   if (!client?.upZeroApiKey) {
@@ -9839,9 +9839,9 @@ router.get("/analytics/erp/attribution", requireAdmin, async (req, res): Promise
   // Sem dataset, roda só a atribuição de pedidos do site.
 
   try {
-    const result = await computeErpPaidAttribution({
+    const result = await getErpPaidAttribution({
       clientId,
-      dataset: client.bigqueryDataset,
+      dataset: client.erpDataset,
       upZeroApiKey: client.upZeroApiKey,
       dateFrom,
       dateTo,

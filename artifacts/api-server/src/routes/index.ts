@@ -11,6 +11,7 @@ import assistantRouter from "./assistant";
 import orchestratorRouter from "./orchestrator";
 import portfolioReportRouter from "./portfolio-report";
 import apiTokensRouter from "./api-tokens";
+import attributionReviewRouter from "./attribution-review";
 
 const router: IRouter = Router();
 
@@ -18,6 +19,7 @@ router.use(healthRouter);
 router.use(authRouter);
 router.use(clientsRouter);
 router.use(portfolioReportRouter);
+router.use(attributionReviewRouter);
 router.use(analyticsRouter);
 router.use(notificationsRouter);
 router.use(savedViewsRouter);

@@ -302,6 +302,13 @@
       "when": 1792068306135,
       "tag": "0042_api_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792443600000,
+      "tag": "0043_upzero_analytics_availability",
+      "breakpoints": true
     }
   ]
 }

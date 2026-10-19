@@ -1,4 +1,5 @@
 import type { UpzeroAnalyticsMetric } from "./analytics-metrics";
+import { fetchUpzeroAnalytics } from "./analytics-availability";
 
 const UPZERO_ANALYTICS_FACTS_URL =
   "https://api.upzero.com.br/external/v1/analytics/facts";
@@ -221,7 +222,7 @@ export async function getUpzeroAnalyticsFacts({
   // rodar.
   let response: Response;
   try {
-    response = await fetch(url.toString(), {
+    response = await fetchUpzeroAnalytics("facts", apiKey, url.toString(), {
       method: "GET",
       headers: {
         "X-API-Key": apiKey,

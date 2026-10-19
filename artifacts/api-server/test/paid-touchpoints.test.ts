@@ -1,5 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("@workspace/db", () => ({ db: {}, pool: { query: async () => ({ rows: [] }) }, paidTouchpointsTable: {}, paidTouchpointsSyncTable: {} }));
 import { decodeFbcClickTimestamp, latestTouchpointBefore } from "../src/services/paid-touchpoints";
+import { fetchPaidTouchpointsForUser } from "../src/services/paid-touchpoints";
+afterEach(() => vi.unstubAllGlobals());
+
+describe("completude do histórico", () => {
+  it("não multiplica uma indisponibilidade 503 em dezenas de janelas", async () => {
+    const fetch = vi.fn(async () => new Response("Consulta de eventos de analytics temporariamente desativada", {status:503}));
+    vi.stubGlobal("fetch",fetch);
+    await expect(fetchPaidTouchpointsForUser({apiKey:"test",userId:1,from:"2016-01-01T00:00:00Z",to:"2026-10-19T00:00:00Z"})).rejects.toThrow("desativada pela UP Zero");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("não aceita paginação truncada como busca completa", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ data: [], next_cursor: "more" }) })));
+    await expect(fetchPaidTouchpointsForUser({apiKey:"test",userId:1,from:"2026-10-01T00:00:00Z",to:"2026-10-19T00:00:00Z"})).rejects.toThrow("limite de paginação");
+  });
+  it("divide uma janela com falha transiente sem reduzir o histórico solicitado", async () => {
+    const windows: Array<{from:string|null;to:string|null}> = [];
+    vi.stubGlobal("fetch",vi.fn(async (input:string) => {
+      const url=new URL(input);windows.push({from:url.searchParams.get("from"),to:url.searchParams.get("to")});
+      return windows.length<=3 ? {ok:false,status:504} : {ok:true,json:async()=>({data:[],next_cursor:null})};
+    }));
+    const from="2020-01-01T00:00:00Z",to="2026-10-19T00:00:00Z";
+    await expect(fetchPaidTouchpointsForUser({apiKey:"test",userId:1,from,to})).resolves.toEqual([]);
+    expect(windows).toHaveLength(5);
+    expect(windows[3]?.from).toBe(from);
+    expect(windows[3]?.to).toBe(windows[4]?.from);
+    expect(windows[4]?.to).toBe(to);
+  });
+});
 
 describe("decodeFbcClickTimestamp", () => {
   // fbc real da Nadia (validação ao vivo, 03/09/2026): decodifica pra
