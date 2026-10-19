@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-vi.mock("@workspace/db", () => ({ db: {}, paidTouchpointsTable: {}, paidTouchpointsSyncTable: {} }));
+vi.mock("@workspace/db", () => ({ db: {}, pool: { query: async () => ({ rows: [] }) }, paidTouchpointsTable: {}, paidTouchpointsSyncTable: {} }));
 import { decodeFbcClickTimestamp, latestTouchpointBefore } from "../src/services/paid-touchpoints";
 import { fetchPaidTouchpointsForUser } from "../src/services/paid-touchpoints";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("completude do histórico", () => {
   it("não multiplica uma indisponibilidade 503 em dezenas de janelas", async () => {
-    const fetch = vi.fn(async () => ({ok:false,status:503,json:async()=>({code:"ANALYTICS_UNAVAILABLE"})}));
+    const fetch = vi.fn(async () => new Response("Consulta de eventos de analytics temporariamente desativada", {status:503}));
     vi.stubGlobal("fetch",fetch);
-    await expect(fetchPaidTouchpointsForUser({apiKey:"test",userId:1,from:"2016-01-01T00:00:00Z",to:"2026-10-19T00:00:00Z"})).rejects.toThrow("ANALYTICS_UNAVAILABLE");
-    expect(fetch).toHaveBeenCalledTimes(3);
+    await expect(fetchPaidTouchpointsForUser({apiKey:"test",userId:1,from:"2016-01-01T00:00:00Z",to:"2026-10-19T00:00:00Z"})).rejects.toThrow("desativada pela UP Zero");
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
   it("não aceita paginação truncada como busca completa", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ data: [], next_cursor: "more" }) })));

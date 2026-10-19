@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("../src/services/upzero/analytics-availability", () => ({ fetchUpzeroAnalytics: (_endpoint: string, _apiKey: string, url: string, init: RequestInit) => fetch(url, init) }));
 const state = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[], touches: [] as Array<{ occurredAt: Date; source: string }>, fail: false, snapshots: [] as unknown[][], selects: 0 }));
 vi.mock("@workspace/db", () => ({
   customersTable: {}, ordersTable: {}, orderAttributionsTable: {},

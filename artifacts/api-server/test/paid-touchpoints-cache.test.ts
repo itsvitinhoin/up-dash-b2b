@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("../src/services/upzero/analytics-availability", () => ({ fetchUpzeroAnalytics: (_endpoint: string, _apiKey: string, url: string, init: RequestInit) => fetch(url, init) }));
 
 // Banco e UpZero simulados: o que se testa aqui é a DECISÃO do cache
 // (ler do Postgres, atualizar só o trecho novo, ou buscar tudo), não as queries.
@@ -44,7 +45,7 @@ vi.mock("@workspace/db", () => {
 });
 vi.mock("drizzle-orm", () => ({ and: () => 0, eq: () => 0, gte: () => 0, lte: () => 0, sql: () => 0 }));
 
-import { getTouchpointsForCustomerCached } from "../src/services/paid-touchpoints";
+import { getTouchpointsForCustomerCached, syncPaidTouchpointsForCustomer } from "../src/services/paid-touchpoints";
 
 const NOW = new Date("2026-10-08T15:00:00Z");
 const BLOCK = "2026-10-08T12:00:00.000Z"; // início do bloco de 6h
@@ -83,6 +84,13 @@ afterEach(() => {
 const base = { apiKey: "k", clientId: "c1", customerId: "u1", externalUserId: 7, from: FROM, to: BLOCK };
 
 describe("getTouchpointsForCustomerCached", () => {
+  it("job agendado atualiza apenas o trecho novo quando já existe histórico", async () => {
+    state.sync = { syncedFrom: new Date(FROM), syncedTo: hoursAgo(10), syncedAt: hoursAgo(10) };
+    await syncPaidTouchpointsForCustomer(base);
+    expect(fetchedWindows).toHaveLength(1);
+    expect(fetchedWindows[0]!.from).toBe(hoursAgo(34).toISOString());
+    expect(state.syncWrites[0]!.syncedFrom.toISOString()).toBe(hoursAgo(34).toISOString());
+  });
   it("sem sincronização anterior busca a janela inteira (comportamento antigo)", async () => {
     await getTouchpointsForCustomerCached(base);
     expect(fetchedWindows).toHaveLength(1);

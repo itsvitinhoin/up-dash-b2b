@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("../src/services/upzero/analytics-availability", () => ({ fetchUpzeroAnalytics: (_endpoint: string, _apiKey: string, url: string, init: RequestInit) => fetch(url, init) }));
 import {
   getUpzeroAnalyticsMetrics,
   summarizeUpzeroSellerPurchases,

@@ -1076,7 +1076,7 @@ type PaidTouchpointsCandidate = { id: string; externalUserId: number };
 // precisa cobrir o caso comum pra tirar a lentidão do primeiro
 // carregamento; quem escapar ainda funciona, só não vem pré-aquecido.
 async function findCustomersToWarmTouchpoints(
-  client: { id: string; bigqueryDataset: string | null },
+  client: { id: string; erpDataset: string | null },
   cutoff: Date,
 ): Promise<PaidTouchpointsCandidate[]> {
   const byId = new Map<string, number>();
@@ -1094,9 +1094,9 @@ async function findCustomersToWarmTouchpoints(
     .groupBy(customersTable.id, customersTable.externalId);
   siteRows.forEach(addRow);
 
-  if (client.bigqueryDataset) {
+  if (client.erpDataset) {
     try {
-      const pedidos = vestiTable(client.bigqueryDataset, "pedidos_erp");
+      const pedidos = vestiTable(client.erpDataset, "pedidos_erp");
       const [rows] = await bigquery.query({
         query: `
           SELECT DISTINCT customer_id
@@ -1136,11 +1136,11 @@ export async function runPaidTouchpointsSync(
 
   const datasetRows = filteredClients.length > 0
     ? await db
-        .select({ id: clientsTable.id, bigqueryDataset: clientsTable.bigqueryDataset })
+        .select({ id: clientsTable.id, erpDataset: clientsTable.erpDataset })
         .from(clientsTable)
         .where(inArray(clientsTable.id, filteredClients.map((client) => client.id)))
     : [];
-  const datasetByClient = new Map(datasetRows.map((row) => [row.id, row.bigqueryDataset]));
+  const datasetByClient = new Map(datasetRows.map((row) => [row.id, row.erpDataset]));
 
   const cutoff = new Date(Date.now() - PAID_TOUCHPOINTS_RECENT_ORDER_DAYS * 24 * 60 * 60 * 1000);
   const from = new Date(Date.now() - PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -1158,7 +1158,7 @@ export async function runPaidTouchpointsSync(
     const jobId = await createJob(client.id, "paid_touchpoints", trigger);
     try {
       const customers = await findCustomersToWarmTouchpoints(
-        { id: client.id, bigqueryDataset: datasetByClient.get(client.id) ?? null },
+        { id: client.id, erpDataset: datasetByClient.get(client.id) ?? null },
         cutoff,
       );
       if (customers.length === 0) {

@@ -8,6 +8,7 @@
 import { db, paidTouchpointsTable, paidTouchpointsSyncTable } from "@workspace/db";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { isPaidCampaignSignal } from "./campaign-attribution";
+import { fetchUpzeroAnalytics } from "./upzero/analytics-availability";
 
 const UPZERO_BASE = "https://api.upzero.com.br";
 
@@ -106,7 +107,7 @@ async function fetchUpzeroFactsPage(params: {
   // vira erro isolado (fetchErrors) em vez de travar o relatório.
   let res: Response | undefined;
   for (let attempt = 0; attempt < 3; attempt++) {
-    res = await fetch(url.toString(), {
+    res = await fetchUpzeroAnalytics("facts", params.apiKey, url.toString(), {
       headers: { "X-API-Key": params.apiKey },
       signal: AbortSignal.timeout(15_000),
     });
@@ -254,10 +255,16 @@ export async function syncPaidTouchpointsForCustomer(params: {
   from: string;
   to: string;
 }): Promise<{ found: number; saved: number }> {
+  const [syncState] = await db.select().from(paidTouchpointsSyncTable).where(
+    and(eq(paidTouchpointsSyncTable.clientId, params.clientId), eq(paidTouchpointsSyncTable.customerId, params.customerId)),
+  );
+  const from = syncState && syncState.syncedFrom <= new Date(params.from)
+    ? new Date(Math.max(new Date(params.from).getTime(), syncState.syncedTo.getTime() - TOUCHPOINT_REFRESH_OVERLAP_MS)).toISOString()
+    : params.from;
   const touchpoints = await fetchPaidTouchpointsForUser({
     apiKey: params.apiKey,
     userId: params.externalUserId,
-    from: params.from,
+    from,
     to: params.to,
   });
   const saved = await savePaidTouchpoints({
@@ -266,7 +273,7 @@ export async function syncPaidTouchpointsForCustomer(params: {
     externalUserId: params.externalUserId,
     touchpoints,
   });
-  await markSynced({ clientId: params.clientId, customerId: params.customerId, from: new Date(params.from), to: new Date(params.to) });
+  await markSynced({ clientId: params.clientId, customerId: params.customerId, from: new Date(from), to: new Date(params.to) });
   return { found: touchpoints.length, saved };
 }
 
