@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { db, clientsTable, eventsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { fetchMetaMarketingData } from "./meta-ads";
+import { getErpPaidAttribution, type ErpAttributionResult } from "./erp-attribution";
 import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution, fetchVestiFunnelEventCounts } from "./erpAnalytics";
 import {
   calculatePerformanceRatios,
@@ -81,6 +82,7 @@ type PerformanceQualityItem = {
 };
 
 export type PerformanceDashboard = {
+  paidAttribution?: ErpAttributionResult;
   generatedAt: string;
   sources: {
     erp: { status: "connected"; label: string };
@@ -362,6 +364,8 @@ export async function fetchPerformanceDashboard(
       .select({
         metaAdsApiKey: clientsTable.metaAdsApiKey,
         metaAdAccountId: clientsTable.metaAdAccountId,
+        commercePlatform: clientsTable.commercePlatform,
+        upZeroApiKey: clientsTable.upZeroApiKey,
       })
       .from(clientsTable)
       .where(eq(clientsTable.id, clientId)),
@@ -383,6 +387,13 @@ export async function fetchPerformanceDashboard(
   });
   const vestiMatcher = hasUnmatchedDocuments ? await matchErpDocumentsWithVestiAttribution(dataset) : null;
   const client = clientRows[0];
+  const unifiedAttribution = client?.commercePlatform === "UPZERO" && client.upZeroApiKey
+    ? await getErpPaidAttribution({ clientId, dataset, upZeroApiKey: client.upZeroApiKey, dateFrom, dateTo })
+    : null;
+  if (unifiedAttribution && !unifiedAttribution.complete) {
+    ecommerceStatus = "unavailable";
+    ecommerceMessage = `Atribuição parcial: ${unifiedAttribution.fetchErrors.length} cliente(s) aguardam verificação. Os valores incluem apenas pedidos verificados.`;
+  }
   const token = getMetaAccessToken(client?.metaAdsApiKey);
 
   let mediaStatus: PerformanceDashboard["sources"]["media"]["status"] =
@@ -509,7 +520,7 @@ export async function fetchPerformanceDashboard(
       matchedBuyerDocuments.add(document);
       ecommerceMatchedOrders += orders;
     }
-    if (!match?.attribution) continue;
+    if (unifiedAttribution || !match?.attribution) continue;
 
     attributedOrders += orders;
     attributedRevenue += revenue;
@@ -547,6 +558,37 @@ export async function fetchPerformanceDashboard(
       campaign.revenue += revenue;
       campaign.orders += orders;
       campaignRevenueMap.set(campaignKey, campaign);
+    }
+  }
+
+  if (unifiedAttribution) {
+    attributedOrders = unifiedAttribution.influencedOrders.length;
+    attributedRevenue = unifiedAttribution.influencedTotal;
+    matchedBuyerDocuments.clear();
+    ecommerceMatchedOrders = 0;
+    for (const order of unifiedAttribution.allOrders) {
+      if (order.upzeroCustomerId) {
+        matchedBuyerDocuments.add(order.upzeroCustomerId);
+        ecommerceMatchedOrders++;
+      }
+    }
+    for (const order of unifiedAttribution.influencedOrders) {
+      attributedBuyerDocuments.add(order.upzeroCustomerId);
+      const day = order.dataCriado.slice(0, 10);
+      const point = dailyMap.get(day);
+      if (point) point.attributedRevenue += order.valor;
+      const channel = normalizePerformanceChannel({ utmSource: order.touchpointSource, utmMedium: order.touchpointMedium, utmCampaign: order.touchpointCampaign });
+      const current = channelMap.get(channel) ?? { channel, spend: 0, revenue: 0, orders: 0, roas: null };
+      current.revenue += order.valor;
+      current.orders++;
+      channelMap.set(channel, current);
+      if (order.touchpointCampaign) {
+        const key = normalizedCampaignKey(order.touchpointCampaign);
+        const campaign = campaignRevenueMap.get(key) ?? { name: order.touchpointCampaign, revenue: 0, orders: 0 };
+        campaign.revenue += order.valor;
+        campaign.orders++;
+        campaignRevenueMap.set(key, campaign);
+      }
     }
   }
 
@@ -603,7 +645,7 @@ export async function fetchPerformanceDashboard(
   const returningBuyers = Object.values(buyerTypeByDocument).filter(
     (type) => type === "RETURNING",
   ).length;
-  const newAttributedBuyers = Array.from(attributedBuyerDocuments).filter(
+  const newAttributedBuyers = unifiedAttribution ? unifiedAttribution.customerCohorts.filter((c) => c.cohort === "novo").length : Array.from(attributedBuyerDocuments).filter(
     (document) => buyerTypeByDocument[document] === "NEW",
   ).length;
   const eventSummary = eventSummaryResult.rows[0] ?? ({} as EventSummaryRow);
@@ -769,6 +811,7 @@ export async function fetchPerformanceDashboard(
   ].sort((a, b) => b.revenue - a.revenue || b.spend - a.spend);
 
   return {
+    ...(unifiedAttribution ? { paidAttribution: unifiedAttribution } : {}),
     generatedAt: new Date().toISOString(),
     sources: {
       erp: { status: "connected", label: `Miré · ${dataset}` },
@@ -846,9 +889,10 @@ export async function fetchPerformanceDashboard(
       },
       {
         label: "Sem evidência paga",
-        value: Math.max(0, erp.kpis.orders - attributedOrders),
-        detail: "Orgânico, direto ou sem identificação",
+        value: Math.max(0, erp.kpis.orders - attributedOrders - (unifiedAttribution?.pendingOrders ?? 0)),
+        detail: "Pedidos sem evidência paga verificada ou sem identidade conciliada",
       },
+      ...(unifiedAttribution?.pendingOrders ? [{ label: "Verificação pendente", value: unifiedAttribution.pendingOrders, detail: "Pedidos de clientes cuja consulta de evidências falhou" }] : []),
     ],
     daily: Array.from(dailyMap.values()).sort((a, b) =>
       a.date.localeCompare(b.date),

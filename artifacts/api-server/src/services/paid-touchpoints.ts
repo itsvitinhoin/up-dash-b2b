@@ -106,12 +106,12 @@ async function fetchUpzeroFactsPage(params: {
   // vira erro isolado (fetchErrors) em vez de travar o relatório.
   const res = await fetch(url.toString(), {
     headers: { "X-API-Key": params.apiKey },
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(15_000),
   });
-  if (!res.ok) {
-    throw new Error(`UpZero /analytics/facts falhou (${res.status}): ${await res.text()}`);
-  }
-  return (await res.json()) as UpzeroFactsResponse;
+  if (!res.ok) throw new Error(`UpZero /analytics/facts falhou (${res.status})`);
+  const payload = await res.json() as UpzeroFactsResponse;
+  if (!Array.isArray(payload.data)) throw new Error("UpZero /analytics/facts devolveu resposta incompleta");
+  return payload;
 }
 
 export type TouchpointCandidate = {
@@ -154,13 +154,25 @@ export async function fetchPaidTouchpointsForUser(params: {
   // com volume anormal de navegação.
   const MAX_PAGES = 20;
   do {
-    const page = await fetchUpzeroFactsPage({
-      apiKey: params.apiKey,
-      userId: params.userId,
-      from: params.from,
-      to: params.to,
-      cursor,
-    });
+    let page: UpzeroFactsResponse;
+    try {
+      page = await fetchUpzeroFactsPage({ ...params, cursor });
+    } catch (error) {
+      const span = new Date(params.to).getTime() - new Date(params.from).getTime();
+      const retryable = /timeout|abort|\(429\)|\(5\d\d\)|fetch failed/i.test(error instanceof Error ? error.message + ' ' + error.name : String(error));
+      if (!retryable || span <= 31 * 86_400_000) throw error;
+      // Uma busca de dez anos pode exceder o orçamento da API. Divide sem
+      // reduzir o histórico de atribuição; só confirma cobertura completa.
+      const midpoint = new Date(new Date(params.from).getTime() + Math.floor(span / 2)).toISOString();
+      const left = await fetchPaidTouchpointsForUser({ ...params, to: midpoint });
+      const right = await fetchPaidTouchpointsForUser({ ...params, from: midpoint });
+      const merged = new Map<string, TouchpointCandidate>();
+      for (const touch of [...left, ...right]) {
+        const existing = merged.get(touch.evidenceKey);
+        if (!existing || touch.occurredAt < existing.occurredAt) merged.set(touch.evidenceKey, touch);
+      }
+      return [...merged.values()];
+    }
     for (const fact of page.data) {
       if (!isPaidCampaignSignal(fact)) continue;
       const decoded = decodeFbcClickTimestamp(fact.fbc);
@@ -171,7 +183,7 @@ export async function fetchPaidTouchpointsForUser(params: {
       found.set(key, {
         occurredAt,
         eventName: fact.event_name,
-        source: fact.utm_source ?? fact.source,
+        source: fact.utm_source || (fact.gclid ? "google" : fact.fbc || fact.fbclid ? "meta" : fact.source),
         medium: fact.utm_medium,
         campaign: fact.utm_campaign,
         fbc: fact.fbc,
@@ -184,6 +196,7 @@ export async function fetchPaidTouchpointsForUser(params: {
     cursor = page.next_cursor ?? undefined;
     pages++;
   } while (cursor && pages < MAX_PAGES);
+  if (cursor) throw new Error("Histórico de eventos incompleto: limite de paginação atingido");
   return [...found.values()];
 }
 
@@ -260,7 +273,7 @@ function rowToTouchpointCandidate(row: {
   return {
     occurredAt: row.occurredAt,
     eventName: row.eventName ?? "",
-    source: row.source,
+    source: !row.source || row.source === "site" ? (row.gclid ? "google" : row.fbc || row.fbclid ? "meta" : row.source) : row.source,
     medium: row.medium,
     campaign: row.campaign,
     fbc: row.fbc,
@@ -328,7 +341,10 @@ async function readCachedTouchpoints(params: { clientId: string; customerId: str
         lte(paidTouchpointsTable.occurredAt, params.to),
       ),
     );
-  return rows.map(rowToTouchpointCandidate);
+  return rows.filter((row) => isPaidCampaignSignal((row.rawEvent ?? {
+    utm_source: row.source, utm_medium: row.medium, utm_campaign: row.campaign,
+    source: null, channel: null, fbc: row.fbc, fbclid: row.fbclid, gclid: row.gclid,
+  }) as UpzeroFact)).map(rowToTouchpointCandidate);
 }
 
 export async function getTouchpointsForCustomerCached(params: {
@@ -339,6 +355,7 @@ export async function getTouchpointsForCustomerCached(params: {
   from: string; // ISO
   to: string; // ISO
   needUntil?: string; // ISO -- data do último pedido que usa esse touchpoint (limita a cobertura exigida)
+  forceRefresh?: boolean;
 }): Promise<TouchpointCandidate[]> {
   const fromDate = new Date(params.from);
   const toDate = new Date(params.to);
@@ -354,7 +371,7 @@ export async function getTouchpointsForCustomerCached(params: {
   const windowClosedLongAgo = needMs < Date.now() - TOUCHPOINT_SETTLED_MS;
   const syncedRecently = Boolean(syncState) && Date.now() - syncState!.syncedAt.getTime() < TOUCHPOINT_FRESH_MS;
 
-  if (covered && (windowClosedLongAgo || syncedRecently)) {
+  if (!params.forceRefresh && covered && (windowClosedLongAgo || syncedRecently)) {
     return readCachedTouchpoints({ clientId: params.clientId, customerId: params.customerId, from: fromDate, to: toDate });
   }
 

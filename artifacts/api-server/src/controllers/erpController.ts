@@ -6,7 +6,7 @@ import {
   queryDateOnly,
   requireClient,
 } from "../lib/httpQuery";
-import { cached } from "../lib/queryCache";
+import { cached, invalidateCached } from "../lib/queryCache";
 import {
   resolveErpDataset,
   fetchErpDashboard,
@@ -352,6 +352,10 @@ export async function getPerformance(
         ),
     ),
   ]);
+
+  if (dashboard.paidAttribution && !dashboard.paidAttribution.complete) {
+    invalidateCached(`performance:dashboard:${ctx.clientId}:${ctx.dataset}:${dateFromOnly}:${dateToOnly}`);
+  }
 
   const rows = orders.rows.map((order) => {
     const documentKey = (order.document ?? order.customerId ?? "").replace(
