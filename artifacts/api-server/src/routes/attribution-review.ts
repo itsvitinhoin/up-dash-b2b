@@ -28,12 +28,13 @@ router.post("/analytics/erp/attribution/reprocess", async (req, res) => {
     const result = await getErpPaidAttribution({ clientId, dataset: client.dataset, upZeroApiKey: client.apiKey, dateFrom, dateTo, forceRefresh: true, refreshCustomerIds: customerIds?.length ? customerIds : undefined });
     // Revisa também quem só tinha pedido do site no relatório antigo,
     // sem adicionar essas solicitações comerciais ao faturamento ERP.
-    const { rows: siteCustomers } = await pool.query(`SELECT c.id,c.external_id,MAX(o.created_at) AS last_order
+    const { rows: rawSiteCustomers } = await pool.query(`SELECT c.id,c.external_id,MAX(o.created_at) AS last_order
       FROM orders o JOIN customers c ON c.id=o.customer_id
       WHERE o.client_id=$1 AND o.status<>'REJECTED' AND o.amount>0
         AND o.created_at >= ($2::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
         AND o.created_at < (($3::date+1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
       GROUP BY c.id,c.external_id`,[clientId,dateFrom,dateTo]);
+    const siteCustomers = rawSiteCustomers as Array<{id:string;external_id:string|null;last_order:Date}>;
     const erpCustomerIds = new Set(result.allOrders.map((order) => order.upzeroCustomerId).filter(Boolean));
     const siteOnly = siteCustomers.filter((customer) => !erpCustomerIds.has(customer.id));
     const siteErrors: Array<{customerId:string;message:string}> = [];

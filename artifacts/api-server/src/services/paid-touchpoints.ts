@@ -114,7 +114,7 @@ async function fetchUpzeroFactsPage(params: {
     await new Promise((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
   }
   if (!res!.ok) {
-    const body = typeof res!.json === "function" ? await res!.json().catch(() => null) : null;
+    const body = (typeof res!.json === "function" ? await res!.json().catch(() => null) : null) as {code?:unknown;error?:{code?:unknown}} | null;
     const code = body?.code ?? body?.error?.code;
     const safeCode = typeof code === "string" && /^[A-Z0-9_]{3,80}$/.test(code) ? ` ${code}` : "";
     throw new Error(`UpZero /analytics/facts falhou (${res!.status})${safeCode}`);
