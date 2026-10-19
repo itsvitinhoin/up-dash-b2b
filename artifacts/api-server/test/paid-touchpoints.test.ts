@@ -5,6 +5,12 @@ import { fetchPaidTouchpointsForUser } from "../src/services/paid-touchpoints";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("completude do histórico", () => {
+  it("não multiplica uma indisponibilidade 503 em dezenas de janelas", async () => {
+    const fetch = vi.fn(async () => ({ok:false,status:503,json:async()=>({code:"ANALYTICS_UNAVAILABLE"})}));
+    vi.stubGlobal("fetch",fetch);
+    await expect(fetchPaidTouchpointsForUser({apiKey:"test",userId:1,from:"2016-01-01T00:00:00Z",to:"2026-10-19T00:00:00Z"})).rejects.toThrow("ANALYTICS_UNAVAILABLE");
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
   it("não aceita paginação truncada como busca completa", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ data: [], next_cursor: "more" }) })));
     await expect(fetchPaidTouchpointsForUser({apiKey:"test",userId:1,from:"2026-10-01T00:00:00Z",to:"2026-10-19T00:00:00Z"})).rejects.toThrow("limite de paginação");

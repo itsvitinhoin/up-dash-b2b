@@ -169,7 +169,9 @@ export async function fetchPaidTouchpointsForUser(params: {
       page = await fetchUpzeroFactsPage({ ...params, cursor });
     } catch (error) {
       const span = new Date(params.to).getTime() - new Date(params.from).getTime();
-      const retryable = /timeout|abort|\(429\)|\(5\d\d\)|fetch failed/i.test(error instanceof Error ? error.message + ' ' + error.name : String(error));
+      // Indisponibilidade (503) e limite de requisições (429) já tiveram
+      // retentativas; dividir datas só multiplicaria chamadas ao serviço.
+      const retryable = /timeout|abort|\(504\)|fetch failed/i.test(error instanceof Error ? error.message + ' ' + error.name : String(error));
       if (!retryable || span <= 31 * 86_400_000) throw error;
       // Uma busca de dez anos pode exceder o orçamento da API. Divide sem
       // reduzir o histórico de atribuição; só confirma cobertura completa.
