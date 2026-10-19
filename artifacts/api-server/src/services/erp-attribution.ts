@@ -196,12 +196,8 @@ export async function computeErpPaidAttribution(params: {
           FROM ${pedidosTable}
           WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${ERP_STATUS_FILTER}
           GROUP BY pedido_id
-          -- Achado 08/09/2026: pedido totalmente devolvido fica com status
-          -- CONCLUIDO mas valor_total zerado (a devolução vira negativo no
-          -- valor_liquido, não no total) -- PDF teste 7 pede excluir pedido
-          -- zerado da receita; sem isso ele ainda contava como "pedido"
-          -- (inflava contagem e podia até virar a "1ª compra influenciada").
-          HAVING valor > 0
+          -- Inclui ajustes negativos e registros zerados para conciliar
+          -- a população e o valor líquido com o financeiro oficial.
         )
         SELECT o.*, c.nome AS customer_name, c.documento AS document,
           c.email AS erp_email, c.ddd AS erp_ddd, c.celular AS erp_celular, c.telefone AS erp_telefone
@@ -325,7 +321,7 @@ export async function computeErpPaidAttribution(params: {
       touchpointCampaign: null,
     });
 
-    if (!isMatched) continue;
+    if (!isMatched || valor === 0) continue;
     registerOrder(
       { upzeroCustomerId: match!.id, externalUserId, name: match!.name, createdAt: match!.createdAt },
       { orderId, channel: "erp", valor, valorPago: valor, dataCriado },

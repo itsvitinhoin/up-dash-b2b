@@ -303,6 +303,7 @@ const ATTRIBUTION_STATE_LABEL: Record<PaidAttributionState, string> = {
 };
 
 type ErpAttributionResponse = {
+  reprocessing?: { siteOnlyCustomers: number; siteErrors: Array<{customerId:string;message:string}>; erpCustomers:number; pendingErpCustomers:number };
   revenueBasis: "erp_net" | "site";
   complete: boolean;
   pendingOrders: number;
@@ -318,7 +319,7 @@ type OrderComparison = {
   erpOrderId: string;
   customerName: string | null;
   erp: { date: string; netAmount: number; discount: number; items: Array<{ sku: string; name: string; quantity: number; price: number }> };
-  siteItems: Array<{ id: string; external_id: string; name: string; amount: number; fulfilled_amount: number; quantity: number; item_fulfilled_quantity: number; created_at: string }>;
+  siteItems: Array<{ id: string; external_id: string; sku: string; name: string; amount: number; fulfilled_amount: number; quantity: number; item_fulfilled_quantity: number; created_at: string }>;
 };
 
 const COHORT_LABEL: Record<CohortLabel, string> = {
@@ -566,11 +567,11 @@ function OrderComparisonPanel({ data }: { data: OrderComparison }) {
       const first = items[0];
       const names = [...new Set([...data.erp.items.map((item) => normalize(item.name)), ...items.map((item) => normalize(item.name))])];
       return <div key={id} className="overflow-x-auto"><p className="font-medium">Site #{first.external_id} · {new Date(first.created_at).toLocaleString("pt-BR")} · Solicitado {formatCurrency(first.amount)} · Atendido {formatCurrency(first.fulfilled_amount)}</p>
-        <Table><TableHeader><TableRow><TableHead>Produto</TableHead><TableHead>Peças ERP</TableHead><TableHead>Peças site solicitadas</TableHead><TableHead>Peças site atendidas</TableHead></TableRow></TableHeader><TableBody>
+        <Table><TableHeader><TableRow><TableHead>Produto</TableHead><TableHead>SKU ERP / site</TableHead><TableHead>Peças ERP</TableHead><TableHead>Peças site solicitadas</TableHead><TableHead>Peças site atendidas</TableHead></TableRow></TableHeader><TableBody>
           {names.map((name) => {
             const erp = data.erp.items.filter((item) => normalize(item.name) === name);
             const site = items.filter((item) => normalize(item.name) === name);
-            return <TableRow key={name}><TableCell>{erp[0]?.name ?? site[0]?.name}</TableCell><TableCell>{erp.reduce((sum, item) => sum + item.quantity, 0)}</TableCell><TableCell>{site.reduce((sum, item) => sum + item.quantity, 0)}</TableCell><TableCell>{site.reduce((sum, item) => sum + item.item_fulfilled_quantity, 0)}</TableCell></TableRow>;
+            return <TableRow key={name}><TableCell>{erp[0]?.name ?? site[0]?.name}</TableCell><TableCell>{erp.map(item=>item.sku).join(", ") || "—"} / {site.map(item=>item.sku).join(", ") || "—"}</TableCell><TableCell>{erp.reduce((sum, item) => sum + item.quantity, 0)}</TableCell><TableCell>{site.reduce((sum, item) => sum + item.quantity, 0)}</TableCell><TableCell>{site.reduce((sum, item) => sum + item.item_fulfilled_quantity, 0)}</TableCell></TableRow>;
           })}
         </TableBody></Table>
       </div>;
@@ -1033,12 +1034,12 @@ export default function PerformancePage() {
         { header: "Documento", accessor: (row) => row.document },
         { header: "Canal", accessor: (row) => (row.channel === "erp" ? "ERP" : "Site") },
         { header: "Coorte", accessor: (row) => (row.cohort ? COHORT_LABEL[row.cohort] : "") },
-        { header: "Atribuição", accessor: (row) => (row.attributed ? "Atribuído" : "Sem origem") },
+        { header: "Atribuição", accessor: (row) => row.verificationStatus === "pending" ? "Verificação pendente" : row.verificationStatus === "unmatched" ? "Identidade não conciliada" : row.attributed ? "Atribuído" : "Sem origem" },
         { header: "Tipo", accessor: (row) => (row.attributionState ? ATTRIBUTION_STATE_LABEL[row.attributionState] : "") },
         { header: "Touchpoint", accessor: (row) => row.touchpointAt },
         { header: "Origem do clique", accessor: (row) => row.touchpointSource },
         { header: "Valor", accessor: (row) => row.valor },
-        { header: "Valor pago", accessor: (row) => row.valorPago },
+        { header: "Valor atendido", accessor: (row) => row.valorPago },
       ],
     );
   };
@@ -1125,7 +1126,7 @@ export default function PerformancePage() {
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>ROI aguardando cobertura de custo</AlertTitle>
           <AlertDescription>
-            O ROAS e o MER estão válidos. O ROI final será exibido quando ao
+            {attributionData?.complete === false ? "O ROAS usa somente a receita verificada e permanece parcial. " : ""}O ROI final será exibido quando ao
             menos 95% das peças vendidas tiverem custo no ERP; cobertura atual:{" "}
             {formatPercentage(k?.costCoveragePct ?? 0)}.
           </AlertDescription>
@@ -1314,9 +1315,9 @@ export default function PerformancePage() {
                       <TableHead>Coorte</TableHead>
                       <TableHead className="text-right">Clientes</TableHead>
                       <TableHead className="text-right">Pedidos</TableHead>
-                      <TableHead className="text-right">Pedidos pagos</TableHead>
+                      <TableHead className="text-right">Pedidos atendidos</TableHead>
                       <TableHead className="text-right">Fat. gerado</TableHead>
-                      <TableHead className="text-right">Fat. pago</TableHead>
+                      <TableHead className="text-right">Valor atendido</TableHead>
                       <TableHead className="text-right">Ticket médio</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1900,6 +1901,11 @@ export default function PerformancePage() {
                 </Alert>
               )}
               {reprocess.isError && <Alert variant="destructive" className="mt-4"><AlertTitle>Reprocessamento não concluído</AlertTitle><AlertDescription>As verificações pendentes continuam sinalizadas. Tente novamente.</AlertDescription></Alert>}
+              {reprocess.data?.reprocessing && <Alert className="mt-4"><AlertTitle>Conferência das duas fontes executada</AlertTitle><AlertDescription>
+                {reprocess.data.reprocessing.erpCustomers} comprador(es) conciliado(s) no ERP; {reprocess.data.reprocessing.siteOnlyCustomers} comprador(es) adicional(is) com pedidos apenas no site.
+                {" "}{reprocess.data.reprocessing.pendingErpCustomers} consulta(s) pendente(s) no ERP e {reprocess.data.reprocessing.siteErrors.length} no site.
+                {reprocess.data.reprocessing.siteErrors.length > 0 && <details><summary>Consultas do site pendentes</summary><ul>{reprocess.data.reprocessing.siteErrors.map((item)=><li key={item.customerId}>{item.customerId}: {item.message}</li>)}</ul></details>}
+              </AlertDescription></Alert>}
               <div className="mt-4 up-metric-grid">
                 <GlassMetricCard label="Pedidos exibidos" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>} hideComparison />
                 <GlassMetricCard label="Valor exibido" value={<>{formatCurrency(filteredStats.valorTotal)}</>} hideComparison />

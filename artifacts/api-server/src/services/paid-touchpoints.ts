@@ -104,12 +104,22 @@ async function fetchUpzeroFactsPage(params: {
   // relatório inteiro -- o resto dos clientes já rodava em paralelo, mas
   // esse aqui não tinha teto. 10s por página é generoso pro caso normal e
   // vira erro isolado (fetchErrors) em vez de travar o relatório.
-  const res = await fetch(url.toString(), {
-    headers: { "X-API-Key": params.apiKey },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) throw new Error(`UpZero /analytics/facts falhou (${res.status})`);
-  const payload = await res.json() as UpzeroFactsResponse;
+  let res: Response | undefined;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    res = await fetch(url.toString(), {
+      headers: { "X-API-Key": params.apiKey },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok || ![429, 502, 503, 504].includes(res.status) || attempt === 2) break;
+    await new Promise((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
+  }
+  if (!res!.ok) {
+    const body = typeof res!.json === "function" ? await res!.json().catch(() => null) : null;
+    const code = body?.code ?? body?.error?.code;
+    const safeCode = typeof code === "string" && /^[A-Z0-9_]{3,80}$/.test(code) ? ` ${code}` : "";
+    throw new Error(`UpZero /analytics/facts falhou (${res!.status})${safeCode}`);
+  }
+  const payload = await res!.json() as UpzeroFactsResponse;
   if (!Array.isArray(payload.data)) throw new Error("UpZero /analytics/facts devolveu resposta incompleta");
   return payload;
 }

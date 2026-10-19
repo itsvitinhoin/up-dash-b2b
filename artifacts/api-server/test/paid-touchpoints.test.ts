@@ -13,14 +13,14 @@ describe("completude do histórico", () => {
     const windows: Array<{from:string|null;to:string|null}> = [];
     vi.stubGlobal("fetch",vi.fn(async (input:string) => {
       const url=new URL(input);windows.push({from:url.searchParams.get("from"),to:url.searchParams.get("to")});
-      return windows.length===1 ? {ok:false,status:504} : {ok:true,json:async()=>({data:[],next_cursor:null})};
+      return windows.length<=3 ? {ok:false,status:504} : {ok:true,json:async()=>({data:[],next_cursor:null})};
     }));
     const from="2020-01-01T00:00:00Z",to="2026-10-19T00:00:00Z";
     await expect(fetchPaidTouchpointsForUser({apiKey:"test",userId:1,from,to})).resolves.toEqual([]);
-    expect(windows).toHaveLength(3);
-    expect(windows[1]?.from).toBe(from);
-    expect(windows[1]?.to).toBe(windows[2]?.from);
-    expect(windows[2]?.to).toBe(to);
+    expect(windows).toHaveLength(5);
+    expect(windows[3]?.from).toBe(from);
+    expect(windows[3]?.to).toBe(windows[4]?.from);
+    expect(windows[4]?.to).toBe(to);
   });
 });
 

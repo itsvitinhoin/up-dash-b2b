@@ -23,6 +23,13 @@ beforeEach(() => {
   state.fail=false;state.snapshots=[];state.selects=0;
 });
 describe("atribuição financeira por pedido", () => {
+  it("concilia ajustes negativos e mantém pedidos zerados sem lhes atribuir receita", async () => {
+    state.rows = [100,-10,0].map((valor,n)=>({pedido_id:String(n),customer_id:"111",valor,data_criado:"2026-10-03T00:00:00Z"}));
+    const result=await computeErpPaidAttribution(params);
+    expect(result.allOrders).toHaveLength(3);
+    expect(result.influencedTotal).toBe(90);
+    expect(result.influencedOrders).toHaveLength(2);
+  });
   it("usa apenas o ERP e preserva duas vendas legítimas de mesmo valor no mesmo dia", async () => {
     const result=await computeErpPaidAttribution(params);
     expect(result.revenueBasis).toBe("erp_net");

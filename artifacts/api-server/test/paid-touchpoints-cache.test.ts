@@ -136,7 +136,7 @@ describe("getTouchpointsForCustomerCached", () => {
   });
 
   it("falha da UpZero propaga o erro (o chamador conta a falha, não esconde)", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 504, json: async () => ({}), text: async () => "timeout" })));
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => "forbidden" })));
     await expect(getTouchpointsForCustomerCached(base)).rejects.toThrow();
   });
 });

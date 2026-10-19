@@ -7,6 +7,7 @@ import { getErpPaidAttribution } from "../services/erp-attribution";
 import { invalidateCached } from "../lib/queryCache";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { resolveErpCustomerIdentities } from "../services/erp-identity";
+import { getTouchpointsForCustomerCached, standardTouchpointWindow } from "../services/paid-touchpoints";
 
 const router = Router();
 router.use("/analytics/erp/attribution", authenticate, requireAdmin);
@@ -25,8 +26,27 @@ router.post("/analytics/erp/attribution/reprocess", async (req, res) => {
   if (!client?.apiKey) { res.status(400).json({ code: "NO_API_KEY", message: "Cliente sem integração UP Zero" }); return; }
   try {
     const result = await getErpPaidAttribution({ clientId, dataset: client.dataset, upZeroApiKey: client.apiKey, dateFrom, dateTo, forceRefresh: true, refreshCustomerIds: customerIds?.length ? customerIds : undefined });
+    // Revisa também quem só tinha pedido do site no relatório antigo,
+    // sem adicionar essas solicitações comerciais ao faturamento ERP.
+    const { rows: siteCustomers } = await pool.query(`SELECT c.id,c.external_id,MAX(o.created_at) AS last_order
+      FROM orders o JOIN customers c ON c.id=o.customer_id
+      WHERE o.client_id=$1 AND o.status<>'REJECTED' AND o.amount>0
+        AND o.created_at >= ($2::date::timestamp AT TIME ZONE 'America/Sao_Paulo')
+        AND o.created_at < (($3::date+1)::timestamp AT TIME ZONE 'America/Sao_Paulo')
+      GROUP BY c.id,c.external_id`,[clientId,dateFrom,dateTo]);
+    const erpCustomerIds = new Set(result.allOrders.map((order) => order.upzeroCustomerId).filter(Boolean));
+    const siteOnly = siteCustomers.filter((customer) => !erpCustomerIds.has(customer.id));
+    const siteErrors: Array<{customerId:string;message:string}> = [];
+    const { lookbackFrom } = standardTouchpointWindow();
+    for (const customer of siteOnly) {
+      const userId = Number(customer.external_id);
+      if (!Number.isSafeInteger(userId) || userId <= 0) continue;
+      try {
+        await getTouchpointsForCustomerCached({ apiKey:client.apiKey,clientId,customerId:customer.id,externalUserId:userId,from:lookbackFrom,to:new Date().toISOString(),needUntil:new Date(customer.last_order).toISOString(),forceRefresh:true });
+      } catch(error) { siteErrors.push({customerId:customer.id,message:error instanceof Error?error.message:"Falha de consulta"}); }
+    }
     invalidateCached(`performance:dashboard:${clientId}:${client.dataset}:${dateFrom}:${dateTo}`);
-    res.json(result);
+    res.json({ ...result, reprocessing: { siteOnlyCustomers:siteOnly.length, siteErrors, erpCustomers:erpCustomerIds.size, pendingErpCustomers:result.fetchErrors.length } });
   } catch (error) {
     res.status(502).json({ code: "ATTRIBUTION_FAILED", message: error instanceof Error ? error.message : "Falha ao reprocessar evidências" });
   }
