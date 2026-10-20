@@ -18,6 +18,8 @@ import {
 import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
+import { resolveGa4SyncWindow } from "./ga4-daily-rules";
+import { clientIdsWithGa4History, syncGa4DailyForClient } from "./ga4-daily-sync";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { syncPaidTouchpointsForCustomer } from "./paid-touchpoints";
 import { ERP_STATUS_FILTER } from "./erp-attribution";
@@ -28,7 +30,8 @@ export type ExtractionJobType =
   | "meta_ads"
   | "nuvemshop_transactional"
   | "daily_metrics"
-  | "paid_touchpoints";
+  | "paid_touchpoints"
+  | "ga4_daily";
 
 export type ExtractionTrigger = "manual" | "cron";
 
@@ -41,6 +44,7 @@ type ExtractionClient = {
   dashboardType: string | null;
   nuvemshopStoreId: string | null;
   nuvemshopAccessToken: string | null;
+  ga4PropertyId: string | null;
 };
 
 type ExtractionRunSummary = {
@@ -217,6 +221,7 @@ async function clientsWith(where: SQL | undefined): Promise<ExtractionClient[]> 
       dashboardType: clientsTable.dashboardType,
       nuvemshopStoreId: clientsTable.nuvemshopStoreId,
       nuvemshopAccessToken: clientsTable.nuvemshopAccessToken,
+      ga4PropertyId: clientsTable.ga4PropertyId,
     })
     .from(clientsTable)
     // Cliente arquivado sai de todas as atualizacoes (UpZero, Meta, Nuvemshop...); para voltar tem que ser restaurado.
@@ -961,6 +966,68 @@ export async function runNuvemshopTransactionalExtraction(
   };
 }
 
+// Criado 20/10/2026: a lista de clientes deixou de chamar o GA4 ao vivo. Este
+// job puxa as metricas diarias de cada cliente com ga4PropertyId e grava em
+// ga4_daily_metrics; a tela so le. Falha por cliente fica em sync_jobs.error
+// (antes a recusa do Google era engolida na lista, sem ninguem ver).
+export async function runGa4DailyExtraction(
+  trigger: ExtractionTrigger,
+  options: { clientId?: string; lookbackDays?: number } = {},
+): Promise<ExtractionRunSummary> {
+  const startedAt = new Date();
+  const allClients = (await clientsWith(isNotNull(clientsTable.ga4PropertyId))).filter(
+    (client) => client.ga4PropertyId?.trim(),
+  );
+  const clients = options.clientId
+    ? allClients.filter((client) => client.id === options.clientId)
+    : allClients;
+  const withHistory = await clientIdsWithGa4History(clients.map((client) => client.id));
+
+  let done = 0;
+  let failed = 0;
+  const clientResults: NonNullable<ExtractionRunSummary["clientResults"]> = [];
+
+  for (const client of clients) {
+    const propertyId = client.ga4PropertyId?.trim();
+    if (!propertyId) continue;
+    const jobId = await createJob(client.id, "ga4_daily", trigger);
+    try {
+      const window = resolveGa4SyncWindow({
+        hasHistory: withHistory.has(client.id),
+        lookbackDays: options.lookbackDays,
+      });
+      const result = await syncGa4DailyForClient({ clientId: client.id, propertyId, ...window });
+      await completeJob(jobId, { clientName: client.name, propertyId, ...result });
+      clientResults.push({ clientId: client.id, clientName: client.name, status: "done", result });
+      done += 1;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[ga4-daily] client failed", {
+        clientId: client.id,
+        clientName: client.name,
+        propertyId,
+        error: message,
+      });
+      clientResults.push({ clientId: client.id, clientName: client.name, status: "failed", error: message });
+      await failJob(jobId, err);
+      failed += 1;
+    }
+  }
+
+  return {
+    jobType: "ga4_daily",
+    trigger,
+    clients: clients.length,
+    totalClients: allClients.length,
+    clientResults,
+    done,
+    failed,
+    skipped: 0,
+    startedAt: startedAt.toISOString(),
+    finishedAt: new Date().toISOString(),
+  };
+}
+
 export async function runDailyMetricsBackfill(
   trigger: ExtractionTrigger,
   options: {
@@ -1018,13 +1085,20 @@ export async function runHourlyExtractionBundle(
   trigger: ExtractionTrigger;
   analytics: ExtractionRunSummary;
   meta: ExtractionRunSummary;
+  ga4: ExtractionRunSummary | null;
   startedAt: string;
   finishedAt: string;
 }> {
   const startedAt = new Date();
-  const [analytics, meta] = await Promise.all([
+  const [analytics, meta, ga4] = await Promise.all([
     runUpzeroAnalyticsExtraction(trigger),
     runMetaAdsExtraction(trigger),
+    // GA4 nao pode derrubar o pacote horario: falha por cliente ja vai pro
+    // sync_jobs; aqui so protege contra erro geral (ex.: banco indisponivel).
+    runGa4DailyExtraction(trigger).catch((err) => {
+      console.error("[hourly-bundle] ga4_daily falhou", err);
+      return null;
+    }),
   ]);
 
   return {
@@ -1032,6 +1106,7 @@ export async function runHourlyExtractionBundle(
     trigger,
     analytics,
     meta,
+    ga4,
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
   };

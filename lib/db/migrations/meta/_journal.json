@@ -302,6 +302,13 @@
       "when": 1792068306135,
       "tag": "0042_api_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792510944581,
+      "tag": "0043_ga4_daily_metrics",
+      "breakpoints": true
     }
   ]
 }

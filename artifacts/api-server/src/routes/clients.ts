@@ -28,7 +28,7 @@ import { authenticate, requireAdmin } from "../middlewares/auth";
 import { syncUpZeroClient } from "../services/upzero-sync";
 import { syncNuvemshopClient } from "../services/nuvemshop-sync";
 import { fetchMetaAdAccounts, normalizeMetaAdAccountId } from "../services/meta-ads";
-import { fetchGa4FunnelMetrics } from "../services/ga4";
+import { sumGa4SessionsByClient } from "../services/ga4-daily-sync";
 import { hashPassword } from "../lib/auth";
 import { logger } from "../lib/logger";
 import {
@@ -256,11 +256,24 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
         ),
       );
 
-    const [currRows, prevRows, registrationRows, creativeRows] = await Promise.all([
+    // Sessoes do GA4 vem de ga4_daily_metrics (job ga4_daily), nunca do Google
+    // ao vivo: a chamada ao vivo custava ~2s da lista e as recusas do Google
+    // passavam em silencio. Cliente sem dado guardado fica fora do mapa (null).
+    const ga4ClientIds = rows
+      .filter((r) => r.dashboardType === "B2C" && r.ga4PropertyId)
+      .map((r) => r.id);
+    const ga4SessionsQuery = sumGa4SessionsByClient({
+      clientIds: ga4ClientIds,
+      dateFrom: toGa4Date(dateFrom),
+      dateTo: toGa4Date(dateTo),
+    });
+
+    const [currRows, prevRows, registrationRows, creativeRows, ga4SessionsByClientId] = await Promise.all([
       orderAgg(dateFrom, dateTo),
       orderAgg(prevFrom, prevTo),
       registrationAgg,
       creativesQuery,
+      ga4SessionsQuery,
     ]);
 
     const curr = new Map<string, { revenue: number; orders: number }>();
@@ -306,28 +319,6 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
         totalLeads: existing.totalLeads + Math.round(c.leads * frac),
         approvedLeads: existing.approvedLeads + Math.round(c.approvedLeads * frac),
       });
-    }
-
-    const ga4SessionsByClientId = new Map<string, number>();
-    const ga4Clients = rows.filter((r) => r.dashboardType === "B2C" && r.ga4PropertyId);
-    if (ga4Clients.length > 0) {
-      const ga4Results = await Promise.allSettled(
-        ga4Clients.map(async (client) => {
-          const metrics = await fetchGa4FunnelMetrics({
-            propertyId: client.ga4PropertyId,
-            dateFrom: toGa4Date(dateFrom),
-            dateTo: toGa4Date(dateTo),
-          });
-          return [client.id, metrics?.sessions ?? 0] as const;
-        }),
-      );
-      for (const result of ga4Results) {
-        if (result.status === "fulfilled") {
-          ga4SessionsByClientId.set(result.value[0], result.value[1]);
-        } else {
-          console.warn("[clients] Failed to load GA4 sessions for B2C client", result.reason);
-        }
-      }
     }
 
     enriched = rows.map((r) => {

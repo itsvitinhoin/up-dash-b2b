@@ -22,7 +22,9 @@
  *   TASK=meta_ads              -> sync de métricas de anúncio Meta
  *   TASK=nuvemshop_transactional -> sync de pedidos/clientes/produtos Nuvemshop
  *   TASK=daily_metrics         -> recalcula métricas diárias agregadas
- *   TASK=hourly_bundle         -> roda upzero_analytics + meta_ads juntos
+ *   TASK=ga4_daily             -> sessões/eventos diários do GA4 -> ga4_daily_metrics
+ *     (LOOKBACK_DAYS=N força a janela; sem histórico faz backfill de GA4_BACKFILL_DAYS)
+ *   TASK=hourly_bundle         -> roda upzero_analytics + meta_ads + ga4_daily juntos
  *   TASK=whatsapp_fix_phone_waba -> corrige o waba_id de UM número em
  *     whatsapp_phone_numbers (ver CLIENT_ID/PHONE_NUMBER_ID/WABA_ID abaixo)
  *   TASK=run_migrations       -> aplica as migrations pendentes de lib/db/migrations
@@ -69,6 +71,7 @@ import {
   runMetaAdsExtraction,
   runNuvemshopTransactionalExtraction,
   runDailyMetricsBackfill,
+  runGa4DailyExtraction,
   runHourlyExtractionBundle,
   runPaidTouchpointsSync,
   type ExtractionTrigger,
@@ -171,6 +174,9 @@ async function main() {
       result = await runDailyMetricsBackfill(trigger, { clientId, dateFrom, dateTo });
       break;
     }
+    case "ga4_daily":
+      result = await runGa4DailyExtraction(trigger, { clientId, lookbackDays: envInt("LOOKBACK_DAYS") });
+      break;
     case "hourly_bundle":
       result = await runHourlyExtractionBundle(trigger);
       break;
@@ -197,7 +203,7 @@ async function main() {
       result = await reconcileExcludedClients();
       break;
     default:
-      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients.`);
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, ga4_daily, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients.`);
       process.exit(1);
   }
 
