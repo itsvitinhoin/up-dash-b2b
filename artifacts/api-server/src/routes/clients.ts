@@ -262,10 +262,15 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     const ga4ClientIds = rows
       .filter((r) => r.dashboardType === "B2C" && r.ga4PropertyId)
       .map((r) => r.id);
+    // Coluna secundaria: se a leitura falhar (ex.: migration ainda nao aplicada),
+    // a lista abre sem ela em vez de dar erro 500.
     const ga4SessionsQuery = sumGa4SessionsByClient({
       clientIds: ga4ClientIds,
       dateFrom: toGa4Date(dateFrom),
       dateTo: toGa4Date(dateTo),
+    }).catch((err) => {
+      console.warn("[clients] Falha ao ler ga4_daily_metrics; seguindo sem sessoes do GA4", err);
+      return new Map<string, number>();
     });
 
     const [currRows, prevRows, registrationRows, creativeRows, ga4SessionsByClientId] = await Promise.all([
