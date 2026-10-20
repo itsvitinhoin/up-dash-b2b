@@ -78,7 +78,8 @@ import {
   type InsightLanguage,
 } from "../services/insight-text";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
-import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
+import { fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
+import { getGa4Daily, getGa4Funnel } from "../services/ga4-daily-sync";
 import * as vestiDashboardController from "../controllers/vestiDashboardController";
 import * as vestiOrdersController from "../controllers/vestiOrdersController";
 import * as vestiCustomersController from "../controllers/vestiCustomersController";
@@ -1388,7 +1389,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
 
     const [ga4Funnel, ga4Daily, [orderAgg], [requestedRow], [eventAgg], [customerRegistrationAgg]] = await Promise.all([
       isB2CClient
-        ? fetchGa4FunnelMetrics({
+        ? getGa4Funnel({
+            clientId,
             propertyId: clientConfig?.ga4PropertyId,
             dateFrom: winDateFromOnly,
             dateTo: winDateToOnly,
@@ -1398,7 +1400,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
           })
         : Promise.resolve(null),
       isB2CClient && full
-        ? fetchGa4DailyMetrics({
+        ? getGa4Daily({
+            clientId,
             propertyId: clientConfig?.ga4PropertyId,
             dateFrom: winDateFromOnly,
             dateTo: winDateToOnly,
@@ -3372,7 +3375,8 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
   }
 
   if (funnelClient?.dashboardType === "B2C" && !utmSource && !utmMedium && !utmCampaign) {
-    const ga4 = await fetchGa4FunnelMetrics({
+    const ga4 = await getGa4Funnel({
+      clientId,
       propertyId: funnelClient.ga4PropertyId,
       dateFrom: dateFromOnly,
       dateTo: dateToOnly,
@@ -6926,7 +6930,8 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
   const ordersCount = buyerMetricOrders.length;
   const customerCount = uniqueCustomers.size;
   const ga4 = isB2CClient
-    ? await fetchGa4FunnelMetrics({
+    ? await getGa4Funnel({
+        clientId,
         propertyId: clientConfig?.ga4PropertyId,
         dateFrom: dateFromOnly,
         dateTo: dateToOnly,
@@ -11354,7 +11359,8 @@ router.get("/analytics/scale", async (req, res): Promise<void> => {
   const [ga4Funnel, ga4RollingFunnel] = clientConfig.ga4PropertyId
     ? await Promise.all([
         withTimeout(
-          fetchGa4FunnelMetrics({
+          getGa4Funnel({
+            clientId,
             propertyId: clientConfig.ga4PropertyId,
             dateFrom: dateFromOnly,
             dateTo: dateToOnly,
@@ -11366,7 +11372,8 @@ router.get("/analytics/scale", async (req, res): Promise<void> => {
           return null;
         }),
         withTimeout(
-          fetchGa4FunnelMetrics({
+          getGa4Funnel({
+            clientId,
             propertyId: clientConfig.ga4PropertyId,
             dateFrom: rollingDateFromOnly,
             dateTo: rollingDateToOnly,

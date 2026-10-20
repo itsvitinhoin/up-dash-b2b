@@ -1,7 +1,12 @@
-import { and, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, ga4DailyMetricsTable } from "@workspace/db";
-import { fillGa4Days } from "./ga4-daily-rules";
-import { fetchGa4DailyMetrics } from "./ga4";
+import { aggregateGa4Rows, fillGa4Days, isGa4StoreUsable } from "./ga4-daily-rules";
+import {
+  fetchGa4DailyMetrics,
+  fetchGa4FunnelMetrics,
+  type Ga4DailyMetrics,
+  type Ga4FunnelMetrics,
+} from "./ga4";
 
 export async function clientIdsWithGa4History(clientIds: string[]): Promise<Set<string>> {
   if (clientIds.length === 0) return new Set();
@@ -97,4 +102,92 @@ export async function sumGa4SessionsByClient(params: {
     .groupBy(ga4DailyMetricsTable.clientId);
   for (const row of rows) result.set(row.clientId, Number(row.sessions) || 0);
   return result;
+}
+
+// ── Leitura pelas telas de um cliente (dashboard, funil, pedidos, escala) ───
+// Le de ga4_daily_metrics e so cai na chamada ao vivo se a loja ainda nao tem
+// dado guardado utilizavel (ainda sem acesso no GA4, periodo mais antigo que o
+// backfill ou job parado ha mais de 48h). Assim a troca nao tira dado de quem
+// funciona ao vivo hoje. Quando todas as lojas estiverem sincronizando, o
+// ramo ao vivo pode sair.
+async function queryStoredGa4Days(params: {
+  clientId: string;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<Ga4DailyMetrics[] | null> {
+  const rows = await db
+    .select({
+      date: ga4DailyMetricsTable.metricDate,
+      sessions: ga4DailyMetricsTable.sessions,
+      pageViews: ga4DailyMetricsTable.pageViews,
+      productViews: ga4DailyMetricsTable.productViews,
+      addToCarts: ga4DailyMetricsTable.addToCarts,
+      checkouts: ga4DailyMetricsTable.checkouts,
+      purchases: ga4DailyMetricsTable.purchases,
+      earliest: sql<string | null>`(SELECT MIN(metric_date)::text FROM ga4_daily_metrics WHERE client_id = ${params.clientId})`,
+      latestSyncedAt: sql<string | null>`(SELECT MAX(synced_at) FROM ga4_daily_metrics WHERE client_id = ${params.clientId})`,
+    })
+    .from(ga4DailyMetricsTable)
+    .where(
+      and(
+        eq(ga4DailyMetricsTable.clientId, params.clientId),
+        gte(ga4DailyMetricsTable.metricDate, params.dateFrom),
+        lte(ga4DailyMetricsTable.metricDate, params.dateTo),
+      ),
+    )
+    .orderBy(ga4DailyMetricsTable.metricDate);
+  if (rows.length === 0) return null;
+  const usable = isGa4StoreUsable({
+    earliestDate: rows[0].earliest,
+    latestSyncedAt: rows[0].latestSyncedAt ? new Date(rows[0].latestSyncedAt) : null,
+    dateFrom: params.dateFrom,
+  });
+  if (!usable) return null;
+  return rows.map((row) => ({
+    date: row.date,
+    sessions: row.sessions,
+    pageViews: row.pageViews,
+    productViews: row.productViews,
+    addToCarts: row.addToCarts,
+    checkouts: row.checkouts,
+    purchases: row.purchases,
+  }));
+}
+
+// Falha de leitura (ex.: migration ainda nao aplicada) cai no ao vivo, nao quebra a tela.
+async function readStoredGa4Days(params: {
+  clientId: string;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<Ga4DailyMetrics[] | null> {
+  try {
+    return await queryStoredGa4Days(params);
+  } catch (err) {
+    console.warn("[ga4] leitura de ga4_daily_metrics falhou; usando o GA4 ao vivo", err);
+    return null;
+  }
+}
+
+export async function getGa4Funnel(params: {
+  clientId: string;
+  propertyId?: string | null;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<Ga4FunnelMetrics | null> {
+  if (!params.propertyId) return null;
+  const stored = await readStoredGa4Days(params);
+  if (stored) return aggregateGa4Rows(stored);
+  return fetchGa4FunnelMetrics(params);
+}
+
+export async function getGa4Daily(params: {
+  clientId: string;
+  propertyId?: string | null;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<Ga4DailyMetrics[] | null> {
+  if (!params.propertyId) return null;
+  const stored = await readStoredGa4Days(params);
+  if (stored) return stored;
+  return fetchGa4DailyMetrics(params);
 }

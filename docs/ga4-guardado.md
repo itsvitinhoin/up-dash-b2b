@@ -37,6 +37,19 @@ a service account do GA4 sem acesso a essas propriedades.
 - Não reaproveita `daily_client_metrics.visits`: aquela coluna conta eventos VISIT
   da UpZero e é sobrescrita por `refreshDailyClientMetrics`.
 
+## Telas de um cliente só (dashboard, funil, pedidos, escala)
+
+As 6 chamadas ao vivo de funil/série diária em `routes/analytics.ts` agora usam
+`getGa4Funnel`/`getGa4Daily`: leem de `ga4_daily_metrics` e **só caem no GA4 ao vivo**
+se a loja não tem dado guardado utilizável — sem linhas ainda (loja sem acesso no GA4),
+período que começa antes do que foi guardado, ou job parado há mais de 48 h. Assim a
+troca não tira dado de quem funciona ao vivo hoje (Aiyu e Hot Pink, por exemplo, até
+ganharem acesso). Quando as 7 lojas sincronizarem, o ramo ao vivo pode sair.
+
+**Atenção na lista de clientes:** ela NÃO tem esse fallback (o ao vivo era justamente o
+que a deixava lenta). Loja sem dado guardado aparece com a coluna vazia na lista. Por isso
+só publicar depois de Aiyu e Hot Pink terem acesso.
+
 ## Ordem de publicação (importante)
 
 1. **Banco de produção** (`up_dash_b2b`, Cloud SQL Studio): rodar
@@ -82,8 +95,8 @@ atrapalha nada.
 
 ## Fora deste passo (de propósito)
 
-- As outras telas que ainda chamam `fetchGa4*` ao vivo (`routes/analytics.ts`, 5
-  pontos) continuam como estavam; migram uma a uma lendo desta tabela.
+- `fetchGa4ProductViewMetrics` (visualizações por produto, `routes/analytics.ts`) segue ao
+  vivo: precisa de dado por item, que a tabela diária não guarda.
 - A decisão estrutural continua sendo levar o backend pro Cloud Run (us-central1,
   junto do banco) e o botão "Sincronizar" da Nuvemshop disparar o job existente.
 - Acesso da service account às 4 propriedades que recusam é ação humana no GA4

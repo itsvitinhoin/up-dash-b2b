@@ -1,4 +1,4 @@
-import type { Ga4DailyMetrics } from "./ga4";
+import type { Ga4DailyMetrics, Ga4FunnelMetrics } from "./ga4";
 
 // Regras puras do sync diario do GA4 (sem banco), testaveis isoladamente.
 
@@ -59,4 +59,47 @@ export function fillGa4Days(from: string, to: string, fetched: Ga4DailyMetrics[]
         purchases: 0,
       },
   );
+}
+
+// ── Leitura do dado guardado pelas telas de um cliente só ───────────────────
+// O funil de um periodo e a soma dos dias (sessoes, pageviews e contagens de
+// evento sao aditivos). Mesmo formato que fetchGa4FunnelMetrics devolve.
+export function aggregateGa4Rows(rows: Ga4DailyMetrics[]): Ga4FunnelMetrics {
+  const total: Ga4FunnelMetrics = {
+    sessions: 0,
+    pageViews: 0,
+    productViews: 0,
+    addToCarts: 0,
+    checkouts: 0,
+    purchases: 0,
+    source: "ga4",
+  };
+  for (const row of rows) {
+    total.sessions += row.sessions;
+    total.pageViews += row.pageViews;
+    total.productViews += row.productViews;
+    total.addToCarts += row.addToCarts;
+    total.checkouts += row.checkouts;
+    total.purchases += row.purchases;
+  }
+  return total;
+}
+
+export const GA4_STORE_MAX_AGE_HOURS = 48;
+
+// O dado guardado so serve se (1) cobre o inicio do periodo pedido -- o
+// backfill nao vai alem de GA4_BACKFILL_DAYS, e somar so parte do periodo daria
+// um numero menor sem avisar -- e (2) foi atualizado recentemente; se o job
+// parou de funcionar pra essa loja, e melhor cair no ao vivo do que mostrar
+// numero velho como se fosse atual.
+export function isGa4StoreUsable(params: {
+  earliestDate: string | null;
+  latestSyncedAt: Date | null;
+  dateFrom: string;
+  now?: Date;
+}): boolean {
+  if (!params.earliestDate || !params.latestSyncedAt) return false;
+  if (params.dateFrom < params.earliestDate) return false;
+  const ageMs = (params.now ?? new Date()).getTime() - params.latestSyncedAt.getTime();
+  return ageMs <= GA4_STORE_MAX_AGE_HOURS * 60 * 60 * 1000;
 }
