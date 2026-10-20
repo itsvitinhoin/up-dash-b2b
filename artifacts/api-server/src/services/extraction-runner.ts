@@ -19,7 +19,11 @@ import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
 import { resolveGa4SyncWindow } from "./ga4-daily-rules";
-import { clientIdsWithGa4History, syncGa4DailyForClient } from "./ga4-daily-sync";
+import {
+  clientIdsWithGa4History,
+  clientIdsWithGa4ProductHistory,
+  syncGa4DailyForClient,
+} from "./ga4-daily-sync";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { syncPaidTouchpointsForCustomer } from "./paid-touchpoints";
 import { ERP_STATUS_FILTER } from "./erp-attribution";
@@ -981,7 +985,9 @@ export async function runGa4DailyExtraction(
   const clients = options.clientId
     ? allClients.filter((client) => client.id === options.clientId)
     : allClients;
-  const withHistory = await clientIdsWithGa4History(clients.map((client) => client.id));
+  const clientIds = clients.map((client) => client.id);
+  const withHistory = await clientIdsWithGa4History(clientIds);
+  const withProductHistory = await clientIdsWithGa4ProductHistory(clientIds);
 
   let done = 0;
   let failed = 0;
@@ -996,7 +1002,14 @@ export async function runGa4DailyExtraction(
         hasHistory: withHistory.has(client.id),
         lookbackDays: options.lookbackDays,
       });
-      const result = await syncGa4DailyForClient({ clientId: client.id, propertyId, ...window });
+      // Trafego e produtos tem historico separado: a tabela de produtos veio depois,
+      // entao uma loja com 400 dias de trafego pode nao ter produto nenhum ainda.
+      // Sem isso o backfill de produtos so pegaria os ultimos dias e a leitura
+      // somaria um periodo parcial achando que esta completo.
+      const productFrom = withProductHistory.has(client.id)
+        ? window.from
+        : resolveGa4SyncWindow({ hasHistory: false, lookbackDays: options.lookbackDays }).from;
+      const result = await syncGa4DailyForClient({ clientId: client.id, propertyId, ...window, productFrom });
       await completeJob(jobId, { clientName: client.name, propertyId, ...result });
       clientResults.push({ clientId: client.id, clientName: client.name, status: "done", result });
       done += 1;

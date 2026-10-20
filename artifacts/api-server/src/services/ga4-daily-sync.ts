@@ -1,5 +1,5 @@
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
-import { db, ga4DailyMetricsTable, ga4ProductViewsDailyTable } from "@workspace/db";
+import { db, ga4DailyMetricsTable, ga4ProductViewsDailyTable, syncJobsTable } from "@workspace/db";
 import { aggregateGa4Rows, fillGa4Days, isGa4StoreUsable, toStoredProductViews } from "./ga4-daily-rules";
 import {
   fetchGa4DailyMetrics,
@@ -20,12 +20,40 @@ export async function clientIdsWithGa4History(clientIds: string[]): Promise<Set<
   return new Set(rows.map((row) => row.clientId));
 }
 
+// Quem ja teve o backfill de produtos. O criterio e o marcador productFrom no
+// resultado do job (so jobs desta versao o gravam), nao a existencia de linhas:
+// a imagem anterior gravou so os ultimos dias de produtos, e isso nao e historico.
+export async function clientIdsWithGa4ProductHistory(clientIds: string[]): Promise<Set<string>> {
+  if (clientIds.length === 0) return new Set();
+  const rows = await db
+    .selectDistinct({ clientId: syncJobsTable.clientId })
+    .from(syncJobsTable)
+    .where(
+      and(
+        inArray(syncJobsTable.clientId, clientIds),
+        eq(syncJobsTable.jobType, "ga4_daily"),
+        eq(syncJobsTable.status, "done"),
+        sql`${syncJobsTable.result}->>productFrom IS NOT NULL`,
+      ),
+    );
+  return new Set(rows.map((row) => row.clientId));
+}
+
 export async function syncGa4DailyForClient(params: {
   clientId: string;
   propertyId: string;
   from: string;
+  // Inicio da janela de produtos (>= 1o dia do backfill); padrao = from.
+  productFrom?: string;
   to: string;
-}): Promise<{ from: string; to: string; days: number; sessions: number; productViewRows: number }> {
+}): Promise<{
+  from: string;
+  to: string;
+  productFrom: string;
+  days: number;
+  sessions: number;
+  productViewRows: number;
+}> {
   const fetched = await fetchGa4DailyMetrics({
     propertyId: params.propertyId,
     dateFrom: params.from,
@@ -41,9 +69,10 @@ export async function syncGa4DailyForClient(params: {
 
   // Busca as duas coisas ANTES de gravar qualquer uma: se uma falhar, nada muda e
   // as tabelas nao ficam uma atualizada e a outra velha.
+  const productFrom = params.productFrom ?? params.from;
   const fetchedProductViews = await fetchGa4ProductViewsDaily({
     propertyId: params.propertyId,
-    dateFrom: params.from,
+    dateFrom: productFrom,
     dateTo: params.to,
   });
   if (fetchedProductViews === null) throw new Error("GA4 sem credencial ao buscar visualizacoes de produto.");
@@ -90,7 +119,7 @@ export async function syncGa4DailyForClient(params: {
       .where(
         and(
           eq(ga4ProductViewsDailyTable.clientId, params.clientId),
-          gte(ga4ProductViewsDailyTable.metricDate, params.from),
+          gte(ga4ProductViewsDailyTable.metricDate, productFrom),
           lte(ga4ProductViewsDailyTable.metricDate, params.to),
         ),
       );
@@ -105,6 +134,7 @@ export async function syncGa4DailyForClient(params: {
   return {
     from: params.from,
     to: params.to,
+    productFrom,
     days: rows.length,
     sessions: rows.reduce((sum, row) => sum + row.sessions, 0),
     productViewRows: productViews.length,
@@ -232,20 +262,33 @@ export async function getGa4Daily(params: {
 // duas juntas) e cai no ao vivo se a loja ainda nao tem dado guardado.
 async function storeCovers(params: { clientId: string; dateFrom: string }): Promise<boolean> {
   try {
-    const [meta] = await db
-      .select({
-        earliest: sql<string | null>`MIN(${ga4DailyMetricsTable.metricDate})::text`,
-        latestSyncedAt: sql<string | null>`MAX(${ga4DailyMetricsTable.syncedAt})`,
-      })
-      .from(ga4DailyMetricsTable)
-      .where(eq(ga4DailyMetricsTable.clientId, params.clientId));
+    // Frescor: o job grava as duas tabelas juntas, entao o ultimo synced_at do
+    // trafego vale pros dois. Cobertura: a data de onde o backfill de PRODUTOS
+    // partiu fica no resultado do job (productFrom) -- a tabela de produtos nao
+    // serve de prova, pois loja sem nenhuma view_item tem zero linhas.
+    const [[fresh], [coverage]] = await Promise.all([
+      db
+        .select({ latestSyncedAt: sql<string | null>`MAX(${ga4DailyMetricsTable.syncedAt})` })
+        .from(ga4DailyMetricsTable)
+        .where(eq(ga4DailyMetricsTable.clientId, params.clientId)),
+      db
+        .select({ earliest: sql<string | null>`MIN(${syncJobsTable.result}->>productFrom)` })
+        .from(syncJobsTable)
+        .where(
+          and(
+            eq(syncJobsTable.clientId, params.clientId),
+            eq(syncJobsTable.jobType, "ga4_daily"),
+            eq(syncJobsTable.status, "done"),
+          ),
+        ),
+    ]);
     return isGa4StoreUsable({
-      earliestDate: meta?.earliest ?? null,
-      latestSyncedAt: meta?.latestSyncedAt ? new Date(meta.latestSyncedAt) : null,
+      earliestDate: coverage?.earliest ?? null,
+      latestSyncedAt: fresh?.latestSyncedAt ? new Date(fresh.latestSyncedAt) : null,
       dateFrom: params.dateFrom,
     });
   } catch (err) {
-    console.warn("[ga4] cobertura de ga4_daily_metrics falhou; usando o GA4 ao vivo", err);
+    console.warn("[ga4] cobertura de visualizacoes de produto falhou; usando o GA4 ao vivo", err);
     return false;
   }
 }
