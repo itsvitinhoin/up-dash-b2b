@@ -27,7 +27,7 @@ export async function syncGa4DailyForClient(params: {
   // sync_jobs.error, em vez de gravar "0 sessoes" como se fosse dado real.
   if (fetched === null) {
     throw new Error(
-      "GA4 sem credencial: defina GA4_SERVICE_ACCOUNT_JSON (ou GOOGLE_APPLICATION_CREDENTIALS_JSON) no job.",
+      "GA4 sem credencial: rode no Cloud Run (usa a conta de servico do job) ou defina GA4_SERVICE_ACCOUNT_JSON.",
     );
   }
 

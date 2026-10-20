@@ -1,4 +1,5 @@
 import { createSign } from "node:crypto";
+import { GoogleAuth } from "google-auth-library";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const DATA_API_BASE = "https://analyticsdata.googleapis.com/v1beta";
@@ -76,12 +77,30 @@ function readServiceAccount(): ServiceAccount | null {
   }
 }
 
+// Dentro do Cloud Run (servico ou job) nao precisa de chave: usa a identidade da
+// propria execucao (ADC), o mesmo que o script-vesti-nuvem faz pro GA4 -> BigQuery.
+// So tenta la (ou com GA4_USE_ADC=1): fora do Google Cloud o ADC consulta o
+// servidor de metadados e demora a falhar, o que atrasaria toda chamada na Vercel.
+function canUseAdc(): boolean {
+  return Boolean(process.env.K_SERVICE || process.env.CLOUD_RUN_JOB || process.env.GA4_USE_ADC === "1");
+}
+
+let adcAuth: GoogleAuth | null = null;
+
+async function getAdcAccessToken(): Promise<string | null> {
+  adcAuth ??= new GoogleAuth({ scopes: [SCOPE] });
+  const token = await adcAuth.getAccessToken();
+  if (!token) return null;
+  cachedToken = { token, expiresAt: Date.now() + 30 * 60 * 1000 };
+  return token;
+}
+
 async function getAccessToken(): Promise<string | null> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.token;
   }
   const serviceAccount = readServiceAccount();
-  if (!serviceAccount) return null;
+  if (!serviceAccount) return canUseAdc() ? getAdcAccessToken() : null;
 
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "RS256", typ: "JWT" };

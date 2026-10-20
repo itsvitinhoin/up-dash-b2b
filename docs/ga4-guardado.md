@@ -45,10 +45,14 @@ a service account do GA4 sem acesso a essas propriedades.
    objetivo.
 2. **Imagem do job** (build é manual, da raiz do repo):
    `gcloud builds submit --project=up-vesti-report --config=artifacts/api-server/cloudbuild.job.yaml --substitutions=SHORT_SHA=$(git rev-parse --short HEAD) .`
-3. **Credencial do GA4 no job.** O job lê `GA4_SERVICE_ACCOUNT_JSON` (ou
-   `GOOGLE_APPLICATION_CREDENTIALS_JSON`) — hoje essa variável só existe na Vercel.
-   Sem ela o job falha rápido por cliente com "GA4 sem credencial" (não grava zero).
-   A service account precisa ser **Leitor** na propriedade de cada loja.
+3. **Credencial do GA4: nao precisa de chave.** Dentro do Cloud Run o job usa a
+   identidade da propria execucao (ADC), igual ao `script-vesti-nuvem` (que le o GA4
+   todo dia sem arquivo de chave: `credentials.json` esta no `.dockerignore`). O job
+   `upzero-sync-job` roda como `928204832932-compute@developer.gserviceaccount.com`,
+   a mesma conta do job legado, que ja le Giah Studio, Jini e Malagueta. Falta so
+   essa conta ser **Leitor** nas propriedades das lojas que ela ainda nao enxerga
+   (o primeiro backfill mostra quais em `sync_jobs.error`). Fora do Cloud Run, sem
+   `GA4_SERVICE_ACCOUNT_JSON`, o job falha por cliente com "GA4 sem credencial".
 4. **Backfill** (uma vez, e o `hourly_bundle` mantém depois):
    `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=ga4_daily,TRIGGER=manual --wait`
    (ou `CLIENT_ID=<id>` pra uma loja). O job `hourly` aponta pra `:latest`, então
