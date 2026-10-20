@@ -323,3 +323,62 @@ export async function fetchGa4ProductViewMetrics(params: {
     }))
     .filter((row) => row.views > 0);
 }
+
+export interface Ga4ProductViewDay {
+  date: string;
+  itemId: string | null;
+  itemName: string | null;
+  itemVariant: string | null;
+  views: number;
+}
+
+// Visualizacoes de produto (view_item) POR DIA -- a versao "guardavel" de
+// fetchGa4ProductViewMetrics, pro job ga4_daily. Pagina com offset porque 400
+// dias x catalogo passam facil de uma pagina.
+export async function fetchGa4ProductViewsDaily(params: {
+  propertyId?: string | null;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<Ga4ProductViewDay[] | null> {
+  if (!params.propertyId) return null;
+  const token = await getAccessToken();
+  if (!token) return null;
+
+  const PAGE = 100_000;
+  const out: Ga4ProductViewDay[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const report = await runReport(params.propertyId, {
+      dateRanges: [{ startDate: params.dateFrom, endDate: params.dateTo }],
+      dimensions: [
+        { name: "date" },
+        { name: "itemId" },
+        { name: "itemName" },
+        { name: "itemVariant" },
+      ],
+      metrics: [{ name: "eventCount" }],
+      dimensionFilter: {
+        filter: {
+          fieldName: "eventName",
+          stringFilter: { matchType: "EXACT", value: "view_item" },
+        },
+      },
+      orderBys: [{ dimension: { dimensionName: "date" } }],
+      limit: PAGE,
+      offset,
+    });
+    const rows = report.rows ?? [];
+    for (const row of rows) {
+      const views = metricValue(row, 0);
+      if (views <= 0) continue;
+      out.push({
+        date: ga4Date(row.dimensionValues?.[0]?.value),
+        itemId: row.dimensionValues?.[1]?.value?.trim() || null,
+        itemName: row.dimensionValues?.[2]?.value?.trim() || null,
+        itemVariant: row.dimensionValues?.[3]?.value?.trim() || null,
+        views,
+      });
+    }
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}

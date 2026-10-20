@@ -103,3 +103,37 @@ export function isGa4StoreUsable(params: {
   const ageMs = (params.now ?? new Date()).getTime() - params.latestSyncedAt.getTime();
   return ageMs <= GA4_STORE_MAX_AGE_HOURS * 60 * 60 * 1000;
 }
+
+// ── Visualizacoes de produto por dia ────────────────────────────────────────
+export type ProductViewDay = {
+  date: string;
+  itemId: string | null;
+  itemName: string | null;
+  itemVariant: string | null;
+  views: number;
+};
+
+export type StoredProductViewKey = {
+  metricDate: string;
+  itemId: string;
+  itemName: string;
+  itemVariant: string;
+  views: number;
+};
+
+// A chave primaria nao aceita null (null vira ''), e dois itens que so diferem
+// por espaco/null caem na mesma chave depois da normalizacao -- somar evita o
+// erro "ON CONFLICT ... cannot affect row a second time" no upsert em lote.
+export function toStoredProductViews(rows: ProductViewDay[]): StoredProductViewKey[] {
+  const byKey = new Map<string, StoredProductViewKey>();
+  for (const row of rows) {
+    const itemId = (row.itemId ?? "").trim();
+    const itemName = (row.itemName ?? "").trim();
+    const itemVariant = (row.itemVariant ?? "").trim();
+    const key = [row.date, itemId, itemName, itemVariant].join("\u0000");
+    const current = byKey.get(key);
+    if (current) current.views += row.views;
+    else byKey.set(key, { metricDate: row.date, itemId, itemName, itemVariant, views: row.views });
+  }
+  return [...byKey.values()];
+}

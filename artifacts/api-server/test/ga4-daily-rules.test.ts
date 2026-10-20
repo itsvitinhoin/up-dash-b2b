@@ -7,6 +7,7 @@ import {
   resolveGa4SyncWindow,
   saoPauloDate,
   shiftDate,
+  toStoredProductViews,
 } from "../src/services/ga4-daily-rules";
 
 const day = (date: string, sessions: number) => ({
@@ -123,5 +124,19 @@ describe("isGa4StoreUsable", () => {
   });
   it("sem histórico nenhum não serve", () => {
     expect(isGa4StoreUsable({ earliestDate: null, latestSyncedAt: null, dateFrom: "2026-09-21", now })).toBe(false);
+  });
+});
+
+describe("toStoredProductViews", () => {
+  it("troca null por '' e soma itens que só diferem por espaço", () => {
+    const rows = toStoredProductViews([
+      { date: "2026-10-20", itemId: "A1", itemName: "Vestido", itemVariant: null, views: 5 },
+      { date: "2026-10-20", itemId: "A1 ", itemName: "Vestido", itemVariant: "", views: 3 },
+      { date: "2026-10-20", itemId: null, itemName: null, itemVariant: null, views: 2 },
+      { date: "2026-10-19", itemId: "A1", itemName: "Vestido", itemVariant: null, views: 1 },
+    ]);
+    expect(rows).toHaveLength(3);
+    expect(rows.find((r) => r.metricDate === "2026-10-20" && r.itemId === "A1")?.views).toBe(8);
+    expect(rows.find((r) => r.itemId === "" && r.itemName === "")?.views).toBe(2);
   });
 });

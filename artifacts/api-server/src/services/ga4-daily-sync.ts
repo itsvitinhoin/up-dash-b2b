@@ -1,11 +1,14 @@
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
-import { db, ga4DailyMetricsTable } from "@workspace/db";
-import { aggregateGa4Rows, fillGa4Days, isGa4StoreUsable } from "./ga4-daily-rules";
+import { db, ga4DailyMetricsTable, ga4ProductViewsDailyTable } from "@workspace/db";
+import { aggregateGa4Rows, fillGa4Days, isGa4StoreUsable, toStoredProductViews } from "./ga4-daily-rules";
 import {
   fetchGa4DailyMetrics,
   fetchGa4FunnelMetrics,
+  fetchGa4ProductViewMetrics,
+  fetchGa4ProductViewsDaily,
   type Ga4DailyMetrics,
   type Ga4FunnelMetrics,
+  type Ga4ProductViewMetric,
 } from "./ga4";
 
 export async function clientIdsWithGa4History(clientIds: string[]): Promise<Set<string>> {
@@ -22,7 +25,7 @@ export async function syncGa4DailyForClient(params: {
   propertyId: string;
   from: string;
   to: string;
-}): Promise<{ from: string; to: string; days: number; sessions: number }> {
+}): Promise<{ from: string; to: string; days: number; sessions: number; productViewRows: number }> {
   const fetched = await fetchGa4DailyMetrics({
     propertyId: params.propertyId,
     dateFrom: params.from,
@@ -35,6 +38,16 @@ export async function syncGa4DailyForClient(params: {
       "GA4 sem credencial: rode no Cloud Run (usa a conta de servico do job) ou defina GA4_SERVICE_ACCOUNT_JSON.",
     );
   }
+
+  // Busca as duas coisas ANTES de gravar qualquer uma: se uma falhar, nada muda e
+  // as tabelas nao ficam uma atualizada e a outra velha.
+  const fetchedProductViews = await fetchGa4ProductViewsDaily({
+    propertyId: params.propertyId,
+    dateFrom: params.from,
+    dateTo: params.to,
+  });
+  if (fetchedProductViews === null) throw new Error("GA4 sem credencial ao buscar visualizacoes de produto.");
+  const productViews = toStoredProductViews(fetchedProductViews);
 
   const rows = fillGa4Days(params.from, params.to, fetched).map((row) => ({
     clientId: params.clientId,
@@ -68,11 +81,33 @@ export async function syncGa4DailyForClient(params: {
       });
   }
 
+  // Troca a janela inteira (apaga e regrava): o GA4 revisa contagens recentes e
+  // um item que sumiu da revisao nao pode ficar com o numero velho.
+  const PRODUCT_BATCH = 1000;
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(ga4ProductViewsDailyTable)
+      .where(
+        and(
+          eq(ga4ProductViewsDailyTable.clientId, params.clientId),
+          gte(ga4ProductViewsDailyTable.metricDate, params.from),
+          lte(ga4ProductViewsDailyTable.metricDate, params.to),
+        ),
+      );
+    const syncedAt = new Date();
+    for (let i = 0; i < productViews.length; i += PRODUCT_BATCH) {
+      await tx.insert(ga4ProductViewsDailyTable).values(
+        productViews.slice(i, i + PRODUCT_BATCH).map((row) => ({ clientId: params.clientId, ...row, syncedAt })),
+      );
+    }
+  });
+
   return {
     from: params.from,
     to: params.to,
     days: rows.length,
     sessions: rows.reduce((sum, row) => sum + row.sessions, 0),
+    productViewRows: productViews.length,
   };
 }
 
@@ -190,4 +225,69 @@ export async function getGa4Daily(params: {
   const stored = await readStoredGa4Days(params);
   if (stored) return stored;
   return fetchGa4DailyMetrics(params);
+}
+
+// Visualizacoes de produto do periodo, somadas por item -- mesmo formato de
+// fetchGa4ProductViewMetrics. Usa a cobertura da tabela diaria (o job grava as
+// duas juntas) e cai no ao vivo se a loja ainda nao tem dado guardado.
+async function storeCovers(params: { clientId: string; dateFrom: string }): Promise<boolean> {
+  try {
+    const [meta] = await db
+      .select({
+        earliest: sql<string | null>`MIN(${ga4DailyMetricsTable.metricDate})::text`,
+        latestSyncedAt: sql<string | null>`MAX(${ga4DailyMetricsTable.syncedAt})`,
+      })
+      .from(ga4DailyMetricsTable)
+      .where(eq(ga4DailyMetricsTable.clientId, params.clientId));
+    return isGa4StoreUsable({
+      earliestDate: meta?.earliest ?? null,
+      latestSyncedAt: meta?.latestSyncedAt ? new Date(meta.latestSyncedAt) : null,
+      dateFrom: params.dateFrom,
+    });
+  } catch (err) {
+    console.warn("[ga4] cobertura de ga4_daily_metrics falhou; usando o GA4 ao vivo", err);
+    return false;
+  }
+}
+
+export async function getGa4ProductViews(params: {
+  clientId: string;
+  propertyId?: string | null;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<Ga4ProductViewMetric[] | null> {
+  if (!params.propertyId) return null;
+  if (await storeCovers(params)) {
+    try {
+      const rows = await db
+        .select({
+          itemId: ga4ProductViewsDailyTable.itemId,
+          itemName: ga4ProductViewsDailyTable.itemName,
+          itemVariant: ga4ProductViewsDailyTable.itemVariant,
+          views: sql<number>`SUM(${ga4ProductViewsDailyTable.views})::int`,
+        })
+        .from(ga4ProductViewsDailyTable)
+        .where(
+          and(
+            eq(ga4ProductViewsDailyTable.clientId, params.clientId),
+            gte(ga4ProductViewsDailyTable.metricDate, params.dateFrom),
+            lte(ga4ProductViewsDailyTable.metricDate, params.dateTo),
+          ),
+        )
+        .groupBy(
+          ga4ProductViewsDailyTable.itemId,
+          ga4ProductViewsDailyTable.itemName,
+          ga4ProductViewsDailyTable.itemVariant,
+        );
+      return rows.map((row) => ({
+        itemId: row.itemId || null,
+        itemName: row.itemName || null,
+        itemVariant: row.itemVariant || null,
+        views: Number(row.views) || 0,
+      }));
+    } catch (err) {
+      console.warn("[ga4] leitura de ga4_product_views_daily falhou; usando o GA4 ao vivo", err);
+    }
+  }
+  return fetchGa4ProductViewMetrics(params);
 }

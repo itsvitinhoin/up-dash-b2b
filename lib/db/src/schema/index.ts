@@ -21,3 +21,4 @@ export * from "./customerIdentityLinks";
 export * from "./orderAttributions";
 export * from "./api-tokens";
 export * from "./ga4DailyMetrics";
+export * from "./ga4ProductViewsDaily";

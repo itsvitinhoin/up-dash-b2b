@@ -78,8 +78,8 @@ import {
   type InsightLanguage,
 } from "../services/insight-text";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
-import { fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
-import { getGa4Daily, getGa4Funnel } from "../services/ga4-daily-sync";
+import type { Ga4DailyMetrics, Ga4FunnelMetrics, Ga4Source } from "../services/ga4";
+import { getGa4Daily, getGa4Funnel, getGa4ProductViews } from "../services/ga4-daily-sync";
 import * as vestiDashboardController from "../controllers/vestiDashboardController";
 import * as vestiOrdersController from "../controllers/vestiOrdersController";
 import * as vestiCustomersController from "../controllers/vestiCustomersController";
@@ -5227,7 +5227,8 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
 
   if (isB2C && hasPeriodFilter && rawRows.length > 0 && client?.ga4PropertyId) {
     try {
-      const ga4Rows = await fetchGa4ProductViewMetrics({
+      const ga4Rows = await getGa4ProductViews({
+        clientId,
         propertyId: client.ga4PropertyId,
         dateFrom: from.toISOString().slice(0, 10),
         dateTo: to.toISOString().slice(0, 10),

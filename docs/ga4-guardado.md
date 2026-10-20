@@ -50,10 +50,18 @@ ganharem acesso). Quando as 7 lojas sincronizarem, o ramo ao vivo pode sair.
 que a deixava lenta). Loja sem dado guardado aparece com a coluna vazia na lista. Por isso
 só publicar depois de Aiyu e Hot Pink terem acesso.
 
+## Visualizações por produto (tabela de produtos B2C)
+
+Também guardadas: `ga4_product_views_daily` (migration 0044), uma linha por
+(cliente, dia, item) do evento `view_item`, gravada pelo mesmo job `ga4_daily` — o equivalente
+ao `analytics_ga4_view_item` que o legado mantém no BigQuery. O job busca tráfego e produtos
+**antes** de gravar qualquer um (se um falhar, nada muda) e regrava a janela inteira de produtos
+(o GA4 revisa contagens recentes). `getGa4ProductViews` lê daqui, com o mesmo fallback ao vivo.
+
 ## Ordem de publicação (importante)
 
-1. **Banco de produção** (`up_dash_b2b`, Cloud SQL Studio): rodar
-   `lib/db/migrations/0043_ga4_daily_metrics.sql` (idempotente). Antes do deploy
+1. **Banco de produção** (`up_dash_b2b`, Cloud SQL Studio): rodar, nesta ordem,
+   `lib/db/migrations/0043_ga4_daily_metrics.sql` e `0044_ga4_product_views_daily.sql` (as duas idempotentes; a 0043 já foi aplicada em 20/10). Antes do deploy
    da Vercel — se faltar, a lista abre sem o GA4 (aviso no log), mas não é o
    objetivo.
 2. **Imagem do job** (build é manual, da raiz do repo):
@@ -95,8 +103,6 @@ atrapalha nada.
 
 ## Fora deste passo (de propósito)
 
-- `fetchGa4ProductViewMetrics` (visualizações por produto, `routes/analytics.ts`) segue ao
-  vivo: precisa de dado por item, que a tabela diária não guarda.
 - A decisão estrutural continua sendo levar o backend pro Cloud Run (us-central1,
   junto do banco) e o botão "Sincronizar" da Nuvemshop disparar o job existente.
 - Acesso da service account às 4 propriedades que recusam é ação humana no GA4

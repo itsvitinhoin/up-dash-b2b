@@ -309,6 +309,13 @@
       "when": 1792510944581,
       "tag": "0043_ga4_daily_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1792516396946,
+      "tag": "0044_ga4_product_views_daily",
+      "breakpoints": true
     }
   ]
 }
