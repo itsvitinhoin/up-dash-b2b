@@ -2027,12 +2027,12 @@ function vestiPctChange(current: number, previous: number): number | null {
 
 function vestiDailyHeuristic(params: {
   kpis: VestiDailyMetricSet;
-  prevKpis: VestiDailyMetricSet;
+  prevKpis: VestiDailyMetricSet | null;
   campaigns: Array<{ name: string; spend: number; roas: number; purchases: number }>;
   breakdown: VestiDailyBreakdown;
 }): { generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" } {
-  const revenueChange = vestiPctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue);
-  const salesChange = vestiPctChange(params.kpis.sales, params.prevKpis.sales);
+  const revenueChange = params.prevKpis ? vestiPctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue) : null;
+  const salesChange = params.prevKpis ? vestiPctChange(params.kpis.sales, params.prevKpis.sales) : null;
   const topCampaign = params.campaigns[0];
   const topProduct = params.breakdown.products[0];
   const topCategory = params.breakdown.categories[0];
@@ -2064,13 +2064,13 @@ export async function generateVestiDailyReportText(params: {
   dateFrom: string;
   dateTo: string;
   kpis: VestiDailyMetricSet;
-  prevKpis: VestiDailyMetricSet;
+  prevKpis: VestiDailyMetricSet | null;
   campaigns: Array<{ name: string; spend: number; purchases: number; revenue: number; roas: number; cpa: number }>;
   breakdown: VestiDailyBreakdown;
 }): Promise<{ generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" }> {
   const heuristic = vestiDailyHeuristic(params);
   const ai = getOpenAIClient();
-  if (!ai || !isAIConfigured()) return heuristic;
+  if (!ai || !isAIConfigured() || !params.prevKpis) return heuristic;
 
   try {
     const completion = await ai.chat.completions.create({

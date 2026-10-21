@@ -5,7 +5,7 @@ import { db, clientsTable } from "@workspace/db";
 import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse, GetJourneyQueryParams, GetJourneyResponse, GetMarketingQueryParams, GetMarketingResponse, GetUtmQueryParams, GetUtmResponse } from "@workspace/api-zod";
 import { addDaysToDateOnly, coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly, saoPauloDateOnlyEnd, saoPauloDateOnlyStart } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
-import { fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
+import { MediaReadError, fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
 import {
   resolveVestiDataset,
   computeVestiWindow,
@@ -32,7 +32,9 @@ function getGlobalMetaAccessToken(fallback?: string | null): string | null {
 
 // Gasto de anúncios (Meta) do cliente Vesti: lido SÓ do dado guardado (BigQuery `data_ads_global.ads_insights_account`, coletado pelo sync),
 // nunca do Graph ao vivo (decisão de 19/10/2026; antes o ao vivo vinha primeiro e o guardado era só fallback quando vinha zero).
-// Ver services/vesti-ads-stored.ts. O dia de HOJE só aparece depois da próxima coleta. Sem conta cadastrada ou com falha na leitura: 0.
+// Ver services/vesti-ads-stored.ts. O dia de HOJE só aparece depois da próxima coleta.
+// Regra "indisponível não é zero" (conciliação de 21/10/2026): sem conta cadastrada = 0 (não há o que ler);
+// falha ou leitura incompleta do BigQuery = MediaReadError (HTTP 503 MEDIA_UNAVAILABLE), nunca R$ 0,00.
 async function loadStoredAds(
   client: { metaAdAccountId?: string | null } | undefined,
   dateFromOnly: string,
@@ -46,7 +48,7 @@ async function loadStoredAds(
     );
   } catch (err) {
     console.warn("[vesti] gasto de anúncios guardado indisponível:", err);
-    return [];
+    throw new MediaReadError();
   }
 }
 
@@ -440,14 +442,14 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
           return null;
         })
       : null;
-  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
+  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads).catch((err) => console.warn("[vesti] Creative cache write failed:", err));
 
   const [currentWindow, prevWindow, breakdown, currentMediaSpend, prevMediaSpend] = await Promise.all([
     cached(`vesti:window:${dataset}:${dateFromOnly}:${dateToOnly}:{}`, 5 * 60 * 1000, () => computeVestiWindow(dataset, dateFromOnly, dateToOnly, {}, false)),
     cached(`vesti:window:${dataset}:${prevDateFromOnly}:${prevDateToOnly}:{}`, 5 * 60 * 1000, () => computeVestiWindow(dataset, prevDateFromOnly, prevDateToOnly, {}, false)),
     cached(`vesti:daily-breakdown:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () => fetchVestiDailyBreakdown(dataset, dateFromOnly, dateToOnly)),
     resolveVestiInvestment(client, dateFromOnly, dateToOnly),
-    resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly),
+    resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly).catch(() => null),
   ]);
 
   const kpis = {
@@ -458,7 +460,7 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
     costPerPurchase: currentWindow.kpis.orders > 0 ? currentMediaSpend / currentWindow.kpis.orders : 0,
     roas: currentMediaSpend > 0 ? currentWindow.kpis.revenue / currentMediaSpend : 0,
   };
-  const prevKpis = {
+  const prevKpis = prevMediaSpend === null ? null : {
     approvedRevenue: prevWindow.kpis.revenue,
     sales: prevWindow.kpis.orders,
     avgTicket: prevWindow.kpis.avgTicket,
@@ -499,12 +501,12 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
     kpis,
     prevKpis,
     changes: {
-      approvedRevenue: pctChange(kpis.approvedRevenue, prevKpis.approvedRevenue),
-      sales: pctChange(kpis.sales, prevKpis.sales),
-      avgTicket: pctChange(kpis.avgTicket, prevKpis.avgTicket),
-      costPerPurchase: pctChange(kpis.costPerPurchase, prevKpis.costPerPurchase),
-      mediaSpend: pctChange(kpis.mediaSpend, prevKpis.mediaSpend),
-      roas: pctChange(kpis.roas, prevKpis.roas),
+      approvedRevenue: prevKpis ? pctChange(kpis.approvedRevenue, prevKpis.approvedRevenue) : null,
+      sales: prevKpis ? pctChange(kpis.sales, prevKpis.sales) : null,
+      avgTicket: prevKpis ? pctChange(kpis.avgTicket, prevKpis.avgTicket) : null,
+      costPerPurchase: prevKpis ? pctChange(kpis.costPerPurchase, prevKpis.costPerPurchase) : null,
+      mediaSpend: prevKpis ? pctChange(kpis.mediaSpend, prevKpis.mediaSpend) : null,
+      roas: prevKpis ? pctChange(kpis.roas, prevKpis.roas) : null,
     },
     campaigns,
     products: breakdown.products,
@@ -858,11 +860,11 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
           return null;
         })
       : null;
-  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
+  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads).catch((err) => console.warn("[vesti] Creative cache write failed:", err));
 
   const [storedAdsCurrent, prevSpend] = await Promise.all([
     loadStoredAds(client, dateFromOnly, dateToOnly),
-    resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly),
+    resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly).catch(() => null),
   ]);
   const spend = totalSpend(storedAdsCurrent);
 
@@ -906,7 +908,7 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
   res.json(
     GetMarketingResponse.parse({
       kpis: buildKpis(channelData, spend),
-      prevKpis: buildKpis(prevChannelData, prevSpend),
+      prevKpis: prevSpend === null ? null : buildKpis(prevChannelData, prevSpend),
       leadsOverTime: channelData.leadsOverTime,
       revenueOverTime: channelData.revenueOverTime,
       spendOverTime: spendSeries(storedAdsCurrent),

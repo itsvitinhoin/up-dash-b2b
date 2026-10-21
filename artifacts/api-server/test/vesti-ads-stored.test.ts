@@ -76,6 +76,14 @@ describe("fetchStoredAdsDaily", () => {
     expect(await fetchStoredAdsDaily("act_1", "2026-10-01", "2026-10-02", async () => [])).toEqual([]);
   });
 
+  it("linha guardada sem valor de gasto: leitura incompleta sobe como erro (não vira zero)", async () => {
+    await expect(
+      fetchStoredAdsDaily("act_1", "2026-10-01", "2026-10-02", async () => [{ day: "2026-10-01", spend: 0, null_spend_rows: 1 }]),
+    ).rejects.toThrow("incompleta");
+    const days = await fetchStoredAdsDaily("act_1", "2026-10-01", "2026-10-02", async () => [{ day: "2026-10-01", spend: 7, null_spend_rows: 0 }]);
+    expect(days[0]?.spend).toBe(7);
+  });
+
   it("erro do BigQuery sobe (quem chama decide o que mostrar)", async () => {
     await expect(fetchStoredAdsDaily("act_1", "2026-10-01", "2026-10-02", async () => { throw new Error("quota"); })).rejects.toThrow("quota");
   });

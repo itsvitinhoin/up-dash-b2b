@@ -543,7 +543,7 @@ export default function MarketingPage() {
   const { language: insightLanguage } = useI18n();
   const insightParams = { clientId, ...dateParams, screen: "marketing" as const, language: insightLanguage };
 
-  const { data, isLoading, isError, refetch } = useGetMarketing(
+  const { data, isLoading, isError, error, refetch } = useGetMarketing(
     {
       clientId,
       ...dateParams,
@@ -570,14 +570,14 @@ export default function MarketingPage() {
   // ── KPI changes ──────────────────────────────────────────────────────────
   const previousMarketing = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetMarketingUrl({ clientId, ...dateParams, creativesPage, creativesPageSize: CREATIVES_PAGE_SIZE, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, creative: filters.creative || undefined }), enabled);
   const previousCreatives = [ ...(previousMarketing.data?.creatives ?? []), ...(previousMarketing.data?.topCreatives.ctr ?? []), ...(previousMarketing.data?.topCreatives.cpl ?? []), ...(previousMarketing.data?.topCreatives.leads ?? []) ];
-  const spendChange = useMemo(() => data ? computeChange(data.kpis.totalSpend, data.prevKpis.totalSpend) : null, [data]);
-  const revenueChange = useMemo(() => data ? computeChange(data.kpis.attributedRevenue, data.prevKpis.attributedRevenue) : null, [data]);
-  const roasChange = useMemo(() => data ? computeChange(data.kpis.roas, data.prevKpis.roas) : null, [data]);
-  const approvalRateChange = useMemo(() => data ? computeChange(data.kpis.approvalRate, data.prevKpis.approvalRate) : null, [data]);
-  const leadsChange = useMemo(() => data ? computeChange(data.kpis.totalLeads, data.prevKpis.totalLeads) : null, [data]);
-  const approvedLeadsChange = useMemo(() => data ? computeChange(data.kpis.approvedLeads, data.prevKpis.approvedLeads) : null, [data]);
-  const cplChange = useMemo(() => data ? computeChange(data.kpis.cpl, data.prevKpis.cpl) : null, [data]);
-  const cpaChange = useMemo(() => data ? computeChange(data.kpis.cpa, data.prevKpis.cpa) : null, [data]);
+  const spendChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.totalSpend, data.prevKpis.totalSpend) : null, [data]);
+  const revenueChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.attributedRevenue, data.prevKpis.attributedRevenue) : null, [data]);
+  const roasChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.roas, data.prevKpis.roas) : null, [data]);
+  const approvalRateChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.approvalRate, data.prevKpis.approvalRate) : null, [data]);
+  const leadsChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.totalLeads, data.prevKpis.totalLeads) : null, [data]);
+  const approvedLeadsChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.approvedLeads, data.prevKpis.approvedLeads) : null, [data]);
+  const cplChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.cpl, data.prevKpis.cpl) : null, [data]);
+  const cpaChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.cpa, data.prevKpis.cpa) : null, [data]);
 
   // "Top Meta Creatives" (Best CTR/Lowest CPL/Most Leads) sempre mostrava
   // "No creatives" pra QUALQUER client (B2C ou Vesti) — não é bug de dado,
@@ -732,7 +732,9 @@ export default function MarketingPage() {
         <AlertCircle className="h-4 w-4" />
         <AlertTitle>{tx("Erro")}</AlertTitle>
         <AlertDescription className="flex items-center justify-between">
-          {tx("Não foi possível carregar os anúncios.")}
+          {(error as { data?: { code?: string } })?.data?.code === "MEDIA_UNAVAILABLE"
+            ? tx("Investimento indisponível. Não foi possível ler a conta Meta; isso não significa gasto zero.")
+            : tx("Não foi possível carregar os anúncios.")}
           <Button variant="outline" size="sm" onClick={() => refetch()}>
             <RefreshCw className="mr-2 h-4 w-4" /> {tx("Tentar novamente")}
           </Button>
@@ -814,7 +816,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-revenue" previousValue={data?.prevKpis.attributedRevenue}
+            testId="kpi-revenue" previousValue={data?.prevKpis?.attributedRevenue}
             icon={DollarSign}
             iconClass="bg-teal-500/15 text-teal-400"
             label="Faturamento"
@@ -826,7 +828,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-roas" previousValue={data?.prevKpis.roas}
+            testId="kpi-roas" previousValue={data?.prevKpis?.roas}
             icon={TrendingUp}
             iconClass="bg-emerald-500/15 text-emerald-400"
             label="ROA"
@@ -838,7 +840,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-approval-rate" previousValue={data?.prevKpis.approvalRate}
+            testId="kpi-approval-rate" previousValue={data?.prevKpis?.approvalRate}
             icon={CheckCircle2}
             iconClass="bg-indigo-500/15 text-indigo-400"
             label="Taxa de aprovação"
@@ -850,7 +852,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-leads" previousValue={data?.prevKpis.totalLeads}
+            testId="kpi-leads" previousValue={data?.prevKpis?.totalLeads}
             icon={Users}
             iconClass="bg-sky-500/15 text-sky-400"
             label="Total de leads"
@@ -862,7 +864,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-approved-leads" previousValue={data?.prevKpis.approvedLeads}
+            testId="kpi-approved-leads" previousValue={data?.prevKpis?.approvedLeads}
             icon={CheckCircle2}
             iconClass="bg-green-500/15 text-green-400"
             label={isB2C ? tx("Compras") : tx("Leads aprovados")}
@@ -874,7 +876,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-cpl" previousValue={isB2C ? data?.prevKpis.cpa : data?.prevKpis.cpl}
+            testId="kpi-cpl" previousValue={isB2C ? data?.prevKpis?.cpa : data?.prevKpis?.cpl}
             icon={Target}
             iconClass="bg-orange-500/15 text-orange-400"
             label={isB2C ? "Custo por Compra" : "CPL"}
@@ -888,7 +890,7 @@ export default function MarketingPage() {
           />
           {!isB2C && (
             <MktKpiCard
-              testId="kpi-cpa" previousValue={data?.prevKpis.cpa}
+              testId="kpi-cpa" previousValue={data?.prevKpis?.cpa}
               icon={Sparkles}
               iconClass="bg-amber-500/15 text-amber-400"
               label="CPA"

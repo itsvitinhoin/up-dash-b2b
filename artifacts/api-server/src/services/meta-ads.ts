@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { aggregateMetaInsights, metaReportingWindow, spendCents } from "./meta-reporting";
 import { and, eq } from "drizzle-orm";
 import { db, creativesTable } from "@workspace/db";
 
@@ -21,6 +23,7 @@ interface MetaInsightRow {
   action_values?: MetaAction[];
   cost_per_action_type?: MetaAction[];
   purchase_roas?: MetaRoas[];
+  hourly_stats_aggregated_by_advertiser_time_zone?: string;
   date_start: string;
   date_stop: string;
 }
@@ -173,7 +176,7 @@ function graphVersion(): string {
 }
 
 async function fetchGraph<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   const body = (await res.json()) as T & { error?: { message?: string } };
   if (!res.ok || body.error) {
     throw new Error(body.error?.message ?? `${res.status} ${res.statusText}`);
@@ -272,7 +275,7 @@ async function fetchCampaignStatuses(accessToken: string, adAccountId: string): 
   })}`;
 
   while (url) {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     const body = (await res.json()) as {
       data?: MetaCampaignRow[];
       paging?: { next?: string };
@@ -332,7 +335,7 @@ async function fetchInsights(
   })}`;
 
   while (url) {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     const body = (await res.json()) as {
       data?: MetaInsightRow[];
       paging?: { next?: string };
@@ -342,7 +345,8 @@ async function fetchInsights(
       const message = body.error?.message ?? `${res.status} ${res.statusText}`;
       throw new Error(`Meta Marketing API error: ${message}`);
     }
-    rows.push(...(body.data ?? []));
+    if (!Array.isArray(body.data)) throw new Error("O Meta retornou uma resposta de mídia incompleta.");
+    rows.push(...body.data);
     url = body.paging?.next ?? null;
   }
 
@@ -350,7 +354,7 @@ async function fetchInsights(
 }
 
 function dailyPoint(row: MetaInsightRow): MetaDailyPoint {
-  const spend = numberValue(row.spend);
+  const spend = spendCents(row.spend) / 100;
   const leads = actionValue(row.actions, "lead");
   return {
     date: row.date_start,
@@ -364,7 +368,7 @@ function dailyPoint(row: MetaInsightRow): MetaDailyPoint {
 }
 
 function adMetric(row: MetaInsightRow, since: string, until: string): MetaAdMetric {
-  const spend = numberValue(row.spend);
+  const spend = spendCents(row.spend) / 100;
   const leads = actionValue(row.actions, "lead");
   const purchases = actionValue(row.actions, "purchase");
   const revenue = actionValue(row.action_values, "purchase");
@@ -387,7 +391,7 @@ function adMetric(row: MetaInsightRow, since: string, until: string): MetaAdMetr
 }
 
 function summarize(daily: MetaDailyPoint[]) {
-  const spend = daily.reduce((sum, p) => sum + p.spend, 0);
+  const spend = daily.reduce((sum, p) => sum + Math.round(p.spend * 100), 0) / 100;
   const leads = daily.reduce((sum, p) => sum + p.leads, 0);
   return {
     spend,
@@ -515,49 +519,79 @@ async function buildTopCreatives(accessToken: string, ads: MetaAdMetric[]): Prom
   };
 }
 
-export async function fetchMetaMarketingData(params: {
-  accessToken: string;
-  adAccountId: string;
-  since: string;
-  until: string;
-}): Promise<MetaMarketingData> {
-  const fields =
-    "spend,impressions,clicks,inline_link_clicks,actions,action_values,cost_per_action_type,purchase_roas,date_start,date_stop";
-  const timeRange = JSON.stringify({ since: params.since, until: params.until });
+export class MediaReadError extends Error {
+  readonly status = 503;
+  readonly code = "MEDIA_UNAVAILABLE";
+  constructor() { super("Investimento indisponível: não foi possível ler e alinhar os dados da conta Meta. Tente novamente."); }
+}
 
-  const [dailyRows, adRows, campaignRows, campaignStatuses] = await Promise.all([
-    fetchInsights(params.accessToken, params.adAccountId, {
-      level: "account",
-      fields,
-      time_range: timeRange,
-      time_increment: "1",
-      limit: "500",
-    }),
+type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string };
+const mediaReads = new Map<string, { expiresAt: number; promise: Promise<MetaMarketingData> }>();
+const accountZones = new Map<string, { expiresAt: number; promise: Promise<string> }>();
+
+async function fetchAccountTimeZone(params: MetaParams, key: string): Promise<string> {
+  const cached = accountZones.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  const promise = fetchGraph<{ timezone_name?: string }>(`${GRAPH_BASE}/${graphVersion()}/${normalizeMetaAdAccountId(params.adAccountId)}?${new URLSearchParams({access_token: params.accessToken, fields: "timezone_name"})}`)
+    .then((account) => {
+      if (!account.timezone_name) throw new Error("Fuso da conta Meta indisponível.");
+      return account.timezone_name;
+    });
+  if (accountZones.size >= 250) accountZones.delete(accountZones.keys().next().value!);
+  accountZones.set(key, { expiresAt: Date.now() + 3_600_000, promise });
+  try { return await promise; } catch (error) { accountZones.delete(key); throw error; }
+}
+
+/** Shared single-flight snapshot; errors are never cached or converted to spend=0. */
+export async function fetchMetaMarketingData(params: MetaParams): Promise<MetaMarketingData> {
+  if (!params.accessToken.trim() || !params.adAccountId.trim()) throw new MediaReadError();
+  const accountKey = `${normalizeMetaAdAccountId(params.adAccountId)}:${createHash("sha256").update(params.accessToken).digest("hex")}`;
+  const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? ""]);
+  const cached = mediaReads.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  const promise = fetchMetaMarketingDataUncached(params, accountKey).catch(() => { throw new MediaReadError(); });
+  if (mediaReads.size >= 250) mediaReads.delete(mediaReads.keys().next().value!);
+  const entry = { expiresAt: Date.now() + 60_000, promise };
+  mediaReads.set(key, entry);
+  try { return await promise; } catch (error) {
+    if (mediaReads.get(key) === entry) mediaReads.delete(key);
+    throw error;
+  }
+}
+
+/** Sem conta ou token Meta conectado não há o que ler: isso NÃO é falha de leitura (a tela carrega, sem dado de mídia). */
+export function isMetaConnected(params: { accessToken?: string | null; adAccountId?: string | null }): boolean {
+  return !!params.accessToken?.trim() && !!params.adAccountId?.trim();
+}
+
+export function emptyMetaMarketingData(): MetaMarketingData {
+  return { daily: [], ads: [], campaigns: [], topCreatives: { ctr: [], cpl: [], leads: [] }, summary: { spend: 0, impressions: 0, clicks: 0, leads: 0, purchases: 0, cpl: null } };
+}
+
+async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: string): Promise<MetaMarketingData> {
+  const accountTimeZone = await fetchAccountTimeZone(params, accountKey);
+  const window = metaReportingWindow(params.since, params.until, accountTimeZone);
+  const [rows, campaignStatuses] = await Promise.all([
     fetchInsights(params.accessToken, params.adAccountId, {
       level: "ad",
-      fields: `ad_id,ad_name,campaign_id,campaign_name,${fields}`,
-      time_range: timeRange,
-      limit: "500",
-    }),
-    fetchInsights(params.accessToken, params.adAccountId, {
-      level: "campaign",
-      fields: `campaign_id,campaign_name,${fields}`,
-      time_range: timeRange,
+      fields: "ad_id,ad_name,campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",
+      time_range: JSON.stringify({ since: window.since, until: window.until }),
+      time_increment: "1",
+      ...(window.hourly ? { breakdowns: "hourly_stats_aggregated_by_advertiser_time_zone" } : {}),
       limit: "500",
     }),
     fetchCampaignStatuses(params.accessToken, params.adAccountId).catch(() => new Map<string, string>()),
   ]);
-
-  const daily = dailyRows.map(dailyPoint);
-  const ads = adRows.map((row) => adMetric(row, params.since, params.until));
-  const campaigns = campaignRows.map((row) => {
-    const metric = adMetric(row, params.since, params.until);
-    return {
-      ...metric,
-      status: row.campaign_id ? campaignStatuses.get(row.campaign_id) ?? metric.status : metric.status,
-    };
-  });
-  return { daily, ads, campaigns, topCreatives: await buildTopCreatives(params.accessToken, ads), summary: summarize(daily) };
+  const grouped = aggregateMetaInsights(params.campaignName ? rows.filter((row) => row.campaign_name?.toLowerCase().includes(params.campaignName!.toLowerCase())) : rows, params.since, params.until, accountTimeZone);
+  const daily = grouped.daily.map(dailyPoint);
+  const ads = grouped.ads.map((row) => adMetric(row, params.since, params.until));
+  const campaigns = grouped.campaigns.map((row) => ({
+    ...adMetric(row, params.since, params.until),
+    status: row.campaign_id ? campaignStatuses.get(row.campaign_id) ?? "UNKNOWN" : "UNKNOWN",
+  }));
+  // Creative previews are optional decoration; they cannot make financial data unavailable.
+  const topCreatives = await buildTopCreatives(params.accessToken, ads).catch(() => ({ ctr: [], cpl: [], leads: [] }));
+  return { daily, ads, campaigns, topCreatives, summary: summarize(daily) };
 }
 
 export async function upsertMetaCreatives(clientId: string, ads: MetaAdMetric[]): Promise<void> {

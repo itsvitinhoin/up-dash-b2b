@@ -1515,7 +1515,7 @@ export interface MetaTopCreatives {
 
 export interface MarketingResponse {
   kpis: MarketingKpis;
-  prevKpis: MarketingKpis;
+  prevKpis: MarketingKpis | null;
   leadsOverTime: TimeSeriesPoint[];
   revenueOverTime: TimeSeriesPoint[];
   spendOverTime: TimeSeriesPoint[];

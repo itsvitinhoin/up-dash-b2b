@@ -2928,7 +2928,7 @@ export const GetMarketingResponse = zod.object({
     approvalRate: zod.number(),
     cpl: zod.number(),
     cpa: zod.number(),
-  }),
+  }).nullable(),
   leadsOverTime: zod.array(
     zod.object({
       date: zod.string(),

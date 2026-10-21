@@ -53,6 +53,7 @@ export async function fetchStoredAdsDaily(
   const sql = `
     SELECT
       FORMAT_DATE('%Y-%m-%d', date_start) AS day,
+      COUNTIF(spend IS NULL) AS null_spend_rows,
       CAST(COALESCE(SUM(spend), 0) AS FLOAT64) AS spend,
       CAST(COALESCE(SUM(impressions), 0) AS INT64) AS impressions,
       CAST(COALESCE(SUM(clicks), 0) AS INT64) AS clicks,
@@ -66,6 +67,8 @@ export async function fetchStoredAdsDaily(
     ORDER BY day
   `;
   const rows = await query(sql, { adAccountId: account, dateFrom, dateTo });
+  // Linha guardada sem valor de gasto = leitura incompleta: não vale como zero (regra "indisponível não é zero", 21/10/2026).
+  if (rows.some((row) => toNumber(row.null_spend_rows) > 0)) throw new Error("Leitura de gasto incompleta no dado guardado.");
   return rows
     .map((row) => ({
       date: String(row.day ?? ""),

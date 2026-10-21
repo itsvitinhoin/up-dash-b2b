@@ -60,7 +60,7 @@ type DailyReportResponse = {
   period: { from: string; to: string };
   previousPeriod: { from: string; to: string };
   kpis: DailyMetricSet;
-  prevKpis: DailyMetricSet;
+  prevKpis: DailyMetricSet | null;
   changes: Record<keyof DailyMetricSet, number | null>;
   campaigns: Array<{
     id: string;
@@ -217,7 +217,7 @@ export default function DailyPage() {
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
 
-  const { data, isLoading, isError, refetch } = useQuery<DailyReportResponse>({
+  const { data, isLoading, isError, error, refetch } = useQuery<DailyReportResponse>({
     queryKey: ["b2c-daily-report", clientId, dateFrom, dateTo, selectedDashboardMode],
     queryFn: () => {
       const params = new URLSearchParams({ dateFrom, dateTo });
@@ -292,7 +292,9 @@ export default function DailyPage() {
       <Alert variant="destructive" data-testid="page-daily-error">
         <AlertTitle>{tx("Não foi possível carregar o relatório diário.")}</AlertTitle>
         <AlertDescription>
-          Verifique se o cliente é B2C ou Vesti e se as integrações necessárias estão configuradas.
+          {(error as { data?: { code?: string } })?.data?.code === "MEDIA_UNAVAILABLE"
+            ? tx("Investimento indisponível. Não foi possível ler a conta Meta; isso não significa gasto zero. Tente novamente.")
+            : tx("Não foi possível ler os dados do período. Tente novamente.")}
         </AlertDescription>
         <Button className="mt-4" variant="outline" onClick={() => refetch()}>
           Tentar novamente
