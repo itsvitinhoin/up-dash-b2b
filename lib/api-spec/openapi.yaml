@@ -3875,7 +3875,9 @@ components:
         kpis:
           $ref: "#/components/schemas/MarketingKpis"
         prevKpis:
-          $ref: "#/components/schemas/MarketingKpis"
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/MarketingKpis"
         leadsOverTime:
           type: array
           items:

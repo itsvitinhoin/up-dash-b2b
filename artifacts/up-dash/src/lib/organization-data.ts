@@ -40,7 +40,7 @@ type Activation = {
 type OrderTotals = { kpis: { fulfilledQuantity: number } };
 type PerformanceMetrics = {
   kpis: { cac: number | null; ctr: number; cpc: number | null };
-  // Sem Meta conectada a Performance devolve gasto 0 e CAC 0: isso nao e "custo zero", e "sem dado".
+  // Media availability gates all derived costs; unavailable never means a confirmed zero.
   sources?: { media?: { status?: string } };
 };
 const mediaConnected = (data?: PerformanceMetrics) => data?.sources?.media?.status === "connected";
@@ -109,17 +109,17 @@ export function useOrganizationData(
     utmCampaign: filters.utmCampaign || undefined,
   };
   const dashboard = useGetDashboard(dashboardParams, {
-    query: queryOpts({ enabled: enabled && wants("dashboard"), placeholderData: (previous) => previous }),
+    query: queryOpts({ enabled: enabled && wants("dashboard"), staleTime: 0, refetchOnMount: "always" }),
   });
   const marketing = useGetMarketing(period, {
-    query: queryOpts({ enabled: enabled && wants("marketing"), placeholderData: (previous) => previous }),
+    query: queryOpts({ enabled: enabled && wants("marketing"), staleTime: 0, refetchOnMount: "always" }),
   });
   const customers = useGetCustomerSummary(
     { ...period, compare: true },
-    { query: queryOpts({ enabled: enabled && wants("customers"), placeholderData: (previous) => previous }) },
+    { query: queryOpts({ enabled: enabled && wants("customers"), staleTime: 0, refetchOnMount: "always" }) },
   );
   const funnel = useGetFunnel(funnelParams, {
-    query: queryOpts({ enabled: enabled && wants("funnel"), placeholderData: (previous) => previous }),
+    query: queryOpts({ enabled: enabled && wants("funnel"), staleTime: 0, refetchOnMount: "always" }),
   });
 
   // Universo da Recompra = o MESMO dos cartões do topo do Dashboard (conferido em 10 clientes, 09/set a 08/out):
@@ -182,7 +182,7 @@ export function useOrganizationData(
   const previousRecompra = usePreviousPeriodQuery<RecompraResponse>(periodQuery("/api/analytics/recompra/dashboard", recompraQuery), heavyEnabled && wantsPrevious("recompra") && recompra.data !== undefined);
 
   const d = dashboard.data?.kpis,
-    m = marketing.data?.kpis,
+    m = marketing.isError ? undefined : marketing.data?.kpis,
     c = customers.data?.kpis;
   const r = recompra.data?.blocks;
   const activation = (
@@ -190,10 +190,10 @@ export function useOrganizationData(
       | (typeof funnel.data & { activation?: Activation })
       | undefined
   )?.activation;
-  const meta = marketing.data?.platformBreakdown.find(
+  const meta = (marketing.isError ? undefined : marketing.data)?.platformBreakdown.find(
     (p) => p.platform === "META",
   );
-  const google = marketing.data?.platformBreakdown.find(
+  const google = (marketing.isError ? undefined : marketing.data)?.platformBreakdown.find(
     (p) => p.platform === "GOOGLE",
   );
   const measures: Record<string, OrganizedMetric> = {};
@@ -206,7 +206,7 @@ export function useOrganizationData(
     loading = false,
     series?: number[],
   ) {
-    measures[key] = { key, label: tx(label), value, format, source: source ? tx(source) : source, loading, series };
+    measures[key] = { info: marketing.isError && ["spend", "totalSpend", "metaSpend", "googleSpend", "roas"].includes(key) ? tx("Não foi possível ler o investimento. Tente novamente; indisponível não significa gasto zero.") : undefined, key, label: tx(label), value, format, source: source ? tx(source) : source, loading, series };
   }
   put(
     "revenue",
@@ -477,7 +477,7 @@ export function useOrganizationData(
     "currency",
     "Meta · Performance",
   );
-  const pd = dashboard.data?.prevKpis, pm = marketing.data?.prevKpis, pc = customers.data?.prevKpis;
+  const pd = dashboard.data?.prevKpis, pm = marketing.isError ? undefined : marketing.data?.prevKpis, pc = customers.data?.prevKpis;
   const pr = previousRecompra.data?.blocks;
   const previousMeta = previousMarketing.data?.platformBreakdown.find(row => row.platform === "META");
   const previousGoogle = previousMarketing.data?.platformBreakdown.find(row => row.platform === "GOOGLE");

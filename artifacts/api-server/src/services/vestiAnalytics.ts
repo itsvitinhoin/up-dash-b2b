@@ -2027,12 +2027,12 @@ function vestiPctChange(current: number, previous: number): number | null {
 
 function vestiDailyHeuristic(params: {
   kpis: VestiDailyMetricSet;
-  prevKpis: VestiDailyMetricSet;
+  prevKpis: VestiDailyMetricSet | null;
   campaigns: Array<{ name: string; spend: number; roas: number; purchases: number }>;
   breakdown: VestiDailyBreakdown;
 }): { generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" } {
-  const revenueChange = vestiPctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue);
-  const salesChange = vestiPctChange(params.kpis.sales, params.prevKpis.sales);
+  const revenueChange = params.prevKpis ? vestiPctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue) : null;
+  const salesChange = params.prevKpis ? vestiPctChange(params.kpis.sales, params.prevKpis.sales) : null;
   const topCampaign = params.campaigns[0];
   const topProduct = params.breakdown.products[0];
   const topCategory = params.breakdown.categories[0];
@@ -2064,13 +2064,13 @@ export async function generateVestiDailyReportText(params: {
   dateFrom: string;
   dateTo: string;
   kpis: VestiDailyMetricSet;
-  prevKpis: VestiDailyMetricSet;
+  prevKpis: VestiDailyMetricSet | null;
   campaigns: Array<{ name: string; spend: number; purchases: number; revenue: number; roas: number; cpa: number }>;
   breakdown: VestiDailyBreakdown;
 }): Promise<{ generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" }> {
   const heuristic = vestiDailyHeuristic(params);
   const ai = getOpenAIClient();
-  if (!ai || !isAIConfigured()) return heuristic;
+  if (!ai || !isAIConfigured() || !params.prevKpis) return heuristic;
 
   try {
     const completion = await ai.chat.completions.create({
@@ -3200,6 +3200,8 @@ export async function fetchVestiMetaSpendFromBigQuery(
 ): Promise<VestiMetaSpendSummary> {
   const query = `
     SELECT
+      COUNT(*) AS source_rows,
+      COUNT(spend) AS spend_rows,
       COALESCE(SUM(spend), 0) AS spend,
       COALESCE(SUM(leads_qty), 0) AS leads,
       COALESCE(SUM(purchases_qty), 0) AS purchases,
@@ -3210,6 +3212,7 @@ export async function fetchVestiMetaSpendFromBigQuery(
   `;
   const [rows] = await bigquery.query({ query, params: { adAccountId, dateFrom, dateTo } });
   const row = (rows as Array<Record<string, unknown>>)[0];
+  if (Number(row?.source_rows ?? 0) === 0 || Number(row?.spend_rows) !== Number(row?.source_rows) || !Number.isFinite(Number(row?.spend))) throw new Error("Sem leitura completa de mídia disponível no período.");
   return {
     spend: Number(row?.spend) || 0,
     leads: Number(row?.leads) || 0,

@@ -1,3 +1,4 @@
+import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
 import { Router, type IRouter } from "express";
 import { and, asc, desc, eq, gte, isNull, lte, sql, ilike, or, inArray, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -77,7 +78,7 @@ import {
   utmInsight,
   type InsightLanguage,
 } from "../services/insight-text";
-import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
+import { MediaReadError, fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
 import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
 import * as vestiDashboardController from "../controllers/vestiDashboardController";
 import * as vestiOrdersController from "../controllers/vestiOrdersController";
@@ -95,7 +96,6 @@ import {
 import { getUpzeroAnalyticsFactsAsMetrics, getUpzeroAnalyticsFactsByEvent, getUpzeroFactActorsByDay } from "../services/upzero/analytics-facts";
 import { buildFunnelSteps, countFunnelPeople, FUNNEL_EVENT_NAMES, funnelActorKey, worstFunnelStep, type FunnelStepKey } from "../services/funnel-people";
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
-import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
 import { normalizeCampaignText, isPaidCampaignSignal, latestCampaignEvidenceBefore } from "../services/campaign-attribution";
 import { syncPaidTouchpointsForCustomer } from "../services/paid-touchpoints";
@@ -162,7 +162,9 @@ function shouldCacheAnalyticsRequest(req: import("express").Request): boolean {
   if (req.method !== "GET") return false;
   if (ANALYTICS_RESPONSE_CACHE_TTL_MS <= 0) return false;
   if (!req.path.startsWith("/analytics/")) return false;
-  if (req.path === "/analytics/insight") return false;
+  if (["/analytics/insight", "/analytics/dashboard", "/analytics/daily-report",
+    "/analytics/marketing", "/analytics/funnel", "/analytics/customers",
+    "/analytics/customers/summary", "/analytics/campaign-customers"].includes(req.path)) return false;
   if (req.path.includes("/debug")) return false;
   return true;
 }
@@ -182,6 +184,7 @@ function pruneAnalyticsResponseCache(): void {
 
 router.use((req, res, next) => {
   if (!shouldCacheAnalyticsRequest(req)) {
+    res.setHeader("Cache-Control", "private, no-store");
     next();
     return;
   }
@@ -229,26 +232,12 @@ import {
   requireClient,
 } from "../lib/httpQuery";
 
-function utcDateOnlyStart(value: string): Date {
-  return new Date(`${value}T00:00:00.000Z`);
-}
-
-function utcDateOnlyEnd(value: string): Date {
-  return new Date(`${value}T23:59:59.999Z`);
-}
-
 function customerDateQueryRange(
-  query: Record<string, unknown>,
+  _query: Record<string, unknown>,
   dateFrom: Date | undefined,
   dateTo: Date | undefined,
 ): { from: Date | undefined; to: Date | undefined } {
-  const rawFrom = typeof query.dateFrom === "string" ? query.dateFrom : null;
-  const rawTo = typeof query.dateTo === "string" ? query.dateTo : null;
-
-  return {
-    from: rawFrom && DATE_ONLY_RE.test(rawFrom) ? utcDateOnlyStart(rawFrom) : dateFrom,
-    to: rawTo && DATE_ONLY_RE.test(rawTo) ? utcDateOnlyEnd(rawTo) : dateTo,
-  };
+  return { from: dateFrom, to: dateTo };
 }
 
 function getGlobalMetaAccessToken(fallback?: string | null): string | null {
@@ -1269,7 +1258,6 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     salesBySize: DashboardSalesBreakdown[];
     traffic: DashboardTraffic;
     dailyPerformance: DashboardDailyPerformance[];
-    metricRows?: DailyMetricRow[];
   };
 
   // The prior window only needs the data the client renders for comparison
@@ -1409,11 +1397,11 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
         : Promise.resolve(null),
       db
         .select({
-          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          revenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
           orders: sql<number>`COUNT(*)::int`,
         })
         .from(ordersTable)
-        .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`)),
+        .where(and(baseOrderWhere, paidOrderStatus())),
       db
         .select({ total: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float` })
         .from(ordersTable)
@@ -1516,13 +1504,13 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
           GROUP BY ${ordersTable.customerId}
         )
         SELECT
-          to_char(date_trunc('day', period_orders.created_at), 'YYYY-MM-DD') AS date,
+          to_char(date(timezone('America/Sao_Paulo', period_orders.created_at)), 'YYYY-MM-DD') AS date,
           COUNT(DISTINCT period_orders.customer_id) FILTER (WHERE COALESCE(order_history.total_orders, 0) <= 1)::int AS new_buyers,
           COUNT(DISTINCT period_orders.customer_id) FILTER (WHERE COALESCE(order_history.total_orders, 0) > 1)::int AS returning_buyers
         FROM period_orders
         INNER JOIN order_history ON order_history.customer_id = period_orders.customer_id
-        GROUP BY date_trunc('day', period_orders.created_at)
-        ORDER BY date_trunc('day', period_orders.created_at)
+        GROUP BY date(timezone('America/Sao_Paulo', period_orders.created_at))
+        ORDER BY date(timezone('America/Sao_Paulo', period_orders.created_at))
       `);
       const buyerDailyRows = (buyerDailyRaw.rows ?? buyerDailyRaw) as unknown as BuyerDailyRow[];
       dailyNewBuyers = buyerDailyRows.map((row) => ({ date: row.date, value: Number(row.new_buyers) || 0 }));
@@ -1567,28 +1555,28 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
 
     const dailyRevenue = await db
       .select({
-        date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
-        value: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+        date: sql<string>`to_char(date(timezone('America/Sao_Paulo', ${ordersTable.createdAt})), 'YYYY-MM-DD')`,
+        value: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
       })
       .from(ordersTable)
       .where(
         and(
           baseOrderWhere,
-          sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+          paidOrderStatus(),
         ),
       )
-      .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
-      .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
+      .groupBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`)
+      .orderBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`);
 
     const dailyOrders = await db
       .select({
-        date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+        date: sql<string>`to_char(date(timezone('America/Sao_Paulo', ${ordersTable.createdAt})), 'YYYY-MM-DD')`,
         value: sql<number>`COUNT(*)::float`,
       })
       .from(ordersTable)
-      .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`))
-      .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
-      .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
+      .where(and(baseOrderWhere, paidOrderStatus()))
+      .groupBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`)
+      .orderBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`);
 
     const dailyPerformance = full
       ? buildDailyPerformance({
@@ -1600,10 +1588,10 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
         })
       : [];
 
-    const dailyLeads = full
+    const dailyLeads = full && isB2CClient
       ? await db
           .select({
-            date: sql<string>`to_char(date_trunc('day', ${eventsTable.createdAt}), 'YYYY-MM-DD')`,
+            date: sql<string>`to_char(date(timezone('America/Sao_Paulo', ${eventsTable.createdAt})), 'YYYY-MM-DD')`,
             value: sql<number>`COUNT(*)::float`,
           })
           .from(eventsTable)
@@ -1615,8 +1603,17 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
               lte(eventsTable.createdAt, winTo),
             ),
           )
-          .groupBy(sql`date_trunc('day', ${eventsTable.createdAt})`)
-          .orderBy(sql`date_trunc('day', ${eventsTable.createdAt})`)
+          .groupBy(sql`date(timezone('America/Sao_Paulo', ${eventsTable.createdAt}))`)
+          .orderBy(sql`date(timezone('America/Sao_Paulo', ${eventsTable.createdAt}))`)
+      : full ? await db
+        .select({
+          date: sql<string>`to_char(date(timezone('America/Sao_Paulo', ${customersTable.createdAt})), 'YYYY-MM-DD')`,
+          value: sql<number>`COUNT(*)::float`,
+        })
+        .from(customersTable)
+        .where(and(...customerRegistrationConds))
+        .groupBy(sql`date(timezone('America/Sao_Paulo', ${customersTable.createdAt}))`)
+        .orderBy(sql`date(timezone('America/Sao_Paulo', ${customersTable.createdAt}))`)
       : [];
 
     const revenueByCategory = full
@@ -1629,7 +1626,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
           .from(orderItemsTable)
           .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
           .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
-          .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`))
+          .where(and(baseOrderWhere, paidOrderStatus()))
           .groupBy(productsTable.category)
       : [];
 
@@ -1655,7 +1652,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
             .from(orderItemsTable)
             .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
             .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
-            .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`))
+            .where(and(baseOrderWhere, paidOrderStatus()))
             .groupBy(sql`COALESCE(NULLIF(${productsTable.category}, ''), 'Sem categoria')`),
           db
             .select({
@@ -1667,7 +1664,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
             })
             .from(orderItemsTable)
             .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
-            .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`)),
+            .where(and(baseOrderWhere, paidOrderStatus())),
         ])
           .then(([categoryRows, variantRows]) => [
             mapSalesBreakdown(categoryRows),
@@ -1696,196 +1693,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     };
   };
 
-  const aggregateWindow = async (
-    winFrom: Date,
-    winTo: Date,
-    full: boolean,
-  ): Promise<WindowAggregates> => {
-    let metrics = await readDailyClientMetrics({ clientId, from: winFrom, to: winTo });
-    if (!metrics.complete) {
-      await refreshDailyClientMetrics({ clientId, from: winFrom, to: winTo });
-      metrics = await readDailyClientMetrics({ clientId, from: winFrom, to: winTo });
-    }
-
-    const rows = metrics.rows;
-    const revenue = rows.reduce((sum, row) => sum + row.approvedRevenue, 0);
-    const orders = rows.reduce((sum, row) => sum + row.approvedOrders, 0);
-    const requestedRevenue = rows.reduce((sum, row) => sum + row.requestedRevenue, 0);
-    const visits = rows.reduce((sum, row) => sum + row.visits, 0);
-    const [customerRegistrationAgg] = await db
-      .select({
-        registrations: sql<number>`COUNT(*)::int`,
-        approvals: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
-      })
-      .from(customersTable)
-      .where(
-        and(
-          eq(customersTable.clientId, clientId),
-          gte(customersTable.createdAt, winFrom),
-          lte(customersTable.createdAt, winTo),
-        ),
-      );
-    const registrations = Number(customerRegistrationAgg?.registrations) || 0;
-    const approvals = Number(customerRegistrationAgg?.approvals) || 0;
-    const newBuyers = rows.reduce((sum, row) => sum + row.newBuyers, 0);
-    const returningBuyers = rows.reduce((sum, row) => sum + row.returningBuyers, 0);
-    const totalBuyers = newBuyers + returningBuyers;
-
-    let customerAgg: { total: number; repeat: number } = { total: 0, repeat: 0 };
-    if (full) {
-      const [custRow] = await db
-        .select({
-          total: sql<number>`COUNT(*)::int`,
-          repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
-        })
-        .from(customersTable)
-        .where(eq(customersTable.clientId, clientId));
-      customerAgg = custRow;
-    }
-
-    const revenueByCategory = full
-      ? await db
-          .select({
-            category: sql<string>`COALESCE(${productsTable.category}, 'Uncategorized')`,
-            revenue: sql<number>`COALESCE(SUM(${orderItemsTable.priceAtSale} * ${orderItemsTable.quantity}), 0)::float`,
-            orders: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
-          })
-          .from(orderItemsTable)
-          .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
-          .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
-          .where(
-            and(
-              eq(ordersTable.clientId, clientId),
-              gte(ordersTable.createdAt, winFrom),
-              lte(ordersTable.createdAt, winTo),
-              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-            ),
-          )
-          .groupBy(productsTable.category)
-      : [];
-
-    const kpis: DashboardKpis = {
-      revenue,
-      orders,
-      avgTicket: orders > 0 ? revenue / orders : 0,
-      conversionRate: calculateDashboardConversionRate({
-        isB2C: false,
-        orders,
-        visits,
-        approvedLeads: approvals,
-      }),
-      approvalRate: registrations > 0 ? Math.min(100, Math.max(0, (approvals / registrations) * 100)) : 0,
-      leads: registrations,
-      approvedLeads: approvals,
-      customers: Number(customerAgg.total) || 0,
-      repeatCustomers: Number(customerAgg.repeat) || 0,
-      requestedRevenue,
-      newBuyers,
-      returningBuyers,
-      retentionPct: totalBuyers > 0 ? (returningBuyers / totalBuyers) * 100 : 0,
-    };
-
-    return {
-      kpis,
-      dailyRevenue: rows.map((row) => ({ date: row.date, value: row.approvedRevenue })),
-      dailyOrders: rows.map((row) => ({ date: row.date, value: row.approvedOrders })),
-      dailyLeads: full ? rows.map((row) => ({ date: row.date, value: row.registrations })) : [],
-      dailyNewBuyers: full ? rows.map((row) => ({ date: row.date, value: row.newBuyers })) : [],
-      dailyReturningBuyers: full ? rows.map((row) => ({ date: row.date, value: row.returningBuyers })) : [],
-      revenueByCategory,
-      salesByCategory: [],
-      salesByColor: [],
-      salesBySize: [],
-      traffic: { sessions: visits, orders, source: visits > 0 ? "events" : "none" },
-      dailyPerformance: full
-        ? rows.map((row) => ({
-            date: row.date,
-            revenue: row.approvedRevenue,
-            orders: row.approvedOrders,
-            sessions: row.visits,
-            conversionRate: row.visits > 0 ? (row.approvedOrders / row.visits) * 100 : 0,
-          }))
-        : [],
-      metricRows: rows,
-    };
-  };
-
-  const aggregateSignals = (rows: DailyMetricRow[]): DashboardSignal[] => {
-    const totalVisits = rows.reduce((sum, row) => sum + row.visits, 0);
-    const ratesByDay = rows
-      .filter((row) => row.visits >= 5)
-      .map((row) => row.purchases / row.visits)
-      .sort((a, b) => a - b);
-    if (totalVisits < 50 || ratesByDay.length < 3) return [];
-    const p20idx = Math.max(0, Math.floor(ratesByDay.length * 0.2) - 1);
-    const p20rate = ratesByDay[p20idx]!;
-    const medianRate = ratesByDay[Math.floor(ratesByDay.length / 2)]!;
-    if (p20rate >= 0.02) return [];
-    return [{
-      type: "high_traffic_low_sales",
-      severity: p20rate < 0.005 ? "critical" : "warning",
-      title: "High traffic, low conversion",
-      body: `The bottom 20% of trading days convert at just ${(p20rate * 100).toFixed(1)}% visits→purchases (period median: ${(medianRate * 100).toFixed(1)}%). Review checkout flow, pricing, or catalog relevance.`,
-      meta: {
-        p20ConversionPct: +(p20rate * 100).toFixed(2),
-        medianConversionPct: +(medianRate * 100).toFixed(2),
-        totalVisits,
-      },
-    }];
-  };
-
-  const canUseDailyAggregates =
-    !isB2CClient &&
-    !category &&
-    !sellerId &&
-    !channel &&
-    !segment &&
-    !utmSourceFilter &&
-    !utmMediumFilter &&
-    !utmCampaignFilter;
-
-  if (canUseDailyAggregates) {
-    try {
-      const current = await aggregateWindow(from, to, true);
-      let prev: WindowAggregates | null = null;
-      if (compare) {
-        const lengthMs = to.getTime() - from.getTime();
-        const prevTo = new Date(from.getTime() - 1);
-        const prevFrom = new Date(prevTo.getTime() - lengthMs);
-        prev = await aggregateWindow(prevFrom, prevTo, false);
-      }
-
-      res.setHeader("X-UPDash-Aggregates", "daily_client_metrics");
-      res.json(
-        GetDashboardResponse.parse({
-          kpis: current.kpis,
-          revenueOverTime: current.dailyRevenue,
-          ordersOverTime: current.dailyOrders,
-          leadsOverTime: current.dailyLeads,
-          revenueByCategory: current.revenueByCategory,
-          salesByCategory: current.salesByCategory,
-          salesByColor: current.salesByColor,
-          salesBySize: current.salesBySize,
-          newBuyersOverTime: current.dailyNewBuyers,
-          returningBuyersOverTime: current.dailyReturningBuyers,
-          traffic: current.traffic,
-          dailyPerformance: current.dailyPerformance,
-          signals: aggregateSignals(current.metricRows ?? []),
-          ...(prev
-            ? {
-                prevKpis: prev.kpis,
-                prevRevenueOverTime: prev.dailyRevenue,
-                prevOrdersOverTime: prev.dailyOrders,
-              }
-            : {}),
-        }),
-      );
-      return;
-    } catch (err) {
-      console.warn("[dashboard] daily aggregates unavailable; falling back:", err instanceof Error ? err.message : err);
-    }
-  }
-
+  // Headline metrics and series read current facts, as do Clientes, Diário and Funil.
+  // A precomputed row being present does not mean it includes later syncs/status changes.
   const current = await computeWindow(from, to, true, dateFromOnly, dateToOnly);
 
   // Equivalent prior window: same length, ending the day before `from`.
@@ -1922,7 +1731,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
           sql`${eventsTable.eventType} IN ('VISIT', 'PURCHASE')`,
         ),
       )
-      .groupBy(sql`date_trunc('day', ${eventsTable.createdAt})`);
+      .groupBy(sql`date(timezone('America/Sao_Paulo', ${eventsTable.createdAt}))`);
 
     const totalVisits = dailyConvRows.reduce((s, r) => s + Number(r.visits), 0);
     // Only consider days with enough traffic to be statistically meaningful.
@@ -1960,7 +1769,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       db
         .select({
           state: customersTable.state,
-          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          revenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
         })
         .from(ordersTable)
         .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
@@ -1969,7 +1778,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
             eq(ordersTable.clientId, clientId),
             gte(ordersTable.createdAt, winFrom),
             lte(ordersTable.createdAt, winTo),
-            sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+            paidOrderStatus(),
           ),
         )
         .groupBy(customersTable.state);
@@ -2975,30 +2784,13 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       new Set(allRows.flatMap((row) => row.campaigns.map((campaign) => campaign.campaign)).filter((value): value is string => !!value)),
     ).sort();
     const customerTypes = Array.from(new Set(allRows.map((row) => row.type).filter((value): value is string => !!value))).sort();
-    const creativeRows = await db
-      .select()
-      .from(creativesTable)
-      .where(eq(creativesTable.clientId, clientId));
-    const cachedInvestment = creativeRows.reduce(
-      (sum, creative) => sum + creative.spend * computeSpendOverlapFraction(creative, from, to),
-      0,
-    );
-    const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
-    let investment = cachedInvestment;
-    if (metaAccessToken && client?.metaAdAccountId) {
-      try {
-        const metaCurrent = await fetchMetaMarketingData({
-          accessToken: metaAccessToken,
-          adAccountId: client.metaAdAccountId,
-          since: from.toISOString().slice(0, 10),
-          until: to.toISOString().slice(0, 10),
-        });
-        investment = metaCurrent.summary.spend;
-        await upsertMetaCreatives(clientId, metaCurrent.ads);
-      } catch (err) {
-        console.warn("[campaign-customers] Meta spend fetch failed:", err instanceof Error ? err.message : err);
-      }
-    }
+    const metaCurrent = await fetchMetaMarketingData({
+      accessToken: getGlobalMetaAccessToken(client?.metaAdsApiKey) ?? "",
+      adAccountId: client?.metaAdAccountId ?? "",
+      since: saoPauloDateOnly(from),
+      until: saoPauloDateOnly(to),
+    });
+    const investment = metaCurrent.summary.spend;
     const requestedValue = filteredRows.reduce((sum, row) => sum + row.totalPurchaseValue, 0);
     const fulfilledValue = filteredRows.reduce((sum, row) => sum + row.totalFulfilledPurchaseValue, 0);
 
@@ -3024,6 +2816,10 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       },
     });
   } catch (err) {
+    if (err instanceof MediaReadError) {
+      res.status(err.status).json({ error: true, code: err.code, message: err.message, status: err.status });
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     res.status(502).json({
       error: true,
@@ -3454,7 +3250,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     return parts;
   };
   // Cadastros e aprovados vêm da base de clientes (é a fonte de verdade); compradores, dos pedidos pagos.
-  // Mesma janela da página Cadastros (customerDateQueryRange): antes o funil dava 748 onde Cadastros dava 749.
+  // Same Brasília creation-date cohort as Dashboard and Cadastros; approvals use current status.
   const customerWindow = (() => {
     const range = customerDateQueryRange(rawQuery, parsed.data.dateFrom, parsed.data.dateTo);
     return dateRange(range.from, range.to);
@@ -3523,8 +3319,8 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     const [customerTotals, paidBuyers] = await Promise.all([loadCustomerTotals(), loadPaidBuyers()]);
     const counts: Partial<Record<FunnelStepKey, number>> = {
       ...people.counts,
-      // O cadastro da base nunca pode ficar abaixo do que foi rastreado nem dos aprovados; compra, idem com os pedidos pagos.
-      REGISTRATION: Math.max(people.counts.REGISTRATION, customerTotals.registrations),
+      // Tracking is diagnostic; it never replaces the registration cohort. Purchases retain their paid-order guard.
+      REGISTRATION: customerTotals.registrations,
       APPROVED_REGISTRATION: customerTotals.approved,
       PURCHASE: Math.max(people.counts.PURCHASE, paidBuyers ?? 0),
     };
@@ -3685,8 +3481,8 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
           .where(
             and(
               eq(siteVisitsTable.clientId, clientId),
-              gte(siteVisitsTable.visitDate, from.toISOString().slice(0, 10)),
-              lte(siteVisitsTable.visitDate, to.toISOString().slice(0, 10)),
+              gte(siteVisitsTable.visitDate, saoPauloDateOnly(from)),
+              lte(siteVisitsTable.visitDate, saoPauloDateOnly(to)),
             ),
           )
       : Promise.resolve([{ total: 0 }]),
@@ -3697,7 +3493,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     counts[row.eventType as FunnelStepKey] = Number(row.count);
   }
   const [customerTotals, paidBuyers] = await Promise.all([loadCustomerTotals(), loadPaidBuyers()]);
-  counts.REGISTRATION = Math.max(counts.REGISTRATION ?? 0, customerTotals.registrations);
+  counts.REGISTRATION = customerTotals.registrations;
   counts.APPROVED_REGISTRATION = customerTotals.approved;
   counts.PURCHASE = Math.max(counts.PURCHASE ?? 0, paidBuyers ?? 0);
 
@@ -4107,8 +3903,8 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
     : { from: new Date(0), to: new Date() };
 
   const winLenMs = to.getTime() - from.getTime();
-  const prevFrom = new Date(from.getTime() - winLenMs);
-  const prevTo = new Date(from.getTime());
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - winLenMs);
 
   const [kpis, prevKpisRaw, registrationsOverTime, registrationsByState, registrationsBySource] =
     await Promise.all([
@@ -4116,7 +3912,7 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
       compare && hasExplicitRange ? computeSummaryKpis(clientId, prevFrom, prevTo) : null,
       db
         .select({
-          date: sql<string>`to_char(date_trunc('day', ${customersTable.createdAt}), 'YYYY-MM-DD')`,
+          date: sql<string>`to_char(date(timezone('America/Sao_Paulo', ${customersTable.createdAt})), 'YYYY-MM-DD')`,
           registrations: sql<number>`count(*)::int`,
           approved: sql<number>`sum(case when ${customersTable.registrationStatus} = 'APPROVED' then 1 else 0 end)::int`,
         })
@@ -4128,8 +3924,8 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
             lte(customersTable.createdAt, to),
           ),
         )
-        .groupBy(sql`date_trunc('day', ${customersTable.createdAt})`)
-        .orderBy(sql`date_trunc('day', ${customersTable.createdAt})`),
+        .groupBy(sql`date(timezone('America/Sao_Paulo', ${customersTable.createdAt}))`)
+        .orderBy(sql`date(timezone('America/Sao_Paulo', ${customersTable.createdAt}))`),
       db
         .select({
           state: sql<string>`coalesce(${customersTable.state}, 'Unknown')`,
@@ -7263,34 +7059,23 @@ async function buildInsightContext(
 
 // ── Marketing-specific insight context ───────────────────────────────────────
 async function buildMarketingInsightContext(clientId: string, from: Date, to: Date) {
-  const creatives = await db
-    .select()
-    .from(creativesTable)
-    .where(eq(creativesTable.clientId, clientId));
-
-  const activeCreatives = creatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
-  const kpis = await computeMarketingKpis(clientId, activeCreatives, from, to);
-
-  // Previous period for trend
+  const [client] = await db.select({ name: clientsTable.name, dashboardType: clientsTable.dashboardType,
+    metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .from(clientsTable).where(eq(clientsTable.id, clientId));
   const span = to.getTime() - from.getTime();
   const prevTo = new Date(from.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - span);
-  const prevActive = creatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0);
-  const prevKpis = await computeMarketingKpis(clientId, prevActive, prevFrom, prevTo);
-
+  const credentials = {accessToken: getGlobalMetaAccessToken(client?.metaAdsApiKey) ?? "", adAccountId: client?.metaAdAccountId ?? ""};
+  const [current, previous] = await Promise.all([
+    fetchMetaMarketingData({...credentials, since:saoPauloDateOnly(from),until:saoPauloDateOnly(to)}),
+    fetchMetaMarketingData({...credentials, since:saoPauloDateOnly(prevFrom),until:saoPauloDateOnly(prevTo)}),
+  ]);
+  const [kpis, prevKpis] = await Promise.all([
+    computeMarketingKpis(clientId, from, to, current, client?.dashboardType === "B2C"),
+    computeMarketingKpis(clientId, prevFrom, prevTo, previous, client?.dashboardType === "B2C"),
+  ]);
   const roasTrend = prevKpis.roas > 0 ? (kpis.roas - prevKpis.roas) / prevKpis.roas : 0;
-
-  // Top platform by spend
-  const platformTotals: Record<string, number> = {};
-  for (const c of activeCreatives) {
-    const fraction = computeSpendOverlapFraction(c, from, to);
-    platformTotals[c.platform] = (platformTotals[c.platform] ?? 0) + c.spend * fraction;
-  }
-  const topPlatform = Object.entries(platformTotals).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "n/a";
-
-  const [brand] = await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId));
-
-  return { kpis, prevKpis, roasTrend, topPlatform, brand: brand?.name ?? "the brand" };
+  return { kpis, prevKpis, roasTrend, topPlatform: "Meta", brand: client?.name ?? "the brand" };
 }
 
 async function generateInsight(
@@ -10302,10 +10087,10 @@ type Creative = typeof creativesTable.$inferSelect;
  */
 function computeSpendOverlapFraction(creative: Creative, from: Date, to: Date): number {
   if (!creative.activeFrom || !creative.activeTo) return 1;
-  const cFrom = new Date(creative.activeFrom as string);
-  const cTo = new Date(creative.activeTo as string);
+  const cFrom = saoPauloDateOnlyStart(String(creative.activeFrom).slice(0, 10));
+  const cTo = new Date(saoPauloDateOnlyEnd(String(creative.activeTo).slice(0, 10)).getTime() + 1);
   const campaignMs = Math.max(1, cTo.getTime() - cFrom.getTime());
-  const overlapMs = Math.max(0, Math.min(to.getTime(), cTo.getTime()) - Math.max(from.getTime(), cFrom.getTime()));
+  const overlapMs = Math.max(0, Math.min(to.getTime() + 1, cTo.getTime()) - Math.max(from.getTime(), cFrom.getTime()));
   return overlapMs / campaignMs;
 }
 
@@ -10425,7 +10210,7 @@ function buildMetaCampaignMetrics(campaigns: MetaAdMetric[]) {
 }
 
 function buildMetaPlatformBreakdown(campaigns: MetaAdMetric[]) {
-  const spend = campaigns.reduce((sum, campaign) => sum + campaign.spend, 0);
+  const spend = campaigns.reduce((sum, campaign) => sum + Math.round(campaign.spend * 100), 0) / 100;
   const leads = campaigns.reduce((sum, campaign) => sum + campaign.leads, 0);
   const purchases = campaigns.reduce((sum, campaign) => sum + campaign.purchases, 0);
   const clicks = campaigns.reduce((sum, campaign) => sum + campaign.clicks, 0);
@@ -10447,23 +10232,17 @@ function buildMetaPlatformBreakdown(campaigns: MetaAdMetric[]) {
 
 async function computeMarketingKpis(
   clientId: string,
-  creatives: Creative[],
   from: Date,
   to: Date,
-  meta?: MetaMarketingData | null,
+  meta: MetaMarketingData,
   isB2CClient = false,
 ) {
-  const creativeSpend = creatives.reduce((s, c) => s + c.spend * computeSpendOverlapFraction(c, from, to), 0);
-  const totalSpend = meta ? meta.summary.spend : creativeSpend;
+  const totalSpend = meta.summary.spend;
 
-  // Requested revenue: all order amounts requested in the period, regardless
-  // of final approval/shipping status. This mirrors the dashboard's
-  // requestedRevenue KPI and keeps marketing ROA aligned with demand generated.
+  // Same paid-order creation cohort as Dashboard, Clientes and Diário.
   const [orderRow] = await db
     .select({
-      revenue: isB2CClient
-        ? sql<number>`COALESCE(SUM(${ordersTable.fulfilledAmount}), 0)::float`
-        : sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+      revenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
       orders: sql<number>`COUNT(*)::int`,
     })
     .from(ordersTable)
@@ -10472,7 +10251,7 @@ async function computeMarketingKpis(
         eq(ordersTable.clientId, clientId),
         gte(ordersTable.createdAt, from),
         lte(ordersTable.createdAt, to),
-        ...(isB2CClient ? [sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`] : []),
+        paidOrderStatus(),
       ),
     );
   const attributedRevenue = Number(orderRow?.revenue) || 0;
@@ -10495,7 +10274,7 @@ async function computeMarketingKpis(
   const totalLeads = Number(registrationRow?.totalLeads) || 0;
   const approvedLeads = Number(registrationRow?.approvedLeads) || 0;
   const approvalRate = totalLeads > 0 ? (approvedLeads / totalLeads) * 100 : 0;
-  const metaLeads = meta?.summary.leads ?? creatives.reduce((s, c) => s + c.leads * computeSpendOverlapFraction(c, from, to), 0);
+  const metaLeads = meta.summary.leads;
 
   return {
     totalSpend,
@@ -10614,16 +10393,16 @@ function pctChange(current: number, previous: number): number | null {
 
 function dailyHeuristic(params: {
   kpis: DailyReportMetricSet;
-  prevKpis: DailyReportMetricSet;
+  prevKpis: DailyReportMetricSet | null;
   campaigns: Array<{ name: string; spend: number; roas: number; purchases: number }>;
   products: Array<{ name: string; units: number; revenue: number }>;
   categories: Array<{ name: string; units: number; revenue: number }>;
   colors: Array<{ name: string; units: number; revenue: number }>;
   sizes: Array<{ name: string; units: number; revenue: number }>;
 }): { generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" } {
-  const revenueChange = pctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue);
-  const salesChange = pctChange(params.kpis.sales, params.prevKpis.sales);
-  const roasChange = pctChange(params.kpis.roas, params.prevKpis.roas);
+  const revenueChange = params.prevKpis ? pctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue) : null;
+  const salesChange = params.prevKpis ? pctChange(params.kpis.sales, params.prevKpis.sales) : null;
+  const roasChange = params.prevKpis ? pctChange(params.kpis.roas, params.prevKpis.roas) : null;
   const topCampaign = params.campaigns[0];
   const topProduct = params.products[0];
   const topCategory = params.categories[0];
@@ -10679,7 +10458,7 @@ async function generateDailyReportText(params: {
   dateFrom: string;
   dateTo: string;
   kpis: DailyReportMetricSet;
-  prevKpis: DailyReportMetricSet;
+  prevKpis: DailyReportMetricSet | null;
   campaigns: Array<{ name: string; spend: number; purchases: number; revenue: number; roas: number; cpa: number }>;
   products: Array<{ name: string; category: string | null; units: number; revenue: number }>;
   categories: Array<{ name: string; units: number; revenue: number }>;
@@ -10688,7 +10467,7 @@ async function generateDailyReportText(params: {
 }): Promise<{ generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" }> {
   const heuristic = dailyHeuristic(params);
   const ai = getOpenAIClient();
-  if (!ai || !isAIConfigured()) return heuristic;
+  if (!ai || !isAIConfigured() || !params.prevKpis) return heuristic;
 
   const parseReportJson = (text: string): { generalAnalysis?: string; reportSummary?: unknown } | null => {
     try {
@@ -10828,11 +10607,11 @@ router.get("/analytics/daily-report", async (req, res): Promise<void> => {
     return;
   }
 
-  const paidStatus = sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`;
+  const paidStatus = paidOrderStatus();
   const metricForWindow = async (winFrom: Date, winTo: Date, mediaSpend: number): Promise<DailyReportMetricSet> => {
     const [row] = await db
       .select({
-        approvedRevenue: sql<number>`COALESCE(SUM(${ordersTable.fulfilledAmount}), 0)::float`,
+        approvedRevenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(true)}), 0)::float`,
         sales: sql<number>`COUNT(*)::int`,
       })
       .from(ordersTable)
@@ -10851,34 +10630,13 @@ router.get("/analytics/daily-report", async (req, res): Promise<void> => {
 
   const metaAccessToken = getGlobalMetaAccessToken(clientConfig.metaAdsApiKey);
   const [metaCurrent, metaPrev] = await Promise.all([
-    metaAccessToken && clientConfig.metaAdAccountId
-      ? fetchMetaMarketingData({
-          accessToken: metaAccessToken,
-          adAccountId: clientConfig.metaAdAccountId,
-          since: dateFromOnly,
-          until: dateToOnly,
-        }).catch((err) => {
-          console.warn("[daily-report] Meta current fetch failed:", err);
-          return null;
-        })
-      : Promise.resolve(null),
-    metaAccessToken && clientConfig.metaAdAccountId
-      ? fetchMetaMarketingData({
-          accessToken: metaAccessToken,
-          adAccountId: clientConfig.metaAdAccountId,
-          since: prevDateFromOnly,
-          until: prevDateToOnly,
-        }).catch((err) => {
-          console.warn("[daily-report] Meta previous fetch failed:", err);
-          return null;
-        })
-      : Promise.resolve(null),
+    fetchMetaMarketingData({ accessToken: metaAccessToken ?? "", adAccountId: clientConfig.metaAdAccountId ?? "", since: dateFromOnly, until: dateToOnly }),
+    fetchMetaMarketingData({ accessToken: metaAccessToken ?? "", adAccountId: clientConfig.metaAdAccountId ?? "", since: prevDateFromOnly, until: prevDateToOnly }).catch(() => null),
   ]);
-  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
 
   const [kpis, prevKpis, productRows, categoryRows, colorRows, sizeRows] = await Promise.all([
-    metricForWindow(from, to, metaCurrent?.summary.spend ?? 0),
-    metricForWindow(prevFrom, prevTo, metaPrev?.summary.spend ?? 0),
+    metricForWindow(from, to, metaCurrent.summary.spend),
+    metaPrev ? metricForWindow(prevFrom, prevTo, metaPrev.summary.spend) : Promise.resolve(null),
     db
       .select({
         name: productsTable.name,
@@ -10976,12 +10734,12 @@ router.get("/analytics/daily-report", async (req, res): Promise<void> => {
     kpis,
     prevKpis,
     changes: {
-      approvedRevenue: pctChange(kpis.approvedRevenue, prevKpis.approvedRevenue),
-      sales: pctChange(kpis.sales, prevKpis.sales),
-      avgTicket: pctChange(kpis.avgTicket, prevKpis.avgTicket),
-      costPerPurchase: pctChange(kpis.costPerPurchase, prevKpis.costPerPurchase),
-      mediaSpend: pctChange(kpis.mediaSpend, prevKpis.mediaSpend),
-      roas: pctChange(kpis.roas, prevKpis.roas),
+      approvedRevenue: prevKpis ? pctChange(kpis.approvedRevenue, prevKpis.approvedRevenue) : null,
+      sales: prevKpis ? pctChange(kpis.sales, prevKpis.sales) : null,
+      avgTicket: prevKpis ? pctChange(kpis.avgTicket, prevKpis.avgTicket) : null,
+      costPerPurchase: prevKpis ? pctChange(kpis.costPerPurchase, prevKpis.costPerPurchase) : null,
+      mediaSpend: prevKpis ? pctChange(kpis.mediaSpend, prevKpis.mediaSpend) : null,
+      roas: prevKpis ? pctChange(kpis.roas, prevKpis.roas) : null,
     },
     campaigns,
     products,
@@ -11545,8 +11303,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   }
 
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
-  const since = from.toISOString().slice(0, 10);
-  const until = to.toISOString().slice(0, 10);
+  const since = queryDateOnly(req.query as Record<string, unknown>, "dateFrom", from);
+  const until = queryDateOnly(req.query as Record<string, unknown>, "dateTo", to);
   const creativesPage = (parsed.data as Record<string, unknown>).creativesPage as number | undefined ?? 1;
   const creativesPageSize = (parsed.data as Record<string, unknown>).creativesPageSize as number | undefined ?? 20;
   const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
@@ -11557,8 +11315,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const periodMs = to.getTime() - from.getTime();
   const prevTo = new Date(from.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - periodMs);
-  const prevSince = prevFrom.toISOString().slice(0, 10);
-  const prevUntil = prevTo.toISOString().slice(0, 10);
+  const prevSince = saoPauloDateOnly(prevFrom);
+  const prevUntil = saoPauloDateOnly(prevTo);
 
   const [clientConfig] = await db
     .select({
@@ -11570,116 +11328,48 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     .where(eq(clientsTable.id, clientId));
   const isB2CClient = clientConfig?.dashboardType === "B2C";
 
-  let metaCurrent: MetaMarketingData | null = null;
-  let metaPrev: MetaMarketingData | null = null;
   const metaAccessToken = getGlobalMetaAccessToken(clientConfig?.metaAdsApiKey);
-  if (metaAccessToken && clientConfig?.metaAdAccountId) {
-    try {
-      [metaCurrent, metaPrev] = await Promise.all([
-        fetchMetaMarketingData({
-          accessToken: metaAccessToken,
-          adAccountId: clientConfig.metaAdAccountId,
-          since,
-          until,
-        }),
-        fetchMetaMarketingData({
-          accessToken: metaAccessToken,
-          adAccountId: clientConfig.metaAdAccountId,
-          since: prevSince,
-          until: prevUntil,
-        }),
-      ]);
-      await upsertMetaCreatives(clientId, metaCurrent.ads);
-    } catch (err) {
-      console.warn("[marketing] Meta insights fetch failed:", err);
-      metaCurrent = null;
-      metaPrev = null;
-    }
-  }
-
-  // All creatives for the client; sorted by prorated spend descending
-  const rawCreatives = await db
-    .select()
-    .from(creativesTable)
-    .where(eq(creativesTable.clientId, clientId))
-    .orderBy(desc(creativesTable.spend));
-
-  // Apply client-side filters: utmSource → platform match, creative → name contains
-  const allCreatives = rawCreatives.filter((c) => {
-    if (utmSrc && (c.platform ?? "").toLowerCase() !== utmSrc.toLowerCase()) return false;
-    if (creativeFilt && !c.name.toLowerCase().includes(creativeFilt.toLowerCase())) return false;
-    return true;
-  });
-
-  // Only creatives active (overlapping) in the current window
-  const creatives = allCreatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
-  const metaCampaigns = metaCurrent && metaSourceMatchesFilter(utmSrc)
-    ? metaCurrent.campaigns
-      .filter((campaign) => !creativeFilt || campaign.name.toLowerCase().includes(creativeFilt.toLowerCase()))
-      .sort((a, b) => b.spend - a.spend)
-    : null;
-  const creativesTotal = metaCampaigns ? metaCampaigns.length : creatives.length;
-
-  // Apply server-side pagination to the creatives slice passed to buildCreativeMetrics
+  if (utmSrc && !metaSourceMatchesFilter(utmSrc)) throw new MediaReadError();
+  const [metaCurrent, metaPrev] = await Promise.all([
+    fetchMetaMarketingData({ accessToken: metaAccessToken ?? "", adAccountId: clientConfig?.metaAdAccountId ?? "", since, until, campaignName: creativeFilt }),
+    fetchMetaMarketingData({ accessToken: metaAccessToken ?? "", adAccountId: clientConfig?.metaAdAccountId ?? "", since: prevSince, until: prevUntil, campaignName: creativeFilt })
+      .catch(() => null),
+  ]);
+  const metaCampaigns = [...metaCurrent.campaigns].sort((a, b) => b.spend - a.spend);
+  const creativesTotal = metaCampaigns.length;
   const offset = (creativesPage - 1) * creativesPageSize;
-  const pagedCreatives = creatives.slice(offset, offset + creativesPageSize);
-  const pagedMetaCampaigns = metaCampaigns?.slice(offset, offset + creativesPageSize) ?? null;
+  const pagedMetaCampaigns = metaCampaigns.slice(offset, offset + creativesPageSize);
 
   const [kpis, prevKpis] = await Promise.all([
-    computeMarketingKpis(clientId, creatives, from, to, metaCurrent, isB2CClient),
-    computeMarketingKpis(clientId, allCreatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0), prevFrom, prevTo, metaPrev, isB2CClient),
+    computeMarketingKpis(clientId, from, to, metaCurrent, isB2CClient),
+    metaPrev ? computeMarketingKpis(clientId, prevFrom, prevTo, metaPrev, isB2CClient) : Promise.resolve(null),
   ]);
 
-  const leadsRows = metaCurrent
-    ? metaCurrent.daily.map((point) => ({ date: point.date, value: point.leads }))
-    : await db
-      .select({
-        date: sql<string>`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')::text`,
-        value: sql<number>`COUNT(*)::int`,
-      })
-      .from(eventsTable)
-      .innerJoin(customersTable, eq(eventsTable.customerId, customersTable.id))
-      .where(
-        and(
-          eq(eventsTable.clientId, clientId),
-          gte(eventsTable.createdAt, from),
-          lte(eventsTable.createdAt, to),
-          sql`${eventsTable.eventType} = 'REGISTRATION'`,
-          utmSrc
-            ? sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`
-            : sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
-          ...(utmMed ? [sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`] : []),
-        ),
-      )
-      .groupBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`)
-      .orderBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`);
+  const leadsRows = metaCurrent.daily.map((point) => ({ date: point.date, value: point.leads }));
 
-  // Daily series: requested revenue
+  // Paid revenue series uses the same cohort and money as the cards.
   const revenueRows = await db
     .select({
-      date: sql<string>`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')::text`,
-      value: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+      date: sql<string>`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))::text`,
+      value: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
     })
     .from(ordersTable)
-    .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
     .where(
       and(
         eq(ordersTable.clientId, clientId),
+        paidOrderStatus(),
         gte(ordersTable.createdAt, from),
         lte(ordersTable.createdAt, to),
       ),
     )
-    .groupBy(sql`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')`)
-    .orderBy(sql`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')`);
+    .groupBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`)
+    .orderBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`);
 
   const totalProratedSpend = kpis.totalSpend;
-  const attrRevForCreatives = kpis.attributedRevenue;
 
   const [spendOverTime, stateBreakdown] = await Promise.all([
     Promise.resolve(
-      metaCurrent
-        ? metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend }))
-        : buildSpendOverTime(creatives, from, to),
+      metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend })),
     ),
     buildStateBreakdown(clientId, from, to, totalProratedSpend),
   ]);
@@ -11702,12 +11392,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     revenueOverTime: revenueRows,
     spendOverTime,
     topCreatives: responseTopCreatives,
-    creatives: pagedMetaCampaigns
-      ? buildMetaCampaignMetrics(pagedMetaCampaigns)
-      : buildCreativeMetrics(pagedCreatives, attrRevForCreatives, totalProratedSpend, from, to),
-    platformBreakdown: metaCampaigns
-      ? buildMetaPlatformBreakdown(metaCampaigns)
-      : buildPlatformBreakdown(creatives, attrRevForCreatives, totalProratedSpend, from, to),
+    creatives: buildMetaCampaignMetrics(pagedMetaCampaigns),
+    platformBreakdown: buildMetaPlatformBreakdown(metaCampaigns),
     stateBreakdown,
     ageBreakdown: buildAgeBreakdown(),
     creativesTotal,

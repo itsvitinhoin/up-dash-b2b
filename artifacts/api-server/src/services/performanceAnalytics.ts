@@ -101,7 +101,7 @@ export type PerformanceDashboard = {
     returnAmount: number;
     attributedRevenue: number;
     unattributedRevenue: number;
-    mediaSpend: number;
+    mediaSpend: number | null;
     roas: number | null;
     mer: number | null;
     cogs: number;
@@ -785,7 +785,7 @@ export async function fetchPerformanceDashboard(
       returnAmount: erp.kpis.returnAmount,
       attributedRevenue,
       unattributedRevenue: Math.max(0, erp.kpis.netRevenue - attributedRevenue),
-      mediaSpend,
+      mediaSpend: mediaStatus === "connected" ? mediaSpend : null,
       roas: ratios.roas,
       mer: ratios.mer,
       cogs,

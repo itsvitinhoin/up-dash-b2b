@@ -1,3 +1,5 @@
+import { saoPauloDateOnly, coerceDateQuery as coerceClientsQuery } from "../lib/reporting-period";
+import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
 import { Router, type IRouter } from "express";
 import { and, eq, gte, ilike, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -91,31 +93,12 @@ function clientPublicFields<T extends typeof clientsTable.$inferSelect>(client: 
   };
 }
 
-// Coerce ISO date-time strings on the query before zod sees them — orval
-// generates `z.coerce.date()` for date-time params, but Express delivers
-// strings, and we want graceful fallback if either bound is missing.
-function coerceClientsQuery(query: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...query };
-  for (const key of ["dateFrom", "dateTo"]) {
-    const v = out[key];
-    if (typeof v === "string" && v.length > 0) {
-      const parsed = new Date(v);
-      if (!Number.isNaN(parsed.getTime())) {
-        if (key === "dateTo" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
-          parsed.setUTCHours(23, 59, 59, 999);
-        }
-        out[key] = parsed;
-      }
-    }
-  }
-  return out;
-}
-
 function toGa4Date(value: Date): string {
-  return value.toISOString().slice(0, 10);
+  return saoPauloDateOnly(value);
 }
 
 router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "private, no-store");
   const parsed = ListClientsQueryParams.safeParse(
     coerceClientsQuery(req.query as Record<string, unknown>),
   );
@@ -195,20 +178,20 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     const prevTo = new Date(dateFrom.getTime() - 1);
     const prevFrom = new Date(prevTo.getTime() - lengthMs);
 
-    // Requested revenue/orders per client in the window. The client list uses
-    // demand created in the period, so it intentionally does not filter final
-    // order status.
+    // Same paid-order population, revenue and Brasília day as Dashboard and Diário.
     const orderAgg = (winFrom: Date, winTo: Date) =>
       db
         .select({
           clientId: ordersTable.clientId,
-          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          revenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(sql`${clientsTable.dashboardType} = 'B2C'`)}), 0)::float`,
           orders: sql<number>`COUNT(*)::int`,
         })
         .from(ordersTable)
+        .innerJoin(clientsTable, eq(clientsTable.id, ordersTable.clientId))
         .where(
           and(
             inArray(ordersTable.clientId, ids),
+            paidOrderStatus(),
             gte(ordersTable.createdAt, winFrom),
             lte(ordersTable.createdAt, winTo),
           ),
