@@ -6,10 +6,23 @@ O painel do cliente Vesti (Clientes por campanha, Relatório diário, Escala e M
 
 Princípio: a tela nunca depende de API de terceiro para mostrar dado; quem coleta é o sync (como o dash legado).
 
-## O que NÃO mudou (ainda)
+## Campanhas, anúncios e criativos (degraus 2 e 3)
 
-- **Lista de campanhas** (Relatório diário) e **anúncios, criativos e top criativos** (Marketing) ainda vêm do Meta ao vivo. São os próximos degraus (campanhas, depois anúncios).
-- Quem usa o token do Meta ao vivo: só essas duas listas. O gasto não depende mais dele.
+As telas Vesti **não chamam mais o Meta ao vivo para nada**. Além do gasto, também vêm do dado guardado:
+
+- **Relatório diário:** lista de campanhas (gasto, compras, receita, ROAS, custo por compra), de `ads_insights` somado por campanha; status atual de `ads_campaigns`.
+- **Marketing:** lista de anúncios, "Top criativos" (melhor CTR, menor custo por lead, mais leads) e imagem de cada anúncio, de `ads_insights` somado por anúncio; nome, status e miniatura de `ads_details`.
+
+Conferido em 21/10/2026 contra o BigQuery real (01/10 a 18/10), nas 3 maiores contas: a soma por campanha e a soma por anúncio batem **exatamente** com o total da conta (R$ 174.128,85, R$ 27.642,97 e R$ 3.308,65), e 100% dos anúncios com gasto têm nome, status e imagem. A tabela por anúncio não tem linhas por região/idade/gênero (essas colunas vêm vazias), então não há contagem em dobro.
+
+Diferenças para o ao vivo, que quem lê os números precisa saber:
+
+- **Cliques:** o guardado conta todos os cliques; o ao vivo contava cliques no link. O CTR guardado fica um pouco maior (é a mesma base do dash legado).
+- **Imagem:** vem a miniatura guardada. Não há vídeo nem link de prévia (campos vazios, tipo "imagem" ou "desconhecido").
+- **Anúncio criado hoje:** o nome e a miniatura só chegam com a próxima coleta de detalhes (por volta das 05:00 UTC). Até lá aparece com o nome da campanha.
+- **Atenção em `ads_details`:** o id da conta é gravado SEM o prefixo `act_` (nas outras tabelas vem com ele). A leitura compara sem o prefixo; foi isso que escondeu os detalhes na primeira conferência.
+- **Tabela de criativos no Postgres** (`creatives`): continua sendo atualizada ao abrir Relatório diário e Marketing, agora a partir do dado guardado. Ela alimenta a lista de clientes e o relatório do portfólio. É escrita ao ler, uma dívida conhecida a resolver quando essas telas lerem do guardado.
+- O token do Meta (`META_ADS_API_KEY` e o campo por cliente) deixou de ser usado pelas telas Vesti.
 
 ## Consequências para quem lê os números
 
@@ -25,7 +38,7 @@ Princípio: a tela nunca depende de API de terceiro para mostrar dado; quem cole
 - `artifacts/api-server/src/services/vesti-ads-stored.ts`: leitura do dado guardado (`fetchStoredAdsDaily`, `totalSpend`, `spendSeries`). O id da conta é padronizado para `act_...` (formato gravado pela coleta) e vai como parâmetro da consulta, nunca colado no texto SQL.
 - `artifacts/api-server/src/controllers/vestiDashboardController.ts`: `loadStoredAds` e `resolveVestiInvestment` nos quatro pontos.
 - Removida a função antiga `fetchVestiMetaSpendFromBigQuery` (`vestiAnalytics.ts`), que só servia de reserva.
-- Testes: `artifacts/api-server/test/vesti-ads-stored.test.ts` (13).
+- Testes: `artifacts/api-server/test/vesti-ads-stored.test.ts` (27) e `test/vesti-stored-controller.test.ts` (12: telas Relatório diário e Marketing de ponta a ponta, com BigQuery simulado).
 
 ## Como conferir antes de publicar
 

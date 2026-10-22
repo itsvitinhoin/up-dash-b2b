@@ -5,7 +5,7 @@ import { db, clientsTable } from "@workspace/db";
 import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse, GetJourneyQueryParams, GetJourneyResponse, GetMarketingQueryParams, GetMarketingResponse, GetUtmQueryParams, GetUtmResponse } from "@workspace/api-zod";
 import { addDaysToDateOnly, coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly, saoPauloDateOnlyEnd, saoPauloDateOnlyStart } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
-import { MediaReadError, fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
+import { MediaReadError, upsertMetaCreatives } from "../services/meta-ads";
 import {
   resolveVestiDataset,
   computeVestiWindow,
@@ -22,13 +22,18 @@ import {
   fetchVestiUtmData,
   type VestiFilters,
 } from "../services/vestiAnalytics";
-import { fetchStoredAdsDaily, spendSeries, totalSpend, type StoredAdsDay } from "../services/vesti-ads-stored";
-
-// Duplicado de propósito (mesmo padrão de routes/analytics.ts e
-// routes/clients.ts) — evita import circular controller↔routes.
-function getGlobalMetaAccessToken(fallback?: string | null): string | null {
-  return process.env.META_ADS_API_KEY ?? process.env.META_ACCESS_TOKEN ?? process.env.META_API_KEY ?? process.env.META_TOKEN ?? fallback ?? null;
-}
+import {
+  fetchStoredAds,
+  fetchStoredAdsDaily,
+  fetchStoredCampaigns,
+  spendSeries,
+  toMetaAdMetric,
+  topCreativesFromStored,
+  totalSpend,
+  type StoredAd,
+  type StoredAdsDay,
+  type StoredCampaign,
+} from "../services/vesti-ads-stored";
 
 // Gasto de anúncios (Meta) do cliente Vesti: lido SÓ do dado guardado (BigQuery `data_ads_global.ads_insights_account`, coletado pelo sync),
 // nunca do Graph ao vivo (decisão de 19/10/2026; antes o ao vivo vinha primeiro e o guardado era só fallback quando vinha zero).
@@ -49,6 +54,48 @@ async function loadStoredAds(
   } catch (err) {
     console.warn("[vesti] gasto de anúncios guardado indisponível:", err);
     throw new MediaReadError();
+  }
+}
+
+// Campanhas e anúncios do período, também só do dado guardado. Mesma regra do gasto: sem conta = lista vazia; falha de leitura = 503.
+async function loadStoredList<T>(
+  kind: "campaigns" | "ads",
+  client: { metaAdAccountId?: string | null } | undefined,
+  dateFromOnly: string,
+  dateToOnly: string,
+  fetcher: (account: string, from: string, to: string) => Promise<T[]>,
+): Promise<T[]> {
+  const account = client?.metaAdAccountId;
+  if (!account) return [];
+  try {
+    return await cached(`vesti:ads-stored-${kind}:${account}:${dateFromOnly}:${dateToOnly}`, VESTI_CACHE_TTL_MS, () => fetcher(account, dateFromOnly, dateToOnly));
+  } catch (err) {
+    console.warn(`[vesti] ${kind === "ads" ? "anúncios" : "campanhas"} guardados indisponíveis:`, err);
+    throw new MediaReadError();
+  }
+}
+
+const loadStoredCampaigns = (client: { metaAdAccountId?: string | null } | undefined, from: string, to: string): Promise<StoredCampaign[]> =>
+  loadStoredList("campaigns", client, from, to, fetchStoredCampaigns);
+
+const loadStoredAdList = (client: { metaAdAccountId?: string | null } | undefined, from: string, to: string): Promise<StoredAd[]> =>
+  loadStoredList("ads", client, from, to, fetchStoredAds);
+
+// A tabela `creatives` (Postgres) alimenta a lista de clientes e o relatório do portfólio; continua sendo atualizada ao abrir estas telas,
+// agora a partir do dado guardado (antes, do Meta ao vivo). Melhor esforço: nunca derruba a tela. Dívida conhecida: escrever ao ler.
+async function syncCreativesCache(
+  clientId: string,
+  client: { metaAdAccountId?: string | null } | undefined,
+  dateFromOnly: string,
+  dateToOnly: string,
+  ads?: StoredAd[],
+): Promise<void> {
+  if (!client?.metaAdAccountId) return;
+  try {
+    const list = ads ?? (await loadStoredAdList(client, dateFromOnly, dateToOnly));
+    await upsertMetaCreatives(clientId, list.map((ad) => toMetaAdMetric(ad, dateFromOnly, dateToOnly)));
+  } catch (err) {
+    console.warn("[vesti] Creative cache write failed:", err);
   }
 }
 
@@ -419,7 +466,7 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
   }
 
   const [client] = await db
-    .select({ name: clientsTable.name, metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .select({ name: clientsTable.name, metaAdAccountId: clientsTable.metaAdAccountId })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
 
@@ -433,24 +480,15 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
   const prevDateFromOnly = saoPauloDateOnly(prevFrom);
   const prevDateToOnly = saoPauloDateOnly(prevTo);
 
-  // Ao vivo SÓ para a lista de campanhas (degrau 2 troca por dado guardado); o gasto vem do guardado (resolveVestiInvestment).
-  const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
-  const metaCurrent =
-    metaAccessToken && client?.metaAdAccountId
-      ? await fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: dateFromOnly, until: dateToOnly }).catch((err) => {
-          console.warn("[vesti-daily-report] Meta current fetch failed:", err);
-          return null;
-        })
-      : null;
-  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads).catch((err) => console.warn("[vesti] Creative cache write failed:", err));
-
-  const [currentWindow, prevWindow, breakdown, currentMediaSpend, prevMediaSpend] = await Promise.all([
+  const [currentWindow, prevWindow, breakdown, currentMediaSpend, prevMediaSpend, storedCampaigns] = await Promise.all([
     cached(`vesti:window:${dataset}:${dateFromOnly}:${dateToOnly}:{}`, 5 * 60 * 1000, () => computeVestiWindow(dataset, dateFromOnly, dateToOnly, {}, false)),
     cached(`vesti:window:${dataset}:${prevDateFromOnly}:${prevDateToOnly}:{}`, 5 * 60 * 1000, () => computeVestiWindow(dataset, prevDateFromOnly, prevDateToOnly, {}, false)),
     cached(`vesti:daily-breakdown:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () => fetchVestiDailyBreakdown(dataset, dateFromOnly, dateToOnly)),
     resolveVestiInvestment(client, dateFromOnly, dateToOnly),
     resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly).catch(() => null),
+    loadStoredCampaigns(client, dateFromOnly, dateToOnly),
   ]);
+  await syncCreativesCache(clientId, client, dateFromOnly, dateToOnly);
 
   const kpis = {
     approvedRevenue: currentWindow.kpis.revenue,
@@ -469,15 +507,15 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
     roas: prevMediaSpend > 0 ? prevWindow.kpis.revenue / prevMediaSpend : 0,
   };
 
-  const campaigns = (metaCurrent?.campaigns ?? [])
+  const campaigns = storedCampaigns
     .map((campaign) => ({
       id: campaign.id,
       name: campaign.name,
       spend: campaign.spend,
       purchases: campaign.purchases,
       revenue: campaign.revenue,
-      roas: campaign.roas ?? (campaign.spend > 0 ? campaign.revenue / campaign.spend : 0),
-      cpa: campaign.cpa ?? (campaign.purchases > 0 ? campaign.spend / campaign.purchases : 0),
+      roas: campaign.spend > 0 ? campaign.revenue / campaign.spend : 0,
+      cpa: campaign.purchases > 0 ? campaign.spend / campaign.purchases : 0,
       clicks: campaign.clicks,
       impressions: campaign.impressions,
     }))
@@ -832,7 +870,7 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
   }
 
   const [client] = await db
-    .select({ metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .select({ metaAdAccountId: clientsTable.metaAdAccountId })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
 
@@ -851,22 +889,13 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
     cached(`vesti:marketing:${dataset}:${prevDateFromOnly}:${prevDateToOnly}`, 5 * 60 * 1000, () => fetchVestiMarketingData(dataset, prevDateFromOnly, prevDateToOnly)),
   ]);
 
-  const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
-  // Ao vivo SÓ para anúncios/criativos (degrau 3 troca por dado guardado); gasto e série diária vêm do guardado.
-  const metaCurrent =
-    metaAccessToken && client?.metaAdAccountId
-      ? await fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: dateFromOnly, until: dateToOnly }).catch((err) => {
-          console.warn("[vesti-marketing] Meta current fetch failed:", err);
-          return null;
-        })
-      : null;
-  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads).catch((err) => console.warn("[vesti] Creative cache write failed:", err));
-
-  const [storedAdsCurrent, prevSpend] = await Promise.all([
+  const [storedAdsCurrent, storedAdList, prevSpend] = await Promise.all([
     loadStoredAds(client, dateFromOnly, dateToOnly),
+    loadStoredAdList(client, dateFromOnly, dateToOnly),
     resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly).catch(() => null),
   ]);
   const spend = totalSpend(storedAdsCurrent);
+  await syncCreativesCache(clientId, client, dateFromOnly, dateToOnly, storedAdList);
 
   const buildKpis = (channel: typeof channelData, spend: number) => {
     const roas = spend > 0 ? channel.totalAttributedRevenue / spend : 0;
@@ -884,26 +913,13 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
     };
   };
 
-  const allAds = metaCurrent?.ads ?? [];
+  const allAds = storedAdList.map((ad) => toMetaAdMetric(ad, dateFromOnly, dateToOnly));
   const filteredAds = utmSource ? allAds.filter((ad) => ad.name.toLowerCase().includes(utmSource.toLowerCase())) : allAds;
   const creativesOffset = (creativesPage - 1) * creativesPageSize;
   const pagedAds = filteredAds.slice(creativesOffset, creativesOffset + creativesPageSize);
 
-  // Imagem do criativo (05/08/2026): `fetchMetaMarketingData` já busca a
-  // imagem real via uma chamada extra no Graph API, mas só pros top-N por
-  // métrica (`metaCurrent.topCreatives` — evita 1 chamada por anúncio,
-  // que seria caro/lento pra lista inteira). O `creatives` aqui embaixo
-  // sempre mandava `imageUrl: null` fixo, mesmo pros anúncios que JÁ
-  // tinham imagem buscada. Reaproveita o que já foi buscado em vez de
-  // não usar de propósito.
-  const creativeImageById = new Map<string, string | null>();
-  for (const group of [metaCurrent?.topCreatives?.ctr, metaCurrent?.topCreatives?.cpl, metaCurrent?.topCreatives?.leads]) {
-    for (const creative of group ?? []) {
-      if (!creativeImageById.has(creative.id)) {
-        creativeImageById.set(creative.id, creative.imageUrl ?? creative.thumbnailUrl ?? null);
-      }
-    }
-  }
+  // Imagem do criativo: a miniatura do anúncio vem guardada (`ads_details.thumbnail_url`) para TODOS os anúncios, não só para o top.
+  const creativeImageById = new Map<string, string | null>(storedAdList.map((ad) => [ad.id, ad.thumbnailUrl]));
 
   res.json(
     GetMarketingResponse.parse({
@@ -944,7 +960,7 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
       // com o caminho UpZero (analytics.ts) -- quebrava Marketing pra
       // QUALQUER client Vesti. Mesmo default usado lá quando não tem Meta
       // Ads conectado.
-      topCreatives: metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] },
+      topCreatives: topCreativesFromStored(storedAdList),
       stateBreakdown: [],
       ageBreakdown: [],
       creativesTotal: filteredAds.length,
