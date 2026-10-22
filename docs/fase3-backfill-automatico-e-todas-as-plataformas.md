@@ -46,6 +46,76 @@ Status (22/10/2026): **desenho aprovado pelo Marcelo; implementação por etapas
 - Botão **"Buscar histórico"**: grava o pedido em `ads_backfill_requests` (e já publica `ads_accounts`). Sem credencial nova: é o mesmo canal que o dash já usa para publicar listas.
 - Isso entrega também o "painel de status por cliente" que estava pendente.
 
+### Estado da implementação (22/10/2026)
+
+- **Limpeza das repetições: feita e conferida.** Rodada em 22/10 às 15:03 a 15:09 (horário de Brasília). Depois: zero repetições nos dois níveis e totais idênticos à prévia (nível anúncio R$ 4.086.364,08 em 27 contas; nível conta R$ 69.777,60 em 3 contas). Nenhum gasto real se perdeu.
+- **Leitura que ignora repetições e conserto do histórico: publicados** (dash novo `d9edcc2`; backend-dash `30afb24`). O conserto do backend-dash precisa do build para valer em produção.
+- **`ads-onboarding` (backend-dash): implementado, commit `e948445` na branch `feature/ads-onboarding`, ainda não publicado.** 52 testes novos; SQL de gravação validado no BigQuery real (tabela temporária); a simulação com dados reais escolheu as 18 contas esperadas (17 sem coleta mais a Estime, que nunca gastou e vira "pronta" com 0 linhas). O histórico (`backfill-new-client`) agora devolve as linhas gravadas e os **meses que falharam** (antes o erro de cada mês virava só uma linha de log).
+- **Falta:** lado do dash novo (criar as tabelas de pedido e estado, botão "Buscar histórico" e status no diálogo Meta) e a Etapa 4.
+
+### Achado: cada coleta de anúncios é agendada duas vezes
+
+No Cloud Scheduler (`us-central1`) existem **dois agendamentos ativos para o mesmo horário** em cada job de anúncio:
+
+| Job | Caminho antigo (serviço) | Caminho novo (Cloud Run Job) |
+|---|---|---|
+| insights por anúncio | `ingest-facebook-insights` -> `/jobs/ingest-insights` | `schedule-ingest-insights` -> `up-jobs:run` |
+| detalhes | `ingest-facebook-details` | `schedule-ingest-details` |
+| campanhas | `ingest-facebook-campaigns` | `schedule-ingest-campaigns` |
+| nível conta | `ingest-facebook-levelAccount` -> `/ingestion/ads/run-account` (**falha com 401**, inofensivo) | `schedule-ingest-level-account` |
+
+Conferido nos logs de 22/10 (UTC): o caminho antigo **executa** (insights 206 s, detalhes 54 s, campanhas 87 s, todos com resposta 200) em paralelo ao do job. Consequências: o **dobro de chamadas ao Facebook** (pesa no limite de chamadas, que já estourou uma vez em 22/10) e **corridas de gravação** que explicam as repetições (por exemplo 02 a 07/12/2025). Os horários das execuções são **UTC** (a coleta roda às 05:00 a 05:10 UTC, que é 02:00 a 02:10 em Brasília).
+
+**Recomendação (decisão do Marcelo, reversível):** pausar os quatro agendamentos do caminho antigo e manter os do Cloud Run Job (que já têm tempo limite de 1 h e tentativas):
+
+```bash
+gcloud scheduler jobs pause ingest-facebook-insights --project=up-vesti-report --location=us-central1
+gcloud scheduler jobs pause ingest-facebook-details --project=up-vesti-report --location=us-central1
+gcloud scheduler jobs pause ingest-facebook-campaigns --project=up-vesti-report --location=us-central1
+gcloud scheduler jobs pause ingest-facebook-levelAccount --project=up-vesti-report --location=us-central1
+```
+
+Para desfazer: `gcloud scheduler jobs resume <nome> --project=up-vesti-report --location=us-central1`. Conferir no dia seguinte: execuções do `up-jobs` às 05:00 a 05:10 UTC com sucesso e dados do dia no BigQuery.
+
+### Implantação do `ads-onboarding`
+
+1. **Publicar e fazer o build** (backend-dash; o build sai do clone limpo):
+
+   ```bash
+   git -C C:/trabalho/wt-backend-contas push origin feature/ads-onboarding:main
+   cd C:/trabalho/build-backend-dash
+   git pull
+   gcloud builds submit --project=up-vesti-report --config=cloudbuild.yaml .
+   ```
+
+2. **Simulação** (só lista quem seria processado; não cria tabela nem grava nada):
+
+   ```bash
+   gcloud run jobs execute up-jobs --project=up-vesti-report --region=europe-west1 --update-env-vars="JOB_NAME=ads-onboarding,ONBOARDING_DRY_RUN=1" --wait
+   ```
+
+3. **Execução real** (processa até 2 contas; as tabelas `ads_backfill_requests` e `ads_backfill_status` são criadas na primeira vez):
+
+   ```bash
+   gcloud run jobs execute up-jobs --project=up-vesti-report --region=europe-west1 --update-env-vars="JOB_NAME=ads-onboarding" --wait
+   ```
+
+4. **Agendar** (depois de uma execução real boa). Mesmo formato dos agendamentos existentes, de hora em hora das 03:30 às 08:30 em Brasília (depois da coleta noturna). No PowerShell, o corpo vai por arquivo para não brigar com as aspas:
+
+   ```powershell
+   '{"overrides":{"containerOverrides":[{"env":[{"name":"JOB_NAME","value":"ads-onboarding"}]}]}}' | Set-Content -NoNewline body-onboarding.json
+   gcloud scheduler jobs create http schedule-ads-onboarding --project=up-vesti-report --location=us-central1 --schedule="30 3-8 * * *" --time-zone="America/Sao_Paulo" --uri="https://europe-west1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/up-vesti-report/jobs/up-jobs:run" --http-method=POST --message-body-from-file=body-onboarding.json --oauth-service-account-email=928204832932-compute@developer.gserviceaccount.com --oauth-token-scope=https://www.googleapis.com/auth/cloud-platform --attempt-deadline=180s --max-retry-attempts=1
+   ```
+
+5. **Conferir o estado** no BigQuery:
+
+   ```sql
+   SELECT ad_account_id, state, attempts, rows_ad, rows_account, resume_from, error, updated_at
+   FROM `up-vesti-report.up_global.ads_backfill_status` ORDER BY updated_at DESC;
+   ```
+
+   Interruptor de emergência: `ADS_ONBOARDING_DISABLED=1`. Por padrão traz o histórico desde 2025-01-01 (`ONBOARDING_START_DATE`) e 2 contas por execução (`ONBOARDING_MAX_PER_RUN`).
+
 ## Etapa 4: ir além da Vesti (todas as plataformas)
 
 1. **Coleta:** padrão `UPDASH_ADS_ACCOUNTS_PLATFORM` passa a `ALL` **no código** (o `cloudbuild.yaml` usa `--set-env-vars`, que apaga variável colocada à mão). As 17 contas sem coleta (Nuvemshop 9, UpZero 6, Manual 2) entram no `ads-onboarding` em lotes de 2 por execução, respeitando o limite do Facebook.
