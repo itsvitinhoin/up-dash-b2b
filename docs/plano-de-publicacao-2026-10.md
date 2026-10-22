@@ -73,7 +73,7 @@ Seguir a ordem de `docs/ga4-guardado.md` (na branch):
 1. Banco de produção, no Cloud SQL Studio: `lib/db/migrations/0043_ga4_daily_metrics.sql` (**já aplicada em 20/10**) e `0044_ga4_product_views_daily.sql` (idempotentes).
 2. Imagem do job (manual): `gcloud builds submit --project=up-vesti-report --config=artifacts/api-server/cloudbuild.job.yaml --substitutions=SHORT_SHA=$(git rev-parse --short HEAD) .` (da raiz do repositório).
 3. Acesso: a conta `928204832932-compute@developer.gserviceaccount.com` precisa ser **Leitor** nas propriedades GA4 das lojas que ela ainda não enxerga (Aiyu e Hot Pink). O primeiro backfill mostra quais falham, em `sync_jobs.error`.
-4. Backfill uma vez: `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=ga4_daily,TRIGGER=manual --wait`.
+4. Backfill uma vez: `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars="TASK=ga4_daily,TRIGGER=manual" --wait`.
 5. **Só então** o push (tabela populada).
 
 Se a linha A já estiver na `main`, trazer a B por cima:

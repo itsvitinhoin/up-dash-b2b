@@ -79,11 +79,12 @@ Dívida técnica conhecida: a busca de contas está copiada em seis jobs. O test
 6. **Histórico das duas contas novas** (a coleta diária só pega os últimos dias):
 
    ```bash
-   gcloud run jobs execute up-jobs --project=up-vesti-report --region=europe-west1 --update-env-vars=JOB_NAME=backfill-new-client,BACKFILL_ACCOUNT=act_576902447698410 --wait
-   gcloud run jobs execute up-jobs --project=up-vesti-report --region=europe-west1 --update-env-vars=JOB_NAME=backfill-new-client,BACKFILL_ACCOUNT=act_626178051781932 --wait
+   gcloud run jobs execute up-jobs --project=up-vesti-report --region=europe-west1 --update-env-vars="JOB_NAME=backfill-new-client,BACKFILL_ACCOUNT=act_576902447698410" --wait
+   gcloud run jobs execute up-jobs --project=up-vesti-report --region=europe-west1 --update-env-vars="JOB_NAME=backfill-new-client,BACKFILL_ACCOUNT=act_626178051781932" --wait
    ```
 
-   (Por padrão busca 2 anos; `BACKFILL_START_DATE=AAAA-MM-DD` limita.) Se a execução der erro de permissão, o token global do Facebook não enxerga a conta: liberar o acesso no Business Manager.
+   **No PowerShell mantenha as aspas** em volta de `--update-env-vars` (sem elas o PowerShell trata a vírgula como lista e o job recebe um nome inválido; foi o que aconteceu na primeira tentativa em 22/10/2026).
+   Cada conta leva alguns minutos ou mais. Por padrão busca 2 anos; `BACKFILL_START_DATE=AAAA-MM-DD` limita. Se a execução der erro de permissão, o token global do Facebook não enxerga a conta: liberar o acesso no Business Manager.
 7. **Conferir no BigQuery** (esperado: as duas contas com linhas até hoje):
 
    ```sql

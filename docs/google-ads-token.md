@@ -53,7 +53,7 @@ gcloud builds submit --project=up-vesti-report --config=cloudbuild.yaml .
 ### 5. Testar com a janela padrão
 
 ```bash
-gcloud run jobs execute up-jobs --project=up-vesti-report --region=europe-west1 --update-env-vars=JOB_NAME=ingest-google-ads,WINDOW_DAYS=7 --wait
+gcloud run jobs execute up-jobs --project=up-vesti-report --region=europe-west1 --update-env-vars="JOB_NAME=ingest-google-ads,WINDOW_DAYS=7" --wait
 ```
 
 Sucesso = a execução termina sem `invalid_grant` nos logs. Conferir no BigQuery:
@@ -70,7 +70,7 @@ FROM `up-vesti-report.data_ads_global.google_ads_campaigns_insights`;
 A ingestão grava numa tabela temporária e faz `MERGE`, então repetir períodos **não duplica**. Rodar uma vez com janela longa:
 
 ```bash
-gcloud run jobs execute up-jobs --project=up-vesti-report --region=europe-west1 --update-env-vars=JOB_NAME=ingest-google-ads,WINDOW_DAYS=75 --wait
+gcloud run jobs execute up-jobs --project=up-vesti-report --region=europe-west1 --update-env-vars="JOB_NAME=ingest-google-ads,WINDOW_DAYS=75" --wait
 ```
 
 Repetir a consulta do passo 5 e conferir que há linhas de cada dia desde 25/08:
