@@ -271,3 +271,30 @@ describe("topCreativesFromStored", () => {
     expect(topCreativesFromStored([])).toEqual({ ctr: [], cpl: [], leads: [] });
   });
 });
+
+describe("proteção contra linhas repetidas no histórico guardado", () => {
+  it("gasto por dia: usa UMA linha por dia (a mais recente) ANTES de somar", async () => {
+    const query = vi.fn<StoredAdsQuery>(async () => []);
+    await fetchStoredAdsDaily("act_1", "2025-06-01", "2025-06-30", query);
+    const sql = query.mock.calls[0][0];
+    expect(sql).toContain("QUALIFY ROW_NUMBER() OVER (PARTITION BY date_start ORDER BY ingestion_timestamp DESC, last_updated DESC) = 1");
+    expect(sql.indexOf("unique_days AS")).toBeGreaterThan(-1);
+    expect(sql.indexOf("QUALIFY")).toBeLessThan(sql.indexOf("GROUP BY day"));
+    expect(sql).toContain("FROM unique_days");
+  });
+
+  it.each([
+    ["campanhas", () => fetchStoredCampaigns("act_1", "2025-06-01", "2025-06-30", vi.fn<StoredAdsQuery>(async () => [])), "GROUP BY campaign_id"],
+    ["anúncios", () => fetchStoredAds("act_1", "2025-06-01", "2025-06-30", vi.fn<StoredAdsQuery>(async () => [])), "GROUP BY ad_id"],
+  ])("%s: tira as linhas repetidas por (campanha, conjunto, anúncio, dia e quebras) ANTES de agrupar", async (_nome, _run, groupBy) => {
+    const query = vi.fn<StoredAdsQuery>(async () => []);
+    if (_nome === "campanhas") await fetchStoredCampaigns("act_1", "2025-06-01", "2025-06-30", query);
+    else await fetchStoredAds("act_1", "2025-06-01", "2025-06-30", query);
+    const sql = query.mock.calls[0][0];
+    expect(sql).toContain("PARTITION BY campaign_id, adset_id, ad_id, date_start, region, age, gender, placement, device_platform");
+    expect(sql).toContain("ORDER BY ingestion_timestamp DESC, last_updated DESC) = 1");
+    expect(sql.indexOf("unique_rows AS")).toBeGreaterThan(-1);
+    expect(sql.indexOf("QUALIFY")).toBeLessThan(sql.indexOf(groupBy));
+    expect(sql).toContain("FROM unique_rows");
+  });
+});

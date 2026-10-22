@@ -51,7 +51,16 @@ export async function fetchStoredAdsDaily(
 ): Promise<StoredAdsDay[]> {
   const account = storedAccountId(adAccountId);
   if (!account) return [];
+  // O dado guardado tem DIAS REPETIDOS no histórico antigo (cópias idênticas; ex.: Venoro e Milalai até 25/05/2026, medido em 22/10/2026). Soma-se
+  // UMA linha por dia (a mais recente), senão o período antigo sairia em dobro. Quando não há repetição, o resultado é o mesmo de antes.
   const sql = `
+    WITH unique_days AS (
+      SELECT *
+      FROM ${vestiTable("data_ads_global", "ads_insights_account")}
+      WHERE ad_account_id = @adAccountId
+        AND date_start BETWEEN @dateFrom AND @dateTo
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY date_start ORDER BY ingestion_timestamp DESC, last_updated DESC) = 1
+    )
     SELECT
       FORMAT_DATE('%Y-%m-%d', date_start) AS day,
       COUNTIF(spend IS NULL) AS null_spend_rows,
@@ -61,9 +70,7 @@ export async function fetchStoredAdsDaily(
       CAST(COALESCE(SUM(leads_qty), 0) AS INT64) AS leads,
       CAST(COALESCE(SUM(purchases_qty), 0) AS INT64) AS purchases,
       CAST(COALESCE(SUM(purchase_value), 0) AS FLOAT64) AS purchase_value
-    FROM ${vestiTable("data_ads_global", "ads_insights_account")}
-    WHERE ad_account_id = @adAccountId
-      AND date_start BETWEEN @dateFrom AND @dateTo
+    FROM unique_days
     GROUP BY day
     ORDER BY day
   `;
@@ -127,6 +134,13 @@ const AGGREGATES = `
       CAST(COALESCE(SUM(purchases_qty), 0) AS INT64) AS purchases,
       CAST(COALESCE(SUM(purchase_value), 0) AS FLOAT64) AS revenue`;
 
+// Nível anúncio: o histórico antigo também tem linhas repetidas (cópias idênticas, sem quebra por região/idade: Venoro, Milalai, e dias de dez/2025 em
+// várias contas). Vale uma linha por (campanha, conjunto, anúncio, dia e quebras), a mais recente. As quebras entram na chave para nunca juntar linhas
+// que sejam fatias diferentes do mesmo anúncio.
+const DEDUPE_AD_ROWS =
+  "QUALIFY ROW_NUMBER() OVER (PARTITION BY campaign_id, adset_id, ad_id, date_start, region, age, gender, placement, device_platform " +
+  "ORDER BY ingestion_timestamp DESC, last_updated DESC) = 1";
+
 function assertComplete(rows: Array<Record<string, unknown>>): void {
   if (rows.some((row) => toNumber(row.null_spend_rows) > 0)) throw new Error("Leitura de gasto incompleta no dado guardado.");
 }
@@ -157,14 +171,18 @@ export async function fetchStoredCampaigns(
   const account = storedAccountId(adAccountId);
   if (!account) return [];
   const sql = `
-    WITH period AS (
-      SELECT
-        campaign_id,
-        ARRAY_AGG(campaign_name IGNORE NULLS ORDER BY date_start DESC LIMIT 1)[SAFE_OFFSET(0)] AS name,${AGGREGATES}
+    WITH unique_rows AS (
+      SELECT *
       FROM ${vestiTable("data_ads_global", "ads_insights")}
       WHERE ad_account_id = @adAccountId
         AND date_start BETWEEN @dateFrom AND @dateTo
         AND campaign_id IS NOT NULL
+      ${DEDUPE_AD_ROWS}
+    ), period AS (
+      SELECT
+        campaign_id,
+        ARRAY_AGG(campaign_name IGNORE NULLS ORDER BY date_start DESC LIMIT 1)[SAFE_OFFSET(0)] AS name,${AGGREGATES}
+      FROM unique_rows
       GROUP BY campaign_id
     ), latest_status AS (
       SELECT campaign_id, status
@@ -198,14 +216,18 @@ export async function fetchStoredAds(
   const account = storedAccountId(adAccountId);
   if (!account) return [];
   const sql = `
-    WITH period AS (
-      SELECT
-        ad_id,
-        ARRAY_AGG(campaign_name IGNORE NULLS ORDER BY date_start DESC LIMIT 1)[SAFE_OFFSET(0)] AS campaign_name,${AGGREGATES}
+    WITH unique_rows AS (
+      SELECT *
       FROM ${vestiTable("data_ads_global", "ads_insights")}
       WHERE ad_account_id = @adAccountId
         AND date_start BETWEEN @dateFrom AND @dateTo
         AND ad_id IS NOT NULL
+      ${DEDUPE_AD_ROWS}
+    ), period AS (
+      SELECT
+        ad_id,
+        ARRAY_AGG(campaign_name IGNORE NULLS ORDER BY date_start DESC LIMIT 1)[SAFE_OFFSET(0)] AS campaign_name,${AGGREGATES}
+      FROM unique_rows
       GROUP BY ad_id
     ), latest_details AS (
       SELECT ad_id, name, status, thumbnail_url

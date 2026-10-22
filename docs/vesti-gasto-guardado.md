@@ -40,6 +40,18 @@ Diferenças para o ao vivo, que quem lê os números precisa saber:
 - Removida a função antiga `fetchVestiMetaSpendFromBigQuery` (`vestiAnalytics.ts`), que só servia de reserva.
 - Testes: `artifacts/api-server/test/vesti-ads-stored.test.ts` (27) e `test/vesti-stored-controller.test.ts` (12: telas Relatório diário e Marketing de ponta a ponta, com BigQuery simulado).
 
+## Linhas repetidas no histórico guardado (achado de 22/10/2026)
+
+O BigQuery guardado tem **linhas repetidas (cópias idênticas, sem quebra por região/idade)** no histórico antigo, vindas de coletas e histórias que rodaram em duplicidade (inclusive o bug do `backfill-new-client`, que rodava duas cópias ao mesmo tempo). Medido:
+
+- **Nível conta** (`ads_insights_account`): Venoro (441 dias, 02/2025 a 25/05/2026), Milalai (359 dias, 10/2024 a 25/05/2026) e outra conta (8 dias, maio/2026).
+- **Nível anúncio** (`ads_insights`): Venoro e Milalai (2x em todo o histórico até abril/maio de 2026), a conta `act_1044217252816711` (dez/2025), e dias de 02 a 07/12/2025 em várias contas (Vogabox, Vn11, Adama...). Os **últimos 60 dias estão limpos** em todas as contas.
+- As *views* `ads_insights_latest` e `ads_insights_summary_daily` **não** removem repetição, e o dash legado lê `ads_insights_account` somando, então o legado também mostra esses períodos antigos inflados.
+
+**Proteção na leitura (esta mudança):** as três consultas passam a usar **uma linha por dia (conta)** e **uma linha por (campanha, conjunto, anúncio, dia, quebras)** (a mais recente), antes de somar. Conferido no BigQuery real: Venoro jun/2025 R$ 1.063,13 e Milalai jun/2025 R$ 167,19 (antes saíam em dobro) batem exatamente em conta, campanhas e anúncios; Doce Deleite (sem repetição) não mudou; Vogabox e Adama (dez/2025) batem exato por conta e ficam a 0,6% e 0,03% por campanha/anúncio.
+
+**Ainda pendente:** limpar as repetições na origem (benefício também para o dash legado). É uma escrita grande no BigQuery de produção; fazer por conta e por mês, com prévia, como na Tuba Plus (`docs/operacao/2026-10-22-limpeza-tuba-plus-marco.sql`).
+
 ## Como conferir antes de publicar
 
 1. Lista de contas que a coleta conhece (só leitura, BigQuery):
