@@ -7,6 +7,7 @@ Estado da `main` no GitHub: `ae7e147` (16/10, login por cookie). Tudo abaixo est
 | Linha de trabalho | Branch (local) | Precisa de infra? | Situação |
 |---|---|---|---|
 | **A. Conciliação + Vesti 100% do dado guardado** | `feature/vesti-campanhas-anuncios-guardados` (`ef1c72d`) | Não (sem migration, sem job) | Pronta, falta conferência com dados reais (seção 1) |
+| **A0. Lista de contas de anúncio (Fase 2)** | dash novo: `feature/publicar-contas-anuncio` (`c6f259b`); backend-dash: `feature/contas-do-dash-novo` (`a9a7daa`, em `C:/trabalho/wt-backend-contas`) | Não precisa de segredo: o build do backend-dash é o de sempre | Pronta; **vem antes da A** (seção 0) |
 | **B. GA4 guardado** | `feature/ga4-guardado` (`523b30c`, 6 commits) | Sim: migration 0044, build da imagem do job, acesso nas lojas, backfill | Pronta, falta a ordem de infra (seção 2) |
 | **C. Docs do cookie** | `feature/sessao-por-cookie` (`b824cb5`) | Não | Só documentação, junta com a A |
 | Victor: atribuição unificada | `origin/codex/mx-unified-attribution` | Sim (migration 0043 dele) | Não é nosso; ver seção 3 |
@@ -16,11 +17,26 @@ A linha A contém, em ordem: gasto Vesti do guardado (`df7d869`), conciliação 
 
 Verificado: as linhas A e B se juntam com **um único conflito**, nas linhas de importação de `routes/analytics.ts` (resolução abaixo). A junção das duas compila e passa **372 testes** (só o `smoke.test.ts` falha, como sempre, por precisar de admin no banco).
 
+## 0. Ordem recomendada: primeiro a coleta, depois a troca das telas
+
+A linha A troca as telas Vesti para o dado guardado. **Estime e Tuba Plus não têm coleta** (medido em 21/10), então, se a linha A for primeiro, elas ficam zeradas até a coleta nova rodar. Para ninguém zerar, a ordem é a da Fase 2 (detalhes e comandos em `docs/fase2-coleta-facebook-no-dash-novo.md`):
+
+1. **Publicar o dash novo com o publicador** (`feature/publicar-contas-anuncio`). Nenhuma tela muda: só passa a existir a tabela `up_global.ads_accounts` e a rota HTTP provisória (já na `main` como `49cfdf1`) é removida.
+
+   ```bash
+   git -C C:/trabalho/up-glass-dev push origin feature/publicar-contas-anuncio:main
+   ```
+
+2. **Fazer a tabela encher**: abrir um cliente Vesti na tela e salvar a conta Meta como está (dispara a publicação). Conferir no BigQuery: 14 linhas, 13 contas, incluindo Estime e Tuba Plus.
+3. **Publicar o backend-dash** (`feature/contas-do-dash-novo`): merge na `main` dele e o build de sempre. **Não precisa de segredo nem de variável nova.**
+4. **Histórico** das duas contas novas (`backfill-new-client`) e **conferir no BigQuery** que Estime e Tuba Plus têm linhas até hoje.
+5. **Só então a linha A** (seção 1). Como a `main` terá andado, a branch da linha A precisa ser reposicionada sobre ela antes do push (`git rebase origin/main`; os arquivos da linha A e os da Fase 2 não se sobrepõem, então não há conflito esperado). Peça ao Claude para fazer e rodar os testes de novo.
+
 ## 1. Publicar a linha A
 
 ### 1.1 Antes do push
 
-1. **Cruzar as contas de anúncio** (a principal causa de R$ 0,00 depois da troca). No Postgres do dash novo:
+1. **Cruzar as contas de anúncio** (a principal causa de R$ 0,00 depois da troca). **Feito em 21/10/2026**: 12 das 14 marcas Vesti com conta no dash novo estão coletadas; Estime e Tuba Plus não (a Fase 2, seção 0, resolve antes da troca). Para refazer, no Postgres do dash novo:
 
    ```sql
    SELECT name, meta_ad_account_id FROM clients
@@ -35,7 +51,7 @@ Verificado: as linhas A e B se juntam com **um único conflito**, nas linhas de 
 ### 1.2 Push (quem faz: Marcelo, com OK explícito)
 
 ```bash
-git -C C:/trabalho/up-glass-dev push origin feature/vesti-campanhas-anuncios-guardados:main
+git -C C:/trabalho/up-glass-dev push origin feature/vesti-campanhas-anuncios-guardados:main   # depois do rebase sobre a main (seção 0, passo 5)
 ```
 
 ### 1.3 Depois do push (10 minutos)
