@@ -16,7 +16,7 @@ Medido em 21/10/2026 (14 marcas Vesti do dash novo com conta cadastrada): **12 e
 Outros achados:
 
 1. **Aurami e Cocci usam a mesma conta** (`act_1483477112868321`): mostram o mesmo gasto. É o cadastro, não bug; mas somas de portfólio contam esse gasto duas vezes.
-2. O legado tem também `User.adAccountIds` (lista), que a coleta **não lê** (só `adAccountId`). Pode haver contas fora da coleta por isso.
+2. Cada job de coleta tem a **própria cópia** da busca de contas no cadastro antigo (`getActiveAdAccounts()`): os principais leem `adAccountIds` (lista) **e** `adAccountId`; só `adAccountsRepo` (usado por `runAdsIngestion` e `backfillAdsHistory`) lê apenas `adAccountId`. Por isso não basta mexer em um lugar só.
 3. 17 das 37 contas coletadas em 19/10 estavam sem dado novo; a tabela sozinha não diz se a marca parou de anunciar ou se a coleta falha.
 
 ## Decisão
@@ -40,15 +40,17 @@ Alternativas descartadas:
 - Remove a rota `GET /api/ads-accounts` (que estava na `main` sem uso).
 - 13 testes novos. Sem migration.
 
-### backend-dash (`feature/contas-do-dash-novo`, `a9a7daa`, num worktree isolado a partir da `origin/main`)
+### backend-dash (`feature/contas-do-dash-novo`, `07f1728`, um commit só, num worktree isolado a partir da `origin/main`)
 
 - `src/lib/upDashAdAccounts.ts`: lê `up_global.ads_accounts` (consulta com parâmetro, cache de 5 min; 1 min depois de uma falha). **Falha aberta**: tabela inexistente, BigQuery fora do ar ou permissão negada => lista vazia e aviso no log; a coleta segue só com o cadastro antigo. **Só Vesti por padrão** (`UPDASH_ADS_ACCOUNTS_PLATFORM`, padrão `VESTI`; `ALL` inclui as outras plataformas; vazio volta para `VESTI`, nunca amplia por engano). Interruptor de emergência: `ADS_ACCOUNTS_FROM_UPDASH_DISABLED=1`.
-- `src/data/sources/adAccountsRepo.ts`: `getActiveAdAccountsFromDB()` junta as duas fontes, e **a lista de clientes excluídos continua valendo** para as contas do dash novo.
+- **Formato:** as contas do dash novo saem **só com dígitos**, igual ao cadastro antigo. Os jobs montam `act_${conta}` na URL do Facebook e a tabela de detalhes grava a conta sem `act_`; mandar `act_123` viraria `act_act_123`.
+- **Onde a lista é unida** (`withUpDashAdAccounts`, antes do filtro de excluídos, **a lista de clientes excluídos continua valendo** para as contas do dash novo): `ingestFacebookInsights` (por anúncio), `ingestFacebookInsightsAccount` (por conta), `ingestFacebookCampaignsAdsets`, `ingestFacebookAdDetails`, `backfillFacebookInsights`, `backfillFacebookInsightsAccount` e `adAccountsRepo`. Conferido no código: não há outro job de Facebook que liste contas por conta própria.
+- `tests/adAccountSources.test.ts` (**teste-guarda**): quebra se algum desses arquivos deixar de unir a lista do dash novo, ou se um job novo listar contas do cadastro antigo sem unir. Provado: estragando um job de propósito o teste falha.
 - **`cloudbuild.yaml` não muda** (sem variável nova, sem segredo).
-- 15 testes novos; `tests/excludedClients.test.ts` continua passando. A única falha da suíte (`login-success.test.ts`) precisa de Postgres local e já falhava antes.
+- 26 testes novos; `tests/excludedClients.test.ts` continua passando. A única falha da suíte (`login-success.test.ts`) precisa de Postgres local e já falhava antes.
 - Validado em dry-run no BigQuery real: a consulta parametrizada e o comando de criação da tabela são válidos (nada foi criado).
 
-Todos os jobs de Facebook que dependem da lista passam por `getActiveAdAccountsFromDB()` (`runAdsIngestion.ts` e `backfillAdsHistory.ts`). Conferir antes da primeira execução se `ingest-insights`, `ingest-level-account`, `ingest-campaigns` e `ingest-details` obtêm as contas por essas funções (se algum tiver lista própria, ele não verá as contas novas).
+Dívida técnica conhecida: a busca de contas está copiada em seis jobs. O teste-guarda evita esquecimentos; unificar numa função só é um próximo passo.
 
 ## Implantação (nesta ordem)
 
@@ -62,12 +64,16 @@ Todos os jobs de Facebook que dependem da lista passam por `getActiveAdAccountsF
    ORDER BY ad_account_id, client_name;
    ```
 
-4. **Publicar o backend-dash.** Merge da `feature/contas-do-dash-novo` na `main` do backend-dash e build (não precisa de segredo):
+4. **Publicar o backend-dash** (não precisa de segredo). **Não rode o build dentro da pasta `C:/trabalho/backend-dash`**: ela tem alterações locais ainda não commitadas (`dailyReport.ts`, `periodReport.ts`, `reportPdfGenerator.ts`, `package.json`) que iriam junto para produção. Publique a mudança e faça o build a partir de um **clone limpo** da `main`:
 
    ```bash
-   cd backend-dash
+   git -C C:/trabalho/wt-backend-contas push origin feature/contas-do-dash-novo:main
+   git clone git@github.com:itsvitinhoin/up-dash-backend.git C:/trabalho/build-backend-dash
+   cd C:/trabalho/build-backend-dash
    gcloud builds submit --project=up-vesti-report --config=cloudbuild.yaml .
    ```
+
+   (Se o Cloud Build tiver um gatilho no push, ele já começa sozinho; confira o histórico antes de rodar o comando.)
 
 5. **Conferir a primeira coleta.** Nos logs do job aparece `[ads-accounts] 2 conta(s) a mais vindas do dash novo (total N)`. Se aparecer `não consegui ler as contas do dash novo`, a coleta seguiu só com o cadastro antigo: ver o erro (tabela, permissão de leitura do BigQuery).
 6. **Histórico das duas contas novas** (a coleta diária só pega os últimos dias):
@@ -99,7 +105,7 @@ Todos os jobs de Facebook que dependem da lista passam por `getActiveAdAccountsF
 
 - **Painel de status por cliente Vesti** (dataset existe, último dia de venda, conta cadastrada, última coleta, mensagem em linguagem simples), para explicar "por que está zerado" sem abrir o BigQuery.
 - **Alerta de frescor**: aviso quando uma conta ativa passa de 2 dias sem linha nova (hoje o job falha em silêncio, como no Google Ads).
-- **Verificar `User.adAccountIds`** no legado (contas na lista que a coleta não lê).
+- **Unificar a busca de contas** (hoje copiada em seis jobs) numa função só.
 - **Fase 3** (aposentar o legado) e portar os coletores, só quando houver data.
 
 ## Riscos e como mitigar
