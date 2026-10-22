@@ -1,6 +1,12 @@
-// Lista das contas de anúncio (Meta) dos clientes do dash novo, para a coleta diária do backend-dash saber o que coletar.
-// Fonte da verdade do cadastro de contas = `clients.metaAdAccountId`. Regras: conta válida (act_ + dígitos), cliente não arquivado e ativo;
-// a mesma conta em dois clientes (ex.: Aurami e Cocci) aparece uma vez, com os dois clientes listados.
+// Contas de anúncio (Meta) dos clientes do dash novo, para a coleta diária do backend-dash saber o que coletar (regras puras, sem banco).
+//
+// O dash é a fonte da verdade do cadastro (`clients.metaAdAccountId`). Ele publica uma tabela no BigQuery (up_global.ads_accounts), do mesmo jeito
+// que já faz com os clientes excluídos (up_global.excluded_clients): quem coleta lê a tabela, sem chave nem chamada ao dash.
+// Regras: conta válida (act_ + dígitos), cliente não arquivado e ativo. A mesma conta em dois clientes (ex.: Aurami e Cocci) gera uma linha
+// por cliente (quem lê usa DISTINCT).
+
+export const ADS_ACCOUNTS_DATASET = "up_global";
+export const ADS_ACCOUNTS_TABLE = "ads_accounts";
 
 export type AdsAccountClientRow = {
   id: string;
@@ -11,9 +17,11 @@ export type AdsAccountClientRow = {
   archivedAt: Date | null;
 };
 
-export type AdsAccountEntry = {
+export type AdsAccountRow = {
   adAccountId: string;
-  clients: Array<{ id: string; name: string }>;
+  clientId: string;
+  clientName: string;
+  commercePlatform: string;
 };
 
 export type IgnoredAdsAccount = { clientId: string; clientName: string; reason: "archived" | "inactive" | "invalid_account" };
@@ -26,38 +34,33 @@ export function normalizeAdAccountId(raw: string | null | undefined): string | n
   return /^\d{5,}$/.test(digits) ? `act_${digits}` : null;
 }
 
-/** `commercePlatform` (ex.: "VESTI") limita aos clientes dessa plataforma; sem ele, vale para todos. */
-export function buildAdsAccountsList(
-  rows: AdsAccountClientRow[],
-  options: { commercePlatform?: string } = {},
-): { accounts: AdsAccountEntry[]; ignored: IgnoredAdsAccount[] } {
-  const byAccount = new Map<string, AdsAccountEntry>();
+export function buildAdsAccountRows(clients: AdsAccountClientRow[]): { rows: AdsAccountRow[]; ignored: IgnoredAdsAccount[] } {
+  const rows: AdsAccountRow[] = [];
   const ignored: IgnoredAdsAccount[] = [];
+  const seen = new Set<string>();
 
-  for (const row of rows) {
-    if (options.commercePlatform && row.commercePlatform !== options.commercePlatform) continue;
+  for (const client of clients) {
     // Cliente sem conta cadastrada não é "ignorado": simplesmente não tem o que coletar.
-    if (!row.metaAdAccountId?.trim()) continue;
-    if (row.archivedAt) {
-      ignored.push({ clientId: row.id, clientName: row.name, reason: "archived" });
+    if (!client.metaAdAccountId?.trim()) continue;
+    if (client.archivedAt) {
+      ignored.push({ clientId: client.id, clientName: client.name, reason: "archived" });
       continue;
     }
-    if (!row.isActive) {
-      ignored.push({ clientId: row.id, clientName: row.name, reason: "inactive" });
+    if (!client.isActive) {
+      ignored.push({ clientId: client.id, clientName: client.name, reason: "inactive" });
       continue;
     }
-    const account = normalizeAdAccountId(row.metaAdAccountId);
-    if (!account) {
-      ignored.push({ clientId: row.id, clientName: row.name, reason: "invalid_account" });
+    const adAccountId = normalizeAdAccountId(client.metaAdAccountId);
+    if (!adAccountId) {
+      ignored.push({ clientId: client.id, clientName: client.name, reason: "invalid_account" });
       continue;
     }
-    const entry = byAccount.get(account) ?? { adAccountId: account, clients: [] };
-    entry.clients.push({ id: row.id, name: row.name });
-    byAccount.set(account, entry);
+    const key = `${adAccountId}|${client.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ adAccountId, clientId: client.id, clientName: client.name, commercePlatform: client.commercePlatform ?? "" });
   }
 
-  const accounts = [...byAccount.values()]
-    .map((entry) => ({ ...entry, clients: entry.clients.sort((a, b) => a.name.localeCompare(b.name, "pt-BR")) }))
-    .sort((a, b) => a.adAccountId.localeCompare(b.adAccountId));
-  return { accounts, ignored };
+  rows.sort((a, b) => a.adAccountId.localeCompare(b.adAccountId) || a.clientName.localeCompare(b.clientName, "pt-BR") || a.clientId.localeCompare(b.clientId));
+  return { rows, ignored };
 }

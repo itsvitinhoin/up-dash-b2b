@@ -44,6 +44,7 @@ import {
   purgeClientCompletely,
   reconcileExcludedClients,
 } from "../services/client-lifecycle";
+import { publishAdsAccountsSafely } from "../services/ads-accounts-publisher";
 import {
   OnboardingError,
   groupSyncStoresByDataset,
@@ -458,6 +459,8 @@ router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
     .insert(clientsTable)
     .values(values)
     .returning();
+  // Conta de anúncio nova entra na coleta (up_global.ads_accounts). Falha aqui não desfaz o cadastro: o job de hora em hora republica.
+  if (created.metaAdAccountId) await publishAdsAccountsSafely("cliente criado");
   res.status(201).json(GetClientResponse.parse(clientPublicFields(created)));
 });
 
@@ -769,6 +772,7 @@ router.post("/clients/vesti", requireAdmin, async (req, res): Promise<void> => {
     } catch (err) {
       logger.warn({ err: err instanceof Error ? err.message : String(err) }, "cliente Vesti criado, mas não consegui atualizar a lista de excluídos");
     }
+    await publishAdsAccountsSafely("cliente Vesti criado");
     res.status(201).json({
       client: GetClientResponse.parse(clientPublicFields(result.created.client)),
       dataset: result.dataset,
@@ -1166,6 +1170,10 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
     });
     return;
   }
+  // A lista de contas de anúncio (up_global.ads_accounts) usa estes campos; só republica quando algum mudou.
+  if (Object.keys(updates).some((key) => key === "metaAdAccountId" || key === "isActive" || key === "commercePlatform" || key === "name")) {
+    await publishAdsAccountsSafely("cliente editado");
+  }
   res.json(GetClientResponse.parse(clientPublicFields(updated)));
 });
 
@@ -1213,6 +1221,7 @@ router.post("/clients/:clientId/archive", requireAdmin, async (req, res): Promis
   // Avisa os outros programas (script-vesti-nuvem, backend-dash) para pararem de atualizar este cliente. O banco do painel manda:
   // se a publicacao falhar, o cliente continua excluido e a limpeza noturna republica a lista.
   await reconcileExcludedClients().catch((err) => logger.error({ err, clientId }, "Failed to publish excluded clients list"));
+  await publishAdsAccountsSafely("cliente excluído");
   logger.warn({ clientId, name: existing.name, by: req.user?.email }, "Client excluded (archived)");
   res.json(GetClientResponse.parse(clientPublicFields(updated ?? existing)));
 });
@@ -1234,6 +1243,7 @@ router.post("/clients/:clientId/restore", requireAdmin, async (req, res): Promis
     return;
   }
   await reconcileExcludedClients().catch((err) => logger.error({ err, clientId }, "Failed to publish excluded clients list"));
+  await publishAdsAccountsSafely("cliente recuperado");
   logger.warn({ clientId, name: updated.name, by: req.user?.email }, "Client recovered (restored from archive)");
   res.json(GetClientResponse.parse(clientPublicFields(updated)));
 });
