@@ -5,6 +5,7 @@
 export type AdsAccountClientRow = {
   id: string;
   name: string;
+  commercePlatform: string | null;
   metaAdAccountId: string | null;
   isActive: boolean;
   archivedAt: Date | null;
@@ -25,11 +26,16 @@ export function normalizeAdAccountId(raw: string | null | undefined): string | n
   return /^\d{5,}$/.test(digits) ? `act_${digits}` : null;
 }
 
-export function buildAdsAccountsList(rows: AdsAccountClientRow[]): { accounts: AdsAccountEntry[]; ignored: IgnoredAdsAccount[] } {
+/** `commercePlatform` (ex.: "VESTI") limita aos clientes dessa plataforma; sem ele, vale para todos. */
+export function buildAdsAccountsList(
+  rows: AdsAccountClientRow[],
+  options: { commercePlatform?: string } = {},
+): { accounts: AdsAccountEntry[]; ignored: IgnoredAdsAccount[] } {
   const byAccount = new Map<string, AdsAccountEntry>();
   const ignored: IgnoredAdsAccount[] = [];
 
   for (const row of rows) {
+    if (options.commercePlatform && row.commercePlatform !== options.commercePlatform) continue;
     // Cliente sem conta cadastrada não é "ignorado": simplesmente não tem o que coletar.
     if (!row.metaAdAccountId?.trim()) continue;
     if (row.archivedAt) {

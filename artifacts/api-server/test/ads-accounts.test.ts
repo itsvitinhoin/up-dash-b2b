@@ -3,7 +3,7 @@ import express from "express";
 import request from "supertest";
 
 const state = vi.hoisted(() => ({
-  rows: [] as Array<{ id: string; name: string; metaAdAccountId: string | null; isActive: boolean; archivedAt: Date | null }>,
+  rows: [] as Array<{ id: string; name: string; commercePlatform: string | null; metaAdAccountId: string | null; isActive: boolean; archivedAt: Date | null }>,
   authenticated: true,
 }));
 
@@ -24,6 +24,7 @@ import { buildAdsAccountsList, normalizeAdAccountId } from "../src/services/ads-
 
 const client = (over: Partial<(typeof state.rows)[number]> & { id: string }) => ({
   name: `Marca ${over.id}`,
+  commercePlatform: "VESTI" as string | null,
   metaAdAccountId: "act_1447102162403037",
   isActive: true,
   archivedAt: null,
@@ -79,6 +80,16 @@ describe("buildAdsAccountsList", () => {
     ]);
   });
 
+  it("filtro por plataforma: só os clientes dessa plataforma entram", () => {
+    const rows = [
+      client({ id: "v", name: "Vesti", commercePlatform: "VESTI", metaAdAccountId: "act_1000000000000001" }),
+      client({ id: "u", name: "UpZero", commercePlatform: "UPZERO", metaAdAccountId: "act_2000000000000002" }),
+      client({ id: "n", name: "Sem plataforma", commercePlatform: null, metaAdAccountId: "act_3000000000000003" }),
+    ];
+    expect(buildAdsAccountsList(rows, { commercePlatform: "VESTI" }).accounts.map((a) => a.adAccountId)).toEqual(["act_1000000000000001"]);
+    expect(buildAdsAccountsList(rows).accounts.map((a) => a.adAccountId)).toEqual(["act_1000000000000001", "act_2000000000000002", "act_3000000000000003"]);
+  });
+
   it("conta compartilhada: se um cliente está arquivado e o outro ativo, a conta continua", () => {
     const { accounts } = buildAdsAccountsList([
       client({ id: "a", name: "A", archivedAt: new Date() }),
@@ -102,6 +113,26 @@ describe("GET /ads-accounts", () => {
     expect(res.body.ignored).toEqual([]);
     expect(typeof res.body.generatedAt).toBe("string");
     expect(JSON.stringify(res.body)).not.toMatch(/token|secret|apiKey/i);
+  });
+
+  it("?commercePlatform=VESTI devolve só Vesti (aceita minúsculas); sem o parâmetro, todos", async () => {
+    state.authenticated = true;
+    state.rows = [
+      client({ id: "v", name: "Vesti", commercePlatform: "VESTI", metaAdAccountId: "act_1000000000000001" }),
+      client({ id: "u", name: "UpZero", commercePlatform: "UPZERO", metaAdAccountId: "act_2000000000000002" }),
+    ];
+    const vesti = await request(app).get("/api/ads-accounts?commercePlatform=vesti");
+    expect(vesti.status).toBe(200);
+    expect(vesti.body.accounts.map((a: any) => a.adAccountId)).toEqual(["act_1000000000000001"]);
+    const all = await request(app).get("/api/ads-accounts");
+    expect(all.body.accounts).toHaveLength(2);
+  });
+
+  it("plataforma desconhecida: 400", async () => {
+    state.authenticated = true;
+    const res = await request(app).get("/api/ads-accounts?commercePlatform=XYZ");
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("VALIDATION_ERROR");
   });
 
   it("sem login válido: 401", async () => {
