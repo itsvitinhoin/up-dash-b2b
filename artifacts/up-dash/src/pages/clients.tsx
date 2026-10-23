@@ -59,6 +59,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ExcludeClientDialog, ExcludedClientsTable } from "@/components/client-exclusion";
 import { NewVestiClientDialog } from "@/components/vesti-client-onboarding";
 import { ApiTokensDialog } from "@/components/api-tokens";
+import { AdsHistorySection } from "@/components/ads-history";
 import { isManualB2C, newClientPlatform, newClientProblem } from "@/lib/client-create-rules";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
@@ -810,6 +811,8 @@ function MetaAdsKeyDialog({
               <AlertDescription>{tx("Não foi possível salvar. Tente novamente.")}</AlertDescription>
             </Alert>
           )}
+          {/* Histórico da conta JÁ SALVA (a que está em coleta); trocar a conta acima só vale depois de salvar. */}
+          {hasAdAccount && <AdsHistorySection clientId={clientId} />}
         </div>
 
         <DialogFooter>
