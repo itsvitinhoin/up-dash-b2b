@@ -59,7 +59,17 @@ Status (22/10/2026): **desenho aprovado pelo Marcelo; implementação por etapas
 - **Na produção, hoje, essa regra pegaria 2 contas:** `1418950000264215` (primeira linha 2026-10-18) e `987747454966549` (2026-08-31). Elas só entram depois do build.
 - **Implantação:** a coluna `end_date` é criada sozinha (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) na primeira execução real depois do build; a leitura do estado usa `SELECT *` para a simulação não quebrar antes disso.
 
-- **Falta:** lado do dash novo (criar as tabelas de pedido e estado, botão "Buscar histórico" e status no diálogo Meta) e a Etapa 4.
+### Painel: status e botão "Buscar histórico" (23/10/2026, feito localmente, ainda NÃO publicado)
+
+- **Dash novo** (branch `feature/historico-anuncios-painel`, commit `e86a36b`): no diálogo **Meta** da linha do cliente aparece o bloco "Histórico de anúncios" com a fase (sem histórico / na fila / buscando agora / aguardando limite do Facebook / pronto / parcial / com erro), os dias já coletados (de, até, quantos), o resultado da última busca e o botão **Buscar histórico** (data de início opcional; sem data, vale 01/01/2025). Rotas só de admin: `GET /api/clients/:id/ads-history` e `POST /api/clients/:id/ads-history/request`.
+- **Só pelo BigQuery, sem chave nova:** o dash grava o pedido em `up_global.ads_backfill_requests` (mesma definição da tabela do backend) e lê `ads_backfill_status` e a cobertura de `ads_insights_account`. O pedido entra na fila e o job `ads-onboarding` (agendado, 03:30 a 08:30 de Brasília) busca; a tela atualiza sozinha enquanto está na fila ou rodando.
+- **Travas no servidor** (o botão pode estar velho na tela): recusa pedido se já há pedido na fila, histórico rodando ou "aguardando limite"; recusa cliente na lixeira, sem conta válida ou data inválida (antes de 2023-01-01 ou no futuro). Conta que falhou por falta de permissão PODE pedir de novo (para depois que o cliente liberar o acesso) e a tela explica o erro #200 em português.
+- **Conferido no navegador** com uma API de mentira local (os quatro estados, o clique no botão e o pedido enviado). Testes: 40 novos em `artifacts/api-server/test/ads-history.test.ts`.
+- **Proteção no backend-dash** (branch `fix/backfill-busca-antes-de-apagar`, commit `75917b8`): o histórico por anúncio apagava o período ANTES de buscar no Facebook; se a busca falhasse, o dado existente se perdia. Agora busca primeiro e só apaga se vieram linhas (`lib/refreshPeriod.ts`). Importante porque o botão torna fácil pedir de novo numa conta que perdeu o acesso. **Publicar o backend-dash ANTES do dash.**
+- **Ordem de publicação:** (1) push do backend-dash (o gatilho builda e deploya sozinho; conferir `gcloud builds list`, sem build manual); (2) push do dash (main = Vercel).
+- **Sugestão (decisão do Marcelo):** hoje o job só roda das 03:30 às 08:30; um pedido feito de tarde espera até a manhã seguinte. Se isso incomodar, dá para estender o agendamento (`schedule-ads-onboarding`) para o dia todo; o job já para sozinho ao bater no limite do Facebook e processa só 2 contas por vez.
+
+- **Falta:** publicar o painel (ver acima) e a Etapa 4.
 
 ### Achado: cada coleta de anúncios é agendada duas vezes
 
