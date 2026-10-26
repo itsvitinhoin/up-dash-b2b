@@ -10,6 +10,7 @@ import {
   resolveVestiDataset,
   computeVestiWindow,
   computeVestiStateRevenue,
+  fetchVestiStateCoverage,
   fetchVestiOrderStatusBreakdown,
   fetchVestiAttributedCustomers,
   fetchVestiFunnel,
@@ -170,13 +171,14 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
   const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
-  const { category, sellerId, channel, color, compare } = parsed.data;
+  const { category, sellerId, channel, color, state, compare } = parsed.data;
 
   const vestiFilters: VestiFilters = {
     category: category || undefined,
     sellerId: sellerId || undefined,
     channel: channel || undefined,
     color: color || undefined,
+    state: state?.trim() || undefined,
   };
   const filterKey = JSON.stringify(vestiFilters);
 
@@ -245,9 +247,20 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
         ]
       : [];
 
+  // Cobertura de estado dos pedidos pagos (aviso do filtro Estado na tela). Nunca derruba o painel: falhou = sem aviso.
+  const stateCoverage = await cached(
+    `vesti:state-coverage:${dataset}:${dateFromOnly}:${dateToOnly}`,
+    VESTI_CACHE_TTL_MS,
+    () => fetchVestiStateCoverage(dataset, dateFromOnly, dateToOnly).catch((err) => {
+      console.warn("[vesti] cobertura de estado indisponível:", err instanceof Error ? err.message : err);
+      return null;
+    }),
+  );
+
   res.json(
     GetDashboardResponse.parse({
       kpis: vestiCurrent.kpis,
+      stateCoverage,
       revenueOverTime: vestiCurrent.dailyRevenue,
       ordersOverTime: vestiCurrent.dailyOrders,
       leadsOverTime: vestiCurrent.dailyLeads,

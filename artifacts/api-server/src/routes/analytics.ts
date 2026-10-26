@@ -1205,6 +1205,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
   const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
   const { category, sellerId, channel, color, segment, compare, utmSource: utmSourceFilter, utmMedium: utmMediumFilter, utmCampaign: utmCampaignFilter } = parsed.data;
+  // UF do pedido (SP, MG...). Pedido sem estado não casa; a cobertura vai na resposta (stateCoverage) para a tela avisar.
+  const stateFilter = parsed.data.state?.trim().toUpperCase() || undefined;
   const [clientConfig] = await db
     .select({
       dashboardType: clientsTable.dashboardType,
@@ -1316,6 +1318,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       lte(ordersTable.createdAt, winTo),
     ];
     if (sellerId) orderConds.push(eq(ordersTable.sellerId, sellerId));
+    if (stateFilter) orderConds.push(sql`UPPER(TRIM(${ordersTable.state})) = ${stateFilter}`);
     const emptyWindow: WindowAggregates = {
       kpis: { ...ZERO_KPIS },
       dailyRevenue: [],
@@ -1816,9 +1819,24 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
 
   const signals = await computeSignals();
 
+  // Cobertura de estado dos pedidos pagos da janela (ignora o filtro de estado): a tela avisa quando filtrar por estado esconderia a maioria.
+  const stateCoverage = await db
+    .select({
+      total: sql<number>`COUNT(*)::int`,
+      withState: sql<number>`COUNT(*) FILTER (WHERE COALESCE(TRIM(${ordersTable.state}), '') <> '')::int`,
+    })
+    .from(ordersTable)
+    .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to), paidOrderStatus()))
+    .then(([row]) => (row && row.total > 0 ? Math.min(1, row.withState / row.total) : null))
+    .catch((err) => {
+      console.warn("[dashboard] cobertura de estado indisponível:", err instanceof Error ? err.message : err);
+      return null;
+    });
+
   res.json(
     GetDashboardResponse.parse({
       kpis: current.kpis,
+      stateCoverage,
       revenueOverTime: current.dailyRevenue,
       ordersOverTime: current.dailyOrders,
       leadsOverTime: current.dailyLeads,

@@ -16,6 +16,10 @@ import type { TimeSeriesPoint } from "./timeSeriesPoint";
 
 export interface DashboardResponse {
   kpis: DashboardKpis;
+  /** Share (0 to 1) of the period's paid orders that carry a state (UF), ignoring the `state` filter.
+Lets the UI warn when filtering by state would hide most orders. Null when there are no paid orders.
+ */
+  stateCoverage?: number | null;
   revenueOverTime: TimeSeriesPoint[];
   ordersOverTime: TimeSeriesPoint[];
   leadsOverTime: TimeSeriesPoint[];

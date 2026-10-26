@@ -1688,7 +1688,9 @@ export function AppLayout({ children }: AppLayoutProps) {
                   </div>
                 )}
               </div>
-              {meta.hasFilterBar && <FilterBar />}
+              {meta.hasFilterBar && (
+                <FilterBar variant={location === "/" || location === "/dashboard" ? "overview" : "default"} />
+              )}
             </div>
           )}
           <div className="up-page-content" aria-busy={isGlobalSwitchLoading || activeDataLoads > 0}>

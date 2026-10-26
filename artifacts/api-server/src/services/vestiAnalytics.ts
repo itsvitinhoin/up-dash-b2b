@@ -50,6 +50,8 @@ export type VestiFilters = {
   sellerId?: string;
   channel?: string;
   color?: string;
+  /** UF do pedido (SP, MG...). Só casa pedido que tem estado; ver fetchVestiStateCoverage. */
+  state?: string;
 };
 
 export type VestiKpis = {
@@ -130,6 +132,11 @@ function buildFilterClause(alias: string, view: string, produtos: string, filter
       WHERE ARRAY_LENGTH(p2.categories) > 0 AND UPPER(p2.categories[SAFE_OFFSET(0)].name) = UPPER(@category)
     )`);
     params.category = filters.category;
+  }
+  if (filters.state) {
+    // `estado` vem da Vesti já como UF; UPPER nos dois lados para não depender da caixa. Pedido sem estado (coluna vazia) não casa.
+    parts.push(`UPPER(${alias}.estado) = UPPER(@state)`);
+    params.state = filters.state;
   }
   if (filters.color) {
     // Mesmo padrão da categoria: cor vem do array `colors` do catálogo
@@ -322,6 +329,27 @@ async function fetchRevenueByCategory(
     revenue: Number(r.revenue) || 0,
     orders: Number(r.orders) || 0,
   }));
+}
+
+/**
+ * Fração (0 a 1) dos pedidos PAGOS da janela que têm estado preenchido, ignorando o filtro de estado. A Vesti não manda o estado em todos os
+ * clientes (medido em 26/10/2026, 90 dias: Fiore 100%, Vogabox 22%, Tuba Plus 0%, Estime 0%); a tela usa isto para avisar que filtrar por estado
+ * esconderia a maior parte dos pedidos. Sem pedido pago na janela devolve null.
+ */
+export async function fetchVestiStateCoverage(dataset: string, dateFrom: string, dateTo: string): Promise<number | null> {
+  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const query = `
+    SELECT
+      COUNT(DISTINCT IF(pago, pedido_id, NULL)) AS pagos,
+      COUNT(DISTINCT IF(pago AND estado IS NOT NULL AND TRIM(estado) != '', pedido_id, NULL)) AS pagos_com_estado
+    FROM ${view}
+    WHERE data_ref BETWEEN @dateFrom AND @dateTo
+  `;
+  const [rows] = await bigquery.query({ query, params: { dateFrom, dateTo } });
+  const row = rows[0] as Record<string, number> | undefined;
+  const total = Number(row?.pagos) || 0;
+  if (total <= 0) return null;
+  return Math.min(1, (Number(row?.pagos_com_estado) || 0) / total);
 }
 
 async function fetchStateRevenue(

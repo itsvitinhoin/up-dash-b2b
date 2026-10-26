@@ -817,6 +817,12 @@ export const GetDashboardQueryParams = zod.object({
     .string()
     .optional()
     .describe("Restrict order metrics to a single seller."),
+  state: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict order metrics to orders shipped to a single Brazilian state (UF, e.g. SP, MG). Only orders with a known state match; see `stateCoverage` in the response.",
+    ),
   channel: zod.coerce
     .string()
     .optional()
@@ -891,6 +897,12 @@ export const GetDashboardResponse = zod.object({
       .number()
       .describe("returningBuyers \/ (newBuyers + returningBuyers) \* 100."),
   }),
+  stateCoverage: zod
+    .number()
+    .nullish()
+    .describe(
+      "Share (0 to 1) of the period's paid orders that carry a state (UF), ignoring the `state` filter. Lets the UI warn when filtering by state would hide most orders. Null when there are no paid orders.",
+    ),
   revenueOverTime: zod.array(
     zod.object({
       date: zod.string(),

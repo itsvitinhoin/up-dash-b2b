@@ -427,6 +427,13 @@ paths:
             type: string
           description: Restrict order metrics to a single seller.
         - in: query
+          name: state
+          schema:
+            type: string
+          description: |
+            Restrict order metrics to orders shipped to a single Brazilian state (UF, e.g. SP, MG).
+            Only orders with a known state match; see `stateCoverage` in the response.
+        - in: query
           name: channel
           schema:
             type: string
@@ -2356,6 +2363,12 @@ components:
       properties:
         kpis:
           $ref: "#/components/schemas/DashboardKpis"
+        stateCoverage:
+          type: number
+          nullable: true
+          description: |
+            Share (0 to 1) of the period's paid orders that carry a state (UF), ignoring the `state` filter.
+            Lets the UI warn when filtering by state would hide most orders. Null when there are no paid orders.
         revenueOverTime:
           type: array
           items:

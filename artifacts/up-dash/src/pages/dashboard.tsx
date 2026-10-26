@@ -1618,6 +1618,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
       category: filters.category ?? undefined,
       sellerId: filters.sellerId ?? undefined,
+      state: filters.state ?? undefined,
       channel: filters.channel ?? undefined,
       color: filters.color ?? undefined,
       segment: filters.segment ?? undefined,
@@ -1932,6 +1933,16 @@ export default function DashboardPage({ organization = "executive" }: { organiza
               <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
               Tentar novamente
             </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+      {/* Filtro Estado: se o estado só vem em parte dos pedidos pagos, o número filtrado mostra só essa parte. Avisa em vez de esconder. */}
+      {filters.state && typeof data?.stateCoverage === "number" && data.stateCoverage < 0.6 && (
+        <Alert className="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300 no-print" data-testid="state-coverage-warning">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Estado informado em parte dos pedidos</AlertTitle>
+          <AlertDescription>
+            Só {Math.round(data.stateCoverage * 100)}% dos pedidos pagos deste cliente no período têm estado. Os números filtrados por {filters.state} mostram apenas esses pedidos.
           </AlertDescription>
         </Alert>
       )}

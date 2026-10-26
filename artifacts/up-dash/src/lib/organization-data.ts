@@ -94,6 +94,7 @@ export function useOrganizationData(
     ...period,
     category: filters.category ?? undefined,
     sellerId: filters.sellerId ?? undefined,
+    state: filters.state ?? undefined,
     channel: filters.channel ?? undefined,
     color: filters.color ?? undefined,
     segment: filters.segment ?? undefined,

@@ -128,6 +128,19 @@ const BRAZIL_STATES = [
   "TO",
 ].map((s) => ({ value: s, label: s }));
 
+const BRAZIL_STATE_NAMES: Record<string, string> = {
+  AC: "Acre", AL: "Alagoas", AM: "Amazonas", AP: "Amapá", BA: "Bahia", CE: "Ceará", DF: "Distrito Federal", ES: "Espírito Santo",
+  GO: "Goiás", MA: "Maranhão", MG: "Minas Gerais", MS: "Mato Grosso do Sul", MT: "Mato Grosso", PA: "Pará", PB: "Paraíba",
+  PE: "Pernambuco", PI: "Piauí", PR: "Paraná", RJ: "Rio de Janeiro", RN: "Rio Grande do Norte", RO: "Rondônia", RR: "Roraima",
+  RS: "Rio Grande do Sul", SC: "Santa Catarina", SE: "Sergipe", SP: "São Paulo", TO: "Tocantins",
+};
+
+/** Opções do filtro Estado na Visão geral: "São Paulo (SP)", em ordem alfabética; o valor enviado ao servidor é a UF. */
+const BRAZIL_STATE_OPTIONS_NAMED = BRAZIL_STATES.map((o) => ({
+  value: o.value,
+  label: BRAZIL_STATE_NAMES[o.value] ? `${BRAZIL_STATE_NAMES[o.value]} (${o.value})` : o.value,
+})).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+
 const SIZE_OPTIONS = [
   { value: "PP", label: "PP" },
   { value: "P", label: "P" },
@@ -168,7 +181,16 @@ const FILTER_LABELS_PT: Record<string, string> = {
   Color: "Cor",
   Creative: "Criativo",
 };
-export function FilterBar() {
+/**
+ * `overview` = barra da Visão geral de performance (pedido do time em 26/10/2026): só Período (fora daqui, nos atalhos do layout), Vendedora e
+ * Estado. Categoria, Canal, Segmento e "Mais filtros" não aparecem. Os pedidos contam sempre só os PAGOS (regra do produto, sem filtro de status).
+ */
+const OVERVIEW_HIDDEN_FILTERS = [
+  "category", "channel", "segment", "utmSource", "utmMedium", "utmCampaign", "city", "product", "size", "color", "creative",
+] as const satisfies ReadonlyArray<keyof DashboardFilters>;
+
+export function FilterBar({ variant = "default" }: { variant?: "default" | "overview" } = {}) {
+  const overview = variant === "overview";
   const { language, tx } = useI18n();
   const label = (english: string, portuguese: string) =>
     language === "pt" ? portuguese : english;
@@ -283,6 +305,13 @@ export function FilterBar() {
     if (!popoverOpen) setNewName("");
   }, [popoverOpen]);
 
+  // Os filtros são globais entre as páginas. Na Visão geral os botões deles não existem, então um valor deixado por outra página (ex.: Categoria
+  // vinda de Pedidos) não pode continuar filtrando os números sem ninguém ver: zera ao entrar.
+  useEffect(() => {
+    if (!overview) return;
+    for (const key of OVERVIEW_HIDDEN_FILTERS) if (filters[key]) setFilter(key, null);
+  }, [overview, filters, setFilter]);
+
   useEffect(() => {
     if (selectedDashboardMode === "B2C") {
       if (filters.sellerId) setFilter("sellerId", null);
@@ -305,6 +334,12 @@ export function FilterBar() {
       label: string;
       value: string;
     }[] = [];
+    if (overview) {
+      if (selectedDashboardMode === "B2B" && filters.sellerId)
+        chips.push({ key: "sellerId", label: "Vendedora", value: labelFor(sellerOptions, filters.sellerId) });
+      if (filters.state) chips.push({ key: "state", label: "Estado", value: filters.state });
+      return chips;
+    }
     if (filters.category)
       chips.push({
         key: "category",
@@ -373,6 +408,7 @@ export function FilterBar() {
       });
     return chips;
   }, [
+    overview,
     filters,
     selectedDashboardMode,
     sellerOptions,
@@ -399,7 +435,14 @@ export function FilterBar() {
     return extraKeys.filter((k) => !!filters[k]).length;
   }, [filters, selectedDashboardMode]);
 
-  const saveCurrentFilters = () => ({
+  const saveCurrentFilters = () => overview
+    ? {
+        dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+        dateTo: format(dateRange.to, "yyyy-MM-dd"),
+        sellerId: filters.sellerId,
+        state: filters.state,
+      }
+    : {
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
     dateTo: format(dateRange.to, "yyyy-MM-dd"),
     category: filters.category,
@@ -415,7 +458,7 @@ export function FilterBar() {
     size: filters.size,
     color: filters.color,
     creative: filters.creative,
-  });
+  };
 
   return (
     <div
@@ -424,27 +467,31 @@ export function FilterBar() {
       aria-label="Filtros do dashboard"
       data-testid="filter-bar"
     >
-      <FilterSelect
-        placeholder="Category"
-        value={filters.category}
-        options={categoryOptions}
-        onChange={(v) => setFilter("category", v)}
-        testId="filter-category"
-      />
-      <FilterSelect
-        placeholder="Channel"
-        value={filters.channel}
-        options={channelOptions}
-        onChange={(v) => setFilter("channel", v)}
-        testId="filter-channel"
-      />
-      <FilterSelect
-        placeholder="Segment"
-        value={filters.segment}
-        options={SEGMENT_OPTIONS}
-        onChange={(v) => setFilter("segment", v)}
-        testId="filter-segment"
-      />
+      {!overview && (
+        <>
+          <FilterSelect
+            placeholder="Category"
+            value={filters.category}
+            options={categoryOptions}
+            onChange={(v) => setFilter("category", v)}
+            testId="filter-category"
+          />
+          <FilterSelect
+            placeholder="Channel"
+            value={filters.channel}
+            options={channelOptions}
+            onChange={(v) => setFilter("channel", v)}
+            testId="filter-channel"
+          />
+          <FilterSelect
+            placeholder="Segment"
+            value={filters.segment}
+            options={SEGMENT_OPTIONS}
+            onChange={(v) => setFilter("segment", v)}
+            testId="filter-segment"
+          />
+        </>
+      )}
       {selectedDashboardMode === "B2B" && (
         <FilterSelect
           placeholder="Seller"
@@ -455,7 +502,29 @@ export function FilterBar() {
         />
       )}
 
+      {overview && (
+        <>
+          <FilterSelect
+            placeholder="State"
+            value={filters.state}
+            options={BRAZIL_STATE_OPTIONS_NAMED}
+            onChange={(v) => setFilter("state", v)}
+            testId="filter-state"
+            widthClass="w-[200px]"
+          />
+          <Badge
+            variant="outline"
+            className="h-7 px-2 text-[11px] font-normal text-muted-foreground"
+            title={label("Revenue and orders always count paid orders only.", "Faturamento e pedidos contam sempre só pedidos pagos.")}
+            data-testid="filter-paid-only"
+          >
+            {label("Paid orders only", "Somente pedidos pagos")}
+          </Badge>
+        </>
+      )}
+
       {/* More Filters popover */}
+      {!overview && (
       <Popover open={moreOpen} onOpenChange={setMoreOpen}>
         <PopoverTrigger asChild>
           <Button
@@ -628,6 +697,7 @@ export function FilterBar() {
           </div>
         </PopoverContent>
       </Popover>
+      )}
 
       {activeChips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 ml-1">
@@ -668,7 +738,12 @@ export function FilterBar() {
       <div className="ml-auto flex items-center gap-1.5 flex-wrap">
         {views?.slice(0, 6).map((view) => {
           const viewFilterSummary = (
-            [
+            (overview
+              ? [
+                  ["State", view.filters.state],
+                  ["Seller", view.filters.sellerId],
+                ]
+              : [
               ["Category", view.filters.category],
               ["Channel", view.filters.channel],
               ["Segment", view.filters.segment],
@@ -682,7 +757,7 @@ export function FilterBar() {
               ["Color", view.filters.color],
               ["Seller", view.filters.sellerId],
               ["Creative", view.filters.creative],
-            ] as [string, string | null | undefined][]
+            ]) as [string, string | null | undefined][]
           )
             .filter(([, v]) => v)
             .map(([k, v]) => `${k}: ${v}`)
@@ -713,7 +788,10 @@ export function FilterBar() {
                         ? new Date(view.filters.dateTo)
                         : dateRange.to,
                     },
-                    filters: {
+                    filters: overview
+                      // Visão geral: um atalho antigo pode ter Categoria, Canal etc. Aqui só valem Vendedora e Estado; o resto não é aplicado.
+                      ? { ...filters, sellerId: view.filters.sellerId ?? null, state: view.filters.state ?? null }
+                      : {
                       category: view.filters.category ?? null,
                       sellerId: view.filters.sellerId ?? null,
                       channel: view.filters.channel ?? null,
@@ -753,9 +831,9 @@ export function FilterBar() {
               variant="ghost"
               className="h-7 px-2 text-xs"
               data-testid="filter-save-view"
-              disabled={!hasAny && activeChips.length === 0}
+              disabled={overview ? activeChips.length === 0 : !hasAny && activeChips.length === 0}
               title={
-                hasAny || activeChips.length > 0
+                (overview ? activeChips.length > 0 : hasAny || activeChips.length > 0)
                   ? label("Save current filters", "Salvar filtros atuais")
                   : label(
                       "Aplique pelo menos um filtro para salvar",
@@ -826,6 +904,8 @@ interface FilterSelectProps {
   onChange: (value: string | null) => void;
   testId: string;
   fullWidth?: boolean;
+  /** Classe de largura quando não é `fullWidth` (padrão 140px). */
+  widthClass?: string;
 }
 
 function FilterSelect({
@@ -835,6 +915,7 @@ function FilterSelect({
   onChange,
   testId,
   fullWidth,
+  widthClass = "w-[140px]",
 }: FilterSelectProps) {
   const { language, tx } = useI18n();
   const localizedPlaceholder =
@@ -847,7 +928,7 @@ function FilterSelect({
       onValueChange={(v) => onChange(v === "__all" ? null : v)}
     >
       <SelectTrigger
-        className={`h-7 text-xs bg-background ${fullWidth ? "w-full" : "w-[140px]"}`}
+        className={`h-7 text-xs bg-background ${fullWidth ? "w-full" : widthClass}`}
         data-testid={testId}
         aria-label={localizedPlaceholder}
       >

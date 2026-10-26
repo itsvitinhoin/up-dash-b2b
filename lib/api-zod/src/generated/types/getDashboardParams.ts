@@ -19,6 +19,12 @@ export type GetDashboardParams = {
    */
   sellerId?: string;
   /**
+   * Restrict order metrics to orders shipped to a single Brazilian state (UF, e.g. SP, MG).
+Only orders with a known state match; see `stateCoverage` in the response.
+
+   */
+  state?: string;
+  /**
    * Restrict to orders from customers acquired via a UTM source (e.g. instagram, google).
    */
   channel?: string;

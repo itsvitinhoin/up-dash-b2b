@@ -603,6 +603,10 @@ export interface OrderStatusBreakdown {
 
 export interface DashboardResponse {
   kpis: DashboardKpis;
+  /** Share (0 to 1) of the period's paid orders that carry a state (UF), ignoring the `state` filter.
+Lets the UI warn when filtering by state would hide most orders. Null when there are no paid orders.
+ */
+  stateCoverage?: number | null;
   revenueOverTime: TimeSeriesPoint[];
   ordersOverTime: TimeSeriesPoint[];
   leadsOverTime: TimeSeriesPoint[];
@@ -1898,6 +1902,12 @@ export type GetDashboardParams = {
    * Restrict order metrics to a single seller.
    */
   sellerId?: string;
+  /**
+   * Restrict order metrics to orders shipped to a single Brazilian state (UF, e.g. SP, MG).
+Only orders with a known state match; see `stateCoverage` in the response.
+
+   */
+  state?: string;
   /**
    * Restrict to orders from customers acquired via a UTM source (e.g. instagram, google).
    */
