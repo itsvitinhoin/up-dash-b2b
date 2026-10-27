@@ -64,6 +64,7 @@ import {
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
+import { usesMetaRevenue, manualMarketingKpis } from "../services/marketing-source";
 import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
 import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
 import * as vestiDashboardController from "../controllers/vestiDashboardController";
@@ -7289,15 +7290,24 @@ async function buildMarketingInsightContext(clientId: string, from: Date, to: Da
     .from(creativesTable)
     .where(eq(creativesTable.clientId, clientId));
 
+  const [config] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId));
+  const isB2C = config?.dashboardType === "B2C";
+  const metaRevenue = usesMetaRevenue(config?.commercePlatform);
+  const token = getGlobalMetaAccessToken(config?.metaAdsApiKey);
+  const readMeta = (start: Date, end: Date) => token && config?.metaAdAccountId
+    ? fetchMetaMarketingData({ accessToken: token, adAccountId: config.metaAdAccountId, since: start.toISOString().slice(0, 10), until: end.toISOString().slice(0, 10), isB2C })
+    : Promise.resolve(null);
+  const currentMeta = metaRevenue ? await readMeta(from, to) : null;
   const activeCreatives = creatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
-  const kpis = await computeMarketingKpis(clientId, activeCreatives, from, to);
+  const kpis = await computeMarketingKpis(clientId, activeCreatives, from, to, currentMeta, isB2C, metaRevenue);
 
   // Previous period for trend
   const span = to.getTime() - from.getTime();
   const prevTo = new Date(from.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - span);
   const prevActive = creatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0);
-  const prevKpis = await computeMarketingKpis(clientId, prevActive, prevFrom, prevTo);
+  const previousMeta = metaRevenue ? await readMeta(prevFrom, prevTo) : null;
+  const prevKpis = await computeMarketingKpis(clientId, prevActive, prevFrom, prevTo, previousMeta, isB2C, metaRevenue);
 
   const roasTrend = prevKpis.roas > 0 ? (kpis.roas - prevKpis.roas) / prevKpis.roas : 0;
 
@@ -7307,11 +7317,11 @@ async function buildMarketingInsightContext(clientId: string, from: Date, to: Da
     const fraction = computeSpendOverlapFraction(c, from, to);
     platformTotals[c.platform] = (platformTotals[c.platform] ?? 0) + c.spend * fraction;
   }
-  const topPlatform = Object.entries(platformTotals).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "n/a";
+  const topPlatform = metaRevenue ? "META" : Object.entries(platformTotals).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "n/a";
 
   const [brand] = await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId));
 
-  return { kpis, prevKpis, roasTrend, topPlatform, brand: brand?.name ?? "the brand" };
+  return { isB2C, kpis, prevKpis, roasTrend, topPlatform, brand: brand?.name ?? "the brand" };
 }
 
 function buildMarketingHeuristic(ctx: Awaited<ReturnType<typeof buildMarketingInsightContext>>) {
@@ -7321,7 +7331,11 @@ function buildMarketingHeuristic(ctx: Awaited<ReturnType<typeof buildMarketingIn
   return {
     headline: `ROAS is ${trending} ${Math.abs(Number(roasPct))}% vs last period at ${kpis.roas.toFixed(2)}×`,
     body: `You spent R$${kpis.totalSpend.toFixed(0)} on paid channels and generated R$${kpis.attributedRevenue.toFixed(0)} in attributed revenue. ${topPlatform} is your top-performing platform.`,
-    bullets: [
+    bullets: ctx.isB2C ? [
+      `${kpis.purchases} compras com custo por compra de R$${kpis.cpa.toFixed(2)}`,
+      `Receita atribuída de R$${kpis.attributedRevenue.toFixed(2)}`,
+      roasTrend > 0 ? "ROAS em alta — avalie os criativos com mais compras" : "Revise o desempenho de compras e o custo por compra",
+    ] : [
       `${kpis.approvedLeads} approved leads at R$${kpis.cpa.toFixed(0)} CPA`,
       `Cost per lead is R$${kpis.cpl.toFixed(0)} — ${kpis.approvalRate.toFixed(0)}% approval rate`,
       roasTrend >= 0 ? "Paid channel ROAS is improving — consider scaling top creatives" : "ROAS is declining — review underperforming creatives and adjust bids",
@@ -7362,11 +7376,13 @@ Ad Spend: R$${kpis.totalSpend.toFixed(2)}
 Attributed Revenue: R$${kpis.attributedRevenue.toFixed(2)}
 ROAS: ${kpis.roas.toFixed(2)}x
 ROAS trend vs prior window: ${(roasTrend * 100).toFixed(2)}%
-Total Leads: ${kpis.totalLeads}
+${mktCtx.isB2C ? `Purchases: ${kpis.purchases}
+Cost per purchase: R$${kpis.cpa.toFixed(2)}
+Use purchases, not leads or registration approvals.` : `Total Leads: ${kpis.totalLeads}
 Approved Leads: ${kpis.approvedLeads}
 Approval Rate: ${kpis.approvalRate.toFixed(1)}%
 CPL (cost per lead): R$${kpis.cpl.toFixed(2)}
-CPA (cost per approved lead): R$${kpis.cpa.toFixed(2)}
+CPA: R$${kpis.cpa.toFixed(2)}`}
 Top platform by spend: ${topPlatform}
 
 Focus on paid-channel performance and next best actions. Return strict JSON:
@@ -7381,7 +7397,7 @@ No markdown, no preamble.`;
           max_completion_tokens: 600,
           response_format: { type: "json_object" },
           messages: [
-            { role: "system", content: "You write concise, actionable B2B paid-media marketing insights. Always respond with the requested JSON shape only." },
+            { role: "system", content: "You write concise, actionable paid-media marketing insights for the supplied business model. Always respond with the requested JSON shape only." },
             { role: "user", content: mktPrompt },
           ],
         });
@@ -10582,7 +10598,12 @@ async function computeMarketingKpis(
   to: Date,
   meta?: MetaMarketingData | null,
   isB2CClient = false,
+  metaRevenue = false,
 ) {
+  if (metaRevenue) {
+    if (!meta) throw new Error("Meta insights unavailable for manual client");
+    return manualMarketingKpis(meta);
+  }
   const creativeSpend = creatives.reduce((s, c) => s + c.spend * computeSpendOverlapFraction(c, from, to), 0);
   const totalSpend = meta ? meta.summary.spend : creativeSpend;
 
@@ -10630,6 +10651,7 @@ async function computeMarketingKpis(
   return {
     totalSpend,
     attributedRevenue,
+    purchases: requestedOrders,
     roas: totalSpend > 0 ? attributedRevenue / totalSpend : 0,
     totalLeads,
     approvedLeads,
@@ -11692,6 +11714,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
 
   const [clientConfig] = await db
     .select({
+      commercePlatform: clientsTable.commercePlatform,
       dashboardType: clientsTable.dashboardType,
       metaAdsApiKey: clientsTable.metaAdsApiKey,
       metaAdAccountId: clientsTable.metaAdAccountId,
@@ -11699,6 +11722,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
   const isB2CClient = clientConfig?.dashboardType === "B2C";
+  const metaRevenue = usesMetaRevenue(clientConfig?.commercePlatform);
 
   let metaCurrent: MetaMarketingData | null = null;
   let metaPrev: MetaMarketingData | null = null;
@@ -11709,22 +11733,31 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
         fetchMetaMarketingData({
           accessToken: metaAccessToken,
           adAccountId: clientConfig.metaAdAccountId,
+          isB2C: isB2CClient,
           since,
           until,
         }),
         fetchMetaMarketingData({
           accessToken: metaAccessToken,
           adAccountId: clientConfig.metaAdAccountId,
+          isB2C: isB2CClient,
           since: prevSince,
           until: prevUntil,
         }),
       ]);
-      await upsertMetaCreatives(clientId, metaCurrent.ads);
+      await upsertMetaCreatives(clientId, metaCurrent.ads).catch((err) => {
+        console.warn("[marketing] Failed to persist Meta creative cache:", err);
+      });
     } catch (err) {
       console.warn("[marketing] Meta insights fetch failed:", err);
       metaCurrent = null;
       metaPrev = null;
     }
+  }
+
+  if (metaRevenue && (!metaCurrent || !metaPrev)) {
+    res.status(502).json({ error: true, code: "META_INSIGHTS_UNAVAILABLE", message: "Não foi possível consultar o Meta Ads. Verifique a conexão e tente novamente.", status: 502 });
+    return;
   }
 
   // All creatives for the client; sorted by prorated spend descending
@@ -11756,8 +11789,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const pagedMetaCampaigns = metaCampaigns?.slice(offset, offset + creativesPageSize) ?? null;
 
   const [kpis, prevKpis] = await Promise.all([
-    computeMarketingKpis(clientId, creatives, from, to, metaCurrent, isB2CClient),
-    computeMarketingKpis(clientId, allCreatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0), prevFrom, prevTo, metaPrev, isB2CClient),
+    computeMarketingKpis(clientId, creatives, from, to, metaCurrent, isB2CClient, metaRevenue),
+    computeMarketingKpis(clientId, allCreatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0), prevFrom, prevTo, metaPrev, isB2CClient, metaRevenue),
   ]);
 
   const leadsRows = metaCurrent
@@ -11785,7 +11818,9 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
       .orderBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`);
 
   // Daily series: requested revenue
-  const revenueRows = await db
+  const revenueRows = metaRevenue && metaCurrent
+    ? metaCurrent.daily.map((point) => ({ date: point.date, value: point.revenue }))
+    : await db
     .select({
       date: sql<string>`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')::text`,
       value: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
@@ -11811,7 +11846,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
         ? metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend }))
         : buildSpendOverTime(creatives, from, to),
     ),
-    buildStateBreakdown(clientId, from, to, totalProratedSpend),
+    metaRevenue ? Promise.resolve([]) : buildStateBreakdown(clientId, from, to, totalProratedSpend),
   ]);
 
   const topCreatives = metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] };
@@ -11828,6 +11863,10 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const payload = GetMarketingResponse.parse({
     kpis,
     prevKpis,
+    revenueSource: metaRevenue ? "META" : "ECOMMERCE",
+    metaSummary: metaCurrent?.summary ?? null,
+    prevMetaSummary: metaPrev?.summary ?? null,
+    purchasesOverTime: metaCurrent?.daily.map(point => ({ date: point.date, value: point.purchases })) ?? [],
     leadsOverTime: leadsRows,
     revenueOverTime: revenueRows,
     spendOverTime,

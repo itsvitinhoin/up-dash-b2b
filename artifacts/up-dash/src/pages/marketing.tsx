@@ -81,6 +81,7 @@ interface MarketingKpis {
   approvalRate: number;
   cpl: number;
   cpa: number;
+  purchases?: number;
 }
 
 interface CreativeRow {
@@ -204,8 +205,8 @@ function MktKpiCard({
 }
 
 // ── Platform bar ─────────────────────────────────────────────────────────────
-function PlatformRow({ platform, spend, roas, leads, clicks, maxSpend }: {
-  platform: string; spend: number; roas: number; leads: number; clicks: number; maxSpend: number;
+function PlatformRow({ platform, spend, roas, leads, clicks, maxSpend, isB2C = false }: {
+  platform: string; spend: number; roas: number; leads: number; clicks: number; maxSpend: number; isB2C?: boolean;
 }) {
   const pct = maxSpend > 0 ? (spend / maxSpend) * 100 : 0;
   const color = PLATFORM_COLORS[platform] ?? "#5b8dff";
@@ -220,7 +221,7 @@ function PlatformRow({ platform, spend, roas, leads, clicks, maxSpend }: {
         <div className="up-channel-summary text-muted-foreground text-xs tabular-nums">
           <span>{formatCurrency(spend)}</span>
           <span>ROAS {roas.toFixed(2)}×</span>
-          <span>{formatNumber(leads)} leads</span>
+          <span>{formatNumber(leads)} {isB2C ? "compras" : "leads"}</span>
           <span>{formatNumber(clicks)} cliques</span>
         </div>
       </div>
@@ -365,12 +366,14 @@ function TopCreativeCard({
   metricLabel,
   metricValue,
   costLabel = "CPL",
+  isB2C = false,
 }: {
   creative: MetaTopCreative;
-  previous?: Pick<MetaTopCreative, "id" | "ctr" | "cpa" | "cpl" | "leads" | "spend">;
+  previous?: Pick<MetaTopCreative, "id" | "ctr" | "cpa" | "cpl" | "leads" | "purchases" | "spend">;
   metricLabel: string;
   metricValue: string;
   costLabel?: string;
+  isB2C?: boolean;
 }) {
   return (
     <Card className="up-creative-card" data-testid="top-creative-card">
@@ -384,7 +387,7 @@ function TopCreativeCard({
       <div className="up-metric-grid up-creative-metrics">
         <GlassMetricCard label="CTR" value={creative.ctr} format={formatPercentage} previousValue={previous?.ctr} source="Meta Ads · criativo" />
         <GlassMetricCard label={costLabel} value={costLabel === "Custo/Compra" ? creative.cpa : creative.cpl} format={formatCurrency} previousValue={costLabel === "Custo/Compra" ? previous?.cpa : previous?.cpl} source="Meta Ads · criativo" />
-        <GlassMetricCard label="Leads" value={creative.leads} format={formatNumber} previousValue={previous?.leads} source="Meta Ads · criativo" />
+        <GlassMetricCard label={isB2C ? "Compras" : "Leads"} value={isB2C ? creative.purchases : creative.leads} format={formatNumber} previousValue={isB2C ? previous?.purchases : previous?.leads} source="Meta Ads · criativo" />
         <GlassMetricCard label="Investimento" value={creative.spend} format={formatCurrency} previousValue={previous?.spend} source="Meta Ads · criativo" />
       </div>
     </Card>
@@ -397,12 +400,14 @@ function TopCreativesColumn({
   previousItems,
   metric,
   costLabel,
+  isB2C = false,
 }: {
   title: string;
   items: MetaTopCreative[];
-  previousItems?: Array<Pick<MetaTopCreative, "id" | "ctr" | "cpa" | "cpl" | "leads" | "spend">>;
+  previousItems?: Array<Pick<MetaTopCreative, "id" | "ctr" | "cpa" | "cpl" | "leads" | "purchases" | "spend">>;
   metric: "ctr" | "cpl" | "cpa" | "leads" | "purchases";
   costLabel?: string;
+  isB2C?: boolean;
 }) {
   const metricLabel = metric === "ctr" ? "CTR" : metric === "cpl" ? "CPL" : metric === "cpa" ? "Custo/Compra" : metric === "purchases" ? "Compras" : "Leads";
   const metricValue = (creative: MetaTopCreative) =>
@@ -434,6 +439,7 @@ function TopCreativesColumn({
               metricLabel={metricLabel}
               metricValue={metricValue(creative)}
               costLabel={costLabel}
+              isB2C={isB2C}
             />
           ))
         )}
@@ -563,7 +569,7 @@ export default function MarketingPage() {
 
   // ── KPI changes ──────────────────────────────────────────────────────────
   const previousMarketing = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetMarketingUrl({ clientId, ...dateParams, creativesPage, creativesPageSize: CREATIVES_PAGE_SIZE, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, creative: filters.creative || undefined }), enabled);
-  const previousCreatives = [ ...(previousMarketing.data?.creatives ?? []), ...(previousMarketing.data?.topCreatives.ctr ?? []), ...(previousMarketing.data?.topCreatives.cpl ?? []), ...(previousMarketing.data?.topCreatives.leads ?? []) ];
+  const previousCreatives = [ ...(previousMarketing.data?.creatives ?? []).map(c => ({ ...c, purchases: c.approvedLeads })), ...(previousMarketing.data?.topCreatives.ctr ?? []), ...(previousMarketing.data?.topCreatives.cpl ?? []), ...(previousMarketing.data?.topCreatives.leads ?? []) ];
   const spendChange = useMemo(() => data ? computeChange(data.kpis.totalSpend, data.prevKpis.totalSpend) : null, [data]);
   const revenueChange = useMemo(() => data ? computeChange(data.kpis.attributedRevenue, data.prevKpis.attributedRevenue) : null, [data]);
   const roasChange = useMemo(() => data ? computeChange(data.kpis.roas, data.prevKpis.roas) : null, [data]);
@@ -573,14 +579,10 @@ export default function MarketingPage() {
   const cplChange = useMemo(() => data ? computeChange(data.kpis.cpl, data.prevKpis.cpl) : null, [data]);
   const cpaChange = useMemo(() => data ? computeChange(data.kpis.cpa, data.prevKpis.cpa) : null, [data]);
 
-  // "Top Meta Creatives" (Best CTR/Lowest CPL/Most Leads) sempre mostrava
-  // "No creatives" pra QUALQUER client (B2C ou Vesti) — não é bug de dado,
-  // é que `data.topCreatives` nunca existiu no contrato da API
-  // (GetMarketingResponse não declara esse campo), então sempre lia
-  // `undefined`. `data.creatives` (a lista paginada de anúncios) sempre
-  // teve dado real. Deriva os 3 rankings aqui em vez de depender de um
-  // campo que o backend nunca manda.
+  // Prefer the API rankings across all ads; retain the campaign fallback for
+  // integrations that do not expose Meta creative media.
   const topCreatives = useMemo(() => {
+    if (data?.topCreatives && Object.values(data.topCreatives).some(items => items.length > 0)) return data.topCreatives;
     const creatives = data?.creatives ?? [];
     const toTopCreative = (c: CreativeRow): MetaTopCreative => ({
       id: c.id,
@@ -600,13 +602,14 @@ export default function MarketingPage() {
     const byCtr = [...creatives].sort((a, b) => b.ctr - a.ctr).slice(0, 3).map(toTopCreative);
     // CPL só faz sentido comparando quem teve lead — senão um anúncio com
     // gasto mínimo e 0 lead "ganha" por CPL zerado, o que é enganoso.
-    const byCpl = [...creatives].filter((c) => c.leads > 0).sort((a, b) => a.cpl - b.cpl).slice(0, 3).map(toTopCreative);
-    const byLeads = [...creatives].sort((a, b) => b.leads - a.leads).slice(0, 3).map(toTopCreative);
+    const byCpl = [...creatives].filter((c) => isB2C ? c.approvedLeads > 0 : c.leads > 0).sort((a, b) => isB2C ? a.cpa - b.cpa : a.cpl - b.cpl).slice(0, 3).map(toTopCreative);
+    const byLeads = [...creatives].filter(c => isB2C ? c.approvedLeads > 0 : c.leads > 0).sort((a, b) => isB2C ? b.approvedLeads - a.approvedLeads : b.leads - a.leads).slice(0, 3).map(toTopCreative);
     return { ctr: byCtr, cpl: byCpl, leads: byLeads };
-  }, [data]);
+  }, [data, isB2C]);
 
   // ── Sparklines (reuse time-series data) ──────────────────────────────────
-  const sparkLeads = data?.leadsOverTime.map((p) => p.value) ?? [];
+  const conversionSeries = isB2C ? data?.purchasesOverTime ?? [] : data?.leadsOverTime ?? [];
+  const sparkLeads = conversionSeries.map((p) => p.value);
   const sparkRevenue = data?.revenueOverTime.map((p) => p.value) ?? [];
   const sparkSpend = data?.spendOverTime.map((p) => p.value) ?? [];
 
@@ -614,12 +617,12 @@ export default function MarketingPage() {
   const spendLeadsData = useMemo(() => {
     if (!data) return [];
     const spendDates = data.spendOverTime.map((p) => p.date);
-    return joinSeries(spendDates, data.spendOverTime, data.leadsOverTime).map((p) => ({
+    return joinSeries(spendDates, data.spendOverTime, isB2C ? data.purchasesOverTime ?? [] : data.leadsOverTime).map((p) => ({
       date: p.date,
       spend: p.a,
       leads: p.b,
     }));
-  }, [data]);
+  }, [data, isB2C]);
 
   // ── Chart 2: Spend vs Revenue dual-axis ──────────────────────────────────
   const spendVsRevenueData = useMemo(() => {
@@ -811,7 +814,7 @@ export default function MarketingPage() {
             testId="kpi-revenue" previousValue={data?.prevKpis.attributedRevenue}
             icon={DollarSign}
             iconClass="bg-teal-500/15 text-teal-400"
-            label="Faturamento"
+            label={data?.revenueSource === "META" ? "Faturamento atribuído Meta" : "Faturamento"}
             value={data?.kpis.attributedRevenue ?? 0}
             format={formatCurrency}
             change={revenueChange}
@@ -823,7 +826,7 @@ export default function MarketingPage() {
             testId="kpi-roas" previousValue={data?.prevKpis.roas}
             icon={TrendingUp}
             iconClass="bg-emerald-500/15 text-emerald-400"
-            label="ROA"
+            label={data?.revenueSource === "META" ? "ROAS Meta" : "ROA"}
             value={data?.kpis.roas ?? 0}
             format={(v) => `${v.toFixed(2)}×`}
             change={roasChange}
@@ -831,6 +834,7 @@ export default function MarketingPage() {
             sparkColor="#87adff"
             isLoading={isLoading}
           />
+          {!isB2C && <>
           <MktKpiCard
             testId="kpi-approval-rate" previousValue={data?.prevKpis.approvalRate}
             icon={CheckCircle2}
@@ -855,14 +859,15 @@ export default function MarketingPage() {
             sparkColor="#afc4ff"
             isLoading={isLoading}
           />
+          </>}
           <MktKpiCard
-            testId="kpi-approved-leads" previousValue={data?.prevKpis.approvedLeads}
+            testId="kpi-approved-leads" previousValue={isB2C ? data?.prevKpis.purchases ?? data?.prevKpis.approvedLeads : data?.prevKpis.approvedLeads}
             icon={CheckCircle2}
             iconClass="bg-green-500/15 text-green-400"
             label={isB2C ? "Compras" : "Leads aprovados"}
-            value={data?.kpis.approvedLeads ?? 0}
+            value={isB2C ? data?.kpis.purchases ?? data?.kpis.approvedLeads ?? 0 : data?.kpis.approvedLeads ?? 0}
             format={formatNumber}
-            change={approvedLeadsChange}
+            change={isB2C && data?.kpis.purchases != null ? computeChange(data.kpis.purchases, data.prevKpis.purchases ?? 0) : approvedLeadsChange}
             sparkValues={sparkLeads}
             sparkColor="#87adff"
             isLoading={isLoading}
@@ -917,9 +922,9 @@ export default function MarketingPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 2xl:grid-cols-3 gap-4">
-              <TopCreativesColumn previousItems={previousCreatives} title="Melhor CTR" items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn previousItems={previousCreatives} title={isB2C ? "Menor custo por compra" : "Menor CPL"} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn previousItems={previousCreatives} title={isB2C ? "Mais compras" : "Mais leads"} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn isB2C={isB2C} previousItems={previousCreatives} title="Melhor CTR" items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn isB2C={isB2C} previousItems={previousCreatives} title={isB2C ? "Menor custo por compra" : "Menor CPL"} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn isB2C={isB2C} previousItems={previousCreatives} title={isB2C ? "Mais compras" : "Mais leads"} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
             </div>
           )}
         </motion.div>
@@ -932,7 +937,7 @@ export default function MarketingPage() {
           <Card className="xl:col-span-2 p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
-              Investimento e leads
+              {isB2C ? "Investimento e compras" : "Investimento e leads"}
             </h2>
             {isLoading ? (
               <Skeleton className="h-52 w-full" />
@@ -949,12 +954,12 @@ export default function MarketingPage() {
                     contentStyle={CHART_TOOLTIP_STYLE}
                     labelFormatter={fmtDateLong}
                     formatter={(value: number, name: string) => [
-                      name === "spend" ? formatCurrency(value) : formatNumber(value),
-                      name === "spend" ? "Ad Spend" : "Leads",
+                      name === "Investimento" ? formatCurrency(value) : formatNumber(value),
+                      name === "Investimento" ? "Investimento" : isB2C ? "Compras" : "Leads",
                     ]}
                   />
                   <Bar yAxisId="left" dataKey="spend" fill="#5b8dff" opacity={0.8} radius={[2, 2, 0, 0]} name="Investimento" />
-                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#afc4ff" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Leads" />
+                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#afc4ff" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name={isB2C ? "Compras" : "Leads"} />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
@@ -1057,7 +1062,7 @@ export default function MarketingPage() {
             ) : (
               <div className="space-y-5">
                 {platformRows.map((row) => (
-                  <PlatformRow key={row.platform} platform={row.platform} spend={row.spend} roas={row.roas} leads={row.leads} clicks={row.clicks} maxSpend={maxPlatformSpend} />
+                  <PlatformRow key={row.platform} platform={row.platform} spend={row.spend} roas={row.roas} leads={isB2C ? row.approvedLeads : row.leads} clicks={row.clicks} maxSpend={maxPlatformSpend} isB2C={isB2C} />
                 ))}
               </div>
             )}
@@ -1072,7 +1077,7 @@ export default function MarketingPage() {
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
             ) : stateRows.length === 0 ? (
-              <EmptyState icon={MapPin} title="Sem dados geográficos" description="Sem leads de canais pagos com estado informado neste período." />
+              <EmptyState icon={MapPin} title="Sem dados geográficos" description={isB2C ? "Sem detalhamento geográfico de compras disponível nesta fonte." : "Sem leads de canais pagos com estado informado neste período."} />
             ) : (
               <div className="space-y-5">
                 {stateRows.map((row) => (
@@ -1147,7 +1152,7 @@ export default function MarketingPage() {
                         { key: "spend" as SortKey, label: "Investimento", align: "right", wide: false },
                         { key: "attributedRevenue" as SortKey, label: "Faturamento", align: "right", wide: false },
                         { key: "roas" as SortKey, label: "ROA", align: "right", wide: false },
-                        { key: "leads" as SortKey, label: "Leads", align: "right", wide: false },
+                        ...(!isB2C ? [{ key: "leads" as SortKey, label: "Leads", align: "right", wide: false }] : []),
                         { key: "approvedLeads" as SortKey, label: isB2C ? "Compras" : "Compras", align: "right", wide: false },
                         ...(isB2C
                           ? [{ key: "cpa" as SortKey, label: "Custo/Compra", align: "right" as const, wide: false }]
@@ -1173,14 +1178,14 @@ export default function MarketingPage() {
                     Array.from({ length: 5 }).map((_, i) => (
                       <tr key={i} className="border-b border-border/50">
                         <td className="px-5 py-3"><Skeleton className="h-4 w-40" /></td>
-                        {Array.from({ length: isB2C ? 10 : 11 }).map((_, j) => (
+                        {Array.from({ length: isB2C ? 9 : 11 }).map((_, j) => (
                           <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-14 ml-auto" /></td>
                         ))}
                       </tr>
                     ))
                   ) : sortedCreatives.length === 0 ? (
                     <tr>
-                      <td colSpan={isB2C ? 11 : 12} className="px-5 py-10 text-center text-muted-foreground text-sm">
+                      <td colSpan={isB2C ? 10 : 12} className="px-5 py-10 text-center text-muted-foreground text-sm">
                         Nenhuma campanha encontrada para esta marca.
                       </td>
                     </tr>
@@ -1202,7 +1207,7 @@ export default function MarketingPage() {
                             {creative.roas.toFixed(2)}×
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatNumber(creative.leads)}</td>
+                        {!isB2C && <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatNumber(creative.leads)}</td>}
                         <td className="px-4 py-3 text-right tabular-nums text-emerald-400">{formatNumber(creative.approvedLeads)}</td>
                         {!isB2C && <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatCurrency(creative.cpl)}</td>}
                         <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{formatCurrency(creative.cpa)}</td>
