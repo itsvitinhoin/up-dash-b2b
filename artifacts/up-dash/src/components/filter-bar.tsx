@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { DateRangePicker } from "@/components/date-range-picker";
 import {
   Select,
   SelectContent,
@@ -197,7 +198,7 @@ export function FilterBar({ variant = "default" }: { variant?: "default" | "over
   const { user, selectedClientId, selectedDashboardMode } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { dateRange, filters, setFilter, resetFilters, applyView, hasAny } =
+  const { dateRange, setDateRange, filters, setFilter, resetFilters, applyView, hasAny } =
     useDashboardFilters();
 
   const clientId =
@@ -467,6 +468,15 @@ export function FilterBar({ variant = "default" }: { variant?: "default" | "over
       aria-label="Filtros do dashboard"
       data-testid="filter-bar"
     >
+      {overview && (
+        // Período na mesma linha dos filtros (o seletor do topo some só nesta página: ver app-layout). Mesmo componente, mesmas opções.
+        <DateRangePicker
+          value={dateRange}
+          onChange={setDateRange}
+          align="start"
+          className="h-[34px] gap-1.5 rounded-[10px] bg-background px-3 [&_span]:text-xs"
+        />
+      )}
       {!overview && (
         <>
           <FilterSelect
@@ -512,14 +522,6 @@ export function FilterBar({ variant = "default" }: { variant?: "default" | "over
             testId="filter-state"
             widthClass="w-[200px]"
           />
-          <Badge
-            variant="outline"
-            className="h-7 px-2 text-[11px] font-normal text-muted-foreground"
-            title={label("Revenue and orders always count paid orders only.", "Faturamento e pedidos contam sempre só pedidos pagos.")}
-            data-testid="filter-paid-only"
-          >
-            {label("Paid orders only", "Somente pedidos pagos")}
-          </Badge>
         </>
       )}
 

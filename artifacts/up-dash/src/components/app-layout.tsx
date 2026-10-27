@@ -900,9 +900,13 @@ export function AppLayout({ children }: AppLayoutProps) {
       : navTitleKeys[location]
         ? t(navTitleKeys[location], tx(meta.title))
         : tx(meta.title));
+  // Visão geral: o período, a vendedora e o estado ficam numa linha só (FilterBar variant="overview"); o seletor de período do topo e os
+  // botões 7/30/90 dias não aparecem aqui para não haver dois controles do mesmo período.
+  const isOverviewRoute = location === "/" || location === "/dashboard";
+  const paidOnlyText = language === "pt" ? "só pedidos pagos" : language === "ko" ? "결제 완료 주문만" : "paid orders only";
   const subtitleText =
     location === "/" || location === "/dashboard"
-      ? `${new Intl.DateTimeFormat(language === "pt" ? "pt-BR" : language === "ko" ? "ko-KR" : "en-US", { weekday: "long", day: "numeric", month: "long" }).format(new Date())} · ${DESIGN_DEMO ? "prévia visual" : t("page.dashboard.live", "live data")}`
+      ? `${new Intl.DateTimeFormat(language === "pt" ? "pt-BR" : language === "ko" ? "ko-KR" : "en-US", { weekday: "long", day: "numeric", month: "long" }).format(new Date())} · ${DESIGN_DEMO ? "prévia visual" : t("page.dashboard.live", "live data")} · ${paidOnlyText}`
       : pageTranslationKey
         ? t(`page.${pageTranslationKey}.subtitle`, tx(meta.subtitle))
         : tx(meta.subtitle);
@@ -1524,7 +1528,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               </div>
             )}
 
-            {meta.hasDateRange && <div className="up-top-period"><DateRangePicker value={dateRange} onChange={setDateRange} /></div>}
+            {meta.hasDateRange && !isOverviewRoute && <div className="up-top-period"><DateRangePicker value={dateRange} onChange={setDateRange} /></div>}
 
             <div className="up-top-actions flex items-center gap-2">
               <Button
@@ -1646,9 +1650,9 @@ export function AppLayout({ children }: AppLayoutProps) {
             </p>
           )}
           {(meta.hasDateRange || meta.hasFilterBar) && (
-            <div className="up-control-panel up-glass-panel no-print">
-              <div className="up-operation-row">
-                {meta.hasDateRange && (
+            <div className={`up-control-panel up-glass-panel no-print${isOverviewRoute ? " up-control-panel--single" : ""}`}>
+              <div className="up-operation-row" hidden={isOverviewRoute}>
+                {meta.hasDateRange && !isOverviewRoute && (
                   <div
                     className="up-period-chips"
                     role="group"
@@ -1689,7 +1693,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 )}
               </div>
               {meta.hasFilterBar && (
-                <FilterBar variant={location === "/" || location === "/dashboard" ? "overview" : "default"} />
+                <FilterBar variant={isOverviewRoute ? "overview" : "default"} />
               )}
             </div>
           )}
