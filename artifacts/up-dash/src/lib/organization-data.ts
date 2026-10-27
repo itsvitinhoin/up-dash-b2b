@@ -39,7 +39,23 @@ type Activation = {
 };
 type OrderTotals = { kpis: { fulfilledQuantity: number } };
 type PerformanceMetrics = {
-  kpis: { cac: number | null; ctr: number; cpc: number | null };
+  kpis: {
+    cac: number | null;
+    ctr: number;
+    cpc: number | null;
+    /** Faturamento do ERP (líquido de descontos, pedidos não cancelados): base da % atribuída aos anúncios. */
+    netRevenue?: number;
+    /** Pedidos do ERP no período. */
+    orders?: number;
+    /** Receita atribuída à mídia paga (pedido do ERP + identidade + toque pago). */
+    attributedRevenue?: number;
+    mediaSpend?: number | null;
+    /** Compradores novos no ERP e, entre eles, os atribuídos a anúncios. */
+    newBuyers?: number;
+    newAttributedBuyers?: number;
+    /** Receita atribuída ÷ faturamento líquido do ERP, em %. */
+    revenueAttributionCoveragePct?: number;
+  };
   // Media availability gates all derived costs; unavailable never means a confirmed zero.
   sources?: { media?: { status?: string } };
 };
@@ -207,7 +223,7 @@ export function useOrganizationData(
     loading = false,
     series?: number[],
   ) {
-    measures[key] = { info: marketing.isError && ["spend", "totalSpend", "metaSpend", "googleSpend", "roas"].includes(key) ? tx("Não foi possível ler o investimento. Tente novamente; indisponível não significa gasto zero.") : undefined, key, label: tx(label), value, format, source: source ? tx(source) : source, loading, series };
+    measures[key] = { info: marketing.isError && ["spend", "totalSpend", "metaSpend", "googleSpend", "roas", "adsSpend", "adsRoas"].includes(key) ? tx("Não foi possível ler o investimento. Tente novamente; indisponível não significa gasto zero.") : undefined, key, label: tx(label), value, format, source: source ? tx(source) : source, loading, series };
   }
   put(
     "revenue",
@@ -251,6 +267,36 @@ export function useOrganizationData(
     "Ecommerce",
     dashboard.isLoading,
   );
+  // ── Visão geral (pedido do time, 26/10/2026): ERP × e-commerce, anúncios, novos clientes e recompra ──
+  // ERP e atribuição vêm da Performance (só cliente com ERP integrado; sem ERP a fonte responde erro e o card fica "—" com explicação).
+  const pk = performance.data?.kpis;
+  const perfLoading = enabled && selectedDashboardMode !== "B2C" && !performance.data && !performance.isError;
+  const noErp = tx("Este cliente não tem ERP integrado, ou o dado do ERP não está disponível agora. Indisponível não significa zero.");
+  const erpMeasure = (key: string, label: string, value: number | null | undefined, format: OrganizedMetric["format"], source: string, info?: string) => {
+    put(key, label, value, format, source, perfLoading);
+    if (value == null) measures[key].info = noErp;
+    else if (info) measures[key].info = tx(info);
+  };
+  erpMeasure("erpRevenue", "Faturamento pago no ERP", pk?.netRevenue, "currency", "ERP · pago", "Faturamento líquido do ERP no período (descontos já abatidos): é a base da % atribuída aos anúncios.");
+  erpMeasure("erpOrders", "Pedidos totais pagos no ERP", pk?.orders, "number", "ERP · pago");
+  put(
+    "ecomPaidRevenue",
+    "Faturamento pago no E-commerce",
+    // Vesti manda o faturamento só dos pagos em `paidRevenue` (o `revenue` dela soma todos os pedidos); nas demais plataformas `revenue` já é só pago.
+    d ? (d.paidRevenue ?? d.revenue) : undefined,
+    "currency",
+    "E-commerce · pago",
+    dashboard.isLoading,
+  );
+  put("ecomPaidOrders", "Pedidos totais pagos no E-commerce", d?.orders, "number", "E-commerce · pago", dashboard.isLoading);
+  // Anúncios: receita atribuída (ERP) ÷ investimento total em anúncios. Os três cards fecham entre si na tela.
+  erpMeasure("adsRevenue", "Faturamento total de anúncios (pago)", pk?.attributedRevenue, "currency", "ERP × mídia paga", "Faturamento pago do ERP que o sistema consegue ligar a um toque de anúncio pago (documento do cliente + evidência de clique).");
+  put("adsSpend", "Investimento total em anúncios", m?.totalSpend, "currency", "Mídia", marketing.isLoading);
+  const adsRoasValue = pk?.attributedRevenue != null && m?.totalSpend != null && m.totalSpend > 0 ? pk.attributedRevenue / m.totalSpend : null;
+  erpMeasure("adsRoas", "ROAS pagos", adsRoasValue, "ratio", "Receita atribuída pago ÷ investimento", "Faturamento de anúncios (pago) dividido pelo investimento total em anúncios.");
+  erpMeasure("adsShare", "% do faturamento da marca atribuído aos anúncios", pk?.revenueAttributionCoveragePct, "percent", "ERP × mídia paga", "Faturamento de anúncios (pago) ÷ faturamento do ERP, que é o total da marca. Mesma conta da tela Performance.");
+  erpMeasure("newCustomersTotal", "Total de novos clientes", pk?.newBuyers ?? d?.newBuyers, "number", pk?.newBuyers != null ? "ERP · primeira compra no período" : "E-commerce · primeira compra no período");
+  erpMeasure("newCustomersFromAds", "Novos clientes vindos de anúncios", pk?.newAttributedBuyers, "number", "ERP × mídia paga");
   put(
     "spend",
     "Investimento",
@@ -362,6 +408,13 @@ export function useOrganizationData(
     recompraSource,
     recompra.isLoading,
   );
+  // Rótulos pedidos pelo time para a Visão geral (26/10/2026); mesmos números de Aquisição/Recompra, que seguem com o nome antigo nas outras páginas.
+  put("newCustomersRevenue", "Faturamento de novos clientes", money(r?.aquisicao), "currency", acquisitionSource, recompra.isLoading);
+  put("newCustomersOrders", "Vendas de novos clientes", r?.aquisicao?.vendas, "number", acquisitionSource, recompra.isLoading);
+  put("newCustomersTicket", "Ticket de novos clientes", ticketOf(r?.aquisicao), "currency", acquisitionSource, recompra.isLoading);
+  put("repurchaseCustomers", "Clientes que recompraram", r?.recompra.clientes, "number", recompraSource, recompra.isLoading);
+  put("repurchaseRevenue", "Faturamento de recompra", money(r?.recompra), "currency", recompraSource, recompra.isLoading);
+  put("repurchaseSales", "Vendas de recompra", r?.recompra.vendas, "number", recompraSource, recompra.isLoading);
   put(
     "registrations",
     "Cadastros Gerados",
@@ -484,11 +537,19 @@ export function useOrganizationData(
   const previousGoogle = previousMarketing.data?.platformBreakdown.find(row => row.platform === "GOOGLE");
   const previousValues: Record<string, number | null | undefined> = {
     revenue: pd?.revenue, paidRevenue: pd?.revenue, requestedRevenue: pd?.requestedRevenue,
+    ecomPaidRevenue: pd ? (pd.paidRevenue ?? pd.revenue) : undefined, ecomPaidOrders: pd?.orders,
+    erpRevenue: previousPerformance.data?.kpis.netRevenue, erpOrders: previousPerformance.data?.kpis.orders,
+    adsRevenue: previousPerformance.data?.kpis.attributedRevenue, adsSpend: pm?.totalSpend,
+    adsRoas: previousPerformance.data?.kpis.attributedRevenue != null && pm?.totalSpend ? previousPerformance.data.kpis.attributedRevenue / pm.totalSpend : null,
+    adsShare: previousPerformance.data?.kpis.revenueAttributionCoveragePct,
+    newCustomersTotal: previousPerformance.data?.kpis.newBuyers ?? pd?.newBuyers, newCustomersFromAds: previousPerformance.data?.kpis.newAttributedBuyers,
     orders: pd?.orders, ticket: pd?.avgTicket, newCustomers: pd?.newBuyers,
     spend: pm?.totalSpend, totalSpend: pm?.totalSpend, metaSpend: previousMeta?.spend, googleSpend: previousGoogle?.spend,
     roas: pm?.roas, requestedRoas: selectedDashboardMode === "B2C" ? null : pm?.roas, paidRoas: selectedDashboardMode === "B2C" ? pm?.roas : null,
     cac: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cac : null, ctr: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.ctr : null, cpc: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cpc : null,
     acquisitionRevenue: money(pr?.aquisicao), acquisitionOrders: pr?.aquisicao?.vendas, acquisitionTicket: ticketOf(pr?.aquisicao),
+    newCustomersRevenue: money(pr?.aquisicao), newCustomersOrders: pr?.aquisicao?.vendas, newCustomersTicket: ticketOf(pr?.aquisicao),
+    repurchaseCustomers: pr?.recompra.clientes, repurchaseRevenue: money(pr?.recompra), repurchaseSales: pr?.recompra.vendas,
     repurchasers: pr?.recompra.clientes, retentionRevenue: money(pr?.recompra), retentionOrders: pr?.recompra.vendas, retentionTicket: ticketOf(pr?.recompra),
     registrations: pc?.totalRegistrations, approved: pc?.approvedRegistrations, approvalRate: pc?.approvalRatePct, firstPurchaseAverage: pc?.avgTimeToFirstPurchaseDays,
     pieces: previousOrders.data?.kpis.fulfilledQuantity, impressions: previousMeta?.impressions, clicks: previousMeta?.clicks,

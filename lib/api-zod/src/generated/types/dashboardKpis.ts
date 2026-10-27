@@ -18,6 +18,8 @@ export interface DashboardKpis {
   repeatCustomers: number;
   /** Sum of ALL order amounts in the period regardless of status (PENDING included). */
   requestedRevenue: number;
+  /** Revenue of PAID orders only. Vesti: sum of reserved value where the order is paid (the `revenue` field there counts every order). Other platforms already report paid-only revenue in `revenue` and may omit this. */
+  paidRevenue?: number;
   /** Distinct buyers whose first ever purchase falls in this window. */
   newBuyers: number;
   /** Distinct buyers who had at least one prior order before this window. */

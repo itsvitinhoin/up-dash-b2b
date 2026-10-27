@@ -65,6 +65,8 @@ export type VestiKpis = {
   customers: number;
   repeatCustomers: number;
   requestedRevenue: number;
+  /** Faturamento só dos pedidos PAGOS (`revenue` conta todos os pedidos, por paridade com o legado). */
+  paidRevenue: number;
   newBuyers: number;
   returningBuyers: number;
   retentionPct: number;
@@ -94,6 +96,7 @@ const ZERO_VESTI_KPIS: VestiKpis = {
   customers: 0,
   repeatCustomers: 0,
   requestedRevenue: 0,
+  paidRevenue: 0,
   newBuyers: 0,
   returningBuyers: 0,
   retentionPct: 0,
@@ -188,6 +191,7 @@ async function fetchKpis(
     SELECT
       COALESCE(SUM(v.valor_reservado), 0) AS revenue,
       COALESCE(SUM(v.valor_solicitado), 0) AS requested_revenue,
+      COALESCE(SUM(IF(v.pago, v.valor_reservado, 0)), 0) AS paid_revenue,
       COUNT(DISTINCT v.pedido_id) AS leads,
       COUNT(DISTINCT IF(v.pago, v.pedido_id, NULL)) AS approved_leads,
       COUNT(DISTINCT IF(v.pago, v.cliente_id, NULL)) AS customers,
@@ -230,6 +234,7 @@ async function fetchKpis(
     customers: Number(row.customers) || 0,
     repeatCustomers: Number(row.repeat_customers) || 0,
     requestedRevenue,
+    paidRevenue: Number(row.paid_revenue) || 0,
     newBuyers,
     returningBuyers,
     retentionPct: totalBuyers > 0 ? (returningBuyers / totalBuyers) * 100 : 0,

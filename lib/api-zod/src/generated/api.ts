@@ -883,6 +883,12 @@ export const GetDashboardResponse = zod.object({
       .describe(
         "Sum of ALL order amounts in the period regardless of status (PENDING included).",
       ),
+    paidRevenue: zod
+      .number()
+      .optional()
+      .describe(
+        "Revenue of PAID orders only. Vesti: sum of reserved value where the order is paid (the `revenue` field there counts every order). Other platforms already report paid-only revenue in `revenue` and may omit this.",
+      ),
     newBuyers: zod
       .number()
       .describe(
@@ -967,6 +973,12 @@ export const GetDashboardResponse = zod.object({
         .number()
         .describe(
           "Sum of ALL order amounts in the period regardless of status (PENDING included).",
+        ),
+      paidRevenue: zod
+        .number()
+        .optional()
+        .describe(
+          "Revenue of PAID orders only. Vesti: sum of reserved value where the order is paid (the `revenue` field there counts every order). Other platforms already report paid-only revenue in `revenue` and may omit this.",
         ),
       newBuyers: zod
         .number()
