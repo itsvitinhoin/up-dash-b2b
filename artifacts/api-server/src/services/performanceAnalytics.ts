@@ -105,6 +105,9 @@ export type PerformanceDashboard = {
     attributionCoveragePct: number;
     uniqueBuyers: number;
     newBuyers: number;
+    /** Faturamento líquido e pedidos do ERP dos compradores novos do período (mesma base de `newBuyers`). */
+    newBuyersRevenue: number;
+    newBuyersOrders: number;
     returningBuyers: number;
     retentionPct: number;
     totalQuantity: number;
@@ -588,6 +591,16 @@ export async function fetchPerformanceDashboard(
     }));
   };
 
+  // Compradores novos: o que eles compraram no período no ERP (base única dos cards de Novos clientes, decisão do time em 27/10/2026).
+  let newBuyersRevenue = 0;
+  let newBuyersOrders = 0;
+  for (const row of customerDays) {
+    const document = row.document ?? row.customer_id;
+    if (row.is_identified && document && buyerTypeByDocument[document] === "NEW") {
+      newBuyersRevenue += Number(row.net_revenue) || 0;
+      newBuyersOrders += Number(row.orders) || 0;
+    }
+  }
   const newBuyers = Object.values(buyerTypeByDocument).filter(
     (type) => type === "NEW",
   ).length;
@@ -789,6 +802,8 @@ export async function fetchPerformanceDashboard(
       attributionCoveragePct: percentage(attributedOrders, erp.kpis.orders),
       uniqueBuyers: periodBuyerDocuments.size,
       newBuyers,
+      newBuyersRevenue,
+      newBuyersOrders,
       returningBuyers,
       retentionPct: percentage(returningBuyers, periodBuyerDocuments.size),
       totalQuantity: erp.kpis.totalQuantity,

@@ -55,6 +55,9 @@ type PerformanceMetrics = {
     mediaSpend?: number | null;
     /** Compradores novos no ERP e, entre eles, os atribuídos a anúncios. */
     newBuyers?: number;
+    /** Faturamento líquido e pedidos do ERP desses compradores novos, no período. */
+    newBuyersRevenue?: number;
+    newBuyersOrders?: number;
     newAttributedBuyers?: number;
     /** Receita atribuída ÷ faturamento líquido do ERP, em %. */
     revenueAttributionCoveragePct?: number;
@@ -423,8 +426,13 @@ export function useOrganizationData(
     recompra.isLoading,
   );
   // Rótulos pedidos pelo time para a Visão geral (26/10/2026); mesmos números de Aquisição/Recompra, que seguem com o nome antigo nas outras páginas.
-  put("newCustomersRevenue", "Faturamento de novos clientes", money(r?.aquisicao), "currency", acquisitionSource, recompra.isLoading);
-  put("newCustomersOrders", "Vendas de novos clientes", r?.aquisicao?.vendas, "number", acquisitionSource, recompra.isLoading);
+  // Base única dos 4 cards de Novos clientes (decisão do time, 27/10/2026): ERP (loja física + site) quando o cliente tem ERP;
+  // sem ERP, a mesma conta pelo e-commerce/Vesti (Recompra), como o total de novos já faz.
+  const erpNew = pk?.newBuyersRevenue != null;
+  const newSource = erpNew ? "ERP · compras dos novos clientes no período" : acquisitionSource;
+  const newLoading = recompra.isLoading || perfLoading;
+  put("newCustomersRevenue", "Faturamento de novos clientes", erpNew ? pk?.newBuyersRevenue : money(r?.aquisicao), "currency", newSource, newLoading);
+  put("newCustomersOrders", "Vendas de novos clientes", erpNew ? pk?.newBuyersOrders : r?.aquisicao?.vendas, "number", newSource, newLoading);
   put("newCustomersTicket", "Ticket de novos clientes", ticketOf(r?.aquisicao), "currency", acquisitionSource, recompra.isLoading);
   put("repurchaseCustomers", "Clientes que recompraram", r?.recompra.clientes, "number", recompraSource, recompra.isLoading);
   put("repurchaseRevenue", "Faturamento de recompra", money(r?.recompra), "currency", recompraSource, recompra.isLoading);
@@ -562,7 +570,7 @@ export function useOrganizationData(
     roas: pm?.roas, requestedRoas: selectedDashboardMode === "B2C" ? null : pm?.roas, paidRoas: selectedDashboardMode === "B2C" ? pm?.roas : null,
     cac: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cac : null, ctr: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.ctr : null, cpc: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cpc : null,
     acquisitionRevenue: money(pr?.aquisicao), acquisitionOrders: pr?.aquisicao?.vendas, acquisitionTicket: ticketOf(pr?.aquisicao),
-    newCustomersRevenue: money(pr?.aquisicao), newCustomersOrders: pr?.aquisicao?.vendas, newCustomersTicket: ticketOf(pr?.aquisicao),
+    newCustomersRevenue: previousPerformance.data?.kpis.newBuyersRevenue ?? money(pr?.aquisicao), newCustomersOrders: previousPerformance.data?.kpis.newBuyersOrders ?? pr?.aquisicao?.vendas, newCustomersTicket: ticketOf(pr?.aquisicao),
     repurchaseCustomers: pr?.recompra.clientes, repurchaseRevenue: money(pr?.recompra), repurchaseSales: pr?.recompra.vendas,
     repurchasers: pr?.recompra.clientes, retentionRevenue: money(pr?.recompra), retentionOrders: pr?.recompra.vendas, retentionTicket: ticketOf(pr?.recompra),
     registrations: pc?.totalRegistrations, approved: pc?.approvedRegistrations, approvalRate: pc?.approvalRatePct, firstPurchaseAverage: pc?.avgTimeToFirstPurchaseDays,
