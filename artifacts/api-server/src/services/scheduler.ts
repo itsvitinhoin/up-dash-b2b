@@ -1,4 +1,4 @@
-import { isNotNull } from "drizzle-orm";
+import { and, isNotNull, isNull } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { syncUpZeroClient } from "./upzero-sync";
@@ -36,7 +36,8 @@ async function runNightlySync(): Promise<void> {
         upZeroApiKey: clientsTable.upZeroApiKey,
       })
       .from(clientsTable)
-      .where(isNotNull(clientsTable.upZeroApiKey)) as {
+      // Arquivado nao entra na atualizacao diaria.
+      .where(and(isNotNull(clientsTable.upZeroApiKey), isNull(clientsTable.archivedAt))) as {
         id: string;
         name: string;
         upZeroApiKey: string;

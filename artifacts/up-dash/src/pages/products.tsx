@@ -1,8 +1,9 @@
-import { ProductSalesCharts } from "@/components/product-sales-charts";
+import { useI18n } from "@/lib/i18n";
 import { periodQuery, usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { getGetProductsSummaryUrl } from "@workspace/api-client-react";
-import { displayLabel } from "@/lib/display-label";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
+import { ProductSalesCharts } from "@/components/product-sales-charts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
@@ -93,6 +94,8 @@ function readQueryParam(search: string, key: string): string | undefined {
 const LOW_STOCK_THRESHOLD = 10;
 
 export default function ProductsPage() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const [, setLocation] = useLocation();
@@ -207,7 +210,8 @@ export default function ProductsPage() {
   const stockSalesValue = (summary as typeof summary & { availableStockSalesValue?: number })?.availableStockSalesValue;
 
   // AI Insight
-  const insightParams = { ...periodParams, screen: "products" as const };
+  const { language: insightLanguage } = useI18n();
+  const insightParams = { ...periodParams, screen: "products" as const, language: insightLanguage };
   const { data: insight, isLoading: insightLoading, isFetching: insightFetching } = useGetInsight(
     insightParams,
     { query: queryOpts({ enabled: queryEnabled }) },
@@ -338,12 +342,12 @@ export default function ProductsPage() {
                 format={(v) => formatNumber(Math.round(v))}
               />
             </span>{" "}
-            Exibidos
+            {tx("Exibidos")}
             <span className="ml-2 text-muted-foreground/70">
               · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
             </span>
             <span className="ml-2 text-muted-foreground/70">
-              · {formatNumber(inStockCount)} Em estoque
+              · {formatNumber(inStockCount)} {tx("Em estoque")}
             </span>
             {lowStockCount > 0 && (
               <span className="ml-2 text-amber-500/90">
@@ -370,7 +374,7 @@ export default function ProductsPage() {
           data-testid="products-active-filters"
         >
           <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-            Filtrado por:
+            {tx("Filtrado por:")}
           </span>
           {urlSearch && (
             <span
@@ -396,7 +400,7 @@ export default function ProductsPage() {
             data-testid="products-clear-filters"
           >
             <XIcon className="h-3 w-3 mr-1" />
-            Limpar
+            {tx("Limpar")}
           </Button>
         </div>
       )}
@@ -413,10 +417,10 @@ export default function ProductsPage() {
             ))
           ) : (
             <>
-              <GlassMetricCard testId="kpi-sales-power" label="Sales Power" value={stockSalesValue == null ? "—" : formatCurrencySmart(stockSalesValue)} info="Soma do estoque disponível de todo o catálogo multiplicado pelo preço de venda de cada SKU." source="Catálogo e estoque conectado" comparisonUnavailable="O catálogo não fornece o estoque histórico da janela anterior." />
-              <GlassMetricCard label="Faturamento por SKU/dia" comparisonValue={summary?.salesPower ?? null} previousValue={previousSummary.data?.salesPower} format={formatCurrency} value={summary ? formatCurrency(summary.salesPower) : "—"} change={summary?.salesPowerChangePct} info="Faturamento / SKUs com venda / dias." source="Ecommerce · resumo de produtos" />
-              <GlassMetricCard  label="SKUs ativos" comparisonValue={summary?.activeSkus ?? null} previousValue={previousSummary.data?.activeSkus} value={<>{formatNumber(summary?.activeSkus ?? 0)}</>} info="SKUs com vendas no período selecionado." source="Ecommerce · resumo de produtos" />
-              <GlassMetricCard  label="Período" comparisonValue={summary?.periodDays ?? null} previousValue={previousSummary.data?.periodDays} format={v => `${v} dias`} value={<>{summary?.periodDays ?? 30}d</>} info="Quantidade de dias do período analisado." source="Filtro de período" />
+              <GlassMetricCard testId="kpi-sales-power" label={tx("Sales Power")} value={stockSalesValue == null ? "—" : formatCurrencySmart(stockSalesValue)} info="Soma do estoque disponível de todo o catálogo multiplicado pelo preço de venda de cada SKU." source={tx("Catálogo e estoque conectado")} comparisonUnavailable="O catálogo não fornece o estoque histórico da janela anterior." />
+              <GlassMetricCard label={tx("Faturamento por SKU/dia")} comparisonValue={summary?.salesPower ?? null} previousValue={previousSummary.data?.salesPower} format={formatCurrency} value={summary ? formatCurrency(summary.salesPower) : "—"} change={summary?.salesPowerChangePct} info="Faturamento / SKUs com venda / dias." source={tx("Ecommerce · resumo de produtos")} />
+              <GlassMetricCard  label={tx("SKUs ativos")} comparisonValue={summary?.activeSkus ?? null} previousValue={previousSummary.data?.activeSkus} value={<>{formatNumber(summary?.activeSkus ?? 0)}</>} info="SKUs com vendas no período selecionado." source={tx("Ecommerce · resumo de produtos")} />
+              <GlassMetricCard  label={tx("Período")} comparisonValue={summary?.periodDays ?? null} previousValue={previousSummary.data?.periodDays} format={v => `${v} dias`} value={<>{summary?.periodDays ?? 30}d</>} info="Quantidade de dias do período analisado." source={tx("Filtro de período")} />
             </>
           )}
         </div>
@@ -448,13 +452,13 @@ export default function ProductsPage() {
               <div className="flex items-center justify-between mb-3">
                 <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
                   <Sparkles className="h-3 w-3" />
-                  UP Insight · Catálogo · {insight?.source === "ai" ? "IA" : "Auto"}
+                  UP Insight · {tx("Catálogo")} · {insight?.source === "ai" ? "IA" : "Auto"}
                 </span>
                 <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Fechar análise"
+                  aria-label={tx("Fechar análise")}
                   data-testid="products-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
@@ -494,7 +498,7 @@ export default function ProductsPage() {
                   {regenerate.isPending ? "Regenerating…" : "Regenerate"}
                 </Button>
                 {insight?.cached && (
-                  <span className="text-[11px] text-muted-foreground">Atualização a cada hora</span>
+                  <span className="text-[11px] text-muted-foreground">{tx("Atualização a cada hora")}</span>
                 )}
               </div>
             </div>
@@ -511,7 +515,7 @@ export default function ProductsPage() {
               <Input
                 value={searchInput}
                 onChange={(e) => handleSearchInputChange(e.target.value)}
-                placeholder="Buscar por SKU ou nome do produto…"
+                placeholder={tx("Buscar por SKU ou nome do produto…")}
                 className="pl-8"
                 data-testid="products-search-input"
               />
@@ -530,10 +534,10 @@ export default function ProductsPage() {
                 className="w-full sm:w-[220px]"
                 data-testid="products-category-select"
               >
-                <SelectValue placeholder="Todas as categorias" />
+                <SelectValue placeholder={tx("Todas as categorias")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_CATEGORIES}>Todas as categorias</SelectItem>
+                <SelectItem value={ALL_CATEGORIES}>{tx("Todas as categorias")}</SelectItem>
                 {categoryOptions.map((c) => (
                   <SelectItem key={c} value={c}>
                     {c}
@@ -546,7 +550,7 @@ export default function ProductsPage() {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground flex items-center gap-1">
-                <ArrowDownUp className="h-3 w-3" /> Ordenar por
+                <ArrowDownUp className="h-3 w-3" /> {tx("Ordenar por")}
               </span>
               <ToggleGroup
                 type="single"
@@ -555,20 +559,20 @@ export default function ProductsPage() {
                 data-testid="product-sort-toggle"
                 className="flex-wrap justify-start"
               >
-                <ToggleGroupItem value={GetProductsSort.revenue} aria-label="Ordenar por faturamento">
-                  Faturamento
+                <ToggleGroupItem value={GetProductsSort.revenue} aria-label={tx("Ordenar por faturamento")}>
+                  {tx("Faturamento")}
                 </ToggleGroupItem>
-                <ToggleGroupItem value={GetProductsSort.units} aria-label="Ordenar por unidades">
-                  Unidades vendidas
+                <ToggleGroupItem value={GetProductsSort.units} aria-label={tx("Ordenar por unidades")}>
+                  {tx("Unidades vendidas")}
                 </ToggleGroupItem>
-                <ToggleGroupItem value={GetProductsSort.created} aria-label="Ordenar pelos mais recentes">
-                  Mais recentes
+                <ToggleGroupItem value={GetProductsSort.created} aria-label={tx("Ordenar pelos mais recentes")}>
+                  {tx("Mais recentes")}
                 </ToggleGroupItem>
               </ToggleGroup>
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Exibir</span>
+              <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">{tx("Exibir")}</span>
               <Select value={limit.toString()} onValueChange={(val) => setLimit(Number(val))}>
                 <SelectTrigger className="w-[80px]">
                   <SelectValue />
@@ -590,8 +594,8 @@ export default function ProductsPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription className="flex items-center justify-between">
-            Não foi possível carregar os produtos.
-            <Button variant="outline" size="sm" onClick={() => refetch()}>Tentar novamente</Button>
+            {tx("Não foi possível carregar os produtos.")}
+            <Button variant="outline" size="sm" onClick={() => refetch()}>{tx("Tentar novamente")}</Button>
           </AlertDescription>
         </Alert>
       ) : (
@@ -602,19 +606,19 @@ export default function ProductsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10" />
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Produto</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Categoria</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Classificação</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Produto")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Categoria")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Classificação")}</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Grade</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px]">Status</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Preço</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Estoque</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Visualizações</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Vendido no período</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Preço")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Estoque")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Visualizações")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Vendido no período")}</TableHead>
                   <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Conv %</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">% vendido</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Faturamento</TableHead>
-                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">Adicionado</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("% vendido")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Faturamento")}</TableHead>
+                  <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Adicionado")}</TableHead>
                   <TableHead className="w-6" />
                 </TableRow>
               </TableHeader>
@@ -644,8 +648,8 @@ export default function ProductsPage() {
                     <TableCell colSpan={15} className="p-0">
                       <EmptyState
                         icon={PackageOpen}
-                        title="Nenhum produto para exibir"
-                        description="Não há produtos no catálogo com os filtros atuais. Limpe os filtros ou sincronize o catálogo da loja."
+                        title={tx("Nenhum produto para exibir")}
+                        description={tx("Não há produtos no catálogo com os filtros atuais. Limpe os filtros ou sincronize o catálogo da loja.")}
                         className="m-4 border-0 bg-transparent"
                       />
                     </TableCell>
@@ -741,9 +745,9 @@ export default function ProductsPage() {
                 </DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <GlassMetricCard  label="Vendidos" value={<>{formatNumber(selectedProduct.totalSold)}</>}  />
-                <GlassMetricCard  label="Receita" value={<>{formatCurrency(selectedProduct.totalRevenue)}</>}  />
-                <GlassMetricCard  label="Estoque" value={<>{formatNumber(selectedProduct.stock)}</>}  />
+                <GlassMetricCard  label={tx("Vendidos")} value={<>{formatNumber(selectedProduct.totalSold)}</>} hideComparison />
+                <GlassMetricCard  label={tx("Receita")} value={<>{formatCurrency(selectedProduct.totalRevenue)}</>} hideComparison />
+                <GlassMetricCard  label={tx("Estoque")} value={<>{formatNumber(selectedProduct.stock)}</>} hideComparison />
                 <div className="rounded-md border border-border bg-card p-3">
                   <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">Grade</p>
                   <Badge
@@ -761,9 +765,9 @@ export default function ProductsPage() {
                       <TableHead className="font-mono uppercase tracking-wider text-[10px]">SKU</TableHead>
                       <TableHead className="font-mono uppercase tracking-wider text-[10px]">Cor</TableHead>
                       <TableHead className="font-mono uppercase tracking-wider text-[10px]">Tamanho</TableHead>
-                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Estoque</TableHead>
-                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Vendidos</TableHead>
-                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Receita</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Estoque")}</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Vendidos")}</TableHead>
+                      <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Receita")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

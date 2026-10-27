@@ -1,5 +1,3 @@
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -79,10 +77,9 @@ export default function AccessesPage() {
     { query: queryOpts({ placeholderData: (prev) => prev }) },
   );
 
-  const { data: accesses, isLoading: isLoadingAccesses, isError, refetch } = useQuery<AccessesResponse>({
-    ...queryOpts<AccessesResponse>({}),
+  const { data: accesses, isLoading: isLoadingAccesses } = useQuery({
     queryKey: ["client-accesses"],
-    queryFn: ({ signal }) => customFetch<AccessesResponse>("/api/accesses", { signal }),
+    queryFn: () => customFetch<AccessesResponse>("/api/accesses"),
   });
 
   const createAccess = useMutation({
@@ -161,11 +158,7 @@ export default function AccessesPage() {
 
   return (
     <div className="space-y-6" data-testid="page-accesses">
-      <div className="up-metric-grid">
-        {[["Acessos ativos", accesses?.data.length ?? 0], ["Marcas com acesso", new Set(accesses?.data.map(a => a.clientId)).size], ["Resultados da busca", filteredAccesses.length]].map(([label, value]) => <GlassMetricCard key={label} label={String(label)} value={Number(value)} loading={isLoadingAccesses} source="UP Dash · usuários e vínculos de acesso" info="Contagem atual dos logins e das marcas vinculadas. Resultados da busca acompanha o filtro da lista." comparisonUnavailable="A fonte disponibiliza o cadastro atual, sem contagem histórica de acessos por período." />)}
-      </div>
-      {isError && <Alert variant="destructive"><AlertTitle>Não foi possível carregar os acessos</AlertTitle><AlertDescription>Atualize os registros para tentar novamente.</AlertDescription><Button className="mt-3" variant="outline" onClick={() => refetch()}>Tentar novamente</Button></Alert>}
-      <div className="up-access-layout">
+      <div className="grid gap-4 lg:grid-cols-[minmax(320px,420px)_1fr]">
         <Card>
           <CardContent className="p-5">
             <div className="mb-5 flex items-start gap-3">
@@ -182,9 +175,9 @@ export default function AccessesPage() {
 
             <form className="space-y-4" onSubmit={handleSubmit}>
               <div className="space-y-2">
-                <Label htmlFor="access-client">Marca liberada</Label>
+                <Label>Marca liberada</Label>
                 <Select value={clientId} onValueChange={setClientId}>
-                  <SelectTrigger id="access-client">
+                  <SelectTrigger>
                     <SelectValue placeholder="Selecione a marca" />
                   </SelectTrigger>
                   <SelectContent>
@@ -198,7 +191,7 @@ export default function AccessesPage() {
                 {isLoadingClients && <Skeleton className="h-4 w-32" />}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label htmlFor="firstName">Nome</Label>
                   <Input
@@ -239,7 +232,7 @@ export default function AccessesPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Mínimo 8 caracteres"
-                    className="min-w-0 font-mono text-xs"
+                    className="font-mono text-xs"
                   />
                   <Button
                     type="button"
@@ -276,7 +269,7 @@ export default function AccessesPage() {
               </div>
               <Badge variant="outline" className="gap-1">
                 <KeyRound className="h-3 w-3" />
-                {filteredAccesses.length} {filteredAccesses.length === 1 ? "acesso" : "acessos"}
+                {filteredAccesses.length} acessos
               </Badge>
             </div>
 
@@ -284,7 +277,7 @@ export default function AccessesPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar por nome, e-mail ou marca"
-              className="mb-4" aria-label="Buscar acessos"
+              className="mb-4"
             />
 
             <div className="rounded-md border">
@@ -351,7 +344,6 @@ export default function AccessesPage() {
                             disabled={deleteAccess.isPending}
                             onClick={() => deleteAccess.mutate(access.id)}
                             title="Remover acesso"
-                            aria-label={`Remover acesso de ${access.firstName} ${access.lastName}`}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>

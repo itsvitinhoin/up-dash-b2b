@@ -1,4 +1,5 @@
-import { displayLabel } from "@/lib/display-label";
+import { useI18n } from "@/lib/i18n";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
@@ -88,11 +89,12 @@ function BreakdownChart({
   data: { name: string; revenue: number }[];
   label: string;
 }) {
+  const { tx } = useI18n();
   if (!data.length) {
     return (
       <EmptyState
         icon={BarChart2}
-        title="Sem dados"
+        title={tx("Sem dados")}
         description={`Não ${label.toLowerCase()} detalhamento neste período.`}
         className="h-40 border-0 bg-transparent"
       />
@@ -153,6 +155,8 @@ function BreakdownChart({
 }
 
 export default function SellerDetailPage() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { sellerId } = useParams<{ sellerId: string }>();
   const [, navigate] = useLocation();
   const { user, selectedClientId } = useAuth();
@@ -221,9 +225,9 @@ export default function SellerDetailPage() {
     return (
       <EmptyState
         icon={ShoppingBag}
-        title="Vendedora não encontrada"
-        description="Esta vendedora pode ter sido removida ou seu acesso não está disponível."
-        action={{ label: "Voltar para Vendedoras", onClick: () => navigate("/sellers") }}
+        title={tx("Vendedora não encontrada")}
+        description={tx("Esta vendedora pode ter sido removida ou seu acesso não está disponível.")}
+        action={{ label: tx("Voltar para Vendedoras"), onClick: () => navigate("/sellers") }}
       />
     );
   }
@@ -245,7 +249,7 @@ export default function SellerDetailPage() {
         data-testid="seller-detail-back"
       >
         <ArrowLeft className="h-4 w-4" />
-        Vendedoras
+        {tx("Vendedoras")}
       </Button>
 
       {/* Header card */}
@@ -306,7 +310,7 @@ export default function SellerDetailPage() {
           ) : kpis && prevKpis ? (
             <>
               <KpiCard
-                label="Faturamento"
+                label={tx("Faturamento")}
                 value={kpis.revenue}
                 prev={prevKpis.revenue}
                 icon={TrendingUp}
@@ -314,35 +318,35 @@ export default function SellerDetailPage() {
                 className="col-span-2 sm:col-span-1 bg-gradient-to-br from-primary/[0.04] via-card to-card border-primary/20"
               />
               <KpiCard
-                label="Pedidos"
+                label={tx("Pedidos")}
                 value={kpis.orders}
                 prev={prevKpis.orders}
                 icon={ShoppingBag}
                 format={(v) => formatNumber(Math.round(v))}
               />
               <KpiCard
-                label="Ticket médio"
+                label={tx("Ticket médio")}
                 value={kpis.avgTicket}
                 prev={prevKpis.avgTicket}
                 icon={TrendingUp}
                 format={formatCurrency}
               />
               <KpiCard
-                label="Clientes"
+                label={tx("Clientes")}
                 value={kpis.uniqueCustomers}
                 prev={prevKpis.uniqueCustomers}
                 icon={Users}
                 format={(v) => formatNumber(Math.round(v))}
               />
               <KpiCard
-                label="Taxa de aprovação"
+                label={tx("Taxa de aprovação")}
                 value={kpis.approvalRate}
                 prev={prevKpis.approvalRate}
                 icon={CheckCircle2}
                 format={(v) => `${v.toFixed(1)}%`}
               />
               <KpiCard
-                label="% de conversão"
+                label={tx("% de conversão")}
                 value={kpis.conversionRate}
                 prev={prevKpis.conversionRate}
                 icon={Target}
@@ -359,7 +363,7 @@ export default function SellerDetailPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Evolução do faturamento
+              {tx("Evolução do faturamento")}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -368,8 +372,8 @@ export default function SellerDetailPage() {
             ) : mergedChart.length === 0 ? (
               <EmptyState
                 icon={TrendingUp}
-                title="Sem dados de faturamento"
-                description="Nenhum pedido aprovado neste período."
+                title={tx("Sem dados de faturamento")}
+                description={tx("Nenhum pedido aprovado neste período.")}
                 className="h-48 border-0 bg-transparent"
               />
             ) : (
@@ -418,7 +422,7 @@ export default function SellerDetailPage() {
                                 className="tabular-nums"
                                 style={{ color: p.color }}
                               >
-                                {p.name === "prevRevenue" ? "Período anterior" : "Faturamento"}:{" "}
+                                {p.name === "prevRevenue" ? "Período anterior" : tx("Faturamento")}:{" "}
                                 {formatCurrency(p.value as number)}
                               </p>
                             ))}
@@ -432,7 +436,7 @@ export default function SellerDetailPage() {
                       stroke="hsl(var(--primary))"
                       strokeWidth={2}
                       dot={false}
-                      name="Faturamento"
+                      name={tx("Faturamento")}
                       isAnimationActive={!reduced}
                     />
                     {mergedChart.some((d) => d.prevRevenue !== undefined) && (
@@ -443,7 +447,7 @@ export default function SellerDetailPage() {
                         strokeWidth={1.5}
                         strokeDasharray="4 3"
                         dot={false}
-                        name="Faturamento anterior"
+                        name={tx("Faturamento anterior")}
                         isAnimationActive={!reduced}
                       />
                     )}
@@ -462,14 +466,14 @@ export default function SellerDetailPage() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                 <BarChart2 className="h-4 w-4" />
-                Faturamento por categoria
+                {tx("Faturamento por categoria")}
               </CardTitle>
             </CardHeader>
             <CardContent>
               {isLoading ? (
                 <Skeleton className="h-32 w-full" />
               ) : (
-                <BreakdownChart data={categoryData} label="Categoria" />
+                <BreakdownChart data={categoryData} label={tx("Categoria")} />
               )}
             </CardContent>
           </Card>
@@ -477,7 +481,7 @@ export default function SellerDetailPage() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                 <MapPin className="h-4 w-4" />
-                Faturamento por estado
+                {tx("Faturamento por estado")}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -497,7 +501,7 @@ export default function SellerDetailPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
               <Users className="h-4 w-4" />
-              Principais clientes
+              {tx("Principais clientes")}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -510,19 +514,19 @@ export default function SellerDetailPage() {
             ) : !customersData?.data.length ? (
               <EmptyState
                 icon={Users}
-                title="Nenhum cliente cadastrado"
-                description="Nenhum cliente comprou desta vendedora no período selecionado."
+                title={tx("Nenhum cliente cadastrado")}
+                description={tx("Nenhum cliente comprou desta vendedora no período selecionado.")}
                 className="border-0 bg-transparent"
               />
             ) : (
               <Table data-testid="seller-customers-table">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead className="text-right">Pedidos</TableHead>
+                    <TableHead>{tx("Cliente")}</TableHead>
+                    <TableHead className="text-right">{tx("Pedidos")}</TableHead>
                     <TableHead className="text-right">Spent</TableHead>
-                    <TableHead className="text-right hidden sm:table-cell">Segmento</TableHead>
-                    <TableHead className="text-right hidden md:table-cell">Última compra</TableHead>
+                    <TableHead className="text-right hidden sm:table-cell">{tx("Segmento")}</TableHead>
+                    <TableHead className="text-right hidden md:table-cell">{tx("Última compra")}</TableHead>
                     <TableHead className="w-8" />
                   </TableRow>
                 </TableHeader>
@@ -587,7 +591,7 @@ export default function SellerDetailPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
               <ShoppingBag className="h-4 w-4" />
-              Pedidos recentes
+              {tx("Pedidos recentes")}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -600,19 +604,19 @@ export default function SellerDetailPage() {
             ) : !ordersData?.data.length ? (
               <EmptyState
                 icon={ShoppingBag}
-                title="Nenhum pedido registrado"
-                description="Nenhum pedido atribuído a esta vendedora no período selecionado."
+                title={tx("Nenhum pedido registrado")}
+                description={tx("Nenhum pedido atribuído a esta vendedora no período selecionado.")}
                 className="border-0 bg-transparent"
               />
             ) : (
               <Table data-testid="seller-orders-table">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
+                    <TableHead>{tx("Cliente")}</TableHead>
+                    <TableHead className="text-right">{tx("Valor")}</TableHead>
                     <TableHead className="hidden sm:table-cell">Status</TableHead>
-                    <TableHead className="hidden md:table-cell">Localização</TableHead>
-                    <TableHead className="text-right hidden lg:table-cell">Data</TableHead>
+                    <TableHead className="hidden md:table-cell">{tx("Localização")}</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">{tx("Data")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

@@ -128,6 +128,19 @@ const BRAZIL_STATES = [
   "TO",
 ].map((s) => ({ value: s, label: s }));
 
+const BRAZIL_STATE_NAMES: Record<string, string> = {
+  AC: "Acre", AL: "Alagoas", AM: "Amazonas", AP: "Amapá", BA: "Bahia", CE: "Ceará", DF: "Distrito Federal", ES: "Espírito Santo",
+  GO: "Goiás", MA: "Maranhão", MG: "Minas Gerais", MS: "Mato Grosso do Sul", MT: "Mato Grosso", PA: "Pará", PB: "Paraíba",
+  PE: "Pernambuco", PI: "Piauí", PR: "Paraná", RJ: "Rio de Janeiro", RN: "Rio Grande do Norte", RO: "Rondônia", RR: "Roraima",
+  RS: "Rio Grande do Sul", SC: "Santa Catarina", SE: "Sergipe", SP: "São Paulo", TO: "Tocantins",
+};
+
+/** Opções do filtro Estado na Visão geral: "São Paulo (SP)", em ordem alfabética; o valor enviado ao servidor é a UF. */
+const BRAZIL_STATE_OPTIONS_NAMED = BRAZIL_STATES.map((o) => ({
+  value: o.value,
+  label: BRAZIL_STATE_NAMES[o.value] ? `${BRAZIL_STATE_NAMES[o.value]} (${o.value})` : o.value,
+})).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+
 const SIZE_OPTIONS = [
   { value: "PP", label: "PP" },
   { value: "P", label: "P" },
@@ -159,7 +172,8 @@ const FILTER_LABELS_PT: Record<string, string> = {
   Category: "Categoria",
   Channel: "Canal",
   Segment: "Segmento",
-  Seller: "Vendedor",
+  Seller: "Vendedora",
+  "UTM Source": "Origem UTM",
   State: "Estado",
   City: "Cidade",
   Product: "Produto",
@@ -167,20 +181,16 @@ const FILTER_LABELS_PT: Record<string, string> = {
   Color: "Cor",
   Creative: "Criativo",
 };
-const FILTER_ALL_PT: Record<string, string> = {
-  Category: "Todas as categorias",
-  Channel: "Todos os canais",
-  Segment: "Todos os segmentos",
-  Seller: "Todos os vendedores",
-  State: "Todos os estados",
-  Size: "Todos os tamanhos",
-  Color: "Todas as cores",
-  "UTM Source": "Todas as origens",
-  "UTM Medium": "Todas as mídias",
-};
+/**
+ * `overview` = barra da Visão geral de performance (pedido do time em 26/10/2026): Vendedora e Estado (o Período fica no seletor do topo). Categoria, Canal, Segmento e "Mais filtros" não aparecem. Os pedidos contam sempre só os PAGOS (regra do produto, sem filtro de status).
+ */
+const OVERVIEW_HIDDEN_FILTERS = [
+  "category", "channel", "segment", "utmSource", "utmMedium", "utmCampaign", "city", "product", "size", "color", "creative",
+] as const satisfies ReadonlyArray<keyof DashboardFilters>;
 
-export function FilterBar() {
-  const { language } = useI18n();
+export function FilterBar({ variant = "default" }: { variant?: "default" | "overview" } = {}) {
+  const overview = variant === "overview";
+  const { language, tx } = useI18n();
   const label = (english: string, portuguese: string) =>
     language === "pt" ? portuguese : english;
   const { user, selectedClientId, selectedDashboardMode } = useAuth();
@@ -263,15 +273,15 @@ export function FilterBar() {
           queryKey: getListSavedViewsQueryKey({ clientId }),
         });
         toast({
-          title: "Visualização salva",
-          description: "Seus filtros estão disponíveis como um atalho.",
+          title: label("View saved", "Visualização salva"),
+          description: label("Your filter set is now available as a chip.", "Seus filtros estão disponíveis como um atalho."),
         });
       },
       onError: (err) => {
         toast({
-          title: "Não foi possível salvar a visualização",
+          title: label("Could not save view", "Não foi possível salvar a visualização"),
           description:
-            (err as { message?: string }).message ?? "Try a different name.",
+            (err as { message?: string }).message ?? label("Try a different name.", "Tente outro nome."),
           variant: "destructive",
         });
       },
@@ -293,6 +303,13 @@ export function FilterBar() {
   useEffect(() => {
     if (!popoverOpen) setNewName("");
   }, [popoverOpen]);
+
+  // Os filtros são globais entre as páginas. Na Visão geral os botões deles não existem, então um valor deixado por outra página (ex.: Categoria
+  // vinda de Pedidos) não pode continuar filtrando os números sem ninguém ver: zera ao entrar.
+  useEffect(() => {
+    if (!overview) return;
+    for (const key of OVERVIEW_HIDDEN_FILTERS) if (filters[key]) setFilter(key, null);
+  }, [overview, filters, setFilter]);
 
   useEffect(() => {
     if (selectedDashboardMode === "B2C") {
@@ -316,6 +333,12 @@ export function FilterBar() {
       label: string;
       value: string;
     }[] = [];
+    if (overview) {
+      if (selectedDashboardMode === "B2B" && filters.sellerId)
+        chips.push({ key: "sellerId", label: "Vendedora", value: labelFor(sellerOptions, filters.sellerId) });
+      if (filters.state) chips.push({ key: "state", label: "Estado", value: filters.state });
+      return chips;
+    }
     if (filters.category)
       chips.push({
         key: "category",
@@ -384,6 +407,7 @@ export function FilterBar() {
       });
     return chips;
   }, [
+    overview,
     filters,
     selectedDashboardMode,
     sellerOptions,
@@ -410,7 +434,14 @@ export function FilterBar() {
     return extraKeys.filter((k) => !!filters[k]).length;
   }, [filters, selectedDashboardMode]);
 
-  const saveCurrentFilters = () => ({
+  const saveCurrentFilters = () => overview
+    ? {
+        dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+        dateTo: format(dateRange.to, "yyyy-MM-dd"),
+        sellerId: filters.sellerId,
+        state: filters.state,
+      }
+    : {
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
     dateTo: format(dateRange.to, "yyyy-MM-dd"),
     category: filters.category,
@@ -426,7 +457,7 @@ export function FilterBar() {
     size: filters.size,
     color: filters.color,
     creative: filters.creative,
-  });
+  };
 
   return (
     <div
@@ -435,30 +466,34 @@ export function FilterBar() {
       aria-label="Filtros do dashboard"
       data-testid="filter-bar"
     >
-      <FilterSelect
-        placeholder="Categoria"
-        value={filters.category}
-        options={categoryOptions}
-        onChange={(v) => setFilter("category", v)}
-        testId="filter-category"
-      />
-      <FilterSelect
-        placeholder="Canal"
-        value={filters.channel}
-        options={channelOptions}
-        onChange={(v) => setFilter("channel", v)}
-        testId="filter-channel"
-      />
-      <FilterSelect
-        placeholder="Segmento"
-        value={filters.segment}
-        options={SEGMENT_OPTIONS}
-        onChange={(v) => setFilter("segment", v)}
-        testId="filter-segment"
-      />
+      {!overview && (
+        <>
+          <FilterSelect
+            placeholder="Category"
+            value={filters.category}
+            options={categoryOptions}
+            onChange={(v) => setFilter("category", v)}
+            testId="filter-category"
+          />
+          <FilterSelect
+            placeholder="Channel"
+            value={filters.channel}
+            options={channelOptions}
+            onChange={(v) => setFilter("channel", v)}
+            testId="filter-channel"
+          />
+          <FilterSelect
+            placeholder="Segment"
+            value={filters.segment}
+            options={SEGMENT_OPTIONS}
+            onChange={(v) => setFilter("segment", v)}
+            testId="filter-segment"
+          />
+        </>
+      )}
       {selectedDashboardMode === "B2B" && (
         <FilterSelect
-          placeholder="Vendedora"
+          placeholder="Seller"
           value={filters.sellerId}
           options={sellerOptions}
           onChange={(v) => setFilter("sellerId", v)}
@@ -466,7 +501,21 @@ export function FilterBar() {
         />
       )}
 
+      {overview && (
+        <>
+          <FilterSelect
+            placeholder="State"
+            value={filters.state}
+            options={BRAZIL_STATE_OPTIONS_NAMED}
+            onChange={(v) => setFilter("state", v)}
+            testId="filter-state"
+            widthClass="w-[200px]"
+          />
+        </>
+      )}
+
       {/* More Filters popover */}
+      {!overview && (
       <Popover open={moreOpen} onOpenChange={setMoreOpen}>
         <PopoverTrigger asChild>
           <Button
@@ -476,7 +525,7 @@ export function FilterBar() {
             data-testid="filter-more"
           >
             <SlidersHorizontal className="h-3.5 w-3.5" />
-            {label("Mais filtros", "Mais filtros")}
+            {label("More filters", "Mais filtros")}
             {extraActiveCount > 0 && (
               <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground font-bold">
                 {extraActiveCount}
@@ -497,7 +546,7 @@ export function FilterBar() {
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <FilterSelect
-                    placeholder="Origem UTM"
+                    placeholder="UTM Source"
                     value={filters.utmSource}
                     options={UTM_SOURCE_OPTIONS}
                     onChange={(v) => setFilter("utmSource", v)}
@@ -522,7 +571,7 @@ export function FilterBar() {
                   </div>
                   <div className="col-span-2">
                     <FilterInput
-                      placeholder="Nome do criativo…"
+                      placeholder={label("Creative name...", "Nome do criativo…")}
                       value={filters.creative}
                       onChange={(v) => setFilter("creative", v)}
                       testId="filter-creative"
@@ -538,7 +587,7 @@ export function FilterBar() {
                   Desempenho
                 </p>
                 <FilterInput
-                  placeholder="Nome do criativo…"
+                  placeholder={label("Creative name...", "Nome do criativo…")}
                   value={filters.creative}
                   onChange={(v) => setFilter("creative", v)}
                   testId="filter-creative"
@@ -561,7 +610,7 @@ export function FilterBar() {
                   fullWidth
                 />
                 <FilterInput
-                  placeholder="Cidade…"
+                  placeholder={label("City…", "Cidade…")}
                   value={filters.city}
                   onChange={(v) => setFilter("city", v)}
                   testId="filter-city"
@@ -577,14 +626,14 @@ export function FilterBar() {
               <div className="grid grid-cols-2 gap-2">
                 <div className="col-span-2">
                   <FilterInput
-                    placeholder="Produto (SKU ou nome)…"
+                    placeholder={label("Product (SKU or name)…", "Produto (SKU ou nome)…")}
                     value={filters.product}
                     onChange={(v) => setFilter("product", v)}
                     testId="filter-product"
                   />
                 </div>
                 <FilterSelect
-                  placeholder="Tamanho"
+                  placeholder="Size"
                   value={filters.size}
                   options={SIZE_OPTIONS}
                   onChange={(v) => setFilter("size", v)}
@@ -592,7 +641,7 @@ export function FilterBar() {
                   fullWidth
                 />
                 <FilterSelect
-                  placeholder="Cor"
+                  placeholder="Color"
                   value={filters.color}
                   options={colorOptions}
                   onChange={(v) => setFilter("color", v)}
@@ -639,6 +688,7 @@ export function FilterBar() {
           </div>
         </PopoverContent>
       </Popover>
+      )}
 
       {activeChips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 ml-1">
@@ -650,14 +700,14 @@ export function FilterBar() {
               data-testid={`chip-${chip.key}`}
             >
               <span className="text-[10px] uppercase tracking-wider opacity-70">
-                {displayLabel(chip.label)}
+                {tx(displayLabel(chip.label))}
               </span>
               <span className="font-medium">{chip.value}</span>
               <button
                 type="button"
                 onClick={() => setFilter(chip.key, null)}
                 className="rounded hover:bg-primary/20 p-0.5"
-                aria-label={`Remover ${chip.label} filter`}
+                aria-label={`${label("Remove", "Remover")} ${tx(chip.label)}`}
               >
                 <X className="h-3 w-3" />
               </button>
@@ -671,7 +721,7 @@ export function FilterBar() {
             data-testid="filter-reset"
           >
             <RotateCcw className="h-3 w-3 mr-1" />
-            {label("Limpar", "Limpar filtros")}
+            {label("Clear filters", "Limpar filtros")}
           </Button>
         </div>
       )}
@@ -679,7 +729,12 @@ export function FilterBar() {
       <div className="ml-auto flex items-center gap-1.5 flex-wrap">
         {views?.slice(0, 6).map((view) => {
           const viewFilterSummary = (
-            [
+            (overview
+              ? [
+                  ["State", view.filters.state],
+                  ["Seller", view.filters.sellerId],
+                ]
+              : [
               ["Category", view.filters.category],
               ["Channel", view.filters.channel],
               ["Segment", view.filters.segment],
@@ -693,7 +748,7 @@ export function FilterBar() {
               ["Color", view.filters.color],
               ["Seller", view.filters.sellerId],
               ["Creative", view.filters.creative],
-            ] as [string, string | null | undefined][]
+            ]) as [string, string | null | undefined][]
           )
             .filter(([, v]) => v)
             .map(([k, v]) => `${k}: ${v}`)
@@ -724,7 +779,10 @@ export function FilterBar() {
                         ? new Date(view.filters.dateTo)
                         : dateRange.to,
                     },
-                    filters: {
+                    filters: overview
+                      // Visão geral: um atalho antigo pode ter Categoria, Canal etc. Aqui só valem Vendedora e Estado; o resto não é aplicado.
+                      ? { ...filters, sellerId: view.filters.sellerId ?? null, state: view.filters.state ?? null }
+                      : {
                       category: view.filters.category ?? null,
                       sellerId: view.filters.sellerId ?? null,
                       channel: view.filters.channel ?? null,
@@ -764,10 +822,10 @@ export function FilterBar() {
               variant="ghost"
               className="h-7 px-2 text-xs"
               data-testid="filter-save-view"
-              disabled={!hasAny && activeChips.length === 0}
+              disabled={overview ? activeChips.length === 0 : !hasAny && activeChips.length === 0}
               title={
-                hasAny || activeChips.length > 0
-                  ? label("Salvar filtros atuais", "Salvar filtros atuais")
+                (overview ? activeChips.length > 0 : hasAny || activeChips.length > 0)
+                  ? label("Save current filters", "Salvar filtros atuais")
                   : label(
                       "Aplique pelo menos um filtro para salvar",
                       "Aplique pelo menos um filtro para salvar",
@@ -775,12 +833,12 @@ export function FilterBar() {
               }
             >
               <BookmarkPlus className="h-3.5 w-3.5 mr-1" />
-              {label("Salvar visualização", "Salvar visão")}
+              {label("Save view", "Salvar visão")}
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-72">
             <p className="text-sm font-medium mb-1">
-              {label("Nome desta visualização", "Nome da visão")}
+              {label("Name of this view", "Nome da visão")}
             </p>
             <p className="text-xs text-muted-foreground mb-3">
               {label(
@@ -790,7 +848,7 @@ export function FilterBar() {
             </p>
             <Input
               autoFocus
-              placeholder="Ex.: VIP — últimos 30 dias"
+              placeholder={label("e.g. VIP — last 30 days", "Ex.: VIP — últimos 30 dias")}
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
@@ -821,7 +879,7 @@ export function FilterBar() {
               data-testid="filter-save-confirm"
             >
               <Save className="h-3.5 w-3.5 mr-1.5" />
-              {label("Salvar visualização", "Salvar visão")}
+              {label("Save view", "Salvar visão")}
             </Button>
           </PopoverContent>
         </Popover>
@@ -837,6 +895,8 @@ interface FilterSelectProps {
   onChange: (value: string | null) => void;
   testId: string;
   fullWidth?: boolean;
+  /** Classe de largura quando não é `fullWidth` (padrão 140px). */
+  widthClass?: string;
 }
 
 function FilterSelect({
@@ -846,8 +906,9 @@ function FilterSelect({
   onChange,
   testId,
   fullWidth,
+  widthClass = "w-[140px]",
 }: FilterSelectProps) {
-  const { language } = useI18n();
+  const { language, tx } = useI18n();
   const localizedPlaceholder =
     language === "pt"
       ? (FILTER_LABELS_PT[placeholder] ?? placeholder)
@@ -858,7 +919,7 @@ function FilterSelect({
       onValueChange={(v) => onChange(v === "__all" ? null : v)}
     >
       <SelectTrigger
-        className={`h-7 text-xs bg-background ${fullWidth ? "w-full" : "w-[140px]"}`}
+        className={`h-7 text-xs bg-background ${fullWidth ? "w-full" : widthClass}`}
         data-testid={testId}
         aria-label={localizedPlaceholder}
       >
@@ -867,12 +928,12 @@ function FilterSelect({
       <SelectContent>
         <SelectItem value="__all">
           {language === "pt"
-            ? (FILTER_ALL_PT[placeholder] ?? `Todos · ${localizedPlaceholder}`)
-            : `Todos ${pluralize(placeholder)}`}
+            ? `Todos · ${localizedPlaceholder}`
+            : `All ${pluralize(placeholder)}`}
         </SelectItem>
         {options.map((opt) => (
           <SelectItem key={opt.value} value={opt.value}>
-            {displayLabel(opt.label)}
+            {tx(displayLabel(opt.label))}
           </SelectItem>
         ))}
       </SelectContent>

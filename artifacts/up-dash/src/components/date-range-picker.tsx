@@ -1,4 +1,3 @@
-import { displayLabel } from "@/lib/display-label";
 import {
   addMonths,
   differenceInDays,
@@ -89,6 +88,14 @@ const presets: Preset[] = [
     getRange: () => {
       const to = today();
       return { from: subDays(to, 29), to };
+    },
+  },
+  {
+    id: "90d",
+    label: "90 dias",
+    getRange: () => {
+      const to = today();
+      return { from: subDays(to, 89), to };
     },
   },
   {
@@ -229,7 +236,7 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
                   : "text-muted-foreground hover:bg-accent hover:text-foreground",
               )}
             >
-              <span>{displayLabel(preset.label)}</span>
+              <span>{preset.label}</span>
               {activePreset?.id === preset.id && <Check className="h-3.5 w-3.5" />}
             </button>
           ))}

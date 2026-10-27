@@ -1,5 +1,5 @@
 import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
-import { displayLabel } from "@/lib/display-label";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
@@ -192,7 +192,8 @@ function originClass(origin: OrderOrigin) {
 }
 
 export default function OrdersPage() {
-  const { t } = useI18n();
+  const { t, tx } = useI18n();
+  const displayLabel = useDisplayLabel();
   const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange } = useDashboardFilters();
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
@@ -456,7 +457,7 @@ export default function OrdersPage() {
               iconClass="bg-orange-500/10 text-orange-400"
               change={null}
               changeLabel=""
-              sub={[{ label: "Base", value: isB2C ? `${formatNumber(data?.kpis.sessions ?? 0)} sessões` : `${formatNumber(data?.kpis.approvedLeads ?? 0)} aprovados` }]}
+              sub={[{ label: "Base", value: isB2C ? `${formatNumber(data?.kpis.sessions ?? 0)} ${tx("sessões")}` : `${formatNumber(data?.kpis.approvedLeads ?? 0)} ${tx("aprovados")}` }]}
               sparkValues={[]}
               sparkColor="#0458fe"
               ringValue={data?.kpis.conversionPct ?? 0}
@@ -619,10 +620,10 @@ export default function OrdersPage() {
           ) : (
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <GlassMetricCard  label={isB2C ? "Valor faturado" : "Valor solicitado"} value={<>{formatCurrency(details.order.amount)}</>}  />
-                <GlassMetricCard  label={isB2C ? "Valor pago" : "Valor atendido"} value={<>{formatCurrency(details.order.fulfilledAmount)}</>}  />
-                <GlassMetricCard  label={isB2C ? "Peças faturadas" : "Peças solicitadas"} value={<>{formatNumber(details.order.requestedQuantity)}</>}  />
-                <GlassMetricCard  label={isB2C ? "Peças pagas" : "Peças atendidas"} value={<>{formatNumber(details.order.fulfilledQuantity)}</>}  />
+                <GlassMetricCard  label={isB2C ? "Valor faturado" : "Valor solicitado"} value={<>{formatCurrency(details.order.amount)}</>} hideComparison />
+                <GlassMetricCard  label={isB2C ? "Valor pago" : "Valor atendido"} value={<>{formatCurrency(details.order.fulfilledAmount)}</>} hideComparison />
+                <GlassMetricCard  label={isB2C ? "Peças faturadas" : "Peças solicitadas"} value={<>{formatNumber(details.order.requestedQuantity)}</>} hideComparison />
+                <GlassMetricCard  label={isB2C ? "Peças pagas" : "Peças atendidas"} value={<>{formatNumber(details.order.fulfilledQuantity)}</>} hideComparison />
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">
@@ -672,9 +673,18 @@ export default function OrdersPage() {
                         </div>
                       </div>
                       <div className="grid grid-cols-3 gap-4 text-right text-sm sm:min-w-[280px]">
-                        <GlassMetricCard  label={isB2C ? "Faturada" : "Solicitada"} value={<>{formatNumber(item.quantity)}</>}  />
-                        <GlassMetricCard  label={isB2C ? "Paga" : "Atendida"} value={<>{formatNumber(item.fulfilledQuantity)}</>}  />
-                        <GlassMetricCard  label="Valor" value={<>{formatCurrency(item.priceAtSale)}</>}  />
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{tx(isB2C ? "Faturada" : "Solicitada")}</p>
+                          <p className="font-semibold tabular-nums">{formatNumber(item.quantity)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{tx(isB2C ? "Paga" : "Atendida")}</p>
+                          <p className="font-semibold tabular-nums">{formatNumber(item.fulfilledQuantity)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{tx("Valor")}</p>
+                          <p className="font-semibold tabular-nums">{formatCurrency(item.priceAtSale)}</p>
+                        </div>
                       </div>
                     </div>
                   ))}

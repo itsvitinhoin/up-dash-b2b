@@ -9,6 +9,12 @@ Defina o mesmo segredo longo nos dois ambientes:
 - API/Vercel: `UPDASH_REPORTS_READ_TOKEN`
 - Executor da rotina: `UPDASH_REPORTS_READ_TOKEN`
 
+### Alternativa: usar um token de API em vez do segredo fixo
+
+O servidor aceita, no mesmo cabeçalho `x-updash-reports-token`, **ou** o segredo fixo `UPDASH_REPORTS_READ_TOKEN` **ou** um token de API de admin (`upk_...`, criado em **Clientes → Tokens de API**, de preferência "somente leitura"). Com o token de API **não é preciso configurar a variável na Vercel**: no executor, coloque o valor do token na variável `UPDASH_REPORTS_READ_TOKEN` e rode a rotina normalmente (o script manda o valor no cabeçalho). O token pode ser desligado pela tela a qualquer momento (o relatório passa a responder 401 na hora) e a coluna "Último uso" mostra se está sendo usado. Detalhes em `docs/token-api-admin.md`.
+
+O token nunca deve ser colado em conversa com a IA que executa a rotina: guarde-o no cofre de segredos/variáveis do ambiente onde ela roda.
+
 Opcionalmente, no executor:
 
 - `UPDASH_REPORTS_BASE_URL`: URL do UP Dash. O padrao e `https://www.grupoup-dash.com.br`.

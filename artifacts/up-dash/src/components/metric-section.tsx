@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
 import { BarChart3 } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import {
   formatCurrency,
   formatNumber,
@@ -14,9 +15,12 @@ export type OrganizedMetric = {
   format?: "currency" | "number" | "percent" | "ratio" | "days";
   source?: string;
   previousValue?: number | null;
+  lowerIsBetter?: boolean; // custos: queda é boa
   info?: string;
   series?: number[];
   loading?: boolean;
+  /** Linhas embaixo do gráfico (rótulo e valor já formatado), como nos cards de Faturamento e Pedidos. */
+  sub?: Array<{ label: string; value: string }>;
 };
 export function MetricSection({
   title,
@@ -48,6 +52,7 @@ export function OrganizationHeading({ children }: { children: ReactNode }) {
   return <h2 className="text-sm font-semibold text-foreground">{children}</h2>;
 }
 export function ExistingMetricCard({ metric }: { metric: OrganizedMetric }) {
+  const { tx } = useI18n();
   const present = metric.value != null && Number.isFinite(metric.value);
   const format = (v: number) => {
     if (!present) return "—";
@@ -59,7 +64,7 @@ export function ExistingMetricCard({ metric }: { metric: OrganizedMetric }) {
       case "ratio":
         return `${v.toFixed(2)}x`;
       case "days":
-        return `${v.toFixed(1)} dias`;
+        return `${v.toFixed(1)} ${tx("dias")}`;
       default:
         return formatNumber(Math.round(v));
     }
@@ -73,15 +78,16 @@ export function ExistingMetricCard({ metric }: { metric: OrganizedMetric }) {
       format={format}
       comparisonValue={metric.value ?? null}
       previousValue={metric.previousValue}
+      lowerIsBetter={metric.lowerIsBetter}
       source={metric.source}
-      info={metric.info ?? (present ? undefined : "Esta métrica não está disponível na fonte conectada.")}
+      info={metric.info ?? (present ? undefined : tx("Esta métrica não está disponível na fonte conectada."))}
       change={null}
       changeLabel=""
       sparkValues={metric.series ?? []}
       sparkColor="hsl(var(--chart-1))"
       isLoading={metric.loading ?? false}
       testId={`organized-${metric.key}`}
-      sub={[]}
+      sub={metric.sub ?? []}
     />
   );
 }

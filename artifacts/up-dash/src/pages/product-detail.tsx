@@ -1,4 +1,5 @@
-import { displayLabel } from "@/lib/display-label";
+import { useI18n } from "@/lib/i18n";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
@@ -83,12 +84,13 @@ function BreakdownChart({ data, title }: {
   data: Array<{ label: string; units: number; revenue: number }>;
   title: string;
 }) {
+  const { tx } = useI18n();
   if (!data.length) {
     return (
       <EmptyState
         icon={BarChart2}
-        title="Sem dados disponíveis"
-        description="Sem detalhamento neste período."
+        title={tx("Sem dados disponíveis")}
+        description={tx("Sem detalhamento neste período.")}
         className="h-40 border-0 bg-transparent"
       />
     );
@@ -125,7 +127,7 @@ function BreakdownChart({ data, title }: {
               name === "revenue" ? [formatCurrency(value), "Revenue"] : [formatNumber(value), "Units"]
             }
           />
-          <Bar dataKey="units" fill="hsl(var(--primary))" radius={[0, 3, 3, 0]}  name="Unidades" />
+          <Bar dataKey="units" fill="hsl(var(--primary))" radius={[0, 3, 3, 0]}  name={tx("Unidades")} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -133,6 +135,8 @@ function BreakdownChart({ data, title }: {
 }
 
 export default function ProductDetailPage() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { productId } = useParams<{ productId: string }>();
   const [, setLocation] = useLocation();
   const { user, selectedClientId } = useAuth();
@@ -188,9 +192,9 @@ export default function ProductDetailPage() {
     return (
       <EmptyState
         icon={Package}
-        title="Produto não encontrado"
-        description="Este produto não existe ou seu acesso não está disponível."
-        action={{ label: "Voltar para Produtos", onClick: () => setLocation("/products") }}
+        title={tx("Produto não encontrado")}
+        description={tx("Este produto não existe ou seu acesso não está disponível.")}
+        action={{ label: tx("Voltar para Produtos"), onClick: () => setLocation("/products") }}
         className="py-20"
       />
     );
@@ -213,7 +217,7 @@ export default function ProductDetailPage() {
           data-testid="product-detail-back"
         >
           <ArrowLeft className="h-4 w-4" />
-          Produtos
+          {tx("Produtos")}
         </Button>
       </div>
 
@@ -248,11 +252,11 @@ export default function ProductDetailPage() {
                   )}
                   <div className="flex flex-wrap gap-4 mt-3 text-sm">
                     {product.category && (
-                      <span className="text-muted-foreground">Categoria: <strong className="text-foreground">{product.category}</strong></span>
+                      <span className="text-muted-foreground">{tx("Categoria:")} <strong className="text-foreground">{product.category}</strong></span>
                     )}
-                    <span className="text-muted-foreground">Preço: <strong className="text-foreground">{formatCurrency(product.price)}</strong></span>
-                    <span className="text-muted-foreground">Estoque: <strong className="text-foreground">{formatNumber(product.stock)}</strong></span>
-                    <span className="text-muted-foreground">Adicionado: <strong className="text-foreground">{format(new Date(product.createdAt), "MMM d, yyyy")}</strong></span>
+                    <span className="text-muted-foreground">{tx("Preço:")} <strong className="text-foreground">{formatCurrency(product.price)}</strong></span>
+                    <span className="text-muted-foreground">{tx("Estoque:")} <strong className="text-foreground">{formatNumber(product.stock)}</strong></span>
+                    <span className="text-muted-foreground">{tx("Adicionado:")} <strong className="text-foreground">{format(new Date(product.createdAt), "MMM d, yyyy")}</strong></span>
                   </div>
                 </div>
               </div>
@@ -271,9 +275,9 @@ export default function ProductDetailPage() {
           ))
         ) : kpis ? (
           <>
-            <KpiTile label="Faturamento histórico" value={formatCurrency(kpis.totalRevenue)} />
-            <KpiTile label="Unidades vendidas" value={formatNumber(kpis.totalUnitsSold)} />
-            <KpiTile label="Ticket médio" value={formatCurrency(kpis.avgTicket)} />
+            <KpiTile label={tx("Faturamento histórico")} value={formatCurrency(kpis.totalRevenue)} />
+            <KpiTile label={tx("Unidades vendidas")} value={formatNumber(kpis.totalUnitsSold)} />
+            <KpiTile label={tx("Ticket médio")} value={formatCurrency(kpis.avgTicket)} />
             <KpiTile
               label="Sell-through"
               value={`${Math.round((product?.percentSold ?? 0) * 100)}%`}
@@ -288,7 +292,7 @@ export default function ProductDetailPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Evolução do faturamento
+              {tx("Evolução do faturamento")}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -297,8 +301,8 @@ export default function ProductDetailPage() {
             ) : mergedChart.length === 0 ? (
               <EmptyState
                 icon={TrendingUp}
-                title="Sem dados de vendas neste período"
-                description="Ajuste o período ou consulte novamente quando houver pedidos."
+                title={tx("Sem dados de vendas neste período")}
+                description={tx("Ajuste o período ou consulte novamente quando houver pedidos.")}
                 className="h-48 border-0 bg-transparent"
               />
             ) : (
@@ -339,7 +343,7 @@ export default function ProductDetailPage() {
                     stroke="hsl(var(--primary))"
                     strokeWidth={2}
                     dot={false}
-                    name="Faturamento"
+                    name={tx("Faturamento")}
                   />
                   {mergedChart.some((d) => d.prevRevenue !== undefined) && (
                     <Line
@@ -349,7 +353,7 @@ export default function ProductDetailPage() {
                       strokeWidth={1.5}
                       strokeDasharray="4 4"
                       dot={false}
-                      name="Faturamento anterior"
+                      name={tx("Faturamento anterior")}
                     />
                   )}
                 </LineChart>
@@ -386,7 +390,7 @@ export default function ProductDetailPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
               <Users className="h-4 w-4" />
-              Principais compradores
+              {tx("Principais compradores")}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -394,11 +398,11 @@ export default function ProductDetailPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Cliente</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Segmento</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Unidades</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Cliente")}</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Segmento")}</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Unidades")}</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Spent</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Última compra</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Última compra")}</TableHead>
                     <TableHead className="w-6" />
                   </TableRow>
                 </TableHeader>
@@ -419,8 +423,8 @@ export default function ProductDetailPage() {
                       <TableCell colSpan={6} className="p-0">
                         <EmptyState
                           icon={ShoppingCart}
-                          title="Nenhuma compra registrada"
-                          description="Os compradores aparecerão aqui quando comprarem este produto."
+                          title={tx("Nenhuma compra registrada")}
+                          description={tx("Os compradores aparecerão aqui quando comprarem este produto.")}
                           className="py-12 border-0 bg-transparent"
                         />
                       </TableCell>

@@ -1,8 +1,53 @@
-import { and, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { aggregateMetaInsights, metaReportingWindow, spendCents } from "./meta-reporting";
+import { and, eq, sql } from "drizzle-orm";
 import { db, creativesTable } from "@workspace/db";
+import { fetchMetaGraph } from "./meta-graph";
 
 const DEFAULT_GRAPH_VERSION = "v24.0";
 const GRAPH_BASE = "https://graph.facebook.com";
+const INSIGHTS_CACHE_TTL_MS = 5 * 60 * 1000;
+const CAMPAIGN_STATUS_CACHE_TTL_MS = 15 * 60 * 1000;
+
+// Mídia (vídeo e criativo) muda pouco e é o que mais gasta a cota do app (achado 27/10/2026: ~7 mil chamadas de vídeo por dia).
+// Cache só na memória deste processo, limitado: sucesso vale 1 hora (a URL assinada e o criativo editado se renovam), falha vale 1 minuto.
+const MEDIA_CACHE_TTL_MS = 60 * 60 * 1000;
+const MEDIA_FAILURE_TTL_MS = 60 * 1000;
+const MEDIA_CACHE_MAX_ENTRIES = 5_000;
+
+function createMediaCache<T>() {
+  const entries = new Map<string, { value: T | null; expiresAt: number }>();
+  const inFlight = new Map<string, Promise<T | null>>();
+
+  return (accessToken: string, id: string, load: () => Promise<T>): Promise<T | null> => {
+    // A chave isola permissão e versão do Graph sem guardar o token cru.
+    const key = `${graphVersion()}:${createHash("sha256").update(accessToken).digest("hex")}:${id}`;
+    const cached = entries.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      entries.delete(key);
+      entries.set(key, cached);
+      return Promise.resolve(cached.value);
+    }
+    entries.delete(key);
+    const pending = inFlight.get(key);
+    if (pending) return pending;
+
+    const request = Promise.resolve().then(load).catch(() => null).then((value) => {
+      const now = Date.now();
+      for (const [entryKey, entry] of entries) {
+        if (entry.expiresAt <= now) entries.delete(entryKey);
+      }
+      while (entries.size >= MEDIA_CACHE_MAX_ENTRIES) entries.delete(entries.keys().next().value!);
+      entries.set(key, { value, expiresAt: now + (value === null ? MEDIA_FAILURE_TTL_MS : MEDIA_CACHE_TTL_MS) });
+      return value;
+    }).finally(() => inFlight.delete(key));
+    inFlight.set(key, request);
+    return request;
+  };
+}
+
+const cachedVideoDetails = createMediaCache<MetaVideoDetails>();
+const cachedAdCreativeDetails = createMediaCache<MetaAdCreativeDetails>();
 
 type MetaAction = { action_type?: string; value?: string };
 type MetaRoas = { action_type?: string; value?: string };
@@ -23,6 +68,7 @@ interface MetaInsightRow {
   action_values?: MetaAction[];
   cost_per_action_type?: MetaAction[];
   purchase_roas?: MetaRoas[];
+  hourly_stats_aggregated_by_advertiser_time_zone?: string;
   date_start: string;
   date_stop: string;
 }
@@ -31,6 +77,11 @@ interface MetaCampaignRow {
   id: string;
   status?: string;
   effective_status?: string;
+}
+
+interface MetaGraphList<T> {
+  data?: T[];
+  paging?: { next?: string };
 }
 
 interface MetaAdCreativeDetails {
@@ -183,14 +234,9 @@ function graphVersion(): string {
   return process.env.META_GRAPH_VERSION ?? DEFAULT_GRAPH_VERSION;
 }
 
-async function fetchGraph<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  const body = (await res.json()) as T & { error?: { message?: string } };
-  if (!res.ok || body.error) {
-    throw new Error(body.error?.message ?? `${res.status} ${res.statusText}`);
-  }
-  return body;
-}
+// Toda leitura do Graph passa pelo cliente central (meta-graph.ts): no máximo 4 ao mesmo tempo, leituras iguais juntas viram uma,
+// e depois de limite de uso (HTTP 429 / x-app-usage 100% / códigos 4, 17, 32, 341, 613) o app para de chamar por um tempo.
+const fetchGraph = fetchMetaGraph;
 
 function numberValue(value: unknown): number {
   const n = typeof value === "number" ? value : Number.parseFloat(String(value ?? "0"));
@@ -283,15 +329,7 @@ async function fetchCampaignStatuses(accessToken: string, adAccountId: string): 
   })}`;
 
   while (url) {
-    const res = await fetch(url);
-    const body = (await res.json()) as {
-      data?: MetaCampaignRow[];
-      paging?: { next?: string };
-      error?: { message?: string };
-    };
-    if (!res.ok || body.error) {
-      throw new Error(body.error?.message ?? `${res.status} ${res.statusText}`);
-    }
+    const body: MetaGraphList<MetaCampaignRow> = await fetchGraph(url, CAMPAIGN_STATUS_CACHE_TTL_MS);
     for (const campaign of body.data ?? []) {
       statuses.set(campaign.id, campaign.effective_status ?? campaign.status ?? "UNKNOWN");
     }
@@ -343,17 +381,9 @@ async function fetchInsights(
   })}`;
 
   while (url) {
-    const res = await fetch(url);
-    const body = (await res.json()) as {
-      data?: MetaInsightRow[];
-      paging?: { next?: string };
-      error?: { message?: string; code?: number; type?: string };
-    };
-    if (!res.ok || body.error) {
-      const message = body.error?.message ?? `${res.status} ${res.statusText}`;
-      throw new Error(`Meta Marketing API error: ${message}`);
-    }
-    rows.push(...(body.data ?? []));
+    const body: MetaGraphList<MetaInsightRow> = await fetchGraph(url, INSIGHTS_CACHE_TTL_MS);
+    if (!Array.isArray(body.data)) throw new Error("O Meta retornou uma resposta de mídia incompleta.");
+    rows.push(...body.data);
     url = body.paging?.next ?? null;
   }
 
@@ -361,7 +391,7 @@ async function fetchInsights(
 }
 
 function dailyPoint(row: MetaInsightRow): MetaDailyPoint {
-  const spend = numberValue(row.spend);
+  const spend = spendCents(row.spend) / 100;
   const leads = actionValue(row.actions, "lead");
   return {
     date: row.date_start,
@@ -376,7 +406,7 @@ function dailyPoint(row: MetaInsightRow): MetaDailyPoint {
 }
 
 function adMetric(row: MetaInsightRow, since: string, until: string): MetaAdMetric {
-  const spend = numberValue(row.spend);
+  const spend = spendCents(row.spend) / 100;
   const leads = actionValue(row.actions, "lead");
   const purchases = actionValue(row.actions, "purchase");
   const revenue = actionValue(row.action_values, "purchase");
@@ -400,7 +430,7 @@ function adMetric(row: MetaInsightRow, since: string, until: string): MetaAdMetr
 
 function summarize(daily: MetaDailyPoint[], periodRow?: MetaInsightRow) {
   // Reach is deduplicated for the entire window by Meta. Never add daily reach.
-  const spend = daily.reduce((sum, p) => sum + p.spend, 0);
+  const spend = daily.reduce((sum, p) => sum + Math.round(p.spend * 100), 0) / 100;
   const impressions = daily.reduce((sum, p) => sum + p.impressions, 0);
   const clicks = daily.reduce((sum, p) => sum + p.clicks, 0);
   const leads = daily.reduce((sum, p) => sum + p.leads, 0);
@@ -459,27 +489,23 @@ function videoIdFromCreative(details: MetaAdCreativeDetails): string | null {
   );
 }
 
+// Falha vira null (a miniatura é opcional) e fica 1 minuto no cache para não insistir.
 async function fetchVideoDetails(accessToken: string, videoId: string): Promise<MetaVideoDetails | null> {
-  try {
-    return await fetchGraph<MetaVideoDetails>(`${GRAPH_BASE}/${graphVersion()}/${videoId}?${new URLSearchParams({
+  return cachedVideoDetails(accessToken, videoId, () =>
+    fetchGraph<MetaVideoDetails>(`${GRAPH_BASE}/${graphVersion()}/${videoId}?${new URLSearchParams({
       access_token: accessToken,
       fields: "id,source,picture,permalink_url,length",
-    })}`);
-  } catch {
-    return null;
-  }
+    })}`),
+  );
 }
 
 async function fetchAdCreativeDetails(accessToken: string, adId: string): Promise<MetaAdCreativeDetails | null> {
-  try {
-    return await fetchGraph<MetaAdCreativeDetails>(`${GRAPH_BASE}/${graphVersion()}/${adId}?${new URLSearchParams({
+  return cachedAdCreativeDetails(accessToken, adId, () =>
+    fetchGraph<MetaAdCreativeDetails>(`${GRAPH_BASE}/${graphVersion()}/${adId}?${new URLSearchParams({
       access_token: accessToken,
       fields: "id,name,status,effective_status,preview_shareable_link,creative{id,name,thumbnail_url,image_url,video_id,effective_object_story_id,object_story_spec}",
-    })}`);
-  } catch (err) {
-    console.warn("[meta-ads] fetchAdCreativeDetails failed:", adId, err instanceof Error ? err.message : err);
-    return null;
-  }
+    })}`),
+  );
 }
 
 async function buildTopCreatives(accessToken: string, ads: MetaAdMetric[], isB2C = false): Promise<MetaTopCreatives> {
@@ -535,85 +561,136 @@ async function buildTopCreatives(accessToken: string, ads: MetaAdMetric[], isB2C
   };
 }
 
-export async function fetchMetaMarketingData(params: {
-  accessToken: string;
-  adAccountId: string;
-  since: string;
-  until: string;
-  isB2C?: boolean;
-}): Promise<MetaMarketingData> {
-  const fields =
-    "spend,impressions,clicks,inline_link_clicks,actions,action_values,cost_per_action_type,purchase_roas,date_start,date_stop";
-  const timeRange = JSON.stringify({ since: params.since, until: params.until });
+export class MediaReadError extends Error {
+  readonly status = 503;
+  readonly code = "MEDIA_UNAVAILABLE";
+  constructor() { super("Investimento indisponível: não foi possível ler e alinhar os dados da conta Meta. Tente novamente."); }
+}
 
-  const [dailyRows, adRows, campaignRows, campaignStatuses, periodRows] = await Promise.all([
-    fetchInsights(params.accessToken, params.adAccountId, {
-      level: "account",
-      fields,
-      time_range: timeRange,
-      time_increment: "1",
-      limit: "500",
-    }),
+/** `includeMedia`: só a tela de Marketing (período atual) mostra miniaturas; métricas, comparativos e rotinas não precisam e não gastam chamadas de mídia. */
+type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string; includeMedia?: boolean; isB2C?: boolean; includeReach?: boolean };
+const mediaReads = new Map<string, { expiresAt: number; promise: Promise<MetaMarketingData> }>();
+const accountZones = new Map<string, { expiresAt: number; promise: Promise<string> }>();
+
+async function fetchAccountTimeZone(params: MetaParams, key: string): Promise<string> {
+  const cached = accountZones.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  const promise = fetchGraph<{ timezone_name?: string }>(`${GRAPH_BASE}/${graphVersion()}/${normalizeMetaAdAccountId(params.adAccountId)}?${new URLSearchParams({access_token: params.accessToken, fields: "timezone_name"})}`)
+    .then((account) => {
+      if (!account.timezone_name) throw new Error("Fuso da conta Meta indisponível.");
+      return account.timezone_name;
+    });
+  if (accountZones.size >= 250) accountZones.delete(accountZones.keys().next().value!);
+  accountZones.set(key, { expiresAt: Date.now() + 3_600_000, promise });
+  try { return await promise; } catch (error) { accountZones.delete(key); throw error; }
+}
+
+/** Shared single-flight snapshot; errors are never cached or converted to spend=0. */
+export async function fetchMetaMarketingData(params: MetaParams): Promise<MetaMarketingData> {
+  if (!params.accessToken.trim() || !params.adAccountId.trim()) throw new MediaReadError();
+  const accountKey = `${normalizeMetaAdAccountId(params.adAccountId)}:${createHash("sha256").update(params.accessToken).digest("hex")}`;
+  const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? "", params.includeMedia === true, params.isB2C === true, params.includeReach === true]);
+  const cached = mediaReads.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  const promise = fetchMetaMarketingDataUncached(params, accountKey).catch(() => { throw new MediaReadError(); });
+  if (mediaReads.size >= 250) mediaReads.delete(mediaReads.keys().next().value!);
+  const entry = { expiresAt: Date.now() + 60_000, promise };
+  mediaReads.set(key, entry);
+  try { return await promise; } catch (error) {
+    if (mediaReads.get(key) === entry) mediaReads.delete(key);
+    throw error;
+  }
+}
+
+/** Sem conta ou token Meta conectado não há o que ler: isso NÃO é falha de leitura (a tela carrega, sem dado de mídia). */
+export function isMetaConnected(params: { accessToken?: string | null; adAccountId?: string | null }): boolean {
+  return !!params.accessToken?.trim() && !!params.adAccountId?.trim();
+}
+
+export function emptyMetaMarketingData(): MetaMarketingData {
+  return { daily: [], ads: [], campaigns: [], topCreatives: { ctr: [], cpl: [], leads: [] }, summary: summarize([]) };
+}
+
+async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: string): Promise<MetaMarketingData> {
+  const accountTimeZone = await fetchAccountTimeZone(params, accountKey);
+  const window = metaReportingWindow(params.since, params.until, accountTimeZone);
+  const [rows, campaignStatuses, periodRows] = await Promise.all([
     fetchInsights(params.accessToken, params.adAccountId, {
       level: "ad",
-      fields: `ad_id,ad_name,campaign_id,campaign_name,${fields}`,
-      time_range: timeRange,
-      limit: "500",
-    }),
-    fetchInsights(params.accessToken, params.adAccountId, {
-      level: "campaign",
-      fields: `campaign_id,campaign_name,${fields}`,
-      time_range: timeRange,
+      fields: "ad_id,ad_name,campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",
+      time_range: JSON.stringify({ since: window.since, until: window.until }),
+      time_increment: "1",
+      ...(window.hourly ? { breakdowns: "hourly_stats_aggregated_by_advertiser_time_zone" } : {}),
       limit: "500",
     }),
     fetchCampaignStatuses(params.accessToken, params.adAccountId).catch(() => new Map<string, string>()),
-    fetchInsights(params.accessToken, params.adAccountId, {
-      level: "account", fields: "reach,frequency", time_range: timeRange, limit: "1",
-    }),
+    // Deduplicated reach is valid only when account and reporting windows align.
+    // Do not sum hourly reach or report account reach for a campaign filter.
+    params.includeReach && !window.hourly && !params.campaignName
+      ? fetchInsights(params.accessToken, params.adAccountId, {
+          level: "account", fields: "reach,frequency",
+          time_range: JSON.stringify({since: params.since, until: params.until}), limit: "1",
+        })
+      : Promise.resolve([]),
   ]);
-
-  const daily = dailyRows.map(dailyPoint);
-  const ads = adRows.map((row) => adMetric(row, params.since, params.until));
-  const campaigns = campaignRows.map((row) => {
-    const metric = adMetric(row, params.since, params.until);
-    return {
-      ...metric,
-      status: row.campaign_id ? campaignStatuses.get(row.campaign_id) ?? metric.status : metric.status,
-    };
-  });
-  return { daily, ads, campaigns, topCreatives: await buildTopCreatives(params.accessToken, ads, params.isB2C), summary: summarize(daily, periodRows[0]) };
+  const grouped = aggregateMetaInsights(params.campaignName ? rows.filter((row) => row.campaign_name?.toLowerCase().includes(params.campaignName!.toLowerCase())) : rows, params.since, params.until, accountTimeZone);
+  const daily = grouped.daily.map(dailyPoint);
+  const ads = grouped.ads.map((row) => adMetric(row, params.since, params.until));
+  const campaigns = grouped.campaigns.map((row) => ({
+    ...adMetric(row, params.since, params.until),
+    status: row.campaign_id ? campaignStatuses.get(row.campaign_id) ?? "UNKNOWN" : "UNKNOWN",
+  }));
+  // Creative previews are optional decoration; they cannot make financial data unavailable.
+  const topCreatives = params.includeMedia
+    ? await buildTopCreatives(params.accessToken, ads, params.isB2C).catch(() => ({ ctr: [], cpl: [], leads: [] }))
+    : { ctr: [], cpl: [], leads: [] };
+  return { daily, ads, campaigns, topCreatives, summary: summarize(daily, periodRows[0]) };
 }
 
+/** Anúncios por gravação. Uma ida ao banco por lote (e não uma por anúncio): com banco remoto, cada ida em série soma segundos de espera na tela de Marketing (ela só responde depois desta gravação). */
+const CREATIVE_UPSERT_BATCH = 200;
+
+// No ON CONFLICT, `excluded.<coluna>` é o valor que estava sendo inserido.
+const excludedColumn = (column: { name: string }) => sql.raw(`excluded."${column.name}"`);
+
 export async function upsertMetaCreatives(clientId: string, ads: MetaAdMetric[]): Promise<void> {
+  // Uma linha por anúncio. O mesmo id duas vezes no mesmo comando faria o banco recusar ("cannot affect row a second time"): o último vale.
+  const rows = new Map<string, typeof creativesTable.$inferInsert>();
   for (const ad of ads) {
+    const id = `meta:${clientId}:${ad.id}`;
+    rows.set(id, {
+      id,
+      clientId,
+      name: ad.name,
+      platform: "META",
+      status: "ACTIVE",
+      clicks: ad.clicks,
+      impressions: ad.impressions,
+      spend: ad.spend,
+      leads: ad.leads,
+      approvedLeads: ad.purchases,
+      activeFrom: ad.dateStart,
+      activeTo: ad.dateStop,
+    });
+  }
+
+  const values = [...rows.values()];
+  for (let i = 0; i < values.length; i += CREATIVE_UPSERT_BATCH) {
     await db
       .insert(creativesTable)
-      .values({
-        id: `meta:${clientId}:${ad.id}`,
-        clientId,
-        name: ad.name,
-        platform: "META",
-        status: "ACTIVE",
-        clicks: ad.clicks,
-        impressions: ad.impressions,
-        spend: ad.spend,
-        leads: ad.leads,
-        approvedLeads: ad.purchases,
-        activeFrom: ad.dateStart,
-        activeTo: ad.dateStop,
-      })
+      .values(values.slice(i, i + CREATIVE_UPSERT_BATCH))
       .onConflictDoUpdate({
         target: creativesTable.id,
         set: {
-          name: ad.name,
-          status: "ACTIVE",
-          clicks: ad.clicks,
-          impressions: ad.impressions,
-          spend: ad.spend,
-          leads: ad.leads,
-          approvedLeads: ad.purchases,
-          activeFrom: ad.dateStart,
-          activeTo: ad.dateStop,
+          name: excludedColumn(creativesTable.name),
+          status: excludedColumn(creativesTable.status),
+          clicks: excludedColumn(creativesTable.clicks),
+          impressions: excludedColumn(creativesTable.impressions),
+          spend: excludedColumn(creativesTable.spend),
+          leads: excludedColumn(creativesTable.leads),
+          approvedLeads: excludedColumn(creativesTable.approvedLeads),
+          activeFrom: excludedColumn(creativesTable.activeFrom),
+          activeTo: excludedColumn(creativesTable.activeTo),
           updatedAt: new Date(),
         },
       });

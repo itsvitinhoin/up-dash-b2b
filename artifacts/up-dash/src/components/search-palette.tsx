@@ -1,3 +1,4 @@
+import { useI18n } from "@/lib/i18n";
 import { displayLabel } from "@/lib/display-label";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
@@ -38,6 +39,7 @@ function fuzzyMatch(haystack: string | null | undefined, needle: string): boolea
 }
 
 export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
+  const { language, tx } = useI18n();
   const [, setLocation] = useLocation();
   const { user, selectedClientId, selectedDashboardMode } = useAuth();
   const [query, setQuery] = useState("");
@@ -142,7 +144,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
       commandProps={{ shouldFilter: false }}
     >
       <CommandInput
-        placeholder="Buscar SKUs, produtos, categorias e clientes…"
+        placeholder={tx("Buscar SKUs, produtos, categorias e clientes…")}
         value={query}
         onValueChange={setQuery}
         data-testid="search-palette-input"
@@ -150,7 +152,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
       <CommandList>
         {!hasAnyResults && (
           <CommandEmpty>
-            {query ? "Nenhum resultado encontrado." : "Digite para buscar."}
+            {query ? tx("Nenhum resultado encontrado.") : tx("Digite para buscar.")}
           </CommandEmpty>
         )}
 
@@ -262,7 +264,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
                   </div>
                   {customer.rfmSegment && (
                     <span className="ml-auto text-xs text-muted-foreground">
-                      {displayLabel(customer.rfmSegment)}
+                      {language === "pt" ? displayLabel(customer.rfmSegment) : customer.rfmSegment}
                     </span>
                   )}
                 </CommandItem>

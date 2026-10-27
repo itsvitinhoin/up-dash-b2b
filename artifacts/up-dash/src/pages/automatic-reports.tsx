@@ -1,4 +1,5 @@
-import { displayLabel } from "@/lib/display-label";
+import { useI18n } from "@/lib/i18n";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -508,6 +509,8 @@ function findUpClient(clients: ClientOption[]) {
 }
 
 export default function AutomaticReportsPage() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const queryClient = useQueryClient();
   const { data: clientsData, isLoading: isLoadingClients } = useListClients(
     { page: 1, limit: 500 },
@@ -869,10 +872,10 @@ export default function AutomaticReportsPage() {
   return (
     <div className="space-y-6" data-testid="page-automatic-reports">
       <div className="grid gap-3 md:grid-cols-4">
-        <GlassMetricCard label="Status" value={<><span className={cn("h-2.5 w-2.5 rounded-full", config.enabled ? "bg-emerald-500" : "bg-muted-foreground")} /><p className="text-2xl font-bold">{config.enabled ? "Ativo" : "Inativo"}</p></>}  />
-        <GlassMetricCard label="Marcas configuradas" value={<>{summary.enabledClients}</>}  />
-        <GlassMetricCard label="Destinatários ativos" value={<>{summary.recipients}</>}  />
-        <GlassMetricCard label="Na fila" value={<>{summary.scheduled}</>}  />
+        <GlassMetricCard label={tx("Status")} value={<><span className={cn("h-2.5 w-2.5 rounded-full", config.enabled ? "bg-emerald-500" : "bg-muted-foreground")} /><p className="text-2xl font-bold">{config.enabled ? "Ativo" : "Inativo"}</p></>} hideComparison />
+        <GlassMetricCard label={tx("Marcas configuradas")} value={<>{summary.enabledClients}</>} hideComparison />
+        <GlassMetricCard label={tx("Destinatários ativos")} value={<>{summary.recipients}</>} hideComparison />
+        <GlassMetricCard label={tx("Na fila")} value={<>{summary.scheduled}</>} hideComparison />
       </div>
 
       <Tabs defaultValue="settings" className="space-y-4">
@@ -1120,7 +1123,7 @@ export default function AutomaticReportsPage() {
                         <TableHead>Nome</TableHead>
                         <TableHead>Marca</TableHead>
                         <TableHead>Telefone</TableHead>
-                        <TableHead>Status</TableHead>
+                        <TableHead>{tx("Status")}</TableHead>
                         <TableHead className="text-right">Ações</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1414,7 +1417,7 @@ export default function AutomaticReportsPage() {
                       const mappedVariable = variableById(mappedVariableId);
                       return (
                         <div key={placeholder} className="grid gap-3 p-4 lg:grid-cols-[90px_minmax(0,1fr)_minmax(180px,260px)] lg:items-center">
-                          <GlassMetricCard  label="Campo" value={<>{placeholder}</>}  />
+                          <GlassMetricCard  label={tx("Campo")} value={<>{placeholder}</>} hideComparison />
                           <div className="space-y-2">
                             <Label className="text-xs">Variável do UP Dash</Label>
                             <Select value={mappedVariableId} onValueChange={(value) => updateVariableMapping(placeholder, value)}>
@@ -1489,7 +1492,7 @@ export default function AutomaticReportsPage() {
                             </div>
                             <p className="mt-2 text-xs text-muted-foreground">{variable.description}</p>
                             <div className="mt-2 rounded-md bg-background/60 px-2 py-1 text-xs">
-                              <span className="text-muted-foreground">Prévia: </span>
+                              <span className="text-muted-foreground">{tx("Prévia:")} </span>
                               <span className="font-medium">{variableValues[variable.id] ?? variable.sample}</span>
                             </div>
                           </div>
@@ -1517,10 +1520,10 @@ export default function AutomaticReportsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Modelo</TableHead>
+                      <TableHead>{tx("Modelo")}</TableHead>
                       <TableHead>Categoria</TableHead>
                       <TableHead>Idioma</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead>{tx("Status")}</TableHead>
                       <TableHead>Última sincronização</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1609,8 +1612,8 @@ export default function AutomaticReportsPage() {
                     <TableRow>
                       <TableHead>Cliente</TableHead>
                       <TableHead>Destinatário</TableHead>
-                      <TableHead>Modelo</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead>{tx("Modelo")}</TableHead>
+                      <TableHead>{tx("Status")}</TableHead>
                       <TableHead>Gerado em</TableHead>
                       <TableHead className="text-right">Link</TableHead>
                     </TableRow>

@@ -1,4 +1,3 @@
-import { displayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { BarChart3 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
@@ -9,6 +8,8 @@ import {
   Metrics,
   OrganizationHeading,
 } from "@/components/metric-section";
+import { LazySection } from "@/components/lazy-section";
+import { useI18n } from "@/lib/i18n";
 import { useOrganizationData } from "@/lib/organization-data";
 import { AcquisitionFunnel } from "@/components/acquisition-funnel";
 import { usePurchaseInsights } from "@/lib/purchase-insights";
@@ -29,11 +30,19 @@ import MonthlyHistoryPage from "@/pages/monthly-history";
 import { ErpGeographyView } from "@/pages/erp";
 import type { ArchitecturePage } from "@/lib/dashboard-architecture";
 
+// Cada página pede só as fontes que usa (ver useOrganizationData).
+const ACQUISITION_SOURCES = ["dashboard", "marketing", "performance", "customers", "funnel", "recompra"] as const;
+const ACQUISITION_PREVIOUS = ["performance", "funnel", "recompra"] as const;
+const FUNNEL_SOURCES = ["dashboard", "marketing", "customers", "funnel", "performance"] as const;
+const FUNNEL_PREVIOUS = ["dashboard", "marketing", "funnel", "performance"] as const;
+const ADS_SOURCES = ["marketing", "performance"] as const;
+
 function AcquisitionPage() {
-  const { pick } = useOrganizationData();
+  const { tx } = useI18n();
+  const { pick } = useOrganizationData(ACQUISITION_SOURCES, ACQUISITION_PREVIOUS);
   return (
     <div className="space-y-6" data-testid="acquisition-page">
-      <MetricSection title="AQUISIÇÃO" columns={4}>
+      <MetricSection title={tx("AQUISIÇÃO")} columns={4}>
         <Metrics
           metrics={pick(
             "acquisitionRevenue",
@@ -43,17 +52,17 @@ function AcquisitionPage() {
           )}
         />
       </MetricSection>
-      <MetricSection title="INVESTIMENTO E CUSTOS" columns={4}>
+      <MetricSection title={tx("INVESTIMENTO E CUSTOS")} columns={4}>
         <Metrics
           metrics={pick("cac", "costRegistration", "costApproved", "spend")}
         />
       </MetricSection>
-      <MetricSection title="ATIVAÇÃO DOS APROVADOS" columns={3}>
+      <MetricSection title={tx("ATIVAÇÃO DOS APROVADOS")} columns={3}>
         <Metrics
           metrics={pick("approved", "approvedConverted", "approvedConversion")}
         />
       </MetricSection>
-      <MetricSection title="CADASTRO → PRIMEIRA COMPRA" columns={2}>
+      <MetricSection title={tx("CADASTRO → PRIMEIRA COMPRA")} columns={2}>
         <Metrics
           metrics={pick("firstPurchaseAverage", "firstPurchaseMedian")}
         />
@@ -67,60 +76,78 @@ function AcquisitionPage() {
         ].map((title) => (
           <Card key={title}>
             <CardHeader>
-              <CardTitle className="text-sm">{title}</CardTitle>
+              <CardTitle className="text-sm">{tx(title)}</CardTitle>
             </CardHeader>
             <CardContent>
               <EmptyState
                 icon={BarChart3}
-                title="Análise indisponível"
-                description="Os dados desta análise ainda não estão disponíveis nesta fonte."
+                title={tx("Análise indisponível")}
+                description={tx("Os dados desta análise ainda não estão disponíveis nesta fonte.")}
               />
             </CardContent>
           </Card>
         ))}
       </div>
       <OrganizationHeading>
-        COHORT DE ATIVAÇÃO E DIAGNÓSTICOS
+        {tx("COHORT DE ATIVAÇÃO E DIAGNÓSTICOS")}
       </OrganizationHeading>
-      <FunnelPage organization="acquisition" />
+      <LazySection>
+        <FunnelPage organization="acquisition" />
+      </LazySection>
     </div>
   );
 }
+/** Etapas do funil cujo número vem do banco: zero ali é real. Nas demais, zero pessoas = sem rastreamento ("—"). */
+const DATABASE_FUNNEL_STEPS = new Set(["REGISTRATION", "APPROVED_REGISTRATION", "PURCHASE"]);
+
 function PerformanceFunnelPage() {
-  const { pick, measures, funnel, previousFunnel, dashboard, previousDashboard } = useOrganizationData();
+  const { tx, language } = useI18n();
+  const { pick, measures, funnel, previousFunnel, dashboard, previousDashboard } = useOrganizationData(FUNNEL_SOURCES, FUNNEL_PREVIOUS);
   const insights = usePurchaseInsights();
+  const numberLocale = language === "ko" ? "ko-KR" : language === "en" ? "en-US" : "pt-BR";
+  const pct = (value: number, digits: number) => value.toLocaleString(numberLocale, { maximumFractionDigits: digits });
   const acquisitionLeads = measures.registrations.value;
   const acquisitionApproved = measures.approved.value;
   const steps = funnel.data?.steps ?? [];
-  const count = (...keys: string[]) =>
-    steps.find((step) => keys.includes(step.step))?.count;
-  const previousCount = (...keys: string[]) => previousFunnel.data?.steps.find(step => keys.includes(step.step))?.count;
+  const trackedOnly = Boolean((funnel.data as { dataSource?: string } | undefined)?.dataSource);
+  const noData = (step: { step: string; count: number } | undefined) =>
+    Boolean(step && trackedOnly && step.count === 0 && !DATABASE_FUNNEL_STEPS.has(step.step));
+  const count = (...keys: string[]) => {
+    const step = steps.find((item) => keys.includes(item.step));
+    return noData(step) ? undefined : step?.count;
+  };
+  const previousCount = (...keys: string[]) => {
+    const step = previousFunnel.data?.steps.find((item) => keys.includes(item.step));
+    return noData(step) ? undefined : step?.count;
+  };
+  // Sessões do Dashboard só valem quando existe fonte de tráfego (GA4/eventos); com fonte "none" o 0 é falta de dado.
+  const trafficSessions = dashboard.data?.traffic && dashboard.data.traffic.source !== "none" ? dashboard.data.traffic.sessions : null;
   const stages = [
-    { label: "Impressões", value: measures.impressions.value, previous: measures.impressions.previousValue },
-    { label: "Alcance", value: measures.reach.value, previous: measures.reach.previousValue },
-    { label: "Cliques no Link", value: null, previous: undefined },
+    { label: tx("Impressões"), value: measures.impressions.value, previous: measures.impressions.previousValue },
+    { label: tx("Alcance"), value: measures.reach.value, previous: measures.reach.previousValue },
+    { label: tx("Cliques no Link"), value: null, previous: undefined },
     {
-      label: "Visitas / Sessões",
-      value: dashboard.data?.traffic?.sessions ?? count("VISIT", "SESSIONS"),
-      previous: dashboard.data?.traffic?.sessions != null ? previousDashboard.data?.traffic?.sessions : previousCount("VISIT", "SESSIONS"),
+      label: tx("Visitas / Sessões"),
+      value: trafficSessions ?? count("VISIT", "SESSIONS"),
+      previous: trafficSessions != null ? previousDashboard.data?.traffic?.sessions : previousCount("VISIT", "SESSIONS"),
     },
-    { label: "Cadastros", previous: previousCount("REGISTRATION"), value: count("REGISTRATION") },
+    { label: tx("Cadastros"), previous: previousCount("REGISTRATION"), value: count("REGISTRATION") },
     {
-      label: "Cadastros Aprovados",
+      label: tx("Cadastros Aprovados"),
       previous: previousCount("APPROVED_REGISTRATION", "APPROVAL"), value: count("APPROVED_REGISTRATION", "APPROVAL"),
     },
-    { label: "Adições ao Carrinho", previous: previousCount("ADD_TO_CART"), value: count("ADD_TO_CART") },
+    { label: tx("Adições ao Carrinho"), previous: previousCount("ADD_TO_CART"), value: count("ADD_TO_CART") },
     {
-      label: "Checkout",
+      label: tx("Checkout"),
       previous: previousCount("CHECKOUT_STARTED", "CHECKOUT", "ORDER_SUBMITTED"), value: count("CHECKOUT_STARTED", "CHECKOUT", "ORDER_SUBMITTED"),
     },
     {
-      label: "Faturamento Solicitado",
+      label: tx("Faturamento Solicitado"),
       value: measures.requestedRevenue.value, previous: measures.requestedRevenue.previousValue,
       currency: true,
     },
     {
-      label: "Faturamento Pago",
+      label: tx("Faturamento Pago"),
       value: measures.paidRevenue.value, previous: measures.paidRevenue.previousValue,
       currency: true,
     },
@@ -138,7 +165,7 @@ function PerformanceFunnelPage() {
   ];
   return (
     <div className="space-y-6" data-testid="performance-funnel-page">
-      <MetricSection title="RESULTADO DO FUNIL" columns={4}>
+      <MetricSection title={tx("RESULTADO DO FUNIL")} columns={4}>
         <Metrics
           metrics={pick(
             "spend",
@@ -148,14 +175,14 @@ function PerformanceFunnelPage() {
           )}
         />
       </MetricSection>
-      <AcquisitionFunnel description="Visão geral do período, em todas as origens. Recorrentes contam apenas os clientes novos do período; as taxas comparam os totais de cada etapa." stages={[
-        { label: "Investimento", value: measures.spend.value, currency: true, connector: acquisitionLeads && measures.spend.value != null ? `${formatCurrency(measures.spend.value / acquisitionLeads)} por lead` : "Sem custo por lead disponível" },
-        { label: "Leads", value: acquisitionLeads, connector: acquisitionLeads && acquisitionApproved != null ? `${(acquisitionApproved / acquisitionLeads * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% aprovados` : "Sem taxa de aprovação disponível" },
-        { label: "Leads aprovados", value: acquisitionApproved, connector: acquisitionApproved && insights.data?.baseEvolution ? `${(insights.data.baseEvolution[0].customers / acquisitionApproved * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% novos / aprovados` : "Sem taxa de primeiro pedido disponível" },
-        { label: "Clientes novos", value: insights.data?.baseEvolution?.[0]?.customers, connector: insights.data?.baseEvolution?.[1]?.continuationPct == null ? "Sem taxa de recompra disponível" : `${insights.data.baseEvolution[1].continuationPct.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% voltaram a comprar` },
-        { label: "Clientes recorrentes", value: insights.data?.baseEvolution?.[1]?.customers },
+      <AcquisitionFunnel description={tx("Visão geral do período, em todas as origens. Recorrentes contam apenas os clientes novos do período; as taxas comparam os totais de cada etapa.")} stages={[
+        { label: tx("Investimento"), value: measures.spend.value, currency: true, connector: acquisitionLeads && measures.spend.value != null ? tx("{v} por lead").replace("{v}", formatCurrency(measures.spend.value / acquisitionLeads)) : tx("Sem custo por lead disponível") },
+        { label: tx("Leads"), value: acquisitionLeads, connector: acquisitionLeads && acquisitionApproved != null ? tx("{v}% aprovados").replace("{v}", pct(acquisitionApproved / acquisitionLeads * 100, 1)) : tx("Sem taxa de aprovação disponível") },
+        { label: tx("Leads aprovados"), value: acquisitionApproved, connector: acquisitionApproved && insights.data?.baseEvolution ? tx("{v}% novos / aprovados").replace("{v}", pct(insights.data.baseEvolution[0].customers / acquisitionApproved * 100, 2)) : tx("Sem taxa de primeiro pedido disponível") },
+        { label: tx("Clientes novos"), value: insights.data?.baseEvolution?.[0]?.customers, connector: insights.data?.baseEvolution?.[1]?.continuationPct == null ? tx("Sem taxa de recompra disponível") : tx("{v}% voltaram a comprar").replace("{v}", pct(insights.data.baseEvolution[1].continuationPct, 1)) },
+        { label: tx("Clientes recorrentes"), value: insights.data?.baseEvolution?.[1]?.customers },
       ]} />
-      <Card><CardHeader><CardTitle>Etapas operacionais</CardTitle></CardHeader><CardContent>
+      <Card><CardHeader><CardTitle>{tx("Etapas operacionais")}</CardTitle></CardHeader><CardContent>
           <div className="up-funnel-stages">
             {stages.map((stage, index) => {
               const indicator = measures[indicators[index]];
@@ -163,18 +190,20 @@ function PerformanceFunnelPage() {
                 value={stage.value == null ? "—" : stage.currency ? formatCurrency(stage.value) : formatNumber(stage.value)}
                 comparisonValue={stage.value ?? null}
                 previousValue={stage.previous}
-                format={stage.currency ? formatCurrency : formatNumber} source={index < 3 ? "Meta Ads" : "Ecommerce · funil"}
+                format={stage.currency ? formatCurrency : formatNumber} source={index < 3 ? "Meta Ads" : tx("Ecommerce · funil")}
                 testId={`performance-stage-${index}`}
                 footer={indicator ? <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span className="text-muted-foreground">{displayLabel(indicator.label)}</span>
+                  <span className="text-muted-foreground">{indicator.label}</span>
                   <span className="font-medium tabular-nums">{indicator.value == null ? "—" : indicator.format === "currency" ? formatCurrency(indicator.value) : `${indicator.value.toFixed(1)}%`}</span>
                 </div> : undefined} />;
             })}
           </div>
         </CardContent>
       </Card>
-      <OrganizationHeading>Funil e diagnósticos existentes</OrganizationHeading>
-      <FunnelPage />
+      <OrganizationHeading>{tx("Funil e diagnósticos existentes")}</OrganizationHeading>
+      <LazySection>
+        <FunnelPage />
+      </LazySection>
     </div>
   );
 }
@@ -182,10 +211,11 @@ function RegistrationPage() {
   return <CustomersPage organization="registrations" />;
 }
 function AdsPage() {
-  const { pick } = useOrganizationData();
+  const { tx } = useI18n();
+  const { pick } = useOrganizationData(ADS_SOURCES);
   return (
     <div className="space-y-6" data-testid="ads-page">
-      <MetricSection title="VISÃO GERAL" columns={4}>
+      <MetricSection title={tx("VISÃO GERAL")} columns={4}>
         <Metrics
           metrics={pick(
             "metaSpend",
@@ -203,44 +233,58 @@ function AdsPage() {
         />
       </MetricSection>
       <OrganizationHeading>
-        DESEMPENHO · Campanhas, Ad Sets, Ads e Criativos
+        {tx("DESEMPENHO · Campanhas, Ad Sets, Ads e Criativos")}
       </OrganizationHeading>
-      <MarketingPage />
+      <LazySection eager>
+        <MarketingPage />
+      </LazySection>
     </div>
   );
 }
 function AttributionPage() {
+  const { tx } = useI18n();
   return (
     <div className="space-y-6" data-testid="attribution-page">
-      <OrganizationHeading>JORNADA · Eventos e Touchpoints</OrganizationHeading>
+      <OrganizationHeading>{tx("JORNADA · Eventos e Touchpoints")}</OrganizationHeading>
       <JourneyPage />
       <OrganizationHeading>
-        UTMs · Campanhas · Ad Sets · Ads
+        {tx("UTMs · Campanhas · Ad Sets · Ads")}
       </OrganizationHeading>
-      <UtmPage />
+      <LazySection>
+        <UtmPage />
+      </LazySection>
       <OrganizationHeading>
-        CONVERSÃO · Carrinho · Checkout · Pedido · Compra · Recompra
+        {tx("CONVERSÃO · Carrinho · Checkout · Pedido · Compra · Recompra")}
       </OrganizationHeading>
-      <FunnelPage />
+      <LazySection>
+        <FunnelPage />
+      </LazySection>
     </div>
   );
 }
 function CustomerIntelligencePage() {
+  const { tx } = useI18n();
   return (
     <div className="space-y-6" data-testid="customer-intelligence-page">
       <OrganizationHeading>
-        VISÃO DO CLIENTE · Clientes · Recorrência · Frequência · Ticket
+        {tx("VISÃO DO CLIENTE · Clientes · Recorrência · Frequência · Ticket")}
       </OrganizationHeading>
       <CustomersPage />
       <OrganizationHeading>
-        RETENÇÃO · LTV · Cohorts · Progressão de Compra
+        {tx("RETENÇÃO · LTV · Cohorts · Progressão de Compra")}
       </OrganizationHeading>
-      <RfmPage />
-      <RecompraPage />
+      <LazySection>
+        <RfmPage />
+      </LazySection>
+      <LazySection>
+        <RecompraPage />
+      </LazySection>
       <OrganizationHeading>
-        COMPORTAMENTO · Jornada · Produtos · Pedidos
+        {tx("COMPORTAMENTO · Jornada · Produtos · Pedidos")}
       </OrganizationHeading>
-      <JourneyPage />
+      <LazySection>
+        <JourneyPage />
+      </LazySection>
     </div>
   );
 }

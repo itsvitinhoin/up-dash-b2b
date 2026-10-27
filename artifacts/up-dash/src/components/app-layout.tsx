@@ -227,7 +227,7 @@ const pageMeta: Record<string, PageMeta> = {
   },
   "/compare": {
     title: "Comparar marcas",
-    subtitle: "Compare o desempenho de até quatro marcas",
+    subtitle: "Compare até quatro marcas lado a lado",
     hasDateRange: true,
     hasFilterBar: false,
   },
@@ -447,6 +447,10 @@ const pageMeta: Record<string, PageMeta> = {
 const PLATFORM_PICK = "__platform__";
 const ADMIN_DISPLAY_EMAIL = "admin@updash.com";
 const GLOBAL_SWITCH_MIN_MS = 650;
+// A tela embacada cobre a pagina no maximo este tempo. Depois disso vira o aviso pequeno do canto e a pagina
+// fica utilizavel (os cartoes que ainda carregam mostram o proprio esqueleto). Sem esse teto, uma busca lenta
+// (ex.: "Clientes atribuidos", ~34 s a frio) mantinha a pagina inteira embacada, mesmo com tudo ja pronto atras.
+const GLOBAL_OVERLAY_MAX_MS = 3500;
 const GLOBAL_SWITCH_MAX_MS = 12000;
 const ADMIN_CLIENTS_CACHE_KEY = "updash.adminClientOptions.v1";
 const DESIGN_DEMO =
@@ -484,6 +488,8 @@ type AdminClientOption = {
   // configura em /clients — ver VisibleTabsDialog). Null/vazio = mostra
   // tudo que já seria mostrado pelas regras de B2B/B2C/Vesti de sempre.
   hiddenNavItems: string[] | null;
+  // false = o cliente nao tem ERP configurado (esconde ERP e Desempenho > Visao Geral); null = nao se sabe, mostra.
+  hasErpIntegration: boolean | null;
 };
 
 function toAdminClientOption(client: Client): AdminClientOption {
@@ -495,6 +501,7 @@ function toAdminClientOption(client: Client): AdminClientOption {
     locale: client.locale,
     commercePlatform: client.commercePlatform ?? null,
     hiddenNavItems: client.hiddenNavItems ?? null,
+    hasErpIntegration: client.hasErpIntegration ?? null,
   };
 }
 
@@ -526,6 +533,10 @@ function readCachedAdminClients(): AdminClientOption[] {
           hiddenNavItems: Array.isArray(client?.hiddenNavItems)
             ? client.hiddenNavItems
             : null,
+          hasErpIntegration:
+            typeof client?.hasErpIntegration === "boolean"
+              ? client.hasErpIntegration
+              : null,
         }),
       )
       .filter((client) => client.id && client.name);
@@ -536,7 +547,8 @@ function readCachedAdminClients(): AdminClientOption[] {
 
 function isBackgroundQueryKey(queryKey: readonly unknown[]): boolean {
   const first = String(queryKey[0] ?? "");
-  return first.includes("/api/healthz") || first.includes("/api/notifications");
+  // "metric-previous-period" = busca do periodo anterior dos cartoes: pode demorar e nao deve travar a tela com o carregador global
+  return first.includes("/api/healthz") || first.includes("/api/notifications") || first === "metric-previous-period";
 }
 
 function getUserDisplayName(user: ReturnType<typeof useAuth>["user"]) {
@@ -564,7 +576,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     setSelectedDashboardMode,
   } = useAuth();
   const { theme, setTheme } = useTheme();
-  const { language, t } = useI18n();
+  const { language, t, tx } = useI18n();
   const { dateRange, setDateRange } = useDashboardFilters();
   const { setOpen: setShortcutsOpen } = useKeyboardShortcuts();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -793,6 +805,15 @@ export function AppLayout({ children }: AppLayoutProps) {
     return () => window.clearTimeout(settleTimer);
   }, [activeDataLoads, isGlobalSwitchLoading, globalContext]);
 
+  const overlayWanted = isGlobalSwitchLoading || activeDataLoads > 0;
+  const [overlayExpired, setOverlayExpired] = useState(false);
+  useEffect(() => {
+    setOverlayExpired(false);
+    if (!overlayWanted) return;
+    const expireTimer = window.setTimeout(() => setOverlayExpired(true), GLOBAL_OVERLAY_MAX_MS);
+    return () => window.clearTimeout(expireTimer);
+  }, [overlayWanted, location, globalContext]);
+
   const architecture = architectureForPath(location);
   const breadcrumbArchitecture =
     architecture ?? architectureForPath(navigationPath(location));
@@ -873,18 +894,22 @@ export function AppLayout({ children }: AppLayoutProps) {
     "/utm": "nav.utm",
   };
   const titleText =
-    architecture?.title ??
+    (architecture ? tx(architecture.title) : undefined) ??
     (pageTranslationKey
-      ? t(`page.${pageTranslationKey}.title`, meta.title)
+      ? t(`page.${pageTranslationKey}.title`, tx(meta.title))
       : navTitleKeys[location]
-        ? t(navTitleKeys[location], meta.title)
-        : meta.title);
+        ? t(navTitleKeys[location], tx(meta.title))
+        : tx(meta.title));
+  // Visão geral: a linha de filtros tem só Vendedora e Estado (FilterBar variant="overview"); o período fica no seletor do topo, igual às outras
+  // páginas. Os botões 7/30/90 dias não aparecem aqui (o seletor do topo já tem essas opções e mais).
+  const isOverviewRoute = location === "/" || location === "/dashboard";
+  const paidOnlyText = language === "pt" ? "só pedidos pagos" : language === "ko" ? "결제 완료 주문만" : "paid orders only";
   const subtitleText =
     location === "/" || location === "/dashboard"
-      ? `${new Intl.DateTimeFormat(language === "pt" ? "pt-BR" : language === "ko" ? "ko-KR" : "en-US", { weekday: "long", day: "numeric", month: "long" }).format(new Date())} · ${DESIGN_DEMO ? "prévia visual" : t("page.dashboard.live", "live data")}`
+      ? `${new Intl.DateTimeFormat(language === "pt" ? "pt-BR" : language === "ko" ? "ko-KR" : "en-US", { weekday: "long", day: "numeric", month: "long" }).format(new Date())} · ${DESIGN_DEMO ? "prévia visual" : t("page.dashboard.live", "live data")} · ${paidOnlyText}`
       : pageTranslationKey
-        ? t(`page.${pageTranslationKey}.subtitle`, meta.subtitle)
-        : meta.subtitle;
+        ? t(`page.${pageTranslationKey}.subtitle`, tx(meta.subtitle))
+        : tx(meta.subtitle);
   const globalLoadingClientName =
     location === "/overview"
       ? "visão da plataforma"
@@ -937,6 +962,12 @@ export function AppLayout({ children }: AppLayoutProps) {
       navigate("/dashboard");
     }
   }, [effectiveDashboardMode, isB2BOnlyRoute, location, navigate]);
+  // Cliente sem ERP que abre /erp... ou /performance por link ou favorito: leva para onde ha dados, em vez de uma tela de erro.
+  useEffect(() => {
+    if (activeClient?.hasErpIntegration !== false) return;
+    if (location === "/erp" || location.startsWith("/erp/")) navigate("/dashboard");
+    else if (location === "/performance") navigate("/performance/funil");
+  }, [activeClient?.hasErpIntegration, location, navigate]);
   type NavEntry = {
     name: string;
     href: string;
@@ -944,7 +975,13 @@ export function AppLayout({ children }: AppLayoutProps) {
     children?: Array<{ name: string; href: string; icon: typeof Users }>;
   };
 
+  // Cliente SEM ERP: some o grupo ERP e a "Visao Geral" do Desempenho (as duas respondem 404 NO_ERP_INTEGRATION).
+  // Compara o href exato: "Novos Clientes" tem a rota antiga /performance, mas funciona sem ERP.
+  const hasNoErp = activeClient?.hasErpIntegration === false;
+  const needsErp = (href: string) =>
+    href === "/erp" || href.startsWith("/erp/") || href === "/performance";
   const visibleNav = (item: { href: string }) => {
+    if (hasNoErp && needsErp(item.href)) return false;
     const source = legacyPath(item.href);
     if (effectiveDashboardMode === "B2C" && isB2BOnlyRoute(source))
       return false;
@@ -1069,7 +1106,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       },
     ].filter(visibleNav),
     {
-      name: t("nav.notifications", "Notificações"),
+      name: t("nav.notifications", "Notifications"),
       href: "/notifications",
       icon: Bell,
     },
@@ -1197,7 +1234,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             className="up-nav-link"
           >
             <item.icon className="h-[18px] w-[18px] shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{item.name}</span>
+            <span className="min-w-0 flex-1 truncate">{tx(item.name)}</span>
           </Link>
           {item.children && (
             <button
@@ -1232,7 +1269,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 className="up-nav-sub-link"
               >
                 <child.icon className="h-3.5 w-3.5 shrink-0" />
-                {child.name}
+                {tx(child.name)}
               </Link>
             ))}
           </div>
@@ -1252,13 +1289,13 @@ export function AppLayout({ children }: AppLayoutProps) {
             draggable={false}
           />
           <span className="up-brand-sub">
-            UP Dash · Inteligência de negócios
+            {tx("UP Dash · Inteligência de negócios")}
           </span>
         </Link>
       </div>
 
       <nav
-        aria-label="Navegação principal"
+        aria-label={tx("Navegação principal")}
         className="up-nav flex-1 space-y-6 overflow-y-auto"
       >
         <div>
@@ -1294,7 +1331,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             <p className="text-xs text-muted-foreground truncate">
               {user?.role === "CLIENT" && clientData
                 ? clientData.name
-                : "Time Grupo UP"}
+                : tx("Time Grupo UP")}
             </p>
           </div>
         </div>
@@ -1306,7 +1343,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 health?.status === "ok" ? "bg-emerald-500" : "bg-red-500"
               }`}
             />
-            {health?.status === "ok" ? "Conectado" : health?.status ? "Indisponível" : "Verificando"}
+            {health?.status === "ok" ? tx("Conectado") : health?.status ? tx("Indisponível") : tx("Verificando")}
           </span>
         </div>
       </div>
@@ -1417,7 +1454,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   return (
     <div className="up-app flex h-dvh overflow-hidden text-foreground">
       <a href="#main-content" className="up-skip-link">
-        Ir para o conteúdo
+        {tx("Ir para o conteúdo")}
       </a>
       <aside className="up-sidebar hidden w-[268px] shrink-0 flex-col md:flex no-print">
         {renderSidebarContent("desktop")}
@@ -1429,14 +1466,14 @@ export function AppLayout({ children }: AppLayoutProps) {
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" className="up-top-menu md:hidden">
                 <Menu className="h-5 w-5" />
-                <span className="sr-only">Abrir menu</span>
+                <span className="sr-only">{tx("Abrir menu")}</span>
               </Button>
             </SheetTrigger>
             <SheetContent
               side="left"
               className="up-sidebar up-mobile-sidebar w-[280px] max-w-[86vw] p-0 border-border flex flex-col"
             >
-              <SheetTitle className="sr-only">Menu do dashboard</SheetTitle>
+              <SheetTitle className="sr-only">{tx("Menu do dashboard")}</SheetTitle>
               <SheetDescription className="sr-only">
                 Navegue pelas áreas da sua operação.
               </SheetDescription>
@@ -1446,11 +1483,11 @@ export function AppLayout({ children }: AppLayoutProps) {
 
           <div className="up-breadcrumb hidden min-w-0 items-center gap-2 2xl:flex">
             <span>
-              {breadcrumbArchitecture?.group ??
+              {(breadcrumbArchitecture ? tx(breadcrumbArchitecture.group) : undefined) ??
                 (location.startsWith("/erp")
                   ? "ERP"
                   : location.startsWith("/performance")
-                    ? "Performance"
+                    ? tx("Desempenho")
                     : location.startsWith("/whatsapp")
                       ? "WhatsApp"
                       : t("nav.analytics", "Painel"))}
@@ -1482,7 +1519,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               setSelectedDashboardMode(mode);
               if ((mode === "B2C" && isB2BOnlyRoute(location)) || (mode === "B2B" && b2cOnlyRoutes.has(location))) navigate("/dashboard");
             }}>
-              <SelectTrigger className="up-top-operation h-9 w-[100px] shrink-0" aria-label="Operação" data-testid="dashboard-mode-picker"><Building2 className="h-4 w-4 text-primary" /><SelectValue /></SelectTrigger>
+              <SelectTrigger className="up-top-operation h-9 w-[100px] shrink-0" aria-label={tx("Operação")} data-testid="dashboard-mode-picker"><Building2 className="h-4 w-4 text-primary" /><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="B2B">B2B</SelectItem><SelectItem value="B2C">B2C</SelectItem></SelectContent>
             </Select>}
             {user?.role === "ADMIN" && (
@@ -1584,7 +1621,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         >
           <section
             className="up-page-head no-print"
-            aria-label="Contexto do dashboard"
+            aria-label={tx("Contexto do dashboard")}
           >
             <div className="min-w-0">
               <p className="up-eyebrow">
@@ -1597,7 +1634,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 {(location === "/" || location === "/dashboard") && (
                   <span className="up-display up-display-accent">
                     {" "}
-                    de performance
+                    {tx("de performance")}
                   </span>
                 )}
               </h1>
@@ -1609,17 +1646,17 @@ export function AppLayout({ children }: AppLayoutProps) {
           </section>
           {(LOCAL_UI_PREVIEW || DESIGN_DEMO) && (
             <p className="up-preview-notice no-print">
-              Prévia visual · dados de demonstração
+              {tx("Prévia visual · dados de demonstração")}
             </p>
           )}
           {(meta.hasDateRange || meta.hasFilterBar) && (
-            <div className="up-control-panel up-glass-panel no-print">
-              <div className="up-operation-row">
-                {meta.hasDateRange && (
+            <div className={`up-control-panel up-glass-panel no-print${isOverviewRoute ? " up-control-panel--single" : ""}`}>
+              <div className="up-operation-row" hidden={isOverviewRoute}>
+                {meta.hasDateRange && !isOverviewRoute && (
                   <div
                     className="up-period-chips"
                     role="group"
-                    aria-label="Períodos rápidos"
+                    aria-label={tx("Períodos rápidos")}
                   >
                     {[7, 30, 90].map((days) => (
                       <button
@@ -1655,7 +1692,9 @@ export function AppLayout({ children }: AppLayoutProps) {
                   </div>
                 )}
               </div>
-              {meta.hasFilterBar && <FilterBar />}
+              {meta.hasFilterBar && (
+                <FilterBar variant={isOverviewRoute ? "overview" : "default"} />
+              )}
             </div>
           )}
           <div className="up-page-content" aria-busy={isGlobalSwitchLoading || activeDataLoads > 0}>
@@ -1709,9 +1748,15 @@ export function AppLayout({ children }: AppLayoutProps) {
         </main>
       </div>
 
-      {(isGlobalSwitchLoading || activeDataLoads > 0) && (
+      {overlayWanted && !overlayExpired && (
         <div className="up-loading-overlay fixed inset-0 z-[80] flex items-center justify-center bg-background/40 px-4 backdrop-blur-[10px] no-print" role="status" aria-live="polite" aria-label="Carregando dados atualizados" data-testid="global-loader">
-          <DashLoader label="Carregando dados atualizados" description={globalLoadingDescription} />
+          <DashLoader label={tx("Carregando dados atualizados")} description={globalLoadingDescription} />
+        </div>
+      )}
+
+      {overlayWanted && overlayExpired && activeDataLoads > 0 && (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-50 hidden rounded-lg border border-border bg-card/95 px-4 py-3 shadow-lg backdrop-blur sm:block no-print" data-testid="global-loader-compact">
+          <DashLoader compact label={tx("Carregando informações")} />
         </div>
       )}
 

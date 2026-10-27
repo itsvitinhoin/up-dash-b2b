@@ -1,7 +1,8 @@
+import { useI18n } from "@/lib/i18n";
 import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { MetricDataProvider, metricBindings } from "@/components/metric-data-context";
 import { getGetJourneyUrl } from "@workspace/api-client-react";
-import { displayLabel } from "@/lib/display-label";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo } from "react";
 import { format } from "date-fns";
@@ -57,6 +58,7 @@ function KpiCard({
 }
 
 export default function JourneyPage() {
+  const { tx } = useI18n();
   const { selectedClientId, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -91,7 +93,9 @@ export default function JourneyPage() {
     "metric-compradores-na-primeira-sessão": { field: "pctBuyersFromFirstSession", format: v => `${v.toFixed(1)}%` }
   });
 
+  const { language: insightLanguage } = useI18n();
   const insightParams = {
+    language: insightLanguage,
     clientId,
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
     dateTo: format(dateRange.to, "yyyy-MM-dd"),
@@ -150,7 +154,7 @@ export default function JourneyPage() {
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Erro</AlertTitle>
+          <AlertTitle>{tx("Erro")}</AlertTitle>
           <AlertDescription className="flex items-center justify-between gap-3">
             {(error as { data?: { message?: string } } | undefined)?.data?.message ?? "Failed to load journey data."}
             <Button variant="outline" size="sm" onClick={() => refetch()}>
@@ -190,7 +194,7 @@ export default function JourneyPage() {
                         onClick={() => regenerate.mutate({ params: insightParams })}
                       >
                         <RefreshCw className={`h-3 w-3 mr-1 ${regenerate.isPending ? "animate-spin" : ""}`} />
-                        Atualizar
+                        {tx("Atualizar")}
                       </Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setInsightDismissed(true)}>
                         <XIcon className="h-3 w-3" />
@@ -202,33 +206,33 @@ export default function JourneyPage() {
             </motion.div>
           )}
 
-<MetricDataProvider source="UP Zero · jornada e atribuição" comparisons={metricComparisons}>
+<MetricDataProvider source={tx("UP Zero · jornada e atribuição")} comparisons={metricComparisons}>
           {/* KPI Strip */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <KpiCard
-                label="Média de eventos antes da compra"
+                label={tx("Média de eventos antes da compra")}
                 value={isLoading ? "—" : kpis ? kpis.avgEventsBeforePurchase.toFixed(1) : "—"}
                 icon={Activity}
                 color="#5b8dff"
                 loading={isLoading}
               />
               <KpiCard
-                label="Tempo médio até a primeira compra"
+                label={tx("Tempo médio até a primeira compra")}
                 value={isLoading ? "—" : kpis?.avgTimeToFirstPurchaseDays != null ? `${kpis.avgTimeToFirstPurchaseDays.toFixed(1)}d` : "—"}
                 icon={Clock}
                 color="#afc4ff"
                 loading={isLoading}
               />
               <KpiCard
-                label="Tempo médio entre compras"
+                label={tx("Tempo médio entre compras")}
                 value={isLoading ? "—" : kpis?.avgTimeBetweenPurchasesDays != null ? `${kpis.avgTimeBetweenPurchasesDays.toFixed(1)}d` : "—"}
                 icon={RefreshCw}
                 color="#87adff"
                 loading={isLoading}
               />
               <KpiCard
-                label="Compradores na primeira sessão"
+                label={tx("Compradores na primeira sessão")}
                 value={isLoading ? "—" : kpis ? `${kpis.pctBuyersFromFirstSession.toFixed(1)}%` : "—"}
                 icon={Zap}
                 color="#0458fe"
@@ -245,7 +249,7 @@ export default function JourneyPage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                    Fluxo de eventos
+                    {tx("Fluxo de eventos")}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -264,14 +268,14 @@ export default function JourneyPage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-chart-3" />
-                    Principais caminhos até a compra
+                    {tx("Principais caminhos até a compra")}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {isLoading ? (
                     Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)
                   ) : topPaths.length === 0 ? (
-                    <EmptyState icon={Route} title="Sem caminhos de compra" description="Quando os clientes concluírem compras, a sequência de eventos aparecerá aqui." />
+                    <EmptyState icon={Route} title={tx("Sem caminhos de compra")} description={tx("Quando os clientes concluírem compras, a sequência de eventos aparecerá aqui.")} />
                   ) : (
                     topPaths.map((path, i) => (
                       <div
@@ -313,16 +317,16 @@ export default function JourneyPage() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-chart-4" />
-                    Compradores e não compradores — comparação de eventos
+                    {tx("Compradores e não compradores — comparação de eventos")}
                   </CardTitle>
                   <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
                     <span className="flex items-center gap-1.5">
                       <span className="h-2 w-2 rounded-full bg-[#5b8dff]" />
-                      Compradores (média de {isLoading ? "—" : (buyers?.avgSessionDepth ?? 0).toFixed(1)} eventos/sessão)
+                      {tx("Compradores")} ({tx("média de")} {isLoading ? "—" : (buyers?.avgSessionDepth ?? 0).toFixed(1)} {tx("eventos/sessão")})
                     </span>
                     <span className="flex items-center gap-1.5">
                       <span className="h-2 w-2 rounded-full bg-[#0458fe]" />
-                      Não compradores (média de {isLoading ? "—" : (nonBuyers?.avgSessionDepth ?? 0).toFixed(1)} eventos/sessão)
+                      {tx("Não compradores")} ({tx("média de")} {isLoading ? "—" : (nonBuyers?.avgSessionDepth ?? 0).toFixed(1)} {tx("eventos/sessão")})
                     </span>
                   </div>
                 </div>
@@ -331,7 +335,7 @@ export default function JourneyPage() {
                 {isLoading ? (
                   <Skeleton className="h-52 w-full" />
                 ) : comparisonData.length === 0 ? (
-                  <EmptyState icon={Activity} title="Sem dados de eventos" description="Nenhum evento de visitante registrado neste período." />
+                  <EmptyState icon={Activity} title={tx("Sem dados de eventos")} description={tx("Nenhum evento de visitante registrado neste período.")} />
                 ) : (
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={comparisonData} margin={{ left: 0, right: 8 }}>
@@ -347,8 +351,8 @@ export default function JourneyPage() {
                         }}
                       />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Bar dataKey="buyers" name="Compradores" fill="#5b8dff" radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="nonBuyers" name="Não compradores" fill="#0458fe" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="buyers" name={tx("Compradores")} fill="#5b8dff" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="nonBuyers" name={tx("Não compradores")} fill="#0458fe" radius={[3, 3, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -358,7 +362,7 @@ export default function JourneyPage() {
                   <div className="mt-4 grid grid-cols-2 gap-4 border-t border-border/40 pt-4">
                     <div>
                       <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                        Origens UTM de compradores
+                        {tx("Origens UTM de compradores")}
                       </p>
                       <div className="space-y-1.5">
                         {(buyers?.topUtmSources ?? []).slice(0, 4).map((u) => (
@@ -375,7 +379,7 @@ export default function JourneyPage() {
                     </div>
                     <div>
                       <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                        Origens UTM de não compradores
+                        {tx("Origens UTM de não compradores")}
                       </p>
                       <div className="space-y-1.5">
                         {(nonBuyers?.topUtmSources ?? []).slice(0, 4).map((u) => (
@@ -401,7 +405,7 @@ export default function JourneyPage() {
             <motion.div initial="hidden" animate="visible" variants={variants}>
               <div className="flex items-center gap-2 mb-3">
                 <Lightbulb className="h-4 w-4 text-amber-500" />
-                <h3 className="font-semibold text-sm">Principais análises</h3>
+                <h3 className="font-semibold text-sm">{tx("Principais análises")}</h3>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {insight.bullets.map((bullet, i) => (
@@ -442,12 +446,14 @@ interface FlowEdge {
 }
 
 function EventFlowDiagram({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEdge[] }) {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   if (nodes.length === 0) {
     return (
       <EmptyState
         icon={Activity}
-        title="Sem jornadas de conversão"
-        description="Os fluxos de eventos até a compra aparecerão aqui quando houver compradores no período."
+        title={tx("Sem jornadas de conversão")}
+        description={tx("Os fluxos de eventos até a compra aparecerão aqui quando houver compradores no período.")}
         className="my-4"
       />
     );

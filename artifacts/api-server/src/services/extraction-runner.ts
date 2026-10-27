@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import {
   db,
   clientsTable,
@@ -219,7 +219,8 @@ async function clientsWith(where: SQL | undefined): Promise<ExtractionClient[]> 
       nuvemshopAccessToken: clientsTable.nuvemshopAccessToken,
     })
     .from(clientsTable)
-    .where(where)
+    // Cliente arquivado sai de todas as atualizacoes (UpZero, Meta, Nuvemshop...); para voltar tem que ser restaurado.
+    .where(where ? and(where, isNull(clientsTable.archivedAt)) : isNull(clientsTable.archivedAt))
     .orderBy(clientsTable.name);
 }
 

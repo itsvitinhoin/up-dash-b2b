@@ -19,6 +19,8 @@ const ACCESS_SECRET: string = readSecret("JWT_ACCESS_SECRET");
 const ACCESS_EXPIRES_IN = "1h";
 const REFRESH_TOKEN_TTL_DAYS = 7;
 const REFRESH_TOKEN_TTL_MS = REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000;
+/** Mesma validade do refresh token, em segundos (usada no Max-Age do cookie de sessão). */
+export const REFRESH_TOKEN_TTL_SECONDS = REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60;
 
 export interface AccessTokenPayload {
   sub: string;

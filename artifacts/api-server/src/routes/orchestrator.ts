@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request } from "express";
-import { and, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -619,6 +619,7 @@ async function requireB2BClient(clientId: string | null) {
       name: clientsTable.name,
       dashboardType: clientsTable.dashboardType,
       upZeroApiKey: clientsTable.upZeroApiKey,
+      archivedAt: clientsTable.archivedAt,
     })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
@@ -635,7 +636,7 @@ async function getB2BClients() {
       createdAt: clientsTable.createdAt,
     })
     .from(clientsTable)
-    .where(eq(clientsTable.dashboardType, "B2B"))
+    .where(and(eq(clientsTable.dashboardType, "B2B"), isNull(clientsTable.archivedAt)))
     .orderBy(clientsTable.name);
 }
 
@@ -2153,10 +2154,13 @@ async function processDueAutomationJobs(limit = 25) {
     })
     .from(commercialAutomationJobsTable)
     .leftJoin(commercialAutomationRulesTable, eq(commercialAutomationJobsTable.ruleId, commercialAutomationRulesTable.id))
+    // Cliente excluido (arquivado) nao envia mensagem para ninguem.
+    .innerJoin(clientsTable, eq(clientsTable.id, commercialAutomationJobsTable.clientId))
     .where(
       and(
         eq(commercialAutomationJobsTable.status, "scheduled"),
         lte(commercialAutomationJobsTable.scheduledAt, now),
+        isNull(clientsTable.archivedAt),
       ),
     )
     .orderBy(commercialAutomationJobsTable.scheduledAt)
@@ -2854,6 +2858,15 @@ router.all("/ecommerce/webhooks/:clientId", async (req, res): Promise<void> => {
       accepted: false,
       error: true,
       message: "Cliente B2B não encontrado para este webhook.",
+    });
+    return;
+  }
+  // Cliente excluido (arquivado): nao grava evento nem agenda automacao. 410 avisa a plataforma de origem que o destino acabou.
+  if (client.archivedAt) {
+    res.status(410).json({
+      accepted: false,
+      error: true,
+      message: "Cliente excluído: este webhook não recebe mais eventos.",
     });
     return;
   }

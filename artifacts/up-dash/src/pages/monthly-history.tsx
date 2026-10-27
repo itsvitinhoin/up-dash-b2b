@@ -1,5 +1,5 @@
-import { displayLabel } from "@/lib/display-label";
 import { Fragment, useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import { useQueries } from "@tanstack/react-query";
 import { endOfMonth, format } from "date-fns";
 import {
@@ -38,26 +38,20 @@ import { Download, RefreshCw } from "lucide-react";
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { queryOpts } from "@/lib/query-opts";
 
-const months = [
-  "Jan",
-  "Fev",
-  "Mar",
-  "Abr",
-  "Mai",
-  "Jun",
-  "Jul",
-  "Ago",
-  "Set",
-  "Out",
-  "Nov",
-  "Dez",
-];
+// Abreviacoes por idioma (nao usam tx: chaves como "Mar" ou "Set" colidiriam com outros textos).
+const MONTHS_BY_LANGUAGE = {
+  pt: ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"],
+  en: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+  ko: ["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"],
+} as const;
 type Row = {
   label: string;
   values: Array<number | null | undefined>;
   format?: "currency" | "percent" | "ratio";
 };
 export default function MonthlyHistoryPage() {
+  const { tx, language } = useI18n();
+  const months = MONTHS_BY_LANGUAGE[language] ?? MONTHS_BY_LANGUAGE.pt;
   const { user, selectedClientId } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const [year, setYear] = useState(() => dateRange.to.getFullYear());
@@ -219,11 +213,11 @@ export default function MonthlyHistoryPage() {
     exportRowsAsCsv(
       `historico-mensal-${year}.csv`,
       groups.flatMap((group) =>
-        group.rows.map((row) => ({ group: group.title, row })),
+        group.rows.map((row) => ({ group: tx(group.title), row })),
       ),
       [
-        { header: "Grupo", accessor: (item) => item.group },
-        { header: "Métrica", accessor: (item) => item.row.label },
+        { header: tx("Grupo"), accessor: (item) => item.group },
+        { header: tx("Métrica"), accessor: (item) => tx(item.row.label) },
         ...months.map((month, index) => ({
           header: month,
           accessor: (item: { row: Row }) => cell(item.row, index),
@@ -236,13 +230,13 @@ export default function MonthlyHistoryPage() {
       aria-busy={allQueries.some((q) => q.isFetching)}
     >
       <CardHeader className="flex-row flex-wrap items-center justify-between gap-4">
-        <CardTitle>Histórico Mensal</CardTitle>
+        <CardTitle>{tx("Histórico Mensal")}</CardTitle>
         <div className="flex flex-wrap gap-2">
           <Select
             value={String(year)}
             onValueChange={(value) => setYear(Number(value))}
           >
-            <SelectTrigger className="w-[100px]" aria-label="Ano do histórico">
+            <SelectTrigger className="w-[100px]" aria-label={tx("Ano do histórico")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -264,7 +258,7 @@ export default function MonthlyHistoryPage() {
               }}
             >
               <RefreshCw className="mr-2 h-4 w-4" />
-              Tentar novamente
+              {tx("Tentar novamente")}
             </Button>
           )}
           <Button
@@ -274,7 +268,7 @@ export default function MonthlyHistoryPage() {
             disabled={allQueries.some((q) => q.isLoading)}
           >
             <Download className="mr-2 h-4 w-4" />
-            Exportar CSV
+            {tx("Exportar CSV")}
           </Button>
         </div>
       </CardHeader>
@@ -282,7 +276,7 @@ export default function MonthlyHistoryPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Métrica</TableHead>
+              <TableHead>{tx("Métrica")}</TableHead>
               {months.map((month) => (
                 <TableHead key={month} className="text-right">
                   {month}
@@ -295,13 +289,13 @@ export default function MonthlyHistoryPage() {
               <Fragment key={group.title}>
                 <TableRow className="bg-muted/30">
                   <TableCell colSpan={13} className="font-semibold">
-                    {group.title}
+                    {tx(group.title)}
                   </TableCell>
                 </TableRow>
                 {group.rows.map((row) => (
                   <TableRow key={row.label}>
                     <TableCell className="whitespace-nowrap font-medium">
-                      {displayLabel(row.label)}
+                      {tx(row.label)}
                     </TableCell>
                     {months.map((month, index) => (
                       <TableCell

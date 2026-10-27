@@ -150,6 +150,18 @@ export interface Client {
   hasNuvemshopIntegration: boolean;
   /** True when both GA4 measurement id and API secret are configured. */
   hasGa4Integration: boolean;
+  /** True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it). */
+  hasErpIntegration?: boolean;
+  /**
+   * When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.
+   * @nullable
+   */
+  archivedAt?: string | null;
+  /**
+   * Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Null = use the legacy per-dataset list (or no floor).
+   * @nullable
+   */
+  attributionStartDate?: string | null;
   /** True when this client has at least one CLIENT-role login. */
   hasClientLogin?: boolean;
   /**
@@ -349,6 +361,11 @@ export interface UpdateClientRequest {
    * @nullable
    */
   bigqueryDataset?: string | null;
+  /**
+   * Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Pass null to clear it.
+   * @nullable
+   */
+  attributionStartDate?: string | null;
   /**
    * Nuvemshop store id. Pass null to clear it.
    * @nullable
@@ -586,6 +603,10 @@ export interface OrderStatusBreakdown {
 
 export interface DashboardResponse {
   kpis: DashboardKpis;
+  /** Share (0 to 1) of the period's paid orders that carry a state (UF), ignoring the `state` filter.
+Lets the UI warn when filtering by state would hide most orders. Null when there are no paid orders.
+ */
+  stateCoverage?: number | null;
   revenueOverTime: TimeSeriesPoint[];
   ordersOverTime: TimeSeriesPoint[];
   leadsOverTime: TimeSeriesPoint[];
@@ -1520,7 +1541,7 @@ export interface MarketingResponse {
   prevMetaSummary?: MetaMarketingSummary | null;
   purchasesOverTime?: TimeSeriesPoint[];
   kpis: MarketingKpis;
-  prevKpis: MarketingKpis;
+  prevKpis: MarketingKpis | null;
   leadsOverTime: TimeSeriesPoint[];
   revenueOverTime: TimeSeriesPoint[];
   spendOverTime: TimeSeriesPoint[];
@@ -1854,6 +1875,10 @@ export type ListClientsParams = {
    */
   dashboardType?: ListClientsDashboardType;
   /**
+   * Archived clients are hidden by default. `only` lists just the archived ones, `include` lists everyone.
+   */
+  archived?: ListClientsArchived;
+  /**
  * When both dateFrom and dateTo are provided, each client row in the
 response is enriched with `avgOrderValue`, `conversionRate`, and
 `periodGrowthPct` computed over that window (versus the previous
@@ -1863,6 +1888,14 @@ window of equal length for growth).
   dateFrom?: string;
   dateTo?: string;
 };
+
+export type ListClientsArchived =
+  (typeof ListClientsArchived)[keyof typeof ListClientsArchived];
+
+export const ListClientsArchived = {
+  only: "only",
+  include: "include",
+} as const;
 
 export type ListClientsDashboardType =
   (typeof ListClientsDashboardType)[keyof typeof ListClientsDashboardType];
@@ -1891,6 +1924,12 @@ export type GetDashboardParams = {
    * Restrict order metrics to a single seller.
    */
   sellerId?: string;
+  /**
+   * Restrict order metrics to orders shipped to a single Brazilian state (UF, e.g. SP, MG).
+Only orders with a known state match; see `stateCoverage` in the response.
+
+   */
+  state?: string;
   /**
    * Restrict to orders from customers acquired via a UTM source (e.g. instagram, google).
    */

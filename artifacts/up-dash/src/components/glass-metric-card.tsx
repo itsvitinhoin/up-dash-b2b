@@ -7,7 +7,7 @@ import { formatNumber } from "@/lib/formatters";
 export function GlassMetricCard({
   label, value, icon = BarChart3, format = formatNumber, unit, loading = false,
   change = null, changeLabel = "vs. período anterior", changePositive,
-  sub = [], sparkValues = [], info, source, previousValue, comparisonValue, comparisonUnavailable, footer, deltaContent, className, testId,
+  sub = [], sparkValues = [], info, source, previousValue, comparisonValue, comparisonUnavailable, footer, deltaContent, className, testId, hideComparison, lowerIsBetter,
 }: {
   label: string;
   value: ReactNode;
@@ -25,6 +25,8 @@ export function GlassMetricCard({
   previousValue?: number | null;
   comparisonValue?: number | null;
   comparisonUnavailable?: string;
+  hideComparison?: boolean;
+  lowerIsBetter?: boolean;
   footer?: ReactNode;
   deltaContent?: ReactNode;
   className?: string;
@@ -39,6 +41,6 @@ export function GlassMetricCard({
     sparkColor="var(--up-chart-line)" isLoading={loading}
     testId={testId ?? `metric-${label.toLowerCase().replace(/\s+/g, "-")}`}
     className={className} footer={footer} deltaContent={deltaContent}
-    info={info} source={source} previousValue={previousValue} comparisonValue={comparisonValue} comparisonUnavailable={comparisonUnavailable}
+    hideComparison={hideComparison} lowerIsBetter={lowerIsBetter} info={info} source={source} previousValue={previousValue} comparisonValue={comparisonValue} comparisonUnavailable={comparisonUnavailable}
   />;
 }

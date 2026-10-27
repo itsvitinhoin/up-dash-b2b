@@ -1,7 +1,7 @@
+import { useI18n } from "@/lib/i18n";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
-import { format, parseISO } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import { format } from "date-fns";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
@@ -21,6 +21,8 @@ import {
   X,
 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
+import { CountUp } from "@/components/count-up";
+import { Sparkline } from "@/components/sparkline";
 import { fadeInUp, useReducedMotion, withReducedMotion } from "@/lib/motion";
 import { formatCurrency, formatCurrencySmart, formatNumber, formatPercentage } from "@/lib/formatters";
 import { exportRowsAsCsv } from "@/lib/csv-export";
@@ -38,11 +40,23 @@ import {
 const PALETTE = ["#5b8dff", "#87adff", "#b3caff", "#afc4ff"];
 const MAX_BRANDS = 4;
 
+interface BrandResult {
+  id: string;
+  name: string;
+  revenue: number;
+  orders: number;
+  avgTicket: number;
+  conversionRate: number;
+  customers: number;
+  series: { date: string; value: number }[];
+}
+
 function BrandCardLoading() {
   return <Skeleton className="h-44 w-full" />;
 }
 
 export default function ComparePage() {
+  const { tx } = useI18n();
   const { user } = useAuth();
   const { dateRange } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -60,9 +74,9 @@ export default function ComparePage() {
     return (
       <Alert variant="destructive" data-testid="page-compare">
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Acesso restrito</AlertTitle>
+        <AlertTitle>Restricted</AlertTitle>
         <AlertDescription>
-          Esta visualização está disponível apenas para administradores.
+          {tx("Esta visualização está disponível apenas para administradores.")}
         </AlertDescription>
       </Alert>
     );
@@ -71,11 +85,11 @@ export default function ComparePage() {
   return (
     <div className="space-y-6" data-testid="page-compare">
       <Card className="p-5 bg-card border-border">
-        <div className="up-section-heading mb-4">
+        <div className="flex items-start justify-between mb-4">
           <div>
-            <h2 className="text-base font-semibold leading-tight">Selecione marcas para comparar</h2>
+            <h2 className="text-base font-semibold leading-tight">{tx("Selecione marcas para comparar")}</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Selecione até {MAX_BRANDS} marcas. Os KPIs e gráficos abaixo são atualizados automaticamente.
+              {tx("Selecione até")} {MAX_BRANDS} {tx("marcas. Os KPIs e gráficos abaixo são atualizados automaticamente.")}
             </p>
           </div>
           {selected.length > 0 && (
@@ -86,7 +100,7 @@ export default function ComparePage() {
               className="text-xs"
               data-testid="compare-clear"
             >
-              Limpar seleção
+              {tx("Limpar seleção")}
             </Button>
           )}
         </div>
@@ -113,7 +127,6 @@ export default function ComparePage() {
                         : [...prev, client.id],
                     )
                   }
-                  aria-pressed={isOn}
                   data-testid={`compare-pick-${client.id}`}
                   className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${
                     isOn
@@ -138,8 +151,8 @@ export default function ComparePage() {
       {selected.length < 2 ? (
         <EmptyState
           icon={GitCompareArrows}
-          title={selected.length === 0 ? "Selecione de 2 a 4 marcas para comparar" : "Selecione mais uma marca para comparar"}
-          description="Os KPIs e a evolução do faturamento aparecerão lado a lado quando duas ou mais marcas forem selecionadas."
+          title={selected.length === 0 ? tx("Selecione de 2 a 4 marcas para comparar") : tx("Selecione mais uma marca para comparar")}
+          description={tx("Os KPIs e a evolução do faturamento aparecerão lado a lado quando duas ou mais marcas forem selecionadas.")}
         />
       ) : (
         <CompareGrid
@@ -165,13 +178,13 @@ interface CompareGridProps {
 function CompareGrid({ selectedIds, dateRange, allClients, variants, onRemove }: CompareGridProps) {
   return (
     <>
-      <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {selectedIds.map((id, idx) => (
           <BrandKpiCard
             key={id}
             clientId={id}
             color={PALETTE[idx % PALETTE.length]}
-            name={allClients.find((c) => c.id === id)?.name ?? "Marca"}
+            name={allClients.find((c) => c.id === id)?.name ?? "Brand"}
             dateRange={dateRange}
             variants={variants}
             onRemove={() => onRemove(id)}
@@ -198,6 +211,7 @@ interface BrandKpiCardProps {
 }
 
 function BrandKpiCard({ clientId, name, color, dateRange, variants, onRemove }: BrandKpiCardProps) {
+  const { tx } = useI18n();
   const { data, isLoading } = useGetDashboard(
     {
       clientId,
@@ -209,23 +223,49 @@ function BrandKpiCard({ clientId, name, color, dateRange, variants, onRemove }: 
 
   if (isLoading) return <BrandCardLoading />;
 
-  if (!data) return <Alert variant="destructive"><AlertTitle>Não foi possível carregar {name}</AlertTitle><AlertDescription>Atualize a página para tentar novamente.</AlertDescription></Alert>;
+  const series = data?.revenueOverTime?.map((p) => p.value) ?? [];
+
   return (
     <motion.div initial="hidden" animate="visible" variants={variants}>
-      <Card className="p-5" data-testid={`compare-card-${clientId}`}>
-        <div className="up-section-heading mb-4">
-          <div className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} /><h2 className="text-base font-semibold break-words">{name}</h2></div>
-          <Button variant="ghost" size="icon" onClick={onRemove} aria-label={`Remover ${name}`}><X className="h-4 w-4" /></Button>
+      <Card className="p-5 bg-card border-border" data-testid={`compare-card-${clientId}`}>
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ backgroundColor: color }}
+            />
+            <p className="text-sm font-semibold truncate" title={name}>{name}</p>
+          </div>
+          <Button variant="ghost" size="sm"
+            type="button"
+            onClick={onRemove}
+            className="text-muted-foreground hover:text-foreground"
+            aria-label={`Remover ${name}`}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
         </div>
-        <div className="up-metric-grid">
-          <GlassMetricCard label="Faturamento" value={data.kpis.revenue} format={formatCurrencySmart} previousValue={data.prevKpis?.revenue} source="Ecommerce · pedidos da marca selecionada" sparkValues={data.revenueOverTime.map(p => p.value)} />
-          <GlassMetricCard label="Pedidos" value={data.kpis.orders} format={formatNumber} previousValue={data.prevKpis?.orders} source="Ecommerce · pedidos da marca selecionada" />
-          <GlassMetricCard label="Ticket médio" value={data.kpis.avgTicket} format={formatCurrencySmart} previousValue={data.prevKpis?.avgTicket} source="Ecommerce · pedidos da marca selecionada" info="Faturamento dividido pelo número de pedidos, com os mesmos filtros para cada marca." />
-          <GlassMetricCard label="Conversão" value={data.kpis.conversionRate} format={formatPercentage} previousValue={data.prevKpis?.conversionRate} source="Ecommerce · pedidos; analytics · sessões" />
+        <p className="text-2xl font-semibold tabular-nums">
+          <CountUp value={data?.kpis.revenue ?? 0} format={(v) => formatCurrencySmart(v)} />
+        </p>
+        <p className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">
+          {tx("Faturamento")}
+        </p>
+        <div className="mt-3">
+          <Sparkline values={series} stroke={color} fill={color + "33"} width={200} height={36} />
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+          <Stat label={tx("Pedidos")} value={formatNumber(data?.kpis.orders ?? 0)} />
+          <Stat label={tx("Ticket médio")} value={formatCurrency(data?.kpis.avgTicket ?? 0)} />
+          <Stat label="Conv." value={formatPercentage(data?.kpis.conversionRate ?? 0)} />
         </div>
       </Card>
     </motion.div>
   );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (<GlassMetricCard label={label} value={value} />);
 }
 
 interface CompareChartProps {
@@ -235,6 +275,7 @@ interface CompareChartProps {
 }
 
 function CompareChart({ selectedIds, dateRange, allClients }: CompareChartProps) {
+  const { tx } = useI18n();
   // Fetch each brand's series in parallel via separate hooks. We use a stable
   // limit of 4 so React's hook order is preserved.
   const slot0 = useBrandSeries(selectedIds[0], dateRange);
@@ -251,7 +292,7 @@ function CompareChart({ selectedIds, dateRange, allClients }: CompareChartProps)
       series.forEach((p) => {
         const entry: Record<string, string | number> =
           dateMap.get(p.date) ?? { date: p.date };
-        entry[id] = p.value;
+        entry[name] = p.value;
         dateMap.set(p.date, entry);
       });
     });
@@ -271,7 +312,7 @@ function CompareChart({ selectedIds, dateRange, allClients }: CompareChartProps)
           const name = allClients.find((c) => c.id === id)?.name ?? id;
           return {
             header: name,
-            accessor: (r: Record<string, unknown>) => Number(r[id] ?? 0),
+            accessor: (r: Record<string, unknown>) => Number(r[name] ?? 0),
           };
         }),
       ],
@@ -280,14 +321,14 @@ function CompareChart({ selectedIds, dateRange, allClients }: CompareChartProps)
 
   return (
     <Card className="p-5 bg-card border-border" data-testid="compare-chart">
-      <div className="up-section-heading mb-4">
+      <div className="flex items-start justify-between mb-4">
         <div>
-          <h2 className="text-base font-semibold leading-tight">Faturamento diário comparado</h2>
+          <h2 className="text-base font-semibold leading-tight">{tx("Faturamento diário comparado")}</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Faturamento por marca, com a mesma janela de datas para todas.
+            {tx("Barras empilhadas por marca no período selecionado.")}
           </p>
         </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           {selectedIds.map((id, idx) => (
             <Badge key={id} variant="outline" className="text-xs">
               <span
@@ -308,7 +349,7 @@ function CompareChart({ selectedIds, dateRange, allClients }: CompareChartProps)
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
             <XAxis
               dataKey="date"
-              tickFormatter={(v) => format(parseISO(v), "dd/MM", { locale: ptBR })}
+              tickFormatter={(v) => format(new Date(v), "MMM d")}
               stroke="hsl(var(--muted-foreground))"
               fontSize={11}
               tickLine={false}
@@ -325,7 +366,7 @@ function CompareChart({ selectedIds, dateRange, allClients }: CompareChartProps)
             />
             <Tooltip
               formatter={(value: number) => formatCurrency(value)}
-              labelFormatter={(label) => format(parseISO(String(label)), "dd/MM/yyyy", { locale: ptBR })}
+              labelFormatter={(label) => format(new Date(label), "MMM d, yyyy")}
               contentStyle={{
                 backgroundColor: "hsl(var(--popover))",
                 border: "1px solid hsl(var(--border))",
@@ -339,8 +380,7 @@ function CompareChart({ selectedIds, dateRange, allClients }: CompareChartProps)
               return (
                 <Bar
                   key={id}
-                  dataKey={id}
-                  name={name}
+                  dataKey={name}
                   fill={PALETTE[idx % PALETTE.length]}
                   radius={[4, 4, 0, 0]}
                 />

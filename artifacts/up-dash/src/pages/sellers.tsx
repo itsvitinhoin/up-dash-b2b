@@ -1,3 +1,4 @@
+import { useI18n } from "@/lib/i18n";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
@@ -50,6 +51,7 @@ const BAR_PALETTE = [
 ];
 
 export default function SellersPage() {
+  const { tx } = useI18n();
   const { selectedClientId, user } = useAuth();
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
@@ -70,7 +72,8 @@ export default function SellersPage() {
     { query: queryOpts({ enabled }) },
   );
 
-  const insightParams = { clientId, dateFrom, dateTo, screen: "sellers" as const };
+  const { language: insightLanguage } = useI18n();
+  const insightParams = { clientId, dateFrom, dateTo, screen: "sellers" as const, language: insightLanguage };
   const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
     query: queryOpts({ enabled, staleTime: 3_600_000 }),
   });
@@ -126,7 +129,7 @@ export default function SellersPage() {
             <span className="text-foreground font-semibold tabular-nums">
               Top {limit}
             </span>{" "}
-            Vendedoras
+            {tx("Vendedoras")}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -155,7 +158,7 @@ export default function SellersPage() {
           Exportar CSV
         </Button>
         <div className="flex items-center gap-2 bg-card p-1 rounded-md border border-border">
-          <span className="text-sm font-medium text-muted-foreground px-2">Exibir principais</span>
+          <span className="text-sm font-medium text-muted-foreground px-2">{tx("Exibir principais")}</span>
           <Select value={limit.toString()} onValueChange={(val) => setLimit(Number(val))}>
             <SelectTrigger className="w-[80px] border-none shadow-none h-8">
               <SelectValue />
@@ -174,15 +177,15 @@ export default function SellersPage() {
       {/* Hero KPI strip */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <motion.div variants={cardVariants}>
-          <GlassMetricCard label="Faturamento total" value={totalRevenue} format={formatCurrencySmart} icon={DollarSign} loading={isLoading} footer={<p className="text-xs text-muted-foreground">Entre os principais {activeSellers} vendedoras</p>} />
+          <GlassMetricCard label={tx("Faturamento total")} value={totalRevenue} format={formatCurrencySmart} icon={DollarSign} loading={isLoading} footer={<p className="text-xs text-muted-foreground">{tx("Entre os principais")} {activeSellers} {tx("vendedoras")}</p>} />
         </motion.div>
 
         <motion.div variants={cardVariants}>
-          <GlassMetricCard label="Vendedoras ativas" value={activeSellers} icon={Users} loading={isLoading} footer={<p className="text-xs text-muted-foreground">Classificação por participação no faturamento</p>} />
+          <GlassMetricCard label={tx("Vendedoras ativas")} value={activeSellers} icon={Users} loading={isLoading} footer={<p className="text-xs text-muted-foreground">{tx("Classificação por participação no faturamento")}</p>} />
         </motion.div>
 
         <motion.div variants={cardVariants}>
-          <GlassMetricCard label="Principal vendedora" value={topSeller?.name ?? "—"} icon={Crown} loading={isLoading} footer={topSeller ? <p className="text-xs text-muted-foreground">{formatCurrency(topSeller.totalRevenue)} · {formatNumber(topSeller.totalOrders)} pedidos</p> : undefined} />
+          <GlassMetricCard label={tx("Principal vendedora")} value={topSeller?.name ?? "—"} icon={Crown} loading={isLoading} footer={topSeller ? <p className="text-xs text-muted-foreground">{formatCurrency(topSeller.totalRevenue)} · {formatNumber(topSeller.totalOrders)} {tx("pedidos")}</p> : undefined} />
         </motion.div>
       </div>
 
@@ -196,13 +199,13 @@ export default function SellersPage() {
               <div className="flex items-center justify-between mb-3">
                 <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/15 text-primary text-[10px] font-semibold uppercase tracking-wider">
                   <Sparkles className="h-3 w-3" />
-                  UP Insight · Vendedoras · {insight?.source === "ai" ? "IA" : "Auto"}
+                  UP Insight · {tx("Vendedoras")} · {insight?.source === "ai" ? "IA" : "Auto"}
                 </span>
                 <Button variant="ghost" size="sm"
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Fechar análise"
+                  aria-label={tx("Fechar análise")}
                   data-testid="sellers-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
@@ -242,7 +245,7 @@ export default function SellersPage() {
                   {regenerate.isPending ? "Regenerating…" : "Regenerate"}
                 </Button>
                 {insight?.cached && (
-                  <span className="text-[11px] text-muted-foreground">Atualização a cada hora</span>
+                  <span className="text-[11px] text-muted-foreground">{tx("Atualização a cada hora")}</span>
                 )}
               </div>
             </div>
@@ -259,7 +262,7 @@ export default function SellersPage() {
                 <BarChart3 className="h-3.5 w-3.5" />
               </div>
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Participação no faturamento
+                {tx("Participação no faturamento")}
                 {chartData.length > 0 && (
                   <span className="ml-1 text-muted-foreground/60">
                     · Top {chartData.length}
@@ -274,7 +277,7 @@ export default function SellersPage() {
                   style={{ background: "hsl(var(--chart-1))" }}
                   aria-hidden
                 />
-                <span>Maior intensidade = maior faturamento</span>
+                <span>{tx("Maior intensidade = maior faturamento")}</span>
               </div>
             )}
           </div>
@@ -293,7 +296,7 @@ export default function SellersPage() {
             </div>
           ) : chartData.length === 0 ? (
             <div className="h-[280px] flex items-center justify-center text-sm text-muted-foreground">
-              Sem faturamento de vendedoras para exibir
+              {tx("Sem faturamento de vendedoras para exibir")}
             </div>
           ) : (
             <div
@@ -340,7 +343,7 @@ export default function SellersPage() {
                             #{p.rank} · {p.name}
                           </div>
                           <div className="text-muted-foreground tabular-nums">
-                            {formatCurrency(p.revenue)} · {formatNumber(p.orders)} pedidos
+                            {formatCurrency(p.revenue)} · {formatNumber(p.orders)} {tx("pedidos")}
                           </div>
                           <div className="text-muted-foreground/70 tabular-nums">
                             {p.share.toFixed(1)}% do total
@@ -373,14 +376,14 @@ export default function SellersPage() {
               {/* Screen-reader fallback: same info as the visual chart, in
                   table form, since the Recharts tooltip is hover-only. */}
               <table className="sr-only">
-                <caption>Participação no faturamento por vendedora, principais {chartData.length}</caption>
+                <caption>{tx("Participação no faturamento por vendedora, principais")} {chartData.length}</caption>
                 <thead>
                   <tr>
-                    <th scope="col">Posição</th>
-                    <th scope="col">Vendedora</th>
-                    <th scope="col">Faturamento</th>
-                    <th scope="col">Pedidos</th>
-                    <th scope="col">Participação no total</th>
+                    <th scope="col">{tx("Posição")}</th>
+                    <th scope="col">{tx("Vendedora")}</th>
+                    <th scope="col">{tx("Faturamento")}</th>
+                    <th scope="col">{tx("Pedidos")}</th>
+                    <th scope="col">{tx("Participação no total")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -404,8 +407,8 @@ export default function SellersPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription className="flex items-center justify-between">
-            Não foi possível carregar as vendedoras.
-            <Button variant="outline" size="sm" onClick={() => refetch()}>Tentar novamente</Button>
+            {tx("Não foi possível carregar as vendedoras.")}
+            <Button variant="outline" size="sm" onClick={() => refetch()}>{tx("Tentar novamente")}</Button>
           </AlertDescription>
         </Alert>
       ) : (
@@ -430,8 +433,8 @@ export default function SellersPage() {
           ) : data?.length === 0 ? (
             <EmptyState
               icon={Trophy}
-              title="Sem atividade de vendedoras"
-              description="Quando houver pedidos atribuídos a vendedoras no período, elas aparecerão classificadas aqui."
+              title={tx("Sem atividade de vendedoras")}
+              description={tx("Quando houver pedidos atribuídos a vendedoras no período, elas aparecerão classificadas aqui.")}
             />
           ) : (
             data?.map((seller, index) => {
@@ -490,18 +493,18 @@ export default function SellersPage() {
                       <div className="hidden md:flex items-center gap-8 text-right">
                         <div>
                           <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground flex items-center justify-end gap-1 mb-1">
-                            <ShoppingBag className="h-3 w-3" /> Pedidos
+                            <ShoppingBag className="h-3 w-3" /> {tx("Pedidos")}
                           </p>
                           <p className="font-medium tabular-nums">{formatNumber(seller.totalOrders)}</p>
                         </div>
                         <div>
                           <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground flex items-center justify-end gap-1 mb-1">
-                            <DollarSign className="h-3 w-3" /> Ticket médio
+                            <DollarSign className="h-3 w-3" /> {tx("Ticket médio")}
                           </p>
                           <p className="font-medium tabular-nums">{formatCurrency(seller.avgTicket)}</p>
                         </div>
                         <div className="w-32">
-                          <p className="font-mono uppercase tracking-wider text-[10px] text-primary mb-1">Faturamento</p>
+                          <p className="font-mono uppercase tracking-wider text-[10px] text-primary mb-1">{tx("Faturamento")}</p>
                           <p className={`text-xl font-bold tabular-nums ${
                             index === 0
                               ? "bg-gradient-to-br from-foreground via-foreground to-primary bg-clip-text text-transparent"

@@ -1,5 +1,5 @@
-import { Router, type IRouter, type Request } from "express";
-import { eq } from "drizzle-orm";
+import { Router, type IRouter, type Request, type Response } from "express";
+import { eq, sql } from "drizzle-orm";
 import { db, usersTable, clientsTable, clientUserAccessesTable } from "@workspace/db";
 import {
   LoginBody,
@@ -16,11 +16,24 @@ import {
   issueRefreshToken,
   rotateRefreshToken,
   revokeRefreshToken,
+  REFRESH_TOKEN_TTL_SECONDS,
   type SessionContext,
 } from "../lib/auth";
+import { clearSessionCookieHeaders, parseCookies, pickRefreshToken, REFRESH_COOKIE, sessionCookieHeaders } from "../lib/session-cookie";
 import { authenticate } from "../middlewares/auth";
 
 const router: IRouter = Router();
+
+// Cookie "Secure" em HTTPS (produção); em http local (desenvolvimento/teste) o navegador descartaria um cookie Secure.
+function cookiesAreSecure(req: Request): boolean {
+  return req.secure || process.env.NODE_ENV === "production";
+}
+
+function setSessionCookies(req: Request, res: Response, refreshToken: string): void {
+  res.setHeader("Set-Cookie", sessionCookieHeaders({ refreshToken, maxAgeSeconds: REFRESH_TOKEN_TTL_SECONDS, secure: cookiesAreSecure(req) }));
+  // Resposta com token novo não pode ficar em cache de navegador nem de proxy.
+  res.setHeader("Cache-Control", "no-store");
+}
 
 function sessionContextFrom(req: Request): SessionContext {
   return {
@@ -34,17 +47,32 @@ async function resolveClientIdForUser(
   role: "ADMIN" | "CLIENT",
 ): Promise<string | null> {
   if (role !== "CLIENT") return null;
+  // Marca ativa primeiro (false < true na ordenacao): quem tem acesso a varias marcas nao perde a entrada porque uma foi arquivada.
+  const archivedLast = sql`(${clientsTable.archivedAt} IS NOT NULL)`;
   const [access] = await db
     .select({ id: clientUserAccessesTable.clientId })
     .from(clientUserAccessesTable)
-    .where(eq(clientUserAccessesTable.userId, userId));
+    .innerJoin(clientsTable, eq(clientsTable.id, clientUserAccessesTable.clientId))
+    .where(eq(clientUserAccessesTable.userId, userId))
+    .orderBy(archivedLast);
   if (access?.id) return access.id;
 
   const [client] = await db
     .select({ id: clientsTable.id })
     .from(clientsTable)
-    .where(eq(clientsTable.userId, userId));
+    .where(eq(clientsTable.userId, userId))
+    .orderBy(archivedLast);
   return client?.id ?? null;
+}
+
+// Usuario CLIENT cujo cliente foi arquivado perde o acesso (admin nao e afetado). O acesso volta se o cliente for restaurado.
+async function isClientArchived(clientId: string | null): Promise<boolean> {
+  if (!clientId) return false;
+  const [client] = await db
+    .select({ archivedAt: clientsTable.archivedAt })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  return Boolean(client?.archivedAt);
 }
 
 router.post("/auth/login", async (req, res): Promise<void> => {
@@ -86,6 +114,15 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   }
 
   const clientId = await resolveClientIdForUser(user.id, user.role);
+  if (await isClientArchived(clientId)) {
+    res.status(403).json({
+      error: true,
+      code: "CLIENT_ARCHIVED",
+      message: "Este acesso foi desativado. Fale com a equipe da Agência Up.",
+      status: 403,
+    });
+    return;
+  }
 
   const accessToken = signAccessToken({
     sub: user.id,
@@ -94,6 +131,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     clientId,
   });
   const refreshToken = await issueRefreshToken(user.id, sessionContextFrom(req));
+  setSessionCookies(req, res, refreshToken);
 
   res.json(
     LoginResponse.parse({
@@ -122,31 +160,36 @@ router.post("/auth/logout", async (req, res): Promise<void> => {
     });
     return;
   }
-  const refreshToken = parsed.data.refreshToken;
-  if (refreshToken && refreshToken.length > 0) {
+  // Revoga o refresh token do corpo (tela) E o do cookie (sessão restaurada por cookie), se forem diferentes; depois apaga os cookies.
+  const cookieToken = parseCookies(req.get("cookie"))[REFRESH_COOKIE];
+  for (const token of new Set([parsed.data.refreshToken, cookieToken])) {
+    if (!token || token.length === 0) continue;
     try {
-      await revokeRefreshToken(refreshToken);
+      await revokeRefreshToken(token);
     } catch {
       /* best-effort */
     }
   }
+  res.setHeader("Set-Cookie", clearSessionCookieHeaders({ secure: cookiesAreSecure(req) }));
   res.json(LogoutResponse.parse({ message: "Logged out successfully" }));
 });
 
 router.post("/auth/refresh", async (req, res): Promise<void> => {
-  const parsed = RefreshTokenBody.safeParse(req.body);
-  if (!parsed.success) {
+  // O refresh token vem do corpo (tela e clientes antigos) ou, sem corpo, do cookie de sessão (tela que perdeu o localStorage).
+  const picked = pickRefreshToken({ body: req.body, cookieHeader: req.get("cookie") });
+  if (!picked) {
+    const parsed = RefreshTokenBody.safeParse(req.body);
     res.status(400).json({
       error: true,
       code: "VALIDATION_ERROR",
-      message: parsed.error.message,
+      message: parsed.success ? "refreshToken is required (body or session cookie)" : parsed.error.message,
       status: 400,
     });
     return;
   }
   try {
     const { userId, refreshToken } = await rotateRefreshToken(
-      parsed.data.refreshToken,
+      picked.token,
       sessionContextFrom(req),
     );
     const [user] = await db
@@ -163,12 +206,23 @@ router.post("/auth/refresh", async (req, res): Promise<void> => {
       return;
     }
     const clientId = await resolveClientIdForUser(user.id, user.role);
+    if (await isClientArchived(clientId)) {
+      res.status(401).json({
+        error: true,
+        code: "CLIENT_ARCHIVED",
+        message: "Este acesso foi desativado.",
+        status: 401,
+      });
+      return;
+    }
     const accessToken = signAccessToken({
       sub: user.id,
       email: user.email,
       role: user.role,
       clientId,
     });
+    // O token girou: o cookie leva o novo (senão o cookie ficaria com um token já morto).
+    setSessionCookies(req, res, refreshToken);
     res.json(RefreshTokenResponse.parse({ accessToken, refreshToken }));
   } catch {
     res.status(401).json({

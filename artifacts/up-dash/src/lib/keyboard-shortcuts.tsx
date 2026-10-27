@@ -1,3 +1,4 @@
+import { useI18n } from "@/lib/i18n";
 import {
   createContext,
   ReactNode,
@@ -139,6 +140,7 @@ export function useKeyboardShortcuts(): ShortcutsContextValue {
 }
 
 function ShortcutsDialog() {
+  const { tx } = useI18n();
   const ctx = useContext(ShortcutsContext);
   const setOpen = useCallback((open: boolean) => ctx?.setOpen(open), [ctx]);
   if (!ctx) return null;
@@ -146,27 +148,27 @@ function ShortcutsDialog() {
     <Dialog open={ctx.open} onOpenChange={setOpen}>
       <DialogContent className="max-w-md" data-testid="keyboard-shortcuts-dialog">
         <DialogHeader>
-          <DialogTitle>Atalhos de teclado</DialogTitle>
-          <DialogDescription>Navegue pelo UP Dash com o teclado.</DialogDescription>
+          <DialogTitle>{tx("Atalhos de teclado")}</DialogTitle>
+          <DialogDescription>{tx("Navegue pelo UP Dash com o teclado.")}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-5 mt-2">
           <div>
-            <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Navegar</p>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">{tx("Navegar")}</p>
             <ul className="space-y-1.5">
               {NAV_SHORTCUTS.map((s) => (
                 <li key={s.combo} className="flex items-center justify-between text-sm">
-                  <span className="text-foreground">{s.description}</span>
+                  <span className="text-foreground">{tx(s.description)}</span>
                   <ShortcutKey combo={s.combo} />
                 </li>
               ))}
             </ul>
           </div>
           <div>
-            <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Ações</p>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">{tx("Ações")}</p>
             <ul className="space-y-1.5">
               {ACTION_SHORTCUTS.map((s) => (
                 <li key={s.combo} className="flex items-center justify-between text-sm">
-                  <span className="text-foreground">{s.description}</span>
+                  <span className="text-foreground">{tx(s.description)}</span>
                   <ShortcutKey combo={s.combo} />
                 </li>
               ))}

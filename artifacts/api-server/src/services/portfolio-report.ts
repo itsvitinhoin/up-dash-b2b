@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import {
   clientsTable,
   creativesTable,
@@ -755,6 +755,7 @@ export async function buildPortfolioReport(params: PortfolioReportParams): Promi
       upZeroApiKey: clientsTable.upZeroApiKey,
     })
     .from(clientsTable)
+    .where(isNull(clientsTable.archivedAt))
     .orderBy(clientsTable.dashboardType, clientsTable.name);
 
   const excluded = allClients.filter((client) => isInternalClient(client.name));

@@ -106,6 +106,7 @@ export * from "./journeyEventNode";
 export * from "./journeyKpis";
 export * from "./journeyResponse";
 export * from "./journeyUtmSource";
+export * from "./listClientsArchived";
 export * from "./listClientsDashboardType";
 export * from "./listClientsParams";
 export * from "./listNotificationsParams";
@@ -205,3 +206,5 @@ export * from "./utmKpis";
 export * from "./utmResponse";
 export * from "./utmRow";
 export * from "./utmSubRow";
+
+export * from "./metaMarketingSummary";

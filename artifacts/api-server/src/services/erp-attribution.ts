@@ -415,6 +415,8 @@ export async function computeErpPaidAttribution(params: {
           externalUserId: customer.externalUserId,
           from: touchpointLookbackFrom,
           to: touchpointLookbackTo,
+          // Só importa touchpoint até o último pedido do cliente no relatório.
+          needUntil: orders.reduce((latest, o) => (o.dataCriado > latest ? o.dataCriado : latest), orders[0]?.dataCriado ?? touchpointLookbackTo),
         });
         results[i] = { upzeroCustomerId, customer, orders, touchpoints, error: null };
       } catch (err) {

@@ -1,3 +1,4 @@
+import { MediaReadError } from "./services/meta-ads";
 import express, { type Express } from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -114,6 +115,11 @@ app.use(
       "[app] unhandled error",
     );
     if (res.headersSent) return;
+    if (err instanceof MediaReadError) {
+      res.setHeader("Cache-Control", "private, no-store");
+      res.status(err.status).json({ error: true, code: err.code, message: err.message, status: err.status });
+      return;
+    }
     res.status(500).json({
       error: true,
       code: "INTERNAL_ERROR",

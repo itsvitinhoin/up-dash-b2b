@@ -1,4 +1,5 @@
-import { displayLabel } from "@/lib/display-label";
+import { useI18n } from "@/lib/i18n";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -222,6 +223,8 @@ function normalizePayloadVariableOption(
 }
 
 export default function WhatsappTemplatesPage() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
   const clientId = user?.role === "ADMIN" ? selectedClientId : user?.clientId;
@@ -728,7 +731,7 @@ export default function WhatsappTemplatesPage() {
                     : "border-border";
 
               return (
-                <Button variant="outline" size="sm"
+                <button
                   key={phone.id}
                   type="button"
                   className={`group min-h-44 rounded-md border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-70 ${healthBorder} ${
@@ -761,9 +764,9 @@ export default function WhatsappTemplatesPage() {
                   </div>
 
                   <div className="mt-4 grid grid-cols-3 gap-3 border-y border-border/70 py-3">
-                    <GlassMetricCard  label="Aprovados" value={<>{summary.approved}</>}  />
-                    <GlassMetricCard  label="Pendentes" value={<>{summary.pending}</>}  />
-                    <GlassMetricCard  label="Recusados" value={<>{summary.rejected}</>}  />
+                    <GlassMetricCard  label={tx("Aprovados")} value={<>{summary.approved}</>} hideComparison />
+                    <GlassMetricCard  label={tx("Pendentes")} value={<>{summary.pending}</>} hideComparison />
+                    <GlassMetricCard  label={tx("Recusados")} value={<>{summary.rejected}</>} hideComparison />
                   </div>
 
                   <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
@@ -779,7 +782,7 @@ export default function WhatsappTemplatesPage() {
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     Último sync: {formatSyncDate(summary.lastSyncedAt)}
                   </p>
-                </Button>
+                </button>
               );
             })}
           </div>
@@ -819,9 +822,9 @@ export default function WhatsappTemplatesPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={ALL}>Todos os status</SelectItem>
-                      <SelectItem value="APPROVED">Aprovados</SelectItem>
-                      <SelectItem value="PENDING">Pendentes</SelectItem>
-                      <SelectItem value="REJECTED">Recusados</SelectItem>
+                      <SelectItem value="APPROVED">{tx("Aprovados")}</SelectItem>
+                      <SelectItem value="PENDING">{tx("Pendentes")}</SelectItem>
+                      <SelectItem value="REJECTED">{tx("Recusados")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <Button
@@ -971,8 +974,8 @@ export default function WhatsappTemplatesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="UTILITY">Utility</SelectItem>
-                  <SelectItem value="MARKETING">Anúncios</SelectItem>
-                  <SelectItem value="AUTHENTICATION">Autenticação</SelectItem>
+                  <SelectItem value="MARKETING">{tx("Anúncios")}</SelectItem>
+                  <SelectItem value="AUTHENTICATION">{tx("Autenticação")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1288,7 +1291,7 @@ export default function WhatsappTemplatesPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Modelo</TableHead>
+                <TableHead>{tx("Modelo")}</TableHead>
                 <TableHead>Categoria</TableHead>
                 <TableHead>Idioma</TableHead>
                 <TableHead>Status</TableHead>

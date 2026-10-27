@@ -46,6 +46,74 @@ async function performRefresh(refresh: string): Promise<{
   }
 }
 
+// Sessão por cookie (ver api-server/src/lib/session-cookie.ts): o servidor guarda o refresh token num cookie HttpOnly e deixa um marcador
+// legível ("updash_has_session=1"). Se a tela abre SEM localStorage (navegador que só guarda cookies, ex.: agentes de IA em navegador
+// na nuvem) mas COM o marcador, restaura a sessão pelo cookie em vez de mandar para o login.
+const SESSION_MARKER_COOKIE = "updash_has_session";
+
+function hasSessionMarker(): boolean {
+  return document.cookie.split(";").some((part) => part.trim() === `${SESSION_MARKER_COOKIE}=1`);
+}
+
+function clearSessionMarker(): void {
+  document.cookie = `${SESSION_MARKER_COOKIE}=; Max-Age=0; Path=/; SameSite=Lax`;
+}
+
+// O refresh token é de uso único: uma restauração por vez (o React em desenvolvimento roda o efeito duas vezes).
+let _restoreInFlight: Promise<boolean> | null = null;
+
+function restoreSessionFromCookie(): Promise<boolean> {
+  if (_restoreInFlight) return _restoreInFlight;
+  _restoreInFlight = (async () => {
+    try {
+      const res = await fetch("/api/auth/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: "{}",
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        clearSessionMarker();
+        return false;
+      }
+      const data = (await res.json()) as { accessToken?: string; refreshToken?: string };
+      if (typeof data.accessToken !== "string" || typeof data.refreshToken !== "string") {
+        clearSessionMarker();
+        return false;
+      }
+      const headers = { authorization: `Bearer ${data.accessToken}`, accept: "application/json" };
+      const meRes = await fetch("/api/auth/me", { headers });
+      if (!meRes.ok) return false;
+      const me = (await meRes.json()) as AuthUser;
+      if (me.role === "CLIENT" && me.clientId) {
+        // Usuário de cliente: o painel (B2B/B2C) vem do cliente, como no login normal. Se falhar, vale o padrão.
+        try {
+          const clientRes = await fetch(`/api/clients/${me.clientId}`, { headers });
+          if (clientRes.ok) {
+            const client = (await clientRes.json()) as { dashboardType?: string };
+            if (client.dashboardType === "B2B" || client.dashboardType === "B2C") {
+              localStorage.setItem(DASHBOARD_MODE_KEY, client.dashboardType);
+            }
+          }
+        } catch {
+          /* usa o painel padrão */
+        }
+      }
+      localStorage.setItem(TOKEN_KEY, data.accessToken);
+      localStorage.setItem(REFRESH_KEY, data.refreshToken);
+      localStorage.setItem(USER_KEY, JSON.stringify(me));
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setTimeout(() => {
+        _restoreInFlight = null;
+      }, 0);
+    }
+  })();
+  return _restoreInFlight;
+}
+
 // One-time initialisation of the API client interceptors.
 // Using a module-scoped flag avoids repeated calls on HMR re-renders while
 // keeping all side-effects inside the component file (no module-top-level
@@ -79,6 +147,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // Vira true quando a tentativa de restaurar a sessão pelo cookie termina (o efeito de inicialização roda de novo e relê o localStorage).
+  const [sessionRestoreDone, setSessionRestoreDone] = useState(false);
   const [, setLocation] = useLocation();
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedDashboardMode, setSelectedDashboardModeState] = useState<DashboardMode>("B2B");
@@ -108,6 +178,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSelectedClientId(LOCAL_UI_PREVIEW_CLIENT_ID);
       setSelectedDashboardModeState("B2B");
       setIsLoading(false);
+      return;
+    }
+
+    // Sem login no localStorage mas com o marcador de sessão: tenta restaurar pelo cookie e só então segue (o efeito roda de novo).
+    const alreadyStored = Boolean(localStorage.getItem(TOKEN_KEY) && localStorage.getItem(USER_KEY));
+    if (!alreadyStored && !sessionRestoreDone && hasSessionMarker()) {
+      void restoreSessionFromCookie().finally(() => setSessionRestoreDone(true));
       return;
     }
 
@@ -143,7 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     setIsLoading(false);
-  }, []);
+  }, [sessionRestoreDone]);
 
   useEffect(() => {
     const syncFromUrl = () => {

@@ -1,3 +1,4 @@
+import { useI18n } from "@/lib/i18n";
 import { format, parseISO } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowUpRight, Inbox, X, ChevronRight } from "lucide-react";
@@ -30,6 +31,7 @@ const STATUS_TINT: Record<string, string> = {
 };
 
 export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
+  const { tx } = useI18n();
   const { user, selectedClientId } = useAuth();
   const reduced = useReducedMotion();
   const [, navigate] = useLocation();
@@ -76,7 +78,7 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
       >
         <SheetHeader>
           <SheetTitle>
-            Pedidos em {date ? format(parseISO(date), "EEEE, MMM d, yyyy") : "—"}
+            {tx("Pedidos em")} {date ? format(parseISO(date), "EEEE, MMM d, yyyy") : "—"}
           </SheetTitle>
           <SheetDescription>
             Pedidos com maior faturamento no dia selecionado. Clique em uma linha para ver os detalhes.
@@ -97,8 +99,8 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3 mt-6">
-              <Stat label="Pedidos" value={data.totalOrders.toLocaleString()} />
-              <Stat label="Faturamento" value={formatCurrency(data.totalRevenue)} />
+              <Stat label={tx("Pedidos")} value={data.totalOrders.toLocaleString()} />
+              <Stat label={tx("Faturamento")} value={formatCurrency(data.totalRevenue)} />
             </div>
 
             <div className="mt-5 flex items-center justify-between">
@@ -132,7 +134,7 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
                         <button
                           onClick={() => { onClose(); navigate(`/customers/${row.customerId}`); }}
                           className="text-sm font-medium truncate hover:text-primary transition-colors flex items-center gap-1 group"
-                          title="Ver perfil do cliente"
+                          title={tx("Ver perfil do cliente")}
                         >
                           {row.customerName ?? "Unknown customer"}
                           <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -172,7 +174,7 @@ export function DrillDownPanel({ date, onClose }: DrillDownPanelProps) {
           size="sm"
           className="absolute top-4 right-12 h-7 w-7 p-0"
           onClick={onClose}
-          aria-label="Fechar detalhamento"
+          aria-label={tx("Fechar detalhamento")}
         >
           <X className="h-4 w-4" />
         </Button>

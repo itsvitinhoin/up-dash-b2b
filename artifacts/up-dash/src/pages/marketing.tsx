@@ -1,12 +1,13 @@
 import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { getGetMarketingUrl } from "@workspace/api-client-react";
-import { displayLabel } from "@/lib/display-label";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState, useEffect } from "react";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import { useI18n } from "@/lib/i18n";
 import { queryOpts } from "@/lib/query-opts";
 import {
   useGetMarketing,
@@ -276,6 +277,7 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
 
 // ── Status badge ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
+  const displayLabel = useDisplayLabel();
   const isActive = status === "ACTIVE";
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium font-mono uppercase tracking-wide ${isActive ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>
@@ -386,7 +388,7 @@ function TopCreativeCard({
       </div>
       <div className="up-metric-grid up-creative-metrics">
         <GlassMetricCard label="CTR" value={creative.ctr} format={formatPercentage} previousValue={previous?.ctr} source="Meta Ads · criativo" />
-        <GlassMetricCard label={costLabel} value={costLabel === "Custo/Compra" ? creative.cpa : creative.cpl} format={formatCurrency} previousValue={costLabel === "Custo/Compra" ? previous?.cpa : previous?.cpl} source="Meta Ads · criativo" />
+        <GlassMetricCard lowerIsBetter label={costLabel} value={costLabel === "Custo/Compra" ? creative.cpa : creative.cpl} format={formatCurrency} previousValue={costLabel === "Custo/Compra" ? previous?.cpa : previous?.cpl} source="Meta Ads · criativo" />
         <GlassMetricCard label={isB2C ? "Compras" : "Leads"} value={isB2C ? creative.purchases : creative.leads} format={formatNumber} previousValue={isB2C ? previous?.purchases : previous?.leads} source="Meta Ads · criativo" />
         <GlassMetricCard label="Investimento" value={creative.spend} format={formatCurrency} previousValue={previous?.spend} source="Meta Ads · criativo" />
       </div>
@@ -409,7 +411,8 @@ function TopCreativesColumn({
   costLabel?: string;
   isB2C?: boolean;
 }) {
-  const metricLabel = metric === "ctr" ? "CTR" : metric === "cpl" ? "CPL" : metric === "cpa" ? "Custo/Compra" : metric === "purchases" ? "Compras" : "Leads";
+  const { tx } = useI18n();
+  const metricLabel = metric === "ctr" ? "CTR" : metric === "cpl" ? "CPL" : metric === "cpa" ? "Custo/Compra" : metric === "purchases" ? tx("Compras") : "Leads";
   const metricValue = (creative: MetaTopCreative) =>
     metric === "ctr"
       ? formatPercentage(creative.ctr)
@@ -429,7 +432,7 @@ function TopCreativesColumn({
       </h3>
       <div className="space-y-3">
         {items.length === 0 ? (
-          <EmptyState icon={ImageIcon} title="Nenhum criativo" description="Sem dados de criativos da Meta neste período." className="h-36" />
+          <EmptyState icon={ImageIcon} title={tx("Nenhum criativo")} description={tx("Sem dados de criativos da Meta neste período.")} className="h-36" />
         ) : (
           items.slice(0, 3).map((creative) => (
             <TopCreativeCard
@@ -460,6 +463,7 @@ function InsightBlock({
   isRegenerating: boolean;
   onRegenerate: () => void;
 }) {
+  const { tx } = useI18n();
   if (!isLoading && !insight) return null;
   return (
     <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
@@ -470,7 +474,7 @@ function InsightBlock({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-mono uppercase tracking-wider text-violet-400">Análise de anúncios com IA</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider text-violet-400">{tx("Análise de anúncios com IA")}</span>
               <Button
                 variant="ghost"
                 size="sm"
@@ -480,7 +484,7 @@ function InsightBlock({
                 data-testid="insight-regenerate"
               >
                 <RefreshCw className={`h-3 w-3 mr-1.5 ${isRegenerating ? "animate-spin" : ""}`} />
-                Atualizar
+                {tx("Atualizar")}
               </Button>
             </div>
             {isLoading ? (
@@ -517,6 +521,7 @@ const AXIS_TICK = { fontSize: 10, fill: "hsl(var(--muted-foreground))" };
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function MarketingPage() {
+  const { tx } = useI18n();
   const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -541,9 +546,10 @@ export default function MarketingPage() {
   const dateTo = dateParams.dateTo;
   useEffect(() => { setCreativesPage(1); }, [clientId, dateFrom, dateTo]);
 
-  const insightParams = { clientId, ...dateParams, screen: "marketing" as const };
+  const { language: insightLanguage } = useI18n();
+  const insightParams = { clientId, ...dateParams, screen: "marketing" as const, language: insightLanguage };
 
-  const { data, isLoading, isError, refetch } = useGetMarketing(
+  const { data, isLoading, isError, error, refetch } = useGetMarketing(
     {
       clientId,
       ...dateParams,
@@ -569,15 +575,15 @@ export default function MarketingPage() {
 
   // ── KPI changes ──────────────────────────────────────────────────────────
   const previousMarketing = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetMarketingUrl({ clientId, ...dateParams, creativesPage, creativesPageSize: CREATIVES_PAGE_SIZE, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, creative: filters.creative || undefined }), enabled);
-  const previousCreatives = [ ...(previousMarketing.data?.creatives ?? []).map(c => ({ ...c, purchases: c.approvedLeads })), ...(previousMarketing.data?.topCreatives.ctr ?? []), ...(previousMarketing.data?.topCreatives.cpl ?? []), ...(previousMarketing.data?.topCreatives.leads ?? []) ];
-  const spendChange = useMemo(() => data ? computeChange(data.kpis.totalSpend, data.prevKpis.totalSpend) : null, [data]);
-  const revenueChange = useMemo(() => data ? computeChange(data.kpis.attributedRevenue, data.prevKpis.attributedRevenue) : null, [data]);
-  const roasChange = useMemo(() => data ? computeChange(data.kpis.roas, data.prevKpis.roas) : null, [data]);
-  const approvalRateChange = useMemo(() => data ? computeChange(data.kpis.approvalRate, data.prevKpis.approvalRate) : null, [data]);
-  const leadsChange = useMemo(() => data ? computeChange(data.kpis.totalLeads, data.prevKpis.totalLeads) : null, [data]);
-  const approvedLeadsChange = useMemo(() => data ? computeChange(data.kpis.approvedLeads, data.prevKpis.approvedLeads) : null, [data]);
-  const cplChange = useMemo(() => data ? computeChange(data.kpis.cpl, data.prevKpis.cpl) : null, [data]);
-  const cpaChange = useMemo(() => data ? computeChange(data.kpis.cpa, data.prevKpis.cpa) : null, [data]);
+  const previousCreatives = [ ...(previousMarketing.data?.creatives ?? []).map(c => ({...c, purchases: c.approvedLeads})), ...(previousMarketing.data?.topCreatives.ctr ?? []), ...(previousMarketing.data?.topCreatives.cpl ?? []), ...(previousMarketing.data?.topCreatives.leads ?? []) ];
+  const spendChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.totalSpend, data.prevKpis.totalSpend) : null, [data]);
+  const revenueChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.attributedRevenue, data.prevKpis.attributedRevenue) : null, [data]);
+  const roasChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.roas, data.prevKpis.roas) : null, [data]);
+  const approvalRateChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.approvalRate, data.prevKpis.approvalRate) : null, [data]);
+  const leadsChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.totalLeads, data.prevKpis.totalLeads) : null, [data]);
+  const approvedLeadsChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.approvedLeads, data.prevKpis.approvedLeads) : null, [data]);
+  const cplChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.cpl, data.prevKpis.cpl) : null, [data]);
+  const cpaChange = useMemo(() => data?.prevKpis ? computeChange(data.kpis.cpa, data.prevKpis.cpa) : null, [data]);
 
   // Prefer the API rankings across all ads; retain the campaign fallback for
   // integrations that do not expose Meta creative media.
@@ -679,30 +685,30 @@ export default function MarketingPage() {
       `marketing-campaigns-${format(dateRange.from, "yyyyMMdd")}-${format(dateRange.to, "yyyyMMdd")}.csv`,
       sortedCreatives,
       isB2C ? [
-        { header: "Nome", accessor: (r) => r.name },
-        { header: "Plataforma", accessor: (r) => r.platform },
+        { header: tx("Nome"), accessor: (r) => r.name },
+        { header: tx("Plataforma"), accessor: (r) => r.platform },
         { header: "Status", accessor: (r) => r.status },
         { header: "Investimento", accessor: (r) => r.spend },
-        { header: "Compras", accessor: (r) => r.approvedLeads },
+        { header: tx("Compras"), accessor: (r) => r.approvedLeads },
         { header: "Custo por Compra", accessor: (r) => r.cpa.toFixed(2) },
-        { header: "Faturamento atribuído", accessor: (r) => r.attributedRevenue.toFixed(2) },
+        { header: tx("Faturamento atribuído"), accessor: (r) => r.attributedRevenue.toFixed(2) },
         { header: "ROAS", accessor: (r) => r.roas.toFixed(2) },
-        { header: "Cliques", accessor: (r) => r.clicks },
-        { header: "Impressões", accessor: (r) => r.impressions },
+        { header: tx("Cliques"), accessor: (r) => r.clicks },
+        { header: tx("Impressões"), accessor: (r) => r.impressions },
         { header: "CTR %", accessor: (r) => r.ctr.toFixed(2) },
       ] : [
-        { header: "Nome", accessor: (r) => r.name },
-        { header: "Plataforma", accessor: (r) => r.platform },
+        { header: tx("Nome"), accessor: (r) => r.name },
+        { header: tx("Plataforma"), accessor: (r) => r.platform },
         { header: "Status", accessor: (r) => r.status },
         { header: "Investimento", accessor: (r) => r.spend },
         { header: "Leads", accessor: (r) => r.leads },
-        { header: "Leads aprovados", accessor: (r) => r.approvedLeads },
+        { header: tx("Leads aprovados"), accessor: (r) => r.approvedLeads },
         { header: "CPL", accessor: (r) => r.cpl.toFixed(2) },
         { header: "CPA", accessor: (r) => r.cpa.toFixed(2) },
-        { header: "Faturamento atribuído", accessor: (r) => r.attributedRevenue.toFixed(2) },
+        { header: tx("Faturamento atribuído"), accessor: (r) => r.attributedRevenue.toFixed(2) },
         { header: "ROAS", accessor: (r) => r.roas.toFixed(2) },
-        { header: "Cliques", accessor: (r) => r.clicks },
-        { header: "Impressões", accessor: (r) => r.impressions },
+        { header: tx("Cliques"), accessor: (r) => r.clicks },
+        { header: tx("Impressões"), accessor: (r) => r.impressions },
         { header: "CTR %", accessor: (r) => r.ctr.toFixed(2) },
       ],
     );
@@ -727,11 +733,13 @@ export default function MarketingPage() {
     return (
       <Alert variant="destructive" data-testid="page-marketing">
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Erro</AlertTitle>
+        <AlertTitle>{tx("Erro")}</AlertTitle>
         <AlertDescription className="flex items-center justify-between">
-          Não foi possível carregar os anúncios.
+          {(error as { data?: { code?: string } })?.data?.code === "MEDIA_UNAVAILABLE"
+            ? tx("Investimento indisponível. Não foi possível ler a conta Meta; isso não significa gasto zero.")
+            : tx("Não foi possível carregar os anúncios.")}
           <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
+            <RefreshCw className="mr-2 h-4 w-4" /> {tx("Tentar novamente")}
           </Button>
         </AlertDescription>
       </Alert>
@@ -750,12 +758,12 @@ export default function MarketingPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-violet-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Canais pagos · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
+            {tx("Canais pagos")} · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
           </span>
         </div>
         <Button variant="outline" size="sm" onClick={handleExport} disabled={!data} data-testid="marketing-export-csv">
           <Download className="h-4 w-4 mr-1.5" />
-          Exportar CSV
+          {tx("Exportar CSV")}
         </Button>
       </motion.div>
 
@@ -767,14 +775,14 @@ export default function MarketingPage() {
               <Link2 className="h-7 w-7 text-violet-400" />
             </div>
             <div>
-              <h3 className="text-base font-semibold mb-1">Sem dados de canais pagos</h3>
+              <h3 className="text-base font-semibold mb-1">{tx("Sem dados de canais pagos")}</h3>
               <p className="text-sm text-muted-foreground max-w-sm">
-                Conecte suas contas de anúncios (Meta, Google, TikTok) para acompanhar investimento, ROAS e desempenho das campanhas neste período.
+                {tx("Conecte suas contas de anúncios (Meta, Google, TikTok) para acompanhar investimento, ROAS e desempenho das campanhas neste período.")}
               </p>
             </div>
             <Button variant="outline" size="sm" className="gap-2">
               <Link2 className="h-4 w-4" />
-              Conectar contas de anúncios
+              {tx("Conectar contas de anúncios")}
             </Button>
           </Card>
         </motion.div>
@@ -811,7 +819,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-revenue" previousValue={data?.prevKpis.attributedRevenue}
+            testId="kpi-revenue" previousValue={data?.prevKpis?.attributedRevenue}
             icon={DollarSign}
             iconClass="bg-teal-500/15 text-teal-400"
             label={data?.revenueSource === "META" ? "Faturamento atribuído Meta" : "Faturamento"}
@@ -823,7 +831,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-roas" previousValue={data?.prevKpis.roas}
+            testId="kpi-roas" previousValue={data?.prevKpis?.roas}
             icon={TrendingUp}
             iconClass="bg-emerald-500/15 text-emerald-400"
             label={data?.revenueSource === "META" ? "ROAS Meta" : "ROA"}
@@ -836,7 +844,7 @@ export default function MarketingPage() {
           />
           {!isB2C && <>
           <MktKpiCard
-            testId="kpi-approval-rate" previousValue={data?.prevKpis.approvalRate}
+            testId="kpi-approval-rate" previousValue={data?.prevKpis?.approvalRate}
             icon={CheckCircle2}
             iconClass="bg-indigo-500/15 text-indigo-400"
             label="Taxa de aprovação"
@@ -848,7 +856,7 @@ export default function MarketingPage() {
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-leads" previousValue={data?.prevKpis.totalLeads}
+            testId="kpi-leads" previousValue={data?.prevKpis?.totalLeads}
             icon={Users}
             iconClass="bg-sky-500/15 text-sky-400"
             label="Total de leads"
@@ -861,19 +869,19 @@ export default function MarketingPage() {
           />
           </>}
           <MktKpiCard
-            testId="kpi-approved-leads" previousValue={isB2C ? data?.prevKpis.purchases ?? data?.prevKpis.approvedLeads : data?.prevKpis.approvedLeads}
+            testId="kpi-approved-leads" previousValue={isB2C ? data?.prevKpis?.purchases ?? data?.prevKpis?.approvedLeads : data?.prevKpis?.approvedLeads}
             icon={CheckCircle2}
             iconClass="bg-green-500/15 text-green-400"
-            label={isB2C ? "Compras" : "Leads aprovados"}
+            label={isB2C ? tx("Compras") : tx("Leads aprovados")}
             value={isB2C ? data?.kpis.purchases ?? data?.kpis.approvedLeads ?? 0 : data?.kpis.approvedLeads ?? 0}
             format={formatNumber}
-            change={isB2C && data?.kpis.purchases != null ? computeChange(data.kpis.purchases, data.prevKpis.purchases ?? 0) : approvedLeadsChange}
+            change={isB2C && data?.kpis.purchases != null ? data.prevKpis?.purchases != null ? computeChange(data.kpis.purchases, data.prevKpis.purchases) : null : approvedLeadsChange}
             sparkValues={sparkLeads}
             sparkColor="#87adff"
             isLoading={isLoading}
           />
           <MktKpiCard
-            testId="kpi-cpl" previousValue={isB2C ? data?.prevKpis.cpa : data?.prevKpis.cpl}
+            testId="kpi-cpl" previousValue={isB2C ? data?.prevKpis?.cpa : data?.prevKpis?.cpl}
             icon={Target}
             iconClass="bg-orange-500/15 text-orange-400"
             label={isB2C ? "Custo por Compra" : "CPL"}
@@ -887,7 +895,7 @@ export default function MarketingPage() {
           />
           {!isB2C && (
             <MktKpiCard
-              testId="kpi-cpa" previousValue={data?.prevKpis.cpa}
+              testId="kpi-cpa" previousValue={data?.prevKpis?.cpa}
               icon={Sparkles}
               iconClass="bg-amber-500/15 text-amber-400"
               label="CPA"
@@ -906,7 +914,7 @@ export default function MarketingPage() {
       {!hasNoData && (
         <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">Principais criativos da Meta</h2>
+            <h2 className="text-sm font-semibold text-foreground">{tx("Principais criativos da Meta")}</h2>
             <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
               {isB2C ? "CTR · Custo por Compra · Compras" : "CTR · CPL · Leads"}
             </span>
@@ -922,9 +930,9 @@ export default function MarketingPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 2xl:grid-cols-3 gap-4">
-              <TopCreativesColumn isB2C={isB2C} previousItems={previousCreatives} title="Melhor CTR" items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn isB2C={isB2C} previousItems={previousCreatives} title={isB2C ? "Menor custo por compra" : "Menor CPL"} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
-              <TopCreativesColumn isB2C={isB2C} previousItems={previousCreatives} title={isB2C ? "Mais compras" : "Mais leads"} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn isB2C={isB2C} previousItems={previousCreatives} title={tx("Melhor CTR")} items={topCreatives.ctr} metric="ctr" costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn isB2C={isB2C} previousItems={previousCreatives} title={isB2C ? tx("Menor custo por compra") : tx("Menor CPL")} items={topCreatives.cpl} metric={isB2C ? "cpa" : "cpl"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
+              <TopCreativesColumn isB2C={isB2C} previousItems={previousCreatives} title={isB2C ? tx("Mais compras") : tx("Mais leads")} items={topCreatives.leads} metric={isB2C ? "purchases" : "leads"} costLabel={isB2C ? "Custo/Compra" : "CPL"} />
             </div>
           )}
         </motion.div>
@@ -937,12 +945,12 @@ export default function MarketingPage() {
           <Card className="xl:col-span-2 p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
-              {isB2C ? "Investimento e compras" : "Investimento e leads"}
+              {isB2C ? tx("Investimento e compras") : tx("Investimento e leads")}
             </h2>
             {isLoading ? (
               <Skeleton className="h-52 w-full" />
             ) : spendLeadsData.length === 0 ? (
-              <EmptyState icon={BarChart3} title="Sem dados" description="Sem atividade de canais pagos neste período." className="h-52" />
+              <EmptyState icon={BarChart3} title={tx("Sem dados")} description={tx("Sem atividade de canais pagos neste período.")} className="h-52" />
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <ComposedChart data={spendLeadsData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
@@ -954,12 +962,12 @@ export default function MarketingPage() {
                     contentStyle={CHART_TOOLTIP_STYLE}
                     labelFormatter={fmtDateLong}
                     formatter={(value: number, name: string) => [
-                      name === "Investimento" ? formatCurrency(value) : formatNumber(value),
-                      name === "Investimento" ? "Investimento" : isB2C ? "Compras" : "Leads",
+                      name === tx("Investimento") ? formatCurrency(value) : formatNumber(value),
+                      name === tx("Investimento") ? "Investimento" : isB2C ? "Compras" : "Leads",
                     ]}
                   />
-                  <Bar yAxisId="left" dataKey="spend" fill="#5b8dff" opacity={0.8} radius={[2, 2, 0, 0]} name="Investimento" />
-                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#afc4ff" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name={isB2C ? "Compras" : "Leads"} />
+                  <Bar yAxisId="left" dataKey="spend" fill="#5b8dff" opacity={0.8} radius={[2, 2, 0, 0]} name={tx("Investimento")} />
+                  <Line yAxisId="right" type="monotone" dataKey="leads" stroke="#afc4ff" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name={isB2C ? tx("Compras") : "Leads"} />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
@@ -969,12 +977,12 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              Evolução do ROAS
+              {tx("Evolução do ROAS")}
             </h2>
             {isLoading ? (
               <Skeleton className="h-52 w-full" />
             ) : roasData.length === 0 ? (
-              <EmptyState icon={TrendingUp} title="Sem dados" description="Sem dados de ROAS neste período." className="h-52" />
+              <EmptyState icon={TrendingUp} title={tx("Sem dados")} description={tx("Sem dados de ROAS neste período.")} className="h-52" />
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={roasData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
@@ -1008,17 +1016,17 @@ export default function MarketingPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
-                Investimento e faturamento
+                {tx("Investimento e faturamento")}
               </h2>
               <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
-                <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-6 rounded bg-violet-500/60" /> Investimento</span>
-                <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-6 rounded bg-teal-400" /> Faturamento</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-6 rounded bg-violet-500/60" /> {tx("Investimento")}</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-6 rounded bg-teal-400" /> {tx("Faturamento")}</span>
               </div>
             </div>
             {isLoading ? (
               <Skeleton className="h-48 w-full" />
             ) : spendVsRevenueData.length === 0 ? (
-              <EmptyState icon={DollarSign} title="Sem dados" description="Sem atividade de canais pagos neste período." className="h-48" />
+              <EmptyState icon={DollarSign} title={tx("Sem dados")} description={tx("Sem atividade de canais pagos neste período.")} className="h-48" />
             ) : (
               <ResponsiveContainer width="100%" height={192}>
                 <ComposedChart data={spendVsRevenueData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
@@ -1037,8 +1045,8 @@ export default function MarketingPage() {
                     labelFormatter={fmtDateLong}
                     formatter={(v: number, name: string) => [formatCurrency(v), name === "spend" ? "Spend" : "Revenue"]}
                   />
-                  <Bar yAxisId="left" dataKey="spend" fill="url(#spendGrad2)" radius={[3, 3, 0, 0]} maxBarSize={32}  name="Investimento" />
-                  <Line yAxisId="right" type="monotone" dataKey="revenue" stroke="#87adff" strokeWidth={2} dot={false} activeDot={{ r: 4 }}  name="Faturamento" />
+                  <Bar yAxisId="left" dataKey="spend" fill="url(#spendGrad2)" radius={[3, 3, 0, 0]} maxBarSize={32}  name={tx("Investimento")} />
+                  <Line yAxisId="right" type="monotone" dataKey="revenue" stroke="#87adff" strokeWidth={2} dot={false} activeDot={{ r: 4 }}  name={tx("Faturamento")} />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
@@ -1053,12 +1061,12 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
               <Megaphone className="h-4 w-4 text-muted-foreground" />
-              Por plataforma
+              {tx("Por plataforma")}
             </h2>
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
             ) : platformRows.length === 0 ? (
-              <EmptyState icon={Megaphone} title="Nenhuma campanha" description="Nenhuma campanha ativa encontrada para esta marca." />
+              <EmptyState icon={Megaphone} title={tx("Nenhuma campanha")} description={tx("Nenhuma campanha ativa encontrada para esta marca.")} />
             ) : (
               <div className="space-y-5">
                 {platformRows.map((row) => (
@@ -1072,12 +1080,12 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
               <MapPin className="h-4 w-4 text-muted-foreground" />
-              Principais estados por ROAS
+              {tx("Principais estados por ROAS")}
             </h2>
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
             ) : stateRows.length === 0 ? (
-              <EmptyState icon={MapPin} title="Sem dados geográficos" description={isB2C ? "Sem detalhamento geográfico de compras disponível nesta fonte." : "Sem leads de canais pagos com estado informado neste período."} />
+              <EmptyState icon={MapPin} title={tx("Sem dados geográficos")} description={isB2C ? "Sem detalhamento geográfico de compras disponível nesta fonte." : "Sem leads de canais pagos com estado informado neste período."} />
             ) : (
               <div className="space-y-5">
                 {stateRows.map((row) => (
@@ -1135,9 +1143,9 @@ export default function MarketingPage() {
         <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
           <Card className="bg-card border-border overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-              <h2 className="text-sm font-semibold text-foreground">Desempenho de campanhas</h2>
+              <h2 className="text-sm font-semibold text-foreground">{tx("Desempenho de campanhas")}</h2>
               <p className="text-xs text-muted-foreground">
-                {data ? `${Math.min((creativesPage - 1) * CREATIVES_PAGE_SIZE + 1, data.creativesTotal)}–${Math.min(creativesPage * CREATIVES_PAGE_SIZE, data.creativesTotal)} de ${data.creativesTotal}` : "—"} · clique nos títulos para ordenar
+                {data ? `${Math.min((creativesPage - 1) * CREATIVES_PAGE_SIZE + 1, data.creativesTotal)}–${Math.min(creativesPage * CREATIVES_PAGE_SIZE, data.creativesTotal)} ${tx("de")} ${data.creativesTotal}` : "—"} · {tx("clique nos títulos para ordenar")}
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -1146,21 +1154,21 @@ export default function MarketingPage() {
                   <tr className="border-b border-border bg-muted/30">
                     {(
                       [
-                        { key: "name" as SortKey, label: "Campanha", align: "left", wide: true },
-                        { key: "platform" as SortKey, label: "Plataforma", align: "left", wide: false },
+                        { key: "name" as SortKey, label: tx("Campanha"), align: "left", wide: true },
+                        { key: "platform" as SortKey, label: tx("Plataforma"), align: "left", wide: false },
                         { key: "status" as SortKey, label: "Status", align: "left", wide: false },
-                        { key: "spend" as SortKey, label: "Investimento", align: "right", wide: false },
-                        { key: "attributedRevenue" as SortKey, label: "Faturamento", align: "right", wide: false },
+                        { key: "spend" as SortKey, label: tx("Investimento"), align: "right", wide: false },
+                        { key: "attributedRevenue" as SortKey, label: tx("Faturamento"), align: "right", wide: false },
                         { key: "roas" as SortKey, label: "ROA", align: "right", wide: false },
                         ...(!isB2C ? [{ key: "leads" as SortKey, label: "Leads", align: "right", wide: false }] : []),
-                        { key: "approvedLeads" as SortKey, label: isB2C ? "Compras" : "Compras", align: "right", wide: false },
+                        { key: "approvedLeads" as SortKey, label: tx("Compras"), align: "right", wide: false },
                         ...(isB2C
                           ? [{ key: "cpa" as SortKey, label: "Custo/Compra", align: "right" as const, wide: false }]
                           : [
                               { key: "cpl" as SortKey, label: "CPL", align: "right" as const, wide: false },
                               { key: "cpa" as SortKey, label: "CPA", align: "right" as const, wide: false },
                             ]),
-                        { key: "clicks" as SortKey, label: "Cliques", align: "right", wide: false },
+                        { key: "clicks" as SortKey, label: tx("Cliques"), align: "right", wide: false },
                         { key: "ctr" as SortKey, label: "CTR %", align: "right", wide: false },
                       ] as { key: SortKey; label: string; align: "left" | "right"; wide: boolean }[]
                     ).map(({ key, label, align, wide }) => (
@@ -1186,7 +1194,7 @@ export default function MarketingPage() {
                   ) : sortedCreatives.length === 0 ? (
                     <tr>
                       <td colSpan={isB2C ? 10 : 12} className="px-5 py-10 text-center text-muted-foreground text-sm">
-                        Nenhuma campanha encontrada para esta marca.
+                        {tx("Nenhuma campanha encontrada para esta marca.")}
                       </td>
                     </tr>
                   ) : (
@@ -1231,14 +1239,14 @@ export default function MarketingPage() {
                     disabled={creativesPage === 1}
                     className="px-3 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Anterior
+                    {tx("Anterior")}
                   </Button>
                   <Button variant="outline" size="sm"
                     onClick={() => setCreativesPage((p) => Math.min(Math.ceil(data.creativesTotal / CREATIVES_PAGE_SIZE), p + 1))}
                     disabled={creativesPage * CREATIVES_PAGE_SIZE >= data.creativesTotal}
                     className="px-3 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Próximo
+                    {tx("Próximo")}
                   </Button>
                 </div>
               </div>

@@ -1,11 +1,11 @@
+import { useI18n } from "@/lib/i18n";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
-import { useGetGeography } from "@workspace/api-client-react";
+import { getGetGeographyUrl, useGetGeography } from "@workspace/api-client-react";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -34,11 +34,13 @@ import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatCurrencySmart, formatNumber } from "@/lib/formatters";
 import { exportRowsAsCsv } from "@/lib/csv-export";
+import { CountUp } from "@/components/count-up";
 import { BrazilHeatMap } from "@/components/brazil-heat-map";
-import { periodQuery, usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { useReducedMotion, fadeInUp, withReducedMotion } from "@/lib/motion";
+import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
 
 export default function GeographyPage() {
+  const { tx } = useI18n();
   const { selectedClientId, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -47,19 +49,19 @@ export default function GeographyPage() {
 
   const clientId = user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
 
-  const enabled = user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
-  const params = {
-    clientId,
-    dateFrom: format(dateRange.from, "yyyy-MM-dd"),
-    dateTo: format(dateRange.to, "yyyy-MM-dd"),
-    utmSource: filters.utmSource || undefined,
-    utmMedium: filters.utmMedium || undefined,
-  };
-  const { data, isLoading, isError, refetch } = useGetGeography(params, {
-    query: queryOpts({ enabled }),
-  });
-  const previous = usePreviousPeriodQuery<NonNullable<typeof data>>(
-    periodQuery("/api/analytics/geography", params), enabled,
+  const { data, isLoading, isError, refetch } = useGetGeography(
+    {
+      clientId,
+      dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+      dateTo: format(dateRange.to, "yyyy-MM-dd"),
+      utmSource: filters.utmSource || undefined,
+      utmMedium: filters.utmMedium || undefined,
+    },
+    {
+      query: queryOpts({
+        enabled: user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId),
+      }),
+    },
   );
 
   const states = useMemo(() => data?.states ?? [], [data]);
@@ -84,21 +86,34 @@ export default function GeographyPage() {
   );
   const topState = sortedStates[0];
   const topCity = sortedCities[0];
-  const previousRevenue = previous.data?.states.reduce((sum, state) => sum + state.revenue, 0);
-  // Compare the current leading state with itself, even when the ranking changes.
-  const previousTopRevenue = topState && previous.data
-    ? previous.data.states.find(state => state.state === topState?.state)?.revenue ?? 0
-    : undefined;
-  const comparisonUnavailable = previous.isError
-    ? "Não foi possível carregar a mesma métrica no período anterior."
-    : "O período anterior ainda não está disponível.";
-  const metricSource = "Ecommerce · pedidos e distribuição geográfica";
+
+  // Mesmo recorte do periodo imediatamente anterior, para os quatro numeros do topo mostrarem a variacao.
+  const previousGeography = usePreviousPeriodQuery<NonNullable<typeof data>>(
+    getGetGeographyUrl({
+      clientId,
+      dateFrom: format(dateRange.from, "yyyy-MM-dd"),
+      dateTo: format(dateRange.to, "yyyy-MM-dd"),
+      utmSource: filters.utmSource || undefined,
+      utmMedium: filters.utmMedium || undefined,
+    }),
+    user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId),
+  );
+  const previousTotals = useMemo(() => {
+    const prev = previousGeography.data;
+    if (!prev) return undefined;
+    return {
+      revenue: prev.states.reduce((acc, s) => acc + s.revenue, 0),
+      states: prev.states.length,
+      cities: prev.cities.length,
+      top: prev.states.reduce((max, s) => Math.max(max, s.revenue), 0),
+    };
+  }, [previousGeography.data]);
 
   const handleExport = () => {
     if (!data) return;
     const rows = [
       ...states.map((s) => ({
-        kind: "Estado",
+        kind: "state",
         name: s.state,
         state: s.state,
         customers: s.customers,
@@ -106,7 +121,7 @@ export default function GeographyPage() {
         revenue: s.revenue,
       })),
       ...cities.map((c) => ({
-        kind: "Cidade",
+        kind: "city",
         name: c.city,
         state: c.state,
         customers: 0,
@@ -118,12 +133,12 @@ export default function GeographyPage() {
       `geography-${new Date().toISOString().slice(0, 10)}.csv`,
       rows,
       [
-        { header: "Tipo", accessor: (r) => r.kind },
-        { header: "Nome", accessor: (r) => r.name },
-        { header: "Estado", accessor: (r) => r.state },
-        { header: "Clientes", accessor: (r) => r.customers },
-        { header: "Pedidos", accessor: (r) => r.orders },
-        { header: "Faturamento", accessor: (r) => r.revenue },
+        { header: "kind", accessor: (r) => r.kind },
+        { header: "name", accessor: (r) => r.name },
+        { header: "state", accessor: (r) => r.state },
+        { header: "customers", accessor: (r) => r.customers },
+        { header: "orders", accessor: (r) => r.orders },
+        { header: "revenue", accessor: (r) => r.revenue },
       ],
     );
   };
@@ -143,7 +158,7 @@ export default function GeographyPage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Atualizado · {format(dateRange.from, "d MMM", { locale: ptBR })} → {format(dateRange.to, "d MMM, yyyy", { locale: ptBR })}
+            Atualizado · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
           </span>
         </motion.div>
         <Button
@@ -161,9 +176,9 @@ export default function GeographyPage() {
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Erro</AlertTitle>
+          <AlertTitle>{tx("Erro")}</AlertTitle>
           <AlertDescription className="flex items-center justify-between">
-            Não foi possível carregar os dados geográficos.
+            {tx("Não foi possível carregar os dados geográficos.")}
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
             </Button>
@@ -171,70 +186,111 @@ export default function GeographyPage() {
         </Alert>
       ) : (
         <>
+          {/* ── Hero section ─────────────────────────────────────────────────── */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
-            <Card>
-              <CardContent>
-                <div className="up-section-heading">
-                  <div>
-                    <h2 className="flex items-center gap-2 text-lg font-medium">
-                      <Globe2 className="h-5 w-5 shrink-0 text-primary" />
-                      Onde estão seus clientes
+            <Card className="relative overflow-hidden border-border/60 bg-gradient-to-br from-primary/[0.08] via-card to-card">
+              <div
+                aria-hidden
+                className="absolute -top-24 -right-24 h-72 w-72 rounded-full blur-3xl opacity-40"
+                style={{ background: "radial-gradient(circle, hsl(var(--chart-1) / 0.45), transparent 65%)" }}
+              />
+              <div
+                aria-hidden
+                className="absolute -bottom-32 -left-20 h-72 w-72 rounded-full blur-3xl opacity-30"
+                style={{ background: "radial-gradient(circle, hsl(var(--chart-3) / 0.45), transparent 65%)" }}
+              />
+              <div
+                aria-hidden
+                className="absolute inset-0 opacity-[0.06]"
+                style={{
+                  backgroundImage:
+                    "linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px)",
+                  backgroundSize: "32px 32px",
+                  maskImage:
+                    "radial-gradient(ellipse 80% 60% at 50% 50%, black 30%, transparent 100%)",
+                  WebkitMaskImage:
+                    "radial-gradient(ellipse 80% 60% at 50% 50%, black 30%, transparent 100%)",
+                }}
+              />
+              <CardContent className="relative p-6 sm:p-8">
+                <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
+                  <div className="lg:min-w-0 lg:flex-1">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/60 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground backdrop-blur">
+                      <Globe2 className="h-3 w-3 text-primary" />
+                      {tx("Inteligência geográfica")}
+                    </span>
+                    <h2 className="mt-2 text-3xl sm:text-4xl font-bold tracking-tight">
+                      {tx("Onde estão seus clientes")}{" "}
+                      <span className="bg-gradient-to-r from-primary via-chart-1 to-chart-3 bg-clip-text text-transparent">
+                        {tx("comprando")}
+                      </span>
                     </h2>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Mapa do faturamento no Brasil. O tamanho das bolhas indica o número de clientes e os tons de azul indicam a intensidade do faturamento.
+                    <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+                      {tx("Mapa do faturamento no Brasil. O tamanho das bolhas indica o número de clientes e os tons de azul indicam a intensidade do faturamento.")}
                     </p>
+                  </div>
+                  <div className="grid w-full grid-cols-2 gap-3 sm:grid-cols-4 lg:w-[56rem] lg:max-w-[62%] lg:shrink-0">
+                    <HeroStat
+                      icon={TrendingUp}
+                      label={tx("Faturamento total")}
+                      value={totalRevenue}
+                      previous={previousTotals?.revenue}
+                      format={(v) => formatCurrencySmart(v)}
+                      color="hsl(var(--chart-1))"
+                      delay={0.05}
+                      reduced={reduced}
+                    />
+                    <HeroStat
+                      icon={MapPin}
+                      label={tx("Estados cobertos")}
+                      value={states.length}
+                      previous={previousTotals?.states}
+                      color="hsl(var(--chart-3))"
+                      delay={0.12}
+                      reduced={reduced}
+                    />
+                    <HeroStat
+                      icon={Building2}
+                      label={tx("Cidades")}
+                      value={cities.length}
+                      previous={previousTotals?.cities}
+                      color="hsl(var(--chart-4))"
+                      delay={0.19}
+                      reduced={reduced}
+                    />
+                    <HeroStat
+                      icon={Trophy}
+                      label={topState ? `Top · ${topState.state}` : tx("Principal mercado")}
+                      value={topState?.revenue ?? 0}
+                      previous={previousTotals?.top}
+                      format={(v) => formatCurrencySmart(v)}
+                      tone="hot"
+                      delay={0.26}
+                      reduced={reduced}
+                    />
                   </div>
                 </div>
               </CardContent>
             </Card>
           </motion.div>
 
-          <div className="up-metric-grid" data-testid="geography-metrics">
-            <GlassMetricCard
-              icon={TrendingUp} label="Faturamento total" value={totalRevenue}
-              format={formatCurrencySmart} loading={isLoading}
-              previousValue={previousRevenue} comparisonUnavailable={comparisonUnavailable}
-              source={metricSource}
-              info="Soma do faturamento dos pedidos agrupados por estado, no período e filtros selecionados."
-            />
-            <GlassMetricCard
-              icon={MapPin} label="Estados atendidos" value={states.length}
-              loading={isLoading} previousValue={previous.data?.states.length}
-              comparisonUnavailable={comparisonUnavailable} source={metricSource}
-              info="Quantidade de estados retornados na distribuição de vendas do período. Registros sem estado informado seguem o agrupamento da fonte."
-            />
-            <GlassMetricCard
-              icon={Building2} label="Cidades" value={cities.length}
-              loading={isLoading} previousValue={previous.data?.cities.length}
-              comparisonUnavailable={comparisonUnavailable} source={metricSource}
-              info="Quantidade de cidades retornadas pela fonte. A consulta de Ecommerce lista até 50 cidades, ordenadas por faturamento."
-            />
-            <GlassMetricCard
-              icon={Trophy} label={topState ? `Principal mercado · ${topState.state}` : "Principal mercado"}
-              value={topState?.revenue ?? 0} format={formatCurrencySmart} loading={isLoading}
-              previousValue={previousTopRevenue} comparisonUnavailable={comparisonUnavailable}
-              source={metricSource}
-              info="Faturamento do estado que lidera o período atual. O comparativo usa o faturamento desse mesmo estado no período anterior."
-            />
-          </div>
-
           {/* ── Heat map + leaderboard ──────────────────────────────────────── */}
-          <div className="up-geography-layout">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <motion.div
-              className="up-geography-map"
+              className="lg:col-span-2"
               initial="hidden"
               animate="visible"
               variants={variants}
             >
               <Card className="overflow-hidden">
                 <CardContent className="p-4 sm:p-6">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                      Mapa de faturamento no Brasil
+                      {tx("Mapa de faturamento no Brasil")}
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {states.length} estados · {cities.length} cidades
+                      {states.length} {tx("estados")} · {cities.length} {tx("cidades")}
                     </span>
                   </div>
                   {isLoading ? (
@@ -242,12 +298,11 @@ export default function GeographyPage() {
                   ) : states.length === 0 ? (
                     <EmptyState
                       icon={MapPin}
-                      title="Sem vendas por região"
-                      description="Quando os pedidos forem enviados, o mapa por estado aparecerá aqui."
+                      title={tx("Sem vendas por região")}
+                      description={tx("Quando os pedidos forem enviados, o mapa por estado aparecerá aqui.")}
                     />
                   ) : (
-                    <BrazilHeatMap states={states} cities={cities} reduced={reduced}
-                      ariaLabel="Mapa de faturamento por estado no Brasil" lowLabel="Menor" highLabel="Maior" />
+                    <BrazilHeatMap states={states} cities={cities} reduced={reduced} />
                   )}
                 </CardContent>
               </Card>
@@ -257,10 +312,10 @@ export default function GeographyPage() {
             <motion.div initial="hidden" animate="visible" variants={variants}>
               <Card className="overflow-hidden h-full">
                 <CardContent className="p-4 sm:p-6">
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="mb-4 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
-                      <Flame className="h-4 w-4 text-primary" />
-                      Mercados em destaque
+                      <Flame className="h-4 w-4 text-amber-500" />
+                      {tx("Mercados em destaque")}
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                       Top {Math.min(8, sortedStates.length)}
@@ -274,12 +329,13 @@ export default function GeographyPage() {
                     </div>
                   ) : sortedStates.length === 0 ? (
                     <p className="text-sm text-muted-foreground py-8 text-center">
-                      Sem dados neste período.
+                      {tx("Sem dados neste período.")}
                     </p>
                   ) : (
                     <ol className="space-y-2.5" data-testid="geo-leaderboard">
                       {sortedStates.slice(0, 8).map((s, i) => {
                         const pct = totalRevenue > 0 ? (s.revenue / totalRevenue) * 100 : 0;
+                        const isTop = i < 3;
                         return (
                           <motion.li
                             key={s.state}
@@ -291,28 +347,40 @@ export default function GeographyPage() {
                             {/* progress bar background */}
                             <motion.div
                               aria-hidden
-                              className="absolute inset-y-0 left-0 bg-primary/10"
+                              className={`absolute inset-y-0 left-0 ${
+                                isTop
+                                  ? "bg-gradient-to-r from-amber-500/20 via-orange-500/15 to-red-500/10"
+                                  : "bg-primary/8"
+                              }`}
                               initial={{ width: 0 }}
                               animate={{ width: `${pct}%` }}
                               transition={{ duration: reduced ? 0 : 0.9, delay: reduced ? 0 : 0.2 + i * 0.05, ease: [0.22, 1, 0.36, 1] }}
                             />
                             <div className="relative flex items-center gap-2.5">
                               <span
-                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/15 text-[11px] font-bold text-primary"
+                                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[11px] font-bold ${
+                                  i === 0
+                                    ? "bg-red-500 text-white"
+                                    : i === 1
+                                      ? "bg-orange-500 text-white"
+                                      : i === 2
+                                        ? "bg-amber-500 text-white"
+                                        : "bg-muted text-muted-foreground"
+                                }`}
                               >
                                 {s.state}
                               </span>
                               <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                <div className="flex items-baseline justify-between gap-2">
                                   <span className="text-sm font-semibold tabular-nums text-foreground">
                                     {formatCurrency(s.revenue)}
                                   </span>
                                   <span className="font-mono text-[10px] text-muted-foreground">
-                                    {pct.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%
+                                    {pct.toFixed(1)}%
                                   </span>
                                 </div>
                                 <div className="text-[11px] text-muted-foreground">
-                                  {formatNumber(s.customers)} clientes · {formatNumber(s.orders)} pedidos
+                                  {formatNumber(s.customers)} {tx("clientes")} · {formatNumber(s.orders)} {tx("pedidos")}
                                 </div>
                               </div>
                             </div>
@@ -330,10 +398,10 @@ export default function GeographyPage() {
                       className="mt-4 rounded-md border border-dashed border-border/60 bg-muted/30 p-3"
                     >
                       <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
-                        <Activity className="h-3 w-3" /> Cidade em destaque
+                        <Activity className="h-3 w-3" /> {tx("Cidade em destaque")}
                       </p>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
                           <p className="text-sm font-semibold text-foreground">
                             {topCity.city}
                             <span className="ml-1.5 text-[10px] font-mono text-muted-foreground">
@@ -341,7 +409,7 @@ export default function GeographyPage() {
                             </span>
                           </p>
                           <p className="text-[11px] text-muted-foreground">
-                            {formatNumber(topCity.orders)} pedidos
+                            {formatNumber(topCity.orders)} {tx("pedidos")}
                           </p>
                         </div>
                         <span className="text-base font-bold tabular-nums text-foreground">
@@ -359,37 +427,35 @@ export default function GeographyPage() {
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <Card className="overflow-hidden">
               <CardContent className="p-4 sm:p-6">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="mb-3 flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                    {view === "state" ? "Todos os estados" : "Todas as cidades"}
+                    {view === "state" ? tx("Todos os estados") : tx("Todas as cidades")}
                   </h3>
                   <div className="inline-flex rounded-md border border-border bg-card/60 p-0.5 text-[11px] font-mono uppercase tracking-wider">
                     <Button variant="ghost" size="sm"
                       type="button"
                       onClick={() => setView("state")}
                       data-testid="geo-toggle-state"
-                      aria-pressed={view === "state"}
                       className={`px-2.5 py-1 rounded-sm transition ${
                         view === "state"
                           ? "bg-primary/15 text-primary"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      Estado
+                      State
                     </Button>
                     <Button variant="ghost" size="sm"
                       type="button"
                       onClick={() => setView("city")}
                       data-testid="geo-toggle-city"
-                      aria-pressed={view === "city"}
                       className={`px-2.5 py-1 rounded-sm transition ${
                         view === "city"
                           ? "bg-primary/15 text-primary"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      Cidade
+                      {tx("Cidade")}
                     </Button>
                   </div>
                 </div>
@@ -399,11 +465,11 @@ export default function GeographyPage() {
                     <Table>
                       <TableHeader className="sticky top-0 bg-card z-10">
                         <TableRow>
-                          <TableHead>Estado</TableHead>
-                          <TableHead className="text-right">Clientes</TableHead>
-                          <TableHead className="text-right">Pedidos</TableHead>
-                          <TableHead className="text-right">Faturamento</TableHead>
-                          <TableHead className="text-right">Participação</TableHead>
+                          <TableHead>State</TableHead>
+                          <TableHead className="text-right">{tx("Clientes")}</TableHead>
+                          <TableHead className="text-right">{tx("Pedidos")}</TableHead>
+                          <TableHead className="text-right">{tx("Faturamento")}</TableHead>
+                          <TableHead className="text-right">Share</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -422,8 +488,8 @@ export default function GeographyPage() {
                             <TableCell colSpan={5} className="p-0">
                               <EmptyState
                                 icon={MapPin}
-                                title="Sem vendas por região"
-                                description="Quando os pedidos forem enviados, o detalhamento por estado aparecerá aqui."
+                                title={tx("Sem vendas por região")}
+                                description={tx("Quando os pedidos forem enviados, o detalhamento por estado aparecerá aqui.")}
                                 className="m-4 border-0 bg-transparent"
                               />
                             </TableCell>
@@ -437,7 +503,7 @@ export default function GeographyPage() {
                                 <TableCell className="text-right tabular-nums">{formatNumber(state.customers)}</TableCell>
                                 <TableCell className="text-right tabular-nums">{formatNumber(state.orders)}</TableCell>
                                 <TableCell className="text-right font-medium tabular-nums">{formatCurrency(state.revenue)}</TableCell>
-                                <TableCell className="text-right font-mono text-xs text-muted-foreground">{pct.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</TableCell>
+                                <TableCell className="text-right font-mono text-xs text-muted-foreground">{pct.toFixed(1)}%</TableCell>
                               </TableRow>
                             );
                           })
@@ -448,10 +514,10 @@ export default function GeographyPage() {
                     <Table>
                       <TableHeader className="sticky top-0 bg-card z-10">
                         <TableRow>
-                          <TableHead>Cidade</TableHead>
-                          <TableHead>Estado</TableHead>
-                          <TableHead className="text-right">Pedidos</TableHead>
-                          <TableHead className="text-right">Faturamento</TableHead>
+                          <TableHead>{tx("Cidade")}</TableHead>
+                          <TableHead>State</TableHead>
+                          <TableHead className="text-right">{tx("Pedidos")}</TableHead>
+                          <TableHead className="text-right">{tx("Faturamento")}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -469,8 +535,8 @@ export default function GeographyPage() {
                             <TableCell colSpan={4} className="p-0">
                               <EmptyState
                                 icon={MapPin}
-                                title="Sem dados de cidades"
-                                description="Quando houver pedidos, as cidades com melhor desempenho aparecerão aqui."
+                                title={tx("Sem dados de cidades")}
+                                description={tx("Quando houver pedidos, as cidades com melhor desempenho aparecerão aqui.")}
                                 className="m-4 border-0 bg-transparent"
                               />
                             </TableCell>
@@ -492,7 +558,7 @@ export default function GeographyPage() {
 
                 {!isLoading && (totalCustomers > 0) && (
                   <p className="mt-3 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
-                    {formatNumber(totalCustomers)} clientes nos agrupamentos de {states.length} estados
+                    {formatNumber(totalCustomers)} {tx("clientes únicos entre")} {states.length} {tx("estados")}
                   </p>
                 )}
               </CardContent>
@@ -502,4 +568,31 @@ export default function GeographyPage() {
       )}
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+
+function HeroStat({
+  icon: Icon,
+  label,
+  value,
+  format,
+  color = "hsl(var(--primary))",
+  tone,
+  delay,
+  reduced,
+  previous,
+}: {
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  label: string;
+  value: number;
+  format?: (v: number) => string;
+  color?: string;
+  tone?: "hot";
+  delay: number;
+  reduced: boolean;
+  previous?: number | null;
+}) {
+  const accent = tone === "hot" ? "hsl(var(--chart-1))" : color;
+  return (<GlassMetricCard label={label} value={value} icon={Icon} format={format ?? formatNumber} previousValue={previous} />);
 }

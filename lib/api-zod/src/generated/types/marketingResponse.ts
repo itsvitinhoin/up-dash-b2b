@@ -13,9 +13,15 @@ import type { MarketingStateRow } from "./marketingStateRow";
 import type { MetaTopCreatives } from "./metaTopCreatives";
 import type { TimeSeriesPoint } from "./timeSeriesPoint";
 
+import type { MetaMarketingSummary } from "./metaMarketingSummary";
+
 export interface MarketingResponse {
+  revenueSource?: "META" | "ECOMMERCE";
+  metaSummary?: MetaMarketingSummary | null;
+  prevMetaSummary?: MetaMarketingSummary | null;
+  purchasesOverTime?: TimeSeriesPoint[];
   kpis: MarketingKpis;
-  prevKpis: MarketingKpis;
+  prevKpis: MarketingKpis | null;
   leadsOverTime: TimeSeriesPoint[];
   revenueOverTime: TimeSeriesPoint[];
   spendOverTime: TimeSeriesPoint[];

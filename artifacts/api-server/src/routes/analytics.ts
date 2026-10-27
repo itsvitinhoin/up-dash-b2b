@@ -1,5 +1,6 @@
+import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
 import { Router, type IRouter } from "express";
-import { and, asc, desc, eq, gte, lte, sql, ilike, or, inArray, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, sql, ilike, or, inArray, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -63,9 +64,23 @@ import {
   GetUtmResponse,
 } from "@workspace/api-zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
-import { getOpenAIClient, isAIConfigured } from "../lib/openai";
+import { getOpenAIClient, getInsightAI, isAIConfigured } from "../lib/openai";
+import {
+  customersInsight,
+  dashboardInsight,
+  journeyInsight,
+  marketingInsight,
+  normalizeInsightLanguage,
+  productsInsight,
+  rfmInsight,
+  sellersInsight,
+  stockInsight,
+  utmInsight,
+  type InsightLanguage,
+} from "../services/insight-text";
+import { MediaReadError, fetchMetaMarketingData, emptyMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
 import { usesMetaRevenue, manualMarketingKpis } from "../services/marketing-source";
-import { fetchMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
+import { fetchMetaMarketingDataIfConnected } from "../services/meta-connected";
 import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
 import * as vestiDashboardController from "../controllers/vestiDashboardController";
 import * as vestiOrdersController from "../controllers/vestiOrdersController";
@@ -80,9 +95,9 @@ import {
   getUpzeroAnalyticsMetrics,
   type UpzeroAnalyticsMetric,
 } from "../services/upzero/analytics-metrics";
-import { getUpzeroAnalyticsFactsAsMetrics } from "../services/upzero/analytics-facts";
+import { getUpzeroAnalyticsFactsAsMetrics, getUpzeroAnalyticsFactsByEvent, getUpzeroFactActorsByDay } from "../services/upzero/analytics-facts";
+import { buildFunnelSteps, countFunnelPeople, FUNNEL_EVENT_NAMES, funnelActorKey, worstFunnelStep, type FunnelStepKey } from "../services/funnel-people";
 import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
-import { readDailyClientMetrics, refreshDailyClientMetrics, type DailyMetricRow } from "../services/daily-client-metrics";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
 import { normalizeCampaignText, isPaidCampaignSignal, latestCampaignEvidenceBefore } from "../services/campaign-attribution";
 import { syncPaidTouchpointsForCustomer } from "../services/paid-touchpoints";
@@ -169,6 +184,7 @@ function pruneAnalyticsResponseCache(): void {
 
 router.use((req, res, next) => {
   if (!shouldCacheAnalyticsRequest(req)) {
+    res.setHeader("Cache-Control", "private, no-store");
     next();
     return;
   }
@@ -216,26 +232,12 @@ import {
   requireClient,
 } from "../lib/httpQuery";
 
-function utcDateOnlyStart(value: string): Date {
-  return new Date(`${value}T00:00:00.000Z`);
-}
-
-function utcDateOnlyEnd(value: string): Date {
-  return new Date(`${value}T23:59:59.999Z`);
-}
-
 function customerDateQueryRange(
-  query: Record<string, unknown>,
+  _query: Record<string, unknown>,
   dateFrom: Date | undefined,
   dateTo: Date | undefined,
 ): { from: Date | undefined; to: Date | undefined } {
-  const rawFrom = typeof query.dateFrom === "string" ? query.dateFrom : null;
-  const rawTo = typeof query.dateTo === "string" ? query.dateTo : null;
-
-  return {
-    from: rawFrom && DATE_ONLY_RE.test(rawFrom) ? utcDateOnlyStart(rawFrom) : dateFrom,
-    to: rawTo && DATE_ONLY_RE.test(rawTo) ? utcDateOnlyEnd(rawTo) : dateTo,
-  };
+  return { from: dateFrom, to: dateTo };
 }
 
 function getGlobalMetaAccessToken(fallback?: string | null): string | null {
@@ -448,6 +450,78 @@ async function getUpzeroTrackingRows(params: {
     const metrics = await getUpzeroAnalyticsMetrics(params);
     return { rows: metrics.data, source: "metrics" };
   }
+}
+
+// Funil: lê só os tipos de evento que o funil usa, um por vez (ver getUpzeroAnalyticsFactsByEvent).
+// Achado 09/10/2026 (medido na UP Zero): cada tipo lê inteiro em 1-2 s, exceto `page_view` -- 13 mil+ eventos em
+// 7 dias e a página 14 do cursor nem respondeu em 40 s. As VISITAS são lidas em fatias de 1 dia (pessoas distintas).
+// Se uma fatia/tipo falhar ou estourar o limite, esse tipo usa as métricas por hora, que SÓ ESTIMAM: a soma de
+// sessões por hora conta a mesma pessoa várias vezes (medido: 2.526 contra ~1.016 pessoas reais em 2 dias).
+const FUNNEL_SLICED_EVENTS: readonly string[] = ["page_view"];
+
+// A análise "Ativação B2B" (cadastro aprovado -> 1ª compra) nunca chegou na tela (o contrato da API a descartava).
+// Achado 09/10/2026: ligá-la agora mostraria 0,2% na MX Fashion, porque o sincronizador das 00:03 recria clientes que já
+// tinham pedido com cadastro e aprovação carimbados com a HORA DO SYNC (52 clientes, todos compradores): para eles o 1º
+// pedido sempre "vem antes" da aprovação. Só liga com FUNNEL_ACTIVATION=1, depois que o sync gravar as datas reais.
+const FUNNEL_ACTIVATION_ENABLED = process.env.FUNNEL_ACTIVATION === "1";
+
+async function getFunnelTrackingRows(params: {
+  from: string;
+  to: string;
+  apiKey?: string | null;
+}): Promise<{ rows: UpzeroAnalyticsMetric[]; source: "facts" | "metrics"; complete: boolean }> {
+  let factRows: UpzeroAnalyticsMetric[] = [];
+  let source: "facts" | "metrics" = "facts";
+  const viaMetrics = new Set<string>();
+  try {
+    const [byEvent, sliced] = await Promise.all([
+      getUpzeroAnalyticsFactsByEvent({
+        ...params,
+        eventNames: FUNNEL_EVENT_NAMES.filter((name) => !FUNNEL_SLICED_EVENTS.includes(name)),
+      }),
+      Promise.all(
+        FUNNEL_SLICED_EVENTS.map(async (eventName) => ({
+          eventName,
+          ...(await getUpzeroFactActorsByDay({
+            ...params,
+            eventName,
+            actorKey: (row) => funnelActorKey(row),
+            isIdentified: (row) => getMetricUser(row) !== null,
+          })),
+        })),
+      ),
+    ]);
+    for (const name of [...byEvent.truncatedEvents, ...byEvent.failedEvents]) viaMetrics.add(name);
+    for (const slice of sliced) if (!slice.complete) viaMetrics.add(slice.eventName);
+    // linhas parciais de um tipo cortado/falho são descartadas: esse tipo será lido pelas métricas
+    factRows = bridgeAnonymousRowsToIdentifiedUsers(
+      [...byEvent.rows, ...sliced.flatMap((slice) => slice.rows)].filter((row) => !viaMetrics.has(row.event_name)),
+    );
+  } catch (err) {
+    console.warn(
+      "[upzero:funnel] facts por evento indisponível; usando só métricas por hora:",
+      err instanceof Error ? err.message : err,
+    );
+    source = "metrics";
+    for (const name of FUNNEL_EVENT_NAMES) viaMetrics.add(name);
+  }
+  let complete = true;
+  const metricRows: UpzeroAnalyticsMetric[] = [];
+  await Promise.all(
+    [...viaMetrics].map(async (eventName) => {
+      try {
+        const metrics = await getUpzeroAnalyticsMetrics({ ...params, eventName });
+        metricRows.push(...metrics.data);
+      } catch (err) {
+        complete = false;
+        console.warn(
+          "[upzero:funnel] métricas indisponíveis para", eventName + ":",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }),
+  );
+  return { rows: [...factRows, ...metricRows], source, complete };
 }
 
 function bridgeKeysForRow(row: UpzeroAnalyticsMetric): string[] {
@@ -772,6 +846,8 @@ router.get(
         locale: clientsTable.locale,
       })
       .from(clientsTable)
+      // Arquivados saem dos totais da plataforma (voltam se forem restaurados).
+      .where(isNull(clientsTable.archivedAt))
       .orderBy(clientsTable.name);
 
     const totalClients = clients.length;
@@ -1130,6 +1206,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
   const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
   const { category, sellerId, channel, color, segment, compare, utmSource: utmSourceFilter, utmMedium: utmMediumFilter, utmCampaign: utmCampaignFilter } = parsed.data;
+  // UF do pedido (SP, MG...). Pedido sem estado não casa; a cobertura vai na resposta (stateCoverage) para a tela avisar.
+  const stateFilter = parsed.data.state?.trim().toUpperCase() || undefined;
   const [clientConfig] = await db
     .select({
       dashboardType: clientsTable.dashboardType,
@@ -1182,7 +1260,6 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     salesBySize: DashboardSalesBreakdown[];
     traffic: DashboardTraffic;
     dailyPerformance: DashboardDailyPerformance[];
-    metricRows?: DailyMetricRow[];
   };
 
   // The prior window only needs the data the client renders for comparison
@@ -1242,6 +1319,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       lte(ordersTable.createdAt, winTo),
     ];
     if (sellerId) orderConds.push(eq(ordersTable.sellerId, sellerId));
+    if (stateFilter) orderConds.push(sql`UPPER(TRIM(${ordersTable.state})) = ${stateFilter}`);
     const emptyWindow: WindowAggregates = {
       kpis: { ...ZERO_KPIS },
       dailyRevenue: [],
@@ -1322,11 +1400,11 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
         : Promise.resolve(null),
       db
         .select({
-          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          revenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
           orders: sql<number>`COUNT(*)::int`,
         })
         .from(ordersTable)
-        .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`)),
+        .where(and(baseOrderWhere, paidOrderStatus())),
       db
         .select({ total: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float` })
         .from(ordersTable)
@@ -1429,13 +1507,13 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
           GROUP BY ${ordersTable.customerId}
         )
         SELECT
-          to_char(date_trunc('day', period_orders.created_at), 'YYYY-MM-DD') AS date,
+          to_char(date(timezone('America/Sao_Paulo', period_orders.created_at)), 'YYYY-MM-DD') AS date,
           COUNT(DISTINCT period_orders.customer_id) FILTER (WHERE COALESCE(order_history.total_orders, 0) <= 1)::int AS new_buyers,
           COUNT(DISTINCT period_orders.customer_id) FILTER (WHERE COALESCE(order_history.total_orders, 0) > 1)::int AS returning_buyers
         FROM period_orders
         INNER JOIN order_history ON order_history.customer_id = period_orders.customer_id
-        GROUP BY date_trunc('day', period_orders.created_at)
-        ORDER BY date_trunc('day', period_orders.created_at)
+        GROUP BY date(timezone('America/Sao_Paulo', period_orders.created_at))
+        ORDER BY date(timezone('America/Sao_Paulo', period_orders.created_at))
       `);
       const buyerDailyRows = (buyerDailyRaw.rows ?? buyerDailyRaw) as unknown as BuyerDailyRow[];
       dailyNewBuyers = buyerDailyRows.map((row) => ({ date: row.date, value: Number(row.new_buyers) || 0 }));
@@ -1480,28 +1558,28 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
 
     const dailyRevenue = await db
       .select({
-        date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
-        value: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+        date: sql<string>`to_char(date(timezone('America/Sao_Paulo', ${ordersTable.createdAt})), 'YYYY-MM-DD')`,
+        value: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
       })
       .from(ordersTable)
       .where(
         and(
           baseOrderWhere,
-          sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+          paidOrderStatus(),
         ),
       )
-      .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
-      .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
+      .groupBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`)
+      .orderBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`);
 
     const dailyOrders = await db
       .select({
-        date: sql<string>`to_char(date_trunc('day', ${ordersTable.createdAt}), 'YYYY-MM-DD')`,
+        date: sql<string>`to_char(date(timezone('America/Sao_Paulo', ${ordersTable.createdAt})), 'YYYY-MM-DD')`,
         value: sql<number>`COUNT(*)::float`,
       })
       .from(ordersTable)
-      .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`))
-      .groupBy(sql`date_trunc('day', ${ordersTable.createdAt})`)
-      .orderBy(sql`date_trunc('day', ${ordersTable.createdAt})`);
+      .where(and(baseOrderWhere, paidOrderStatus()))
+      .groupBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`)
+      .orderBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`);
 
     const dailyPerformance = full
       ? buildDailyPerformance({
@@ -1513,10 +1591,10 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
         })
       : [];
 
-    const dailyLeads = full
+    const dailyLeads = full && isB2CClient
       ? await db
           .select({
-            date: sql<string>`to_char(date_trunc('day', ${eventsTable.createdAt}), 'YYYY-MM-DD')`,
+            date: sql<string>`to_char(date(timezone('America/Sao_Paulo', ${eventsTable.createdAt})), 'YYYY-MM-DD')`,
             value: sql<number>`COUNT(*)::float`,
           })
           .from(eventsTable)
@@ -1528,8 +1606,17 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
               lte(eventsTable.createdAt, winTo),
             ),
           )
-          .groupBy(sql`date_trunc('day', ${eventsTable.createdAt})`)
-          .orderBy(sql`date_trunc('day', ${eventsTable.createdAt})`)
+          .groupBy(sql`date(timezone('America/Sao_Paulo', ${eventsTable.createdAt}))`)
+          .orderBy(sql`date(timezone('America/Sao_Paulo', ${eventsTable.createdAt}))`)
+      : full ? await db
+        .select({
+          date: sql<string>`to_char(date(timezone('America/Sao_Paulo', ${customersTable.createdAt})), 'YYYY-MM-DD')`,
+          value: sql<number>`COUNT(*)::float`,
+        })
+        .from(customersTable)
+        .where(and(...customerRegistrationConds))
+        .groupBy(sql`date(timezone('America/Sao_Paulo', ${customersTable.createdAt}))`)
+        .orderBy(sql`date(timezone('America/Sao_Paulo', ${customersTable.createdAt}))`)
       : [];
 
     const revenueByCategory = full
@@ -1542,7 +1629,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
           .from(orderItemsTable)
           .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
           .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
-          .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`))
+          .where(and(baseOrderWhere, paidOrderStatus()))
           .groupBy(productsTable.category)
       : [];
 
@@ -1568,7 +1655,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
             .from(orderItemsTable)
             .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
             .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
-            .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`))
+            .where(and(baseOrderWhere, paidOrderStatus()))
             .groupBy(sql`COALESCE(NULLIF(${productsTable.category}, ''), 'Sem categoria')`),
           db
             .select({
@@ -1580,7 +1667,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
             })
             .from(orderItemsTable)
             .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
-            .where(and(baseOrderWhere, sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`)),
+            .where(and(baseOrderWhere, paidOrderStatus())),
         ])
           .then(([categoryRows, variantRows]) => [
             mapSalesBreakdown(categoryRows),
@@ -1609,196 +1696,8 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     };
   };
 
-  const aggregateWindow = async (
-    winFrom: Date,
-    winTo: Date,
-    full: boolean,
-  ): Promise<WindowAggregates> => {
-    let metrics = await readDailyClientMetrics({ clientId, from: winFrom, to: winTo });
-    if (!metrics.complete) {
-      await refreshDailyClientMetrics({ clientId, from: winFrom, to: winTo });
-      metrics = await readDailyClientMetrics({ clientId, from: winFrom, to: winTo });
-    }
-
-    const rows = metrics.rows;
-    const revenue = rows.reduce((sum, row) => sum + row.approvedRevenue, 0);
-    const orders = rows.reduce((sum, row) => sum + row.approvedOrders, 0);
-    const requestedRevenue = rows.reduce((sum, row) => sum + row.requestedRevenue, 0);
-    const visits = rows.reduce((sum, row) => sum + row.visits, 0);
-    const [customerRegistrationAgg] = await db
-      .select({
-        registrations: sql<number>`COUNT(*)::int`,
-        approvals: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
-      })
-      .from(customersTable)
-      .where(
-        and(
-          eq(customersTable.clientId, clientId),
-          gte(customersTable.createdAt, winFrom),
-          lte(customersTable.createdAt, winTo),
-        ),
-      );
-    const registrations = Number(customerRegistrationAgg?.registrations) || 0;
-    const approvals = Number(customerRegistrationAgg?.approvals) || 0;
-    const newBuyers = rows.reduce((sum, row) => sum + row.newBuyers, 0);
-    const returningBuyers = rows.reduce((sum, row) => sum + row.returningBuyers, 0);
-    const totalBuyers = newBuyers + returningBuyers;
-
-    let customerAgg: { total: number; repeat: number } = { total: 0, repeat: 0 };
-    if (full) {
-      const [custRow] = await db
-        .select({
-          total: sql<number>`COUNT(*)::int`,
-          repeat: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.totalOrders} > 1)::int`,
-        })
-        .from(customersTable)
-        .where(eq(customersTable.clientId, clientId));
-      customerAgg = custRow;
-    }
-
-    const revenueByCategory = full
-      ? await db
-          .select({
-            category: sql<string>`COALESCE(${productsTable.category}, 'Uncategorized')`,
-            revenue: sql<number>`COALESCE(SUM(${orderItemsTable.priceAtSale} * ${orderItemsTable.quantity}), 0)::float`,
-            orders: sql<number>`COUNT(DISTINCT ${ordersTable.id})::int`,
-          })
-          .from(orderItemsTable)
-          .innerJoin(ordersTable, eq(orderItemsTable.orderId, ordersTable.id))
-          .innerJoin(productsTable, eq(orderItemsTable.productId, productsTable.id))
-          .where(
-            and(
-              eq(ordersTable.clientId, clientId),
-              gte(ordersTable.createdAt, winFrom),
-              lte(ordersTable.createdAt, winTo),
-              sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
-            ),
-          )
-          .groupBy(productsTable.category)
-      : [];
-
-    const kpis: DashboardKpis = {
-      revenue,
-      orders,
-      avgTicket: orders > 0 ? revenue / orders : 0,
-      conversionRate: calculateDashboardConversionRate({
-        isB2C: false,
-        orders,
-        visits,
-        approvedLeads: approvals,
-      }),
-      approvalRate: registrations > 0 ? Math.min(100, Math.max(0, (approvals / registrations) * 100)) : 0,
-      leads: registrations,
-      approvedLeads: approvals,
-      customers: Number(customerAgg.total) || 0,
-      repeatCustomers: Number(customerAgg.repeat) || 0,
-      requestedRevenue,
-      newBuyers,
-      returningBuyers,
-      retentionPct: totalBuyers > 0 ? (returningBuyers / totalBuyers) * 100 : 0,
-    };
-
-    return {
-      kpis,
-      dailyRevenue: rows.map((row) => ({ date: row.date, value: row.approvedRevenue })),
-      dailyOrders: rows.map((row) => ({ date: row.date, value: row.approvedOrders })),
-      dailyLeads: full ? rows.map((row) => ({ date: row.date, value: row.registrations })) : [],
-      dailyNewBuyers: full ? rows.map((row) => ({ date: row.date, value: row.newBuyers })) : [],
-      dailyReturningBuyers: full ? rows.map((row) => ({ date: row.date, value: row.returningBuyers })) : [],
-      revenueByCategory,
-      salesByCategory: [],
-      salesByColor: [],
-      salesBySize: [],
-      traffic: { sessions: visits, orders, source: visits > 0 ? "events" : "none" },
-      dailyPerformance: full
-        ? rows.map((row) => ({
-            date: row.date,
-            revenue: row.approvedRevenue,
-            orders: row.approvedOrders,
-            sessions: row.visits,
-            conversionRate: row.visits > 0 ? (row.approvedOrders / row.visits) * 100 : 0,
-          }))
-        : [],
-      metricRows: rows,
-    };
-  };
-
-  const aggregateSignals = (rows: DailyMetricRow[]): DashboardSignal[] => {
-    const totalVisits = rows.reduce((sum, row) => sum + row.visits, 0);
-    const ratesByDay = rows
-      .filter((row) => row.visits >= 5)
-      .map((row) => row.purchases / row.visits)
-      .sort((a, b) => a - b);
-    if (totalVisits < 50 || ratesByDay.length < 3) return [];
-    const p20idx = Math.max(0, Math.floor(ratesByDay.length * 0.2) - 1);
-    const p20rate = ratesByDay[p20idx]!;
-    const medianRate = ratesByDay[Math.floor(ratesByDay.length / 2)]!;
-    if (p20rate >= 0.02) return [];
-    return [{
-      type: "high_traffic_low_sales",
-      severity: p20rate < 0.005 ? "critical" : "warning",
-      title: "High traffic, low conversion",
-      body: `The bottom 20% of trading days convert at just ${(p20rate * 100).toFixed(1)}% visits→purchases (period median: ${(medianRate * 100).toFixed(1)}%). Review checkout flow, pricing, or catalog relevance.`,
-      meta: {
-        p20ConversionPct: +(p20rate * 100).toFixed(2),
-        medianConversionPct: +(medianRate * 100).toFixed(2),
-        totalVisits,
-      },
-    }];
-  };
-
-  const canUseDailyAggregates =
-    !isB2CClient &&
-    !category &&
-    !sellerId &&
-    !channel &&
-    !segment &&
-    !utmSourceFilter &&
-    !utmMediumFilter &&
-    !utmCampaignFilter;
-
-  if (canUseDailyAggregates) {
-    try {
-      const current = await aggregateWindow(from, to, true);
-      let prev: WindowAggregates | null = null;
-      if (compare) {
-        const lengthMs = to.getTime() - from.getTime();
-        const prevTo = new Date(from.getTime() - 1);
-        const prevFrom = new Date(prevTo.getTime() - lengthMs);
-        prev = await aggregateWindow(prevFrom, prevTo, false);
-      }
-
-      res.setHeader("X-UPDash-Aggregates", "daily_client_metrics");
-      res.json(
-        GetDashboardResponse.parse({
-          kpis: current.kpis,
-          revenueOverTime: current.dailyRevenue,
-          ordersOverTime: current.dailyOrders,
-          leadsOverTime: current.dailyLeads,
-          revenueByCategory: current.revenueByCategory,
-          salesByCategory: current.salesByCategory,
-          salesByColor: current.salesByColor,
-          salesBySize: current.salesBySize,
-          newBuyersOverTime: current.dailyNewBuyers,
-          returningBuyersOverTime: current.dailyReturningBuyers,
-          traffic: current.traffic,
-          dailyPerformance: current.dailyPerformance,
-          signals: aggregateSignals(current.metricRows ?? []),
-          ...(prev
-            ? {
-                prevKpis: prev.kpis,
-                prevRevenueOverTime: prev.dailyRevenue,
-                prevOrdersOverTime: prev.dailyOrders,
-              }
-            : {}),
-        }),
-      );
-      return;
-    } catch (err) {
-      console.warn("[dashboard] daily aggregates unavailable; falling back:", err instanceof Error ? err.message : err);
-    }
-  }
-
+  // Headline metrics and series read current facts, as do Clientes, Diário and Funil.
+  // A precomputed row being present does not mean it includes later syncs/status changes.
   const current = await computeWindow(from, to, true, dateFromOnly, dateToOnly);
 
   // Equivalent prior window: same length, ending the day before `from`.
@@ -1835,7 +1734,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
           sql`${eventsTable.eventType} IN ('VISIT', 'PURCHASE')`,
         ),
       )
-      .groupBy(sql`date_trunc('day', ${eventsTable.createdAt})`);
+      .groupBy(sql`date(timezone('America/Sao_Paulo', ${eventsTable.createdAt}))`);
 
     const totalVisits = dailyConvRows.reduce((s, r) => s + Number(r.visits), 0);
     // Only consider days with enough traffic to be statistically meaningful.
@@ -1873,7 +1772,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
       db
         .select({
           state: customersTable.state,
-          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          revenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
         })
         .from(ordersTable)
         .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
@@ -1882,7 +1781,7 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
             eq(ordersTable.clientId, clientId),
             gte(ordersTable.createdAt, winFrom),
             lte(ordersTable.createdAt, winTo),
-            sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`,
+            paidOrderStatus(),
           ),
         )
         .groupBy(customersTable.state);
@@ -1921,9 +1820,24 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
 
   const signals = await computeSignals();
 
+  // Cobertura de estado dos pedidos pagos da janela (ignora o filtro de estado): a tela avisa quando filtrar por estado esconderia a maioria.
+  const stateCoverage = await db
+    .select({
+      total: sql<number>`COUNT(*)::int`,
+      withState: sql<number>`COUNT(*) FILTER (WHERE COALESCE(TRIM(${ordersTable.state}), '') <> '')::int`,
+    })
+    .from(ordersTable)
+    .where(and(eq(ordersTable.clientId, clientId), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to), paidOrderStatus()))
+    .then(([row]) => (row && row.total > 0 ? Math.min(1, row.withState / row.total) : null))
+    .catch((err) => {
+      console.warn("[dashboard] cobertura de estado indisponível:", err instanceof Error ? err.message : err);
+      return null;
+    });
+
   res.json(
     GetDashboardResponse.parse({
       kpis: current.kpis,
+      stateCoverage,
       revenueOverTime: current.dailyRevenue,
       ordersOverTime: current.dailyOrders,
       leadsOverTime: current.dailyLeads,
@@ -2888,30 +2802,13 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       new Set(allRows.flatMap((row) => row.campaigns.map((campaign) => campaign.campaign)).filter((value): value is string => !!value)),
     ).sort();
     const customerTypes = Array.from(new Set(allRows.map((row) => row.type).filter((value): value is string => !!value))).sort();
-    const creativeRows = await db
-      .select()
-      .from(creativesTable)
-      .where(eq(creativesTable.clientId, clientId));
-    const cachedInvestment = creativeRows.reduce(
-      (sum, creative) => sum + creative.spend * computeSpendOverlapFraction(creative, from, to),
-      0,
-    );
-    const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
-    let investment = cachedInvestment;
-    if (metaAccessToken && client?.metaAdAccountId) {
-      try {
-        const metaCurrent = await fetchMetaMarketingData({
-          accessToken: metaAccessToken,
-          adAccountId: client.metaAdAccountId,
-          since: from.toISOString().slice(0, 10),
-          until: to.toISOString().slice(0, 10),
-        });
-        investment = metaCurrent.summary.spend;
-        await upsertMetaCreatives(clientId, metaCurrent.ads);
-      } catch (err) {
-        console.warn("[campaign-customers] Meta spend fetch failed:", err instanceof Error ? err.message : err);
-      }
-    }
+    const metaCurrent = await fetchMetaMarketingDataIfConnected({
+      accessToken: getGlobalMetaAccessToken(client?.metaAdsApiKey),
+      adAccountId: client?.metaAdAccountId,
+      since: saoPauloDateOnly(from),
+      until: saoPauloDateOnly(to),
+    });
+    const investment = metaCurrent.summary.spend;
     const requestedValue = filteredRows.reduce((sum, row) => sum + row.totalPurchaseValue, 0);
     const fulfilledValue = filteredRows.reduce((sum, row) => sum + row.totalFulfilledPurchaseValue, 0);
 
@@ -2937,6 +2834,10 @@ router.get("/analytics/campaign-customers", async (req, res): Promise<void> => {
       },
     });
   } catch (err) {
+    if (err instanceof MediaReadError) {
+      res.status(err.status).json({ error: true, code: err.code, message: err.message, status: err.status });
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     res.status(502).json({
       error: true,
@@ -3358,102 +3259,92 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     }
   }
 
+  const hasUtmFilter = Boolean(utmSource || utmMedium || utmCampaign);
+  const utmCustomerConditions = (): SQL[] => {
+    const parts: SQL[] = [];
+    if (utmSource) parts.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
+    if (utmMedium) parts.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
+    if (utmCampaign) parts.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
+    return parts;
+  };
+  // Cadastros e aprovados vêm da base de clientes (é a fonte de verdade); compradores, dos pedidos pagos.
+  // Same Brasília creation-date cohort as Dashboard and Cadastros; approvals use current status.
+  const customerWindow = (() => {
+    const range = customerDateQueryRange(rawQuery, parsed.data.dateFrom, parsed.data.dateTo);
+    return dateRange(range.from, range.to);
+  })();
+  const loadCustomerTotals = async () => {
+    const [row] = await db
+      .select({
+        registrations: sql<number>`COUNT(*)::int`,
+        approved: sql<number>`COUNT(*) FILTER (WHERE ${customersTable.registrationStatus} = 'APPROVED')::int`,
+      })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId),
+          gte(customersTable.createdAt, customerWindow.from),
+          lte(customersTable.createdAt, customerWindow.to),
+          ...utmCustomerConditions(),
+        ),
+      );
+    return { registrations: Number(row?.registrations ?? 0), approved: Number(row?.approved ?? 0) };
+  };
+  const loadPaidBuyers = async (): Promise<number | null> => {
+    if (hasUtmFilter) return null;
+    const [row] = await db
+      .select({ buyers: sql<number>`COUNT(DISTINCT ${ordersTable.customerId})::int` })
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          gte(ordersTable.createdAt, from),
+          lte(ordersTable.createdAt, to),
+          sql`${ordersTable.status} IN ('APPROVED','SHIPPED','DELIVERED')`,
+        ),
+      );
+    return Number(row?.buyers ?? 0);
+  };
+  // Achado 09/10/2026: estes campos extras ficam FORA do `GetFunnelResponse.parse` de propósito -- o contrato
+  // gerado não conhece `activation` (o parse o descartava e a análise "Ativação B2B" nunca chegava na tela).
+  const sendFunnel = (
+    body: unknown,
+    extra: { activation?: unknown; dataSource: "upzero-events" | "upzero-hourly" | "local"; dataComplete: boolean },
+  ): void => {
+    res.json({
+      ...GetFunnelResponse.parse(body),
+      ...(extra.activation ? { activation: extra.activation } : {}),
+      dataSource: extra.dataSource,
+      dataComplete: extra.dataComplete,
+    });
+  };
+
   try {
     const [client] = await db
       .select({ upZeroApiKey: clientsTable.upZeroApiKey })
       .from(clientsTable)
       .where(eq(clientsTable.id, clientId));
     const upzeroRange = upzeroIsoRange(req.query as Record<string, unknown>, from, to);
-    const tracking = await getUpzeroTrackingRows({
-      ...upzeroRange,
-      apiKey: client?.upZeroApiKey,
-      context: "funnel",
-    });
+    const tracking = await getFunnelTrackingRows({ ...upzeroRange, apiKey: client?.upZeroApiKey });
     const scopedMetrics = tracking.rows.filter((row) => {
       if (utmSource && row.utm_source?.toLowerCase() !== utmSource.toLowerCase()) return false;
       if (utmMedium && row.utm_medium?.toLowerCase() !== utmMedium.toLowerCase()) return false;
       if (utmCampaign && row.utm_campaign?.toLowerCase() !== utmCampaign.toLowerCase()) return false;
       return true;
     });
-    const counts: Record<string, number> = {
-      VISIT: 0,
-      CATEGORY_VIEW: 0,
-      PRODUCT_VIEW: 0,
-      FORM_START: 0,
-      REGISTER_START: 0,
-      REGISTRATION: 0,
-      APPROVED_REGISTRATION: 0,
-      LOGIN: 0,
-      ADD_TO_CART: 0,
-      CHECKOUT_STARTED: 0,
-      ORDER_CREATED: 0,
-      PURCHASE: 0,
-      PAYMENT_APPROVED: 0,
+    // Cada etapa conta PESSOAS distintas (ver services/funnel-people.ts).
+    const people = countFunnelPeople(scopedMetrics);
+    const [customerTotals, paidBuyers] = await Promise.all([loadCustomerTotals(), loadPaidBuyers()]);
+    const counts: Partial<Record<FunnelStepKey, number>> = {
+      ...people.counts,
+      // Tracking is diagnostic; it never replaces the registration cohort. Purchases retain their paid-order guard.
+      REGISTRATION: customerTotals.registrations,
+      APPROVED_REGISTRATION: customerTotals.approved,
+      PURCHASE: Math.max(people.counts.PURCHASE, paidBuyers ?? 0),
     };
-    for (const row of scopedMetrics) {
-      const value = row.total_events || 0;
-      switch (row.event_name) {
-        case "page_view":
-          counts.VISIT += value;
-          break;
-        case "category_view":
-          counts.CATEGORY_VIEW += value;
-          break;
-        case "product_view":
-        case "product_item_impression":
-          counts.PRODUCT_VIEW += value;
-          break;
-        case "form_start":
-          counts.FORM_START += value;
-          break;
-        case "register_start":
-          counts.REGISTER_START += value;
-          break;
-        case "register_submitted":
-          counts.REGISTRATION += value;
-          break;
-        case "login":
-          counts.LOGIN += value;
-          break;
-        case "add_to_cart":
-          counts.ADD_TO_CART += value;
-          break;
-        case "initiate_checkout":
-        case "checkout_start":
-          counts.CHECKOUT_STARTED += value;
-          break;
-        case "order_created":
-          counts.ORDER_CREATED += value;
-          break;
-        case "purchase":
-          counts.PURCHASE += value;
-          break;
-        case "order_paid":
-        case "payment_approved":
-          counts.PAYMENT_APPROVED += value;
-          break;
-        default:
-          break;
-      }
-    }
 
-    const approvedConditions: SQL[] = [
-      eq(customersTable.clientId, clientId),
-      eq(customersTable.registrationStatus, "APPROVED"),
-      gte(customersTable.createdAt, from),
-      lte(customersTable.createdAt, to),
-    ];
-    if (utmSource) approvedConditions.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
-    if (utmMedium) approvedConditions.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
-    if (utmCampaign) approvedConditions.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
-    const [approvedRegistrations] = await db
-      .select({ count: sql<number>`COUNT(*)::int` })
-      .from(customersTable)
-      .where(and(...approvedConditions));
-    counts.APPROVED_REGISTRATION = Number(approvedRegistrations?.count ?? 0);
-
-    const funnelOrder: Array<{ step: string; label: string }> = [
-      { step: "VISIT", label: "Visualizações de página" },
+    const funnelOrder: Array<{ step: FunnelStepKey; label: string }> = [
+      { step: "VISIT", label: "Visitas ao site" },
       { step: "CATEGORY_VIEW", label: "Categorias vistas" },
       { step: "PRODUCT_VIEW", label: "Produtos vistos" },
       { step: "FORM_START", label: "Formulários iniciados" },
@@ -3468,47 +3359,23 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       { step: "PAYMENT_APPROVED", label: "Pagamentos aprovados" },
     ];
     const approvedBaseline = counts.APPROVED_REGISTRATION ?? 0;
-    const postApprovalSteps = new Set(["LOGIN", "ADD_TO_CART", "CHECKOUT_STARTED", "ORDER_CREATED", "PURCHASE", "PAYMENT_APPROVED"]);
-    const steps = funnelOrder.map((step, index) => {
-      const count = counts[step.step] ?? 0;
-      const previous = index === 0 ? count : counts[funnelOrder[index - 1].step] ?? 0;
-      const conversionRate =
-        index === 0
-          ? 100
-          : step.step === "APPROVED_REGISTRATION"
-            ? previous > 0
-              ? (count / previous) * 100
-              : count > 0
-                ? 100
-                : 0
-            : postApprovalSteps.has(step.step) && approvedBaseline > 0
-              ? (count / approvedBaseline) * 100
-              : previous > 0
-                ? (count / previous) * 100
-                : 0;
-      return {
-        ...step,
-        count,
-        conversionRate,
-        dropOffRate: index === 0 ? 0 : 100 - conversionRate,
-      };
-    });
+    const steps = buildFunnelSteps(funnelOrder, counts, approvedBaseline);
     const conversionCount = counts.PAYMENT_APPROVED || counts.PURCHASE || counts.ORDER_CREATED || 0;
-    const overallConversion = approvedBaseline > 0 ? (conversionCount / approvedBaseline) * 100 : 0;
-    let worst = { idx: -1, drop: -1 };
-    for (let i = 1; i < steps.length; i++) {
-      if (steps[i].dropOffRate > worst.drop) worst = { idx: i, drop: steps[i].dropOffRate };
-    }
+    const overallConversion = approvedBaseline > 0 ? Math.min(100, (conversionCount / approvedBaseline) * 100) : 0;
+    const worst = worstFunnelStep(steps);
+    const complete = tracking.complete;
     const insights = [
       tracking.source === "facts"
-        ? `Funil alimentado pela UP Zero com ${scopedMetrics.length} eventos granulares no período.`
-        : `Funil alimentado pela UP Zero com ${scopedMetrics.length} linhas agregadas por hora no período.`,
+        ? `Funil alimentado pela UP Zero: etapas contadas por pessoa distinta (visitas por sessão), a partir de ${scopedMetrics.length} registros do período.`
+        : `Funil alimentado pela UP Zero com ${scopedMetrics.length} linhas agregadas por hora; sem como separar pessoas, essas etapas somam sessões.`,
       `Conversão geral de ${overallConversion.toFixed(2)}% calculada sobre ${approvedBaseline} cadastros aprovados.`,
     ];
+    if (!complete) {
+      insights.push("A UP Zero não respondeu para algumas etapas neste período; elas podem estar abaixo do real.");
+    }
     if (worst.idx > 0) {
-      insights.unshift(
-        `Maior queda (${worst.drop.toFixed(1)}%) entre ${steps[worst.idx - 1].label} e ${steps[worst.idx].label}.`,
-      );
+      const fromStep = steps.slice(0, worst.idx).reverse().find((step) => step.count > 0) ?? steps[worst.idx - 1];
+      insights.unshift(`Maior queda (${worst.drop.toFixed(1)}%) entre ${fromStep.label} e ${steps[worst.idx].label}.`);
     }
     const avgEventsBeforePurchase = (() => {
       const byUser = new Map<number, UpzeroAnalyticsMetric[]>();
@@ -3531,7 +3398,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       }
       return perBuyer.length > 0 ? perBuyer.reduce((sum, value) => sum + value, 0) / perBuyer.length : 0;
     })();
-    const activation = funnelClient?.dashboardType === "B2B"
+    const activation = FUNNEL_ACTIVATION_ENABLED && funnelClient?.dashboardType === "B2B"
       ? await buildApprovedCustomerActivationAnalysis({
           clientId,
           from,
@@ -3543,39 +3410,38 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
         })
       : null;
 
-    res.json(GetFunnelResponse.parse({
-      steps,
-      overallConversion,
-      insights,
-      avgEventsBeforePurchase,
-      topPaths: [],
-      suggestedActions: buildFunnelSuggestedActions(worst, steps),
-      hasSiteVisitData: counts.VISIT > 0,
-      activation,
-    }));
+    sendFunnel(
+      {
+        steps,
+        overallConversion,
+        insights,
+        avgEventsBeforePurchase,
+        topPaths: [],
+        suggestedActions: buildFunnelSuggestedActions(worst, steps),
+        hasSiteVisitData: (counts.VISIT ?? 0) > 0,
+      },
+      { activation, dataSource: tracking.source === "facts" ? "upzero-events" : "upzero-hourly", dataComplete: complete },
+    );
     return;
   } catch (err) {
     console.warn("[funnel] UP Zero analytics metrics unavailable; falling back to local events:", err);
   }
 
+  // Caminho local (a UP Zero não respondeu): conta pessoas distintas nas tabelas do próprio painel.
   // If UTM filters are active, build a scoped customer list and restrict events to those customers.
   let scopedCustomerCond: SQL | undefined;
-  if (utmSource || utmMedium || utmCampaign) {
-    const custParts: SQL[] = [eq(customersTable.clientId, clientId)];
-    if (utmSource) custParts.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
-    if (utmMedium) custParts.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
-    if (utmCampaign) custParts.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
+  if (hasUtmFilter) {
     const scopedIds = await db
       .select({ id: customersTable.id })
       .from(customersTable)
-      .where(and(...custParts));
+      .where(and(eq(customersTable.clientId, clientId), ...utmCustomerConditions()));
     if (scopedIds.length === 0) {
       const emptySteps = [
-        { step: "VISIT", label: "Site Visits" },
-        { step: "REGISTRATION", label: "Registrations" },
-        { step: "APPROVED_REGISTRATION", label: "Approved Leads" },
-        { step: "ADD_TO_CART", label: "Added to Cart" },
-        { step: "PURCHASE", label: "Purchases" },
+        { step: "VISIT", label: "Visitas ao site" },
+        { step: "REGISTRATION", label: "Cadastros enviados" },
+        { step: "APPROVED_REGISTRATION", label: "Cadastros aprovados" },
+        { step: "ADD_TO_CART", label: "Adições ao carrinho" },
+        { step: "PURCHASE", label: "Compras" },
       ].map((s, i) => ({ ...s, count: 0, conversionRate: i === 0 ? 100 : 0, dropOffRate: i === 0 ? 0 : 100 }));
       // Check hasSiteVisitData even on the early-return path so the notice logic is correct
       const hasSiteVisitDataRowsEarly = await db
@@ -3583,25 +3449,25 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
         .from(siteVisitsTable)
         .where(eq(siteVisitsTable.clientId, clientId));
       const hasSiteVisitDataEarly = Number(hasSiteVisitDataRowsEarly[0]?.count ?? 0) > 0;
-      res.json(GetFunnelResponse.parse({
-        steps: emptySteps,
-        overallConversion: 0,
-        insights: [],
-        avgEventsBeforePurchase: 0,
-        topPaths: [],
-        suggestedActions: [],
-        hasSiteVisitData: hasSiteVisitDataEarly,
-        activation: funnelClient?.dashboardType === "B2B"
-          ? await buildApprovedCustomerActivationAnalysis({
-              clientId,
-              from,
-              to,
-              utmSource,
-              utmMedium,
-              utmCampaign,
-            })
-          : null,
-      }));
+      sendFunnel(
+        {
+          steps: emptySteps,
+          overallConversion: 0,
+          insights: [],
+          avgEventsBeforePurchase: 0,
+          topPaths: [],
+          suggestedActions: [],
+          hasSiteVisitData: hasSiteVisitDataEarly,
+        },
+        {
+          activation:
+            FUNNEL_ACTIVATION_ENABLED && funnelClient?.dashboardType === "B2B"
+              ? await buildApprovedCustomerActivationAnalysis({ clientId, from, to, utmSource, utmMedium, utmCampaign })
+              : null,
+          dataSource: "local",
+          dataComplete: true,
+        },
+      );
       return;
     }
     scopedCustomerCond = inArray(eventsTable.customerId, scopedIds.map((r) => r.id));
@@ -3611,7 +3477,8 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     db
       .select({
         eventType: eventsTable.eventType,
-        count: sql<number>`COUNT(*)::int`,
+        // pessoas distintas (e não eventos): quem não tem cliente associado conta como uma pessoa por evento
+        count: sql<number>`COUNT(DISTINCT COALESCE(${eventsTable.customerId}, ${eventsTable.id}))::int`,
       })
       .from(eventsTable)
       .where(
@@ -3625,113 +3492,58 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       .groupBy(eventsTable.eventType),
     // Only pull site_visit totals when there are no UTM filters
     // (visit data is not UTM-scoped — it represents total site traffic)
-    !utmSource && !utmMedium && !utmCampaign
+    !hasUtmFilter
       ? db
           .select({ total: sql<number>`COALESCE(SUM(${siteVisitsTable.visitCount}), 0)::int` })
           .from(siteVisitsTable)
           .where(
             and(
               eq(siteVisitsTable.clientId, clientId),
-              gte(siteVisitsTable.visitDate, from.toISOString().slice(0, 10)),
-              lte(siteVisitsTable.visitDate, to.toISOString().slice(0, 10)),
+              gte(siteVisitsTable.visitDate, saoPauloDateOnly(from)),
+              lte(siteVisitsTable.visitDate, saoPauloDateOnly(to)),
             ),
           )
       : Promise.resolve([{ total: 0 }]),
   ]);
 
-  const counts: Record<string, number> = {};
+  const counts: Partial<Record<FunnelStepKey, number>> = {};
   for (const row of eventCounts) {
-    counts[row.eventType] = Number(row.count);
+    counts[row.eventType as FunnelStepKey] = Number(row.count);
   }
-  const approvedCustomerConditions: SQL[] = [
-    eq(customersTable.clientId, clientId),
-    eq(customersTable.registrationStatus, "APPROVED"),
-    gte(customersTable.createdAt, from),
-    lte(customersTable.createdAt, to),
-  ];
-  if (utmSource) approvedCustomerConditions.push(sql`lower(${customersTable.utmSource}) = lower(${utmSource})`);
-  if (utmMedium) approvedCustomerConditions.push(sql`lower(${customersTable.utmMedium}) = lower(${utmMedium})`);
-  if (utmCampaign) approvedCustomerConditions.push(sql`lower(${customersTable.utmCampaign}) = lower(${utmCampaign})`);
-  const [approvedCustomerRow] = await db
-    .select({ count: sql<number>`COUNT(*)::int` })
-    .from(customersTable)
-    .where(and(...approvedCustomerConditions));
-  counts.APPROVED_REGISTRATION = Number(approvedCustomerRow?.count ?? counts.APPROVED_REGISTRATION ?? 0);
+  const [customerTotals, paidBuyers] = await Promise.all([loadCustomerTotals(), loadPaidBuyers()]);
+  counts.REGISTRATION = customerTotals.registrations;
+  counts.APPROVED_REGISTRATION = customerTotals.approved;
+  counts.PURCHASE = Math.max(counts.PURCHASE ?? 0, paidBuyers ?? 0);
 
   // Overlay site-visit data from the dedicated table (takes priority over any
   // VISIT events that might exist, since the table represents real web traffic)
   const siteVisitTotal = Number(visitTotals[0]?.total ?? 0);
   if (siteVisitTotal > 0) {
-    counts["VISIT"] = siteVisitTotal;
+    counts.VISIT = siteVisitTotal;
   }
 
-  const funnelOrder: Array<{ step: string; label: string }> = [
-    { step: "VISIT", label: "Site Visits" },
-    { step: "REGISTRATION", label: "Registrations" },
-    { step: "APPROVED_REGISTRATION", label: "Approved Leads" },
-    { step: "ADD_TO_CART", label: "Added to Cart" },
-    { step: "PURCHASE", label: "Purchases" },
+  const funnelOrder: Array<{ step: FunnelStepKey; label: string }> = [
+    { step: "VISIT", label: "Visitas ao site" },
+    { step: "REGISTRATION", label: "Cadastros enviados" },
+    { step: "APPROVED_REGISTRATION", label: "Cadastros aprovados" },
+    { step: "ADD_TO_CART", label: "Adições ao carrinho" },
+    { step: "PURCHASE", label: "Compras" },
   ];
-
-  // Enforce monotonic funnel: each step cannot exceed the previous step's count.
-  // Special case: steps with no data (count = 0) — such as VISIT when the data
-  // source doesn't track site visits — must not zero out all downstream steps.
-  // We track `prev` as the last *non-zero* step count so that an absent step is
-  // skipped in the monotonic chain (it has no data to constrain the next step).
-  // Conversion rates are expressed relative to the last non-zero ancestor.
-  let prev = Number.MAX_SAFE_INTEGER; // sentinel = "no data seen yet"
   const approvedBaseline = counts.APPROVED_REGISTRATION ?? 0;
-  const postApprovalSteps = new Set(["ADD_TO_CART", "PURCHASE"]);
-  const steps = funnelOrder.map((s, i) => {
-    const raw = counts[s.step] ?? 0;
-    // When prev is still MAX_SAFE_INTEGER we haven't seen any data yet,
-    // so treat the current step as unconstrained (use raw directly).
-    const effectivePrev = prev === Number.MAX_SAFE_INTEGER ? raw : prev;
-    const count = Math.min(raw, effectivePrev);
-    let conversionRate = 100;
-    if (i > 0) {
-      if (postApprovalSteps.has(s.step) && approvedBaseline > 0) {
-        conversionRate = (count / approvedBaseline) * 100;
-      } else if (prev > 0 && prev < Number.MAX_SAFE_INTEGER) {
-        // Normal case: previous non-zero step exists — compute real conversion.
-        conversionRate = (count / prev) * 100;
-      } else if (count > 0) {
-        // First step with actual data: it is its own baseline (100%).
-        conversionRate = 100;
-      } else {
-        conversionRate = 0;
-      }
-    }
-    const dropOffRate = i === 0 ? 0 : 100 - conversionRate;
-    // Only advance prev when this step has actual data; zero steps are skipped.
-    if (count > 0) prev = count;
-    return {
-      step: s.step,
-      label: s.label,
-      count,
-      conversionRate,
-      dropOffRate,
-    };
-  });
+  const steps = buildFunnelSteps(funnelOrder, counts, approvedBaseline);
 
-  // Overall conversion: purchases over approved registrations.
+  // Overall conversion: buyers over approved registrations.
   const purchaseCount = counts.PURCHASE ?? 0;
-  const overallConversion = approvedBaseline > 0 ? (purchaseCount / approvedBaseline) * 100 : 0;
+  const overallConversion = approvedBaseline > 0 ? Math.min(100, (purchaseCount / approvedBaseline) * 100) : 0;
 
-  let worst = { idx: -1, drop: -1 };
-  for (let i = 1; i < steps.length; i++) {
-    if (steps[i].dropOffRate > worst.drop) {
-      worst = { idx: i, drop: steps[i].dropOffRate };
-    }
-  }
+  const worst = worstFunnelStep(steps);
   const insights: string[] = [];
   if (worst.idx > 0) {
-    insights.push(
-      `Highest drop-off (${worst.drop.toFixed(1)}%) occurs between ${steps[worst.idx - 1].label} and ${steps[worst.idx].label}.`,
-    );
+    const fromStep = steps.slice(0, worst.idx).reverse().find((step) => step.count > 0) ?? steps[worst.idx - 1];
+    insights.push(`Maior queda (${worst.drop.toFixed(1)}%) entre ${fromStep.label} e ${steps[worst.idx].label}.`);
   }
   insights.push(
-    `Overall funnel conversion is ${overallConversion.toFixed(2)}% from approved leads to purchase.`,
+    `Conversão geral de ${overallConversion.toFixed(2)}% de cadastros aprovados até compra (pessoas distintas).`,
   );
 
   // Average events per customer that occurred BEFORE their first purchase in the window
@@ -3772,7 +3584,7 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
     .from(siteVisitsTable)
     .where(eq(siteVisitsTable.clientId, clientId));
   const hasSiteVisitData = Number(hasSiteVisitDataRows[0]?.count ?? 0) > 0;
-  const activation = funnelClient?.dashboardType === "B2B"
+  const activation = FUNNEL_ACTIVATION_ENABLED && funnelClient?.dashboardType === "B2B"
     ? await buildApprovedCustomerActivationAnalysis({
         clientId,
         from,
@@ -3783,7 +3595,10 @@ router.get("/analytics/funnel", async (req, res): Promise<void> => {
       })
     : null;
 
-  res.json(GetFunnelResponse.parse({ steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions, hasSiteVisitData, activation }));
+  sendFunnel(
+    { steps, overallConversion, insights, avgEventsBeforePurchase, topPaths, suggestedActions, hasSiteVisitData },
+    { activation, dataSource: "local", dataComplete: true },
+  );
 });
 
 // ─── Site Visits: GET ────────────────────────────────────────────────────────
@@ -4106,8 +3921,8 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
     : { from: new Date(0), to: new Date() };
 
   const winLenMs = to.getTime() - from.getTime();
-  const prevFrom = new Date(from.getTime() - winLenMs);
-  const prevTo = new Date(from.getTime());
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - winLenMs);
 
   const [kpis, prevKpisRaw, registrationsOverTime, registrationsByState, registrationsBySource] =
     await Promise.all([
@@ -4115,7 +3930,7 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
       compare && hasExplicitRange ? computeSummaryKpis(clientId, prevFrom, prevTo) : null,
       db
         .select({
-          date: sql<string>`to_char(date_trunc('day', ${customersTable.createdAt}), 'YYYY-MM-DD')`,
+          date: sql<string>`to_char(date(timezone('America/Sao_Paulo', ${customersTable.createdAt})), 'YYYY-MM-DD')`,
           registrations: sql<number>`count(*)::int`,
           approved: sql<number>`sum(case when ${customersTable.registrationStatus} = 'APPROVED' then 1 else 0 end)::int`,
         })
@@ -4127,8 +3942,8 @@ router.get("/analytics/customers/summary", async (req, res): Promise<void> => {
             lte(customersTable.createdAt, to),
           ),
         )
-        .groupBy(sql`date_trunc('day', ${customersTable.createdAt})`)
-        .orderBy(sql`date_trunc('day', ${customersTable.createdAt})`),
+        .groupBy(sql`date(timezone('America/Sao_Paulo', ${customersTable.createdAt}))`)
+        .orderBy(sql`date(timezone('America/Sao_Paulo', ${customersTable.createdAt}))`),
       db
         .select({
           state: sql<string>`coalesce(${customersTable.state}, 'Unknown')`,
@@ -7135,29 +6950,6 @@ interface InsightCacheEntry {
 const insightCache = new Map<string, InsightCacheEntry>();
 const INSIGHT_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-function buildHeuristic(
-  kpis: { revenue: number; orders: number; conversionRate: number; avgTicket: number; approvalRate: number },
-  topCategory: { category: string; revenue: number } | null,
-  topSeller: { name: string; revenue: number } | null,
-  trend: number,
-): { headline: string; body: string; bullets: string[] } {
-  const trendPct = (trend * 100).toFixed(1);
-  const headline =
-    trend > 0.05
-      ? `Revenue trending up ${trendPct}% versus the prior window.`
-      : trend < -0.05
-        ? `Revenue dipping ${Math.abs(parseFloat(trendPct)).toFixed(1)}% versus the prior window.`
-        : `Revenue holding steady at ${kpis.revenue.toFixed(0)}.`;
-
-  const body = `Across the period the catalog generated ${kpis.orders} orders at an average ticket of ${kpis.avgTicket.toFixed(2)}, with a ${kpis.conversionRate.toFixed(1)}% visit-to-purchase conversion rate.`;
-
-  const bullets: string[] = [];
-  if (topCategory) bullets.push(`Top category: ${topCategory.category} (${topCategory.revenue.toFixed(0)}).`);
-  if (topSeller) bullets.push(`Top seller: ${topSeller.name} (${topSeller.revenue.toFixed(0)}).`);
-  if (kpis.approvalRate > 0) bullets.push(`Lead approval rate ${kpis.approvalRate.toFixed(1)}%.`);
-  return { headline, body, bullets };
-}
-
 async function buildInsightContext(
   clientId: string,
   from: Date,
@@ -7285,62 +7077,26 @@ async function buildInsightContext(
 
 // ── Marketing-specific insight context ───────────────────────────────────────
 async function buildMarketingInsightContext(clientId: string, from: Date, to: Date) {
-  const creatives = await db
-    .select()
-    .from(creativesTable)
-    .where(eq(creativesTable.clientId, clientId));
-
-  const [config] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId));
-  const isB2C = config?.dashboardType === "B2C";
-  const metaRevenue = usesMetaRevenue(config?.commercePlatform);
-  const token = getGlobalMetaAccessToken(config?.metaAdsApiKey);
-  const readMeta = (start: Date, end: Date) => token && config?.metaAdAccountId
-    ? fetchMetaMarketingData({ accessToken: token, adAccountId: config.metaAdAccountId, since: start.toISOString().slice(0, 10), until: end.toISOString().slice(0, 10), isB2C })
-    : Promise.resolve(null);
-  const currentMeta = metaRevenue ? await readMeta(from, to) : null;
-  const activeCreatives = creatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
-  const kpis = await computeMarketingKpis(clientId, activeCreatives, from, to, currentMeta, isB2C, metaRevenue);
-
-  // Previous period for trend
+  const [client] = await db.select({ name: clientsTable.name, commercePlatform: clientsTable.commercePlatform, dashboardType: clientsTable.dashboardType,
+    metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .from(clientsTable).where(eq(clientsTable.id, clientId));
+  const isB2C = client?.dashboardType === "B2C";
+  const metaRevenue = usesMetaRevenue(client?.commercePlatform);
   const span = to.getTime() - from.getTime();
   const prevTo = new Date(from.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - span);
-  const prevActive = creatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0);
-  const previousMeta = metaRevenue ? await readMeta(prevFrom, prevTo) : null;
-  const prevKpis = await computeMarketingKpis(clientId, prevActive, prevFrom, prevTo, previousMeta, isB2C, metaRevenue);
-
+  const credentials = {accessToken: getGlobalMetaAccessToken(client?.metaAdsApiKey) ?? "", adAccountId: client?.metaAdAccountId ?? ""};
+  if (metaRevenue && (!credentials.accessToken || !credentials.adAccountId)) throw new MediaReadError();
+  const [current, previous] = await Promise.all([
+    fetchMetaMarketingDataIfConnected({...credentials, since:saoPauloDateOnly(from),until:saoPauloDateOnly(to), isB2C}),
+    fetchMetaMarketingDataIfConnected({...credentials, since:saoPauloDateOnly(prevFrom),until:saoPauloDateOnly(prevTo), isB2C}),
+  ]);
+  const [kpis, prevKpis] = await Promise.all([
+    computeMarketingKpis(clientId, from, to, current, isB2C, metaRevenue),
+    computeMarketingKpis(clientId, prevFrom, prevTo, previous, isB2C, metaRevenue),
+  ]);
   const roasTrend = prevKpis.roas > 0 ? (kpis.roas - prevKpis.roas) / prevKpis.roas : 0;
-
-  // Top platform by spend
-  const platformTotals: Record<string, number> = {};
-  for (const c of activeCreatives) {
-    const fraction = computeSpendOverlapFraction(c, from, to);
-    platformTotals[c.platform] = (platformTotals[c.platform] ?? 0) + c.spend * fraction;
-  }
-  const topPlatform = metaRevenue ? "META" : Object.entries(platformTotals).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "n/a";
-
-  const [brand] = await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId));
-
-  return { isB2C, kpis, prevKpis, roasTrend, topPlatform, brand: brand?.name ?? "the brand" };
-}
-
-function buildMarketingHeuristic(ctx: Awaited<ReturnType<typeof buildMarketingInsightContext>>) {
-  const { kpis, roasTrend, topPlatform } = ctx;
-  const roasPct = (roasTrend * 100).toFixed(1);
-  const trending = roasTrend >= 0 ? "up" : "down";
-  return {
-    headline: `ROAS is ${trending} ${Math.abs(Number(roasPct))}% vs last period at ${kpis.roas.toFixed(2)}×`,
-    body: `You spent R$${kpis.totalSpend.toFixed(0)} on paid channels and generated R$${kpis.attributedRevenue.toFixed(0)} in attributed revenue. ${topPlatform} is your top-performing platform.`,
-    bullets: ctx.isB2C ? [
-      `${kpis.purchases} compras com custo por compra de R$${kpis.cpa.toFixed(2)}`,
-      `Receita atribuída de R$${kpis.attributedRevenue.toFixed(2)}`,
-      roasTrend > 0 ? "ROAS em alta — avalie os criativos com mais compras" : "Revise o desempenho de compras e o custo por compra",
-    ] : [
-      `${kpis.approvedLeads} approved leads at R$${kpis.cpa.toFixed(0)} CPA`,
-      `Cost per lead is R$${kpis.cpl.toFixed(0)} — ${kpis.approvalRate.toFixed(0)}% approval rate`,
-      roasTrend >= 0 ? "Paid channel ROAS is improving — consider scaling top creatives" : "ROAS is declining — review underperforming creatives and adjust bids",
-    ],
-  };
+  return { isB2C, kpis, prevKpis, roasTrend, topPlatform: "Meta", brand: client?.name ?? "the brand" };
 }
 
 async function generateInsight(
@@ -7349,8 +7105,9 @@ async function generateInsight(
   to: Date,
   forceRefresh: boolean,
   screen: string = "dashboard",
+  language: InsightLanguage = "en",
 ): Promise<{ headline: string; body: string; bullets: string[]; generatedAt: string; cached: boolean; source: "ai" | "heuristic" }> {
-  const cacheKey = `${clientId}|${from.toISOString().slice(0, 10)}|${to.toISOString().slice(0, 10)}|${screen}`;
+  const cacheKey = `${clientId}|${from.toISOString().slice(0, 10)}|${to.toISOString().slice(0, 10)}|${screen}|${language}`;
   if (!forceRefresh) {
     const cached = insightCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
@@ -7361,12 +7118,12 @@ async function generateInsight(
   // Use marketing-specific context when requested
   if (screen === "marketing") {
     const mktCtx = await buildMarketingInsightContext(clientId, from, to);
-    const heuristic = buildMarketingHeuristic(mktCtx);
+    const heuristic = marketingInsight(language, mktCtx.kpis, mktCtx.roasTrend, mktCtx.topPlatform, mktCtx.isB2C);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = {
       ...heuristic,
       source: "heuristic",
     };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const { kpis, roasTrend, topPlatform, brand } = mktCtx;
@@ -7447,21 +7204,13 @@ No markdown, no preamble.`;
       const vestiHighConv = vestiLevels.filter((l) => l === "High Conversion").length;
       const vestiTotal = vestiLevels.length;
       const vestiTop = vestiProducts[0];
-      const vestiHeuristic = {
-        headline: vestiTop
-          ? `Top product "${vestiTop.name}" has generated ${vestiTop.totalRevenue.toFixed(0)} in lifetime revenue`
-          : "No product sales recorded yet",
-        body: `${vestiHighConv} of ${vestiTotal} products are High Conversion (65%+ sell-through). ${vestiAtRisk > 0 ? `${vestiAtRisk} product${vestiAtRisk > 1 ? "s" : ""} are At Risk — never sold or very low turnover.` : vestiTotal > 0 ? "No products are At Risk." : "No catalog data available for this period."}`,
-        bullets: [
-          `High Conversion SKUs: ${vestiHighConv} of ${vestiTotal} — consider re-ordering your bestsellers`,
-          vestiAtRisk > 0
-            ? `${vestiAtRisk} At Risk SKU${vestiAtRisk > 1 ? "s" : ""} — these have never sold or have very poor turnover; consider markdown or discontinuation`
-            : vestiTotal > 0
-              ? "All SKUs have recorded at least one sale — good catalog health"
-              : "Add sales data to unlock product performance insights",
-          vestiTop ? `"${vestiTop.name}" leads with ${vestiTop.totalSold} units sold — study what drives its performance` : "Add sales data to unlock product performance insights",
-        ],
-      };
+      const vestiHeuristic = productsInsight(language, {
+        top: vestiTop ? { name: vestiTop.name, totalRevenue: vestiTop.totalRevenue, totalSold: vestiTop.totalSold } : null,
+        highConv: vestiHighConv,
+        atRisk: vestiAtRisk,
+        total: vestiTotal,
+        vesti: true,
+      });
       const vestiGeneratedAt = new Date().toISOString();
       insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt } });
       return { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt, cached: false };
@@ -7503,20 +7252,16 @@ No markdown, no preamble.`;
     const highConvCount = levels.filter((l) => l === "High Conversion").length;
     const totalProducts = levels.length;
 
-    const heuristic = {
-      headline: topProducts[0]
-        ? `Top product "${topProducts[0].name}" has generated ${topProducts[0].totalRevenue.toFixed(0)} in lifetime revenue`
-        : "No product sales recorded yet",
-      body: `${highConvCount} of ${totalProducts} products are High Conversion (65%+ sell-through). ${atRiskCount > 0 ? `${atRiskCount} product${atRiskCount > 1 ? "s" : ""} are At Risk — never sold or very low turnover.` : "No products are At Risk."}`,
-      bullets: [
-        `High Conversion SKUs: ${highConvCount} of ${totalProducts} — consider re-ordering your bestsellers`,
-        atRiskCount > 0 ? `${atRiskCount} At Risk SKU${atRiskCount > 1 ? "s" : ""} — these have never sold or have very poor turnover; consider markdown or discontinuation` : "All SKUs have recorded at least one sale — good catalog health",
-        topProducts[0] ? `"${topProducts[0].name}" leads with ${topProducts[0].totalSold} units sold — study what drives its performance` : "Add sales data to unlock product performance insights",
-      ],
-    };
+    const heuristic = productsInsight(language, {
+      top: topProducts[0] ? { name: topProducts[0].name, totalRevenue: topProducts[0].totalRevenue, totalSold: topProducts[0].totalSold } : null,
+      highConv: highConvCount,
+      atRisk: atRiskCount,
+      total: totalProducts,
+      vesti: false,
+    });
 
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7552,26 +7297,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
   // Customers-specific insight
   if (screen === "customers") {
     const cKpis = await computeSummaryKpis(clientId, from, to);
-    const hasAttribution = cKpis.approvalRatePct < 40;
-    const heuristic = {
-      headline: cKpis.totalRegistrations > 0
-        ? `${cKpis.approvedRegistrations} of ${cKpis.totalRegistrations} registrations approved (${cKpis.approvalRatePct.toFixed(1)}%)`
-        : "No registrations in this period",
-      body: cKpis.totalBuyers > 0
-        ? `${cKpis.totalBuyers} customers made purchases, while ${cKpis.customersWithoutPurchase} registered but never bought.${cKpis.avgTimeToFirstPurchaseDays != null ? ` Average time to first purchase: ${cKpis.avgTimeToFirstPurchaseDays}d.` : ""}`
-        : "No purchases recorded in this period.",
-      bullets: [
-        `Approval rate: ${cKpis.approvalRatePct.toFixed(1)}% — ${hasAttribution ? "below 40%, consider improving your approval process" : "healthy conversion from registration to approval"}`,
-        cKpis.avgTimeToFirstPurchaseDays != null
-          ? `Avg ${cKpis.avgTimeToFirstPurchaseDays}d to first purchase — optimize post-approval activation flows to reduce this`
-          : "Track time to first purchase by enabling first-purchase attribution",
-        cKpis.customersWithoutPurchase > cKpis.totalBuyers
-          ? `${cKpis.customersWithoutPurchase} registered customers never purchased — consider targeted re-engagement campaigns`
-          : "Majority of registered customers have made at least one purchase — strong activation rate",
-      ],
-    };
+    const heuristic = customersInsight(language, cKpis);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7620,23 +7348,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
 
     const totalRevenue = topSellers.reduce((s, r) => s + r.totalRevenue, 0);
     const topRevShare = totalRevenue > 0 && topSellers[0] ? (topSellers[0].totalRevenue / totalRevenue) * 100 : 0;
-    const heuristic = {
-      headline: topSellers[0]
-        ? `${topSellers[0].name} leads with ${topSellers[0].totalOrders} orders and ${topSellers[0].totalRevenue.toFixed(0)} in lifetime revenue`
-        : "No seller activity recorded yet",
-      body: topSellers.length > 0
-        ? `Top seller ${topSellers[0]?.name} accounts for ${topRevShare.toFixed(1)}% of total seller revenue. ${topSellers.length > 1 ? `The next ${topSellers.length - 1} sellers share the remaining ${(100 - topRevShare).toFixed(1)}%.` : ""}`
-        : "Add seller attribution to unlock performance insights.",
-      bullets: [
-        topSellers[0] ? `${topSellers[0].name} — ${topSellers[0].totalOrders} orders · ${topRevShare.toFixed(1)}% revenue share` : "No seller data available",
-        topSellers[1] ? `${topSellers[1].name} — ${topSellers[1].totalOrders} orders · ${totalRevenue > 0 ? ((topSellers[1].totalRevenue / totalRevenue) * 100).toFixed(1) : 0}% revenue share` : "Only one seller on record",
-        topSellers.length > 2
-          ? `${topSellers.length} sellers active — compare their avg ticket to identify coaching opportunities`
-          : "Add more sellers to enable benchmarking",
-      ],
-    };
+    const heuristic = sellersInsight(language, topSellers, totalRevenue, topRevShare);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7686,19 +7400,7 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
       const vSellThrough = vestiStock.kpis.sellThroughRate.toFixed(1);
       const vStockoutNames = vestiStock.stockoutRisk.slice(0, 3).map((r) => r.name);
       const vTotalSold = vestiStock.skus.reduce((s, r) => s + r.unitsSold, 0);
-      const vestiHeuristic = {
-        headline: vStockout > 0
-          ? `${vStockout} SKU${vStockout > 1 ? "s are" : " is"} at critical stockout risk this week`
-          : vOverstock > 0
-            ? `${vOverstock} SKU${vOverstock > 1 ? "s have" : " has"} excess inventory — review pricing or promotions`
-            : `Inventory is healthy with a ${vSellThrough}% sell-through rate`,
-        body: `In the selected period, ${vTotalSold} units were sold across ${vestiStock.total} active SKUs. Sell-through rate stands at ${vSellThrough}%. ${vStockout > 0 ? `${vStockout} product${vStockout > 1 ? "s need" : " needs"} urgent replenishment.` : vOverstock > 0 ? `${vOverstock} product${vOverstock > 1 ? "s are" : " is"} overstocked.` : "No critical risk items detected."}`,
-        bullets: [
-          vStockoutNames.length > 0 ? `Stockout risk: ${vStockoutNames.join(", ")}` : "No stockout-risk products in this period",
-          vOverstock > 0 ? `${vOverstock} SKU${vOverstock > 1 ? "s" : ""} with >90 days coverage — consider markdowns` : "No overstock issues detected",
-          `Current sell-through rate: ${vSellThrough}% — aim for 60–80% for fashion`,
-        ],
-      };
+      const vestiHeuristic = stockInsight(language, { stockout: vStockout, overstock: vOverstock, sellThrough: vSellThrough, names: vStockoutNames, totalSold: vTotalSold, totalSkus: vestiStock.total });
       const vestiGeneratedAt = new Date().toISOString();
       insightCache.set(cacheKey, { expiresAt: Date.now() + INSIGHT_TTL_MS, payload: { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt } });
       return { ...vestiHeuristic, source: "heuristic", generatedAt: vestiGeneratedAt, cached: false };
@@ -7760,21 +7462,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
     }
 
     const sellThrough = totalSold + totalUnits > 0 ? ((totalSold / (totalSold + totalUnits)) * 100).toFixed(1) : "0";
-    const heuristic = {
-      headline: stockoutCount > 0
-        ? `${stockoutCount} SKU${stockoutCount > 1 ? "s are" : " is"} at critical stockout risk this week`
-        : overstockCount > 0
-          ? `${overstockCount} SKU${overstockCount > 1 ? "s have" : " has"} excess inventory — review pricing or promotions`
-          : `Inventory is healthy with a ${sellThrough}% sell-through rate`,
-      body: `In the selected period, ${totalSold} units were sold across ${prods.length} active SKUs. Sell-through rate stands at ${sellThrough}%. ${stockoutCount > 0 ? `${stockoutCount} product${stockoutCount > 1 ? "s need" : " needs"} urgent replenishment.` : overstockCount > 0 ? `${overstockCount} product${overstockCount > 1 ? "s are" : " is"} overstocked.` : "No critical risk items detected."}`,
-      bullets: [
-        stockoutNames.length > 0 ? `Stockout risk: ${stockoutNames.join(", ")}` : `No stockout-risk products in this period`,
-        overstockCount > 0 ? `${overstockCount} SKU${overstockCount > 1 ? "s" : ""} with >90 days coverage — consider markdowns` : "No overstock issues detected",
-        `Current sell-through rate: ${sellThrough}% — aim for 60–80% for fashion`,
-      ],
-    };
+    const heuristic = stockInsight(language, { stockout: stockoutCount, overstock: overstockCount, sellThrough, names: stockoutNames, totalSold, totalSkus: prods.length });
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const brand = (await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, clientId)))[0]?.name ?? "the brand";
@@ -7814,21 +7504,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
   // Journey-specific insight
   if (screen === "journey") {
     const jCtx = await buildJourneyInsightContext(clientId, from, to);
-    const heuristic = {
-      headline: jCtx.avgEventsBeforePurchase > 0
-        ? `Buyers average ${jCtx.avgEventsBeforePurchase.toFixed(1)} events before purchasing`
-        : "No purchase journey data available for this period",
-      body: `Customers who converted touched an average of ${jCtx.avgEventsBeforePurchase.toFixed(1)} events before completing a purchase.${jCtx.avgTimeToFirstPurchaseDays > 0 ? ` Time from registration to first purchase averages ${jCtx.avgTimeToFirstPurchaseDays.toFixed(1)} days.` : ""}`,
-      bullets: [
-        `Avg events before purchase: ${jCtx.avgEventsBeforePurchase.toFixed(1)} — consider shortening the path to reduce drop-off`,
-        jCtx.avgTimeToFirstPurchaseDays > 0
-          ? `Avg time to first purchase: ${jCtx.avgTimeToFirstPurchaseDays.toFixed(1)} days — post-registration nurture can reduce this`
-          : "Enable first-purchase attribution to track activation time",
-        "Compare buyers vs non-buyers to identify the key events that differentiate converters",
-      ],
-    };
+    const heuristic = journeyInsight(language, jCtx);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const prompt = `You are a senior UX/CRO analyst writing a weekly journey analytics insight for "${jCtx.brand}". Period: ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}.
@@ -7867,19 +7545,9 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
     const champions = segMap["Champions"] ?? { count: 0, revenue: 0 };
     const atRisk = segMap["At Risk"] ?? { count: 0, revenue: 0 };
     const lost = segMap["Lost"] ?? { count: 0, revenue: 0 };
-    const heuristic = {
-      headline: champions.count > 0
-        ? `Champions represent ${((champions.count / Math.max(1, total)) * 100).toFixed(1)}% of your customer base`
-        : "No RFM segments computed yet for this brand",
-      body: `Your customer base is segmented into ${total} customers. Champions (${champions.count}) drive the highest lifetime value. ${atRisk.count > 0 ? `${atRisk.count} customers are At Risk — re-engagement can recover their revenue.` : ""}${lost.count > 0 ? ` ${lost.count} customers are Lost — consider win-back campaigns.` : ""}`,
-      bullets: [
-        `Champions: ${champions.count} customers, R$${champions.revenue.toFixed(0)} total revenue`,
-        atRisk.count > 0 ? `At Risk: ${atRisk.count} customers — launch re-engagement campaigns` : "No At Risk customers right now — keep up retention efforts",
-        lost.count > 0 ? `Lost: ${lost.count} customers — consider win-back offers` : "No Lost customers detected",
-      ],
-    };
+    const heuristic = rfmInsight(language, { champions, atRisk, lost, total });
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const ai = getOpenAIClient();
+    const ai = getInsightAI(language);
     if (ai && isAIConfigured()) {
       try {
         const segSummary = Object.entries(segMap).map(([s, v]) => `${s}: ${v.count} customers, R$${v.revenue.toFixed(0)}`).join(" | ");
@@ -7939,21 +7607,15 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
         })()
       : await buildUtmAnalytics(clientId, from, to, "source");
     const topRow = utmData.rows[0];
-    const heuristic = {
-      headline: topRow
-        ? `${topRow.key} drives ${topRow.revenue > 0 ? `R$${topRow.revenue.toFixed(0)} in revenue` : `${topRow.registrations} registrations`} this period`
-        : "No UTM attribution data available for this period",
-      body: `UTM attribution for this period shows ${utmData.kpis.totalRegistrations} registrations across ${utmData.rows.length} acquisition sources. ${topRow ? `Top source "${topRow.key}" converts ${topRow.conversionPct.toFixed(1)}% of registrations into buyers.` : ""} Overall approval rate: ${utmData.kpis.approvalPct.toFixed(1)}%.`,
-      bullets: [
-        topRow
-          ? `Top source: ${topRow.key} — ${topRow.buyers} buyers, R$${topRow.revenue.toFixed(0)} revenue${topRow.roas != null ? `, ROAS ${topRow.roas.toFixed(2)}x` : ""}`
-          : "No source data available for this period",
-        `Conversion rate: ${utmData.kpis.conversionPct.toFixed(1)}% of registrations become buyers — compare channels to find your highest-quality traffic`,
-        `Approval rate: ${utmData.kpis.approvalPct.toFixed(1)}% overall — low approval on a high-spend source signals lead quality issues`,
-      ],
-    };
+    const heuristic = utmInsight(language, {
+      topRow: topRow ? { key: topRow.key, revenue: topRow.revenue, registrations: topRow.registrations, conversionPct: topRow.conversionPct, buyers: topRow.buyers, roas: topRow.roas ?? null } : null,
+      totalRegistrations: utmData.kpis.totalRegistrations,
+      sources: utmData.rows.length,
+      approvalPct: utmData.kpis.approvalPct,
+      conversionPct: utmData.kpis.conversionPct,
+    });
     let utmPayload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = { ...heuristic, source: "heuristic" };
-    const aiUtm = getOpenAIClient();
+    const aiUtm = getInsightAI(language);
     if (aiUtm && isAIConfigured() && topRow) {
       try {
         const sourceSummary = utmData.rows.slice(0, 6)
@@ -7986,14 +7648,14 @@ Return strict JSON: {"headline":"<one short sentence <80 chars>","body":"<2-3 se
   }
 
   const ctx = await buildInsightContext(clientId, from, to);
-  const heuristic = buildHeuristic(ctx.kpis, ctx.topCategory, ctx.topSeller, ctx.trend);
+  const heuristic = dashboardInsight(language, ctx.kpis, ctx.topCategory, ctx.topSeller, ctx.trend);
 
   let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = {
     ...heuristic,
     source: "heuristic",
   };
 
-  const ai = getOpenAIClient();
+  const ai = getInsightAI(language);
   if (ai && isAIConfigured()) {
     try {
       const userPrompt = `You are a senior fashion-retail analyst writing one weekly insight card for the brand "${ctx.brand}". Speak directly to the brand owner. Use the following metrics for the period ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}:
@@ -9875,7 +9537,7 @@ router.get("/analytics/insight", async (req, res): Promise<void> => {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const screen = (parsed.data as Record<string, unknown>).screen as string | undefined ?? "dashboard";
 
-  const insight = await generateInsight(clientId, from, to, false, screen);
+  const insight = await generateInsight(clientId, from, to, false, screen, normalizeInsightLanguage(req.query.language));
   res.json(GetInsightResponse.parse(insight));
 });
 
@@ -9892,7 +9554,7 @@ router.post("/analytics/insight", async (req, res): Promise<void> => {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const screen = (parsed.data as Record<string, unknown>).screen as string | undefined ?? "dashboard";
 
-  const insight = await generateInsight(clientId, from, to, true, screen);
+  const insight = await generateInsight(clientId, from, to, true, screen, normalizeInsightLanguage(req.query.language));
   res.json(GetInsightResponse.parse(insight));
 });
 
@@ -10269,37 +9931,37 @@ function buildFunnelSuggestedActions(
 ): string[] {
   const STEP_ACTIONS: Record<string, string[]> = {
     REGISTRATION: [
-      "Simplify the registration form — fewer required fields can lift signups significantly.",
-      "Add social login options to reduce friction at registration.",
-      "A/B test the registration CTA copy and placement.",
+      "Simplifique o formulário de cadastro: menos campos obrigatórios costumam aumentar os cadastros.",
+      "Ofereça login social para reduzir o atrito no cadastro.",
+      "Faça teste A/B do texto e da posição do botão de cadastro.",
     ],
     APPROVED_REGISTRATION: [
-      "Review approval criteria — if the approval rate is below 50%, consider loosening them.",
-      "Send an immediate approval-notification email/SMS to keep momentum.",
-      "Set up an automated follow-up sequence for pending applications.",
+      "Revise os critérios de aprovação: se a taxa de aprovação estiver abaixo de 50%, considere flexibilizá-los.",
+      "Envie e-mail/SMS de aprovação imediatamente para manter o interesse do cliente.",
+      "Crie uma sequência automática de acompanhamento para cadastros pendentes.",
     ],
     ADD_TO_CART: [
-      "Add urgency signals (limited stock badges, countdown timers) to product pages.",
-      "Improve product page visuals and descriptions to drive cart adds.",
-      "Introduce a 'Recently Viewed' or 'Recommended' section to surface relevant products.",
+      "Use sinais de urgência (selo de estoque limitado, contagem regressiva) nas páginas de produto.",
+      "Melhore as imagens e as descrições das páginas de produto para aumentar as adições ao carrinho.",
+      "Inclua uma seção de 'Vistos recentemente' ou 'Recomendados' para destacar produtos relevantes.",
     ],
     CHECKOUT_STARTED: [
-      "Reduce the number of checkout steps — a single-page checkout converts better.",
-      "Enable guest checkout to remove the login barrier.",
-      "Show trust signals (SSL badge, return policy) prominently at checkout.",
+      "Reduza o número de etapas do checkout: o checkout em uma só página converte melhor.",
+      "Permita comprar sem login para remover a barreira de acesso.",
+      "Mostre selos de confiança (SSL, política de troca) em destaque no checkout.",
     ],
     PURCHASE: [
-      "Investigate payment failures — high drop-off here often signals payment method gaps.",
-      "Offer Buy-Now-Pay-Later (BNPL) options if not already available.",
-      "Add an order-review step with a clear CTA to reduce last-second abandonment.",
+      "Investigue falhas de pagamento: queda alta aqui costuma indicar falta de formas de pagamento.",
+      "Ofereça compra parcelada ou pague depois (BNPL), se ainda não houver.",
+      "Inclua uma etapa de revisão do pedido com botão claro para reduzir o abandono na última hora.",
     ],
   };
 
   const worstStep = worst.idx > 0 ? steps[worst.idx]?.step : null;
   const specific = worstStep ? (STEP_ACTIONS[worstStep] ?? []) : [];
   const generic = [
-    "Invest in re-engagement campaigns targeting customers who dropped off mid-funnel.",
-    "Review mobile UX — mobile sessions often have higher drop-off rates.",
+    "Invista em campanhas de reengajamento para clientes que saíram no meio do funil.",
+    "Revise a experiência no celular: sessões mobile costumam ter mais abandono.",
   ];
   return [...specific.slice(0, 2), ...generic].slice(0, 3);
 }
@@ -10448,10 +10110,10 @@ type Creative = typeof creativesTable.$inferSelect;
  */
 function computeSpendOverlapFraction(creative: Creative, from: Date, to: Date): number {
   if (!creative.activeFrom || !creative.activeTo) return 1;
-  const cFrom = new Date(creative.activeFrom as string);
-  const cTo = new Date(creative.activeTo as string);
+  const cFrom = saoPauloDateOnlyStart(String(creative.activeFrom).slice(0, 10));
+  const cTo = new Date(saoPauloDateOnlyEnd(String(creative.activeTo).slice(0, 10)).getTime() + 1);
   const campaignMs = Math.max(1, cTo.getTime() - cFrom.getTime());
-  const overlapMs = Math.max(0, Math.min(to.getTime(), cTo.getTime()) - Math.max(from.getTime(), cFrom.getTime()));
+  const overlapMs = Math.max(0, Math.min(to.getTime() + 1, cTo.getTime()) - Math.max(from.getTime(), cFrom.getTime()));
   return overlapMs / campaignMs;
 }
 
@@ -10571,7 +10233,7 @@ function buildMetaCampaignMetrics(campaigns: MetaAdMetric[]) {
 }
 
 function buildMetaPlatformBreakdown(campaigns: MetaAdMetric[]) {
-  const spend = campaigns.reduce((sum, campaign) => sum + campaign.spend, 0);
+  const spend = campaigns.reduce((sum, campaign) => sum + Math.round(campaign.spend * 100), 0) / 100;
   const leads = campaigns.reduce((sum, campaign) => sum + campaign.leads, 0);
   const purchases = campaigns.reduce((sum, campaign) => sum + campaign.purchases, 0);
   const clicks = campaigns.reduce((sum, campaign) => sum + campaign.clicks, 0);
@@ -10593,28 +10255,19 @@ function buildMetaPlatformBreakdown(campaigns: MetaAdMetric[]) {
 
 async function computeMarketingKpis(
   clientId: string,
-  creatives: Creative[],
   from: Date,
   to: Date,
-  meta?: MetaMarketingData | null,
+  meta: MetaMarketingData,
   isB2CClient = false,
   metaRevenue = false,
 ) {
-  if (metaRevenue) {
-    if (!meta) throw new Error("Meta insights unavailable for manual client");
-    return manualMarketingKpis(meta);
-  }
-  const creativeSpend = creatives.reduce((s, c) => s + c.spend * computeSpendOverlapFraction(c, from, to), 0);
-  const totalSpend = meta ? meta.summary.spend : creativeSpend;
+  if (metaRevenue) return manualMarketingKpis(meta);
+  const totalSpend = meta.summary.spend;
 
-  // Requested revenue: all order amounts requested in the period, regardless
-  // of final approval/shipping status. This mirrors the dashboard's
-  // requestedRevenue KPI and keeps marketing ROA aligned with demand generated.
+  // Same paid-order creation cohort as Dashboard, Clientes and Diário.
   const [orderRow] = await db
     .select({
-      revenue: isB2CClient
-        ? sql<number>`COALESCE(SUM(${ordersTable.fulfilledAmount}), 0)::float`
-        : sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+      revenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
       orders: sql<number>`COUNT(*)::int`,
     })
     .from(ordersTable)
@@ -10623,7 +10276,7 @@ async function computeMarketingKpis(
         eq(ordersTable.clientId, clientId),
         gte(ordersTable.createdAt, from),
         lte(ordersTable.createdAt, to),
-        ...(isB2CClient ? [sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`] : []),
+        paidOrderStatus(),
       ),
     );
   const attributedRevenue = Number(orderRow?.revenue) || 0;
@@ -10646,7 +10299,7 @@ async function computeMarketingKpis(
   const totalLeads = Number(registrationRow?.totalLeads) || 0;
   const approvedLeads = Number(registrationRow?.approvedLeads) || 0;
   const approvalRate = totalLeads > 0 ? (approvedLeads / totalLeads) * 100 : 0;
-  const metaLeads = meta?.summary.leads ?? creatives.reduce((s, c) => s + c.leads * computeSpendOverlapFraction(c, from, to), 0);
+  const metaLeads = meta.summary.leads;
 
   return {
     totalSpend,
@@ -10766,16 +10419,16 @@ function pctChange(current: number, previous: number): number | null {
 
 function dailyHeuristic(params: {
   kpis: DailyReportMetricSet;
-  prevKpis: DailyReportMetricSet;
+  prevKpis: DailyReportMetricSet | null;
   campaigns: Array<{ name: string; spend: number; roas: number; purchases: number }>;
   products: Array<{ name: string; units: number; revenue: number }>;
   categories: Array<{ name: string; units: number; revenue: number }>;
   colors: Array<{ name: string; units: number; revenue: number }>;
   sizes: Array<{ name: string; units: number; revenue: number }>;
 }): { generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" } {
-  const revenueChange = pctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue);
-  const salesChange = pctChange(params.kpis.sales, params.prevKpis.sales);
-  const roasChange = pctChange(params.kpis.roas, params.prevKpis.roas);
+  const revenueChange = params.prevKpis ? pctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue) : null;
+  const salesChange = params.prevKpis ? pctChange(params.kpis.sales, params.prevKpis.sales) : null;
+  const roasChange = params.prevKpis ? pctChange(params.kpis.roas, params.prevKpis.roas) : null;
   const topCampaign = params.campaigns[0];
   const topProduct = params.products[0];
   const topCategory = params.categories[0];
@@ -10831,7 +10484,7 @@ async function generateDailyReportText(params: {
   dateFrom: string;
   dateTo: string;
   kpis: DailyReportMetricSet;
-  prevKpis: DailyReportMetricSet;
+  prevKpis: DailyReportMetricSet | null;
   campaigns: Array<{ name: string; spend: number; purchases: number; revenue: number; roas: number; cpa: number }>;
   products: Array<{ name: string; category: string | null; units: number; revenue: number }>;
   categories: Array<{ name: string; units: number; revenue: number }>;
@@ -10840,7 +10493,7 @@ async function generateDailyReportText(params: {
 }): Promise<{ generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" }> {
   const heuristic = dailyHeuristic(params);
   const ai = getOpenAIClient();
-  if (!ai || !isAIConfigured()) return heuristic;
+  if (!ai || !isAIConfigured() || !params.prevKpis) return heuristic;
 
   const parseReportJson = (text: string): { generalAnalysis?: string; reportSummary?: unknown } | null => {
     try {
@@ -10980,11 +10633,11 @@ router.get("/analytics/daily-report", async (req, res): Promise<void> => {
     return;
   }
 
-  const paidStatus = sql`${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`;
+  const paidStatus = paidOrderStatus();
   const metricForWindow = async (winFrom: Date, winTo: Date, mediaSpend: number): Promise<DailyReportMetricSet> => {
     const [row] = await db
       .select({
-        approvedRevenue: sql<number>`COALESCE(SUM(${ordersTable.fulfilledAmount}), 0)::float`,
+        approvedRevenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(true)}), 0)::float`,
         sales: sql<number>`COUNT(*)::int`,
       })
       .from(ordersTable)
@@ -11003,34 +10656,13 @@ router.get("/analytics/daily-report", async (req, res): Promise<void> => {
 
   const metaAccessToken = getGlobalMetaAccessToken(clientConfig.metaAdsApiKey);
   const [metaCurrent, metaPrev] = await Promise.all([
-    metaAccessToken && clientConfig.metaAdAccountId
-      ? fetchMetaMarketingData({
-          accessToken: metaAccessToken,
-          adAccountId: clientConfig.metaAdAccountId,
-          since: dateFromOnly,
-          until: dateToOnly,
-        }).catch((err) => {
-          console.warn("[daily-report] Meta current fetch failed:", err);
-          return null;
-        })
-      : Promise.resolve(null),
-    metaAccessToken && clientConfig.metaAdAccountId
-      ? fetchMetaMarketingData({
-          accessToken: metaAccessToken,
-          adAccountId: clientConfig.metaAdAccountId,
-          since: prevDateFromOnly,
-          until: prevDateToOnly,
-        }).catch((err) => {
-          console.warn("[daily-report] Meta previous fetch failed:", err);
-          return null;
-        })
-      : Promise.resolve(null),
+    fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig.metaAdAccountId, since: dateFromOnly, until: dateToOnly }),
+    fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig.metaAdAccountId, since: prevDateFromOnly, until: prevDateToOnly }).catch(() => null),
   ]);
-  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
 
   const [kpis, prevKpis, productRows, categoryRows, colorRows, sizeRows] = await Promise.all([
-    metricForWindow(from, to, metaCurrent?.summary.spend ?? 0),
-    metricForWindow(prevFrom, prevTo, metaPrev?.summary.spend ?? 0),
+    metricForWindow(from, to, metaCurrent.summary.spend),
+    metaPrev ? metricForWindow(prevFrom, prevTo, metaPrev.summary.spend) : Promise.resolve(null),
     db
       .select({
         name: productsTable.name,
@@ -11128,12 +10760,12 @@ router.get("/analytics/daily-report", async (req, res): Promise<void> => {
     kpis,
     prevKpis,
     changes: {
-      approvedRevenue: pctChange(kpis.approvedRevenue, prevKpis.approvedRevenue),
-      sales: pctChange(kpis.sales, prevKpis.sales),
-      avgTicket: pctChange(kpis.avgTicket, prevKpis.avgTicket),
-      costPerPurchase: pctChange(kpis.costPerPurchase, prevKpis.costPerPurchase),
-      mediaSpend: pctChange(kpis.mediaSpend, prevKpis.mediaSpend),
-      roas: pctChange(kpis.roas, prevKpis.roas),
+      approvedRevenue: prevKpis ? pctChange(kpis.approvedRevenue, prevKpis.approvedRevenue) : null,
+      sales: prevKpis ? pctChange(kpis.sales, prevKpis.sales) : null,
+      avgTicket: prevKpis ? pctChange(kpis.avgTicket, prevKpis.avgTicket) : null,
+      costPerPurchase: prevKpis ? pctChange(kpis.costPerPurchase, prevKpis.costPerPurchase) : null,
+      mediaSpend: prevKpis ? pctChange(kpis.mediaSpend, prevKpis.mediaSpend) : null,
+      roas: prevKpis ? pctChange(kpis.roas, prevKpis.roas) : null,
     },
     campaigns,
     products,
@@ -11697,8 +11329,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   }
 
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
-  const since = from.toISOString().slice(0, 10);
-  const until = to.toISOString().slice(0, 10);
+  const since = queryDateOnly(req.query as Record<string, unknown>, "dateFrom", from);
+  const until = queryDateOnly(req.query as Record<string, unknown>, "dateTo", to);
   const creativesPage = (parsed.data as Record<string, unknown>).creativesPage as number | undefined ?? 1;
   const creativesPageSize = (parsed.data as Record<string, unknown>).creativesPageSize as number | undefined ?? 20;
   const utmSrc = (parsed.data as Record<string, unknown>).utmSource as string | undefined;
@@ -11709,8 +11341,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const periodMs = to.getTime() - from.getTime();
   const prevTo = new Date(from.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - periodMs);
-  const prevSince = prevFrom.toISOString().slice(0, 10);
-  const prevUntil = prevTo.toISOString().slice(0, 10);
+  const prevSince = saoPauloDateOnly(prevFrom);
+  const prevUntil = saoPauloDateOnly(prevTo);
 
   const [clientConfig] = await db
     .select({
@@ -11724,127 +11356,55 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const isB2CClient = clientConfig?.dashboardType === "B2C";
   const metaRevenue = usesMetaRevenue(clientConfig?.commercePlatform);
 
-  let metaCurrent: MetaMarketingData | null = null;
-  let metaPrev: MetaMarketingData | null = null;
   const metaAccessToken = getGlobalMetaAccessToken(clientConfig?.metaAdsApiKey);
-  if (metaAccessToken && clientConfig?.metaAdAccountId) {
-    try {
-      [metaCurrent, metaPrev] = await Promise.all([
-        fetchMetaMarketingData({
-          accessToken: metaAccessToken,
-          adAccountId: clientConfig.metaAdAccountId,
-          isB2C: isB2CClient,
-          since,
-          until,
-        }),
-        fetchMetaMarketingData({
-          accessToken: metaAccessToken,
-          adAccountId: clientConfig.metaAdAccountId,
-          isB2C: isB2CClient,
-          since: prevSince,
-          until: prevUntil,
-        }),
-      ]);
-      await upsertMetaCreatives(clientId, metaCurrent.ads).catch((err) => {
-        console.warn("[marketing] Failed to persist Meta creative cache:", err);
-      });
-    } catch (err) {
-      console.warn("[marketing] Meta insights fetch failed:", err);
-      metaCurrent = null;
-      metaPrev = null;
-    }
-  }
-
-  if (metaRevenue && (!metaCurrent || !metaPrev)) {
-    res.status(502).json({ error: true, code: "META_INSIGHTS_UNAVAILABLE", message: "Não foi possível consultar o Meta Ads. Verifique a conexão e tente novamente.", status: 502 });
-    return;
-  }
-
-  // All creatives for the client; sorted by prorated spend descending
-  const rawCreatives = await db
-    .select()
-    .from(creativesTable)
-    .where(eq(creativesTable.clientId, clientId))
-    .orderBy(desc(creativesTable.spend));
-
-  // Apply client-side filters: utmSource → platform match, creative → name contains
-  const allCreatives = rawCreatives.filter((c) => {
-    if (utmSrc && (c.platform ?? "").toLowerCase() !== utmSrc.toLowerCase()) return false;
-    if (creativeFilt && !c.name.toLowerCase().includes(creativeFilt.toLowerCase())) return false;
-    return true;
-  });
-
-  // Only creatives active (overlapping) in the current window
-  const creatives = allCreatives.filter((c) => computeSpendOverlapFraction(c, from, to) > 0);
-  const metaCampaigns = metaCurrent && metaSourceMatchesFilter(utmSrc)
-    ? metaCurrent.campaigns
-      .filter((campaign) => !creativeFilt || campaign.name.toLowerCase().includes(creativeFilt.toLowerCase()))
-      .sort((a, b) => b.spend - a.spend)
-    : null;
-  const creativesTotal = metaCampaigns ? metaCampaigns.length : creatives.length;
-
-  // Apply server-side pagination to the creatives slice passed to buildCreativeMetrics
+  if (metaRevenue && (!metaAccessToken?.trim() || !clientConfig?.metaAdAccountId?.trim())) throw new MediaReadError();
+  // Filtro de fonte que não é Meta: nada do Meta entra no recorte (vazio), não é falha de leitura.
+  const metaExcludedByFilter = !!utmSrc && !metaSourceMatchesFilter(utmSrc);
+  // Só o período atual mostra miniaturas de criativo; o anterior é só comparativo e não gasta chamadas de mídia.
+  const readMeta = (range: { since: string; until: string }, includeMedia = false) => metaExcludedByFilter
+    ? Promise.resolve(emptyMetaMarketingData())
+    : fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig?.metaAdAccountId, ...range, campaignName: creativeFilt, includeMedia, isB2C: isB2CClient, includeReach: true });
+  const [metaCurrent, metaPrev] = await Promise.all([
+    readMeta({ since, until }, true),
+    readMeta({ since: prevSince, until: prevUntil }).catch(() => null),
+  ]);
+  const metaCampaigns = [...metaCurrent.campaigns].sort((a, b) => b.spend - a.spend);
+  const creativesTotal = metaCampaigns.length;
   const offset = (creativesPage - 1) * creativesPageSize;
-  const pagedCreatives = creatives.slice(offset, offset + creativesPageSize);
-  const pagedMetaCampaigns = metaCampaigns?.slice(offset, offset + creativesPageSize) ?? null;
+  const pagedMetaCampaigns = metaCampaigns.slice(offset, offset + creativesPageSize);
 
   const [kpis, prevKpis] = await Promise.all([
-    computeMarketingKpis(clientId, creatives, from, to, metaCurrent, isB2CClient, metaRevenue),
-    computeMarketingKpis(clientId, allCreatives.filter((c) => computeSpendOverlapFraction(c, prevFrom, prevTo) > 0), prevFrom, prevTo, metaPrev, isB2CClient, metaRevenue),
+    computeMarketingKpis(clientId, from, to, metaCurrent, isB2CClient, metaRevenue),
+    metaPrev ? computeMarketingKpis(clientId, prevFrom, prevTo, metaPrev, isB2CClient, metaRevenue) : Promise.resolve(null),
   ]);
 
-  const leadsRows = metaCurrent
-    ? metaCurrent.daily.map((point) => ({ date: point.date, value: point.leads }))
-    : await db
-      .select({
-        date: sql<string>`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')::text`,
-        value: sql<number>`COUNT(*)::int`,
-      })
-      .from(eventsTable)
-      .innerJoin(customersTable, eq(eventsTable.customerId, customersTable.id))
-      .where(
-        and(
-          eq(eventsTable.clientId, clientId),
-          gte(eventsTable.createdAt, from),
-          lte(eventsTable.createdAt, to),
-          sql`${eventsTable.eventType} = 'REGISTRATION'`,
-          utmSrc
-            ? sql`lower(${customersTable.utmSource}) = lower(${utmSrc})`
-            : sql`lower(${customersTable.utmSource}) = ANY(${sql.raw(PAID_SOURCES_ARRAY)})`,
-          ...(utmMed ? [sql`lower(${customersTable.utmMedium}) = lower(${utmMed})`] : []),
-        ),
-      )
-      .groupBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`)
-      .orderBy(sql`DATE(${eventsTable.createdAt} AT TIME ZONE 'UTC')`);
+  const leadsRows = metaCurrent.daily.map((point) => ({ date: point.date, value: point.leads }));
 
-  // Daily series: requested revenue
-  const revenueRows = metaRevenue && metaCurrent
-    ? metaCurrent.daily.map((point) => ({ date: point.date, value: point.revenue }))
+  // Paid revenue series uses the same cohort and money as the cards.
+  const revenueRows = metaRevenue
+    ? metaCurrent.daily.map(point => ({date: point.date, value: point.revenue}))
     : await db
     .select({
-      date: sql<string>`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')::text`,
-      value: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+      date: sql<string>`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))::text`,
+      value: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
     })
     .from(ordersTable)
-    .innerJoin(customersTable, eq(ordersTable.customerId, customersTable.id))
     .where(
       and(
         eq(ordersTable.clientId, clientId),
+        paidOrderStatus(),
         gte(ordersTable.createdAt, from),
         lte(ordersTable.createdAt, to),
       ),
     )
-    .groupBy(sql`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')`)
-    .orderBy(sql`DATE(${ordersTable.createdAt} AT TIME ZONE 'UTC')`);
+    .groupBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`)
+    .orderBy(sql`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))`);
 
   const totalProratedSpend = kpis.totalSpend;
-  const attrRevForCreatives = kpis.attributedRevenue;
 
   const [spendOverTime, stateBreakdown] = await Promise.all([
     Promise.resolve(
-      metaCurrent
-        ? metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend }))
-        : buildSpendOverTime(creatives, from, to),
+      metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend })),
     ),
     metaRevenue ? Promise.resolve([]) : buildStateBreakdown(clientId, from, to, totalProratedSpend),
   ]);
@@ -11871,12 +11431,8 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     revenueOverTime: revenueRows,
     spendOverTime,
     topCreatives: responseTopCreatives,
-    creatives: pagedMetaCampaigns
-      ? buildMetaCampaignMetrics(pagedMetaCampaigns)
-      : buildCreativeMetrics(pagedCreatives, attrRevForCreatives, totalProratedSpend, from, to),
-    platformBreakdown: metaCampaigns
-      ? buildMetaPlatformBreakdown(metaCampaigns)
-      : buildPlatformBreakdown(creatives, attrRevForCreatives, totalProratedSpend, from, to),
+    creatives: buildMetaCampaignMetrics(pagedMetaCampaigns),
+    platformBreakdown: buildMetaPlatformBreakdown(metaCampaigns),
     stateBreakdown,
     ageBreakdown: buildAgeBreakdown(),
     creativesTotal,

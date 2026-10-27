@@ -1,4 +1,6 @@
 import { displayLabel } from "@/lib/display-label";
+import { useI18n } from "@/lib/i18n";
+import { useIsFetching } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import type { ReactNode, ElementType } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus, Info } from "lucide-react";
@@ -40,6 +42,9 @@ export interface DashboardKpiCardProps {
   previousValue?: number | null;
   comparisonValue?: number | null;
   comparisonUnavailable?: string;
+  hideComparison?: boolean;
+  /** Metrica de custo (CAC, CPL, CPA...): variacao negativa e favorável e fica verde. */
+  lowerIsBetter?: boolean;
 }
 
 const METRIC_DESCRIPTIONS: Record<string, string> = {
@@ -52,6 +57,8 @@ const METRIC_DESCRIPTIONS: Record<string, string> = {
   "CPL": "Custo médio por lead registrado pela fonte.",
   "CPA": "Custo médio por aquisição registrada pela fonte.",
   "ROAS": "Retorno da receita atribuída em relação ao investimento em mídia, conforme a base desta fonte.",
+  "ROAS Solicitado": "Faturamento solicitado de todos os pedidos do site no período (qualquer origem e qualquer status, inclusive recusados) dividido pelo investimento em mídia. Não é só a venda que veio de anúncio.",
+  "ROAS Pago": "Faturamento pago (pedidos aprovados, enviados ou entregues) dividido pelo investimento em mídia.",
   "Ticket Médio": "Valor médio dos pedidos considerados na fonte e nos filtros selecionados.",
 };
 
@@ -120,19 +127,23 @@ export function DashboardKpiCard({
   footer,
   deltaContent,
   changePositive,
-  className, info, source, previousValue, comparisonValue, comparisonUnavailable,
+  className, info, source, previousValue, comparisonValue, comparisonUnavailable, hideComparison, lowerIsBetter,
 }: DashboardKpiCardProps) {
   const reduced = useReducedMotion();
+  const { language, tx } = useI18n();
+  const numberLocale = language === "ko" ? "ko-KR" : language === "en" ? "en-US" : "pt-BR";
+  const loadingPrevious = useIsFetching({ queryKey: ["metric-previous-period"] }) > 0;
   const contextual = useMetricData(testId);
   const previous = previousValue !== undefined ? previousValue : contextual.previous;
   const comparison = metricComparison(comparisonValue !== undefined ? comparisonValue : contextual.current !== undefined ? contextual.current : (displayValue === undefined ? value : undefined), previous);
   const effectiveChange = previous !== undefined ? comparison.change : change !== null && Number.isFinite(change) ? change : null;
-  const positive = changePositive ?? (effectiveChange !== null && effectiveChange >= 0);
+  const positive = changePositive ?? (effectiveChange !== null && (lowerIsBetter ? effectiveChange <= 0 : effectiveChange >= 0));
   const rising = effectiveChange !== null && effectiveChange > 0;
-  const metadata = sub.filter(row => /^(fonte|base|cálculo|disponibilidade|regra|período)$/i.test(row.label));
+  // Linhas de fonte/base/regra vão para o popover de informação, exceto as que trazem número: número nunca sai da vista.
+  const metadata = sub.filter(row => /^(fonte|base|cálculo|disponibilidade|regra|período)$/i.test(row.label) && !/\d/.test(row.value));
   const details = sub.filter(row => !metadata.includes(row));
-  const metricSource = source ?? metadata.find(row => /^fonte$/i.test(row.label))?.value ?? contextual.source ?? "Dados conectados do relatório";
-  const comparisonText = comparison.status === "zero-base" ? "O valor anterior é zero; a variação percentual não pode ser calculada." : comparisonUnavailable ?? "A fonte não disponibilizou um valor anterior comparável para esta métrica.";
+  const metricSource = tx(source ?? metadata.find(row => /^fonte$/i.test(row.label))?.value ?? contextual.source ?? "Dados conectados do relatório");
+  const comparisonText = comparison.status === "zero-base" ? tx("O valor anterior é zero; a variação percentual não pode ser calculada.") : tx(comparisonUnavailable ?? "A fonte não disponibilizou um valor anterior comparável para esta métrica.");
   const variants = withReducedMotion(cardEntry, reduced);
   return (
     <motion.div variants={variants} className={`up-metric-wrapper h-full min-w-0 ${className ?? ""}`}>
@@ -146,23 +157,23 @@ export function DashboardKpiCard({
               <Icon className="h-4 w-4" />
             </div>
             <span className="up-metric-label min-w-0 text-[13px] text-muted-foreground">
-              {label}
+              {tx(label)}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {labelAccessory}
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon" className="up-metric-info h-7 w-7 shrink-0 rounded-full" aria-label={`Informações: ${label}`}>
+                <Button variant="ghost" size="icon" className="up-metric-info h-7 w-7 shrink-0 rounded-full" aria-label={`${tx("Informações")}: ${tx(label)}`}>
                   <Info className="h-3.5 w-3.5" />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent align="end" className="up-metric-information w-[min(320px,calc(100vw-24px))] space-y-3 text-xs" aria-label={`Informações da métrica ${label}`}>
-                <p className="font-semibold text-sm">{label}</p>
-                <div className="text-muted-foreground leading-relaxed">{info ?? METRIC_DESCRIPTIONS[label] ?? "Valor da métrica conforme o período e os filtros selecionados."}</div>
-                {metadata.filter(row => !/^fonte$/i.test(row.label)).map(row => <p key={row.label}><span className="text-muted-foreground">{row.label}: </span>{row.value}</p>)}
-                <p><span className="text-muted-foreground">Fonte: </span>{metricSource}</p>
-                <p className="text-muted-foreground">Comparação com a janela imediatamente anterior de mesma duração, mantendo os filtros. {effectiveChange === null ? comparisonText : "Variação percentual sobre o valor anterior."}</p>
+              <PopoverContent align="end" className="up-metric-information w-[min(320px,calc(100vw-24px))] space-y-3 text-xs" aria-label={`${tx("Informações da métrica")} ${tx(label)}`}>
+                <p className="font-semibold text-sm">{tx(label)}</p>
+                <div className="text-muted-foreground leading-relaxed">{info ?? tx(METRIC_DESCRIPTIONS[label] ?? "Valor da métrica conforme o período e os filtros selecionados.")}</div>
+                {metadata.filter(row => !/^fonte$/i.test(row.label)).map(row => <p key={row.label}><span className="text-muted-foreground">{tx(row.label)}: </span>{tx(row.value)}</p>)}
+                <p><span className="text-muted-foreground">{tx("Fonte")}: </span>{metricSource}</p>
+                {!hideComparison && <p className="text-muted-foreground">{tx("Comparação com a janela imediatamente anterior de mesma duração, mantendo os filtros.")} {effectiveChange === null ? comparisonText : tx("Variação percentual sobre o valor anterior.")}</p>}
               </PopoverContent>
             </Popover>
           </div>
@@ -200,13 +211,13 @@ export function DashboardKpiCard({
           ) : null}
         </div>
 
-        {!isLoading && <div className="up-metric-comparison mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-comparison-state={effectiveChange !== null ? "available" : comparison.status}>
+        {!isLoading && !hideComparison && <div className="up-metric-comparison mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-comparison-state={effectiveChange !== null ? "available" : comparison.status}>
           {effectiveChange !== null && Number.isFinite(effectiveChange) ? <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${effectiveChange === 0 ? "up-delta-neutral" : positive ? "up-delta-positive" : "up-delta-negative"}`}>
             {effectiveChange === 0 ? <Minus className="h-3 w-3" /> : rising ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-            {effectiveChange > 0 ? "+" : ""}{effectiveChange.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
-          </span> : <span className="up-delta-neutral rounded-full px-2 py-0.5">{comparison.status === "zero-base" ? "Sem base percentual" : "Indisponível"}</span>}
-          <span className="text-muted-foreground">{changeLabel || "vs. período anterior"}</span>
-          {previous != null && Number.isFinite(previous) && <span className="basis-full text-muted-foreground">Anterior: <span className="text-foreground tabular-nums">{(contextual.format ?? fmt)(previous)}</span></span>}
+            {effectiveChange > 0 ? "+" : ""}{effectiveChange.toLocaleString(numberLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+          </span> : <span className="up-delta-neutral rounded-full px-2 py-0.5">{comparison.status === "zero-base" ? tx("Sem base percentual") : previous === undefined && loadingPrevious ? tx("Calculando…") : tx("Indisponível")}</span>}
+          <span className="text-muted-foreground">{tx(changeLabel || "vs. período anterior")}</span>
+          {previous != null && Number.isFinite(previous) && <span className="basis-full text-muted-foreground">{tx("Anterior")}: <span className="text-foreground tabular-nums">{(contextual.format ?? fmt)(previous)}</span></span>}
           {deltaContent !== undefined && <div className="basis-full">{deltaContent}</div>}
         </div>}
 
@@ -218,7 +229,7 @@ export function DashboardKpiCard({
             width={240}
             height={40}
             className="up-metric-spark w-full mb-3"
-            ariaLabel={`${label} · evolução no período`}
+            ariaLabel={`${tx(label)} · ${tx("evolução no período")}`}
           />
         )}
 
@@ -226,13 +237,13 @@ export function DashboardKpiCard({
           {details.map((row) => (
             <div key={row.label} className="flex justify-between gap-2 text-xs">
               <span className="min-w-0 text-muted-foreground">
-                {displayLabel(row.label)}
+                {tx(language === "pt" ? displayLabel(row.label) : row.label)}
               </span>
               <span
                 className="min-w-0 text-right font-medium tabular-nums"
-                title={row.value}
+                title={tx(row.value)}
               >
-                {row.value}
+                {tx(row.value)}
               </span>
             </div>
           ))}

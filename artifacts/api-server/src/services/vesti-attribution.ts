@@ -26,10 +26,16 @@
 // backend-dash/src/utils/attributionStartDate.ts. Dataset fora da lista não
 // tem gate, igual ao legado quando o User não tem ga4Tid. Se a data mudar
 // pelo admin do backend-dash, esta lista precisa ser atualizada à mão.
+// Desde 15/10/2026 clientes novos NÃO entram nesta lista: a data fica no campo
+// `clients.attribution_start_date` (cadastro "Novo cliente Vesti" e tela
+// Plataforma), que vale primeiro -- ver resolveAttributionStartDateForDataset.
 // Conferida contra o banco de produção do legado em 23/09/2026 (database
 // "vesti-database"): as 24 linhas do job batem exatamente, e a
 // "banoffe_brand" foi cadastrada direto pelo admin (fora do job).
+import { asc, and, eq, isNotNull } from "drizzle-orm";
+import { db, clientsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
+import { logger } from "../lib/logger";
 
 export const ATTRIBUTION_START_ROWS: Array<{ dataset: string; dataInicio: string; consideredDate: string }> = [
   { dataset: "vn11", dataInicio: "2025-06-05", consideredDate: "2025-08-29 16:41:59.165000 UTC" },
@@ -68,6 +74,26 @@ export function resolveAttributionStartDate(dataset: string): string | null {
     ? new Date(`${row.dataInicio}T00:00:00Z`)
     : new Date(row.consideredDate.replace(" ", "T").replace(" UTC", "Z"));
   return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Piso de atribuição de um dataset Vesti. O campo do cliente (`clients.attribution_start_date`, preenchido no cadastro/na tela
+ * Plataforma) vale primeiro; sem ele, cai na lista antiga acima (lojas cadastradas antes do campo existir). Falha de leitura do banco
+ * não derruba a tela: usa a lista.
+ */
+export async function resolveAttributionStartDateForDataset(dataset: string): Promise<string | null> {
+  try {
+    const [row] = await db
+      .select({ startDate: clientsTable.attributionStartDate })
+      .from(clientsTable)
+      .where(and(eq(clientsTable.bigqueryDataset, dataset), isNotNull(clientsTable.attributionStartDate)))
+      .orderBy(asc(clientsTable.createdAt))
+      .limit(1);
+    if (row?.startDate) return row.startDate;
+  } catch (err) {
+    logger.warn({ dataset, err: err instanceof Error ? err.message : String(err) }, "[vesti-attribution] não consegui ler a data de início do cliente; usando a lista");
+  }
+  return resolveAttributionStartDate(dataset);
 }
 
 export type VestiAttributionSets = {
@@ -122,7 +148,7 @@ export async function fetchVestiAttributionSets(vestiDataset: string): Promise<V
   return {
     upAgencyDocs: new Set(upAgencyRows.map((r) => r.doc)),
     consolidatedDocs: new Set(consolidatedRows.map((r) => r.doc)),
-    startDate: resolveAttributionStartDate(vestiDataset),
+    startDate: await resolveAttributionStartDateForDataset(vestiDataset),
   };
 }
 

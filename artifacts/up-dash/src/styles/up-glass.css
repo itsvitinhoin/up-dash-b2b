@@ -684,6 +684,14 @@ body::before {
   -webkit-backdrop-filter: none;
   margin-top: 12px;
 }
+.up-operation-row[hidden] {
+  display: none;
+}
+.up-control-panel--single .up-filter-bar {
+  padding: 0;
+  margin-top: 0;
+  border-top: 0;
+}
 .up-period-chips {
   display: flex;
   flex-wrap: wrap;

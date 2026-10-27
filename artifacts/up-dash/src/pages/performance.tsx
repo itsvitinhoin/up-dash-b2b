@@ -1,8 +1,8 @@
-import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
-import { displayLabel } from "@/lib/display-label";
-import { GlassMetricCard } from "@/components/glass-metric-card";
 import { PerformanceSummarySections, MediaInvestmentCards } from "@/components/overview-organization";
 import { OrganizationHeading } from "@/components/metric-section";
+import { useI18n } from "@/lib/i18n";
+import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -68,6 +68,7 @@ import { exportRowsAsXlsx } from "@/lib/xlsx-export";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
   formatCurrency,
+  formatErpDate,
   formatNumber,
   formatPercentage,
 } from "@/lib/formatters";
@@ -96,7 +97,7 @@ type PerformanceResponse = {
     returnAmount: number;
     attributedRevenue: number;
     unattributedRevenue: number;
-    mediaSpend: number;
+    mediaSpend: number | null;
     roas: number | null;
     mer: number | null;
     cogs: number;
@@ -382,7 +383,7 @@ function SourceStatus({
               }
               title={source.value}
             >
-              {displayLabel(source.label)}: {source.ok ? "conectado" : "atenção"}
+              {source.label}: {source.ok ? "conectado" : "atenção"}
             </Badge>
           ))}
         </div>
@@ -412,11 +413,12 @@ function SectionHeader({
   description: string;
   action?: React.ReactNode;
 }) {
+  const { tx } = useI18n();
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <h2 className="text-base font-semibold">{title}</h2>
-        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        <h2 className="text-base font-semibold">{tx(title)}</h2>
+        <p className="mt-1 text-xs text-muted-foreground">{tx(description)}</p>
       </div>
       {action}
     </div>
@@ -542,6 +544,7 @@ function Pagination({
 }
 
 export default function PerformancePage() {
+  const { tx } = useI18n();
   const { selectedClientId, user } = useAuth();
   const { dateRange } = useDashboardFilters();
   const [ordersPage, setOrdersPage] = useState(1);
@@ -690,7 +693,7 @@ export default function PerformancePage() {
   );
   useEffect(() => setOrdersPage(1), [cohortFilter]);
 
-  const previous = usePreviousPeriodQuery<PerformanceResponse>(periodQuery("/api/analytics/performance", { ...commonParams, page: ordersPage, limit: PAGE_SIZE }), enabled);
+  const previous = usePreviousPeriodQuery<PerformanceResponse>(periodQuery("/api/analytics/performance", { ...commonParams, page: 1, limit: PAGE_SIZE }), enabled);
   const pk = previous.data?.kpis;
   const k = data?.kpis;
   const financialMetrics = [
@@ -708,6 +711,7 @@ export default function PerformancePage() {
     },
     {
       label: "Receita atribuída",
+      info: tx("Faturamento líquido (já descontadas as devoluções) dos compradores do ERP que a UP Zero reconhece como vindos de mídia paga. Conta pelo cliente, não pelo pedido: por isso pode diferir de “Receita com clique pago”, mais abaixo."),
       value: k?.attributedRevenue ?? 0,
       comparisonValue: k?.attributedRevenue ?? null,
       previousValue: pk?.attributedRevenue,
@@ -729,7 +733,8 @@ export default function PerformancePage() {
       comparisonValue: k?.mediaSpend ?? null,
       previousValue: pk?.mediaSpend,
       source: "ERP · Ecommerce · Meta Ads",
-      format: formatCurrency,
+      format: (value: number) => k?.mediaSpend == null ? "—" : formatCurrency(value),
+      info: k?.mediaSpend == null ? tx("Investimento indisponível; falha de leitura não significa gasto zero.") : undefined,
       icon: Megaphone,
       iconClass: "bg-amber-500/10 text-amber-400",
       sparkColor: "#0458fe",
@@ -810,6 +815,7 @@ export default function PerformancePage() {
   const acquisitionMetrics = [
     {
       label: "Pedidos ERP",
+      info: tx("Documentos de pedido do ERP no período. O ERP registra cada devolução como um pedido de valor zero, e eles entram nesta contagem."),
       value: k?.orders ?? 0,
       comparisonValue: k?.orders ?? null,
       previousValue: pk?.orders,
@@ -822,6 +828,7 @@ export default function PerformancePage() {
     },
     {
       label: "Pedidos atribuídos",
+      info: tx("Pedidos do ERP dos compradores reconhecidos como vindos de mídia paga (conta por cliente). Devoluções registradas como pedido no ERP entram nesta contagem."),
       value: k?.attributedOrders ?? 0,
       comparisonValue: k?.attributedOrders ?? null,
       previousValue: pk?.attributedOrders,
@@ -889,7 +896,8 @@ export default function PerformancePage() {
       comparisonValue: k?.cac ?? null,
       previousValue: pk?.cac,
       source: "ERP · Ecommerce · Meta Ads",
-      format: () => (k?.cac == null ? "—" : formatCurrency(k.cac)),
+      format: (v: number) => (k?.cac == null ? "—" : formatCurrency(v)),
+      lowerIsBetter: true,
       icon: BadgeDollarSign,
       iconClass: "bg-orange-500/10 text-orange-400",
       sparkColor: "#0458fe",
@@ -913,7 +921,8 @@ export default function PerformancePage() {
       comparisonValue: k?.cpl ?? null,
       previousValue: pk?.cpl,
       source: "ERP · Ecommerce · Meta Ads",
-      format: () => (k?.cpl == null ? "—" : formatCurrency(k.cpl)),
+      format: (v: number) => (k?.cpl == null ? "—" : formatCurrency(v)),
+      lowerIsBetter: true,
       icon: Target,
       iconClass: "bg-violet-500/10 text-violet-400",
       sparkColor: "#5b8dff",
@@ -965,7 +974,7 @@ export default function PerformancePage() {
       filteredOrders,
       [
         { header: "Pedido", accessor: (row) => row.orderId },
-        { header: "Data", accessor: (row) => row.dataCriado },
+        { header: "Data", accessor: (row) => (row.channel === "erp" ? row.dataCriado.slice(0, 10) : row.dataCriado) },
         { header: "Cliente", accessor: (row) => row.customerName },
         { header: "Documento", accessor: (row) => row.document },
         { header: "Canal", accessor: (row) => (row.channel === "erp" ? "ERP" : "Site") },
@@ -1091,9 +1100,12 @@ export default function PerformancePage() {
           <MediaInvestmentCards />
         </div>
       </section>
-<PerformanceSummarySections />
-<OrganizationHeading>FATURAMENTO × INVESTIMENTO</OrganizationHeading>
-<div className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
+
+      <PerformanceSummarySections />
+
+      <OrganizationHeading>{tx("FATURAMENTO × INVESTIMENTO")}</OrganizationHeading>
+
+      <div className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
         <Card>
           <CardContent className="p-5">
             <SectionHeader
@@ -1135,7 +1147,7 @@ export default function PerformancePage() {
                   fillOpacity={0.16}
                   stroke="var(--color-revenue)"
                   strokeWidth={2}
-                 name="Faturamento" />
+                />
                 <Area
                   dataKey="attributedRevenue"
                   type="monotone"
@@ -1151,7 +1163,7 @@ export default function PerformancePage() {
                   fillOpacity={0.08}
                   stroke="var(--color-spend)"
                   strokeWidth={2}
-                 name="Investimento" />
+                />
                 <ChartLegend content={<ChartLegendContent />} />
               </AreaChart>
             </ChartContainer>
@@ -1197,8 +1209,10 @@ export default function PerformancePage() {
           </CardContent>
         </Card>
       </div>
-<OrganizationHeading>AQUISIÇÃO × RETENÇÃO</OrganizationHeading>
-<Card>
+
+      <OrganizationHeading>{tx("AQUISIÇÃO × RETENÇÃO")}</OrganizationHeading>
+
+      <Card>
         <CardContent className="p-5">
           <SectionHeader
             title="Novos, recorrentes e reativados"
@@ -1224,7 +1238,7 @@ export default function PerformancePage() {
             </Alert>
           ) : (
             <>
-              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-3">
+              <div className="mt-4 up-metric-grid">
                 {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
                   const summary = attributionQuery.data?.cohortSummary.find(
                     (c) => c.cohort === cohort,
@@ -1235,9 +1249,7 @@ export default function PerformancePage() {
                       ? (summary.clientes / totalClientes) * 100
                       : 0;
                   return (
-                    <GlassMetricCard key={cohort} label={COHORT_LABEL[cohort]} value={<>{formatNumber(summary?.clientes ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">
-                          {formatPercentage(pct)}
-                        </span></>}  />
+                    <GlassMetricCard key={cohort} label={COHORT_LABEL[cohort]} value={<>{formatNumber(summary?.clientes ?? 0)}</>} sub={[{ label: "% dos clientes atribuídos", value: formatPercentage(pct) }]} hideComparison />
                   );
                 })}
               </div>
@@ -1327,7 +1339,8 @@ export default function PerformancePage() {
           )}
         </CardContent>
       </Card>
-<section className="space-y-4">
+
+      <section className="space-y-4">
         <SectionHeader
           title="CONCILIAÇÃO FINANCEIRA"
           description="Resultado oficial do ERP conciliado com mídia e atribuição do e-commerce."
@@ -1383,7 +1396,7 @@ export default function PerformancePage() {
                 className="rounded-md border bg-background/30 p-4"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-medium">{displayLabel(item.label)}</p>
+                  <p className="text-sm font-medium">{item.label}</p>
                   <Badge
                     variant="outline"
                     className={
@@ -1419,9 +1432,15 @@ export default function PerformancePage() {
           </div>
           <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-4">
             {(data?.reconciliation ?? []).map((item) => (
-              <GlassMetricCard key={item.label} label={item.label} value={<>{formatNumber(item.value)}</>} footer={<div className="space-y-2"><p className="mt-1 text-xs text-muted-foreground">
+              <div key={item.label} className="bg-card p-4">
+                <p className="text-xs text-muted-foreground">{item.label}</p>
+                <p className="mt-2 text-2xl font-semibold tabular-nums">
+                  {formatNumber(item.value)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
                   {item.detail}
-                </p></div>} />
+                </p>
+              </div>
             ))}
           </div>
         </CardContent>
@@ -1434,21 +1453,35 @@ export default function PerformancePage() {
             description="A origem de cada etapa é indicada porque cliques, eventos do site e pedidos do ERP possuem bases diferentes."
           />
           <div className="mt-5 overflow-x-auto">
-            <div className="up-funnel-grid">
+            <div className="grid min-w-[980px] grid-cols-8 gap-2">
               {(data?.funnel ?? []).map((stage, index) => (
-                <GlassMetricCard key={stage.key} label={stage.label} value={stage.value}
-                  footer={<div className="space-y-2">
-                    <Badge variant="outline">{stage.source}</Badge>
-                    <p className="text-xs text-muted-foreground">{stage.previousRate == null ? "Entrada do funil" : `${formatPercentage(stage.previousRate)} da etapa anterior`}</p>
-                    {index < (data?.funnel.length ?? 0) - 1 && <span className="block text-center text-muted-foreground">→</span>}
-                  </div>} />
+                <div
+                  key={stage.key}
+                  className="relative rounded-md border bg-background/30 p-3"
+                >
+                  <Badge variant="outline" className="mb-3 text-[10px]">
+                    {stage.source}
+                  </Badge>
+                  <p className="min-h-10 text-xs font-medium">{stage.label}</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">
+                    {formatNumber(stage.value)}
+                  </p>
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    {stage.previousRate == null
+                      ? tx("Entrada do funil")
+                      : `${formatPercentage(stage.previousRate)} ${tx("da etapa anterior")}`}
+                  </p>
+                  {index < (data?.funnel.length ?? 0) - 1 && (
+                    <span className="absolute -right-2.5 top-1/2 z-10 text-muted-foreground">
+                      →
+                    </span>
+                  )}
+                </div>
               ))}
             </div>
           </div>
         </CardContent>
       </Card>
-
-
 
       <Card>
         <CardContent className="p-5">
@@ -1808,13 +1841,12 @@ export default function PerformancePage() {
                   </AlertDescription>
                 </Alert>
               )}
-              <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-2 xl:grid-cols-5">
-                <GlassMetricCard  label="Pedidos no período" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>}  />
-                <GlassMetricCard  label="Valor total" value={<>{formatCurrency(filteredStats.valorTotal)}</>}  />
-                <GlassMetricCard  label="Pedidos atribuídos" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>}  />
-                <GlassMetricCard label="Receita atribuída" value={formatCurrency(filteredStats.receitaAtribuida)}
-                  sub={[{label: "Participação no valor total", value: formatPercentage(filteredStats.valorTotal > 0 ? filteredStats.receitaAtribuida / filteredStats.valorTotal * 100 : 0)}]} />
-                <GlassMetricCard  label="Faturamento pago atribuído" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>}  />
+              <div className="mt-4 up-metric-grid">
+                <GlassMetricCard label="Pedidos no período" value={<>{formatNumber(filteredStats.pedidosNoPeriodo)}</>} hideComparison />
+                <GlassMetricCard label="Valor total" value={<>{formatCurrency(filteredStats.valorTotal)}</>} hideComparison />
+                <GlassMetricCard label="Pedidos com clique pago" value={<>{formatNumber(filteredStats.pedidosAtribuidos)}</>} info={tx("Pedidos (ERP + site) em que o mesmo cliente teve um clique pago antes da compra.")} hideComparison />
+                <GlassMetricCard label="Receita com clique pago" value={<>{formatCurrency(filteredStats.receitaAtribuida)}</>} info={tx("Valor desses pedidos, contado por pedido. Pode diferir de “Receita atribuída” (Conciliação financeira), que conta por cliente sobre o faturamento líquido do ERP.")} sub={[{ label: "% do valor total", value: formatPercentage(filteredStats.valorTotal > 0 ? (filteredStats.receitaAtribuida / filteredStats.valorTotal) * 100 : 0) }]} hideComparison />
+                <GlassMetricCard label="Pago desses pedidos" value={<>{formatCurrency(filteredStats.faturamentoPago)}</>} info={tx("Parte do valor desses pedidos que já foi paga.")} hideComparison />
               </div>
               <div className="mt-4 overflow-x-auto">
                 <Table>
@@ -1834,7 +1866,7 @@ export default function PerformancePage() {
                         <TableCell>
                           <p className="font-medium">#{order.orderId}</p>
                           <p className="text-xs text-muted-foreground">
-                            {new Date(order.dataCriado).toLocaleString("pt-BR")}
+                            {order.channel === "erp" ? formatErpDate(order.dataCriado) : new Date(order.dataCriado).toLocaleString("pt-BR")}
                           </p>
                         </TableCell>
                         <TableCell>
@@ -1851,7 +1883,7 @@ export default function PerformancePage() {
                               {COHORT_LABEL[order.cohort]}
                             </Badge>
                           ) : (
-                            <Badge variant="outline">Não identificado</Badge>
+                            <span className="text-muted-foreground" title={tx("A coorte só é calculada para pedidos com clique pago antes da compra.")}>—</span>
                           )}
                         </TableCell>
                         <TableCell>
@@ -1890,8 +1922,6 @@ export default function PerformancePage() {
           )}
         </CardContent>
       </Card>
-
-
     </div>
   );
 }

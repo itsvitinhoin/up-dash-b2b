@@ -149,6 +149,12 @@ paths:
             enum: [B2B, B2C]
           description: Filter clients by the dashboard family selected by the admin.
         - in: query
+          name: archived
+          schema:
+            type: string
+            enum: [only, include]
+          description: Archived clients are hidden by default. `only` lists just the archived ones, `include` lists everyone.
+        - in: query
           name: dateFrom
           schema:
             type: string
@@ -420,6 +426,13 @@ paths:
           schema:
             type: string
           description: Restrict order metrics to a single seller.
+        - in: query
+          name: state
+          schema:
+            type: string
+          description: |
+            Restrict order metrics to orders shipped to a single Brazilian state (UF, e.g. SP, MG).
+            Only orders with a known state match; see `stateCoverage` in the response.
         - in: query
           name: channel
           schema:
@@ -1880,6 +1893,17 @@ components:
         hasGa4Integration:
           type: boolean
           description: True when both GA4 measurement id and API secret are configured.
+        hasErpIntegration:
+          type: boolean
+          description: True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it).
+        archivedAt:
+          type: ["string", "null"]
+          format: date-time
+          description: When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.
+        attributionStartDate:
+          type: ["string", "null"]
+          format: date
+          description: Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Null = use the legacy per-dataset list (or no floor).
         hasClientLogin:
           type: boolean
           description: True when this client has at least one CLIENT-role login.
@@ -2065,6 +2089,10 @@ components:
         bigqueryDataset:
           type: ["string", "null"]
           description: BigQuery dataset (project up-vesti-report) this client reads analytics from. Pass null to clear it.
+        attributionStartDate:
+          type: ["string", "null"]
+          format: date
+          description: Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Pass null to clear it.
         nuvemshopStoreId:
           type: ["string", "null"]
           description: Nuvemshop store id. Pass null to clear it.
@@ -2335,6 +2363,12 @@ components:
       properties:
         kpis:
           $ref: "#/components/schemas/DashboardKpis"
+        stateCoverage:
+          type: number
+          nullable: true
+          description: |
+            Share (0 to 1) of the period's paid orders that carry a state (UF), ignoring the `state` filter.
+            Lets the UI warn when filtering by state would hide most orders. Null when there are no paid orders.
         revenueOverTime:
           type: array
           items:
@@ -3904,7 +3938,9 @@ components:
         kpis:
           $ref: "#/components/schemas/MarketingKpis"
         prevKpis:
-          $ref: "#/components/schemas/MarketingKpis"
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/MarketingKpis"
         leadsOverTime:
           type: array
           items:

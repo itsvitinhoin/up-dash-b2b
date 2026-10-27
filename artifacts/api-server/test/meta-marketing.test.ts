@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@workspace/db", () => ({ db: {}, creativesTable: {} }));
 import { fetchMetaMarketingData } from "../src/services/meta-ads";
 import {
@@ -25,33 +25,47 @@ function insight(purchases = 3, leads = 99) {
     ],
   };
 }
-function mockGraph(empty = false) {
+function mockGraph(empty = false, ranking = false) {
   return vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
       const u = new URL(url);
-      const level = u.searchParams.get("level");
-      let data: unknown[] = [];
-      if (!empty && u.pathname.endsWith("/insights")) {
-        if (level === "account" && u.searchParams.has("time_increment"))
-          data = [insight(), { ...insight(2), date_start: "2026-10-26" }];
-        else if (level === "account")
-          data = [{ reach: "1200", frequency: "1.6666667" }];
-        else if (level === "ad")
-          data = [
-            ...Array.from({ length: 6 }, (_, n) => ({
-              ...insight(0, 1000 - n),
-              ad_id: `lead-${n}`,
-              ad_name: `Lead ${n}`,
-            })),
-            {
-              ...insight(9, 0),
-              ad_id: "purchase-winner",
-              ad_name: "Purchase winner",
-            },
-          ];
+      let body: unknown = { data: [] };
+      if (u.searchParams.get("fields") === "timezone_name")
+        body = { timezone_name: "America/Sao_Paulo" };
+      else if (!empty && u.pathname.endsWith("/insights")) {
+        if (u.searchParams.get("level") === "account")
+          body = { data: [{ reach: "1200", frequency: "1.6666667" }] };
+        else
+          body = {
+            data: ranking
+              ? [
+                  ...Array.from({ length: 6 }, (_, n) => ({
+                    ...insight(0, 1000 - n),
+                    ad_id: `lead-${n}`,
+                    ad_name: `Lead ${n}`,
+                    campaign_id: "campaign",
+                  })),
+                  {
+                    ...insight(9, 0),
+                    ad_id: "purchase-winner",
+                    ad_name: "Purchase winner",
+                    campaign_id: "campaign",
+                  },
+                ]
+              : [
+                  { ...insight(), ad_id: "ad", campaign_id: "campaign" },
+                  {
+                    ...insight(2),
+                    ad_id: "ad",
+                    campaign_id: "campaign",
+                    date_start: "2026-10-26",
+                    date_stop: "2026-10-26",
+                  },
+                ],
+          };
       }
-      return { ok: true, json: async () => ({ data }) };
+      return new Response(JSON.stringify(body), { status: 200 });
     }),
   );
 }
@@ -61,7 +75,14 @@ const params = {
   adAccountId: "123",
   since: "2026-10-25",
   until: "2026-10-26",
+  includeReach: true,
+  includeMedia: true,
 };
+
+let caseId = 0;
+beforeEach(() => {
+  params.adAccountId = `fixture-${++caseId}`;
+});
 
 describe("Meta advertising metrics", () => {
   it("preserves attributed revenue and purchases without double-counting action aliases", async () => {
@@ -91,7 +112,7 @@ describe("Meta advertising metrics", () => {
     });
   });
   it("ranks all B2C ads by purchases even when they have no leads", async () => {
-    mockGraph();
+    mockGraph(false, true);
     const meta = await fetchMetaMarketingData({ ...params, isB2C: true });
     expect(meta.topCreatives.leads.map((c) => c.id)).toEqual([
       "purchase-winner",
@@ -103,7 +124,7 @@ describe("Meta advertising metrics", () => {
     });
   });
   it("keeps B2B rankings based on leads", async () => {
-    mockGraph();
+    mockGraph(false, true);
     const meta = await fetchMetaMarketingData(params);
     expect(meta.topCreatives.leads[0].id).toBe("lead-0");
     expect(meta.topCreatives.leads).toHaveLength(5);
@@ -127,14 +148,17 @@ describe("Meta advertising metrics", () => {
   it("propagates Meta API failures instead of manufacturing zero metrics", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({
-        ok: false,
-        json: async () => ({ error: { message: "Token expired" } }),
-      })),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ error: { code: 190, message: "Token expired" } }),
+            { status: 400 },
+          ),
+      ),
     );
-    await expect(fetchMetaMarketingData(params)).rejects.toThrow(
-      "Token expired",
-    );
+    await expect(fetchMetaMarketingData(params)).rejects.toMatchObject({
+      code: "MEDIA_UNAVAILABLE",
+    });
   });
   it("selects Meta revenue only for MANUAL, never for an empty integrated store", () => {
     expect(usesMetaRevenue("MANUAL")).toBe(true);

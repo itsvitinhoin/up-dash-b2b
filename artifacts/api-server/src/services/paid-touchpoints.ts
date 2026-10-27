@@ -296,6 +296,41 @@ async function markSynced(params: { clientId: string; customerId: string; from: 
 // (e essa sincronização é confiável -- janela fechada há mais de 24h, ou
 // sincronizada há menos de 6h), lê direto do Postgres. Senão, busca na
 // UpZero, salva, e amplia a janela sincronizada.
+//
+// Achado 08/10/2026 (UP Glass, medido contra o banco real, MX Fashion): a
+// Recompra levava 58-77s no touchpoint e devolvia contagens diferentes a
+// cada chamada. Causa: a janela padrão termina no início do bloco de 6h
+// (`standardTouchpointWindow`), então `windowClosedLongAgo` nunca era
+// verdadeiro e o cache só valia por 6h depois do último sync. Cliente que o
+// lote não pega (sem pedido nos últimos 90 dias) caía na busca ao vivo da
+// janela INTEIRA (10 anos), que estoura o timeout da UpZero (~25s) -- e o
+// chamador engolia o erro como "sem touchpoint", mudando o resultado.
+// Duas correções, sem mudar o que conta como atribuído:
+//  1. `needUntil` (data do último pedido que vai usar o touchpoint): só é
+//     preciso cobertura até ali, porque `latestTouchpointBefore` ignora o que
+//     vem depois do pedido. Janela que fechou há mais de 24h é confiável.
+//  2. Quando precisa atualizar e já existe cobertura desde `from`, busca só o
+//     trecho novo (com 24h de folga pra evento que chegou atrasado) em vez
+//     dos 10 anos; o `onConflictDoNothing` torna a sobreposição inofensiva.
+const TOUCHPOINT_SETTLED_MS = 24 * 60 * 60 * 1000;
+const TOUCHPOINT_FRESH_MS = 6 * 60 * 60 * 1000;
+const TOUCHPOINT_REFRESH_OVERLAP_MS = 24 * 60 * 60 * 1000;
+
+async function readCachedTouchpoints(params: { clientId: string; customerId: string; from: Date; to: Date }): Promise<TouchpointCandidate[]> {
+  const rows = await db
+    .select()
+    .from(paidTouchpointsTable)
+    .where(
+      and(
+        eq(paidTouchpointsTable.clientId, params.clientId),
+        eq(paidTouchpointsTable.customerId, params.customerId),
+        gte(paidTouchpointsTable.occurredAt, params.from),
+        lte(paidTouchpointsTable.occurredAt, params.to),
+      ),
+    );
+  return rows.map(rowToTouchpointCandidate);
+}
+
 export async function getTouchpointsForCustomerCached(params: {
   apiKey: string;
   clientId: string;
@@ -303,32 +338,40 @@ export async function getTouchpointsForCustomerCached(params: {
   externalUserId: number;
   from: string; // ISO
   to: string; // ISO
+  needUntil?: string; // ISO -- data do último pedido que usa esse touchpoint (limita a cobertura exigida)
 }): Promise<TouchpointCandidate[]> {
   const fromDate = new Date(params.from);
   const toDate = new Date(params.to);
+  const needMs = params.needUntil ? Math.min(toDate.getTime(), new Date(params.needUntil).getTime()) : toDate.getTime();
 
   const [syncState] = await db
     .select()
     .from(paidTouchpointsSyncTable)
     .where(and(eq(paidTouchpointsSyncTable.clientId, params.clientId), eq(paidTouchpointsSyncTable.customerId, params.customerId)));
 
-  const covered = Boolean(syncState) && syncState!.syncedFrom.getTime() <= fromDate.getTime() && syncState!.syncedTo.getTime() >= toDate.getTime();
-  const windowClosedLongAgo = toDate.getTime() < Date.now() - 24 * 60 * 60 * 1000;
-  const syncedRecently = Boolean(syncState) && Date.now() - syncState!.syncedAt.getTime() < 6 * 60 * 60 * 1000;
+  const coversStart = Boolean(syncState) && syncState!.syncedFrom.getTime() <= fromDate.getTime();
+  const covered = coversStart && syncState!.syncedTo.getTime() >= needMs;
+  const windowClosedLongAgo = needMs < Date.now() - TOUCHPOINT_SETTLED_MS;
+  const syncedRecently = Boolean(syncState) && Date.now() - syncState!.syncedAt.getTime() < TOUCHPOINT_FRESH_MS;
 
   if (covered && (windowClosedLongAgo || syncedRecently)) {
-    const rows = await db
-      .select()
-      .from(paidTouchpointsTable)
-      .where(
-        and(
-          eq(paidTouchpointsTable.clientId, params.clientId),
-          eq(paidTouchpointsTable.customerId, params.customerId),
-          gte(paidTouchpointsTable.occurredAt, fromDate),
-          lte(paidTouchpointsTable.occurredAt, toDate),
-        ),
-      );
-    return rows.map(rowToTouchpointCandidate);
+    return readCachedTouchpoints({ clientId: params.clientId, customerId: params.customerId, from: fromDate, to: toDate });
+  }
+
+  // Já tem cobertura desde `from`: só falta o trecho recente.
+  if (coversStart) {
+    const refreshFrom = new Date(Math.max(fromDate.getTime(), syncState!.syncedTo.getTime() - TOUCHPOINT_REFRESH_OVERLAP_MS));
+    const fresh = await fetchPaidTouchpointsForUser({
+      apiKey: params.apiKey,
+      userId: params.externalUserId,
+      from: refreshFrom.toISOString(),
+      to: params.to,
+    });
+    if (fresh.length > 0) {
+      await savePaidTouchpoints({ clientId: params.clientId, customerId: params.customerId, externalUserId: params.externalUserId, touchpoints: fresh });
+    }
+    await markSynced({ clientId: params.clientId, customerId: params.customerId, from: refreshFrom, to: toDate });
+    return readCachedTouchpoints({ clientId: params.clientId, customerId: params.customerId, from: fromDate, to: toDate });
   }
 
   const touchpoints = await fetchPaidTouchpointsForUser({

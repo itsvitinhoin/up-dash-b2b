@@ -6,26 +6,29 @@ import {
   useGetMarketing,
   useGetCustomerSummary,
   useGetFunnel,
+  useGetClient,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
+import { useI18n } from "@/lib/i18n";
 import { queryOpts } from "@/lib/query-opts";
 import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
-import { precedingPeriod } from "@/lib/metric-comparison";
 import type { OrganizedMetric } from "@/components/metric-section";
 
 type RecompraTotals = {
   faturamento: number;
+  faturamentoBruto?: number; // valor do pedido aprovado (servidor novo)
   vendas: number;
   clientes: number;
   ticketMedio: number | null;
 };
 type RecompraResponse = {
-  blocksP2?: RecompraResponse["blocks"] | null;
   blocks: {
     recompra: RecompraTotals;
     recorrentes: RecompraTotals;
     reativados: RecompraTotals;
+    // pedidos de clientes na 1ª compra (servidor novo; ausente em servidor antigo)
+    aquisicao?: RecompraTotals;
     ciclo: { tempoMedioDias: number | null; medianaDias: number | null };
   };
 };
@@ -37,97 +40,150 @@ type Activation = {
 type OrderTotals = { kpis: { fulfilledQuantity: number } };
 type PerformanceMetrics = {
   kpis: { cac: number | null; ctr: number; cpc: number | null };
+  // Media availability gates all derived costs; unavailable never means a confirmed zero.
+  sources?: { media?: { status?: string } };
 };
+const mediaConnected = (data?: PerformanceMetrics) => data?.sources?.media?.status === "connected";
 
-/** Reuses existing read endpoints. Missing measures remain null, never guessed. */
-export function useOrganizationData() {
+/** Fontes de dados que uma seção pode precisar. Cada seção pede só as suas: o resto nem é buscado. */
+export type OrganizationSource =
+  | "dashboard"
+  | "marketing"
+  | "customers"
+  | "funnel"
+  | "recompra"
+  | "performance"
+  | "orders";
+export const ALL_ORGANIZATION_SOURCES: readonly OrganizationSource[] = [
+  "dashboard",
+  "marketing",
+  "customers",
+  "funnel",
+  "recompra",
+  "performance",
+  "orders",
+];
+
+/**
+ * Reuses existing read endpoints. Missing measures remain null, never guessed.
+ *
+ * Custo de carregamento (UP Glass): as buscas pesadas (Recompra, Performance, pedidos) só
+ * começam depois que o Dashboard principal chegou, e a comparação com o período anterior de
+ * cada fonte é uma busca à parte, em segundo plano (chave "metric-previous-period"), em vez
+ * de dobrar o tempo da busca principal.
+ */
+export function useOrganizationData(
+  only: readonly OrganizationSource[] = ALL_ORGANIZATION_SOURCES,
+  // Fontes cujo período anterior precisa de busca própria (Dashboard e Marketing já trazem o anterior na resposta).
+  previous: readonly OrganizationSource[] = only,
+) {
+  const { tx } = useI18n();
   const { user, selectedClientId, selectedDashboardMode } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const clientId =
     user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled =
     user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
+  const wants = (source: OrganizationSource) => only.includes(source);
   const period = {
     clientId,
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
     dateTo: format(dateRange.to, "yyyy-MM-dd"),
   };
-  const dashboard = useGetDashboard(
-    {
-      ...period,
-      category: filters.category ?? undefined,
-      sellerId: filters.sellerId ?? undefined,
-      channel: filters.channel ?? undefined,
-      color: filters.color ?? undefined,
-      segment: filters.segment ?? undefined,
-      utmSource: filters.utmSource || undefined,
-      utmMedium: filters.utmMedium || undefined,
-      utmCampaign: filters.utmCampaign || undefined,
-      compare: true,
-    },
-    { query: queryOpts({ enabled, placeholderData: (previous) => previous }) },
-  );
+  const dashboardParams = {
+    ...period,
+    category: filters.category ?? undefined,
+    sellerId: filters.sellerId ?? undefined,
+    state: filters.state ?? undefined,
+    channel: filters.channel ?? undefined,
+    color: filters.color ?? undefined,
+    segment: filters.segment ?? undefined,
+    utmSource: filters.utmSource || undefined,
+    utmMedium: filters.utmMedium || undefined,
+    utmCampaign: filters.utmCampaign || undefined,
+    compare: true,
+  };
+  const funnelParams = {
+    ...period,
+    utmSource: filters.utmSource || undefined,
+    utmMedium: filters.utmMedium || undefined,
+    utmCampaign: filters.utmCampaign || undefined,
+  };
+  const dashboard = useGetDashboard(dashboardParams, {
+    query: queryOpts({ enabled: enabled && wants("dashboard"), placeholderData: (previous) => previous }),
+  });
   const marketing = useGetMarketing(period, {
-    query: queryOpts({ enabled, placeholderData: (previous) => previous }),
+    query: queryOpts({ enabled: enabled && wants("marketing"), placeholderData: (previous) => previous }),
   });
   const customers = useGetCustomerSummary(
     { ...period, compare: true },
-    { query: queryOpts({ enabled, placeholderData: (previous) => previous }) },
+    { query: queryOpts({ enabled: enabled && wants("customers"), placeholderData: (previous) => previous }) },
   );
-  const funnel = useGetFunnel(
-    {
-      ...period,
-      utmSource: filters.utmSource || undefined,
-      utmMedium: filters.utmMedium || undefined,
-      utmCampaign: filters.utmCampaign || undefined,
-    },
-    { query: queryOpts({ enabled, placeholderData: (previous) => previous }) },
-  );
-  const recompraParams = new URLSearchParams({
+  const funnel = useGetFunnel(funnelParams, {
+    query: queryOpts({ enabled: enabled && wants("funnel"), placeholderData: (previous) => previous }),
+  });
+
+  // Universo da Recompra = o MESMO dos cartões do topo do Dashboard (conferido em 10 clientes, 09/set a 08/out):
+  // cliente Vesti vende pela Vesti (tipo "vesti" da Recompra: só o canal Vesti, sem o ERP do Vogabox); UpZero e Nuvemshop vendem
+  // pelo site (tipo "ecommerce"). Usar "erp" em cliente UpZero com ERP (MX Fashion) misturava o ERP (R$ 434 mil) com
+  // o site (R$ 55 mil) e a Retenção ficava maior que o faturamento total. Achado extra no PR: ele mandava
+  // estado="todos", que o servidor entendia como um estado chamado "todos" (resultado 0) -- só mandamos estado se houver.
+  const { data: clientDetail } = useGetClient(selectedClientId ?? "", { query: queryOpts({ enabled: !!selectedClientId }) });
+  const platform = clientDetail?.commercePlatform;
+  const platformReady = !selectedClientId || platform !== undefined;
+  const recompraTipo = platform ? (platform === "VESTI" ? "vesti" : "site") : selectedDashboardMode === "B2C" ? "ecommerce" : "erp";
+  // Valor em R$: o topo do Dashboard soma o valor do pedido aprovado nos clientes de site; na Vesti soma "valor reservado"
+  // (a coluna que a Recompra chama de faturamento). Assim Aquisição + Retenção fecham com o Faturamento total.
+  const money = (t?: RecompraTotals | null) => (t == null ? undefined : platform === "VESTI" ? t.faturamento : (t.faturamentoBruto ?? t.faturamento));
+  const ticketOf = (t?: RecompraTotals | null) => (t == null ? undefined : t.vendas > 0 ? (money(t) ?? 0) / t.vendas : null);
+  const recompraSource = platform === "VESTI" ? "Recompra · Vesti pago" : "Recompra · Ecommerce pago";
+  const acquisitionSource = platform === "VESTI" ? "Aquisição · Vesti pago" : "Aquisição · Ecommerce pago";
+
+  // Buscas pesadas: esperam o Dashboard principal (quando a seção o usa) e a plataforma do cliente.
+  const mainSettled = !wants("dashboard") || dashboard.data !== undefined || dashboard.isError;
+  const heavyEnabled = enabled && mainSettled && platformReady;
+
+  const recompraQuery = {
     ...period,
-    ...Object.fromEntries(Object.entries(precedingPeriod(period.dateFrom, period.dateTo)).map(([key, value]) => [key === "dateFrom" ? "compareDateFrom" : "compareDateTo", value])),
     status: "pago",
-    tipo: "ecommerce",
-    estado: filters.state || "todos",
-  } as Record<string, string>);
-  if (!clientId) recompraParams.delete("clientId");
+    tipo: recompraTipo,
+    estado: filters.state || undefined,
+  };
   const recompra = useQuery<RecompraResponse>({
-    queryKey: ["organization-recompra", period, filters.state],
-    queryFn: () =>
-      customFetch(`/api/analytics/recompra/dashboard?${recompraParams}`),
-    enabled,
+    queryKey: ["organization-recompra", period, filters.state, recompraTipo],
+    queryFn: () => customFetch(periodQuery("/api/analytics/recompra/dashboard", recompraQuery)),
+    enabled: heavyEnabled && wants("recompra"),
     staleTime: 120000,
     refetchOnWindowFocus: false,
   });
-  const performanceParams = new URLSearchParams(
-    period as Record<string, string>,
-  );
-  if (!clientId) performanceParams.delete("clientId");
+  const performanceUrl = periodQuery("/api/analytics/performance", period);
   const performance = useQuery<PerformanceMetrics>({
     queryKey: ["organization-performance", period],
-    queryFn: () =>
-      customFetch(`/api/analytics/performance?${performanceParams}`),
-    enabled: enabled && selectedDashboardMode !== "B2C",
+    queryFn: () => customFetch(performanceUrl),
+    enabled: heavyEnabled && wants("performance") && selectedDashboardMode !== "B2C",
     staleTime: 120000,
     refetchOnWindowFocus: false,
   });
+  const ordersUrl = periodQuery("/api/analytics/orders-page", { ...period, page: 1, limit: 1 });
   const orders = useQuery<OrderTotals>({
     queryKey: ["organization-order-totals", period],
-    queryFn: () =>
-      customFetch(
-        `/api/analytics/orders-page?${performanceParams}&page=1&limit=1`,
-      ),
-    enabled,
+    queryFn: () => customFetch(ordersUrl),
+    enabled: heavyEnabled && wants("orders"),
     staleTime: 120000,
     refetchOnWindowFocus: false,
   });
-  const previousDashboard = usePreviousPeriodQuery<NonNullable<typeof dashboard.data>>(periodQuery("/api/analytics/dashboard", { ...period, category: filters.category ?? undefined, sellerId: filters.sellerId ?? undefined, channel: filters.channel ?? undefined, color: filters.color ?? undefined, segment: filters.segment ?? undefined, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, utmCampaign: filters.utmCampaign || undefined, compare: true }), enabled);
-  const previousMarketing = usePreviousPeriodQuery<NonNullable<typeof marketing.data>>(periodQuery("/api/analytics/marketing", period), enabled);
-  const previousPerformance = usePreviousPeriodQuery<PerformanceMetrics>(periodQuery("/api/analytics/performance", period), enabled && selectedDashboardMode !== "B2C");
-  const previousOrders = usePreviousPeriodQuery<OrderTotals>(periodQuery("/api/analytics/orders-page", { ...period, page: 1, limit: 1 }), enabled);
-  const previousFunnel = usePreviousPeriodQuery<NonNullable<typeof funnel.data> & { activation?: Activation }>(periodQuery("/api/analytics/funnel", { ...period, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, utmCampaign: filters.utmCampaign || undefined }), enabled);
+
+  // Período anterior de cada fonte: segundo plano, uma busca por endpoint/filtro.
+  const wantsPrevious = (source: OrganizationSource) => wants(source) && previous.includes(source);
+  const previousDashboard = usePreviousPeriodQuery<NonNullable<typeof dashboard.data>>(periodQuery("/api/analytics/dashboard", dashboardParams), enabled && wantsPrevious("dashboard") && dashboard.data !== undefined);
+  const previousMarketing = usePreviousPeriodQuery<NonNullable<typeof marketing.data>>(periodQuery("/api/analytics/marketing", period), enabled && wantsPrevious("marketing") && marketing.data !== undefined);
+  const previousPerformance = usePreviousPeriodQuery<PerformanceMetrics>(periodQuery("/api/analytics/performance", period), heavyEnabled && wantsPrevious("performance") && selectedDashboardMode !== "B2C" && performance.data !== undefined);
+  const previousOrders = usePreviousPeriodQuery<OrderTotals>(periodQuery("/api/analytics/orders-page", { ...period, page: 1, limit: 1 }), heavyEnabled && wantsPrevious("orders") && orders.data !== undefined);
+  const previousFunnel = usePreviousPeriodQuery<NonNullable<typeof funnel.data> & { activation?: Activation }>(periodQuery("/api/analytics/funnel", funnelParams), enabled && wantsPrevious("funnel") && funnel.data !== undefined);
+  const previousRecompra = usePreviousPeriodQuery<RecompraResponse>(periodQuery("/api/analytics/recompra/dashboard", recompraQuery), heavyEnabled && wantsPrevious("recompra") && recompra.data !== undefined);
+
   const d = dashboard.data?.kpis,
-    m = marketing.data?.kpis,
+    m = marketing.isError ? undefined : marketing.data?.kpis,
     c = customers.data?.kpis;
   const r = recompra.data?.blocks;
   const activation = (
@@ -135,10 +191,10 @@ export function useOrganizationData() {
       | (typeof funnel.data & { activation?: Activation })
       | undefined
   )?.activation;
-  const meta = marketing.data?.platformBreakdown.find(
+  const meta = (marketing.isError ? undefined : marketing.data)?.platformBreakdown.find(
     (p) => p.platform === "META",
   );
-  const google = marketing.data?.platformBreakdown.find(
+  const google = (marketing.isError ? undefined : marketing.data)?.platformBreakdown.find(
     (p) => p.platform === "GOOGLE",
   );
   const measures: Record<string, OrganizedMetric> = {};
@@ -151,7 +207,7 @@ export function useOrganizationData() {
     loading = false,
     series?: number[],
   ) {
-    measures[key] = { key, label, value, format, source, loading, series };
+    measures[key] = { info: marketing.isError && ["spend", "totalSpend", "metaSpend", "googleSpend", "roas"].includes(key) ? tx("Não foi possível ler o investimento. Tente novamente; indisponível não significa gasto zero.") : undefined, key, label: tx(label), value, format, source: source ? tx(source) : source, loading, series };
   }
   put(
     "revenue",
@@ -261,15 +317,15 @@ export function useOrganizationData() {
     "number",
     "Primeira compra no período",
     dashboard.isLoading,
-    dashboard.data?.newBuyersOverTime.map((p) => p.value),
   );
-  put("acquisitionRevenue", "Faturamento de Aquisição", null, "currency", "");
-  put("acquisitionOrders", "Pedidos de Aquisição", null, "number", "");
-  put("acquisitionTicket", "Ticket de Aquisição", null, "currency", "");
+  // Aquisição = pedidos pagos do período de clientes sem compra anterior (mesma base e filtros da Retenção).
+  put("acquisitionRevenue", "Faturamento de Aquisição", money(r?.aquisicao), "currency", acquisitionSource, recompra.isLoading);
+  put("acquisitionOrders", "Pedidos de Aquisição", r?.aquisicao?.vendas, "number", acquisitionSource, recompra.isLoading);
+  put("acquisitionTicket", "Ticket de Aquisição", ticketOf(r?.aquisicao), "currency", acquisitionSource, recompra.isLoading);
   put(
     "cac",
     "CAC",
-    performance.data?.kpis.cac,
+    mediaConnected(performance.data) ? performance.data?.kpis.cac : null,
     "currency",
     "Novos atribuídos · Performance",
     performance.isLoading && enabled && selectedDashboardMode !== "B2C",
@@ -279,15 +335,15 @@ export function useOrganizationData() {
     "Clientes que Recompraram",
     r?.recompra.clientes,
     "number",
-    "Recompra · Ecommerce pago",
+    recompraSource,
     recompra.isLoading,
   );
   put(
     "retentionRevenue",
     "Faturamento de Recompra",
-    r?.recompra.faturamento,
+    money(r?.recompra),
     "currency",
-    "Recompra · Ecommerce pago",
+    recompraSource,
     recompra.isLoading,
   );
   put(
@@ -295,15 +351,15 @@ export function useOrganizationData() {
     "Pedidos de Recompra",
     r?.recompra.vendas,
     "number",
-    "Recompra · Ecommerce pago",
+    recompraSource,
     recompra.isLoading,
   );
   put(
     "retentionTicket",
     "Ticket de Recompra",
-    r?.recompra.ticketMedio,
+    ticketOf(r?.recompra),
     "currency",
-    "Recompra · Ecommerce pago",
+    recompraSource,
     recompra.isLoading,
   );
   put(
@@ -404,7 +460,7 @@ export function useOrganizationData() {
     ["ctr", "CTR", "percent", "ctr"],
     ["cpc", "CPC", "currency", "cpc"],
   ] as const) {
-    put(key, label, marketing.data?.metaSummary?.[field], fmt, "Meta Ads", marketing.isLoading);
+    put(key, label, marketing.isError ? null : marketing.data?.metaSummary?.[field], fmt, "Meta Ads", marketing.isLoading);
   }
   for (const [key, label] of [
     ["connectRate", "Connect Rate"],
@@ -413,8 +469,8 @@ export function useOrganizationData() {
     ["checkoutRate", "Taxa de Checkout"],
     ["paymentRate", "Taxa de Pagamento"],
   ] as const) put(key, label, null, "percent", "");
-  const pd = dashboard.data?.prevKpis, pm = marketing.data?.prevKpis, pc = customers.data?.prevKpis;
-  const pr = recompra.data?.blocksP2;
+  const pd = dashboard.data?.prevKpis, pm = marketing.isError ? undefined : marketing.data?.prevKpis, pc = customers.data?.prevKpis;
+  const pr = previousRecompra.data?.blocks;
   const previousMeta = previousMarketing.data?.platformBreakdown.find(row => row.platform === "META");
   const previousGoogle = previousMarketing.data?.platformBreakdown.find(row => row.platform === "GOOGLE");
   const previousValues: Record<string, number | null | undefined> = {
@@ -422,20 +478,23 @@ export function useOrganizationData() {
     orders: pd?.orders, ticket: pd?.avgTicket, newCustomers: pd?.newBuyers,
     spend: pm?.totalSpend, totalSpend: pm?.totalSpend, metaSpend: previousMeta?.spend, googleSpend: previousGoogle?.spend,
     roas: pm?.roas, requestedRoas: selectedDashboardMode === "B2C" ? null : pm?.roas, paidRoas: selectedDashboardMode === "B2C" ? pm?.roas : null,
-    cac: previousPerformance.data?.kpis.cac,
+    cac: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cac : null,
     ctr: marketing.data?.prevMetaSummary?.ctr, cpc: marketing.data?.prevMetaSummary?.cpc,
     reach: marketing.data?.prevMetaSummary?.reach, frequency: marketing.data?.prevMetaSummary?.frequency,
     cpm: marketing.data?.prevMetaSummary?.cpm, metaPurchases: marketing.data?.prevMetaSummary?.purchases,
     metaCpa: marketing.data?.prevMetaSummary?.cpa, metaRoas: marketing.data?.prevMetaSummary?.roas,
-    repurchasers: pr?.recompra.clientes, retentionRevenue: pr?.recompra.faturamento, retentionOrders: pr?.recompra.vendas, retentionTicket: pr?.recompra.ticketMedio,
+    acquisitionRevenue: money(pr?.aquisicao), acquisitionOrders: pr?.aquisicao?.vendas, acquisitionTicket: ticketOf(pr?.aquisicao),
+    repurchasers: pr?.recompra.clientes, retentionRevenue: money(pr?.recompra), retentionOrders: pr?.recompra.vendas, retentionTicket: ticketOf(pr?.recompra),
     registrations: pc?.totalRegistrations, approved: pc?.approvedRegistrations, approvalRate: pc?.approvalRatePct, firstPurchaseAverage: pc?.avgTimeToFirstPurchaseDays,
     pieces: previousOrders.data?.kpis.fulfilledQuantity, impressions: previousMeta?.impressions, clicks: previousMeta?.clicks,
     approvedConversion: selectedDashboardMode === "B2C" ? null : previousFunnel.data?.overallConversion,
     approvedConverted: previousFunnel.data?.activation?.postApproval.paymentConfirmed, costRegistration: pm?.cpl,
   };
   for (const metric of Object.values(measures)) metric.previousValue = previousValues[metric.key];
+  // Custos: subir é ruim (o cartão pinta de verde/vermelho conforme isso).
+  for (const key of ["cac", "costRegistration", "costApproved", "cpc", "cpm", "metaCpa"]) if (measures[key]) measures[key].lowerIsBetter = true;
   function pick(...keys: string[]) {
     return keys.map((key) => measures[key]);
   }
-  return { measures, pick, dashboard, marketing, customers, funnel, previousFunnel, previousDashboard, recompra };
+  return { measures, pick, dashboard, marketing, customers, funnel, previousFunnel, previousDashboard, recompra, previousRecompra };
 }

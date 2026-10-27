@@ -1,4 +1,5 @@
-import { displayLabel } from "@/lib/display-label";
+import { useI18n } from "@/lib/i18n";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { OrganizationHeading } from "@/components/metric-section";
 import { useState, useMemo, useEffect } from "react";
@@ -156,6 +157,7 @@ function SkuTile({
   }>;
   emptyText: string;
 }) {
+  const { tx } = useI18n();
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2 mb-3">
@@ -181,9 +183,9 @@ function SkuTile({
                 </p>
                 <p className="text-muted-foreground tabular-nums">
                   {r.coverageDays !== null && r.coverageDays !== undefined
-                    ? `${r.coverageDays.toFixed(0)}dias de cobertura`
-                    : "Sem velocidade disponível"}{" "}
-                  · {formatNumber(r.unitsSold)} sold
+                    ? `${r.coverageDays.toFixed(0)} ${tx("dias de cobertura")}`
+                    : tx("Sem velocidade disponível")}{" "}
+                  · {formatNumber(r.unitsSold)} {tx("vendidos")}
                 </p>
               </div>
               <Badge
@@ -201,6 +203,8 @@ function SkuTile({
 }
 
 export default function StockIntelligencePage() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
   const { dateRange, filters } = useDashboardFilters();
@@ -245,7 +249,8 @@ export default function StockIntelligencePage() {
     query: queryOpts({ enabled, placeholderData: (prev) => prev }),
   });
 
-  const insightParams = { clientId, dateFrom, dateTo, screen: "stock" as const };
+  const { language: insightLanguage } = useI18n();
+  const insightParams = { clientId, dateFrom, dateTo, screen: "stock" as const, language: insightLanguage };
   const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
     query: queryOpts({ enabled, staleTime: 3_600_000, placeholderData: (prev) => prev }),
   });
@@ -326,8 +331,8 @@ export default function StockIntelligencePage() {
     return (
       <EmptyState
         icon={Package}
-        title="Não foi possível carregar o estoque"
-        description="Não foi possível carregar a inteligência de estoque. Tente novamente."
+        title={tx("Não foi possível carregar o estoque")}
+        description={tx("Não foi possível carregar a inteligência de estoque. Tente novamente.")}
       />
     );
   }
@@ -350,7 +355,7 @@ export default function StockIntelligencePage() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
           <span className="font-mono uppercase tracking-wider">
-            Atualizado · Inteligência de estoque
+            {tx("Atualizado · Inteligência de estoque")}
           </span>
         </div>
         <Button
@@ -364,15 +369,15 @@ export default function StockIntelligencePage() {
               `stock-intelligence-${new Date().toISOString().slice(0, 10)}.csv`,
               data.skus,
               [
-                { header: "SKU", accessor: (r) => r.sku },
-                { header: "Nome", accessor: (r) => r.name },
-                { header: "Categoria", accessor: (r) => r.category ?? "" },
-                { header: "Estoque", accessor: (r) => r.stock },
-                { header: "Velocidade diária", accessor: (r) => r.dailyVelocity.toFixed(2) },
-                { header: "Dias de cobertura", accessor: (r) => r.coverageDays?.toFixed(1) ?? "—" },
-                { header: "Risco", accessor: (r) => r.risk },
-                { header: "Unidades vendidas", accessor: (r) => r.unitsSold },
-                { header: "Data da última reposição", accessor: (r) => r.lastRestockDate ?? "" },
+                { header: tx("SKU"), accessor: (r) => r.sku },
+                { header: tx("Nome"), accessor: (r) => r.name },
+                { header: tx("Categoria"), accessor: (r) => r.category ?? "" },
+                { header: tx("Estoque"), accessor: (r) => r.stock },
+                { header: tx("Velocidade diária"), accessor: (r) => r.dailyVelocity.toFixed(2) },
+                { header: tx("Dias de cobertura"), accessor: (r) => r.coverageDays?.toFixed(1) ?? "—" },
+                { header: tx("Risco"), accessor: (r) => r.risk },
+                { header: tx("Unidades vendidas"), accessor: (r) => r.unitsSold },
+                { header: tx("Data da última reposição"), accessor: (r) => r.lastRestockDate ?? "" },
               ],
             );
           }}
@@ -401,7 +406,7 @@ export default function StockIntelligencePage() {
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Fechar análise"
+                  aria-label={tx("Fechar análise")}
                   data-testid="stock-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
@@ -441,7 +446,7 @@ export default function StockIntelligencePage() {
                   {regenerate.isPending ? "Regenerating…" : "Regenerate"}
                 </Button>
                 {insight?.cached && (
-                  <span className="text-[11px] text-muted-foreground">Atualização a cada hora</span>
+                  <span className="text-[11px] text-muted-foreground">{tx("Atualização a cada hora")}</span>
                 )}
               </div>
             </div>
@@ -450,7 +455,7 @@ export default function StockIntelligencePage() {
       )}
 
       {/* KPI strip */}
-      <OrganizationHeading>RESUMO DE ESTOQUE</OrganizationHeading>
+      <OrganizationHeading>{tx("RESUMO DE ESTOQUE")}</OrganizationHeading>
 <motion.div variants={cardVariants}>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {isLoading ? (
@@ -463,21 +468,21 @@ export default function StockIntelligencePage() {
           ) : data ? (
             <>
               <KpiCard
-                label="Total de unidades em estoque"
+                label={tx("Total de unidades em estoque")}
                 value={data.kpis.totalUnits}
                 prev={data.prevKpis.totalUnits}
                 format={(v) => formatNumber(v)}
                 icon={Boxes}
               />
               <KpiCard
-                label="Cobertura média em dias"
+                label={tx("Cobertura média em dias")}
                 value={data.kpis.avgCoverageDays}
                 prev={data.prevKpis.avgCoverageDays}
                 format={(v) => `${v.toFixed(1)}d`}
                 icon={Gauge}
               />
               <KpiCard
-                label="SKUs com risco de ruptura"
+                label={tx("SKUs com risco de ruptura")}
                 value={data.kpis.stockoutRiskCount}
                 prev={data.prevKpis.stockoutRiskCount}
                 format={(v) => formatNumber(v)}
@@ -485,7 +490,7 @@ export default function StockIntelligencePage() {
                 invertDelta
               />
               <KpiCard
-                label="SKUs com risco de excesso"
+                label={tx("SKUs com risco de excesso")}
                 value={data.kpis.overstockRiskCount}
                 prev={data.prevKpis.overstockRiskCount}
                 format={(v) => formatNumber(v)}
@@ -505,7 +510,7 @@ export default function StockIntelligencePage() {
       </motion.div>
 
       {/* Ranked SKU tiles */}
-      <OrganizationHeading>PRODUTOS</OrganizationHeading>
+      <OrganizationHeading>{tx("PRODUTOS")}</OrganizationHeading>
 <motion.div variants={cardVariants}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {isLoading ? (
@@ -520,21 +525,21 @@ export default function StockIntelligencePage() {
           ) : data ? (
             <>
               <SkuTile
-                title="Risco de ruptura · 10 principais"
+                title={tx("Risco de ruptura · 10 principais")}
                 icon={AlertTriangle}
                 color="bg-red-500/15 text-red-400"
                 rows={data.stockoutRisk}
                 emptyText="Nenhum produto com risco de ruptura de estoque neste período."
               />
               <SkuTile
-                title="Risco de excesso · 10 principais"
+                title={tx("Risco de excesso · 10 principais")}
                 icon={Package}
                 color="bg-amber-500/15 text-amber-400"
                 rows={data.overstockRisk}
-                emptyText="Nenhum produto com risco de excesso de estoque neste período."
+                emptyText={tx("Nenhum produto com risco de excesso de estoque neste período.")}
               />
               <SkuTile
-                title="Maior giro · 10 principais"
+                title={tx("Maior giro · 10 principais")}
                 icon={TrendingUp}
                 color="bg-emerald-500/15 text-emerald-400"
                 rows={data.highTurnover}
@@ -553,10 +558,10 @@ export default function StockIntelligencePage() {
         <Card className="overflow-hidden">
           <CardHeader className="px-5 py-4 border-b border-border">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle className="text-sm font-semibold">Todos os SKUs</CardTitle>
+              <CardTitle className="text-sm font-semibold">{tx("Todos os SKUs")}</CardTitle>
               <div className="flex flex-wrap items-center gap-2">
                 <Input
-                  placeholder="Buscar SKU ou nome…"
+                  placeholder={tx("Buscar SKU ou nome…")}
                   value={search}
                   onChange={(e) => handleSearch(e.target.value)}
                   className="h-8 w-44 text-xs"
@@ -565,10 +570,10 @@ export default function StockIntelligencePage() {
                 {categories.length > 0 && (
                   <Select value={categoryFilter} onValueChange={handleCategoryFilter}>
                     <SelectTrigger className="h-8 w-36 text-xs" data-testid="stock-category-filter">
-                      <SelectValue placeholder="Categoria" />
+                      <SelectValue placeholder={tx("Categoria")} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">Todas as categorias</SelectItem>
+                      <SelectItem value="all">{tx("Todas as categorias")}</SelectItem>
                       {categories.map((c) => (
                         <SelectItem key={c} value={c}>
                           {c}
@@ -579,13 +584,13 @@ export default function StockIntelligencePage() {
                 )}
                 <Select value={riskFilter} onValueChange={handleRiskFilter}>
                   <SelectTrigger className="h-8 w-32 text-xs" data-testid="stock-risk-filter">
-                    <SelectValue placeholder="Risco" />
+                    <SelectValue placeholder={tx("Risco")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Todos os riscos</SelectItem>
-                    <SelectItem value="Stockout">Ruptura de estoque</SelectItem>
-                    <SelectItem value="Overstock">Excesso de estoque</SelectItem>
-                    <SelectItem value="Healthy">Saudável</SelectItem>
+                    <SelectItem value="all">{tx("Todos os riscos")}</SelectItem>
+                    <SelectItem value="Stockout">{tx("Ruptura de estoque")}</SelectItem>
+                    <SelectItem value="Overstock">{tx("Excesso de estoque")}</SelectItem>
+                    <SelectItem value="Healthy">{tx("Saudável")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -598,15 +603,15 @@ export default function StockIntelligencePage() {
                   <TableRow>
                     {(
                       [
-                        { key: "sku", label: "SKU" },
-                        { key: "name", label: "Nome" },
-                        { key: "category", label: "Categoria" },
-                        { key: "stock", label: "Estoque" },
-                        { key: "dailyVelocity", label: "Velocidade diária" },
-                        { key: "coverageDays", label: "Dias de cobertura" },
-                        { key: "risk", label: "Risco" },
-                        { key: "unitsSold", label: "Unidades vendidas" },
-                        { key: "lastRestockDate", label: "Última reposição" },
+                        { key: "sku", label: tx("SKU") },
+                        { key: "name", label: tx("Nome") },
+                        { key: "category", label: tx("Categoria") },
+                        { key: "stock", label: tx("Estoque") },
+                        { key: "dailyVelocity", label: tx("Velocidade diária") },
+                        { key: "coverageDays", label: tx("Dias de cobertura") },
+                        { key: "risk", label: tx("Risco") },
+                        { key: "unitsSold", label: tx("Unidades vendidas") },
+                        { key: "lastRestockDate", label: tx("Última reposição") },
                       ] as { key: StockSort; label: string }[]
                     ).map((col) => (
                       <TableHead
@@ -620,7 +625,7 @@ export default function StockIntelligencePage() {
                         </span>
                       </TableHead>
                     ))}
-                    <TableHead className="whitespace-nowrap text-xs">Grade</TableHead>
+                    <TableHead className="whitespace-nowrap text-xs">{tx("Grade")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -639,8 +644,8 @@ export default function StockIntelligencePage() {
                       <TableCell colSpan={10} className="h-32 text-center">
                         <EmptyState
                           icon={Package}
-                          title="Nenhum SKU encontrado"
-                          description="Ajuste os filtros."
+                          title={tx("Nenhum SKU encontrado")}
+                          description={tx("Ajuste os filtros.")}
                           className="border-0 bg-transparent"
                         />
                       </TableCell>
@@ -720,7 +725,7 @@ export default function StockIntelligencePage() {
                     disabled={page <= 1}
                     data-testid="stock-prev-page"
                   >
-                    Anterior
+                    {tx("Anterior")}
                   </Button>
                   <Button
                     variant="outline"
@@ -729,7 +734,7 @@ export default function StockIntelligencePage() {
                     disabled={page >= totalPages}
                     data-testid="stock-next-page"
                   >
-                    Próximo
+                    {tx("Próximo")}
                   </Button>
                 </div>
               </div>
@@ -737,7 +742,7 @@ export default function StockIntelligencePage() {
           </CardContent>
         </Card>
       </motion.div>
-<OrganizationHeading>GRADE · Cor · Tamanho · Quantidade</OrganizationHeading>
+<OrganizationHeading>{tx("GRADE · Cor · Tamanho · Quantidade")}</OrganizationHeading>
 <motion.div variants={cardVariants}>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Category: Stock vs Sales */}
@@ -747,7 +752,7 @@ export default function StockIntelligencePage() {
                 <BarChart3 className="h-3.5 w-3.5" />
               </div>
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Estoque e vendas por categoria
+                {tx("Estoque e vendas por categoria")}
               </span>
             </div>
             {isLoading ? (
@@ -803,16 +808,16 @@ export default function StockIntelligencePage() {
                       ]}
                     />
                     <Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} />
-                    <Bar yAxisId="units" dataKey="stockUnits" name="Unidades em estoque" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} barSize={14} />
-                    <Line yAxisId="vel" dataKey="dailyVelocity" name="Velocidade diária" stroke="hsl(var(--chart-3))" strokeWidth={2} dot={{ r: 3, fill: "hsl(var(--chart-3))" }} />
+                    <Bar yAxisId="units" dataKey="stockUnits" name={tx("Unidades em estoque")} fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} barSize={14} />
+                    <Line yAxisId="vel" dataKey="dailyVelocity" name={tx("Velocidade diária")} stroke="hsl(var(--chart-3))" strokeWidth={2} dot={{ r: 3, fill: "hsl(var(--chart-3))" }} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
             ) : (
               <EmptyState
                 icon={BarChart3}
-                title="Sem dados de categorias"
-                description="Sem detalhamento por categoria neste período."
+                title={tx("Sem dados de categorias")}
+                description={tx("Sem detalhamento por categoria neste período.")}
                 className="h-40 border-0 bg-transparent"
               />
             )}
@@ -825,7 +830,7 @@ export default function StockIntelligencePage() {
                 <BarChart3 className="h-3.5 w-3.5" />
               </div>
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Estoque por cor
+                {tx("Estoque por cor")}
               </span>
             </div>
             {isLoading ? (
@@ -859,20 +864,20 @@ export default function StockIntelligencePage() {
                       }}
                       formatter={(v, name) => [formatNumber(v as number), name === "stockUnits" ? "Stock Units" : "Units Sold"]}
                     />
-                    <Bar dataKey="stockUnits" name="Unidades em estoque" stackId="a" radius={[0, 0, 0, 0]} barSize={10}>
+                    <Bar dataKey="stockUnits" name={tx("Unidades em estoque")} stackId="a" radius={[0, 0, 0, 0]} barSize={10}>
                       {colorChartData.map((_, i) => (
                         <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
                       ))}
                     </Bar>
-                    <Bar dataKey="unitsSold" name="Unidades vendidas" stackId="a" radius={[0, 3, 3, 0]} barSize={10} fill="hsl(var(--muted-foreground)/0.35)" />
+                    <Bar dataKey="unitsSold" name={tx("Unidades vendidas")} stackId="a" radius={[0, 3, 3, 0]} barSize={10} fill="hsl(var(--muted-foreground)/0.35)" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             ) : (
               <EmptyState
                 icon={BarChart3}
-                title="Sem dados de cores"
-                description="Sem detalhamento por cor neste período."
+                title={tx("Sem dados de cores")}
+                description={tx("Sem detalhamento por cor neste período.")}
                 className="h-40 border-0 bg-transparent"
               />
             )}
@@ -885,7 +890,7 @@ export default function StockIntelligencePage() {
                 <BarChart3 className="h-3.5 w-3.5" />
               </div>
               <span className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground">
-                Estoque por tamanho
+                {tx("Estoque por tamanho")}
               </span>
             </div>
             {isLoading ? (
@@ -919,20 +924,20 @@ export default function StockIntelligencePage() {
                       }}
                       formatter={(v, name) => [formatNumber(v as number), name === "stockUnits" ? "Stock Units" : "Units Sold"]}
                     />
-                    <Bar dataKey="stockUnits" name="Unidades em estoque" stackId="a" radius={[0, 0, 0, 0]} barSize={10}>
+                    <Bar dataKey="stockUnits" name={tx("Unidades em estoque")} stackId="a" radius={[0, 0, 0, 0]} barSize={10}>
                       {sizeChartData.map((_, i) => (
                         <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
                       ))}
                     </Bar>
-                    <Bar dataKey="unitsSold" name="Unidades vendidas" stackId="a" radius={[0, 3, 3, 0]} barSize={10} fill="hsl(var(--muted-foreground)/0.35)" />
+                    <Bar dataKey="unitsSold" name={tx("Unidades vendidas")} stackId="a" radius={[0, 3, 3, 0]} barSize={10} fill="hsl(var(--muted-foreground)/0.35)" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             ) : (
               <EmptyState
                 icon={BarChart3}
-                title="Sem dados de tamanhos"
-                description="Sem detalhamento por tamanho neste período."
+                title={tx("Sem dados de tamanhos")}
+                description={tx("Sem detalhamento por tamanho neste período.")}
                 className="h-40 border-0 bg-transparent"
               />
             )}
@@ -967,10 +972,10 @@ export default function StockIntelligencePage() {
 
               {/* Summary stats */}
               <div className="grid grid-cols-2 gap-3 mb-6">
-                <GlassMetricCard  label="Unidades vendidas" value={<>{formatNumber(selectedSku.unitsSold)}</>}  />
-                <GlassMetricCard  label="Unidades em estoque" value={<>{formatNumber(selectedSku.stock)}</>}  />
-                <GlassMetricCard  label="Velocidade diária" value={<>{selectedSku.dailyVelocity.toFixed(2)}/d</>}  />
-                <GlassMetricCard  label="Dias de cobertura" value={<>{selectedSku.coverageDays != null ? `${selectedSku.coverageDays.toFixed(0)}d` : "—"}</>}  />
+                <GlassMetricCard  label={tx("Unidades vendidas")} value={<>{formatNumber(selectedSku.unitsSold)}</>} hideComparison />
+                <GlassMetricCard  label={tx("Unidades em estoque")} value={<>{formatNumber(selectedSku.stock)}</>} hideComparison />
+                <GlassMetricCard  label={tx("Velocidade diária")} value={<>{selectedSku.dailyVelocity.toFixed(2)}/d</>} hideComparison />
+                <GlassMetricCard  label={tx("Dias de cobertura")} value={<>{selectedSku.coverageDays != null ? `${selectedSku.coverageDays.toFixed(0)}d` : "—"}</>} hideComparison />
               </div>
 
               {selectedSku.variants && selectedSku.variants.length > 0 && (
@@ -982,10 +987,10 @@ export default function StockIntelligencePage() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="text-[10px]">SKU</TableHead>
+                          <TableHead className="text-[10px]">{tx("SKU")}</TableHead>
                           <TableHead className="text-[10px]">Cor</TableHead>
                           <TableHead className="text-[10px]">Tamanho</TableHead>
-                          <TableHead className="text-[10px] text-right">Estoque</TableHead>
+                          <TableHead className="text-[10px] text-right">{tx("Estoque")}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1010,10 +1015,10 @@ export default function StockIntelligencePage() {
               {/* Sales by Size */}
               <div className="mb-6">
                 <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-3">
-                  Vendas por tamanho
+                  {tx("Vendas por tamanho")}
                 </p>
                 {selectedSku.bySize.length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-2">Sem dados de tamanhos neste período.</p>
+                  <p className="text-xs text-muted-foreground py-2">{tx("Sem dados de tamanhos neste período.")}</p>
                 ) : (
                   <div style={{ height: Math.max(100, selectedSku.bySize.length * 32 + 16) }}>
                     <ResponsiveContainer width="100%" height="100%">
@@ -1043,7 +1048,7 @@ export default function StockIntelligencePage() {
                           }}
                           formatter={(v) => [formatNumber(v as number), "Units Sold"]}
                         />
-                        <Bar dataKey="unitsSold" name="Unidades vendidas" radius={[0, 3, 3, 0]} barSize={12}>
+                        <Bar dataKey="unitsSold" name={tx("Unidades vendidas")} radius={[0, 3, 3, 0]} barSize={12}>
                           {selectedSku.bySize.map((_, i) => (
                             <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
                           ))}
@@ -1057,10 +1062,10 @@ export default function StockIntelligencePage() {
               {/* Sales by Color */}
               <div>
                 <p className="font-mono uppercase tracking-wider text-[10px] text-muted-foreground mb-3">
-                  Vendas por cor
+                  {tx("Vendas por cor")}
                 </p>
                 {selectedSku.byColor.length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-2">Sem dados de cores neste período.</p>
+                  <p className="text-xs text-muted-foreground py-2">{tx("Sem dados de cores neste período.")}</p>
                 ) : (
                   <div style={{ height: Math.max(100, selectedSku.byColor.length * 32 + 16) }}>
                     <ResponsiveContainer width="100%" height="100%">
@@ -1090,7 +1095,7 @@ export default function StockIntelligencePage() {
                           }}
                           formatter={(v) => [formatNumber(v as number), "Units Sold"]}
                         />
-                        <Bar dataKey="unitsSold" name="Unidades vendidas" radius={[0, 3, 3, 0]} barSize={12}>
+                        <Bar dataKey="unitsSold" name={tx("Unidades vendidas")} radius={[0, 3, 3, 0]} barSize={12}>
                           {selectedSku.byColor.map((_, i) => (
                             <Cell key={i} fill={BAR_PALETTE[i % BAR_PALETTE.length]} />
                           ))}

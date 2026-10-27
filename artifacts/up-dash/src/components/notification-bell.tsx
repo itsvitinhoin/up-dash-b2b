@@ -1,3 +1,4 @@
+import { useI18n } from "@/lib/i18n";
 import { useMemo } from "react";
 import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
@@ -23,6 +24,7 @@ import { useReducedMotion, fadeInUp, withReducedMotion } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 export function NotificationBell() {
+  const { tx } = useI18n();
   const { user, selectedClientId } = useAuth();
   const queryClient = useQueryClient();
   const reduced = useReducedMotion();
@@ -63,7 +65,7 @@ export function NotificationBell() {
           variant="ghost"
           size="icon"
           className="relative h-9 w-9 hover:bg-accent"
-          aria-label={`Notificações${unread > 0 ? `, ${unread} unread` : ""}`}
+          aria-label={`${tx("Notificações")}${unread > 0 ? `, ${unread} unread` : ""}`}
           data-testid="notification-bell"
         >
           {unread > 0 ? (
@@ -95,9 +97,9 @@ export function NotificationBell() {
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div>
-            <p className="text-sm font-semibold">Notificações</p>
+            <p className="text-sm font-semibold">{tx("Notificações")}</p>
             <p className="text-xs text-muted-foreground">
-              {unread > 0 ? `${unread} unread` : "Todas as notificações foram lidas"}
+              {unread > 0 ? `${unread} unread` : tx("Todas as notificações foram lidas")}
             </p>
           </div>
           <Button

@@ -338,7 +338,7 @@ export function BrazilHeatMap({
                   title: c.city,
                   sub: c.state,
                   revenue: c.revenue,
-                  extra: cityExtraFormatter?.(c) ?? `${formatNumber(c.orders)} pedidos`,
+                  extra: cityExtraFormatter?.(c) ?? `${formatNumber(c.orders)} orders`,
                 })
               }
               onMouseLeave={() => setHover(null)}
@@ -349,13 +349,13 @@ export function BrazilHeatMap({
                   title: c.city,
                   sub: c.state,
                   revenue: c.revenue,
-                  extra: cityExtraFormatter?.(c) ?? `${formatNumber(c.orders)} pedidos`,
+                  extra: cityExtraFormatter?.(c) ?? `${formatNumber(c.orders)} orders`,
                 })
               }
               onBlur={() => setHover(null)}
               tabIndex={0}
               role="button"
-              aria-label={`${c.city}, ${c.state}: ${valueFormatter(c.revenue)}, ${cityExtraFormatter?.(c) ?? `${formatNumber(c.orders)} pedidos`}`}
+              aria-label={`${c.city}, ${c.state}: ${valueFormatter(c.revenue)}, ${cityExtraFormatter?.(c) ?? `${formatNumber(c.orders)} orders`}`}
               style={{ cursor: "pointer", outline: "none" }}
             />
           );
@@ -394,7 +394,7 @@ export function BrazilHeatMap({
                     title: m.fullName,
                     sub: m.state,
                     revenue: m.revenue,
-                    extra: stateExtraFormatter?.(m) ?? `${formatNumber(m.customers)} clientes · ${formatNumber(m.orders)} pedidos`,
+                    extra: stateExtraFormatter?.(m) ?? `${formatNumber(m.customers)} customers · ${formatNumber(m.orders)} orders`,
                   })
                 }
                 onMouseLeave={() => setHover(null)}
@@ -405,13 +405,13 @@ export function BrazilHeatMap({
                     title: m.fullName,
                     sub: m.state,
                     revenue: m.revenue,
-                    extra: stateExtraFormatter?.(m) ?? `${formatNumber(m.customers)} clientes · ${formatNumber(m.orders)} pedidos`,
+                    extra: stateExtraFormatter?.(m) ?? `${formatNumber(m.customers)} customers · ${formatNumber(m.orders)} orders`,
                   })
                 }
                 onBlur={() => setHover(null)}
                 tabIndex={0}
                 role="button"
-                aria-label={`${m.fullName}: ${valueFormatter(m.revenue)}, ${stateExtraFormatter?.(m) ?? `${formatNumber(m.customers)} clientes · ${formatNumber(m.orders)} pedidos`}`}
+                aria-label={`${m.fullName}: ${valueFormatter(m.revenue)}, ${stateExtraFormatter?.(m) ?? `${formatNumber(m.customers)} customers · ${formatNumber(m.orders)} orders`}`}
                 style={{ cursor: "pointer", outline: "none" }}
               />
               {/* Inner glow */}

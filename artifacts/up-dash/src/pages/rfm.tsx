@@ -1,7 +1,8 @@
+import { useI18n } from "@/lib/i18n";
 import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { getGetRfmUrl } from "@workspace/api-client-react";
 import { MetricDataProvider } from "@/components/metric-data-context";
-import { displayLabel } from "@/lib/display-label";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useState } from "react";
 import { format } from "date-fns";
@@ -97,6 +98,7 @@ const AREA_COLORS: Record<string, string> = {
 };
 
 function SegmentBadge({ segment }: { segment: string | null | undefined }) {
+  const { tx } = useI18n();
   if (!segment) return <Badge variant="outline" className="text-[10px]">—</Badge>;
   const meta = SEGMENT_META[segment];
   const color = meta?.color ?? "#cfddff";
@@ -106,7 +108,7 @@ function SegmentBadge({ segment }: { segment: string | null | undefined }) {
       style={{ background: `${color}18`, color }}
     >
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-      {meta?.label ?? segment}
+      {meta ? tx(meta.label) : segment}
     </span>
   );
 }
@@ -165,6 +167,8 @@ function RfmLogicCard({
 }
 
 export default function RfmPage() {
+  const { tx } = useI18n();
+  const displayLabel = useDisplayLabel();
   const { selectedClientId, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -206,7 +210,9 @@ export default function RfmPage() {
   );
 
   const previous = usePreviousPeriodQuery<NonNullable<typeof data>>(getGetRfmUrl({ clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), segment: segmentFilter && segmentFilter !== "all" ? segmentFilter : undefined, page, limit, sortBy, sortDir, orderStatus: orderStatusFilter, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, state: filters.state || undefined, city: filters.city || undefined, product: filters.product || undefined }), enabled);
+  const { language: insightLanguage } = useI18n();
   const insightParams = {
+    language: insightLanguage,
     clientId,
     dateFrom: format(dateRange.from, "yyyy-MM-dd"),
     dateTo: format(dateRange.to, "yyyy-MM-dd"),
@@ -280,9 +286,9 @@ export default function RfmPage() {
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Erro</AlertTitle>
+          <AlertTitle>{tx("Erro")}</AlertTitle>
           <AlertDescription className="flex items-center justify-between">
-            Não foi possível carregar os dados RFM.
+            {tx("Não foi possível carregar os dados RFM.")}
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
             </Button>
@@ -320,7 +326,7 @@ export default function RfmPage() {
                         onClick={() => regenerate.mutate({ params: insightParams })}
                       >
                         <RefreshCw className={`h-3 w-3 mr-1 ${regenerate.isPending ? "animate-spin" : ""}`} />
-                        Atualizar
+                        {tx("Atualizar")}
                       </Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setInsightDismissed(true)}>
                         <XIcon className="h-3 w-3" />
@@ -332,29 +338,29 @@ export default function RfmPage() {
             </motion.div>
           )}
 
-<MetricDataProvider source="Ecommerce · RFM" comparisons={metricComparisons}>
+<MetricDataProvider source={tx("Ecommerce · RFM")} comparisons={metricComparisons}>
           {/* RFM Logic */}
           <motion.div initial="hidden" animate="visible" variants={variants}>
             <div className="grid gap-3 md:grid-cols-3">
               <RfmLogicCard
                 title="Recência"
                 value={isLoading ? "—" : `${Math.round(avgRecency)}d`}
-                description="Média de dias desde a última compra"
-                info="Recência mede há quantos dias a cliente comprou pela última vez. Quanto menor o número, mais quente está a relação comercial."
+                description={tx("Média de dias desde a última compra")}
+                info={tx("Recência mede há quantos dias a cliente comprou pela última vez. Quanto menor o número, mais quente está a relação comercial.")}
                 icon={CalendarDays}
               />
               <RfmLogicCard
                 title="Frequência"
                 value={isLoading ? "—" : formatNumber(Math.round(avgFrequency))}
-                description="Média de pedidos por compradora"
-                info="Frequência considera quantas compras a cliente já realizou. Clientes com mais compras tendem a responder melhor a relacionamento e reposição."
+                description={tx("Média de pedidos por compradora")}
+                info={tx("Frequência considera quantas compras a cliente já realizou. Clientes com mais compras tendem a responder melhor a relacionamento e reposição.")}
                 icon={ShoppingBag}
               />
               <RfmLogicCard
                 title="Monetário"
                 value={isLoading ? "—" : formatCurrency(avgMonetary)}
-                description="Valor médio acumulado por compradora"
-                info="Monetário soma o valor comprado pela cliente. Esse pilar ajuda a priorizar clientes de maior valor para ações comerciais."
+                description={tx("Valor médio acumulado por compradora")}
+                info={tx("Monetário soma o valor comprado pela cliente. Esse pilar ajuda a priorizar clientes de maior valor para ações comerciais.")}
                 icon={BarChart3}
               />
             </div>
@@ -369,19 +375,19 @@ export default function RfmPage() {
                 const segData = segments.find((s) => s.segment === seg);
                 return (
                   <div key={seg} className="up-metric-selection">
-                    <button type="button" className="up-metric-select" aria-label={`Filtrar segmento ${meta.label}`} aria-pressed={segmentFilter === seg}
+                    <button type="button" className="up-metric-select" aria-label={`${tx("Filtrar segmento")} ${tx(meta.label)}`} aria-pressed={segmentFilter === seg}
                       onClick={() => {
                         setSegmentFilter((prev) => (prev === seg ? "" : seg));
                         setPage(1);
-                      }}><span className="sr-only">{displayLabel(meta.label)}</span></button>
-                    <GlassMetricCard label={meta.label} value={segData?.customerCount ?? 0} previousValue={previous.data?.segments.find(segment => segment.segment === segData?.segment)?.customerCount} source="Ecommerce · segmentação RFM" loading={isLoading}
-                      info={`Segmento ${meta.label}: ${meta.description}. A classificação usa recência, frequência e valor comprado para priorizar a ação comercial.`}
+                      }}><span className="sr-only">{tx(meta.label)}</span></button>
+                    <GlassMetricCard label={meta.label} value={segData?.customerCount ?? 0} previousValue={previous.data?.segments.find(segment => segment.segment === segData?.segment)?.customerCount} source={tx("Ecommerce · segmentação RFM")} loading={isLoading}
+                      info={`${tx("Segmento")} ${tx(meta.label)}: ${tx(meta.description)}. ${tx("A classificação usa recência, frequência e valor comprado para priorizar a ação comercial.")}`}
                       sub={[
-                        { label: "Participação", value: `${segData ? segData.pct.toFixed(1) : 0}%` },
-                        { label: "Faturamento", value: formatCurrency(segData?.revenue ?? 0) },
-                        { label: "Ticket médio", value: formatCurrency(segData?.avgTicket ?? 0) },
+                        { label: tx("Participação"), value: `${segData ? segData.pct.toFixed(1) : 0}%` },
+                        { label: tx("Faturamento"), value: formatCurrency(segData?.revenue ?? 0) },
+                        { label: tx("Ticket médio"), value: formatCurrency(segData?.avgTicket ?? 0) },
                       ]}
-                      footer={<p className="text-muted-foreground">{meta.description}</p>} />
+                      footer={<p className="text-muted-foreground">{tx(meta.description)}</p>} />
                   </div>
                 );
               })}
@@ -394,14 +400,14 @@ export default function RfmPage() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                  Evolução da composição dos segmentos
+                  {tx("Evolução da composição dos segmentos")}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
                   <Skeleton className="h-52 w-full" />
                 ) : composition.length === 0 ? (
-                  <EmptyState icon={BarChart3} title="Sem histórico de segmentos" description="A composição dos segmentos aparecerá quando houver compras neste período." />
+                  <EmptyState icon={BarChart3} title={tx("Sem histórico de segmentos")} description={tx("A composição dos segmentos aparecerá quando houver compras neste período.")} />
                 ) : (
                   <ResponsiveContainer width="100%" height={220}>
                     <AreaChart data={composition} margin={{ left: 0, right: 8 }}>
@@ -484,12 +490,12 @@ export default function RfmPage() {
                       onValueChange={(v) => { setSegmentFilter(v === "all" ? "" : v); setPage(1); }}
                     >
                       <SelectTrigger className="h-8 text-xs w-36">
-                        <SelectValue placeholder="Todos os segmentos" />
+                        <SelectValue placeholder={tx("Todos os segmentos")} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">Todos os segmentos</SelectItem>
+                        <SelectItem value="all">{tx("Todos os segmentos")}</SelectItem>
                         {RFM_SEGMENTS.map((s) => (
-                          <SelectItem key={s} value={s}>{displayLabel(SEGMENT_META[s].label)}</SelectItem>
+                          <SelectItem key={s} value={s}>{tx(SEGMENT_META[s].label)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -518,19 +524,19 @@ export default function RfmPage() {
                           className="cursor-pointer select-none text-xs text-right"
                           onClick={() => handleSort("recencyDays")}
                         >
-                          Recência <SortIndicator col="recencyDays" />
+                          {tx("Recência")} <SortIndicator col="recencyDays" />
                         </TableHead>
                         <TableHead
                           className="cursor-pointer select-none text-xs text-right"
                           onClick={() => handleSort("frequency")}
                         >
-                          Frequência <SortIndicator col="frequency" />
+                          {tx("Frequência")} <SortIndicator col="frequency" />
                         </TableHead>
                         <TableHead
                           className="cursor-pointer select-none text-xs text-right"
                           onClick={() => handleSort("monetary")}
                         >
-                          Valor monetário <SortIndicator col="monetary" />
+                          {tx("Valor monetário")} <SortIndicator col="monetary" />
                         </TableHead>
                         <TableHead className="text-xs text-right">Última compra</TableHead>
                         <TableHead className="text-xs text-right">Ações</TableHead>
@@ -553,7 +559,7 @@ export default function RfmPage() {
                       ) : customers.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={8} className="py-0">
-                            <EmptyState icon={Users} title="Nenhum cliente encontrado" description="Limpe o filtro de segmento ou selecione um período maior." className="border-0 rounded-none" />
+                            <EmptyState icon={Users} title={tx("Nenhum cliente encontrado")} description={tx("Limpe o filtro de segmento ou selecione um período maior.")} className="border-0 rounded-none" />
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -685,7 +691,7 @@ export default function RfmPage() {
             <motion.div initial="hidden" animate="visible" variants={variants}>
               <div className="flex items-center gap-2 mb-3">
                 <Lightbulb className="h-4 w-4 text-amber-500" />
-                <h3 className="font-semibold text-sm">Principais análises</h3>
+                <h3 className="font-semibold text-sm">{tx("Principais análises")}</h3>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {insight.bullets.map((bullet, i) => (
@@ -730,10 +736,10 @@ export default function RfmPage() {
                         <Badge variant="outline">{displayLabel(order.status)}</Badge>
                       </div>
                       <div className="mt-3 grid gap-3 sm:grid-cols-4">
-                        <GlassMetricCard  label="Solicitado" value={<>{formatCurrency(order.amount)}</>}  />
-                        <GlassMetricCard  label="Atendido" value={<>{formatCurrency(order.fulfilledAmount)}</>}  />
-                        <GlassMetricCard  label="Peças solicitadas" value={<>{formatNumber(order.requestedQuantity)}</>}  />
-                        <GlassMetricCard  label="Peças atendidas" value={<>{formatNumber(order.fulfilledQuantity)}</>}  />
+                        <GlassMetricCard  label={tx("Solicitado")} value={<>{formatCurrency(order.amount)}</>}  />
+                        <GlassMetricCard  label={tx("Atendido")} value={<>{formatCurrency(order.fulfilledAmount)}</>}  />
+                        <GlassMetricCard  label={tx("Peças solicitadas")} value={<>{formatNumber(order.requestedQuantity)}</>}  />
+                        <GlassMetricCard  label={tx("Peças atendidas")} value={<>{formatNumber(order.fulfilledQuantity)}</>}  />
                       </div>
                     </div>
                   ))}

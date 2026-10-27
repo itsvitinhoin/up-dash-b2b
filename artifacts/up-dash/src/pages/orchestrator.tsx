@@ -1,4 +1,5 @@
-import { displayLabel } from "@/lib/display-label";
+import { useI18n } from "@/lib/i18n";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -377,6 +378,7 @@ function registrationStatus(status: RegistrationStatus) {
 }
 
 function ShellNav({ current }: { current: string }) {
+  const displayLabel = useDisplayLabel();
   return (
     <div className="flex gap-2 overflow-x-auto pb-1">
       {navItems.map((item) => {
@@ -606,6 +608,7 @@ function CrmCardView({ card }: { card: CrmCard }) {
 }
 
 function CrmPage({ compact = false, clientId }: { compact?: boolean; clientId?: string }) {
+  const displayLabel = useDisplayLabel();
   const crmQuery = useQuery<OrchestratorCrmResponse>({
     ...queryOpts({
       enabled: true,
@@ -688,6 +691,7 @@ function CrmPage({ compact = false, clientId }: { compact?: boolean; clientId?: 
 }
 
 function RegistrationsPage({ clientId }: { clientId?: string }) {
+  const displayLabel = useDisplayLabel();
   const [status, setStatus] = useState<"all" | RegistrationStatus>("all");
   const registrationsQuery = useQuery<OrchestratorRegistrationsResponse>({
     ...queryOpts({
@@ -775,6 +779,8 @@ function RegistrationsPage({ clientId }: { clientId?: string }) {
 }
 
 function AutomationsPage({ clientId }: { clientId?: string }) {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const queryClient = useQueryClient();
   const [automationAudience, setAutomationAudience] = useState<"customer" | "internal_seller">("customer");
   const [isCreatingRule, setIsCreatingRule] = useState(false);
@@ -1084,7 +1090,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Intervalo</Label>
+                <Label>{tx("Intervalo")}</Label>
                 <Input
                   type="number"
                   min={0}
@@ -1228,7 +1234,7 @@ function AutomationsPage({ clientId }: { clientId?: string }) {
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Label>Intervalo</Label>
+                  <Label>{tx("Intervalo")}</Label>
                   <Input
                     type="number"
                     min={0}
@@ -1540,6 +1546,7 @@ function SimulatorPage({ clientId }: { clientId?: string }) {
 }
 
 function LogsPage({ clientId }: { clientId?: string }) {
+  const displayLabel = useDisplayLabel();
   const logsQuery = useQuery<OrchestratorLogsResponse>({
     ...queryOpts({
       enabled: Boolean(clientId),
@@ -1628,6 +1635,8 @@ function LogsPage({ clientId }: { clientId?: string }) {
 }
 
 function ClientPage({ clientId, section }: { clientId: string; section: string }) {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const queryClient = useQueryClient();
   const active = section || "resumo";
   const summaryQuery = useQuery<OrchestratorClientSummaryResponse>({
@@ -1662,7 +1671,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
     <div className="space-y-5">
       <Card>
         <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <GlassMetricCard  label="Marca em configuração" value={<>{clientName}</>} footer={<div className="space-y-2"><p className="text-xs text-muted-foreground">IA Comercial {aiCommercialStatus === "active" ? "ativa" : "desativada"} · webhook {realWebhookUrl}</p></div>} />
+          <GlassMetricCard  label={tx("Marca em configuração")} value={<>{clientName}</>} footer={<div className="space-y-2"><p className="text-xs text-muted-foreground">IA Comercial {aiCommercialStatus === "active" ? "ativa" : "desativada"} · webhook {realWebhookUrl}</p></div>} hideComparison />
           <div className="flex flex-col gap-3 lg:items-end">
             <div className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
               <span>{aiCommercialStatus === "active" ? "IA ativa" : "IA desativada"}</span>
@@ -1680,7 +1689,7 @@ function ClientPage({ clientId, section }: { clientId: string; section: string }
                   <Link key={tab.id} href={`/orquestrador/clientes/${clientId}/${tab.id}`}>
                     <Button variant={active === tab.id ? "default" : "outline"} size="sm" className="shrink-0">
                       <Icon className="mr-2 h-4 w-4" />
-                      {displayLabel(tab.label)}
+                      {tx(displayLabel(tab.label))}
                     </Button>
                   </Link>
                 );

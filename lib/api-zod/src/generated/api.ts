@@ -88,6 +88,12 @@ export const ListClientsQueryParams = zod.object({
     .enum(["B2B", "B2C"])
     .optional()
     .describe("Filter clients by the dashboard family selected by the admin."),
+  archived: zod
+    .enum(["only", "include"])
+    .optional()
+    .describe(
+      "Archived clients are hidden by default. `only` lists just the archived ones, `include` lists everyone.",
+    ),
   dateFrom: zod
     .date()
     .optional()
@@ -144,6 +150,24 @@ export const ListClientsResponse = zod.object({
         .boolean()
         .describe(
           "True when both GA4 measurement id and API secret are configured.",
+        ),
+      hasErpIntegration: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it).",
+        ),
+      archivedAt: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          "When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.",
+        ),
+      attributionStartDate: zod
+        .string()
+        .nullish()
+        .describe(
+          "Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Null = use the legacy per-dataset list (or no floor).",
         ),
       hasClientLogin: zod
         .boolean()
@@ -416,6 +440,24 @@ export const GetClientResponse = zod.object({
     .describe(
       "True when both GA4 measurement id and API secret are configured.",
     ),
+  hasErpIntegration: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it).",
+    ),
+  archivedAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.",
+    ),
+  attributionStartDate: zod
+    .string()
+    .nullish()
+    .describe(
+      "Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Null = use the legacy per-dataset list (or no floor).",
+    ),
   hasClientLogin: zod
     .boolean()
     .optional()
@@ -531,6 +573,11 @@ export const UpdateClientBody = zod
       .describe(
         "BigQuery dataset (project up-vesti-report) this client reads analytics from. Pass null to clear it.",
       ),
+    attributionStartDate: zod
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullish()
+      .describe("Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Pass null to clear it."),
     nuvemshopStoreId: zod
       .string()
       .nullish()
@@ -605,6 +652,24 @@ export const UpdateClientResponse = zod.object({
     .boolean()
     .describe(
       "True when both GA4 measurement id and API secret are configured.",
+    ),
+  hasErpIntegration: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when an ERP dataset is configured for this client (the ERP and Performance overview pages need it).",
+    ),
+  archivedAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "When set, the client is archived (hidden from the panel, out of daily updates, kept for 90 days before it can be deleted). Null = in use.",
+    ),
+  attributionStartDate: zod
+    .string()
+    .nullish()
+    .describe(
+      "Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Null = use the legacy per-dataset list (or no floor).",
     ),
   hasClientLogin: zod
     .boolean()
@@ -752,6 +817,12 @@ export const GetDashboardQueryParams = zod.object({
     .string()
     .optional()
     .describe("Restrict order metrics to a single seller."),
+  state: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict order metrics to orders shipped to a single Brazilian state (UF, e.g. SP, MG). Only orders with a known state match; see `stateCoverage` in the response.",
+    ),
   channel: zod.coerce
     .string()
     .optional()
@@ -826,6 +897,12 @@ export const GetDashboardResponse = zod.object({
       .number()
       .describe("returningBuyers \/ (newBuyers + returningBuyers) \* 100."),
   }),
+  stateCoverage: zod
+    .number()
+    .nullish()
+    .describe(
+      "Share (0 to 1) of the period's paid orders that carry a state (UF), ignoring the `state` filter. Lets the UI warn when filtering by state would hide most orders. Null when there are no paid orders.",
+    ),
   revenueOverTime: zod.array(
     zod.object({
       date: zod.string(),
@@ -2899,7 +2976,7 @@ export const GetMarketingResponse = zod.object({
     approvalRate: zod.number(),
     cpl: zod.number(),
     cpa: zod.number(),
-  }),
+  }).nullable(),
   leadsOverTime: zod.array(
     zod.object({
       date: zod.string(),

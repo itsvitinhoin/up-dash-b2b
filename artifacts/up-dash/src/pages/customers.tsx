@@ -1,4 +1,5 @@
-import { displayLabel } from "@/lib/display-label";
+import { useI18n } from "@/lib/i18n";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { MetricSection } from "@/components/metric-section";
 import { RegistrationConversionCard } from "@/components/registration-conversion-card";
@@ -109,13 +110,16 @@ export function SummaryKpiCard({
   icon: React.ElementType;
   loading: boolean;
 }) {
-  return (<GlassMetricCard label={label} value={value} icon={Icon} loading={loading} change={deltaRaw ?? null} sub={prevValue ? [{label:"Período anterior",value:prevValue}] : []} />);
+  const { tx } = useI18n();
+  return (<GlassMetricCard label={label} value={value} icon={Icon} loading={loading} change={deltaRaw ?? null} sub={prevValue ? [{label: tx("Período anterior"),value:prevValue}] : []} />);
 }
 
 type ChartTab = "timeline" | "state" | "source";
 type CustomerSortKey = "totalSpent" | "totalOrders" | "createdAt" | "firstPurchaseAt" | "lastPurchaseAt" | "name";
 
 export default function CustomersPage({organization}: {organization?: "registrations"} = {}) {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { selectedClientId, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const locationSearch = useSearch();
@@ -199,7 +203,9 @@ export default function CustomersPage({organization}: {organization?: "registrat
     { query: queryOpts({ enabled, placeholderData: (prev) => prev }) },
   );
 
+  const { language: insightLanguage } = useI18n();
   const insightParams = {
+    language: insightLanguage,
     clientId,
     dateFrom: selectedDateFrom,
     dateTo: selectedDateTo,
@@ -321,9 +327,9 @@ export default function CustomersPage({organization}: {organization?: "registrat
   const totalRegistrationStates = registrationStates.reduce((acc, row) => acc + row.customers, 0);
 
   const CHART_TABS: { key: ChartTab; label: string; icon: React.ElementType }[] = [
-    { key: "timeline", label: "Cadastros", icon: TrendingUp },
-    { key: "state", label: "Por estado", icon: BarChart2 },
-    { key: "source", label: "Por origem", icon: Globe },
+    { key: "timeline", label: tx("Cadastros"), icon: TrendingUp },
+    { key: "state", label: tx("Por estado"), icon: BarChart2 },
+    { key: "source", label: tx("Por origem"), icon: Globe },
   ];
 
   return (
@@ -352,7 +358,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             <span className="text-foreground font-semibold tabular-nums">
               <CountUp value={totalCount} format={(v) => formatNumber(Math.round(v))} />
             </span>{" "}
-            Clientes
+            {tx("Clientes")}
             <span className="ml-2 text-muted-foreground/70">
               · {format(dateRange.from, "MMM d")} → {format(dateRange.to, "MMM d, yyyy")}
             </span>
@@ -374,57 +380,57 @@ export default function CustomersPage({organization}: {organization?: "registrat
       </div>
 
       {/* KPI strip */}
-      {organization === "registrations" ? (<div className="space-y-6"><MetricSection title="CADASTROS" columns={4}><SummaryKpiCard
-            label="Cadastros"
+      {organization === "registrations" ? (<div className="space-y-6"><MetricSection title={tx("CADASTROS")} columns={4}><SummaryKpiCard
+            label={tx("Cadastros")}
             value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.totalRegistrations) : undefined}
             deltaRaw={delta(kpis?.totalRegistrations, prevKpis?.totalRegistrations)}
             icon={Users}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Aprovado"
+            label={tx("Aprovado")}
             value={kpis ? formatNumber(kpis.approvedRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.approvedRegistrations) : undefined}
             deltaRaw={delta(kpis?.approvedRegistrations, prevKpis?.approvedRegistrations)}
             icon={UserCheck}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Taxa de aprovação"
+            label={tx("Taxa de aprovação")}
             value={kpis ? `${kpis.approvalRatePct.toFixed(1)}%` : "—"}
             prevValue={prevKpis ? `${prevKpis.approvalRatePct.toFixed(1)}%` : undefined}
             deltaRaw={delta(kpis?.approvalRatePct, prevKpis?.approvalRatePct)}
             icon={TrendingUp}
             loading={summaryLoading}
-          /><RegistrationConversionCard /></MetricSection><MetricSection title="BASE DE CLIENTES" columns={5}><SummaryKpiCard
-            label="Pendente"
+          /><RegistrationConversionCard /></MetricSection><MetricSection title={tx("BASE DE CLIENTES")} columns={5}><SummaryKpiCard
+            label={tx("Pendente")}
             value={kpis ? formatNumber(kpis.pendingRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.pendingRegistrations) : undefined}
             deltaRaw={delta(kpis?.pendingRegistrations, prevKpis?.pendingRegistrations)}
             icon={Clock}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Rejected"
+            label={tx("Recusado")}
             value={kpis ? formatNumber(kpis.rejectedRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.rejectedRegistrations) : undefined}
             deltaRaw={delta(kpis?.rejectedRegistrations, prevKpis?.rejectedRegistrations)}
             icon={UserX}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Total de compradores"
+            label={tx("Total de compradores")}
             value={kpis ? formatNumber(kpis.totalBuyers) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.totalBuyers) : undefined}
             deltaRaw={delta(kpis?.totalBuyers, prevKpis?.totalBuyers)}
             icon={Users}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Aprovados sem compra"
+            label={tx("Aprovados sem compra")}
             value={kpis ? formatNumber(kpis.customersWithoutPurchase) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.customersWithoutPurchase) : undefined}
             deltaRaw={delta(kpis?.customersWithoutPurchase, prevKpis?.customersWithoutPurchase)}
             icon={UserX}
             loading={summaryLoading}
           /><SummaryKpiCard
-            label="Dias médios até a primeira compra"
+            label={tx("Dias médios até a primeira compra")}
             value={kpis?.avgTimeToFirstPurchaseDays != null ? `${kpis.avgTimeToFirstPurchaseDays}d` : "—"}
             prevValue={prevKpis?.avgTimeToFirstPurchaseDays != null ? `${prevKpis.avgTimeToFirstPurchaseDays}d` : undefined}
             deltaRaw={delta(kpis?.avgTimeToFirstPurchaseDays ?? null, prevKpis?.avgTimeToFirstPurchaseDays ?? null)}
@@ -433,7 +439,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
           /></MetricSection></div>) : (<motion.div variants={cardVariants}>
         <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
           <SummaryKpiCard
-            label="Cadastros"
+            label={tx("Cadastros")}
             value={kpis ? formatNumber(kpis.totalRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.totalRegistrations) : undefined}
             deltaRaw={delta(kpis?.totalRegistrations, prevKpis?.totalRegistrations)}
@@ -441,7 +447,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Aprovado"
+            label={tx("Aprovado")}
             value={kpis ? formatNumber(kpis.approvedRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.approvedRegistrations) : undefined}
             deltaRaw={delta(kpis?.approvedRegistrations, prevKpis?.approvedRegistrations)}
@@ -449,7 +455,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Pendente"
+            label={tx("Pendente")}
             value={kpis ? formatNumber(kpis.pendingRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.pendingRegistrations) : undefined}
             deltaRaw={delta(kpis?.pendingRegistrations, prevKpis?.pendingRegistrations)}
@@ -457,7 +463,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Rejected"
+            label={tx("Recusado")}
             value={kpis ? formatNumber(kpis.rejectedRegistrations) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.rejectedRegistrations) : undefined}
             deltaRaw={delta(kpis?.rejectedRegistrations, prevKpis?.rejectedRegistrations)}
@@ -465,7 +471,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Taxa de aprovação"
+            label={tx("Taxa de aprovação")}
             value={kpis ? `${kpis.approvalRatePct.toFixed(1)}%` : "—"}
             prevValue={prevKpis ? `${prevKpis.approvalRatePct.toFixed(1)}%` : undefined}
             deltaRaw={delta(kpis?.approvalRatePct, prevKpis?.approvalRatePct)}
@@ -473,7 +479,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Total de compradores"
+            label={tx("Total de compradores")}
             value={kpis ? formatNumber(kpis.totalBuyers) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.totalBuyers) : undefined}
             deltaRaw={delta(kpis?.totalBuyers, prevKpis?.totalBuyers)}
@@ -481,7 +487,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Aprovados sem compra"
+            label={tx("Aprovados sem compra")}
             value={kpis ? formatNumber(kpis.customersWithoutPurchase) : "—"}
             prevValue={prevKpis ? formatNumber(prevKpis.customersWithoutPurchase) : undefined}
             deltaRaw={delta(kpis?.customersWithoutPurchase, prevKpis?.customersWithoutPurchase)}
@@ -489,7 +495,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
             loading={summaryLoading}
           />
           <SummaryKpiCard
-            label="Dias médios até a primeira compra"
+            label={tx("Dias médios até a primeira compra")}
             value={kpis?.avgTimeToFirstPurchaseDays != null ? `${kpis.avgTimeToFirstPurchaseDays}d` : "—"}
             prevValue={prevKpis?.avgTimeToFirstPurchaseDays != null ? `${prevKpis.avgTimeToFirstPurchaseDays}d` : undefined}
             deltaRaw={delta(kpis?.avgTimeToFirstPurchaseDays ?? null, prevKpis?.avgTimeToFirstPurchaseDays ?? null)}
@@ -504,7 +510,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-semibold">Análise de cadastros</CardTitle>
+              <CardTitle className="text-sm font-semibold">{tx("Análise de cadastros")}</CardTitle>
               <div className="flex gap-1 bg-muted/60 p-1 rounded-lg">
                 {CHART_TABS.map((t) => (
                   <Button variant="ghost" size="sm"
@@ -560,7 +566,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     <Area
                       type="monotone"
                       dataKey="registrations"
-                      name="Cadastros"
+                      name={tx("Cadastros")}
                       stroke="#5b8dff"
                       fill="url(#regGrad)"
                       strokeWidth={2}
@@ -569,7 +575,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     <Area
                       type="monotone"
                       dataKey="approved"
-                      name="Aprovado"
+                      name={tx("Aprovado")}
                       stroke="#87adff"
                       fill="url(#appGrad)"
                       strokeWidth={2}
@@ -594,7 +600,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                         fontSize: "12px",
                       }}
                     />
-                    <Bar dataKey="count" name="Clientes" fill="#5b8dff" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="count" name={tx("Clientes")} fill="#5b8dff" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -666,8 +672,8 @@ export default function CustomersPage({organization}: {organization?: "registrat
             ) : registrationStates.length === 0 ? (
               <EmptyState
                 icon={Globe}
-                title="Sem dados de estados"
-                description="Quando os estados dos clientes estiverem disponíveis, a concentração de cadastros aparecerá aqui."
+                title={tx("Sem dados de estados")}
+                description={tx("Quando os estados dos clientes estiverem disponíveis, a concentração de cadastros aparecerá aqui.")}
                 className="border-0 bg-transparent"
               />
             ) : (
@@ -759,7 +765,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                   type="button"
                   onClick={() => setInsightDismissed(true)}
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Fechar análise"
+                  aria-label={tx("Fechar análise")}
                   data-testid="customers-insight-dismiss"
                 >
                   <XIcon className="h-3.5 w-3.5" />
@@ -799,7 +805,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                   {regenerate.isPending ? "Regenerating…" : "Regenerate"}
                 </Button>
                 {insight?.cached && (
-                  <span className="text-[11px] text-muted-foreground">Atualização a cada hora</span>
+                  <span className="text-[11px] text-muted-foreground">{tx("Atualização a cada hora")}</span>
                 )}
               </div>
             </div>
@@ -815,7 +821,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar clientes…"
+                  placeholder={tx("Buscar clientes…")}
                   className="pl-9"
                   value={search}
                   onChange={(e) => { setSearch(e.target.value); setPage(1); }}
@@ -825,15 +831,15 @@ export default function CustomersPage({organization}: {organization?: "registrat
               <div className="w-full md:w-48">
                 <Select value={rfmSegment || "all"} onValueChange={(v) => { setRfmSegment(v); setPage(1); }}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Segmento" />
+                    <SelectValue placeholder={tx("Segmento")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Todos os segmentos</SelectItem>
-                    <SelectItem value="Champions">Campeões</SelectItem>
-                    <SelectItem value="Loyal">Fiéis</SelectItem>
-                    <SelectItem value="Potential">Potenciais</SelectItem>
-                    <SelectItem value="At Risk">Em risco</SelectItem>
-                    <SelectItem value="Lost">Perdidos</SelectItem>
+                    <SelectItem value="all">{tx("Todos os segmentos")}</SelectItem>
+                    <SelectItem value="Champions">{tx("Campeões")}</SelectItem>
+                    <SelectItem value="Loyal">{tx("Fiéis")}</SelectItem>
+                    <SelectItem value="Potential">{tx("Potenciais")}</SelectItem>
+                    <SelectItem value="At Risk">{tx("Em risco")}</SelectItem>
+                    <SelectItem value="Lost">{tx("Perdidos")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -843,7 +849,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     <SelectValue placeholder="State" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Todos os estados</SelectItem>
+                    <SelectItem value="all">{tx("Todos os estados")}</SelectItem>
                     {brazilStates.map((s) => (
                       <SelectItem key={s} value={s}>{s}</SelectItem>
                     ))}
@@ -881,8 +887,8 @@ export default function CustomersPage({organization}: {organization?: "registrat
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Status: todos</SelectItem>
-                    <SelectItem value="APPROVED">Aprovado</SelectItem>
-                    <SelectItem value="PENDING">Pendente</SelectItem>
+                    <SelectItem value="APPROVED">{tx("Aprovado")}</SelectItem>
+                    <SelectItem value="PENDING">{tx("Pendente")}</SelectItem>
                     <SelectItem value="REJECTED">Recusado</SelectItem>
                   </SelectContent>
                 </Select>
@@ -941,7 +947,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
           <AlertDescription>
             Não foi possível carregar os clientes.{" "}
             <Button variant="link" className="p-0 h-auto text-destructive-foreground font-semibold" onClick={() => refetch()}>
-              Tentar novamente
+              {tx("Tentar novamente")}
             </Button>
           </AlertDescription>
         </Alert>
@@ -952,17 +958,17 @@ export default function CustomersPage({organization}: {organization?: "registrat
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Cliente</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Cliente")}</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px]">Doc</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Localização</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Origem</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Campanha</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Segmento</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">Oportunidade</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Pedidos</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Localização")}</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Origem")}</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Campanha")}</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Segmento")}</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px]">{tx("Oportunidade")}</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Pedidos")}</TableHead>
                     <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Spent</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Primeira compra</TableHead>
-                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">Última compra</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Primeira compra")}</TableHead>
+                    <TableHead className="font-mono uppercase tracking-wider text-[10px] text-right">{tx("Última compra")}</TableHead>
                     <TableHead className="w-8" />
                   </TableRow>
                 </TableHeader>
@@ -989,8 +995,8 @@ export default function CustomersPage({organization}: {organization?: "registrat
                       <TableCell colSpan={12} className="p-0">
                         <EmptyState
                           icon={Inbox}
-                          title="Nenhum cliente corresponde aos filtros"
-                          description="Amplie o período ou limpe a busca e os filtros de segmento."
+                          title={tx("Nenhum cliente corresponde aos filtros")}
+                          description={tx("Amplie o período ou limpe a busca e os filtros de segmento.")}
                           className="m-4 border-0 bg-transparent"
                         />
                       </TableCell>
@@ -1046,7 +1052,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                                 {customer.utmSource}
                               </Badge>
                             ) : (
-                              <span className="text-muted-foreground text-xs">Direto</span>
+                              <span className="text-muted-foreground text-xs">{tx("Direto")}</span>
                             )}
                           </TableCell>
                           <TableCell>
@@ -1056,14 +1062,14 @@ export default function CustomersPage({organization}: {organization?: "registrat
                                 className="text-[10px] border-transparent bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"
                                 title={customer.utmCampaign ?? customer.utmSource ?? undefined}
                               >
-                                Sim
+                                {tx("Sim")}
                               </Badge>
                             ) : (
                               <Badge
                                 variant="outline"
                                 className="text-[10px] border-transparent bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
                               >
-                                Não
+                                {tx("Não")}
                               </Badge>
                             )}
                           </TableCell>
@@ -1109,7 +1115,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     disabled={page === 1}
                     onClick={() => setPage((p) => p - 1)}
                   >
-                    Anterior
+                    {tx("Anterior")}
                   </Button>
                   <Button
                     variant="outline"
@@ -1117,7 +1123,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                     disabled={page === data.pages}
                     onClick={() => setPage((p) => p + 1)}
                   >
-                    Próximo
+                    {tx("Próximo")}
                   </Button>
                 </div>
               </div>

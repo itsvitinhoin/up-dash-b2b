@@ -1,7 +1,8 @@
+import { useI18n } from "@/lib/i18n";
 import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { type FunnelResponse, getGetFunnelUrl } from "@workspace/api-client-react";
 import { MetricDataProvider } from "@/components/metric-data-context";
-import { displayLabel } from "@/lib/display-label";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo } from "react";
 import { format } from "date-fns";
@@ -99,7 +100,14 @@ interface FunnelActivationAnalysis {
 
 type FunnelDataWithActivation = FunnelResponse & {
   activation?: FunnelActivationAnalysis | null;
+  /** De onde vieram os números: eventos da UP Zero por pessoa, totais por hora, ou a base local do painel. */
+  dataSource?: "upzero-events" | "upzero-hourly" | "local";
+  /** false quando a UP Zero não respondeu para alguma etapa. */
+  dataComplete?: boolean;
 };
+
+/** Etapas cujo número vem do banco: zero ali é real. As demais dependem de rastreamento (zero = sem dado). */
+const DATABASE_STEPS = new Set(["REGISTRATION", "APPROVED_REGISTRATION", "PURCHASE"]);
 
 const STAGE_PALETTE = [
   "hsl(var(--chart-1))",
@@ -119,6 +127,8 @@ function formatCurrency(value: number) {
 }
 
 export default function FunnelPage({ organization }: { organization?: "acquisition" } = {}) {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { selectedClientId, selectedDashboardMode, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const reduced = useReducedMotion();
@@ -154,6 +164,8 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
   );
   const previous = usePreviousPeriodQuery<FunnelDataWithActivation>(getGetFunnelUrl({ clientId, dateFrom: format(dateRange.from, "yyyy-MM-dd"), dateTo: format(dateRange.to, "yyyy-MM-dd"), utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined, utmCampaign: filters.utmCampaign || undefined }), queryEnabled);
   const activation = (data as FunnelDataWithActivation | undefined)?.activation ?? null;
+  const dataSource = (data as FunnelDataWithActivation | undefined)?.dataSource;
+  const dataComplete = (data as FunnelDataWithActivation | undefined)?.dataComplete;
 
   // Hide the VISIT step from the visual funnel when its count is zero.
   // The "About this data" notice is driven separately by hasSiteVisitData:
@@ -161,8 +173,14 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
   // even if the current date range shows zero visits.
   const visibleSteps = useMemo(() => {
     if (!data?.steps) return [];
+    // Só nos caminhos que informam a fonte (`dataSource`): etapa de rastreamento com 0 pessoas é "sem dado", não perda.
+    if (dataSource) return data.steps.filter((s) => s.count > 0 || (s.step !== "VISIT" && DATABASE_STEPS.has(s.step)));
     return data.steps.filter((s) => !(s.step === "VISIT" && s.count === 0));
-  }, [data]);
+  }, [data, dataSource]);
+  const untrackedSteps = useMemo(
+    () => (data && dataSource ? data.steps.filter((s) => s.count === 0 && s.step !== "VISIT" && !DATABASE_STEPS.has(s.step)) : []),
+    [data, dataSource],
+  );
 
   // visitStepHidden: VISIT bar is absent from the diagram (count = 0 for the range)
   const visitStepHidden = useMemo(
@@ -251,9 +269,9 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
       {isError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Erro</AlertTitle>
+          <AlertTitle>{tx("Erro")}</AlertTitle>
           <AlertDescription className="flex items-center justify-between">
-            Não foi possível carregar o funil.
+            {tx("Não foi possível carregar o funil.")}
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
             </Button>
@@ -298,20 +316,20 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                 <div className="flex flex-col justify-center">
                   <span className="inline-flex items-center gap-1.5 self-start rounded-full border border-border/60 bg-card/60 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground backdrop-blur">
                     <Activity className="h-3 w-3 text-primary" />
-                    Funil de conversão
+                    {tx("Funil de conversão")}
                   </span>
                   <h2 className="mt-2 text-3xl sm:text-4xl font-bold tracking-tight">
                     {visitStepHidden ? "Leads → Compras" : "Visitantes → Compras"}
                   </h2>
                   <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                    Dos leads cadastrados às compras aprovadas no período selecionado. Consulte cada etapa para ver volumes, conversões e perdas.
+                    {tx("Dos leads cadastrados às compras aprovadas no período selecionado. Consulte cada etapa para ver volumes, conversões e perdas.")}
                   </p>
 
                 </div>
                 </div>
-<MetricDataProvider source="Ecommerce · eventos do funil" comparisons={{
+<MetricDataProvider source={tx("Ecommerce · eventos do funil")} comparisons={{
   [`metric-${(visibleSteps[0]?.label ?? "Topo do funil").toLowerCase().replace(/\s+/g, "-")}`]: { current: visibleSteps[0]?.count, previous: previous.data?.steps.find(step => step.step === visibleSteps[0]?.step)?.count },
-  [`metric-${(biggestDrop ? `Perda em ${biggestDrop.to.label}` : "Maior perda").toLowerCase().replace(/\s+/g, "-")}`]: { current: biggestDrop?.dropPct, previous: previous.data?.steps.find(step => step.step === biggestDrop?.to.step)?.dropOffRate, format: v => `${v.toFixed(1)}%` },
+  [`metric-${(biggestDrop ? `${tx("Perda em")} ${biggestDrop.to.label}` : tx("Maior perda")).toLowerCase().replace(/\s+/g, "-")}`]: { current: biggestDrop?.dropPct, previous: previous.data?.steps.find(step => step.step === biggestDrop?.to.step)?.dropOffRate, format: v => `${v.toFixed(1)}%` },
   "metric-compras": { current: visibleSteps[visibleSteps.length - 1]?.count, previous: previous.data?.steps.find(step => step.step === visibleSteps[visibleSteps.length - 1]?.step)?.count },
   "metric-média-de-eventos-antes-da-compra": { current: data.avgEventsBeforePurchase, previous: previous.data?.avgEventsBeforePurchase, format: v => v.toFixed(1) },
 }}>
@@ -326,7 +344,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     />
                     <MiniStat
                       icon={ShoppingCart}
-                      label="Compras"
+                      label={tx("Compras")}
                       value={visibleSteps[visibleSteps.length - 1]?.count ?? 0}
                       color="hsl(var(--chart-3))"
                       delay={0.12}
@@ -334,7 +352,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     />
                     <MiniStat
                       icon={TrendingUp}
-                      label={biggestDrop ? `Perda em ${biggestDrop.to.label}` : "Maior perda"}
+                      label={biggestDrop ? `${tx("Perda em")} ${biggestDrop.to.label}` : tx("Maior perda")}
                       value={biggestDrop?.dropPct ?? 0}
                       format={(v) => `${v.toFixed(1)}%`}
                       tone="warn"
@@ -343,7 +361,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     />
                     <MiniStat
                       icon={Zap}
-                      label="Média de eventos antes da compra"
+                      label={tx("Média de eventos antes da compra")}
                       value={data.avgEventsBeforePurchase ?? 0}
                       format={(v) => v.toFixed(1)}
                       color="hsl(var(--chart-4))"
@@ -375,7 +393,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   <div className="mb-4 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <TrendingUp className="h-3.5 w-3.5 text-primary" />
-                      Visitas diárias ao site e taxa de conversão
+                      {tx("Visitas diárias ao site e taxa de conversão")}
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                       {visitsData.totalVisits.toLocaleString()} visitas no total
@@ -466,7 +484,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                               fill="hsl(var(--chart-1))"
                               radius={[3, 3, 0, 0]}
                               maxBarSize={32}
-                              name="Visitas"
+                              name={tx("Visitas")}
                             />
                             {hasConversionData && (
                               <Line
@@ -477,7 +495,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                                 strokeWidth={2}
                                 dot={false}
                                 activeDot={{ r: 4, fill: "hsl(var(--chart-3))" }}
-                                name="Taxa de conversão %"
+                                name={tx("Taxa de conversão %")}
                                 connectNulls
                               />
                             )}
@@ -513,7 +531,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   <div className="mb-2 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
                       <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                      Fluxo por etapa
+                      {tx("Fluxo por etapa")}
                     </h3>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                       {visibleSteps.length} etapas
@@ -521,7 +539,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   </div>
                   {funnelChartData.length > 0 && funnelChartData[0].value > 0 ? (
                     <div className="space-y-5">
-                      <AcquisitionFunnel title="Etapas de conversão" stages={funnelChartData.map((step, index) => ({ label: step.label, value: step.value, connector: funnelChartData[index+1] && step.value > 0 ? `${formatPercentage(funnelChartData[index+1].value / step.value * 100)} seguem para a próxima etapa` : undefined }))} />
+                      <AcquisitionFunnel title={tx("Etapas de conversão")} stages={funnelChartData.map((step, index) => ({ label: tx(displayLabel(step.label)), value: step.value, connector: funnelChartData[index+1] && step.value > 0 ? `${formatPercentage(Math.min(100, funnelChartData[index+1].value / step.value * 100))} ${tx("seguem para a próxima etapa")}` : undefined }))} />
                       <div className="grid gap-2 sm:grid-cols-2">
                         {visibleSteps.map((step, index) => (
                           <div key={step.step} className="rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -532,10 +550,10 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                                     className="h-2 w-2 rounded-full"
                                     style={{ backgroundColor: STAGE_PALETTE[index % STAGE_PALETTE.length] }}
                                   />
-                                  <p className="truncate text-sm font-medium">{displayLabel(step.label)}</p>
+                                  <p className="truncate text-sm font-medium">{tx(displayLabel(step.label))}</p>
                                 </div>
                                 <p className="mt-1 text-xs text-muted-foreground">
-                                  {formatPercentage(step.conversionRate)} conversão · {formatPercentage(step.dropOffRate)} queda
+                                  {formatPercentage(step.conversionRate)} {tx("conversão")} · {formatPercentage(step.dropOffRate)} {tx("queda")}
                                 </p>
                               </div>
                               <p className="text-sm font-semibold tabular-nums">{formatNumber(step.count)}</p>
@@ -565,7 +583,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     <Lightbulb className="h-4 w-4 text-amber-500" />
                     <span aria-hidden className="absolute inset-0 rounded-full bg-amber-400/30 blur-md -z-10" />
                   </span>
-                  Principais análises
+                  {tx("Principais análises")}
                 </h3>
               </motion.div>
               {data.insights.length > 0 ? (
@@ -595,7 +613,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
               ) : (
                 <Card>
                   <CardContent className="p-6 text-center text-muted-foreground text-sm">
-                    Dados insuficientes para gerar análises neste período.
+                    {tx("Dados insuficientes para gerar análises neste período.")}
                   </CardContent>
                 </Card>
               )}
@@ -610,7 +628,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   <div className="rounded-lg border border-border/60 bg-card p-4">
                     <p className="font-semibold text-sm flex items-center gap-1.5 mb-3">
                       <ArrowRight className="h-3.5 w-3.5 text-primary" />
-                      Caminhos mais comuns até a compra
+                      {tx("Caminhos mais comuns até a compra")}
                     </p>
                     <div className="space-y-2">
                       {data.topPaths.slice(0, 3).map((path, i) => (
@@ -651,17 +669,48 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
                     <p className="font-semibold text-sm flex items-center gap-1.5 mb-3">
                       <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                      Suggested actions
+                      {tx("Ações sugeridas")}
                     </p>
                     <ul className="space-y-2">
                       {data.suggestedActions.map((action, i) => (
                         <li key={i} className="flex items-start gap-2 text-xs text-foreground/80 leading-relaxed">
                           <span className="text-primary font-bold mt-0.5">→</span>
-                          {action}
+                          {tx(action)}
                         </li>
                       ))}
                     </ul>
                   </div>
+                </motion.div>
+              )}
+
+              {dataSource && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: reduced ? 0 : 0.38 }}
+                  className="rounded-lg border border-border/60 bg-muted/20 p-4 text-xs"
+                  data-testid="funnel-data-source"
+                >
+                  <p className="font-semibold text-foreground/80 mb-1.5 flex items-center gap-1.5">
+                    <Info className="h-3 w-3" /> {tx("Fonte dos dados")}
+                  </p>
+                  <p className="leading-relaxed text-muted-foreground">
+                    {dataSource === "upzero-events"
+                      ? tx("Eventos da UP Zero, contados por pessoa distinta.")
+                      : dataSource === "upzero-hourly"
+                        ? tx("Totais por hora da UP Zero: estas etapas somam sessões e podem contar a mesma pessoa mais de uma vez.")
+                        : tx("Base local do painel (a UP Zero não respondeu a tempo). Só cadastros, aprovações e compras são medidos aqui.")}
+                  </p>
+                  {dataComplete === false && (
+                    <p className="mt-1.5 leading-relaxed text-amber-500">
+                      {tx("A UP Zero não respondeu para algumas etapas; elas podem estar abaixo do real.")}
+                    </p>
+                  )}
+                  {untrackedSteps.length > 0 && (
+                    <p className="mt-1.5 leading-relaxed text-muted-foreground">
+                      {tx("Sem rastreamento neste período (não contam como perda)")}: {untrackedSteps.map((step) => tx(displayLabel(step.label))).join(", ")}
+                    </p>
+                  )}
                 </motion.div>
               )}
 
@@ -676,8 +725,13 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                   <Activity className="h-3 w-3" /> Como interpretar
                 </p>
                 <p className="leading-relaxed">
-                  Cada etapa mostra o volume de entrada, a conversão em relação à etapa anterior e as perdas. Priorize as etapas com maior perda de usuários.
+                  {tx("Cada etapa mostra o volume de entrada, a conversão em relação à etapa anterior e as perdas. Priorize as etapas com maior perda de usuários.")}
                 </p>
+                {dataSource && (
+                  <p className="mt-1.5 leading-relaxed">
+                    {tx("Cada etapa conta pessoas distintas e a conversão nunca passa de 100%: quem fez a etapa antes do período também aparece nela.")}
+                  </p>
+                )}
               </motion.div>
 
               {/* Data availability notice — shown only when no visit data source has been set up */}
@@ -692,7 +746,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                     <Info className="h-3 w-3 text-blue-500" /> Sobre estes dados
                   </p>
                   <p className="leading-relaxed text-muted-foreground">
-                    UP Zero tracks <strong className="text-foreground/80">leads cadastrados, atividade de carrinho e compras</strong> — o funil começa na primeira etapa com dados disponíveis. O acompanhamento de visitas exige uma integração de análise de tráfego, como Google Analytics ou um pixel.
+                    UP Zero tracks <strong className="text-foreground/80">{tx("leads cadastrados, atividade de carrinho e compras")}</strong> — o funil começa na primeira etapa com dados disponíveis. O acompanhamento de visitas exige uma integração de análise de tráfego, como Google Analytics ou um pixel.
                   </p>
                 </motion.div>
               )}
@@ -717,6 +771,8 @@ function toneClasses(tone: string) {
 }
 
 export function ActivationAnalysisCard({ activation, previousActivation }: { activation: FunnelActivationAnalysis; previousActivation?: FunnelActivationAnalysis }) {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const thirtyDay = activation.windows.find((window) => window.key === "within_30d");
   const primaryWindow = thirtyDay ?? activation.windows[activation.windows.length - 1];
   const postApprovalSteps = [
@@ -774,7 +830,7 @@ export function ActivationAnalysisCard({ activation, previousActivation }: { act
             </p>
           </div>
 
-<MetricDataProvider source="Ecommerce · cadastros aprovados e primeira compra" comparisons={{
+<MetricDataProvider source={tx("Ecommerce · cadastros aprovados e primeira compra")} comparisons={{
   "metric-aprovados": { current: activation.approvedCustomers, previous: previousActivation?.approvedCustomers, format: formatNumber },
   "metric-ativação-em-30-dias": { current: activation.thirtyDayActivationRate, previous: previousActivation?.thirtyDayActivationRate, format: v => `${v.toFixed(1)}%` },
   "metric-ticket-1ª-compra": { current: activation.firstPurchaseAov, previous: previousActivation?.firstPurchaseAov, format: formatCurrency },
@@ -919,6 +975,7 @@ function ActivationMetric({ label, value, accent = false }: { label: string; val
 // ─────────────────────────────────────────────────────────────────────────
 
 function ConversionRing({ pct, reduced }: { pct: number; reduced: boolean }) {
+  const { tx } = useI18n();
   const size = 200;
   const stroke = 14;
   const radius = (size - stroke) / 2;
@@ -961,7 +1018,7 @@ function ConversionRing({ pct, reduced }: { pct: number; reduced: boolean }) {
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-          Geral
+          {tx("Geral")}
         </span>
         <CountUp
           value={clamped}
@@ -969,7 +1026,7 @@ function ConversionRing({ pct, reduced }: { pct: number; reduced: boolean }) {
           duration={1200}
           className="text-4xl font-bold tracking-tight tabular-nums bg-gradient-to-br from-foreground to-primary bg-clip-text text-transparent"
         />
-        <span className="mt-0.5 text-[11px] text-muted-foreground">conversão</span>
+        <span className="mt-0.5 text-[11px] text-muted-foreground">{tx("conversão")}</span>
       </div>
     </div>
   );

@@ -38,10 +38,14 @@ vi.mock("../src/middlewares/auth", () => ({
   requireAdmin: (_req: unknown, _res: unknown, next: () => void) => next(),
   resolveClientId: (req: { query: { clientId: string } }) => req.query.clientId,
 }));
-vi.mock("../src/services/meta-ads", () => ({
+vi.mock("../src/services/meta-ads", async () => ({
+  ...(await vi.importActual<typeof import("../src/services/meta-ads")>(
+    "../src/services/meta-ads",
+  )),
   fetchMetaMarketingData: state.fetchMeta,
   upsertMetaCreatives: state.upsert,
 }));
+import { MediaReadError } from "../src/services/meta-ads";
 import router from "../src/routes/analytics";
 import { GetMarketingResponse } from "@workspace/api-zod";
 const summary = {
@@ -79,6 +83,21 @@ const config = {
 };
 const app = express();
 app.use("/api", router);
+app.use(
+  (
+    err: Error,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    res
+      .status(err instanceof MediaReadError ? 503 : 500)
+      .json({
+        error: true,
+        code: err instanceof MediaReadError ? err.code : "INTERNAL_ERROR",
+      });
+  },
+);
 let sequence = 0;
 const url = () =>
   `/api/analytics/marketing?clientId=test-${++sequence}&dateFrom=2026-10-25&dateTo=2026-10-25`;
@@ -114,16 +133,20 @@ describe("Manual marketing source and response contract", () => {
     ]);
     expect(body.purchasesOverTime).toEqual([{ date: "2026-10-25", value: 15 }]);
   });
-  it("preserves live metrics if persisting the creative cache fails", async () => {
-    state.rows = [[{ commercePlatform: "MANUAL" }], [config], []];
-    state.fetchMeta.mockResolvedValue(meta);
-    state.upsert.mockRejectedValue(new Error("Cache write failed"));
+  it("keeps current results available if the previous Meta period fails", async () => {
+    state.rows = [[{ commercePlatform: "MANUAL" }], [config]];
+    state.fetchMeta
+      .mockResolvedValueOnce(meta)
+      .mockRejectedValueOnce(new MediaReadError());
     const response = await request(app).get(url());
     expect(response.status).toBe(200);
     expect(response.body.kpis).toMatchObject({
       purchases: 15,
       attributedRevenue: 3410.43,
     });
+    expect(response.body.prevKpis).toBeNull();
+    expect(response.body.prevMetaSummary).toBeNull();
+    expect(GetMarketingResponse.safeParse(response.body).success).toBe(true);
   });
   it.each([
     { revenue: 800, orders: 4 },
@@ -134,7 +157,6 @@ describe("Manual marketing source and response contract", () => {
       state.rows = [
         [{ commercePlatform: "NUVEMSHOP" }],
         [{ ...config, commercePlatform: "NUVEMSHOP" }],
-        [],
         [{ revenue, orders }],
         [{ revenue: 300, orders: 1 }],
         [{ totalLeads: 0, approvedLeads: 0 }],
@@ -157,10 +179,10 @@ describe("Manual marketing source and response contract", () => {
   );
   it("returns a source error when Meta fails for MANUAL", async () => {
     state.rows = [[{ commercePlatform: "MANUAL" }], [config]];
-    state.fetchMeta.mockRejectedValue(new Error("Meta unavailable"));
+    state.fetchMeta.mockRejectedValue(new MediaReadError());
     const response = await request(app).get(url());
-    expect(response.status).toBe(502);
-    expect(response.body.code).toBe("META_INSIGHTS_UNAVAILABLE");
+    expect(response.status).toBe(503);
+    expect(response.body.code).toBe("MEDIA_UNAVAILABLE");
     expect(response.body.kpis).toBeUndefined();
   });
   it("does not silently fall back to ecommerce when MANUAL lacks a Meta account", async () => {
@@ -169,7 +191,7 @@ describe("Manual marketing source and response contract", () => {
       [{ ...config, metaAdAccountId: null }],
     ];
     const response = await request(app).get(url());
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(503);
     expect(state.fetchMeta).not.toHaveBeenCalled();
   });
 });

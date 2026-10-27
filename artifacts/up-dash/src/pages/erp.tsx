@@ -1,5 +1,6 @@
+import { useI18n } from "@/lib/i18n";
 import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
-import { displayLabel } from "@/lib/display-label";
+import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { Fragment, useDeferredValue, useMemo, useState } from "react";
 import { useLocation } from "wouter";
@@ -83,6 +84,7 @@ import { exportRowsAsXlsx } from "@/lib/xlsx-export";
 import {
   formatCurrency,
   formatCurrencySmart,
+  formatErpDate,
   formatNumber,
   formatPercentage,
 } from "@/lib/formatters";
@@ -371,6 +373,7 @@ function KpiGrid({
   metrics: Metric[];
   loading: boolean;
 }) {
+  const { tx } = useI18n();
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {metrics.map((metric) => (
@@ -383,7 +386,7 @@ function KpiGrid({
           format={metric.format}
           comparisonValue={metric.comparisonValue}
           previousValue={metric.previousValue}
-          source="ERP · vendas e clientes"
+          source={tx("ERP · vendas e clientes")}
           change={null}
           changeLabel=""
           sub={[{ label: metric.subLabel, value: metric.subValue }]}
@@ -610,6 +613,7 @@ function BreakdownCard({
 }
 
 function ErpOverview() {
+  const { tx } = useI18n();
   const { data, isLoading, previousData } = useErpDashboard();
   const { dateFrom, dateTo } = usePeriod();
   const { clientId, enabled } = useErpClientId();
@@ -645,7 +649,7 @@ function ErpOverview() {
       subValue: formatCurrency(k?.grossRevenue ?? 0),
     },
     {
-      label: "Pedidos",
+      label: tx("Pedidos"),
       value: k?.orders ?? 0,
       comparisonValue: k?.orders ?? null,
       previousValue: pk?.orders,
@@ -778,7 +782,7 @@ function ErpOverview() {
                   stroke="var(--color-revenue)"
                   fill="url(#erp-fill)"
                   strokeWidth={2}
-                 name="Faturamento" />
+                 name={tx("Faturamento")} />
               </AreaChart>
             </ChartContainer>
           </CardContent>
@@ -854,8 +858,8 @@ function ErpOverview() {
           data={data?.breakdowns.sellers ?? []}
         />
         <BreakdownCard
-          title="Geografia de compradores"
-          description="Receita por estado do cadastro."
+          title={tx("Geografia de compradores")}
+          description={tx("Receita por estado do cadastro.")}
           icon={MapPin}
           data={data?.breakdowns.states ?? []}
         />
@@ -875,7 +879,7 @@ function ErpOverview() {
                   <TableHead>Categoria</TableHead>
                   <TableHead className="text-right">Variantes</TableHead>
                   <TableHead className="text-right">Peças</TableHead>
-                  <TableHead className="text-right">Faturamento</TableHead>
+                  <TableHead className="text-right">{tx("Faturamento")}</TableHead>
                   <TableHead className="text-right">Margem</TableHead>
                   <TableHead className="text-right">Giro</TableHead>
                   <TableHead className="text-right">Poder de venda</TableHead>
@@ -922,6 +926,7 @@ function ErpOverview() {
 }
 
 function ErpOrdersView() {
+  const { tx } = useI18n();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
@@ -964,9 +969,9 @@ function ErpOrdersView() {
           limit: 5000,
         }),
       );
-      exportRowsAsXlsx(`pedidos-erp-${dateFrom}-${dateTo}.xlsx`, "Pedidos", result.rows, [
+      exportRowsAsXlsx(`pedidos-erp-${dateFrom}-${dateTo}.xlsx`, tx("Pedidos"), result.rows, [
         { header: "Pedido", accessor: (r) => r.id },
-        { header: "Data", accessor: (r) => r.createdAt },
+        { header: "Data", accessor: (r) => (r.createdAt ? r.createdAt.slice(0, 10) : r.createdAt) },
         { header: "Cliente", accessor: (r) => r.customerName },
         { header: "Documento", accessor: (r) => r.document },
         { header: "Loja", accessor: (r) => r.store },
@@ -1128,10 +1133,7 @@ function ErpOrdersView() {
                           <div>
                             <p className="font-medium">#{order.id}</p>
                             <p className="text-xs text-muted-foreground">
-                              {format(
-                                new Date(order.createdAt),
-                                "dd/MM/yy HH:mm",
-                              )}
+                              {formatErpDate(order.createdAt, true)}
                             </p>
                           </div>
                         </div>
@@ -1261,6 +1263,7 @@ function BuyerOrderHistoryDialog({
   onPageChange: (page: number) => void;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { tx } = useI18n();
   const { clientId, enabled } = useErpClientId();
   const document = customer?.document ?? customer?.id;
   const { data, isLoading } = useQuery<ErpOrdersResponse>({
@@ -1292,9 +1295,9 @@ function BuyerOrderHistoryDialog({
         </DialogHeader>
 
         <div className="grid gap-3 border-y py-4 sm:grid-cols-3">
-          <GlassMetricCard  label="Pedidos históricos" value={<>{formatNumber(customer?.historicalOrders ?? 0)}</>}  />
-          <GlassMetricCard  label="Valor total comprado" value={<>{formatCurrency(customer?.lifetimeValue ?? 0)}</>}  />
-          <GlassMetricCard  label="Ticket médio histórico" value={<>{formatCurrency(
+          <GlassMetricCard  label={tx("Pedidos históricos")} value={<>{formatNumber(customer?.historicalOrders ?? 0)}</>} hideComparison />
+          <GlassMetricCard  label={tx("Valor total comprado")} value={<>{formatCurrency(customer?.lifetimeValue ?? 0)}</>} hideComparison />
+          <GlassMetricCard  label={tx("Ticket médio histórico")} value={<>{formatCurrency(
                 (customer?.historicalOrders ?? 0) > 0
                   ? (customer?.lifetimeValue ?? 0) /
                       (customer?.historicalOrders ?? 1)
@@ -1326,9 +1329,7 @@ function BuyerOrderHistoryDialog({
                     </p>
                   </TableCell>
                   <TableCell>
-                    {order.createdAt
-                      ? format(new Date(order.createdAt), "dd/MM/yyyy")
-                      : "—"}
+                    {formatErpDate(order.createdAt)}
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={order.status} />
@@ -1363,6 +1364,8 @@ function BuyerOrderHistoryDialog({
 }
 
 function ErpCustomersView() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const [search, setSearch] = useState("");
   const [buyerType, setBuyerType] = useState("all");
   const [page, setPage] = useState(1);
@@ -1417,9 +1420,9 @@ function ErpCustomersView() {
         { header: "Segmento", accessor: (r) => r.segment },
         { header: "Pedidos no período", accessor: (r) => r.orders },
         { header: "Comprado no período", accessor: (r) => r.totalSpent },
-        { header: "Pedidos históricos", accessor: (r) => r.historicalOrders },
+        { header: tx("Pedidos históricos"), accessor: (r) => r.historicalOrders },
         { header: "LTV", accessor: (r) => r.lifetimeValue },
-        { header: "Último pedido", accessor: (r) => r.lastOrderAt },
+        { header: "Último pedido", accessor: (r) => (r.lastOrderAt ? r.lastOrderAt.slice(0, 10) : r.lastOrderAt) },
       ]);
     } finally {
       setExporting(false);
@@ -1530,7 +1533,7 @@ function ErpCustomersView() {
                   <TableHead className="text-right">Pedidos período</TableHead>
                   <TableHead className="text-right">Valor período</TableHead>
                   <TableHead className="text-right">
-                    Pedidos históricos
+                    {tx("Pedidos históricos")}
                   </TableHead>
                   <TableHead className="text-right">LTV</TableHead>
                   <TableHead>Última compra</TableHead>
@@ -1594,9 +1597,7 @@ function ErpCustomersView() {
                     </TableCell>
                     <TableCell>
                       <p>
-                        {c.lastOrderAt
-                          ? format(new Date(c.lastOrderAt), "dd/MM/yyyy")
-                          : "—"}
+                        {formatErpDate(c.lastOrderAt)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {c.daysSinceLastOrder === null
@@ -1682,6 +1683,7 @@ function ProductTable({
   setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>;
   stockMode?: boolean;
 }) {
+  const { tx } = useI18n();
   const columnCount = stockMode ? 10 : 9;
 
   return (
@@ -1693,7 +1695,7 @@ function ProductTable({
             <TableHead>Categoria</TableHead>
             <TableHead className="text-right">SKUs</TableHead>
             <TableHead className="text-right">Vendidas</TableHead>
-            <TableHead className="text-right">Faturamento</TableHead>
+            <TableHead className="text-right">{tx("Faturamento")}</TableHead>
             <TableHead className="text-right">
               {stockMode ? "Margem" : "Dias restantes"}
             </TableHead>
@@ -1852,6 +1854,7 @@ function ProductTable({
   );
 }
 function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
+  const { tx } = useI18n();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [stockStatus, setStockStatus] = useState(
@@ -1977,7 +1980,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
       ]
     : [
         {
-          label: "Faturamento",
+          label: tx("Faturamento"),
           value: data?.totalRevenue ?? 0,
           format: formatCurrencySmart,
           icon: WalletCards,
@@ -2176,6 +2179,8 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
 }
 
 function ErpSellersView() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const { data, isLoading, previousData } = useErpDashboard();
   const [exporting, setExporting] = useState(false);
   const sellers = data?.breakdowns.sellers ?? [];
@@ -2184,9 +2189,9 @@ function ErpSellersView() {
     setExporting(true);
     exportRowsAsCsv("vendedores-erp.csv", sellers, [
       { header: "Vendedor", accessor: (r) => r.label },
-      { header: "Pedidos", accessor: (r) => r.orders },
+      { header: tx("Pedidos"), accessor: (r) => r.orders },
       { header: "Clientes", accessor: (r) => r.customers },
-      { header: "Faturamento", accessor: (r) => r.revenue },
+      { header: tx("Faturamento"), accessor: (r) => r.revenue },
       {
         header: "Ticket médio",
         accessor: (r) => (r.orders ? r.revenue / r.orders : 0),
@@ -2208,13 +2213,13 @@ function ErpSellersView() {
       subValue: formatNumber(stores.length),
     },
     {
-      label: "Faturamento",
+      label: tx("Faturamento"),
       value: totalRevenue,
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-emerald-500/10 text-emerald-500",
       sparkColor: "#87adff",
-      subLabel: "Pedidos",
+      subLabel: tx("Pedidos"),
       subValue: formatNumber(totalOrders),
     },
     {
@@ -2268,9 +2273,9 @@ function ErpSellersView() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Vendedor</TableHead>
-                  <TableHead className="text-right">Pedidos</TableHead>
+                  <TableHead className="text-right">{tx("Pedidos")}</TableHead>
                   <TableHead className="text-right">Clientes</TableHead>
-                  <TableHead className="text-right">Faturamento</TableHead>
+                  <TableHead className="text-right">{tx("Faturamento")}</TableHead>
                   <TableHead className="text-right">Ticket médio</TableHead>
                   <TableHead className="text-right">Participação</TableHead>
                 </TableRow>
@@ -2335,13 +2340,15 @@ export default function ErpPage() {
 
 
 export function ErpGeographyView() {
+  const displayLabel = useDisplayLabel();
+  const { tx } = useI18n();
   const {data, isLoading} = useErpDashboard();
   const states = data?.breakdowns.states ?? [];
   return <div className="space-y-6" data-testid="erp-geography-page">
-    <BreakdownCard title="Geografia de compradores" description="Receita por estado do cadastro." icon={MapPin} data={states} />
-    <Card><CardContent className="p-5"><SectionTitle icon={MapPin} title="Estados" description="Pedidos e faturamento da fonte ERP." />
+    <BreakdownCard title={tx("Geografia de compradores")} description={tx("Receita por estado do cadastro.")} icon={MapPin} data={states} />
+    <Card><CardContent className="p-5"><SectionTitle icon={MapPin} title={tx("Estados")} description={tx("Pedidos e faturamento da fonte ERP.")} />
       <div className="mt-5 overflow-x-auto"><Table><TableHeader><TableRow>
-        <TableHead>Estado</TableHead><TableHead className="text-right">Pedidos</TableHead><TableHead className="text-right">Faturamento</TableHead>
+        <TableHead>{tx("Estado")}</TableHead><TableHead className="text-right">{tx("Pedidos")}</TableHead><TableHead className="text-right">{tx("Faturamento")}</TableHead>
       </TableRow></TableHeader><TableBody>{states.map(state => <TableRow key={state.label}>
         <TableCell>{displayLabel(state.label)}</TableCell><TableCell className="text-right">{formatNumber(state.orders)}</TableCell><TableCell className="text-right">{formatCurrency(state.revenue)}</TableCell>
       </TableRow>)}{!states.length && <EmptyRow colSpan={3} loading={isLoading} />}</TableBody></Table></div>

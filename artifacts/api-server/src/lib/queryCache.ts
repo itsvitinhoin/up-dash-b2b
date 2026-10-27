@@ -18,3 +18,9 @@ export async function cached<T>(key: string, ttlMs: number, compute: () => Promi
   store.set(key, { value, expiresAt: Date.now() + ttlMs });
   return value;
 }
+
+// Remove uma entrada (ex.: resultado calculado com falha parcial, que não deve
+// ficar guardado pelo TTL inteiro).
+export function invalidateCached(key: string): void {
+  store.delete(key);
+}

@@ -1,3 +1,4 @@
+import { useI18n } from "@/lib/i18n";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -143,6 +144,7 @@ function resultSummary(job: ExtractionJob) {
 }
 
 export default function ExtractionsPage() {
+  const { tx } = useI18n();
   const [status, setStatus] = useState(ALL);
   const [jobType, setJobType] = useState(ALL);
   const [trigger, setTrigger] = useState(ALL);
@@ -193,10 +195,10 @@ export default function ExtractionsPage() {
   return (
     <div className="space-y-6" data-testid="page-extractions">
       <div className="grid gap-3 md:grid-cols-4">
-        <GlassMetricCard label="Execuções" value={<>{data?.summary.total ?? 0}</>}  />
-        <GlassMetricCard label="Rodando" value={<>{data?.summary.running ?? 0}</>}  />
-        <GlassMetricCard label="Concluídas" value={<>{data?.summary.done ?? 0}</>}  />
-        <GlassMetricCard label="Falhas" value={<>{data?.summary.failed ?? 0}</>}  />
+        <GlassMetricCard label={tx("Execuções")} value={<>{data?.summary.total ?? 0}</>} hideComparison />
+        <GlassMetricCard label={tx("Rodando")} value={<>{data?.summary.running ?? 0}</>} hideComparison />
+        <GlassMetricCard label={tx("Concluídas")} value={<>{data?.summary.done ?? 0}</>} hideComparison />
+        <GlassMetricCard label={tx("Falhas")} value={<>{data?.summary.failed ?? 0}</>} hideComparison />
       </div>
 
       <Card>
@@ -231,7 +233,7 @@ export default function ExtractionsPage() {
               <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>Status: todos</SelectItem>
-                <SelectItem value="running">Rodando</SelectItem>
+                <SelectItem value="running">{tx("Rodando")}</SelectItem>
                 <SelectItem value="done">Concluída</SelectItem>
                 <SelectItem value="failed">Falha</SelectItem>
                 <SelectItem value="pending">Pendente</SelectItem>

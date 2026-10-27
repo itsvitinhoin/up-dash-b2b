@@ -1,5 +1,7 @@
+import { saoPauloDateOnly, coerceDateQuery as coerceClientsQuery } from "../lib/reporting-period";
+import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
 import { Router, type IRouter } from "express";
-import { and, eq, gte, ilike, inArray, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, ilike, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   db,
@@ -11,6 +13,8 @@ import {
   customersTable,
   usersTable,
   clientUserAccessesTable,
+  sessionsTable,
+  commercialAutomationJobsTable,
 } from "@workspace/db";
 import {
   CreateClientBody,
@@ -28,6 +32,35 @@ import { syncNuvemshopClient } from "../services/nuvemshop-sync";
 import { fetchMetaAdAccounts, normalizeMetaAdAccountId } from "../services/meta-ads";
 import { fetchGa4FunnelMetrics } from "../services/ga4";
 import { hashPassword } from "../lib/auth";
+import { logger } from "../lib/logger";
+import {
+  ARCHIVE_RETENTION_DAYS,
+  archiveInfo,
+  canDeleteClient,
+  parseArchivedMode,
+} from "../services/client-archive-rules";
+import {
+  exclusiveClientLoginUsers,
+  externalDatasetsOf,
+  planBigQueryPurge,
+  purgeClientCompletely,
+  reconcileExcludedClients,
+} from "../services/client-lifecycle";
+import { publishAdsAccountsSafely } from "../services/ads-accounts-publisher";
+import {
+  OnboardingError,
+  groupSyncStoresByDataset,
+  isValidIsoDate,
+  runVestiOnboarding,
+} from "../services/vesti-onboarding-rules";
+import { createDbStore } from "../services/vesti-onboarding";
+import {
+  createVestiSyncStore,
+  deactivateVestiSyncStore,
+  isSyncServiceConfigured,
+  listVestiSyncStores,
+  setVestiSyncStoreActive,
+} from "../services/vesti-sync-service";
 
 const router: IRouter = Router();
 
@@ -56,34 +89,17 @@ function clientPublicFields<T extends typeof clientsTable.$inferSelect>(client: 
         client.ga4PropertyId?.trim() &&
         client.ga4ApiSecret?.trim(),
     ),
+    // As páginas ERP e "Desempenho > Visão Geral" respondem 404 NO_ERP_INTEGRATION sem dataset de ERP; a tela usa isto para esconder o menu.
+    hasErpIntegration: Boolean(client.erpDataset?.trim()),
   };
 }
 
-// Coerce ISO date-time strings on the query before zod sees them — orval
-// generates `z.coerce.date()` for date-time params, but Express delivers
-// strings, and we want graceful fallback if either bound is missing.
-function coerceClientsQuery(query: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...query };
-  for (const key of ["dateFrom", "dateTo"]) {
-    const v = out[key];
-    if (typeof v === "string" && v.length > 0) {
-      const parsed = new Date(v);
-      if (!Number.isNaN(parsed.getTime())) {
-        if (key === "dateTo" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
-          parsed.setUTCHours(23, 59, 59, 999);
-        }
-        out[key] = parsed;
-      }
-    }
-  }
-  return out;
-}
-
 function toGa4Date(value: Date): string {
-  return value.toISOString().slice(0, 10);
+  return saoPauloDateOnly(value);
 }
 
 router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "private, no-store");
   const parsed = ListClientsQueryParams.safeParse(
     coerceClientsQuery(req.query as Record<string, unknown>),
   );
@@ -100,6 +116,10 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
   const filters: SQL[] = [];
   if (search) filters.push(ilike(clientsTable.name, `%${search}%`));
   if (dashboardType) filters.push(eq(clientsTable.dashboardType, dashboardType));
+  // Arquivados ficam fora por padrao (somem do painel); ?archived=only lista so eles, ?archived=include lista todos.
+  const archivedMode = parseArchivedMode(req.query.archived);
+  if (archivedMode === "exclude") filters.push(isNull(clientsTable.archivedAt));
+  else if (archivedMode === "only") filters.push(isNotNull(clientsTable.archivedAt));
   const where = filters.length > 0 ? and(...filters) : undefined;
 
   const offset = (page - 1) * limit;
@@ -159,20 +179,20 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     const prevTo = new Date(dateFrom.getTime() - 1);
     const prevFrom = new Date(prevTo.getTime() - lengthMs);
 
-    // Requested revenue/orders per client in the window. The client list uses
-    // demand created in the period, so it intentionally does not filter final
-    // order status.
+    // Same paid-order population, revenue and Brasília day as Dashboard and Diário.
     const orderAgg = (winFrom: Date, winTo: Date) =>
       db
         .select({
           clientId: ordersTable.clientId,
-          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          revenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(sql`${clientsTable.dashboardType} = 'B2C'`)}), 0)::float`,
           orders: sql<number>`COUNT(*)::int`,
         })
         .from(ordersTable)
+        .innerJoin(clientsTable, eq(clientsTable.id, ordersTable.clientId))
         .where(
           and(
             inArray(ordersTable.clientId, ids),
+            paidOrderStatus(),
             gte(ordersTable.createdAt, winFrom),
             lte(ordersTable.createdAt, winTo),
           ),
@@ -422,6 +442,8 @@ router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
     .insert(clientsTable)
     .values(values)
     .returning();
+  // Conta de anúncio nova entra na coleta (up_global.ads_accounts). Falha aqui não desfaz o cadastro: o job de hora em hora republica.
+  if (created.metaAdAccountId) await publishAdsAccountsSafely("cliente criado");
   res.status(201).json(GetClientResponse.parse(clientPublicFields(created)));
 });
 
@@ -618,6 +640,135 @@ const ClientCredentialsBody = z.object({
 
 const ClientAccessBody = ClientCredentialsBody.extend({
   clientId: z.string().min(1),
+});
+
+// ---------------------------------------------------------------------------
+// Cadastro completo de cliente Vesti ("Novo cliente Vesti"). Dois jeitos:
+//  - loja NOVA: `filiais` (chave da API Vesti, empresa e nº da filial) → cadastra no serviço de sync (que calcula o dataset do
+//    BigQuery a partir do nome da loja) e cria o cliente no painel;
+//  - loja que JÁ está no sync: `linkDataset` → só cria o cliente no painel ligado a ela, sem mexer no sync.
+// Opcionalmente cria o login do cliente no mesmo passo. Se algo falhar no meio, o que foi feito no sync é desfeito.
+// Regras e roteiro: services/vesti-onboarding-rules.ts.
+// ---------------------------------------------------------------------------
+
+const VestiFilialBody = z.object({
+  apiKey: z.string().trim().min(1),
+  companyId: z.string().trim().min(1),
+  filialNum: z.number().int().min(1),
+});
+
+const CreateVestiClientBody = z
+  .object({
+    name: z.string().trim().min(1),
+    email: z.string().trim().email(),
+    storeName: z.string().trim().nullish(),
+    filiais: z.array(VestiFilialBody).max(20).default([]),
+    linkDataset: z.string().trim().nullish(),
+    attributionStartDate: z.string().trim().nullish(),
+    metaAdAccountId: z.string().trim().nullish(),
+    login: ClientCredentialsBody.nullish(),
+  })
+  .superRefine((body, ctx) => {
+    const linking = Boolean(body.linkDataset);
+    if (linking && body.filiais.length > 0) {
+      ctx.addIssue({ code: "custom", path: ["filiais"], message: "Use filiais (loja nova) OU linkDataset (loja que já está no sync), não os dois" });
+    }
+    if (!linking && body.filiais.length === 0) {
+      ctx.addIssue({ code: "custom", path: ["filiais"], message: "Informe ao menos uma filial" });
+    }
+    const nums = body.filiais.map((filial) => filial.filialNum);
+    if (new Set(nums).size !== nums.length) {
+      ctx.addIssue({ code: "custom", path: ["filiais"], message: "Número de filial repetido" });
+    }
+    if (body.attributionStartDate && !isValidIsoDate(body.attributionStartDate)) {
+      ctx.addIssue({ code: "custom", path: ["attributionStartDate"], message: "Use uma data válida no formato AAAA-MM-DD" });
+    }
+  });
+
+// Lojas Vesti que já estão no serviço de sync, para o modo "ligar uma loja existente" (só nome, dataset, nº de filiais e se
+// já está ligada a algum cliente do painel — nunca chaves nem tokens).
+router.get("/clients/vesti/stores", requireAdmin, async (_req, res): Promise<void> => {
+  if (!isSyncServiceConfigured()) {
+    res.status(503).json({ error: true, code: "SYNC_SERVICE_NOT_CONFIGURED", message: "O serviço de sync da Vesti não está configurado neste ambiente.", status: 503 });
+    return;
+  }
+  let stores;
+  try {
+    stores = await listVestiSyncStores();
+  } catch {
+    res.status(502).json({ error: true, code: "SYNC_SERVICE_FAILED", message: "Não consegui falar com o serviço de sync da Vesti.", status: 502 });
+    return;
+  }
+  const linkedRows = await db
+    .select({ name: clientsTable.name, dataset: clientsTable.bigqueryDataset })
+    .from(clientsTable)
+    .where(isNotNull(clientsTable.bigqueryDataset));
+  const linked = new Map(linkedRows.map((row) => [row.dataset as string, row.name]));
+  res.json({
+    stores: groupSyncStoresByDataset(stores).map((group) => ({ ...group, linkedClientName: linked.get(group.dataset) ?? null })),
+  });
+});
+
+router.post("/clients/vesti", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = CreateVestiClientBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: parsed.error.message, status: 400 });
+    return;
+  }
+  const body = parsed.data;
+  if (!isSyncServiceConfigured()) {
+    res.status(503).json({ error: true, code: "SYNC_SERVICE_NOT_CONFIGURED", message: "O serviço de sync da Vesti não está configurado neste ambiente (SYNC_SERVICE_URL / SYNC_SERVICE_TOKEN).", status: 503 });
+    return;
+  }
+  try {
+    const store = await createDbStore({
+      name: body.name,
+      email: body.email,
+      metaAdAccountId: body.metaAdAccountId,
+      attributionStartDate: body.attributionStartDate,
+      adminId: req.user?.sub ?? null,
+      login: body.login ?? null,
+    });
+    const result = await runVestiOnboarding(
+      {
+        name: body.name,
+        email: body.email,
+        storeName: body.storeName,
+        filiais: body.filiais,
+        linkDataset: body.linkDataset,
+        loginEmail: body.login?.email ?? null,
+      },
+      {
+        sync: {
+          list: () => listVestiSyncStores(),
+          create: (input) => createVestiSyncStore(input),
+          setActive: (id, active) => setVestiSyncStoreActive(id, active),
+          deactivate: (id) => deactivateVestiSyncStore(id),
+        },
+        store,
+      },
+    );
+    // Se a loja/conta já tinha lápide na lista de excluídos (cliente apagado antes), o cliente novo ativo a tira da lista.
+    // Falha aqui não desfaz o cadastro: o job de atualização da lista corrige na próxima rodada.
+    try {
+      await reconcileExcludedClients();
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : String(err) }, "cliente Vesti criado, mas não consegui atualizar a lista de excluídos");
+    }
+    await publishAdsAccountsSafely("cliente Vesti criado");
+    res.status(201).json({
+      client: GetClientResponse.parse(clientPublicFields(result.created.client)),
+      dataset: result.dataset,
+      loginEmail: result.created.loginUserId ? body.login?.email ?? null : null,
+      syncStores: result.syncStores,
+    });
+  } catch (err) {
+    if (err instanceof OnboardingError) {
+      res.status(err.status).json({ error: true, code: err.code, message: err.message, status: err.status });
+      return;
+    }
+    throw err;
+  }
 });
 
 router.get("/accesses", requireAdmin, async (_req, res): Promise<void> => {
@@ -941,6 +1092,20 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
     const dataset = bodyParsed.data.bigqueryDataset?.trim();
     updates.bigqueryDataset = dataset || null;
   }
+  // Cliente Vesti: dia a partir do qual a atribuição paga vale (vazio/null = volta para a lista antiga, ou nenhum piso).
+  if ("attributionStartDate" in bodyParsed.data) {
+    const day = bodyParsed.data.attributionStartDate?.trim();
+    if (day && !isValidIsoDate(day)) {
+      res.status(400).json({
+        error: true,
+        code: "VALIDATION_ERROR",
+        message: "attributionStartDate must be a valid date (YYYY-MM-DD)",
+        status: 400,
+      });
+      return;
+    }
+    updates.attributionStartDate = day || null;
+  }
   if ("hiddenNavItems" in bodyParsed.data) {
     const items = bodyParsed.data.hiddenNavItems;
     updates.hiddenNavItems = items && items.length > 0 ? items : null;
@@ -988,7 +1153,201 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
     });
     return;
   }
+  // A lista de contas de anúncio (up_global.ads_accounts) usa estes campos; só republica quando algum mudou.
+  if (Object.keys(updates).some((key) => key === "metaAdAccountId" || key === "isActive" || key === "commercePlatform" || key === "name")) {
+    await publishAdsAccountsSafely("cliente editado");
+  }
   res.json(GetClientResponse.parse(clientPublicFields(updated)));
+});
+
+// ---------------------------------------------------------------------------
+// Ciclo de vida do cliente. Para o time isso e "EXCLUIR" (com lixeira de ARCHIVE_RETENTION_DAYS); por tras, excluir = arquivar:
+// some do painel, sai das atualizacoes diarias, o login e bloqueado e os dados ficam guardados. Passado o prazo, e apagado
+// de vez (job de limpeza ou "apagar agora"). Helpers e limpeza automatica: services/client-lifecycle.ts.
+// ---------------------------------------------------------------------------
+
+router.post("/clients/:clientId/archive", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: paramParsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = paramParsed.data;
+  const [existing] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!existing) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  // Ja arquivado: devolve como esta (nao reinicia a contagem dos 90 dias).
+  if (existing.archivedAt) {
+    res.json(GetClientResponse.parse(clientPublicFields(existing)));
+    return;
+  }
+  const [updated] = await db
+    .update(clientsTable)
+    .set({ archivedAt: new Date() })
+    .where(and(eq(clientsTable.id, clientId), isNull(clientsTable.archivedAt)))
+    .returning();
+  // Derruba as sessoes abertas dos logins que so servem este cliente (o login novo ja e barrado em /auth/login e /auth/refresh).
+  const loginUsers = await exclusiveClientLoginUsers(clientId, existing.userId);
+  if (loginUsers.length > 0) {
+    await db
+      .update(sessionsTable)
+      .set({ revokedAt: new Date() })
+      .where(and(inArray(sessionsTable.userId, loginUsers.map((user) => user.id)), isNull(sessionsTable.revokedAt)));
+  }
+  // Mensagens de automacao ainda agendadas nao devem sair em nome de um cliente excluido (nem disparar em massa se ele voltar).
+  await db
+    .update(commercialAutomationJobsTable)
+    .set({ status: "cancelled", skipReason: "client_excluded", processedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(commercialAutomationJobsTable.clientId, clientId), eq(commercialAutomationJobsTable.status, "scheduled")));
+  // Avisa os outros programas (script-vesti-nuvem, backend-dash) para pararem de atualizar este cliente. O banco do painel manda:
+  // se a publicacao falhar, o cliente continua excluido e a limpeza noturna republica a lista.
+  await reconcileExcludedClients().catch((err) => logger.error({ err, clientId }, "Failed to publish excluded clients list"));
+  await publishAdsAccountsSafely("cliente excluído");
+  logger.warn({ clientId, name: existing.name, by: req.user?.email }, "Client excluded (archived)");
+  res.json(GetClientResponse.parse(clientPublicFields(updated ?? existing)));
+});
+
+router.post("/clients/:clientId/restore", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: paramParsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = paramParsed.data;
+  const [updated] = await db
+    .update(clientsTable)
+    .set({ archivedAt: null })
+    .where(eq(clientsTable.id, clientId))
+    .returning();
+  if (!updated) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  await reconcileExcludedClients().catch((err) => logger.error({ err, clientId }, "Failed to publish excluded clients list"));
+  await publishAdsAccountsSafely("cliente recuperado");
+  logger.warn({ clientId, name: updated.name, by: req.user?.email }, "Client recovered (restored from archive)");
+  res.json(GetClientResponse.parse(clientPublicFields(updated)));
+});
+
+// O que seria apagado se o cliente fosse excluido agora (alimenta a tela de confirmacao). Nao altera nada.
+router.get("/clients/:clientId/deletion-preview", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: paramParsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = paramParsed.data;
+  const [client] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  const countOf = async (table: typeof ordersTable | typeof customersTable | typeof eventsTable | typeof creativesTable | typeof syncJobsTable) => {
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(table)
+      .where(eq(table.clientId, clientId));
+    return row?.count ?? 0;
+  };
+  const [orders, customers, events, creatives, syncJobs, loginUsers] = await Promise.all([
+    countOf(ordersTable),
+    countOf(customersTable),
+    countOf(eventsTable),
+    countOf(creativesTable),
+    countOf(syncJobsTable),
+    exclusiveClientLoginUsers(clientId, client.userId),
+  ]);
+  const info = archiveInfo(client.archivedAt);
+  res.json({
+    clientId: client.id,
+    name: client.name,
+    archived: info.archived,
+    archivedAt: info.archivedAt,
+    deletableFrom: info.deletableFrom,
+    daysLeft: info.daysLeft,
+    canDelete: info.canDelete,
+    retentionDays: ARCHIVE_RETENTION_DAYS,
+    counts: { orders, customers, events, creatives, syncJobs },
+    loginUsers: loginUsers.map((user) => user.email),
+    // Datasets cadastrados no cliente (o que sai do BigQuery esta em `bigquery`).
+    external: externalDatasetsOf(client),
+    bigquery: await planBigQueryPurge(client),
+  });
+});
+
+const DeleteClientBody = z.object({
+  confirmName: z.string().optional(),
+  force: z.boolean().optional(),
+});
+
+router.delete("/clients/:clientId", requireAdmin, async (req, res): Promise<void> => {
+  const paramParsed = GetClientParams.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: paramParsed.error.message, status: 400 });
+    return;
+  }
+  const bodyParsed = DeleteClientBody.safeParse(req.body ?? {});
+  if (!bodyParsed.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: bodyParsed.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = paramParsed.data;
+  const [client] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  const decision = canDeleteClient({
+    archivedAt: client.archivedAt,
+    clientName: client.name,
+    confirmName: bodyParsed.data.confirmName,
+    force: bodyParsed.data.force,
+  });
+  if (!decision.ok) {
+    if (decision.code === "NAME_MISMATCH") {
+      res.status(400).json({ error: true, code: "NAME_MISMATCH", message: "O nome digitado não confere com o do cliente.", status: 400 });
+    } else if (decision.code === "NOT_ARCHIVED") {
+      res.status(409).json({ error: true, code: "NOT_ARCHIVED", message: "Exclua o cliente antes de apagar de vez.", status: 409 });
+    } else {
+      res.status(409).json({
+        error: true,
+        code: "RETENTION_NOT_ELAPSED",
+        message: `O cliente só pode ser apagado de vez ${ARCHIVE_RETENTION_DAYS} dias depois de excluído (faltam ${decision.daysLeft ?? 0}).`,
+        status: 409,
+      });
+    }
+    return;
+  }
+  // Lapide na lista de excluidos + linhas da up_global + dataset do BigQuery + banco do painel (cascata e logins exclusivos).
+  // Se o BigQuery falhar, nada do painel e apagado: o cliente continua excluido e da para tentar de novo.
+  let deleted: Awaited<ReturnType<typeof purgeClientCompletely>>;
+  try {
+    deleted = await purgeClientCompletely(client);
+  } catch (err) {
+    logger.error({ err, clientId, name: client.name }, "Failed to permanently delete client");
+    res.status(502).json({
+      error: true,
+      code: "PURGE_FAILED",
+      message: "Não foi possível apagar o cliente. Nada foi apagado do painel; tente de novo e, se repetir, veja os logs.",
+      status: 502,
+    });
+    return;
+  }
+  logger.warn(
+    { clientId, name: client.name, early: decision.early, by: req.user?.email, loginUsers: deleted.deletedLoginUsers, bigquery: deleted.bigquery },
+    "Client permanently deleted",
+  );
+  res.json({
+    deleted: true,
+    clientId,
+    name: client.name,
+    early: decision.early,
+    deletedLoginUsers: deleted.deletedLoginUsers,
+    external: deleted.external,
+    bigquery: deleted.bigquery,
+  });
 });
 
 router.post("/clients/:clientId/meta/ad-accounts", requireAdmin, async (req, res): Promise<void> => {
