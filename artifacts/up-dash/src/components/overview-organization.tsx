@@ -2,6 +2,9 @@ import type { ReactNode } from "react";
 import { MetricSection, Metrics } from "@/components/metric-section";
 import { useI18n } from "@/lib/i18n";
 import { useOrganizationData } from "@/lib/organization-data";
+import { useDashboardFilters } from "@/lib/dashboard-filters";
+import { formatCurrency } from "@/lib/formatters";
+import { differenceInCalendarDays } from "date-fns";
 
 // Cada seção pede só as fontes que usa (ver useOrganizationData): o resto nem é buscado.
 const EXECUTIVE_SOURCES = ["dashboard", "marketing", "recompra"] as const;
@@ -13,7 +16,14 @@ const PERFORMANCE_PREVIOUS = ["recompra", "funnel", "performance"] as const;
 const MEDIA_SOURCES = ["marketing"] as const;
 
 /** ROAS dos clientes que vieram de campanhas (o mesmo do painel "Clientes atribuídos às campanhas"). */
-export type AttributedRoas = { value: number | null | undefined; previous?: number | null; loading?: boolean };
+export type AttributedRoas = {
+  value: number | null | undefined;
+  previous?: number | null;
+  loading?: boolean;
+  /** Os dois lados da conta do ROAS (atendido atribuído ÷ investimento), mostrados embaixo do card. */
+  revenue?: number | null;
+  spend?: number | null;
+};
 
 export function OverviewOrganization({
   cards,
@@ -29,6 +39,18 @@ export function OverviewOrganization({
     ecommerce ? ECOMMERCE_SOURCES : EXECUTIVE_SOURCES,
     ecommerce ? ECOMMERCE_PREVIOUS : EXECUTIVE_PREVIOUS,
   );
+  const { dateRange } = useDashboardFilters();
+  const money = (value: number | null | undefined) => (value != null && Number.isFinite(value) ? formatCurrency(value) : "—");
+  // Investimento: as duas linhas usam só números que já estão na tela (investimento, dias do período e pedidos pagos).
+  const days = Math.max(1, differenceInCalendarDays(dateRange.to, dateRange.from) + 1);
+  const paidOrders = measures.orders?.value;
+  const spendMetrics = pick("spend").map((metric) => ({
+    ...metric,
+    sub: [
+      { label: tx("Média por dia"), value: money(metric.value != null ? metric.value / days : null) },
+      { label: tx("Custo por pedido pago"), value: money(metric.value != null && paidOrders ? metric.value / paidOrders : null) },
+    ],
+  }));
   if (ecommerce)
     return (
       <div className="space-y-6">
@@ -57,9 +79,21 @@ export function OverviewOrganization({
         {cards.orders}
         <Metrics
           metrics={[
-            ...pick("spend"),
+            ...spendMetrics,
             attributedRoas
-              ? { key: "roas", label: tx("ROAS"), value: attributedRoas.value, format: "ratio" as const, source: tx("Clientes atribuídos às campanhas · atendido / investimento"), previousValue: attributedRoas.previous, loading: attributedRoas.loading }
+              ? {
+                  key: "roas",
+                  label: tx("ROAS"),
+                  value: attributedRoas.value,
+                  format: "ratio" as const,
+                  source: tx("Clientes atribuídos às campanhas · atendido / investimento"),
+                  previousValue: attributedRoas.previous,
+                  loading: attributedRoas.loading,
+                  sub: [
+                    { label: tx("Atendido atribuído"), value: money(attributedRoas.revenue) },
+                    { label: tx("Investimento"), value: money(attributedRoas.spend) },
+                  ],
+                }
               : measures.roas,
           ]}
         />

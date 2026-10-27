@@ -1981,7 +1981,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
 
       <OverviewOrganization
         ecommerce={organization === "ecommerce"}
-        attributedRoas={isB2C ? undefined : { value: campaignCustomers?.summary?.roas, previous: campaignPrevious.data?.summary?.roas, loading: campaignCustomersLoading }}
+        attributedRoas={isB2C ? undefined : { value: campaignCustomers?.summary?.roas, previous: campaignPrevious.data?.summary?.roas, loading: campaignCustomersLoading, revenue: campaignCustomers?.summary?.fulfilledValue, spend: campaignCustomers?.summary?.investment }}
         cards={{
         revenue: (
           <DashboardKpiCard

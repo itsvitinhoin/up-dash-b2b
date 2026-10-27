@@ -19,6 +19,8 @@ export type OrganizedMetric = {
   info?: string;
   series?: number[];
   loading?: boolean;
+  /** Linhas embaixo do gráfico (rótulo e valor já formatado), como nos cards de Faturamento e Pedidos. */
+  sub?: Array<{ label: string; value: string }>;
 };
 export function MetricSection({
   title,
@@ -85,7 +87,7 @@ export function ExistingMetricCard({ metric }: { metric: OrganizedMetric }) {
       sparkColor="hsl(var(--chart-1))"
       isLoading={metric.loading ?? false}
       testId={`organized-${metric.key}`}
-      sub={[]}
+      sub={metric.sub ?? []}
     />
   );
 }
