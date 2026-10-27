@@ -11146,6 +11146,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
           adAccountId: clientConfig.metaAdAccountId,
           since,
           until,
+          includeMedia: true,
         }),
         fetchMetaMarketingData({
           accessToken: metaAccessToken,

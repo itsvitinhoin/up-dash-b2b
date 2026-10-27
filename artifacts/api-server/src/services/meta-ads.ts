@@ -1,8 +1,58 @@
+import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db, creativesTable } from "@workspace/db";
+import { fetchMetaGraph } from "./meta-graph";
 
 const DEFAULT_GRAPH_VERSION = "v24.0";
 const GRAPH_BASE = "https://graph.facebook.com";
+const INSIGHTS_CACHE_TTL_MS = 5 * 60 * 1000;
+const CAMPAIGN_STATUS_CACHE_TTL_MS = 15 * 60 * 1000;
+
+// Process-local, bounded caches. Short-lived failures avoid hammering Meta while
+// successful media expires so signed URLs and edited creatives can refresh.
+const MEDIA_CACHE_TTL_MS = 60 * 60 * 1000;
+const MEDIA_FAILURE_TTL_MS = 60 * 1000;
+const MEDIA_CACHE_MAX_ENTRIES = 5_000;
+
+function createMediaCache<T>() {
+  const entries = new Map<string, { value: T | null; expiresAt: number }>();
+  const inFlight = new Map<string, Promise<T | null>>();
+
+  return (accessToken: string, id: string, load: () => Promise<T>): Promise<T | null> => {
+    // Keep permissions and Graph versions isolated without retaining raw tokens.
+    const tokenHash = createHash("sha256").update(accessToken).digest("hex");
+    const key = `${graphVersion()}:${tokenHash}:${id}`;
+    const cached = entries.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      entries.delete(key);
+      entries.set(key, cached);
+      return Promise.resolve(cached.value);
+    }
+    entries.delete(key);
+    const pending = inFlight.get(key);
+    if (pending) return pending;
+
+    const request = Promise.resolve().then(load).catch(() => null).then((value) => {
+      const now = Date.now();
+      for (const [entryKey, entry] of entries) {
+        if (entry.expiresAt <= now) entries.delete(entryKey);
+      }
+      while (entries.size >= MEDIA_CACHE_MAX_ENTRIES) {
+        entries.delete(entries.keys().next().value!);
+      }
+      entries.set(key, {
+        value,
+        expiresAt: now + (value === null ? MEDIA_FAILURE_TTL_MS : MEDIA_CACHE_TTL_MS),
+      });
+      return value;
+    }).finally(() => inFlight.delete(key));
+    inFlight.set(key, request);
+    return request;
+  };
+}
+
+const cachedVideoDetails = createMediaCache<MetaVideoDetails>();
+const cachedAdCreativeDetails = createMediaCache<MetaAdCreativeDetails>();
 
 type MetaAction = { action_type?: string; value?: string };
 type MetaRoas = { action_type?: string; value?: string };
@@ -29,6 +79,11 @@ interface MetaCampaignRow {
   id: string;
   status?: string;
   effective_status?: string;
+}
+
+interface MetaGraphList<T> {
+  data?: T[];
+  paging?: { next?: string };
 }
 
 interface MetaAdCreativeDetails {
@@ -172,14 +227,7 @@ function graphVersion(): string {
   return process.env.META_GRAPH_VERSION ?? DEFAULT_GRAPH_VERSION;
 }
 
-async function fetchGraph<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  const body = (await res.json()) as T & { error?: { message?: string } };
-  if (!res.ok || body.error) {
-    throw new Error(body.error?.message ?? `${res.status} ${res.statusText}`);
-  }
-  return body;
-}
+const fetchGraph = fetchMetaGraph;
 
 function numberValue(value: unknown): number {
   const n = typeof value === "number" ? value : Number.parseFloat(String(value ?? "0"));
@@ -272,15 +320,7 @@ async function fetchCampaignStatuses(accessToken: string, adAccountId: string): 
   })}`;
 
   while (url) {
-    const res = await fetch(url);
-    const body = (await res.json()) as {
-      data?: MetaCampaignRow[];
-      paging?: { next?: string };
-      error?: { message?: string };
-    };
-    if (!res.ok || body.error) {
-      throw new Error(body.error?.message ?? `${res.status} ${res.statusText}`);
-    }
+    const body: MetaGraphList<MetaCampaignRow> = await fetchGraph(url, CAMPAIGN_STATUS_CACHE_TTL_MS);
     for (const campaign of body.data ?? []) {
       statuses.set(campaign.id, campaign.effective_status ?? campaign.status ?? "UNKNOWN");
     }
@@ -332,16 +372,7 @@ async function fetchInsights(
   })}`;
 
   while (url) {
-    const res = await fetch(url);
-    const body = (await res.json()) as {
-      data?: MetaInsightRow[];
-      paging?: { next?: string };
-      error?: { message?: string; code?: number; type?: string };
-    };
-    if (!res.ok || body.error) {
-      const message = body.error?.message ?? `${res.status} ${res.statusText}`;
-      throw new Error(`Meta Marketing API error: ${message}`);
-    }
+    const body: MetaGraphList<MetaInsightRow> = await fetchGraph(url, INSIGHTS_CACHE_TTL_MS);
     rows.push(...(body.data ?? []));
     url = body.paging?.next ?? null;
   }
@@ -440,25 +471,21 @@ function videoIdFromCreative(details: MetaAdCreativeDetails): string | null {
 }
 
 async function fetchVideoDetails(accessToken: string, videoId: string): Promise<MetaVideoDetails | null> {
-  try {
-    return await fetchGraph<MetaVideoDetails>(`${GRAPH_BASE}/${graphVersion()}/${videoId}?${new URLSearchParams({
+  return cachedVideoDetails(accessToken, videoId, () =>
+    fetchGraph<MetaVideoDetails>(`${GRAPH_BASE}/${graphVersion()}/${videoId}?${new URLSearchParams({
       access_token: accessToken,
       fields: "id,source,picture,permalink_url,length",
-    })}`);
-  } catch {
-    return null;
-  }
+    })}`),
+  );
 }
 
 async function fetchAdCreativeDetails(accessToken: string, adId: string): Promise<MetaAdCreativeDetails | null> {
-  try {
-    return await fetchGraph<MetaAdCreativeDetails>(`${GRAPH_BASE}/${graphVersion()}/${adId}?${new URLSearchParams({
+  return cachedAdCreativeDetails(accessToken, adId, () =>
+    fetchGraph<MetaAdCreativeDetails>(`${GRAPH_BASE}/${graphVersion()}/${adId}?${new URLSearchParams({
       access_token: accessToken,
       fields: "id,name,status,effective_status,preview_shareable_link,creative{id,name,thumbnail_url,image_url,video_id,effective_object_story_id,object_story_spec}",
-    })}`);
-  } catch {
-    return null;
-  }
+    })}`),
+  );
 }
 
 async function buildTopCreatives(accessToken: string, ads: MetaAdMetric[]): Promise<MetaTopCreatives> {
@@ -519,6 +546,8 @@ export async function fetchMetaMarketingData(params: {
   adAccountId: string;
   since: string;
   until: string;
+  /** Opt in only when rendering creative media; metrics/comparisons need no media calls. */
+  includeMedia?: boolean;
 }): Promise<MetaMarketingData> {
   const fields =
     "spend,impressions,clicks,inline_link_clicks,actions,action_values,cost_per_action_type,purchase_roas,date_start,date_stop";
@@ -556,7 +585,15 @@ export async function fetchMetaMarketingData(params: {
       status: row.campaign_id ? campaignStatuses.get(row.campaign_id) ?? metric.status : metric.status,
     };
   });
-  return { daily, ads, campaigns, topCreatives: await buildTopCreatives(params.accessToken, ads), summary: summarize(daily) };
+  return {
+    daily,
+    ads,
+    campaigns,
+    topCreatives: params.includeMedia
+      ? await buildTopCreatives(params.accessToken, ads)
+      : { ctr: [], cpl: [], leads: [] },
+    summary: summarize(daily),
+  };
 }
 
 export async function upsertMetaCreatives(clientId: string, ads: MetaAdMetric[]): Promise<void> {
