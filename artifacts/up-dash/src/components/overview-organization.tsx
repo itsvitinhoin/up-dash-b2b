@@ -1,11 +1,6 @@
 import { Fragment, type ReactNode } from "react";
-import { LayoutGrid } from "lucide-react";
 import { MetricSection, Metrics } from "@/components/metric-section";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { OVERVIEW_SECTIONS, visibleKeys, type OverviewSection } from "@/lib/overview-layout";
-import { useOverviewExtraCards } from "@/lib/use-overview-extra-cards";
+import { OVERVIEW_SECTIONS } from "@/lib/overview-layout";
 import { useI18n } from "@/lib/i18n";
 import { useOrganizationData } from "@/lib/organization-data";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
@@ -31,47 +26,6 @@ export type AttributedRoas = {
   spend?: number | null;
 };
 
-/** Botão "Cards" do bloco: traz de volta os cards que saíram do padrão (a escolha fica só neste navegador). */
-function ExtraCardsMenu({ section, selected, onToggle, onReset }: { section: OverviewSection; selected: string[]; onToggle: (key: string) => void; onReset: () => void }) {
-  const { tx } = useI18n();
-  if (section.extras.length === 0) return null;
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
-          aria-label={tx("Escolher cards deste bloco")}
-          data-testid={`${section.testId}-cards-menu`}
-        >
-          <LayoutGrid className="h-3.5 w-3.5" />
-          {tx("Cards")}
-          {selected.length > 0 ? ` (+${selected.length})` : ""}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-3" data-testid={`${section.testId}-cards-popover`}>
-        <p className="mb-1 text-xs font-medium">{tx("Cards disponíveis")}</p>
-        <p className="mb-3 text-[11px] text-muted-foreground">{tx("Marque para trazer de volta um card que saiu do padrão deste bloco. Vale só neste navegador.")}</p>
-        <div className="space-y-2">
-          {section.extras.map((extra) => (
-            <label key={extra.key} className="flex cursor-pointer items-center gap-2 text-xs">
-              <Checkbox checked={selected.includes(extra.key)} onCheckedChange={() => onToggle(extra.key)} data-testid={`${section.testId}-extra-${extra.key}`} />
-              <span>{tx(extra.label)}</span>
-            </label>
-          ))}
-        </div>
-        {selected.length > 0 && (
-          <Button type="button" variant="ghost" size="sm" className="mt-3 h-7 w-full text-xs" onClick={onReset}>
-            {tx("Restaurar padrão")}
-          </Button>
-        )}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
 export function OverviewOrganization({
   cards,
   ecommerce,
@@ -87,7 +41,6 @@ export function OverviewOrganization({
     ecommerce ? ECOMMERCE_PREVIOUS : EXECUTIVE_PREVIOUS,
   );
   const { dateRange } = useDashboardFilters();
-  const { choice, toggle, reset } = useOverviewExtraCards();
   const money = (value: number | null | undefined) => (value != null && Number.isFinite(value) ? formatCurrency(value) : "—");
   // Investimento: as duas linhas usam só números que já estão na tela (investimento, dias do período e pedidos pagos).
   const days = Math.max(1, differenceInCalendarDays(dateRange.to, dateRange.from) + 1);
@@ -120,7 +73,7 @@ export function OverviewOrganization({
         </MetricSection>
       </div>
     );
-  // ROAS "antigo" (clientes atribuídos às campanhas): fica disponível no bloco Anúncios, fora do padrão.
+  // ROAS "antigo" (clientes atribuídos às campanhas): fora do padrão, continua pronto (ver lib/overview-layout.ts).
   const roasMetric = attributedRoas
     ? {
         key: "roas",
@@ -145,14 +98,8 @@ export function OverviewOrganization({
   return (
     <div className="space-y-6">
       {OVERVIEW_SECTIONS.map((section) => (
-        <MetricSection
-          key={section.id}
-          title={tx(section.title)}
-          columns={4}
-          id={section.testId}
-          action={<ExtraCardsMenu section={section} selected={choice[section.id] ?? []} onToggle={(key) => toggle(section.id, key)} onReset={() => reset(section.id)} />}
-        >
-          {visibleKeys(section, choice).map((key) => (
+        <MetricSection key={section.id} title={tx(section.title)} columns={4} id={section.testId}>
+          {section.defaults.map((key) => (
             <Fragment key={key}>{renderCard(key)}</Fragment>
           ))}
         </MetricSection>

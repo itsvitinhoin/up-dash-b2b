@@ -27,14 +27,11 @@ export function MetricSection({
   children,
   columns = 4,
   id,
-  action,
 }: {
   title: string;
   children: ReactNode;
   columns?: 2 | 3 | 4 | 5 | 6 | 8;
   id?: string;
-  /** Controle opcional à direita do título (ex.: trazer de volta cards que saíram do padrão). */
-  action?: ReactNode;
 }) {
   const grids = {
     2: "grid-cols-1 sm:grid-cols-2",
@@ -46,14 +43,7 @@ export function MetricSection({
   };
   return (
     <section className="space-y-4" aria-label={title} data-testid={id}>
-      {action ? (
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-          {action}
-        </div>
-      ) : (
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-      )}
+      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
       <div className={`up-metric-grid grid gap-4 ${grids[columns]}`}>{children}</div>
     </section>
   );
