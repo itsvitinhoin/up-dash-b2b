@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { aggregateMetaInsights, metaReportingWindow, spendCents } from "./meta-reporting";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, creativesTable } from "@workspace/db";
 
 const DEFAULT_GRAPH_VERSION = "v24.0";
@@ -594,36 +594,50 @@ async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: st
   return { daily, ads, campaigns, topCreatives, summary: summarize(daily) };
 }
 
+/** Anúncios por gravação. Uma ida ao banco por lote (e não uma por anúncio): com banco remoto, cada ida em série soma segundos de espera na tela de Marketing (ela só responde depois desta gravação). */
+const CREATIVE_UPSERT_BATCH = 200;
+
+// No ON CONFLICT, `excluded.<coluna>` é o valor que estava sendo inserido.
+const excludedColumn = (column: { name: string }) => sql.raw(`excluded."${column.name}"`);
+
 export async function upsertMetaCreatives(clientId: string, ads: MetaAdMetric[]): Promise<void> {
+  // Uma linha por anúncio. O mesmo id duas vezes no mesmo comando faria o banco recusar ("cannot affect row a second time"): o último vale.
+  const rows = new Map<string, typeof creativesTable.$inferInsert>();
   for (const ad of ads) {
+    const id = `meta:${clientId}:${ad.id}`;
+    rows.set(id, {
+      id,
+      clientId,
+      name: ad.name,
+      platform: "META",
+      status: "ACTIVE",
+      clicks: ad.clicks,
+      impressions: ad.impressions,
+      spend: ad.spend,
+      leads: ad.leads,
+      approvedLeads: ad.purchases,
+      activeFrom: ad.dateStart,
+      activeTo: ad.dateStop,
+    });
+  }
+
+  const values = [...rows.values()];
+  for (let i = 0; i < values.length; i += CREATIVE_UPSERT_BATCH) {
     await db
       .insert(creativesTable)
-      .values({
-        id: `meta:${clientId}:${ad.id}`,
-        clientId,
-        name: ad.name,
-        platform: "META",
-        status: "ACTIVE",
-        clicks: ad.clicks,
-        impressions: ad.impressions,
-        spend: ad.spend,
-        leads: ad.leads,
-        approvedLeads: ad.purchases,
-        activeFrom: ad.dateStart,
-        activeTo: ad.dateStop,
-      })
+      .values(values.slice(i, i + CREATIVE_UPSERT_BATCH))
       .onConflictDoUpdate({
         target: creativesTable.id,
         set: {
-          name: ad.name,
-          status: "ACTIVE",
-          clicks: ad.clicks,
-          impressions: ad.impressions,
-          spend: ad.spend,
-          leads: ad.leads,
-          approvedLeads: ad.purchases,
-          activeFrom: ad.dateStart,
-          activeTo: ad.dateStop,
+          name: excludedColumn(creativesTable.name),
+          status: excludedColumn(creativesTable.status),
+          clicks: excludedColumn(creativesTable.clicks),
+          impressions: excludedColumn(creativesTable.impressions),
+          spend: excludedColumn(creativesTable.spend),
+          leads: excludedColumn(creativesTable.leads),
+          approvedLeads: excludedColumn(creativesTable.approvedLeads),
+          activeFrom: excludedColumn(creativesTable.activeFrom),
+          activeTo: excludedColumn(creativesTable.activeTo),
           updatedAt: new Date(),
         },
       });
