@@ -175,9 +175,10 @@ export function useOrganizationData(
     staleTime: 120000,
     refetchOnWindowFocus: false,
   });
-  const performanceUrl = periodQuery("/api/analytics/performance", period);
+  // paidOnly: o ERP da Visao geral conta so venda paga (sem pedido em ESPERA); a pagina Performance continua sem esse filtro.
+  const performanceUrl = periodQuery("/api/analytics/performance", { ...period, paidOnly: true });
   const performance = useQuery<PerformanceMetrics>({
-    queryKey: ["organization-performance", period],
+    queryKey: ["organization-performance", period, "paid"],
     queryFn: () => customFetch(performanceUrl),
     enabled: heavyEnabled && wants("performance") && selectedDashboardMode !== "B2C",
     staleTime: 120000,
@@ -196,7 +197,7 @@ export function useOrganizationData(
   const wantsPrevious = (source: OrganizationSource) => wants(source) && previous.includes(source);
   const previousDashboard = usePreviousPeriodQuery<NonNullable<typeof dashboard.data>>(periodQuery("/api/analytics/dashboard", dashboardParams), enabled && wantsPrevious("dashboard") && dashboard.data !== undefined);
   const previousMarketing = usePreviousPeriodQuery<NonNullable<typeof marketing.data>>(periodQuery("/api/analytics/marketing", period), enabled && wantsPrevious("marketing") && marketing.data !== undefined);
-  const previousPerformance = usePreviousPeriodQuery<PerformanceMetrics>(periodQuery("/api/analytics/performance", period), heavyEnabled && wantsPrevious("performance") && selectedDashboardMode !== "B2C" && performance.data !== undefined);
+  const previousPerformance = usePreviousPeriodQuery<PerformanceMetrics>(periodQuery("/api/analytics/performance", { ...period, paidOnly: true }), heavyEnabled && wantsPrevious("performance") && selectedDashboardMode !== "B2C" && performance.data !== undefined);
   const previousOrders = usePreviousPeriodQuery<OrderTotals>(periodQuery("/api/analytics/orders-page", { ...period, page: 1, limit: 1 }), heavyEnabled && wantsPrevious("orders") && orders.data !== undefined);
   const previousFunnel = usePreviousPeriodQuery<NonNullable<typeof funnel.data> & { activation?: Activation }>(periodQuery("/api/analytics/funnel", funnelParams), enabled && wantsPrevious("funnel") && funnel.data !== undefined);
   const previousRecompra = usePreviousPeriodQuery<RecompraResponse>(periodQuery("/api/analytics/recompra/dashboard", recompraQuery), heavyEnabled && wantsPrevious("recompra") && recompra.data !== undefined);
@@ -281,12 +282,14 @@ export function useOrganizationData(
     else if (info) measures[key].info = tx(info);
   };
   erpMeasure("erpRevenue", "Faturamento pago no ERP", pk?.netRevenue, "currency", "ERP · pago", "Faturamento líquido do ERP no período (descontos já abatidos): é a base da % atribuída aos anúncios.");
-  // Pedido do time (27/10/2026): líquido em destaque e o bruto embaixo, no mesmo card (o líquido é o bruto menos as devoluções).
+  // Pedido do time (27/10/2026): líquido em destaque e o bruto embaixo, no mesmo card. Líquido = bruto − (descontos e devoluções):
+  // a diferença vira uma linha só porque, no Miredata (Obzee, Vogabox), há desconto além da devolução (bruto − devoluções não fecha o líquido).
   if (pk?.netRevenue != null && measures.erpRevenue) {
     const brl = (v: number | null | undefined) => (v != null && Number.isFinite(v) ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—");
+    const gross = pk.grossRevenue;
     measures.erpRevenue.sub = [
-      { label: tx("Faturamento bruto"), value: brl(pk.grossRevenue) },
-      { label: tx("Devoluções"), value: brl(pk.returnAmount) },
+      { label: tx("Faturamento bruto"), value: brl(gross) },
+      { label: tx("Descontos e devoluções"), value: brl(gross != null ? gross - pk.netRevenue : null) },
     ];
   }
   erpMeasure("erpOrders", "Pedidos totais pagos no ERP", pk?.orders, "number", "ERP · pago");

@@ -325,10 +325,12 @@ export async function getPerformance(
   const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
   const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
   const { page, limit } = queryParsed.data;
+  // Cards da Visão geral pedem só venda paga (ERP sem pedido em ESPERA); a página Performance continua como estava.
+  const paidOnly = rawQuery.paidOnly === "1" || rawQuery.paidOnly === "true";
 
   const [dashboard, orders] = await Promise.all([
     cached(
-      `performance:dashboard:${ctx.clientId}:${ctx.dataset}:${dateFromOnly}:${dateToOnly}`,
+      `performance:dashboard:${ctx.clientId}:${ctx.dataset}:${dateFromOnly}:${dateToOnly}${paidOnly ? ":paid" : ""}`,
       ERP_CACHE_TTL_MS,
       () =>
         fetchPerformanceDashboard(
@@ -336,6 +338,7 @@ export async function getPerformance(
           ctx.dataset,
           dateFromOnly,
           dateToOnly,
+          { paidOnly },
         ),
     ),
     cached(

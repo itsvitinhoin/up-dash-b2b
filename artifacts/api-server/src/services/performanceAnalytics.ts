@@ -10,6 +10,8 @@ import {
 } from "./performanceMetrics";
 
 const CANCELLED_STATUSES = ["CANCELADO", "EXCLUIDO"];
+// Venda ainda nao paga (so sai da conta com `paidOnly`, usado pelos cards da Visao geral).
+const UNPAID_STATUSES = ["ESPERA"];
 
 function dateOnly(value: unknown): string {
   if (
@@ -182,12 +184,13 @@ export async function fetchPerformanceDashboard(
   dataset: string,
   dateFrom: string,
   dateTo: string,
+  options: { paidOnly?: boolean } = {},
 ): Promise<PerformanceDashboard> {
   const pedidos = vestiTable(dataset, "pedidos_erp");
   const clientes = vestiTable(dataset, "clientes_erp");
-  const cancelledList = CANCELLED_STATUSES.map((status) => `'${status}'`).join(
-    ", ",
-  );
+  const cancelledList = (options.paidOnly ? [...CANCELLED_STATUSES, ...UNPAID_STATUSES] : CANCELLED_STATUSES)
+    .map((status) => `'${status}'`)
+    .join(", ");
 
   const customerDayQuery = `
     WITH all_orders AS (
@@ -342,7 +345,7 @@ export async function fetchPerformanceDashboard(
     eventSummaryResult,
     clientRows,
   ] = await Promise.all([
-    fetchErpDashboard(clientId, dataset, dateFrom, dateTo),
+    fetchErpDashboard(clientId, dataset, dateFrom, dateTo, options),
     bigquery.query({ query: customerDayQuery, params: { dateFrom, dateTo } }),
     bigquery.query({ query: itemSummaryQuery, params: { dateFrom, dateTo } }),
     bigquery.query({ query: breakdownQuery, params: { dateFrom, dateTo } }),
