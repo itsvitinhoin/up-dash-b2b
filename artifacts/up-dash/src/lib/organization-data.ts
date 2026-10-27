@@ -45,6 +45,9 @@ type PerformanceMetrics = {
     cpc: number | null;
     /** Faturamento do ERP (líquido de descontos, pedidos não cancelados): base da % atribuída aos anúncios. */
     netRevenue?: number;
+    /** Faturamento bruto do ERP e devoluções do período (bruto − devoluções = líquido). */
+    grossRevenue?: number;
+    returnAmount?: number;
     /** Pedidos do ERP no período. */
     orders?: number;
     /** Receita atribuída à mídia paga (pedido do ERP + identidade + toque pago). */
@@ -278,6 +281,14 @@ export function useOrganizationData(
     else if (info) measures[key].info = tx(info);
   };
   erpMeasure("erpRevenue", "Faturamento pago no ERP", pk?.netRevenue, "currency", "ERP · pago", "Faturamento líquido do ERP no período (descontos já abatidos): é a base da % atribuída aos anúncios.");
+  // Pedido do time (27/10/2026): líquido em destaque e o bruto embaixo, no mesmo card (o líquido é o bruto menos as devoluções).
+  if (pk?.netRevenue != null && measures.erpRevenue) {
+    const brl = (v: number | null | undefined) => (v != null && Number.isFinite(v) ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—");
+    measures.erpRevenue.sub = [
+      { label: tx("Faturamento bruto"), value: brl(pk.grossRevenue) },
+      { label: tx("Devoluções"), value: brl(pk.returnAmount) },
+    ];
+  }
   erpMeasure("erpOrders", "Pedidos totais pagos no ERP", pk?.orders, "number", "ERP · pago");
   put(
     "ecomPaidRevenue",

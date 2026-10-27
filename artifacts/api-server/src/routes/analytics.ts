@@ -1441,10 +1441,9 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
 
     // New/Returning is based on the customer's full ecommerce order history,
     // independent of the selected period: 1 historical order = New; 2+ = Returning.
-    // For B2C/Nuvemshop, keep the existing approved/shipped/delivered guard.
-    const paidStatusClause = isB2CClient
-      ? sql`AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`
-      : sql``;
+    // Só pedido pago (approved/shipped/delivered), em B2C e B2B: decisão do time em 27/10/2026 ("novo cliente: conta só pago").
+    // Antes o B2B (UpZero) contava pedido de qualquer status (MX Fashion 30 dias: 13 novos; só pagos: 10).
+    const paidStatusClause = sql`AND ${ordersTable.status} IN ('APPROVED', 'SHIPPED', 'DELIVERED')`;
     type BuyerSummaryRow = { new_buyers: string; returning_buyers: string };
     const buyerSummaryRaw = await db.execute<BuyerSummaryRow>(sql`
       WITH period_buyers AS (
