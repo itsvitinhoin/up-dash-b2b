@@ -21,7 +21,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { DateRangePicker } from "@/components/date-range-picker";
 import {
   Select,
   SelectContent,
@@ -183,8 +182,7 @@ const FILTER_LABELS_PT: Record<string, string> = {
   Creative: "Criativo",
 };
 /**
- * `overview` = barra da Visão geral de performance (pedido do time em 26/10/2026): só Período (fora daqui, nos atalhos do layout), Vendedora e
- * Estado. Categoria, Canal, Segmento e "Mais filtros" não aparecem. Os pedidos contam sempre só os PAGOS (regra do produto, sem filtro de status).
+ * `overview` = barra da Visão geral de performance (pedido do time em 26/10/2026): Vendedora e Estado (o Período fica no seletor do topo). Categoria, Canal, Segmento e "Mais filtros" não aparecem. Os pedidos contam sempre só os PAGOS (regra do produto, sem filtro de status).
  */
 const OVERVIEW_HIDDEN_FILTERS = [
   "category", "channel", "segment", "utmSource", "utmMedium", "utmCampaign", "city", "product", "size", "color", "creative",
@@ -198,7 +196,7 @@ export function FilterBar({ variant = "default" }: { variant?: "default" | "over
   const { user, selectedClientId, selectedDashboardMode } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { dateRange, setDateRange, filters, setFilter, resetFilters, applyView, hasAny } =
+  const { dateRange, filters, setFilter, resetFilters, applyView, hasAny } =
     useDashboardFilters();
 
   const clientId =
@@ -468,15 +466,6 @@ export function FilterBar({ variant = "default" }: { variant?: "default" | "over
       aria-label="Filtros do dashboard"
       data-testid="filter-bar"
     >
-      {overview && (
-        // Período na mesma linha dos filtros (o seletor do topo some só nesta página: ver app-layout). Mesmo componente, mesmas opções.
-        <DateRangePicker
-          value={dateRange}
-          onChange={setDateRange}
-          align="start"
-          className="h-[34px] gap-1.5 rounded-[10px] bg-background px-3 [&_span]:text-xs"
-        />
-      )}
       {!overview && (
         <>
           <FilterSelect

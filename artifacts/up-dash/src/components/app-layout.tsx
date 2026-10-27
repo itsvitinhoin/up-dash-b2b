@@ -900,8 +900,8 @@ export function AppLayout({ children }: AppLayoutProps) {
       : navTitleKeys[location]
         ? t(navTitleKeys[location], tx(meta.title))
         : tx(meta.title));
-  // Visão geral: o período, a vendedora e o estado ficam numa linha só (FilterBar variant="overview"); o seletor de período do topo e os
-  // botões 7/30/90 dias não aparecem aqui para não haver dois controles do mesmo período.
+  // Visão geral: a linha de filtros tem só Vendedora e Estado (FilterBar variant="overview"); o período fica no seletor do topo, igual às outras
+  // páginas. Os botões 7/30/90 dias não aparecem aqui (o seletor do topo já tem essas opções e mais).
   const isOverviewRoute = location === "/" || location === "/dashboard";
   const paidOnlyText = language === "pt" ? "só pedidos pagos" : language === "ko" ? "결제 완료 주문만" : "paid orders only";
   const subtitleText =
@@ -1528,7 +1528,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               </div>
             )}
 
-            {meta.hasDateRange && !isOverviewRoute && <div className="up-top-period"><DateRangePicker value={dateRange} onChange={setDateRange} /></div>}
+            {meta.hasDateRange && <div className="up-top-period"><DateRangePicker value={dateRange} onChange={setDateRange} /></div>}
 
             <div className="up-top-actions flex items-center gap-2">
               <Button

@@ -40,8 +40,6 @@ interface DateRangePickerProps {
   value: DateRange;
   onChange: (range: DateRange) => void;
   className?: string;
-  /** Lado em que o calendário abre em relação ao botão (padrão "end": no topo, à direita da tela). */
-  align?: "start" | "end";
 }
 
 interface DraftDateRange {
@@ -157,7 +155,7 @@ function getRangeLabel(range: DateRange): string {
   return `${format(range.from, fromFormat)} – ${format(range.to, "MMM d, yyyy")}`;
 }
 
-export function DateRangePicker({ value, onChange, className, align = "end" }: DateRangePickerProps) {
+export function DateRangePicker({ value, onChange, className }: DateRangePickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [customMode, setCustomMode] = useState(false);
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(value.from));
@@ -219,7 +217,7 @@ export function DateRangePicker({ value, onChange, className, align = "end" }: D
       </PopoverTrigger>
       <PopoverContent
         className="flex w-[min(calc(100vw-2rem),540px)] flex-col p-0 md:flex-row"
-        align={align}
+        align="end"
       >
         <div className="w-full border-b border-border p-2 md:w-[190px] md:border-b-0 md:border-r">
           {presets.map((preset) => (
