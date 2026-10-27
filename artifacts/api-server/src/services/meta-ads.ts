@@ -2,9 +2,52 @@ import { createHash } from "node:crypto";
 import { aggregateMetaInsights, metaReportingWindow, spendCents } from "./meta-reporting";
 import { and, eq, sql } from "drizzle-orm";
 import { db, creativesTable } from "@workspace/db";
+import { fetchMetaGraph } from "./meta-graph";
 
 const DEFAULT_GRAPH_VERSION = "v24.0";
 const GRAPH_BASE = "https://graph.facebook.com";
+const INSIGHTS_CACHE_TTL_MS = 5 * 60 * 1000;
+const CAMPAIGN_STATUS_CACHE_TTL_MS = 15 * 60 * 1000;
+
+// Mídia (vídeo e criativo) muda pouco e é o que mais gasta a cota do app (achado 27/10/2026: ~7 mil chamadas de vídeo por dia).
+// Cache só na memória deste processo, limitado: sucesso vale 1 hora (a URL assinada e o criativo editado se renovam), falha vale 1 minuto.
+const MEDIA_CACHE_TTL_MS = 60 * 60 * 1000;
+const MEDIA_FAILURE_TTL_MS = 60 * 1000;
+const MEDIA_CACHE_MAX_ENTRIES = 5_000;
+
+function createMediaCache<T>() {
+  const entries = new Map<string, { value: T | null; expiresAt: number }>();
+  const inFlight = new Map<string, Promise<T | null>>();
+
+  return (accessToken: string, id: string, load: () => Promise<T>): Promise<T | null> => {
+    // A chave isola permissão e versão do Graph sem guardar o token cru.
+    const key = `${graphVersion()}:${createHash("sha256").update(accessToken).digest("hex")}:${id}`;
+    const cached = entries.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      entries.delete(key);
+      entries.set(key, cached);
+      return Promise.resolve(cached.value);
+    }
+    entries.delete(key);
+    const pending = inFlight.get(key);
+    if (pending) return pending;
+
+    const request = Promise.resolve().then(load).catch(() => null).then((value) => {
+      const now = Date.now();
+      for (const [entryKey, entry] of entries) {
+        if (entry.expiresAt <= now) entries.delete(entryKey);
+      }
+      while (entries.size >= MEDIA_CACHE_MAX_ENTRIES) entries.delete(entries.keys().next().value!);
+      entries.set(key, { value, expiresAt: now + (value === null ? MEDIA_FAILURE_TTL_MS : MEDIA_CACHE_TTL_MS) });
+      return value;
+    }).finally(() => inFlight.delete(key));
+    inFlight.set(key, request);
+    return request;
+  };
+}
+
+const cachedVideoDetails = createMediaCache<MetaVideoDetails>();
+const cachedAdCreativeDetails = createMediaCache<MetaAdCreativeDetails>();
 
 type MetaAction = { action_type?: string; value?: string };
 type MetaRoas = { action_type?: string; value?: string };
@@ -32,6 +75,11 @@ interface MetaCampaignRow {
   id: string;
   status?: string;
   effective_status?: string;
+}
+
+interface MetaGraphList<T> {
+  data?: T[];
+  paging?: { next?: string };
 }
 
 interface MetaAdCreativeDetails {
@@ -175,14 +223,9 @@ function graphVersion(): string {
   return process.env.META_GRAPH_VERSION ?? DEFAULT_GRAPH_VERSION;
 }
 
-async function fetchGraph<T>(url: string): Promise<T> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  const body = (await res.json()) as T & { error?: { message?: string } };
-  if (!res.ok || body.error) {
-    throw new Error(body.error?.message ?? `${res.status} ${res.statusText}`);
-  }
-  return body;
-}
+// Toda leitura do Graph passa pelo cliente central (meta-graph.ts): no máximo 4 ao mesmo tempo, leituras iguais juntas viram uma,
+// e depois de limite de uso (HTTP 429 / x-app-usage 100% / códigos 4, 17, 32, 341, 613) o app para de chamar por um tempo.
+const fetchGraph = fetchMetaGraph;
 
 function numberValue(value: unknown): number {
   const n = typeof value === "number" ? value : Number.parseFloat(String(value ?? "0"));
@@ -275,15 +318,7 @@ async function fetchCampaignStatuses(accessToken: string, adAccountId: string): 
   })}`;
 
   while (url) {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    const body = (await res.json()) as {
-      data?: MetaCampaignRow[];
-      paging?: { next?: string };
-      error?: { message?: string };
-    };
-    if (!res.ok || body.error) {
-      throw new Error(body.error?.message ?? `${res.status} ${res.statusText}`);
-    }
+    const body: MetaGraphList<MetaCampaignRow> = await fetchGraph(url, CAMPAIGN_STATUS_CACHE_TTL_MS);
     for (const campaign of body.data ?? []) {
       statuses.set(campaign.id, campaign.effective_status ?? campaign.status ?? "UNKNOWN");
     }
@@ -335,16 +370,7 @@ async function fetchInsights(
   })}`;
 
   while (url) {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    const body = (await res.json()) as {
-      data?: MetaInsightRow[];
-      paging?: { next?: string };
-      error?: { message?: string; code?: number; type?: string };
-    };
-    if (!res.ok || body.error) {
-      const message = body.error?.message ?? `${res.status} ${res.statusText}`;
-      throw new Error(`Meta Marketing API error: ${message}`);
-    }
+    const body: MetaGraphList<MetaInsightRow> = await fetchGraph(url, INSIGHTS_CACHE_TTL_MS);
     if (!Array.isArray(body.data)) throw new Error("O Meta retornou uma resposta de mídia incompleta.");
     rows.push(...body.data);
     url = body.paging?.next ?? null;
@@ -443,27 +469,23 @@ function videoIdFromCreative(details: MetaAdCreativeDetails): string | null {
   );
 }
 
+// Falha vira null (a miniatura é opcional) e fica 1 minuto no cache para não insistir.
 async function fetchVideoDetails(accessToken: string, videoId: string): Promise<MetaVideoDetails | null> {
-  try {
-    return await fetchGraph<MetaVideoDetails>(`${GRAPH_BASE}/${graphVersion()}/${videoId}?${new URLSearchParams({
+  return cachedVideoDetails(accessToken, videoId, () =>
+    fetchGraph<MetaVideoDetails>(`${GRAPH_BASE}/${graphVersion()}/${videoId}?${new URLSearchParams({
       access_token: accessToken,
       fields: "id,source,picture,permalink_url,length",
-    })}`);
-  } catch {
-    return null;
-  }
+    })}`),
+  );
 }
 
 async function fetchAdCreativeDetails(accessToken: string, adId: string): Promise<MetaAdCreativeDetails | null> {
-  try {
-    return await fetchGraph<MetaAdCreativeDetails>(`${GRAPH_BASE}/${graphVersion()}/${adId}?${new URLSearchParams({
+  return cachedAdCreativeDetails(accessToken, adId, () =>
+    fetchGraph<MetaAdCreativeDetails>(`${GRAPH_BASE}/${graphVersion()}/${adId}?${new URLSearchParams({
       access_token: accessToken,
       fields: "id,name,status,effective_status,preview_shareable_link,creative{id,name,thumbnail_url,image_url,video_id,effective_object_story_id,object_story_spec}",
-    })}`);
-  } catch (err) {
-    console.warn("[meta-ads] fetchAdCreativeDetails failed:", adId, err instanceof Error ? err.message : err);
-    return null;
-  }
+    })}`),
+  );
 }
 
 async function buildTopCreatives(accessToken: string, ads: MetaAdMetric[]): Promise<MetaTopCreatives> {
@@ -525,7 +547,8 @@ export class MediaReadError extends Error {
   constructor() { super("Investimento indisponível: não foi possível ler e alinhar os dados da conta Meta. Tente novamente."); }
 }
 
-type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string };
+/** `includeMedia`: só a tela de Marketing (período atual) mostra miniaturas; métricas, comparativos e rotinas não precisam e não gastam chamadas de mídia. */
+type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string; includeMedia?: boolean };
 const mediaReads = new Map<string, { expiresAt: number; promise: Promise<MetaMarketingData> }>();
 const accountZones = new Map<string, { expiresAt: number; promise: Promise<string> }>();
 
@@ -546,7 +569,7 @@ async function fetchAccountTimeZone(params: MetaParams, key: string): Promise<st
 export async function fetchMetaMarketingData(params: MetaParams): Promise<MetaMarketingData> {
   if (!params.accessToken.trim() || !params.adAccountId.trim()) throw new MediaReadError();
   const accountKey = `${normalizeMetaAdAccountId(params.adAccountId)}:${createHash("sha256").update(params.accessToken).digest("hex")}`;
-  const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? ""]);
+  const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? "", params.includeMedia === true]);
   const cached = mediaReads.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
   const promise = fetchMetaMarketingDataUncached(params, accountKey).catch(() => { throw new MediaReadError(); });
@@ -590,7 +613,9 @@ async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: st
     status: row.campaign_id ? campaignStatuses.get(row.campaign_id) ?? "UNKNOWN" : "UNKNOWN",
   }));
   // Creative previews are optional decoration; they cannot make financial data unavailable.
-  const topCreatives = await buildTopCreatives(params.accessToken, ads).catch(() => ({ ctr: [], cpl: [], leads: [] }));
+  const topCreatives = params.includeMedia
+    ? await buildTopCreatives(params.accessToken, ads).catch(() => ({ ctr: [], cpl: [], leads: [] }))
+    : { ctr: [], cpl: [], leads: [] };
   return { daily, ads, campaigns, topCreatives, summary: summarize(daily) };
 }
 

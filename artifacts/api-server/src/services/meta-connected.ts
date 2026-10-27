@@ -10,6 +10,7 @@ export async function fetchMetaMarketingDataIfConnected(params: {
   since: string;
   until: string;
   campaignName?: string;
+  includeMedia?: boolean;
 }): Promise<MetaMarketingData> {
   if (!isMetaConnected(params)) return emptyMetaMarketingData();
   return fetchMetaMarketingData({ ...params, accessToken: params.accessToken!, adAccountId: params.adAccountId! });
