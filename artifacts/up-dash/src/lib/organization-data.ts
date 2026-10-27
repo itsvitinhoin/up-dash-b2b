@@ -58,6 +58,10 @@ type PerformanceMetrics = {
     /** Faturamento líquido e pedidos do ERP desses compradores novos, no período. */
     newBuyersRevenue?: number;
     newBuyersOrders?: number;
+    /** Compradores recorrentes do ERP: quantidade, faturamento líquido e pedidos no período. */
+    returningBuyers?: number;
+    returningBuyersRevenue?: number;
+    returningBuyersOrders?: number;
     newAttributedBuyers?: number;
     /** Receita atribuída ÷ faturamento líquido do ERP, em %. */
     revenueAttributionCoveragePct?: number;
@@ -434,9 +438,13 @@ export function useOrganizationData(
   put("newCustomersRevenue", "Faturamento de novos clientes", erpNew ? pk?.newBuyersRevenue : money(r?.aquisicao), "currency", newSource, newLoading);
   put("newCustomersOrders", "Vendas de novos clientes", erpNew ? pk?.newBuyersOrders : r?.aquisicao?.vendas, "number", newSource, newLoading);
   put("newCustomersTicket", "Ticket de novos clientes", ticketOf(r?.aquisicao), "currency", acquisitionSource, recompra.isLoading);
-  put("repurchaseCustomers", "Clientes que recompraram", r?.recompra.clientes, "number", recompraSource, recompra.isLoading);
-  put("repurchaseRevenue", "Faturamento de recompra", money(r?.recompra), "currency", recompraSource, recompra.isLoading);
-  put("repurchaseSales", "Vendas de recompra", r?.recompra.vendas, "number", recompraSource, recompra.isLoading);
+  // Recompra na mesma base dos Novos clientes (decisão do time, 27/10/2026): ERP quando o cliente tem ERP; senão e-commerce/Vesti (Recompra).
+  const erpRepurchase = pk?.returningBuyersRevenue != null;
+  const repurchaseSource = erpRepurchase ? "ERP · compras de quem já tinha comprado antes" : recompraSource;
+  const repurchaseLoading = recompra.isLoading || perfLoading;
+  put("repurchaseCustomers", "Clientes que recompraram", erpRepurchase ? pk?.returningBuyers : r?.recompra.clientes, "number", repurchaseSource, repurchaseLoading);
+  put("repurchaseRevenue", "Faturamento de recompra", erpRepurchase ? pk?.returningBuyersRevenue : money(r?.recompra), "currency", repurchaseSource, repurchaseLoading);
+  put("repurchaseSales", "Vendas de recompra", erpRepurchase ? pk?.returningBuyersOrders : r?.recompra.vendas, "number", repurchaseSource, repurchaseLoading);
   put(
     "registrations",
     "Cadastros Gerados",
@@ -571,7 +579,9 @@ export function useOrganizationData(
     cac: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cac : null, ctr: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.ctr : null, cpc: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cpc : null,
     acquisitionRevenue: money(pr?.aquisicao), acquisitionOrders: pr?.aquisicao?.vendas, acquisitionTicket: ticketOf(pr?.aquisicao),
     newCustomersRevenue: previousPerformance.data?.kpis.newBuyersRevenue ?? money(pr?.aquisicao), newCustomersOrders: previousPerformance.data?.kpis.newBuyersOrders ?? pr?.aquisicao?.vendas, newCustomersTicket: ticketOf(pr?.aquisicao),
-    repurchaseCustomers: pr?.recompra.clientes, repurchaseRevenue: money(pr?.recompra), repurchaseSales: pr?.recompra.vendas,
+    repurchaseCustomers: previousPerformance.data?.kpis.returningBuyers ?? pr?.recompra.clientes,
+    repurchaseRevenue: previousPerformance.data?.kpis.returningBuyersRevenue ?? money(pr?.recompra),
+    repurchaseSales: previousPerformance.data?.kpis.returningBuyersOrders ?? pr?.recompra.vendas,
     repurchasers: pr?.recompra.clientes, retentionRevenue: money(pr?.recompra), retentionOrders: pr?.recompra.vendas, retentionTicket: ticketOf(pr?.recompra),
     registrations: pc?.totalRegistrations, approved: pc?.approvedRegistrations, approvalRate: pc?.approvalRatePct, firstPurchaseAverage: pc?.avgTimeToFirstPurchaseDays,
     pieces: previousOrders.data?.kpis.fulfilledQuantity, impressions: previousMeta?.impressions, clicks: previousMeta?.clicks,
