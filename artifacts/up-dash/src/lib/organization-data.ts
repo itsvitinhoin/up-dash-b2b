@@ -317,8 +317,20 @@ export function useOrganizationData(
   erpMeasure("adsRevenue", "Faturamento total de anúncios (pago)", pk?.attributedRevenue, "currency", "ERP × mídia paga", "Faturamento pago do ERP que o sistema consegue ligar a um toque de anúncio pago (documento do cliente + evidência de clique).");
   // Sem conta de anúncio cadastrada não há gasto a mostrar: "—" com explicação, não R$ 0,00 (indisponível não é zero). Vale só depois de o cadastro do cliente carregar.
   const noAdAccount = !!clientDetail && !clientDetail.metaAdAccountId;
-  put("adsSpend", "Investimento total em anúncios", noAdAccount ? null : m?.totalSpend, "currency", "Mídia", marketing.isLoading);
+  // Conta cadastrada mas NUNCA coletada (nenhum dia guardado: permissão negada, conta nova sem coleta): "sem dado", não R$ 0,00.
+  // Só pergunta quando o gasto veio zerado (dia sem gasto também é zero, e aí a conta tem dias guardados).
+  const spendIsZero = m?.totalSpend === 0 && !noAdAccount && !!clientDetail?.metaAdAccountId;
+  const adsHistory = useQuery<{ available: boolean; history: { coverage: { days: number } } | null }>({
+    queryKey: ["organization-ads-history", selectedClientId],
+    queryFn: () => customFetch(`/api/clients/${selectedClientId}/ads-history`),
+    enabled: enabled && spendIsZero && !!selectedClientId,
+    staleTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const noStoredAds = spendIsZero && adsHistory.data?.available === true && adsHistory.data.history?.coverage?.days === 0;
+  put("adsSpend", "Investimento total em anúncios", noAdAccount || noStoredAds ? null : m?.totalSpend, "currency", "Mídia", marketing.isLoading);
   if (noAdAccount) measures.adsSpend.info = tx("Este cliente não tem conta de anúncio do Meta cadastrada, então não há investimento para mostrar.");
+  else if (noStoredAds) measures.adsSpend.info = tx("A conta de anúncio está cadastrada, mas ainda não há dado de investimento coletado para ela (por exemplo, falta permissão no Meta). Sem dado não significa gasto zero.");
   const adsRoasValue = pk?.attributedRevenue != null && m?.totalSpend != null && m.totalSpend > 0 ? pk.attributedRevenue / m.totalSpend : null;
   erpMeasure("adsRoas", "ROAS pagos", adsRoasValue, "ratio", "Receita atribuída pago ÷ investimento", "Faturamento de anúncios (pago) dividido pelo investimento total em anúncios.");
   erpMeasure("adsShare", "% do faturamento da marca atribuído aos anúncios", pk?.revenueAttributionCoveragePct, "percent", "ERP × mídia paga", "Faturamento de anúncios (pago) ÷ faturamento do ERP, que é o total da marca. Mesma conta da tela Performance.");
