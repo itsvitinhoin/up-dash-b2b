@@ -144,6 +144,8 @@ export type RecompraFilters = {
   tipo: RecompraTipoFilter;
   estado?: string;
   vendedora?: string;
+  /** Id da vendedora no cadastro do site (UpZero/Nuvemshop): a Visão geral filtra por id; `vendedora` (nome) continua para ERP e Vesti. */
+  vendedoraId?: string;
   origem?: string; // só tem efeito quando tipo começa com "anuncios-"
 };
 
@@ -427,8 +429,11 @@ async function findRecompraCandidates(params: {
   }
 
   // Lado site: customer_id já é o customer_id estável, sem resolução.
-  const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000Z`);
-  const dateToExclusiveDate = new Date(params.dateToExclusive);
+  // O recorte do site conta o dia no horário de Brasília (UTC-3, sem horário de verão desde 2019), como o resto do dash.
+  // Antes cortava à meia-noite UTC e pedidos entre 21h e 24h do último dia caíam no dia seguinte (27/10/2026: 1 a 11 pedidos em lojas grandes).
+  const BRT_OFFSET_MS = 3 * 60 * 60 * 1000;
+  const dateFromDate = new Date(Date.parse(`${params.dateFrom}T00:00:00.000Z`) + BRT_OFFSET_MS);
+  const dateToExclusiveDate = new Date(Date.parse(params.dateToExclusive) + BRT_OFFSET_MS);
   const siteStatuses = SITE_STATUS_BY_FILTER[params.filters.status];
   const siteConditions = [
     eq(ordersTable.clientId, params.clientId),
@@ -437,6 +442,7 @@ async function findRecompraCandidates(params: {
     inArray(ordersTable.status, siteStatuses),
   ];
   if (params.filters.estado) siteConditions.push(eq(ordersTable.state, params.filters.estado));
+  if (params.filters.vendedoraId) siteConditions.push(eq(ordersTable.sellerId, params.filters.vendedoraId));
   const siteQuery = db
     .select({
       id: ordersTable.id,

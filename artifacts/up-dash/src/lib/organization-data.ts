@@ -174,9 +174,12 @@ export function useOrganizationData(
     status: "pago",
     tipo: recompraTipo,
     estado: filters.state || undefined,
+    // Vendedora: a Vesti filtra pelo nome da vendedora; UpZero e Nuvemshop, pelo id do cadastro.
+    vendedora: platform === "VESTI" ? filters.sellerId || undefined : undefined,
+    vendedoraId: platform !== "VESTI" ? filters.sellerId || undefined : undefined,
   };
   const recompra = useQuery<RecompraResponse>({
-    queryKey: ["organization-recompra", period, filters.state, recompraTipo],
+    queryKey: ["organization-recompra", period, filters.state, filters.sellerId, recompraTipo],
     queryFn: () => customFetch(periodQuery("/api/analytics/recompra/dashboard", recompraQuery)),
     enabled: heavyEnabled && wants("recompra"),
     staleTime: 120000,

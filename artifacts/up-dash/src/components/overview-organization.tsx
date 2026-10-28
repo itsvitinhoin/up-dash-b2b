@@ -40,8 +40,10 @@ export function OverviewOrganization({
     ecommerce ? ECOMMERCE_SOURCES : EXECUTIVE_SOURCES,
     ecommerce ? ECOMMERCE_PREVIOUS : EXECUTIVE_PREVIOUS,
   );
-  const { dateRange } = useDashboardFilters();
-  const money = (value: number | null | undefined) => (value != null && Number.isFinite(value) ? formatCurrency(value) : "—");
+  const { dateRange, filters } = useDashboardFilters();
+  // Vendedora e Estado só chegam ao e-commerce/Vesti e à Recompra do site: ERP e anúncios mostram o total do cliente.
+  const filterIgnoredNotice = !!(filters.sellerId || filters.state);
+  const money =(value: number | null | undefined) => (value != null && Number.isFinite(value) ? formatCurrency(value) : "—");
   // Investimento: as duas linhas usam só números que já estão na tela (investimento, dias do período e pedidos pagos).
   const days = Math.max(1, differenceInCalendarDays(dateRange.to, dateRange.from) + 1);
   const paidOrders = measures.orders?.value;
@@ -97,6 +99,11 @@ export function OverviewOrganization({
   };
   return (
     <div className="space-y-6">
+      {filterIgnoredNotice && (
+        <p className="text-xs text-muted-foreground" data-testid="overview-filter-notice">
+          {tx("Com Vendedora ou Estado ativos, os cards de ERP e de anúncios mostram o total do cliente: esses dados não são divididos por vendedora ou estado.")}
+        </p>
+      )}
       {OVERVIEW_SECTIONS.map((section) => (
         <MetricSection key={section.id} title={tx(section.title)} columns={4} id={section.testId}>
           {section.defaults.map((key) => (
