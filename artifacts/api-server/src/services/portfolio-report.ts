@@ -9,7 +9,7 @@ import {
   ordersTable,
   productsTable,
 } from "@workspace/db";
-import { fetchMetaMarketingData } from "./meta-ads";
+import { fetchStoredMarketingData } from "./stored-marketing";
 import { getUpzeroAnalyticsFactsAsMetrics } from "./upzero/analytics-facts";
 import {
   getUpzeroAnalyticsMetrics,
@@ -239,17 +239,6 @@ function overlapFraction(
   return Math.min(1, overlapDays / totalDays);
 }
 
-function metaAccessToken(clientToken: string | null): string | null {
-  return (
-    process.env.META_ADS_API_KEY ??
-    process.env.META_ACCESS_TOKEN ??
-    process.env.META_API_KEY ??
-    process.env.META_TOKEN ??
-    clientToken ??
-    null
-  );
-}
-
 function productGroupId(row: ProductReportRow): string {
   const external = row.external_id?.trim();
   return external?.split(":")[0] || row.id;
@@ -366,16 +355,15 @@ async function readMarketingSpend(params: {
   dateFrom: string;
   dateTo: string;
 }): Promise<{ spend: number; source: string; caveat: string | null }> {
-  const token = metaAccessToken(params.clientToken);
-  if (token && params.adAccountId) {
+  // Gasto lido do dado guardado (BigQuery), sem Meta ao vivo: só a conta de anúncio importa, não o token.
+  if (params.adAccountId) {
     try {
-      const data = await fetchMetaMarketingData({
-        accessToken: token,
+      const data = await fetchStoredMarketingData({
         adAccountId: params.adAccountId,
         since: params.dateFrom,
         until: params.dateTo,
       });
-      return { spend: data.summary.spend, source: "Meta Ads API", caveat: null };
+      return { spend: data.summary.spend, source: "Dado guardado de anúncios (BigQuery)", caveat: null };
     } catch {
       // Fall through to the persisted creative snapshot without leaking credentials.
     }

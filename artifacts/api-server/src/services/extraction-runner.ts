@@ -7,7 +7,8 @@ import {
   sellersTable,
   syncJobsTable,
 } from "@workspace/db";
-import { fetchMetaMarketingData, upsertMetaCreatives } from "./meta-ads";
+import { upsertMetaCreatives } from "./meta-ads";
+import { fetchStoredMarketingData } from "./stored-marketing";
 import { syncNuvemshopClient } from "./nuvemshop-sync";
 import {
   getMetricUser,
@@ -90,16 +91,6 @@ async function refreshRecentDailyMetrics(clientId: string, to = new Date()) {
   return refreshDailyClientMetrics({ clientId, from, to });
 }
 
-function resolveMetaAccessToken(fallback?: string | null): string | null {
-  return (
-    process.env.META_ADS_API_KEY ??
-    process.env.META_ACCESS_TOKEN ??
-    process.env.META_API_KEY ??
-    process.env.META_TOKEN ??
-    fallback ??
-    null
-  );
-}
 
 function optionalPositiveInteger(value: number): number | undefined {
   return Number.isFinite(value) && value > 0 ? value : undefined;
@@ -795,19 +786,14 @@ export async function runMetaAdsExtraction(
   for (const client of clients) {
     if (!client.metaAdAccountId) continue;
     const jobId = await createJob(client.id, "meta_ads", trigger);
-    const accessToken = resolveMetaAccessToken(client.metaAdsApiKey);
-    if (!accessToken) {
-      await failJob(jobId, new Error("META_ADS_API_KEY não configurado."));
-      failed += 1;
-      continue;
-    }
 
     try {
-      const data = await fetchMetaMarketingData({
-        accessToken,
+      // Lê do dado guardado (BigQuery), sem chamar o Meta: a rotina horária só renova a tabela `creatives` e não precisa de token.
+      const data = await fetchStoredMarketingData({
         adAccountId: client.metaAdAccountId,
         since,
         until,
+        includeAds: true,
       });
       await upsertMetaCreatives(client.id, data.ads);
       await completeJob(jobId, {

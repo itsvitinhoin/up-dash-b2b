@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { db, clientsTable, eventsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
-import { fetchMetaMarketingData } from "./meta-ads";
+import { fetchStoredMarketingData } from "./stored-marketing";
 import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution, fetchVestiFunnelEventCounts } from "./erpAnalytics";
 import {
   calculatePerformanceRatios,
@@ -10,17 +10,6 @@ import {
 } from "./performanceMetrics";
 
 const CANCELLED_STATUSES = ["CANCELADO", "EXCLUIDO"];
-
-function getMetaAccessToken(fallback?: string | null): string | null {
-  return (
-    process.env.META_ADS_API_KEY ??
-    process.env.META_ACCESS_TOKEN ??
-    process.env.META_API_KEY ??
-    process.env.META_TOKEN ??
-    fallback ??
-    null
-  );
-}
 
 function dateOnly(value: unknown): string {
   if (
@@ -383,7 +372,6 @@ export async function fetchPerformanceDashboard(
   });
   const vestiMatcher = hasUnmatchedDocuments ? await matchErpDocumentsWithVestiAttribution(dataset) : null;
   const client = clientRows[0];
-  const token = getMetaAccessToken(client?.metaAdsApiKey);
 
   let mediaStatus: PerformanceDashboard["sources"]["media"]["status"] =
     "not_configured";
@@ -406,10 +394,10 @@ export async function fetchPerformanceDashboard(
     purchases: number;
     cpl: number | null;
   }> = [];
-  if (token && client?.metaAdAccountId) {
+  // Gasto e campanhas lidos do dado guardado (BigQuery), sem Meta ao vivo: só a conta de anúncio importa, não o token.
+  if (client?.metaAdAccountId) {
     try {
-      const meta = await fetchMetaMarketingData({
-        accessToken: token,
+      const meta = await fetchStoredMarketingData({
         adAccountId: client.metaAdAccountId,
         since: dateFrom,
         until: dateTo,

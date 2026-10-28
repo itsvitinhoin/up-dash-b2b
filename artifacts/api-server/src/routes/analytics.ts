@@ -78,8 +78,9 @@ import {
   utmInsight,
   type InsightLanguage,
 } from "../services/insight-text";
-import { MediaReadError, fetchMetaMarketingData, emptyMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
+import { MediaReadError, emptyMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
 import { fetchMetaMarketingDataIfConnected } from "../services/meta-connected";
+import { fetchStoredMarketingData } from "../services/stored-marketing";
 import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
 import * as vestiDashboardController from "../controllers/vestiDashboardController";
 import * as vestiOrdersController from "../controllers/vestiOrdersController";
@@ -11075,15 +11076,15 @@ router.get("/analytics/scale", async (req, res): Promise<void> => {
   const rollingAvgTicket = rollingOrders > 0 ? rollingRevenue / rollingOrders : 0;
   const rollingMonthlyTurnoverPct = currentSalesPower > 0 ? (rollingMonthlyRevenue / currentSalesPower) * 100 : 0;
 
-  const metaAccessToken = getGlobalMetaAccessToken(clientConfig.metaAdsApiKey);
-  const [metaCurrent, metaRolling] = metaAccessToken && clientConfig.metaAdAccountId
+  // Gasto lido do dado guardado (BigQuery), sem Meta ao vivo: só a conta de anúncio importa, não o token.
+  const [metaCurrent, metaRolling] = clientConfig.metaAdAccountId
     ? await Promise.all([
         withTimeout(
-          fetchMetaMarketingData({
-            accessToken: metaAccessToken,
+          fetchStoredMarketingData({
             adAccountId: clientConfig.metaAdAccountId,
             since: dateFromOnly,
             until: dateToOnly,
+            includeAds: true,
           }),
           3500,
           "Scale Meta fetch timed out",
@@ -11092,8 +11093,7 @@ router.get("/analytics/scale", async (req, res): Promise<void> => {
           return null;
         }),
         withTimeout(
-          fetchMetaMarketingData({
-            accessToken: metaAccessToken,
+          fetchStoredMarketingData({
             adAccountId: clientConfig.metaAdAccountId,
             since: rollingDateFromOnly,
             until: rollingDateToOnly,

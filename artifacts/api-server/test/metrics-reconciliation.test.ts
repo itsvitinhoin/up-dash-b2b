@@ -101,6 +101,11 @@ vi.mock("../src/services/meta-ads", async (original) => {
     ),
   };
 });
+// Gasto de UpZero/Nuvemshop agora vem do dado guardado (stored-marketing): a mesma simulação de antes responde pelos dois caminhos.
+vi.mock("../src/services/stored-marketing", async () => {
+  const meta = await import("../src/services/meta-ads");
+  return { fetchStoredMarketingData: (params: unknown) => (meta.fetchMetaMarketingData as unknown as (p: unknown) => Promise<unknown>)(params) };
+});
 vi.mock("../src/services/upzero/analytics-facts", () => ({
   getUpzeroAnalyticsFactsAsMetrics: async () => [],
   getUpzeroAnalyticsFactsByEvent: async () => ({
