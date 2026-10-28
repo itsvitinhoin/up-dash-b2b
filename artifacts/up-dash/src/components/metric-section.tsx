@@ -62,7 +62,7 @@ export function ExistingMetricCard({ metric }: { metric: OrganizedMetric }) {
       case "percent":
         return formatPercentage(v);
       case "ratio":
-        return `${v.toFixed(2)}x`;
+        return `${v.toFixed(2).replace(".", ",")}x`;
       case "days":
         return `${v.toFixed(1)} ${tx("dias")}`;
       default:

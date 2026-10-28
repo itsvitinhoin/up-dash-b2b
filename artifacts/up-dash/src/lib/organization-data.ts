@@ -312,7 +312,10 @@ export function useOrganizationData(
   put("ecomPaidOrders", "Pedidos totais pagos no E-commerce", d?.orders, "number", "E-commerce · pago", dashboard.isLoading);
   // Anúncios: receita atribuída (ERP) ÷ investimento total em anúncios. Os três cards fecham entre si na tela.
   erpMeasure("adsRevenue", "Faturamento total de anúncios (pago)", pk?.attributedRevenue, "currency", "ERP × mídia paga", "Faturamento pago do ERP que o sistema consegue ligar a um toque de anúncio pago (documento do cliente + evidência de clique).");
-  put("adsSpend", "Investimento total em anúncios", m?.totalSpend, "currency", "Mídia", marketing.isLoading);
+  // Sem conta de anúncio cadastrada não há gasto a mostrar: "—" com explicação, não R$ 0,00 (indisponível não é zero). Vale só depois de o cadastro do cliente carregar.
+  const noAdAccount = !!clientDetail && !clientDetail.metaAdAccountId;
+  put("adsSpend", "Investimento total em anúncios", noAdAccount ? null : m?.totalSpend, "currency", "Mídia", marketing.isLoading);
+  if (noAdAccount) measures.adsSpend.info = tx("Este cliente não tem conta de anúncio do Meta cadastrada, então não há investimento para mostrar.");
   const adsRoasValue = pk?.attributedRevenue != null && m?.totalSpend != null && m.totalSpend > 0 ? pk.attributedRevenue / m.totalSpend : null;
   erpMeasure("adsRoas", "ROAS pagos", adsRoasValue, "ratio", "Receita atribuída pago ÷ investimento", "Faturamento de anúncios (pago) dividido pelo investimento total em anúncios.");
   erpMeasure("adsShare", "% do faturamento da marca atribuído aos anúncios", pk?.revenueAttributionCoveragePct, "percent", "ERP × mídia paga", "Faturamento de anúncios (pago) ÷ faturamento do ERP, que é o total da marca. Mesma conta da tela Performance.");
