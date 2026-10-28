@@ -1672,7 +1672,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
     dateTo: format(dateRange.to, "yyyy-MM-dd"),
   };
   const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
-    query: queryOpts({ enabled }),
+    query: queryOpts({ enabled: enabled && organization === "ecommerce" }),
   });
   const regenerateInsight = useRegenerateInsight({
     mutation: {
@@ -1690,13 +1690,13 @@ export default function DashboardPage({ organization = "executive" }: { organiza
     isLoading: alertsLoading,
   } = useGetAlerts(
     { clientId, horizonDays: 14, lookbackDays: 30, limit: 8 },
-    { query: queryOpts({ enabled }) },
+    { query: queryOpts({ enabled: enabled && organization === "ecommerce" }) },
   );
 
   // Top sellers (mini leaderboard on the dashboard)
   const { data: topSellersData, isLoading: topSellersLoading } = useGetSellers(
     { clientId, limit: 5 },
-    { query: queryOpts({ enabled: enabled && !isB2C }) },
+    { query: queryOpts({ enabled: enabled && !isB2C && organization === "ecommerce" }) },
   );
   const {
     data: campaignCustomers,
@@ -1720,7 +1720,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         `/api/analytics/campaign-customers?${params.toString()}`,
       );
     },
-    enabled: enabled && !isB2C,
+    enabled: enabled && !isB2C && organization === "ecommerce",
     staleTime: 2 * 60 * 1000,
     gcTime: 15 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -2212,6 +2212,8 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         }}
       />
 
+      {/* So na pagina E-commerce: na Visao geral depois dos cards fica apenas o Desempenho diario (pedido do time, 27/10/2026) */}
+      {organization === "ecommerce" && (
       <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
         {isB2C ? (
           <B2COrdersPanel
@@ -2231,6 +2233,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
           />
         )}
       </motion.div>
+      )}
 
       {/* Chart + insight */}
       <motion.div
@@ -2239,7 +2242,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         variants={fadeVariants}
         className="grid grid-cols-1 lg:grid-cols-3 gap-4"
       >
-        <Card className="lg:col-span-2 p-5 bg-card border-border">
+        <Card className={organization === "ecommerce" ? "lg:col-span-2 p-5 bg-card border-border" : "lg:col-span-3 p-5 bg-card border-border"}>
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
             <div>
               <h2 className="text-base font-semibold leading-tight">{t("dashboard.chart.title")}</h2>
@@ -2378,7 +2381,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         </Card>
 
         {/* AI insight card */}
-        {!insightDismissed && (
+        {organization === "ecommerce" && !insightDismissed && (
           <Card
             className="p-5 bg-gradient-to-br from-primary/[0.04] via-card to-card border-border relative overflow-hidden flex flex-col"
             data-testid="ai-insight-card"
@@ -2446,6 +2449,8 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         )}
       </motion.div>
 
+      {organization === "ecommerce" && (
+        <>
       {isB2C && (
         <motion.div
           initial="hidden"
@@ -2827,6 +2832,8 @@ export default function DashboardPage({ organization = "executive" }: { organiza
             </div>
           )}
         </Card>
+      )}
+        </>
       )}
 
       <DrillDownPanel date={drillDate} onClose={() => setDrillDate(null)} />
