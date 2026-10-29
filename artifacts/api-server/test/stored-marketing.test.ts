@@ -16,7 +16,8 @@ import { fetchStoredAds, fetchStoredAdsDaily, fetchStoredCampaigns } from "../sr
 import { fetchStoredMarketingData } from "../src/services/stored-marketing";
 import { fetchMetaMarketingDataIfConnected } from "../src/services/meta-connected";
 
-// UpZero, Nuvemshop e Manual leem anúncios do dado guardado (BigQuery), não do Meta ao vivo (27/10/2026: app bloqueado no limite do Meta).
+// UpZero e Nuvemshop leem anúncios do dado guardado (BigQuery), não do Meta ao vivo (27/10/2026: app bloqueado no limite do Meta).
+// Manual continua ao vivo, por causa de alcance/frequência do período (branch codex/fix-b2c-meta-manual do Victor).
 
 const daily = vi.mocked(fetchStoredAdsDaily);
 const campaigns = vi.mocked(fetchStoredCampaigns);
@@ -85,5 +86,21 @@ describe("leitura guardada de anúncios (UpZero, Nuvemshop, Manual)", () => {
     const filtered = await fetchMetaMarketingDataIfConnected({ accessToken: null, adAccountId: "act_1", ...range, campaignName: "x" });
     expect(filtered.summary.spend).toBe(0);
     expect(daily).not.toHaveBeenCalled();
+  });
+
+  it("cliente MANUAL continua no Meta ao vivo (alcance/frequência do período): sem token vem vazio e o dado guardado nem é lido", async () => {
+    const manual = await fetchMetaMarketingDataIfConnected({ accessToken: null, adAccountId: "act_1", commercePlatform: "MANUAL", ...range });
+    expect(manual.summary.spend).toBe(0);
+    expect(daily).not.toHaveBeenCalled();
+    expect(campaigns).not.toHaveBeenCalled();
+  });
+
+  it("UpZero e Nuvemshop seguem lendo do dado guardado", async () => {
+    daily.mockResolvedValue([day("2026-01-10", 12)]);
+    campaigns.mockResolvedValue([]);
+    for (const commercePlatform of ["UPZERO", "NUVEMSHOP", null]) {
+      const data = await fetchMetaMarketingDataIfConnected({ accessToken: null, adAccountId: "act_1", commercePlatform, ...range });
+      expect(data.summary.spend).toBe(12);
+    }
   });
 });

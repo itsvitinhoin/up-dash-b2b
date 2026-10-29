@@ -7078,12 +7078,12 @@ async function buildInsightContext(
 // ── Marketing-specific insight context ───────────────────────────────────────
 async function buildMarketingInsightContext(clientId: string, from: Date, to: Date) {
   const [client] = await db.select({ name: clientsTable.name, dashboardType: clientsTable.dashboardType,
-    metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId, commercePlatform: clientsTable.commercePlatform })
     .from(clientsTable).where(eq(clientsTable.id, clientId));
   const span = to.getTime() - from.getTime();
   const prevTo = new Date(from.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - span);
-  const credentials = {accessToken: getGlobalMetaAccessToken(client?.metaAdsApiKey) ?? "", adAccountId: client?.metaAdAccountId ?? ""};
+  const credentials = {accessToken: getGlobalMetaAccessToken(client?.metaAdsApiKey) ?? "", adAccountId: client?.metaAdAccountId ?? "", commercePlatform: client?.commercePlatform};
   const [current, previous] = await Promise.all([
     fetchMetaMarketingDataIfConnected({...credentials, since:saoPauloDateOnly(from),until:saoPauloDateOnly(to)}),
     fetchMetaMarketingDataIfConnected({...credentials, since:saoPauloDateOnly(prevFrom),until:saoPauloDateOnly(prevTo)}),
@@ -10648,8 +10648,8 @@ router.get("/analytics/daily-report", async (req, res): Promise<void> => {
 
   const metaAccessToken = getGlobalMetaAccessToken(clientConfig.metaAdsApiKey);
   const [metaCurrent, metaPrev] = await Promise.all([
-    fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig.metaAdAccountId, since: dateFromOnly, until: dateToOnly }),
-    fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig.metaAdAccountId, since: prevDateFromOnly, until: prevDateToOnly }).catch(() => null),
+    fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig.metaAdAccountId, commercePlatform: clientConfig.commercePlatform, since: dateFromOnly, until: dateToOnly }),
+    fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig.metaAdAccountId, commercePlatform: clientConfig.commercePlatform, since: prevDateFromOnly, until: prevDateToOnly }).catch(() => null),
   ]);
 
   const [kpis, prevKpis, productRows, categoryRows, colorRows, sizeRows] = await Promise.all([
@@ -11340,6 +11340,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
       dashboardType: clientsTable.dashboardType,
       metaAdsApiKey: clientsTable.metaAdsApiKey,
       metaAdAccountId: clientsTable.metaAdAccountId,
+      commercePlatform: clientsTable.commercePlatform,
     })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
@@ -11351,7 +11352,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   // Só o período atual mostra miniaturas de criativo; o anterior é só comparativo e não gasta chamadas de mídia.
   const readMeta = (range: { since: string; until: string }, includeMedia = false) => metaExcludedByFilter
     ? Promise.resolve(emptyMetaMarketingData())
-    : fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig?.metaAdAccountId, ...range, campaignName: creativeFilt, includeMedia });
+    : fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig?.metaAdAccountId, commercePlatform: clientConfig?.commercePlatform, ...range, campaignName: creativeFilt, includeMedia });
   const [metaCurrent, metaPrev] = await Promise.all([
     readMeta({ since, until }, true),
     readMeta({ since: prevSince, until: prevUntil }).catch(() => null),
