@@ -29,7 +29,7 @@ export type StoredMarketingParams = {
   includeAds?: boolean;
 };
 
-function dailyPoint(day: { date: string; spend: number; impressions: number; clicks: number; leads: number; purchases: number }): MetaDailyPoint {
+function dailyPoint(day: { date: string; spend: number; impressions: number; clicks: number; leads: number; purchases: number; purchaseValue: number }): MetaDailyPoint {
   return {
     date: day.date,
     spend: day.spend,
@@ -37,19 +37,28 @@ function dailyPoint(day: { date: string; spend: number; impressions: number; cli
     clicks: day.clicks,
     leads: day.leads,
     purchases: day.purchases,
+    revenue: day.purchaseValue,
     cpl: day.leads > 0 ? day.spend / day.leads : null,
   };
 }
 
 function summarize(daily: MetaDailyPoint[]): MetaMarketingData["summary"] {
   const spend = daily.reduce((sum, p) => sum + p.spend, 0);
+  const impressions = daily.reduce((sum, p) => sum + p.impressions, 0);
+  const clicks = daily.reduce((sum, p) => sum + p.clicks, 0);
   const leads = daily.reduce((sum, p) => sum + p.leads, 0);
+  const purchases = daily.reduce((sum, p) => sum + p.purchases, 0);
+  const revenue = daily.reduce((sum, p) => sum + p.revenue, 0);
   return {
-    spend,
-    impressions: daily.reduce((sum, p) => sum + p.impressions, 0),
-    clicks: daily.reduce((sum, p) => sum + p.clicks, 0),
-    leads,
-    purchases: daily.reduce((sum, p) => sum + p.purchases, 0),
+    spend, impressions, clicks, leads, purchases, revenue,
+    // Alcance e frequência do período são pessoas únicas: não se somam dia a dia, então o dado guardado não os tem (só o Meta ao vivo, no cliente Manual).
+    reach: null,
+    frequency: null,
+    ctr: impressions > 0 ? clicks / impressions * 100 : null,
+    cpc: clicks > 0 ? spend / clicks : null,
+    cpm: impressions > 0 ? spend / impressions * 1000 : null,
+    roas: spend > 0 ? revenue / spend : null,
+    cpa: purchases > 0 ? spend / purchases : null,
     cpl: leads > 0 ? spend / leads : null,
   };
 }

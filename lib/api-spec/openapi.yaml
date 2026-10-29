@@ -3730,6 +3730,8 @@ components:
     MarketingKpis:
       type: object
       properties:
+        purchases:
+          type: integer
         totalSpend:
           type: number
         attributedRevenue:
@@ -3885,9 +3887,57 @@ components:
             $ref: "#/components/schemas/MetaCreativeMetric"
       required: [ctr, cpl, leads]
 
+    MetaMarketingSummary:
+      type: object
+      properties:
+        spend:
+          type: number
+        impressions:
+          type: number
+        clicks:
+          type: number
+        leads:
+          type: number
+        purchases:
+          type: number
+        revenue:
+          type: number
+        reach:
+          type: ["number", "null"]
+        frequency:
+          type: ["number", "null"]
+        ctr:
+          type: ["number", "null"]
+        cpc:
+          type: ["number", "null"]
+        cpm:
+          type: ["number", "null"]
+        roas:
+          type: ["number", "null"]
+        cpa:
+          type: ["number", "null"]
+        cpl:
+          type: ["number", "null"]
+      required: [spend, impressions, clicks, leads, purchases, revenue, reach, frequency, ctr, cpc, cpm, roas, cpa, cpl]
+
     MarketingResponse:
       type: object
       properties:
+        revenueSource:
+          type: string
+          enum: [META, ECOMMERCE]
+        metaSummary:
+          anyOf:
+            - $ref: "#/components/schemas/MetaMarketingSummary"
+            - type: "null"
+        prevMetaSummary:
+          anyOf:
+            - $ref: "#/components/schemas/MetaMarketingSummary"
+            - type: "null"
+        purchasesOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
         kpis:
           $ref: "#/components/schemas/MarketingKpis"
         prevKpis:

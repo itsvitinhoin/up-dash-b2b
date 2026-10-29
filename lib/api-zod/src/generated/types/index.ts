@@ -206,3 +206,5 @@ export * from "./utmKpis";
 export * from "./utmResponse";
 export * from "./utmRow";
 export * from "./utmSubRow";
+
+export * from "./metaMarketingSummary";

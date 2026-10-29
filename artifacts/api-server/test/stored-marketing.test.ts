@@ -56,6 +56,14 @@ describe("leitura guardada de anúncios (UpZero, Nuvemshop, Manual)", () => {
     expect(data.campaigns[0]).toMatchObject({ id: "c1", spend: 30, roas: 3, cpa: 30 });
   });
 
+  it("o resumo traz receita de compra, CTR, CPC, CPM, ROAS e CPA; alcance e frequência ficam nulos (só o Meta ao vivo tem)", async () => {
+    daily.mockResolvedValue([{ ...day("2026-01-10", 10, 2, 1), purchaseValue: 40 }, { ...day("2026-01-11", 20, 0, 1), purchaseValue: 80 }]);
+    campaigns.mockResolvedValue([]);
+    const data = await fetchStoredMarketingData({ adAccountId: "act_1", ...range });
+    expect(data.daily[0].revenue).toBe(40);
+    expect(data.summary).toMatchObject({ revenue: 120, roas: 4, cpa: 15, ctr: 5, cpc: 0.3, cpm: 15, reach: null, frequency: null });
+  });
+
   it("anúncios e melhores criativos só vêm quando pedidos (tela de Marketing, Escala, rotina de criativos)", async () => {
     daily.mockResolvedValue([day("2026-01-10", 10)]);
     campaigns.mockResolvedValue([]);

@@ -60,6 +60,8 @@ interface MetaInsightRow {
   status?: string;
   spend?: string;
   impressions?: string;
+  reach?: string;
+  frequency?: string;
   clicks?: string;
   inline_link_clicks?: string;
   actions?: MetaAction[];
@@ -152,6 +154,7 @@ export interface MetaDailyPoint {
   clicks: number;
   leads: number;
   purchases: number;
+  revenue: number;
   cpl: number | null;
 }
 
@@ -208,6 +211,14 @@ export interface MetaMarketingData {
     clicks: number;
     leads: number;
     purchases: number;
+    revenue: number;
+    reach: number | null;
+    frequency: number | null;
+    ctr: number | null;
+    cpc: number | null;
+    cpm: number | null;
+    roas: number | null;
+    cpa: number | null;
     cpl: number | null;
   };
 }
@@ -389,6 +400,7 @@ function dailyPoint(row: MetaInsightRow): MetaDailyPoint {
     clicks: Math.round(numberValue(row.inline_link_clicks ?? row.clicks)),
     leads: Math.round(leads),
     purchases: Math.round(actionValue(row.actions, "purchase")),
+    revenue: actionValue(row.action_values, "purchase"),
     cpl: costPerLead(row.cost_per_action_type) ?? (leads > 0 ? spend / leads : null),
   };
 }
@@ -416,15 +428,23 @@ function adMetric(row: MetaInsightRow, since: string, until: string): MetaAdMetr
   };
 }
 
-function summarize(daily: MetaDailyPoint[]) {
+function summarize(daily: MetaDailyPoint[], periodRow?: MetaInsightRow) {
+  // Reach is deduplicated for the entire window by Meta. Never add daily reach.
   const spend = daily.reduce((sum, p) => sum + Math.round(p.spend * 100), 0) / 100;
+  const impressions = daily.reduce((sum, p) => sum + p.impressions, 0);
+  const clicks = daily.reduce((sum, p) => sum + p.clicks, 0);
   const leads = daily.reduce((sum, p) => sum + p.leads, 0);
+  const purchases = daily.reduce((sum, p) => sum + p.purchases, 0);
+  const revenue = daily.reduce((sum, p) => sum + p.revenue, 0);
+  const reach = periodRow?.reach == null ? null : numberValue(periodRow.reach);
   return {
-    spend,
-    impressions: daily.reduce((sum, p) => sum + p.impressions, 0),
-    clicks: daily.reduce((sum, p) => sum + p.clicks, 0),
-    leads,
-    purchases: daily.reduce((sum, p) => sum + p.purchases, 0),
+    spend, impressions, clicks, leads, purchases, revenue, reach,
+    frequency: periodRow?.frequency != null ? numberValue(periodRow.frequency) : reach ? impressions / reach : null,
+    ctr: impressions > 0 ? clicks / impressions * 100 : null,
+    cpc: clicks > 0 ? spend / clicks : null,
+    cpm: impressions > 0 ? spend / impressions * 1000 : null,
+    roas: spend > 0 ? revenue / spend : null,
+    cpa: purchases > 0 ? spend / purchases : null,
     cpl: leads > 0 ? spend / leads : null,
   };
 }
@@ -488,19 +508,19 @@ async function fetchAdCreativeDetails(accessToken: string, adId: string): Promis
   );
 }
 
-async function buildTopCreatives(accessToken: string, ads: MetaAdMetric[]): Promise<MetaTopCreatives> {
+async function buildTopCreatives(accessToken: string, ads: MetaAdMetric[], isB2C = false): Promise<MetaTopCreatives> {
   const base = ads.map(metricWithCtr);
   const byCtr = [...base]
     .filter((ad) => ad.impressions > 0 && ad.clicks > 0)
     .sort((a, b) => b.ctr - a.ctr)
     .slice(0, 5);
   const byCpl = [...base]
-    .filter((ad) => ad.leads > 0 && ad.cpl > 0)
-    .sort((a, b) => a.cpl - b.cpl)
+    .filter((ad) => isB2C ? ad.purchases > 0 && ad.cpa > 0 : ad.leads > 0 && ad.cpl > 0)
+    .sort((a, b) => isB2C ? a.cpa - b.cpa : a.cpl - b.cpl)
     .slice(0, 5);
   const byLeads = [...base]
-    .filter((ad) => ad.leads > 0)
-    .sort((a, b) => b.leads - a.leads)
+    .filter((ad) => isB2C ? ad.purchases > 0 : ad.leads > 0)
+    .sort((a, b) => isB2C ? b.purchases - a.purchases : b.leads - a.leads)
     .slice(0, 5);
 
   const ids = [...new Set([...byCtr, ...byCpl, ...byLeads].map((ad) => ad.id))];
@@ -548,7 +568,7 @@ export class MediaReadError extends Error {
 }
 
 /** `includeMedia`: só a tela de Marketing (período atual) mostra miniaturas; métricas, comparativos e rotinas não precisam e não gastam chamadas de mídia. */
-type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string; includeMedia?: boolean };
+type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string; includeMedia?: boolean; isB2C?: boolean; includeReach?: boolean };
 const mediaReads = new Map<string, { expiresAt: number; promise: Promise<MetaMarketingData> }>();
 const accountZones = new Map<string, { expiresAt: number; promise: Promise<string> }>();
 
@@ -569,7 +589,7 @@ async function fetchAccountTimeZone(params: MetaParams, key: string): Promise<st
 export async function fetchMetaMarketingData(params: MetaParams): Promise<MetaMarketingData> {
   if (!params.accessToken.trim() || !params.adAccountId.trim()) throw new MediaReadError();
   const accountKey = `${normalizeMetaAdAccountId(params.adAccountId)}:${createHash("sha256").update(params.accessToken).digest("hex")}`;
-  const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? "", params.includeMedia === true]);
+  const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? "", params.includeMedia === true, params.isB2C === true, params.includeReach === true]);
   const cached = mediaReads.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
   const promise = fetchMetaMarketingDataUncached(params, accountKey).catch(() => { throw new MediaReadError(); });
@@ -588,13 +608,13 @@ export function isMetaConnected(params: { accessToken?: string | null; adAccount
 }
 
 export function emptyMetaMarketingData(): MetaMarketingData {
-  return { daily: [], ads: [], campaigns: [], topCreatives: { ctr: [], cpl: [], leads: [] }, summary: { spend: 0, impressions: 0, clicks: 0, leads: 0, purchases: 0, cpl: null } };
+  return { daily: [], ads: [], campaigns: [], topCreatives: { ctr: [], cpl: [], leads: [] }, summary: summarize([]) };
 }
 
 async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: string): Promise<MetaMarketingData> {
   const accountTimeZone = await fetchAccountTimeZone(params, accountKey);
   const window = metaReportingWindow(params.since, params.until, accountTimeZone);
-  const [rows, campaignStatuses] = await Promise.all([
+  const [rows, campaignStatuses, periodRows] = await Promise.all([
     fetchInsights(params.accessToken, params.adAccountId, {
       level: "ad",
       fields: "ad_id,ad_name,campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",
@@ -604,6 +624,14 @@ async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: st
       limit: "500",
     }),
     fetchCampaignStatuses(params.accessToken, params.adAccountId).catch(() => new Map<string, string>()),
+    // Deduplicated reach is valid only when account and reporting windows align.
+    // Do not sum hourly reach or report account reach for a campaign filter.
+    params.includeReach && !window.hourly && !params.campaignName
+      ? fetchInsights(params.accessToken, params.adAccountId, {
+          level: "account", fields: "reach,frequency",
+          time_range: JSON.stringify({since: params.since, until: params.until}), limit: "1",
+        })
+      : Promise.resolve([]),
   ]);
   const grouped = aggregateMetaInsights(params.campaignName ? rows.filter((row) => row.campaign_name?.toLowerCase().includes(params.campaignName!.toLowerCase())) : rows, params.since, params.until, accountTimeZone);
   const daily = grouped.daily.map(dailyPoint);
@@ -614,9 +642,9 @@ async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: st
   }));
   // Creative previews are optional decoration; they cannot make financial data unavailable.
   const topCreatives = params.includeMedia
-    ? await buildTopCreatives(params.accessToken, ads).catch(() => ({ ctr: [], cpl: [], leads: [] }))
+    ? await buildTopCreatives(params.accessToken, ads, params.isB2C).catch(() => ({ ctr: [], cpl: [], leads: [] }))
     : { ctr: [], cpl: [], leads: [] };
-  return { daily, ads, campaigns, topCreatives, summary: summarize(daily) };
+  return { daily, ads, campaigns, topCreatives, summary: summarize(daily, periodRows[0]) };
 }
 
 /** Anúncios por gravação. Uma ida ao banco por lote (e não uma por anúncio): com banco remoto, cada ida em série soma segundos de espera na tela de Marketing (ela só responde depois desta gravação). */

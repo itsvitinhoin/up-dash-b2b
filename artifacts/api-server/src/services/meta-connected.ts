@@ -17,6 +17,8 @@ export async function fetchMetaMarketingDataIfConnected(params: {
   includeMedia?: boolean;
   /** `MANUAL` mantém a leitura ao vivo do Meta (ver acima). */
   commercePlatform?: string | null;
+  isB2C?: boolean;
+  includeReach?: boolean;
 }): Promise<MetaMarketingData> {
   if (params.campaignName || params.commercePlatform === "MANUAL") {
     if (!isMetaConnected(params)) return emptyMetaMarketingData();

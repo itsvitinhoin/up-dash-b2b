@@ -1427,6 +1427,7 @@ export interface CreateSavedViewRequest {
 }
 
 export interface MarketingKpis {
+  purchases?: number;
   totalSpend: number;
   attributedRevenue: number;
   roas: number;
@@ -1519,7 +1520,28 @@ export interface MetaTopCreatives {
   leads: MetaCreativeMetric[];
 }
 
+export interface MetaMarketingSummary {
+  spend: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+  purchases: number;
+  revenue: number;
+  reach: number | null;
+  frequency: number | null;
+  ctr: number | null;
+  cpc: number | null;
+  cpm: number | null;
+  roas: number | null;
+  cpa: number | null;
+  cpl: number | null;
+}
+
 export interface MarketingResponse {
+  revenueSource?: "META" | "ECOMMERCE";
+  metaSummary?: MetaMarketingSummary | null;
+  prevMetaSummary?: MetaMarketingSummary | null;
+  purchasesOverTime?: TimeSeriesPoint[];
   kpis: MarketingKpis;
   prevKpis: MarketingKpis | null;
   leadsOverTime: TimeSeriesPoint[];

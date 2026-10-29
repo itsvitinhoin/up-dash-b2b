@@ -551,34 +551,25 @@ export function useOrganizationData(
     "Meta · cliques da fonte atual",
     marketing.isLoading,
   );
-  for (const [key, label, fmt] of [
-    ["reach", "Alcance", "number"],
-    ["frequency", "Frequência", "number"],
-    ["cpm", "CPM", "currency"],
-    ["metaPurchases", "Compras Meta", "number"],
-    ["metaCpa", "CPA Meta", "currency"],
-    ["metaRoas", "ROAS Meta", "ratio"],
-    ["connectRate", "Connect Rate", "percent"],
-    ["registrationRate", "Taxa de Cadastro", "percent"],
-    ["cartRate", "Taxa de Carrinho", "percent"],
-    ["checkoutRate", "Taxa de Checkout", "percent"],
-    ["paymentRate", "Taxa de Pagamento", "percent"],
-  ] as const)
-    put(key, label, null, fmt, "");
-  put(
-    "ctr",
-    "CTR",
-    mediaConnected(performance.data) ? performance.data?.kpis.ctr : null,
-    "percent",
-    "Meta · Performance",
-  );
-  put(
-    "cpc",
-    "CPC",
-    mediaConnected(performance.data) ? performance.data?.kpis.cpc : null,
-    "currency",
-    "Meta · Performance",
-  );
+  for (const [key, label, fmt, field] of [
+    ["reach", "Alcance", "number", "reach"],
+    ["frequency", "Frequência", "ratio", "frequency"],
+    ["cpm", "CPM", "currency", "cpm"],
+    ["metaPurchases", "Compras Meta", "number", "purchases"],
+    ["metaCpa", "CPA Meta", "currency", "cpa"],
+    ["metaRoas", "ROAS Meta", "ratio", "roas"],
+    ["ctr", "CTR", "percent", "ctr"],
+    ["cpc", "CPC", "currency", "cpc"],
+  ] as const) {
+    put(key, label, marketing.isError ? null : marketing.data?.metaSummary?.[field], fmt, "Meta Ads", marketing.isLoading);
+  }
+  for (const [key, label] of [
+    ["connectRate", "Connect Rate"],
+    ["registrationRate", "Taxa de Cadastro"],
+    ["cartRate", "Taxa de Carrinho"],
+    ["checkoutRate", "Taxa de Checkout"],
+    ["paymentRate", "Taxa de Pagamento"],
+  ] as const) put(key, label, null, "percent", "");
   const pd = dashboard.data?.prevKpis, pm = marketing.isError ? undefined : marketing.data?.prevKpis, pc = customers.data?.prevKpis;
   const pr = previousRecompra.data?.blocks;
   const previousMeta = previousMarketing.data?.platformBreakdown.find(row => row.platform === "META");
@@ -594,7 +585,11 @@ export function useOrganizationData(
     orders: pd?.orders, ticket: pd?.avgTicket, newCustomers: pd?.newBuyers,
     spend: pm?.totalSpend, totalSpend: pm?.totalSpend, metaSpend: previousMeta?.spend, googleSpend: previousGoogle?.spend,
     roas: pm?.roas, requestedRoas: selectedDashboardMode === "B2C" ? null : pm?.roas, paidRoas: selectedDashboardMode === "B2C" ? pm?.roas : null,
-    cac: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cac : null, ctr: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.ctr : null, cpc: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cpc : null,
+    cac: mediaConnected(previousPerformance.data) ? previousPerformance.data?.kpis.cac : null,
+    ctr: marketing.data?.prevMetaSummary?.ctr, cpc: marketing.data?.prevMetaSummary?.cpc,
+    reach: marketing.data?.prevMetaSummary?.reach, frequency: marketing.data?.prevMetaSummary?.frequency,
+    cpm: marketing.data?.prevMetaSummary?.cpm, metaPurchases: marketing.data?.prevMetaSummary?.purchases,
+    metaCpa: marketing.data?.prevMetaSummary?.cpa, metaRoas: marketing.data?.prevMetaSummary?.roas,
     acquisitionRevenue: money(pr?.aquisicao), acquisitionOrders: pr?.aquisicao?.vendas, acquisitionTicket: ticketOf(pr?.aquisicao),
     newCustomersRevenue: previousPerformance.data?.kpis.newBuyersRevenue ?? money(pr?.aquisicao), newCustomersOrders: previousPerformance.data?.kpis.newBuyersOrders ?? pr?.aquisicao?.vendas, newCustomersTicket: ticketOf(pr?.aquisicao),
     repurchaseCustomers: previousPerformance.data?.kpis.returningBuyers ?? pr?.recompra.clientes,

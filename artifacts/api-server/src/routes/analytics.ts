@@ -79,6 +79,7 @@ import {
   type InsightLanguage,
 } from "../services/insight-text";
 import { MediaReadError, emptyMetaMarketingData, upsertMetaCreatives, type MetaAdMetric, type MetaMarketingData } from "../services/meta-ads";
+import { usesMetaRevenue, manualMarketingKpis } from "../services/marketing-source";
 import { fetchMetaMarketingDataIfConnected } from "../services/meta-connected";
 import { fetchStoredMarketingData } from "../services/stored-marketing";
 import { fetchGa4DailyMetrics, fetchGa4FunnelMetrics, fetchGa4ProductViewMetrics, type Ga4DailyMetrics, type Ga4FunnelMetrics, type Ga4Source } from "../services/ga4";
@@ -7076,23 +7077,26 @@ async function buildInsightContext(
 
 // ── Marketing-specific insight context ───────────────────────────────────────
 async function buildMarketingInsightContext(clientId: string, from: Date, to: Date) {
-  const [client] = await db.select({ name: clientsTable.name, dashboardType: clientsTable.dashboardType,
-    metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId, commercePlatform: clientsTable.commercePlatform })
+  const [client] = await db.select({ name: clientsTable.name, commercePlatform: clientsTable.commercePlatform, dashboardType: clientsTable.dashboardType,
+    metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
     .from(clientsTable).where(eq(clientsTable.id, clientId));
+  const isB2C = client?.dashboardType === "B2C";
+  const metaRevenue = usesMetaRevenue(client?.commercePlatform);
   const span = to.getTime() - from.getTime();
   const prevTo = new Date(from.getTime() - 1);
   const prevFrom = new Date(prevTo.getTime() - span);
   const credentials = {accessToken: getGlobalMetaAccessToken(client?.metaAdsApiKey) ?? "", adAccountId: client?.metaAdAccountId ?? "", commercePlatform: client?.commercePlatform};
+  if (metaRevenue && (!credentials.accessToken || !credentials.adAccountId)) throw new MediaReadError();
   const [current, previous] = await Promise.all([
-    fetchMetaMarketingDataIfConnected({...credentials, since:saoPauloDateOnly(from),until:saoPauloDateOnly(to)}),
-    fetchMetaMarketingDataIfConnected({...credentials, since:saoPauloDateOnly(prevFrom),until:saoPauloDateOnly(prevTo)}),
+    fetchMetaMarketingDataIfConnected({...credentials, since:saoPauloDateOnly(from),until:saoPauloDateOnly(to), isB2C}),
+    fetchMetaMarketingDataIfConnected({...credentials, since:saoPauloDateOnly(prevFrom),until:saoPauloDateOnly(prevTo), isB2C}),
   ]);
   const [kpis, prevKpis] = await Promise.all([
-    computeMarketingKpis(clientId, from, to, current, client?.dashboardType === "B2C"),
-    computeMarketingKpis(clientId, prevFrom, prevTo, previous, client?.dashboardType === "B2C"),
+    computeMarketingKpis(clientId, from, to, current, isB2C, metaRevenue),
+    computeMarketingKpis(clientId, prevFrom, prevTo, previous, isB2C, metaRevenue),
   ]);
   const roasTrend = prevKpis.roas > 0 ? (kpis.roas - prevKpis.roas) / prevKpis.roas : 0;
-  return { kpis, prevKpis, roasTrend, topPlatform: "Meta", brand: client?.name ?? "the brand" };
+  return { isB2C, kpis, prevKpis, roasTrend, topPlatform: "Meta", brand: client?.name ?? "the brand" };
 }
 
 async function generateInsight(
@@ -7114,7 +7118,7 @@ async function generateInsight(
   // Use marketing-specific context when requested
   if (screen === "marketing") {
     const mktCtx = await buildMarketingInsightContext(clientId, from, to);
-    const heuristic = marketingInsight(language, mktCtx.kpis, mktCtx.roasTrend, mktCtx.topPlatform);
+    const heuristic = marketingInsight(language, mktCtx.kpis, mktCtx.roasTrend, mktCtx.topPlatform, mktCtx.isB2C);
     let payload: { headline: string; body: string; bullets: string[]; source: "ai" | "heuristic" } = {
       ...heuristic,
       source: "heuristic",
@@ -7129,11 +7133,13 @@ Ad Spend: R$${kpis.totalSpend.toFixed(2)}
 Attributed Revenue: R$${kpis.attributedRevenue.toFixed(2)}
 ROAS: ${kpis.roas.toFixed(2)}x
 ROAS trend vs prior window: ${(roasTrend * 100).toFixed(2)}%
-Total Leads: ${kpis.totalLeads}
+${mktCtx.isB2C ? `Purchases: ${kpis.purchases}
+Cost per purchase: R$${kpis.cpa.toFixed(2)}
+Use purchases, not leads or registration approvals.` : `Total Leads: ${kpis.totalLeads}
 Approved Leads: ${kpis.approvedLeads}
 Approval Rate: ${kpis.approvalRate.toFixed(1)}%
 CPL (cost per lead): R$${kpis.cpl.toFixed(2)}
-CPA (cost per approved lead): R$${kpis.cpa.toFixed(2)}
+CPA: R$${kpis.cpa.toFixed(2)}`}
 Top platform by spend: ${topPlatform}
 
 Focus on paid-channel performance and next best actions. Return strict JSON:
@@ -7148,7 +7154,7 @@ No markdown, no preamble.`;
           max_completion_tokens: 600,
           response_format: { type: "json_object" },
           messages: [
-            { role: "system", content: "You write concise, actionable B2B paid-media marketing insights. Always respond with the requested JSON shape only." },
+            { role: "system", content: "You write concise, actionable paid-media marketing insights for the supplied business model. Always respond with the requested JSON shape only." },
             { role: "user", content: mktPrompt },
           ],
         });
@@ -10253,7 +10259,9 @@ async function computeMarketingKpis(
   to: Date,
   meta: MetaMarketingData,
   isB2CClient = false,
+  metaRevenue = false,
 ) {
+  if (metaRevenue) return manualMarketingKpis(meta);
   const totalSpend = meta.summary.spend;
 
   // Same paid-order creation cohort as Dashboard, Clientes and Diário.
@@ -10296,6 +10304,7 @@ async function computeMarketingKpis(
   return {
     totalSpend,
     attributedRevenue,
+    purchases: requestedOrders,
     roas: totalSpend > 0 ? attributedRevenue / totalSpend : 0,
     totalLeads,
     approvedLeads,
@@ -11336,22 +11345,24 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
 
   const [clientConfig] = await db
     .select({
+      commercePlatform: clientsTable.commercePlatform,
       dashboardType: clientsTable.dashboardType,
       metaAdsApiKey: clientsTable.metaAdsApiKey,
       metaAdAccountId: clientsTable.metaAdAccountId,
-      commercePlatform: clientsTable.commercePlatform,
     })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
   const isB2CClient = clientConfig?.dashboardType === "B2C";
+  const metaRevenue = usesMetaRevenue(clientConfig?.commercePlatform);
 
   const metaAccessToken = getGlobalMetaAccessToken(clientConfig?.metaAdsApiKey);
+  if (metaRevenue && (!metaAccessToken?.trim() || !clientConfig?.metaAdAccountId?.trim())) throw new MediaReadError();
   // Filtro de fonte que não é Meta: nada do Meta entra no recorte (vazio), não é falha de leitura.
   const metaExcludedByFilter = !!utmSrc && !metaSourceMatchesFilter(utmSrc);
   // Só o período atual mostra miniaturas de criativo; o anterior é só comparativo e não gasta chamadas de mídia.
   const readMeta = (range: { since: string; until: string }, includeMedia = false) => metaExcludedByFilter
     ? Promise.resolve(emptyMetaMarketingData())
-    : fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig?.metaAdAccountId, commercePlatform: clientConfig?.commercePlatform, ...range, campaignName: creativeFilt, includeMedia });
+    : fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig?.metaAdAccountId, commercePlatform: clientConfig?.commercePlatform, ...range, campaignName: creativeFilt, includeMedia, isB2C: isB2CClient, includeReach: true });
   const [metaCurrent, metaPrev] = await Promise.all([
     readMeta({ since, until }, true),
     readMeta({ since: prevSince, until: prevUntil }).catch(() => null),
@@ -11362,14 +11373,16 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const pagedMetaCampaigns = metaCampaigns.slice(offset, offset + creativesPageSize);
 
   const [kpis, prevKpis] = await Promise.all([
-    computeMarketingKpis(clientId, from, to, metaCurrent, isB2CClient),
-    metaPrev ? computeMarketingKpis(clientId, prevFrom, prevTo, metaPrev, isB2CClient) : Promise.resolve(null),
+    computeMarketingKpis(clientId, from, to, metaCurrent, isB2CClient, metaRevenue),
+    metaPrev ? computeMarketingKpis(clientId, prevFrom, prevTo, metaPrev, isB2CClient, metaRevenue) : Promise.resolve(null),
   ]);
 
   const leadsRows = metaCurrent.daily.map((point) => ({ date: point.date, value: point.leads }));
 
   // Paid revenue series uses the same cohort and money as the cards.
-  const revenueRows = await db
+  const revenueRows = metaRevenue
+    ? metaCurrent.daily.map(point => ({date: point.date, value: point.revenue}))
+    : await db
     .select({
       date: sql<string>`date(timezone('America/Sao_Paulo', ${ordersTable.createdAt}))::text`,
       value: sql<number>`COALESCE(SUM(${paidRevenueColumn(isB2CClient)}), 0)::float`,
@@ -11392,7 +11405,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     Promise.resolve(
       metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend })),
     ),
-    buildStateBreakdown(clientId, from, to, totalProratedSpend),
+    metaRevenue ? Promise.resolve([]) : buildStateBreakdown(clientId, from, to, totalProratedSpend),
   ]);
 
   const topCreatives = metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] };
@@ -11409,6 +11422,10 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   const payload = GetMarketingResponse.parse({
     kpis,
     prevKpis,
+    revenueSource: metaRevenue ? "META" : "ECOMMERCE",
+    metaSummary: metaCurrent?.summary ?? null,
+    prevMetaSummary: metaPrev?.summary ?? null,
+    purchasesOverTime: metaCurrent?.daily.map(point => ({ date: point.date, value: point.purchases })) ?? [],
     leadsOverTime: leadsRows,
     revenueOverTime: revenueRows,
     spendOverTime,
