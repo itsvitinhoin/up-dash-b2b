@@ -2186,10 +2186,21 @@ function deriveVestiRfmSegment(recencyDays: number, frequency: number, monetary:
   return "Lost";
 }
 
+export type VestiRfmOrder = {
+  id: string;
+  externalId: string | null;
+  status: string;
+  amount: number;
+  fulfilledAmount: number;
+  requestedQuantity: number;
+  fulfilledQuantity: number;
+  createdAt: string;
+};
+
 export type VestiRfm = {
   segments: Array<{ segment: string; customerCount: number; revenue: number; avgTicket: number; pct: number }>;
   composition: Array<{ month: string; Champions: number; Loyal: number; Potential: number; AtRisk: number; Lost: number }>;
-  customers: Array<{ id: string; name: string | null; email: string; segment: string; recencyDays: number; frequency: number; monetary: number }>;
+  customers: Array<{ id: string; name: string | null; email: string; segment: string; recencyDays: number; frequency: number; monetary: number; latestOrders: VestiRfmOrder[] }>;
   total: number;
 };
 
@@ -2305,7 +2316,53 @@ export async function fetchVestiRfm(
     return dir * ((a[key] ?? 0) - (b[key] ?? 0));
   });
   const offset = (filters.page - 1) * filters.limit;
-  const customers = sorted.slice(offset, offset + filters.limit).map((row) => ({
+  const pageRows = sorted.slice(offset, offset + filters.limit);
+
+  // Últimos 3 pedidos de cada cliente da página (o contrato `GetRfmResponse` exige `latestOrders`; sem isso a resposta dava 500 em todo cliente Vesti).
+  // Mesmo desenho do lado B2C: histórico do cliente, sem recorte de período.
+  const latestOrdersByCustomer = new Map<string, VestiRfmOrder[]>();
+  if (pageRows.length > 0) {
+    const [orderRows] = await bigquery.query({
+      query: `
+        WITH pedidos AS (
+          SELECT
+            pedido_id,
+            ANY_VALUE(cliente_id) AS cliente_id,
+            ANY_VALUE(pedido_code) AS pedido_code,
+            ANY_VALUE(status_pedido) AS status_pedido,
+            COALESCE(SUM(valor_solicitado), 0) AS amount,
+            COALESCE(SUM(valor_reservado), 0) AS fulfilled_amount,
+            COALESCE(SUM(produto_quantidade_solicitada), 0) AS requested_quantity,
+            COALESCE(SUM(produto_quantidade_reservada), 0) AS fulfilled_quantity,
+            ANY_VALUE(data_ref) AS created_at
+          FROM ${view}
+          WHERE cliente_id IN UNNEST(@customerIds)
+          GROUP BY pedido_id
+        )
+        SELECT * FROM pedidos
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY cliente_id ORDER BY created_at DESC, pedido_id DESC) <= 3
+        ORDER BY cliente_id, created_at DESC, pedido_id DESC
+      `,
+      params: { customerIds: pageRows.map((row) => row.id) },
+    });
+    for (const r of orderRows as Array<Record<string, unknown>>) {
+      const key = String(r.cliente_id);
+      const list = latestOrdersByCustomer.get(key) ?? [];
+      list.push({
+        id: String(r.pedido_id),
+        externalId: r.pedido_code != null ? String(r.pedido_code) : null,
+        status: (r.status_pedido as string) || "Sem status",
+        amount: Number(r.amount) || 0,
+        fulfilledAmount: Number(r.fulfilled_amount) || 0,
+        requestedQuantity: Number(r.requested_quantity) || 0,
+        fulfilledQuantity: Number(r.fulfilled_quantity) || 0,
+        createdAt: toDateOnly(r.created_at),
+      });
+      latestOrdersByCustomer.set(key, list);
+    }
+  }
+
+  const customers = pageRows.map((row) => ({
     id: row.id,
     name: row.name,
     email: row.email,
@@ -2313,6 +2370,7 @@ export async function fetchVestiRfm(
     recencyDays: row.recencyDays,
     frequency: row.frequency,
     monetary: row.monetary,
+    latestOrders: latestOrdersByCustomer.get(row.id) ?? [],
   }));
 
   return { segments, composition, customers, total: sorted.length };
