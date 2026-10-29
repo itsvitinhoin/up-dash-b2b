@@ -7,19 +7,20 @@ vi.mock("../src/lib/bigquery", () => ({
 
 import { vestiSalesView } from "../src/services/vesti-sales-view";
 
-// Decisão do time (29/10/2026): "pago" na Vesti = coluna Total (summary.total_value, já com desconto) + status pago, igual ao ERP.
+// Decisão (29/10/2026): "pago" na Vesti = valor atendido menos o desconto do pedido (summary.discount) + status pago, igual ao ERP. Sem frete e sem cupom.
 
-describe("vendas da Vesti com o valor Total (já descontado)", () => {
+describe("vendas da Vesti com o valor atendido menos o desconto", () => {
   const sql = vestiSalesView("vogabox");
 
-  it("lê a view de vendas e o Total dos pedidos do mesmo dataset", () => {
+  it("lê a view de vendas e o desconto dos pedidos do mesmo dataset", () => {
     expect(sql).toContain("`up-vesti-report.vogabox.dashboard_vendas_view`");
     expect(sql).toContain("`up-vesti-report.vogabox.pedidos_vesti`");
-    expect(sql).toContain("summary.total_value");
+    expect(sql).toContain("summary.discount");
+    expect(sql).not.toContain("total_value");
   });
 
-  it("troca o valor atendido pelo Total só onde já havia valor, e guarda o antigo em valor_atendido", () => {
-    expect(sql).toContain("IF(s.valor_reservado > 0, COALESCE(p.total_value, s.valor_reservado), 0) AS valor_reservado");
+  it("desconta o desconto só onde já havia valor (nunca negativo), e guarda o antigo em valor_atendido", () => {
+    expect(sql).toContain("IF(s.valor_reservado > 0, GREATEST(s.valor_reservado - COALESCE(p.desconto, 0), 0), 0) AS valor_reservado");
     expect(sql).toContain("s.valor_reservado AS valor_atendido");
   });
 
