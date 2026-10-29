@@ -84,6 +84,7 @@ import { buildPurchaseProgression } from "./purchase-progression";
 //   ver a exceção no item "Tipo" acima.)
 import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import { bigquery, vestiTable } from "../lib/bigquery";
+import { vestiSalesView } from "./vesti-sales-view";
 import { db, ordersTable, sellersTable, customersTable } from "@workspace/db";
 import { resolveErpCustomerIdentities, type ErpContactInfo } from "./erp-identity";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, standardTouchpointWindow, TOUCHPOINT_LOOKBACK_DAYS, type TouchpointCandidate } from "./paid-touchpoints";
@@ -475,7 +476,7 @@ async function findRecompraCandidates(params: {
   // as demais trazem 0) -- por isso SUM, nunca ANY_VALUE, nesses dois
   // campos (ver vestiAnalytics.ts:26-29 e fetchVestiOrdersPage).
   if (params.vestiDataset) {
-    const vendasView = vestiTable(params.vestiDataset, "dashboard_vendas_view");
+    const vendasView = vestiSalesView(params.vestiDataset);
     const vestiStatusClause = VESTI_STATUS_CLAUSE_BY_FILTER[params.filters.status];
     // `data_ref` é DATE (não TIMESTAMP) em dashboard_vendas_view -- ao
     // contrário de data_criado do ERP, não aceita comparar com string ISO

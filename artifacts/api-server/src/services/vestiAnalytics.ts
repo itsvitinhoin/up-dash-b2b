@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
+import { vestiSalesView } from "./vesti-sales-view";
 import { stateFromPhoneDdd } from "../lib/phoneState";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { addDaysToDateOnly } from "../lib/httpQuery";
@@ -342,7 +343,7 @@ async function fetchRevenueByCategory(
  * esconderia a maior parte dos pedidos. Sem pedido pago na janela devolve null.
  */
 export async function fetchVestiStateCoverage(dataset: string, dateFrom: string, dateTo: string): Promise<number | null> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const query = `
     SELECT
       COUNT(DISTINCT IF(pago, pedido_id, NULL)) AS pagos,
@@ -382,7 +383,7 @@ export async function computeVestiWindow(
   filters: VestiFilters = {},
   full = true,
 ): Promise<VestiWindow> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const produtos = vestiTable(dataset, "produtos_vesti");
   const filter = buildFilterClause("v", view, produtos, filters);
 
@@ -426,7 +427,7 @@ export async function fetchVestiOrderStatusBreakdown(
   dateTo: string,
   filters: VestiFilters = {},
 ): Promise<VestiOrderStatusBreakdown> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const produtos = vestiTable(dataset, "produtos_vesti");
   const filter = buildFilterClause("v", view, produtos, filters);
   const query = `
@@ -456,7 +457,7 @@ export async function computeVestiStateRevenue(
   winFrom: string,
   winTo: string,
 ): Promise<{ state: string; revenue: number }[]> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   return fetchStateRevenue(view, winFrom, winTo);
 }
 
@@ -501,7 +502,7 @@ export async function fetchVestiAttributedCustomers(
 ): Promise<VestiAttributedCustomer[]> {
   const clientes = vestiTable(dataset, "clientes_atribuidos_consolidados");
   const clientesVesti = vestiTable(dataset, "clientes_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   // Achado 26/08/2026 (ClickUp Vogabox item 1.6, confirmado pelo Marcelo:
   // é o mesmo filtro `onlyAttributed` do dashboard legado,
@@ -698,7 +699,7 @@ export async function fetchVestiOrdersPage(
   limit: number,
   search: string | undefined,
 ): Promise<VestiOrdersPage> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
   const clientes = vestiTable(dataset, "clientes_vesti");
   const offset = (page - 1) * limit;
@@ -871,7 +872,7 @@ export type VestiOrderDetail = {
 };
 
 export async function fetchVestiOrderDetail(dataset: string, pedidoId: string): Promise<VestiOrderDetail | null> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientes = vestiTable(dataset, "clientes_vesti");
 
   const query = `
@@ -1007,7 +1008,7 @@ export async function fetchVestiCustomersPage(
   sortDir: "asc" | "desc",
   filters: VestiCustomersFilters,
 ): Promise<VestiCustomersPage> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientes = vestiTable(dataset, "clientes_vesti");
   const offset = (page - 1) * limit;
 
@@ -1124,7 +1125,7 @@ export type VestiCustomerDetail = {
 };
 
 export async function fetchVestiCustomerDetail(dataset: string, customerId: string): Promise<VestiCustomerDetail | null> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientes = vestiTable(dataset, "clientes_vesti");
 
   const [custRows] = await bigquery.query({
@@ -1550,7 +1551,7 @@ export async function fetchVestiCustomerSummary(
   dateTo: string | null,
 ): Promise<VestiCustomerSummary> {
   const clientes = vestiTable(dataset, "clientes_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const dateFilter = dateFrom && dateTo ? "AND DATE(created_at) BETWEEN @dateFrom AND @dateTo" : "";
   const params: Record<string, unknown> = dateFrom && dateTo ? { dateFrom, dateTo } : {};
 
@@ -1721,7 +1722,7 @@ export async function fetchVestiProductsPage(
 ): Promise<VestiProductRow[]> {
   const produtos = vestiTable(dataset, "produtos_vesti");
   const estoques = vestiTable(dataset, "estoques_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const conditions: string[] = [];
   const params: Record<string, unknown> = { limit: filters.limit };
@@ -1791,7 +1792,7 @@ export async function fetchVestiProductsSummary(
   dateFrom: string,
   dateTo: string,
 ): Promise<VestiProductsSummary> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const [rows] = await bigquery.query({
     query: `
       SELECT
@@ -1838,7 +1839,7 @@ export type VestiProductDetail = {
 export async function fetchVestiProductDetail(dataset: string, productId: string): Promise<VestiProductDetail | null> {
   const produtos = vestiTable(dataset, "produtos_vesti");
   const estoques = vestiTable(dataset, "estoques_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const [prodRows] = await bigquery.query({
     query: `SELECT id, code, name, price, created_at, categories[SAFE_OFFSET(0)].name AS category FROM ${produtos} WHERE id = @productId LIMIT 1`,
@@ -1968,7 +1969,7 @@ export type VestiDailyBreakdown = {
 };
 
 export async function fetchVestiDailyBreakdown(dataset: string, dateFrom: string, dateTo: string): Promise<VestiDailyBreakdown> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const produtos = vestiTable(dataset, "produtos_vesti");
   const params = { dateFrom, dateTo };
 
@@ -2198,7 +2199,7 @@ export async function fetchVestiRfm(
   dateTo: string,
   filters: { segment?: string; sortBy: string; sortDir: "asc" | "desc"; page: number; limit: number },
 ): Promise<VestiRfm> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientes = vestiTable(dataset, "clientes_vesti");
 
   const [rows] = await bigquery.query({
@@ -2327,7 +2328,7 @@ export type VestiGeography = {
 };
 
 export async function fetchVestiGeography(dataset: string, dateFrom: string, dateTo: string): Promise<VestiGeography> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientes = vestiTable(dataset, "clientes_vesti");
 
   // `estado` vem vazio na maior parte das linhas (mesma limitação já
@@ -2438,7 +2439,7 @@ export async function fetchVestiStock(
 ): Promise<VestiStock> {
   const produtos = vestiTable(dataset, "produtos_vesti");
   const estoques = vestiTable(dataset, "estoques_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const [fromY, fromM, fromD] = dateFrom.split("-").map(Number);
   const [toY, toM, toD] = dateTo.split("-").map(Number);
@@ -2637,7 +2638,7 @@ export async function fetchVestiStock(
 export type VestiSellerRow = { id: string; name: string; email: null; totalOrders: number; totalRevenue: number; avgTicket: number };
 
 export async function fetchVestiSellers(dataset: string, limit: number): Promise<VestiSellerRow[]> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const [rows] = await bigquery.query({
     query: `
       WITH pedidos AS (
@@ -2732,7 +2733,7 @@ async function fetchVestiSellerKpisAndSeries(
 }
 
 export async function fetchVestiSellerDetail(dataset: string, sellerName: string, dateFrom: string, dateTo: string, prevDateFrom: string, prevDateTo: string): Promise<VestiSellerDetail> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const produtos = vestiTable(dataset, "produtos_vesti");
 
   const [current, prev, [categoryRows], [stateRows], [existsRows]] = await Promise.all([
@@ -2791,7 +2792,7 @@ export async function fetchVestiSellerOrders(
   page: number,
   limit: number,
 ): Promise<{ rows: VestiSellerOrderRow[]; total: number }> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const offset = (page - 1) * limit;
 
   const [[listRows], [countRows]] = await Promise.all([
@@ -3064,7 +3065,7 @@ export async function fetchVestiScaleData(
 ): Promise<VestiScaleData> {
   const produtos = vestiTable(dataset, "produtos_vesti");
   const estoques = vestiTable(dataset, "estoques_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const [
     [productRows],
@@ -3251,7 +3252,7 @@ export async function fetchVestiMarketingData(dataset: string, dateFrom: string,
   const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
   const pedidosAtribuidos = vestiTable(dataset, "pedidos_atribuidos_consolidados");
   const clientesVesti = vestiTable(dataset, "clientes_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const startDate = await resolveAttributionStartDateForDataset(dataset);
   const startDateClause = startDate ? "AND pa.data_ref >= @startDate" : "";
@@ -3381,7 +3382,7 @@ export async function fetchVestiUtmData(dataset: string, dateFrom: string, dateT
   const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
   const pedidosAtribuidos = vestiTable(dataset, "pedidos_atribuidos_consolidados");
   const clientesVesti = vestiTable(dataset, "clientes_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const startDate = await resolveAttributionStartDateForDataset(dataset);
   const startDateClause = startDate ? "AND pa.data_ref >= @startDate" : "";
