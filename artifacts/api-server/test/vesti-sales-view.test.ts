@@ -24,6 +24,11 @@ describe("vendas da Vesti com o valor atendido menos o desconto", () => {
     expect(sql).toContain("s.valor_reservado AS valor_atendido");
   });
 
+  it("o dia do pedido é o created_at da Vesti (horário de Brasília), não a data da view que soma 3 horas", () => {
+    expect(sql).toContain("COALESCE(DATE(p.criado_em), s.data_ref) AS data_ref");
+    expect(sql).toContain("ANY_VALUE(created_at) AS criado_em");
+  });
+
   it("junta pelo id do pedido sem duplicar linha (agrupa os pedidos antes do join)", () => {
     expect(sql).toContain("GROUP BY id");
     expect(sql).toContain("ON p.id = s.pedido_id");

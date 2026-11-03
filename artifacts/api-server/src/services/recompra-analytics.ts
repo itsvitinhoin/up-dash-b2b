@@ -624,7 +624,7 @@ async function fetchFullHistory(params: {
   // mapear -- só ERP precisa dessa indireção). Sempre pago=true (PDF
   // seção 6: "Status não muda o histórico positivo"), sem teto de data.
   if (params.vestiDataset) {
-    const vendasView = vestiTable(params.vestiDataset, "dashboard_vendas_view");
+    const vendasView = vestiSalesView(params.vestiDataset);
     const [vestiRows] = await bigquery.query({
       query: `
         SELECT pedido_id, ANY_VALUE(cliente_id) AS cliente_id, ANY_VALUE(data_ref) AS requested_at,
@@ -1337,7 +1337,7 @@ async function fetchAllPositiveEventsForClient(params: {
   }
 
   if (params.vestiDataset) {
-    const vendasView = vestiTable(params.vestiDataset, "dashboard_vendas_view");
+    const vendasView = vestiSalesView(params.vestiDataset);
     const [vestiRows] = await bigquery.query({
       query: `
         SELECT pedido_id, ANY_VALUE(cliente_id) AS cliente_id, ANY_VALUE(data_ref) AS requested_at,
