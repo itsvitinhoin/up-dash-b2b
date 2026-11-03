@@ -131,12 +131,15 @@ type UpZeroStatus =
   | "DELIVERED"
   | "CANCELED";
 
-function mapOrderStatus(
+// `paymentStatus` é o pagamento do pedido na UP Zero (campo `payment_status`), separado do status operacional. Pedido pago que ainda está só
+// RESERVED (ex.: MX Fashion, pedido 2305, set/2026: pago, mas em análise) é venda paga: o painel da UP Zero o conta como pago, então aqui vira APPROVED.
+export function mapOrderStatus(
   s: UpZeroStatus | string,
+  paymentStatus?: string | null,
 ): "PENDING" | "APPROVED" | "SHIPPED" | "DELIVERED" | "REJECTED" {
   switch (String(s).toUpperCase()) {
     case "RESERVED":
-      return "PENDING";
+      return String(paymentStatus ?? "").toLowerCase() === "paid" ? "APPROVED" : "PENDING";
     case "CONFIRMED":
     case "PROCESSING":
     case "INVOICED":
@@ -569,6 +572,8 @@ interface UpZeroOrder {
   // Some UP Zero API versions use "status", others use "order_status"
   order_status?: UpZeroStatus;
   status?: UpZeroStatus;
+  /** Pagamento do pedido ("paid" quando pago), independente do status operacional. */
+  payment_status?: string | null;
   // Some versions use "total", others "total_amount" or "amount"
   total?: string;
   total_amount?: string;
@@ -2027,7 +2032,7 @@ export async function syncUpZeroClient(
   for (const o of upOrders) {
     try {
       const rawStatus = o.order_status ?? o.status;
-      const status = mapOrderStatus(rawStatus ?? ("CONFIRMED" as UpZeroStatus));
+      const status = mapOrderStatus(rawStatus ?? ("CONFIRMED" as UpZeroStatus), o.payment_status);
       const activeItems = (o.items ?? []).filter((item) => item.status !== "removed");
       const itemQuantities = activeItems.map((item) => {
         const requested = getItemRequestedQuantity(item);
