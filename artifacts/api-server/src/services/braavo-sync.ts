@@ -1,0 +1,810 @@
+import { createHash } from "node:crypto";
+import { nanoid } from "nanoid";
+import { and, eq, gt, inArray, like, sql } from "drizzle-orm";
+import {
+  db,
+  clientsTable,
+  customersTable,
+  productsTable,
+  ordersTable,
+  orderItemsTable,
+  eventsTable,
+  syncJobsTable,
+  braavoSyncStatesTable as states,
+  braavoCatalogTable as catalog,
+  BRAAVO_PHASES,
+  type BraavoCursor,
+} from "@workspace/db";
+import {
+  BraavoApi,
+  BraavoError,
+  braavoId,
+  braavoRecord,
+  type BraavoRecord,
+  type BraavoCredentials,
+} from "./braavo-api";
+import {
+  braavoDay,
+  nextDay,
+  normalizeBraavoCustomer,
+  normalizeBraavoOrder,
+  textValue,
+  quantity,
+  money,
+} from "./braavo-normalize";
+import { refreshDailyClientMetrics } from "./daily-client-metrics";
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type Client = typeof clientsTable.$inferSelect;
+export type BraavoBatchResult = {
+  status: "pending" | "done" | "busy" | "failed";
+  phase?: string;
+  page?: number;
+  day?: string | null;
+  processed?: number;
+  complete: boolean;
+  jobId?: string | null;
+  message?: string;
+};
+const PAGE_SIZE = 25;
+
+export function braavoCredentials(client: Client): BraavoCredentials {
+  if (
+    client.commercePlatform !== "BRAAVO" ||
+    client.dashboardType !== "B2C" ||
+    !client.isActive || client.archivedAt
+  )
+    throw new BraavoError(
+      "Selecione um cliente ativo B2C com plataforma Braavo.",
+      "INVALID_CLIENT",
+      400,
+    );
+  if (!client.braavoDomain || !client.braavoApiToken || !client.braavoApiKey)
+    throw new BraavoError(
+      "Cadastre domínio, API Token e API Key da Braavo.",
+      "MISSING_CREDENTIALS",
+      400,
+    );
+  return {
+    domain: client.braavoDomain,
+    apiToken: client.braavoApiToken,
+    apiKey: client.braavoApiKey,
+  };
+}
+export function braavoFingerprint(credentials: BraavoCredentials): string {
+  return createHash("sha256").update(JSON.stringify(credentials)).digest("hex");
+}
+export async function getBraavoClient(clientId: string) {
+  const [client] = await db
+    .select()
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (!client)
+    throw new BraavoError("Cliente não encontrado.", "NOT_FOUND", 404);
+  return client;
+}
+export async function reserveBraavoSlot(domain: string): Promise<number> {
+  const result = await db.execute<{ slot: string | number }>(sql`
+    INSERT INTO braavo_request_slots (domain, next_at) VALUES (${domain}, clock_timestamp() + interval '350 milliseconds')
+    ON CONFLICT (domain) DO UPDATE SET next_at = GREATEST(clock_timestamp(), braavo_request_slots.next_at) + interval '350 milliseconds'
+    RETURNING extract(epoch FROM next_at - interval '350 milliseconds') * 1000 AS slot
+  `);
+  return Number(result.rows[0].slot);
+}
+
+export function initialBraavoCursor(
+  now: Date,
+  completedAt?: Date | null,
+  fullCompletedAt?: Date | null,
+): BraavoCursor {
+  const full =
+    !completedAt ||
+    !fullCompletedAt ||
+    now.getTime() - fullCompletedAt.getTime() >= 7 * 86_400_000;
+  const untilDay = braavoDay(now);
+  const fromDay = full ? null : nextDay(braavoDay(completedAt!), -1);
+  return {
+    phase: "categories",
+    page: 1,
+    day: null,
+    fromDay,
+    untilDay,
+    full,
+    startedAt: now.toISOString(),
+  };
+}
+const dailyPhase = (phase: string) =>
+  ["products", "customers", "orders"].includes(phase);
+export function advanceBraavoCursor(
+  cursor: BraavoCursor,
+  complete: boolean,
+): BraavoCursor {
+  if (!complete) return { ...cursor, page: cursor.page + 1 };
+  if (cursor.day && cursor.day < cursor.untilDay)
+    return { ...cursor, page: 1, day: nextDay(cursor.day) };
+  const phase =
+    BRAAVO_PHASES[BRAAVO_PHASES.indexOf(cursor.phase) + 1] ?? "done";
+  return {
+    ...cursor,
+    phase,
+    page: 1,
+    day: !cursor.full && dailyPhase(phase) ? cursor.fromDay : null,
+    afterId: undefined,
+  };
+}
+
+async function assertLease(tx: Tx, clientId: string, leaseId: string) {
+  const [lease] = await tx
+    .select({ id: states.leaseId })
+    .from(states)
+    .where(and(eq(states.clientId, clientId), eq(states.leaseId, leaseId)))
+    .for("update");
+  if (!lease)
+    throw new BraavoError(
+      "A sincronização foi assumida por outra execução.",
+      "LEASE_LOST",
+      409,
+    );
+  const [client] = await tx.select({ archivedAt: clientsTable.archivedAt, isActive: clientsTable.isActive }).from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!client || client.archivedAt || !client.isActive) throw new BraavoError("Cliente arquivado ou inativo; sincronização interrompida.", "INVALID_CLIENT", 400);
+  await tx
+    .update(states)
+    .set({ leaseUntil: new Date(Date.now() + 90_000), updatedAt: new Date() })
+    .where(eq(states.clientId, clientId));
+}
+async function cachedCatalog(clientId: string) {
+  const rows = await db
+    .select()
+    .from(catalog)
+    .where(
+      and(
+        eq(catalog.clientId, clientId),
+        inArray(catalog.kind, ["categories", "variations"]),
+      ),
+    );
+  return new Map(rows.map((r) => [`${r.kind}:${r.externalId}`, r.data]));
+}
+function variantLabels(
+  cache: Map<string, BraavoRecord>,
+  first: unknown,
+  second: unknown,
+) {
+  let color: string | null = null,
+    size: string | null = null;
+  for (const id of [first, second]) {
+    const value = cache.get(`variations:${id}`);
+    const type = value ? cache.get(`variations:${value.pai_id}`) : undefined;
+    const name = textValue(type?.nome)?.toLowerCase();
+    if (name === "cor" || name === "cores") color = textValue(value?.nome);
+    if (name === "tamanho" || name === "tamanhos")
+      size = textValue(value?.nome);
+  }
+  return { color, size };
+}
+async function persistCustomer(
+  tx: Tx,
+  clientId: string,
+  row: BraavoRecord,
+  fallbackCreatedAt?: Date,
+) {
+  const normalized = normalizeBraavoCustomer(row, fallbackCreatedAt);
+  const [collision] = await tx
+    .select({ externalId: customersTable.externalId })
+    .from(customersTable)
+    .where(
+      and(
+        eq(customersTable.clientId, clientId),
+        eq(customersTable.email, normalized.email),
+      ),
+    );
+  // Do not merge two people merely because their email is equal.
+  if (collision && collision.externalId !== normalized.externalId)
+    throw new BraavoError(
+      "Conflito de e-mail entre clientes distintos; revise o cadastro na Braavo.",
+      "CUSTOMER_IDENTITY_CONFLICT",
+    );
+  const { createdAt, registrationStatus, ...update } = normalized;
+  const [customer] = await tx
+    .insert(customersTable)
+    .values({ clientId, ...normalized })
+    .onConflictDoUpdate({
+      target: [customersTable.clientId, customersTable.externalId],
+      set: { ...update, ...(row.data_criado ? { createdAt } : {}) },
+    })
+    .returning({ id: customersTable.id });
+  return customer.id;
+}
+async function persistSku(
+  tx: Tx,
+  clientId: string,
+  row: BraavoRecord,
+  cache: Map<string, BraavoRecord>,
+) {
+  const skuId = braavoId(row.id),
+    productId = braavoId(row.produto_id);
+  const product = cache.get(`products:${productId}`);
+  if (!product)
+    throw new BraavoError("SKU Braavo sem produto correspondente no catálogo.");
+  const externalId = `braavo:${productId}:${skuId}`;
+  const ref = textValue(row.ref) ?? `braavo-${skuId}`;
+  const [existingRef] = await tx
+    .select({ externalId: productsTable.externalId })
+    .from(productsTable)
+    .where(
+      and(eq(productsTable.clientId, clientId), eq(productsTable.sku, ref)),
+    );
+  const sku =
+    existingRef && existingRef.externalId !== externalId
+      ? `${ref}#braavo-${skuId}`
+      : ref;
+  const { color, size } = variantLabels(cache, row.var1_id, row.var2_id);
+  const name = textValue(product.nome) ?? `Produto ${productId}`;
+  const category = cache.get(`categories:${product.categoria_id}`);
+  const values = {
+    externalId,
+    sku,
+    name:
+      color && size
+        ? `${name} (${color}, ${size})`
+        : [name, color ?? size].filter(Boolean).join(" - "),
+    description: textValue(product.descricao),
+    category: textValue(category?.nome),
+    price: money(row.preco_venda, true),
+    cost: row.preco_custo == null ? null : money(row.preco_custo),
+    stock: quantity(row.estoque),
+    imageUrl: textValue(product.imageUrl),
+    status:
+      String(row.ativo) === "1" && String(product.ativo) === "1"
+        ? ("ACTIVE" as const)
+        : ("INACTIVE" as const),
+    sourceSyncedAt: new Date(),
+  };
+  await tx
+    .insert(productsTable)
+    .values({ clientId, ...values })
+    .onConflictDoUpdate({
+      target: [productsTable.clientId, productsTable.externalId],
+      set: values,
+    });
+}
+async function refreshEntityTotals(
+  tx: Tx,
+  clientId: string,
+  customerIds: string[],
+  productIds: string[],
+) {
+  if (customerIds.length)
+    await tx.execute(sql`
+    UPDATE customers c SET total_orders = (SELECT count(*)::int FROM orders o WHERE o.customer_id=c.id AND o.client_id=${clientId} AND o.status IN ('APPROVED','SHIPPED','DELIVERED')),
+      total_spent = (SELECT coalesce(sum(o.fulfilled_amount),0) FROM orders o WHERE o.customer_id=c.id AND o.client_id=${clientId} AND o.status IN ('APPROVED','SHIPPED','DELIVERED')),
+      first_purchase_at = (SELECT min(o.created_at) FROM orders o WHERE o.customer_id=c.id AND o.client_id=${clientId} AND o.status IN ('APPROVED','SHIPPED','DELIVERED')),
+      last_purchase_at = (SELECT max(o.created_at) FROM orders o WHERE o.customer_id=c.id AND o.client_id=${clientId} AND o.status IN ('APPROVED','SHIPPED','DELIVERED'))
+    WHERE c.client_id=${clientId} AND c.id IN (${sql.join(
+      customerIds.map((id) => sql`${id}`),
+      sql`,`,
+    )})
+  `);
+  if (productIds.length)
+    await tx.execute(sql`
+    UPDATE products p SET total_sold=coalesce(s.total_sold,0), total_revenue=coalesce(s.total_revenue,0)
+    FROM (SELECT target.id, sum(oi.fulfilled_quantity) FILTER (WHERE o.status IN ('APPROVED','SHIPPED','DELIVERED'))::int AS total_sold,
+      sum(oi.fulfilled_quantity*oi.price_at_sale) FILTER (WHERE o.status IN ('APPROVED','SHIPPED','DELIVERED')) AS total_revenue
+      FROM products target LEFT JOIN order_items oi ON oi.product_id=target.id LEFT JOIN orders o ON o.id=oi.order_id AND o.client_id=${clientId}
+      WHERE target.client_id=${clientId} AND target.id IN (${sql.join(
+        productIds.map((id) => sql`${id}`),
+        sql`,`,
+      )}) GROUP BY target.id) s
+    WHERE p.client_id=${clientId} AND p.id=s.id
+  `);
+}
+async function persistOrder(
+  clientId: string,
+  leaseId: string,
+  row: BraavoRecord,
+  cache: Map<string, BraavoRecord>,
+) {
+  const normalized = normalizeBraavoOrder(row);
+  const { items, paid, ...values } = normalized;
+  await db.transaction(async (tx) => {
+    await assertLease(tx, clientId, leaseId);
+    // Preserve the customer's real signup date when the orders API embeds only
+    // its contact snapshot. Missing customers can still be imported safely.
+    const [knownCustomer] = await tx
+      .select({ id: customersTable.id })
+      .from(customersTable)
+      .where(
+        and(
+          eq(customersTable.clientId, clientId),
+          eq(customersTable.externalId, `braavo:${braavoId(row.usuario_id)}`),
+        ),
+      );
+    const customerId =
+      knownCustomer?.id ??
+      (await persistCustomer(
+        tx,
+        clientId,
+        {
+          id: row.usuario_id,
+          nome: row.usuario_nome,
+          email: row.usuario_email,
+          tel_1: row.usuario_tel_1,
+          pessoa: row.usuario_pessoa,
+          cpf: row.usuario_cpf,
+          cnpj: row.usuario_cnpj,
+        },
+        values.createdAt,
+      ));
+    const [previous] = await tx
+      .select({ id: ordersTable.id, customerId: ordersTable.customerId })
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          eq(ordersTable.externalId, values.externalId),
+        ),
+      );
+    const previousItems = previous
+      ? await tx
+          .select({ productId: orderItemsTable.productId })
+          .from(orderItemsTable)
+          .where(eq(orderItemsTable.orderId, previous.id))
+      : [];
+    const [order] = await tx
+      .insert(ordersTable)
+      .values({ clientId, customerId, ...values })
+      .onConflictDoUpdate({
+        target: [ordersTable.clientId, ordersTable.externalId],
+        set: { ...values, customerId },
+      })
+      .returning({ id: ordersTable.id });
+    await tx
+      .delete(orderItemsTable)
+      .where(eq(orderItemsTable.orderId, order.id));
+    const productIds = new Set(previousItems.map((i) => i.productId));
+    for (const item of items) {
+      const { externalId, sku, name, variation1, variation2, ...itemValues } =
+        item;
+      let [product] = await tx
+        .select({ id: productsTable.id })
+        .from(productsTable)
+        .where(
+          and(
+            eq(productsTable.clientId, clientId),
+            eq(productsTable.externalId, externalId),
+          ),
+        );
+      if (!product) {
+        // Deleted historical variants are archived, never presented as available stock.
+        [product] = await tx
+          .insert(productsTable)
+          .values({
+            clientId,
+            externalId,
+            sku: `braavo-archive-${externalId.split(":").at(-1)}`,
+            name,
+            price: item.grossPriceAtSale,
+            status: "INACTIVE",
+          })
+          .returning({ id: productsTable.id });
+      }
+      productIds.add(product.id);
+      await tx.insert(orderItemsTable).values({
+        orderId: order.id,
+        productId: product.id,
+        ...itemValues,
+        ...variantLabels(cache, variation1, variation2),
+      });
+    }
+    const eventId = `braavo:purchase:${braavoId(row.id)}`;
+    if (paid)
+      await tx
+        .insert(eventsTable)
+        .values({
+          clientId,
+          customerId,
+          orderId: order.id,
+          eventType: "PURCHASE",
+          externalSourceId: eventId,
+          createdAt: values.approvalDate!,
+          metadata: {
+            source: "braavo",
+            utm_source: values.utmSource,
+            utm_medium: values.utmMedium,
+            utm_campaign: values.utmCampaign,
+            utm_content: values.utmContent,
+            utm_term: values.utmTerm,
+          },
+        })
+        .onConflictDoUpdate({
+          target: [
+            eventsTable.clientId,
+            eventsTable.eventType,
+            eventsTable.externalSourceId,
+          ],
+          targetWhere: sql`external_source_id IS NOT NULL`,
+          set: {
+            customerId,
+            createdAt: values.approvalDate!,
+            metadata: {
+              source: "braavo",
+              utm_source: values.utmSource,
+              utm_medium: values.utmMedium,
+              utm_campaign: values.utmCampaign,
+              utm_content: values.utmContent,
+              utm_term: values.utmTerm,
+            },
+          },
+        });
+    else
+      await tx
+        .delete(eventsTable)
+        .where(
+          and(
+            eq(eventsTable.clientId, clientId),
+            eq(eventsTable.eventType, "PURCHASE"),
+            eq(eventsTable.externalSourceId, eventId),
+          ),
+        );
+    await refreshEntityTotals(
+      tx,
+      clientId,
+      [...new Set([customerId, ...(previous ? [previous.customerId] : [])])],
+      [...productIds],
+    );
+  });
+  // Refresh the original creation day, even for a payment/cancellation years later.
+  await refreshDailyClientMetrics({
+    clientId,
+    from: values.createdAt,
+    to: values.createdAt,
+  });
+  if (
+    values.approvalDate &&
+    braavoDay(values.approvalDate) !== braavoDay(values.createdAt)
+  )
+    await refreshDailyClientMetrics({
+      clientId,
+      from: values.approvalDate,
+      to: values.approvalDate,
+    });
+}
+
+async function runPage(
+  clientId: string,
+  leaseId: string,
+  api: BraavoApi,
+  cursor: BraavoCursor,
+) {
+  const cache = await cachedCatalog(clientId);
+  if (cursor.phase === "pending") {
+    const rows = await db
+      .select({ externalId: ordersTable.externalId })
+      .from(ordersTable)
+      .where(
+        and(
+          eq(ordersTable.clientId, clientId),
+          eq(ordersTable.status, "PENDING"),
+          like(ordersTable.externalId, "braavo:%"),
+          cursor.afterId
+            ? gt(ordersTable.externalId, cursor.afterId)
+            : undefined,
+        ),
+      )
+      .orderBy(ordersTable.externalId)
+      .limit(10);
+    for (const row of rows)
+      await persistOrder(
+        clientId,
+        leaseId,
+        await api.one("/pedidos/buscar/id", row.externalId!.slice(7)),
+        cache,
+      );
+    return {
+      processed: rows.length,
+      cursor:
+        rows.length < 10
+          ? { ...cursor, phase: "done" as const }
+          : { ...cursor, afterId: rows.at(-1)!.externalId! },
+    };
+  }
+  const paths = {
+    categories: "categorias",
+    variations: "variacoes",
+    products: "produtos",
+    skus: "skus",
+    customers: "clientes",
+    orders: "pedidos",
+  };
+  if (cursor.phase === "done") return { processed: 0, cursor };
+  const limit = ["products", "orders"].includes(cursor.phase) ? 10 : PAGE_SIZE;
+  const page = await api.page(
+    `/${paths[cursor.phase]}/buscar/todos`,
+    cursor.page,
+    limit,
+    cursor.day ? { data_alterado: cursor.day } : {},
+  );
+  if (cursor.phase === "skus" && page.rows.length) {
+    const productIds = [
+      ...new Set(page.rows.map((row) => braavoId(row.produto_id))),
+    ];
+    const products = await db
+      .select()
+      .from(catalog)
+      .where(
+        and(
+          eq(catalog.clientId, clientId),
+          eq(catalog.kind, "products"),
+          inArray(catalog.externalId, productIds),
+        ),
+      );
+    for (const product of products)
+      cache.set(`products:${product.externalId}`, product.data);
+  }
+  for (const row of page.rows) {
+    if (cursor.phase === "orders") {
+      await persistOrder(
+        clientId,
+        leaseId,
+        await api.one("/pedidos/buscar/id", row.id),
+        cache,
+      );
+      continue;
+    }
+    let data = row;
+    if (cursor.phase === "customers")
+      data = { ...row, ...(await api.one("/clientes/buscar/id", row.id)) };
+    if (cursor.phase === "products") {
+      const detail = await api.one("/produtos/buscar/id", row.id);
+      const photos = Array.isArray(detail.fotos)
+        ? detail.fotos.map(braavoRecord)
+        : [];
+      data = {
+        id: detail.id,
+        nome: detail.nome,
+        ativo: detail.ativo,
+        descricao: detail.descricao,
+        categoria_id: detail.categoria_id,
+        imageUrl:
+          photos.map((photo) => textValue(photo.foto_1)).find(Boolean) ?? null,
+      };
+    }
+    await db.transaction(async (tx) => {
+      await assertLease(tx, clientId, leaseId);
+      if (cursor.phase === "customers") {
+        await persistCustomer(tx, clientId, data);
+        return;
+      }
+      if (cursor.phase === "skus") {
+        await persistSku(tx, clientId, row, cache);
+        return;
+      }
+      const kind = cursor.phase as "categories" | "variations" | "products";
+      await tx
+        .insert(catalog)
+        .values({ clientId, kind, externalId: braavoId(row.id), data })
+        .onConflictDoUpdate({
+          target: [catalog.clientId, catalog.kind, catalog.externalId],
+          set: { data },
+        });
+    });
+  }
+  if (cursor.phase === "skus" && page.complete) {
+    await db.transaction(async (tx) => {
+      await assertLease(tx, clientId, leaseId);
+      await tx
+        .update(productsTable)
+        .set({ status: "INACTIVE", stock: 0 })
+        .where(
+          and(
+            eq(productsTable.clientId, clientId),
+            like(productsTable.externalId, "braavo:%"),
+            sql`${productsTable.sourceSyncedAt} < ${cursor.startedAt}::timestamptz`,
+          ),
+        );
+    });
+  }
+  return {
+    processed: page.rows.length,
+    cursor: advanceBraavoCursor(cursor, page.complete),
+  };
+}
+
+export async function getBraavoSyncStatus(clientId: string) {
+  const client = await getBraavoClient(clientId);
+  const [state] = await db
+    .select()
+    .from(states)
+    .where(eq(states.clientId, clientId));
+  return {
+    configured: Boolean(
+      client.commercePlatform === "BRAAVO" &&
+      client.braavoDomain &&
+      client.braavoApiToken &&
+      client.braavoApiKey,
+    ),
+    cursor: state?.cursor ?? null,
+    completedAt: state?.completedAt ?? null,
+    error: state?.error ?? null,
+    busy: Boolean(state?.leaseUntil && state.leaseUntil > new Date()),
+  };
+}
+export async function testBraavoConnection(clientId: string) {
+  const credentials = braavoCredentials(await getBraavoClient(clientId));
+  const api = new BraavoApi(credentials, {
+    reserveSlot: reserveBraavoSlot,
+    deadline: Date.now() + 25_000,
+  });
+  await api.page("/clientes/buscar/todos", 1, 1);
+  return { ok: true, domain: api.domain };
+}
+
+export async function runBraavoBatch(
+  clientId: string,
+  trigger: "manual" | "cron",
+): Promise<BraavoBatchResult> {
+  const leaseId = nanoid();
+  const acquired = await db.transaction(async (tx) => {
+    // Same lock order as connection edits: client first, then sync state.
+    const [client] = await tx
+      .select()
+      .from(clientsTable)
+      .where(eq(clientsTable.id, clientId))
+      .for("no key update");
+    if (!client)
+      throw new BraavoError("Cliente não encontrado.", "NOT_FOUND", 404);
+    const credentials = braavoCredentials(client),
+      fingerprint = braavoFingerprint(credentials);
+    await tx
+      .insert(states)
+      .values({ clientId, fingerprint })
+      .onConflictDoNothing();
+    const [state] = await tx
+      .update(states)
+      .set({
+        leaseId,
+        leaseUntil: new Date(Date.now() + 90_000),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(states.clientId, clientId),
+          sql`(${states.leaseUntil} IS NULL OR ${states.leaseUntil} < now())`,
+        ),
+      )
+      .returning();
+    return { state, credentials, fingerprint };
+  });
+  const { state, credentials, fingerprint } = acquired;
+  if (!state)
+    return {
+      status: "busy",
+      complete: false,
+      message: "A sincronização desta loja já está em andamento.",
+    };
+  let jobId = state.jobId;
+  try {
+    const newCycle =
+      !state.cursor ||
+      state.cursor.phase === "done" ||
+      fingerprint !== state.fingerprint;
+    let cursor = newCycle
+      ? initialBraavoCursor(
+          new Date(),
+          fingerprint === state.fingerprint
+            ? state.cursor?.phase === "done"
+              ? new Date(`${state.cursor.untilDay}T12:00:00-03:00`)
+              : state.completedAt
+            : null,
+          fingerprint === state.fingerprint ? state.fullCompletedAt : null,
+        )
+      : state.cursor!;
+    if (newCycle || !jobId) {
+      if (jobId)
+        await db
+          .update(syncJobsTable)
+          .set({
+            status: "failed",
+            error: "Ciclo substituído após alteração da conexão.",
+            finishedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(syncJobsTable.id, jobId),
+              inArray(syncJobsTable.status, ["pending", "running", "failed"]),
+            ),
+          );
+      const [job] = await db
+        .insert(syncJobsTable)
+        .values({
+          clientId,
+          jobType: "braavo_transactional",
+          trigger,
+          scope: "client",
+          status: "running",
+          startedAt: new Date(),
+        })
+        .returning({ id: syncJobsTable.id });
+      jobId = job.id;
+    } else
+      await db
+        .update(syncJobsTable)
+        .set({ status: "running", error: null, finishedAt: null })
+        .where(eq(syncJobsTable.id, jobId));
+    await db
+      .update(states)
+      .set({ fingerprint, cursor, jobId, error: null })
+      .where(and(eq(states.clientId, clientId), eq(states.leaseId, leaseId)));
+    const api = new BraavoApi(credentials, {
+      reserveSlot: reserveBraavoSlot,
+      deadline: Date.now() + 35_000,
+    });
+    const result = await runPage(clientId, leaseId, api, cursor);
+    cursor = result.cursor;
+    const complete = cursor.phase === "done";
+    const response: BraavoBatchResult = {
+      status: complete ? "done" : "pending",
+      complete,
+      phase: cursor.phase,
+      page: cursor.page,
+      day: cursor.day,
+      processed: result.processed,
+      jobId,
+    };
+    await db.transaction(async (tx) => {
+      await assertLease(tx, clientId, leaseId);
+      await tx
+        .update(states)
+        .set({
+          cursor,
+          error: null,
+          ...(complete
+            ? {
+                completedAt: new Date(),
+                ...(cursor.full ? { fullCompletedAt: new Date() } : {}),
+              }
+            : {}),
+        })
+        .where(eq(states.clientId, clientId));
+      await tx
+        .update(syncJobsTable)
+        .set({
+          status: complete ? "done" : "pending",
+          result: response,
+          ...(complete ? { finishedAt: new Date() } : {}),
+        })
+        .where(eq(syncJobsTable.id, jobId!));
+    });
+    return response;
+  } catch (error) {
+    const waiting =
+      error instanceof BraavoError && error.code === "BATCH_DEADLINE";
+    const message =
+      error instanceof BraavoError
+        ? error.message
+        : "Falha ao persistir o lote Braavo. O ponto de retomada foi preservado.";
+    await db
+      .update(states)
+      .set({ error: waiting ? null : message })
+      .where(and(eq(states.clientId, clientId), eq(states.leaseId, leaseId)));
+    if (jobId)
+      await db
+        .update(syncJobsTable)
+        .set({
+          status: waiting ? "pending" : "failed",
+          error: waiting ? null : message,
+          ...(waiting ? {} : { finishedAt: new Date() }),
+        })
+        .where(eq(syncJobsTable.id, jobId));
+    return {
+      status: waiting ? "pending" : "failed",
+      complete: false,
+      jobId,
+      message,
+    };
+  } finally {
+    await db
+      .update(states)
+      .set({ leaseId: null, leaseUntil: null, updatedAt: new Date() })
+      .where(and(eq(states.clientId, clientId), eq(states.leaseId, leaseId)));
+  }
+}

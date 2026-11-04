@@ -17,6 +17,10 @@ export const logger = pino({
       "res.headers['set-cookie']",
       // Redact any auth-related body the http logger might serialize.
       "req.body.password",
+      "req.body.braavoApiToken",
+      "req.body.braavoApiKey",
+      "*.braavoApiToken",
+      "*.braavoApiKey",
       "req.body.refreshToken",
       "*.password",
       "*.refreshToken",

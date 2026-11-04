@@ -1873,11 +1873,17 @@ components:
           description: Dashboard family for this client.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI, BRAAVO]
           description: Primary commerce data source for this client.
         bigqueryDataset:
           type: ["string", "null"]
           description: BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.
+        braavoDomain:
+          type: ["string", "null"]
+          description: Braavo shop HTTPS domain.
+        hasBraavoIntegration:
+          type: boolean
+          description: True when Braavo domain, API Token and API Key are configured.
         nuvemshopStoreId:
           type: ["string", "null"]
           description: Nuvemshop store id for B2C data ingestion.
@@ -2037,11 +2043,20 @@ components:
           description: Dashboard family for this client. Defaults to B2B.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI, BRAAVO]
           description: Primary commerce data source. Defaults from dashboardType.
         bigqueryDataset:
           type: string
           description: BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI.
+        braavoDomain:
+          type: string
+          description: Braavo shop HTTPS domain.
+        braavoApiToken:
+          type: string
+          description: Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
+        braavoApiKey:
+          type: string
+          description: Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
         nuvemshopStoreId:
           type: string
           description: Optional Nuvemshop store id for B2C clients.
@@ -2084,7 +2099,7 @@ components:
           description: Dashboard family for this client.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI, BRAAVO]
           description: Primary commerce data source.
         bigqueryDataset:
           type: ["string", "null"]
@@ -2093,6 +2108,15 @@ components:
           type: ["string", "null"]
           format: date
           description: Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Pass null to clear it.
+        braavoDomain:
+          type: ["string", "null"]
+          description: Braavo shop HTTPS domain.
+        braavoApiToken:
+          type: ["string", "null"]
+          description: Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
+        braavoApiKey:
+          type: ["string", "null"]
+          description: Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
         nuvemshopStoreId:
           type: ["string", "null"]
           description: Nuvemshop store id. Pass null to clear it.
@@ -2182,7 +2206,7 @@ components:
           description: Dashboard family for this client. Defaults to B2B.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI, BRAAVO]
           description: Primary commerce data source. Defaults from dashboardType.
         currency:
           type: string

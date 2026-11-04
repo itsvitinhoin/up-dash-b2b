@@ -17,4 +17,5 @@ export const ClientCommercePlatform = {
   NUVEMSHOP: "NUVEMSHOP",
   MANUAL: "MANUAL",
   VESTI: "VESTI",
+  BRAAVO: "BRAAVO",
 } as const;

@@ -28,6 +28,13 @@ export interface Client {
    */
   bigqueryDataset?: string | null;
   /**
+   * Braavo shop HTTPS domain.
+   * @nullable
+   */
+  braavoDomain?: string | null;
+  /** True when Braavo domain, API Token and API Key are configured. */
+  hasBraavoIntegration?: boolean;
+  /**
    * Nuvemshop store id for B2C data ingestion.
    * @nullable
    */

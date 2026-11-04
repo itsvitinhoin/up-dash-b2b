@@ -119,13 +119,23 @@ export const ListClientsResponse = zod.object({
         .enum(["B2B", "B2C"])
         .describe("Dashboard family for this client."),
       commercePlatform: zod
-        .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+        .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
         .describe("Primary commerce data source for this client."),
       bigqueryDataset: zod
         .string()
         .nullish()
         .describe(
           "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
+        ),
+      braavoDomain: zod
+        .string()
+        .nullish()
+        .describe("Braavo shop HTTPS domain."),
+      hasBraavoIntegration: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when Braavo domain, API Token and API Key are configured.",
         ),
       nuvemshopStoreId: zod
         .string()
@@ -282,7 +292,7 @@ export const CreateClientBody = zod.object({
     .optional()
     .describe("Dashboard family for this client. Defaults to B2B."),
   commercePlatform: zod
-    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
     .optional()
     .describe("Primary commerce data source. Defaults from dashboardType."),
   bigqueryDataset: zod
@@ -290,6 +300,19 @@ export const CreateClientBody = zod.object({
     .optional()
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI.",
+    ),
+  braavoDomain: zod.string().optional().describe("Braavo shop HTTPS domain."),
+  braavoApiToken: zod
+    .string()
+    .optional()
+    .describe(
+      "Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.",
+    ),
+  braavoApiKey: zod
+    .string()
+    .optional()
+    .describe(
+      "Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.",
     ),
   nuvemshopStoreId: zod
     .string()
@@ -352,7 +375,7 @@ export const ImportClientsBodyItem = zod
       .optional()
       .describe("Dashboard family for this client. Defaults to B2B."),
     commercePlatform: zod
-      .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+      .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
       .optional()
       .describe("Primary commerce data source. Defaults from dashboardType."),
     currency: zod
@@ -410,7 +433,7 @@ export const GetClientResponse = zod.object({
     .enum(["B2B", "B2C"])
     .describe("Dashboard family for this client."),
   commercePlatform: zod
-    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
     .describe("Primary commerce data source for this client."),
   bigqueryDataset: zod
     .string()
@@ -418,6 +441,11 @@ export const GetClientResponse = zod.object({
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
     ),
+  braavoDomain: zod.string().nullish().describe("Braavo shop HTTPS domain."),
+  hasBraavoIntegration: zod
+    .boolean()
+    .optional()
+    .describe("True when Braavo domain, API Token and API Key are configured."),
   nuvemshopStoreId: zod
     .string()
     .nullish()
@@ -564,7 +592,7 @@ export const UpdateClientBody = zod
       .optional()
       .describe("Dashboard family for this client."),
     commercePlatform: zod
-      .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+      .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
       .optional()
       .describe("Primary commerce data source."),
     bigqueryDataset: zod
@@ -578,6 +606,19 @@ export const UpdateClientBody = zod
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .nullish()
       .describe("Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Pass null to clear it."),
+    braavoDomain: zod.string().nullish().describe("Braavo shop HTTPS domain."),
+    braavoApiToken: zod
+      .string()
+      .nullish()
+      .describe(
+        "Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.",
+      ),
+    braavoApiKey: zod
+      .string()
+      .nullish()
+      .describe(
+        "Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.",
+      ),
     nuvemshopStoreId: zod
       .string()
       .nullish()
@@ -623,7 +664,7 @@ export const UpdateClientResponse = zod.object({
     .enum(["B2B", "B2C"])
     .describe("Dashboard family for this client."),
   commercePlatform: zod
-    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
     .describe("Primary commerce data source for this client."),
   bigqueryDataset: zod
     .string()
@@ -631,6 +672,11 @@ export const UpdateClientResponse = zod.object({
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
     ),
+  braavoDomain: zod.string().nullish().describe("Braavo shop HTTPS domain."),
+  hasBraavoIntegration: zod
+    .boolean()
+    .optional()
+    .describe("True when Braavo domain, API Token and API Key are configured."),
   nuvemshopStoreId: zod
     .string()
     .nullish()

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, ne, gte, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import {
   db,
   clientsTable,
@@ -16,6 +16,7 @@ import {
   summarizeUpzeroSellerPurchases,
   type UpzeroAnalyticsMetric,
 } from "./upzero/analytics-metrics";
+import { runBraavoBatch } from "./braavo-sync";
 import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
@@ -28,6 +29,7 @@ export type ExtractionJobType =
   | "upzero_analytics"
   | "meta_ads"
   | "nuvemshop_transactional"
+  | "braavo_transactional"
   | "daily_metrics"
   | "paid_touchpoints";
 
@@ -625,7 +627,7 @@ export async function runUpzeroTransactionalExtraction(
   } = {},
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
-  const allClients = await clientsWith(isNotNull(clientsTable.upZeroApiKey));
+  const allClients = await clientsWith(and(isNotNull(clientsTable.upZeroApiKey), ne(clientsTable.commercePlatform, "BRAAVO")));
   const filteredClients = options.clientId
     ? allClients.filter((client) => client.id === options.clientId)
     : allClients;
@@ -686,7 +688,7 @@ export async function runUpzeroAnalyticsExtraction(
   options: { clientId?: string; to?: Date } = {},
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
-  const allClients = await clientsWith(isNotNull(clientsTable.upZeroApiKey));
+  const allClients = await clientsWith(and(isNotNull(clientsTable.upZeroApiKey), ne(clientsTable.commercePlatform, "BRAAVO")));
   const clients = options.clientId
     ? allClients.filter((client) => client.id === options.clientId)
     : allClients;
@@ -858,6 +860,7 @@ export async function runNuvemshopTransactionalExtraction(
   const since = new Date(startedAt.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
   const allClients = (await clientsWith(and(
     eq(clientsTable.dashboardType, "B2C"),
+    eq(clientsTable.commercePlatform, "NUVEMSHOP"),
     isNotNull(clientsTable.nuvemshopStoreId),
     isNotNull(clientsTable.nuvemshopAccessToken),
   ))).filter((client) => client.nuvemshopStoreId && client.nuvemshopAccessToken);
@@ -945,6 +948,23 @@ export async function runNuvemshopTransactionalExtraction(
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
   };
+}
+
+// One durable page per request. The caller continues the same offset while a
+// client's cycle is pending, keeping every server request bounded.
+export async function runBraavoTransactionalExtraction(trigger: ExtractionTrigger, options: { offset?: number } = {}) {
+  const offset = options.offset ?? 0;
+  const [client] = await db.select({ id: clientsTable.id }).from(clientsTable).where(and(
+    eq(clientsTable.isActive, true), isNull(clientsTable.archivedAt), eq(clientsTable.dashboardType, "B2C"), eq(clientsTable.commercePlatform, "BRAAVO"),
+    sql`nullif(trim(${clientsTable.braavoDomain}), '') IS NOT NULL`,
+    sql`nullif(trim(${clientsTable.braavoApiToken}), '') IS NOT NULL`,
+    sql`nullif(trim(${clientsTable.braavoApiKey}), '') IS NOT NULL`,
+  )).orderBy(clientsTable.id).offset(offset).limit(1);
+  if (!client) return { clients: 0, failed: 0, done: 0, pending: 0, nextOffset: offset };
+  const result = await runBraavoBatch(client.id, trigger);
+  return { clients: 1, clientId: client.id, failed: result.status === "failed" ? 1 : 0,
+    done: result.complete ? 1 : 0, pending: result.status === "pending" ? 1 : 0,
+    nextOffset: result.status === "pending" ? offset : offset + 1, result };
 }
 
 export async function runDailyMetricsBackfill(

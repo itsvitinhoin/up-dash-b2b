@@ -73,6 +73,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { BraavoCredentialFields, BraavoIntegration, type BraavoFields } from "@/components/braavo-integration";
 import {
   Select,
   SelectContent,
@@ -112,13 +113,14 @@ const NAV_ITEM_OPTIONS: Array<{ href: string; label: string }> = [
 ];
 
 const COMMERCE_PLATFORM_OPTIONS: Array<{
-  value: "UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI";
+  value: "UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI" | "BRAAVO";
   label: string;
 }> = [
   { value: "UPZERO", label: "UP Zero" },
   { value: "NUVEMSHOP", label: "Nuvemshop" },
   { value: "VESTI", label: "Vesti" },
   { value: "MANUAL", label: "Manual" },
+  { value: "BRAAVO", label: "Braavo (B2C)" },
 ];
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -838,17 +840,19 @@ function PlatformDialog({
   currentPlatform,
   currentDataset,
   currentAttributionStartDate,
+  dashboardType,
 }: {
   clientId: string;
   clientName: string;
-  currentPlatform: "UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI" | null | undefined;
+  currentPlatform: "UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI" | "BRAAVO" | null | undefined;
   currentDataset: string | null | undefined;
   currentAttributionStartDate?: string | null;
+  dashboardType: "B2B" | "B2C";
 }) {
   const displayLabel = useDisplayLabel();
   const { tx } = useI18n();
   const [open, setOpen] = useState(false);
-  const [platform, setPlatform] = useState<"UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI">("UPZERO");
+  const [platform, setPlatform] = useState<"UPZERO" | "NUVEMSHOP" | "MANUAL" | "VESTI" | "BRAAVO">("UPZERO");
   const [dataset, setDataset] = useState("");
   const [attributionStart, setAttributionStart] = useState("");
   const updateMutation = useUpdateClient();
@@ -914,7 +918,7 @@ function PlatformDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {COMMERCE_PLATFORM_OPTIONS.map((opt) => (
+                {COMMERCE_PLATFORM_OPTIONS.filter((opt) => opt.value !== "BRAAVO" || dashboardType === "B2C").map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {tx(displayLabel(opt.label))}
                   </SelectItem>
@@ -955,7 +959,7 @@ function PlatformDialog({
           {updateMutation.isError && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Falha ao salvar. Tenta de novo.</AlertDescription>
+              <AlertDescription>{updateMutation.error instanceof Error ? updateMutation.error.message : "Falha ao salvar. Tenta de novo."}</AlertDescription>
             </Alert>
           )}
         </div>
@@ -1438,6 +1442,8 @@ export default function ClientsPage() {
   const [newMetaAdAccountId, setNewMetaAdAccountId] = useState("");
   const [newCurrencyCode, setNewCurrencyCode] = useState("BRL");
   const [newDashboardType, setNewDashboardType] = useState<"B2B" | "B2C">(selectedDashboardMode);
+  const [newCommercePlatform, setNewCommercePlatform] = useState<"UPZERO" | "NUVEMSHOP" | "BRAAVO">(selectedDashboardMode === "B2C" ? "NUVEMSHOP" : "UPZERO");
+  const [newBraavo, setNewBraavo] = useState<BraavoFields>({ domain: "https://www.lacleo.com.br", apiToken: "", apiKey: "" });
   const [newNuvemshopStoreId, setNewNuvemshopStoreId] = useState("");
   const [newNuvemshopAccessToken, setNewNuvemshopAccessToken] = useState("");
   const [newGa4MeasurementId, setNewGa4MeasurementId] = useState("");
@@ -1450,7 +1456,7 @@ export default function ClientsPage() {
   const debouncedApiKey = useDebounce(newApiKey, 400);
 
   useEffect(() => {
-    if (!isDialogOpen || !debouncedApiKey || !debouncedApiKey.trim().startsWith("sk_")) {
+    if (newDashboardType !== "B2B" || !isDialogOpen || !debouncedApiKey || !debouncedApiKey.trim().startsWith("sk_")) {
       setLookupMatch(null);
       setIsLookingUp(false);
       return;
@@ -1475,13 +1481,16 @@ export default function ClientsPage() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedApiKey, isDialogOpen]);
+  }, [debouncedApiKey, isDialogOpen, newDashboardType]);
 
   const createMutation = useCreateClient();
   const importMutation = useImportClients();
 
   useEffect(() => {
-    if (!isDialogOpen) setNewDashboardType(selectedDashboardMode);
+    if (!isDialogOpen) {
+      setNewDashboardType(selectedDashboardMode);
+      setNewCommercePlatform(selectedDashboardMode === "B2C" ? "NUVEMSHOP" : "UPZERO");
+    }
   }, [isDialogOpen, selectedDashboardMode]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1567,14 +1576,14 @@ export default function ClientsPage() {
   // Regras do formulário (lib/client-create-rules.ts): Nuvemshop e GA4 opcionais (tudo ou nada); a Meta se liga depois pelo botão da linha.
   const createForm = {
     dashboardType: newDashboardType,
-    nuvemshopStoreId: newNuvemshopStoreId,
-    nuvemshopAccessToken: newNuvemshopAccessToken,
+    nuvemshopStoreId: newCommercePlatform === "BRAAVO" ? "" : newNuvemshopStoreId,
+    nuvemshopAccessToken: newCommercePlatform === "BRAAVO" ? "" : newNuvemshopAccessToken,
     ga4MeasurementId: newGa4MeasurementId,
     ga4PropertyId: newGa4PropertyId,
     ga4ApiSecret: newGa4ApiSecret,
   };
   const createProblem = newClientProblem(createForm);
-  const createManual = isManualB2C(createForm);
+  const createManual = newCommercePlatform !== "BRAAVO" && isManualB2C(createForm);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1589,13 +1598,14 @@ export default function ClientsPage() {
           email: newEmail,
           apiKey: newApiKey,
           dashboardType: newDashboardType,
-          commercePlatform: newClientPlatform(createForm),
+          commercePlatform: newCommercePlatform === "BRAAVO" ? "BRAAVO" : newClientPlatform(createForm),
+          ...(newCommercePlatform === "BRAAVO" ? { braavoDomain: newBraavo.domain.trim(), ...(newBraavo.apiToken.trim() ? { braavoApiToken: newBraavo.apiToken.trim() } : {}), ...(newBraavo.apiKey.trim() ? { braavoApiKey: newBraavo.apiKey.trim() } : {}) } : {}),
           ...(newMetaAdsApiKey.trim() ? { metaAdsApiKey: newMetaAdsApiKey.trim() } : {}),
           ...(newMetaAdAccountId.trim() ? { metaAdAccountId: newMetaAdAccountId.trim() } : {}),
-          ...(newDashboardType === "B2C" && newNuvemshopStoreId.trim()
+          ...(newCommercePlatform === "NUVEMSHOP" && newNuvemshopStoreId.trim()
             ? { nuvemshopStoreId: newNuvemshopStoreId.trim() }
             : {}),
-          ...(newDashboardType === "B2C" && newNuvemshopAccessToken.trim()
+          ...(newCommercePlatform === "NUVEMSHOP" && newNuvemshopAccessToken.trim()
             ? { nuvemshopAccessToken: newNuvemshopAccessToken.trim() }
             : {}),
           ...(newDashboardType === "B2C" && newGa4MeasurementId.trim()
@@ -1621,6 +1631,7 @@ export default function ClientsPage() {
           setNewMetaAdAccountId("");
           setNewCurrencyCode("BRL");
           setNewDashboardType(selectedDashboardMode);
+          setNewBraavo({ domain: "https://www.lacleo.com.br", apiToken: "", apiKey: "" });
           setNewNuvemshopStoreId("");
           setNewNuvemshopAccessToken("");
           setNewGa4MeasurementId("");
@@ -1747,6 +1758,8 @@ export default function ClientsPage() {
             setNewMetaAdAccountId("");
             setNewCurrencyCode("BRL");
             setNewDashboardType(selectedDashboardMode);
+            setNewCommercePlatform(selectedDashboardMode === "B2C" ? "NUVEMSHOP" : "UPZERO");
+            setNewBraavo({ domain: "https://www.lacleo.com.br", apiToken: "", apiKey: "" });
             setNewNuvemshopStoreId("");
             setNewNuvemshopAccessToken("");
             setNewGa4MeasurementId("");
@@ -1773,16 +1786,27 @@ export default function ClientsPage() {
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
                   <Label htmlFor="dashboardType">{tx("Painel")}</Label>
-                  <Select value={newDashboardType} onValueChange={(value) => setNewDashboardType(value === "B2C" ? "B2C" : "B2B")}>
+                  <Select value={newDashboardType} onValueChange={(value) => { setNewDashboardType(value === "B2C" ? "B2C" : "B2B"); setNewCommercePlatform(value === "B2C" ? "NUVEMSHOP" : "UPZERO"); }}>
                     <SelectTrigger id="dashboardType">
                       <SelectValue placeholder={tx("Selecione o painel")} />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="B2B">B2B · UP Zero</SelectItem>
-                      <SelectItem value="B2C">B2C · Nuvemshop</SelectItem>
+                      <SelectItem value="B2C">B2C · E-commerce</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+                {newDashboardType === "B2C" && <div className="grid gap-2">
+                  <Label htmlFor="commercePlatform">Plataforma B2C</Label>
+                  <Select value={newCommercePlatform} onValueChange={(value) => {
+                    const platform = value === "BRAAVO" ? "BRAAVO" : "NUVEMSHOP";
+                    setNewCommercePlatform(platform);
+                    if (platform === "BRAAVO") { if (!newName.trim()) setNewName("La Cleo"); if (!newApiKey.trim()) setNewApiKey(generateApiKey()); }
+                  }}>
+                    <SelectTrigger id="commercePlatform"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="NUVEMSHOP">Nuvemshop</SelectItem><SelectItem value="BRAAVO">Braavo</SelectItem></SelectContent>
+                  </Select>
+                </div>}
                 <div className="grid gap-2">
                   <Label htmlFor="name">{tx("Nome da empresa")}</Label>
                   <Input
@@ -1887,10 +1911,10 @@ export default function ClientsPage() {
                       <div>
                         <p className="text-sm font-medium">B2C integrations</p>
                         <p className="text-xs text-muted-foreground">
-                          {tx("As credenciais da Nuvemshop e GA4 são armazenadas no servidor.")}
+                          {tx("As credenciais da plataforma e GA4 são armazenadas no servidor.")}
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {tx("Nuvemshop e GA4 são opcionais. Para um cliente só de anúncios, deixe em branco e ligue a conta Meta depois, pelo botão Meta account da linha do cliente.")}
+                          {tx("As chaves Braavo, Nuvemshop e GA4 são opcionais. Para um cliente só de anúncios, deixe em branco e ligue a conta Meta depois, pelo botão Meta account da linha do cliente.")}
                         </p>
                       </div>
                       <Button
@@ -1905,6 +1929,7 @@ export default function ClientsPage() {
                       </Button>
                     </div>
                     <div className="grid gap-3">
+                      {newCommercePlatform === "BRAAVO" ? <BraavoCredentialFields value={newBraavo} onChange={setNewBraavo} /> : <>
                       <div className="grid gap-2">
                         <Label htmlFor="nuvemshopStoreId">
                           {tx("ID da loja Nuvemshop")}
@@ -1937,6 +1962,7 @@ export default function ClientsPage() {
                           className="font-mono text-xs"
                         />
                       </div>
+                      </>}
                       <div className="grid gap-2">
                         <Label htmlFor="ga4MeasurementId">
                           {tx("ID de medição GA4")}
@@ -2022,7 +2048,7 @@ export default function ClientsPage() {
                     !newName.trim() ||
                     !newEmail.trim() ||
                     !newApiKey.trim() ||
-                    createProblem !== null
+                    createProblem !== null || (newCommercePlatform === "BRAAVO" && !newBraavo.domain.trim())
                   }
                 >
                   {createMutation.isPending ? "Criando…" : "Salvar cliente"}
@@ -2342,6 +2368,7 @@ export default function ClientsPage() {
                             </>
                           ) : (
                             <>
+                              {client.commercePlatform === "BRAAVO" ? <BraavoIntegration clientId={client.id} clientName={client.name} domain={client.braavoDomain} configured={client.hasBraavoIntegration ?? false} /> : <>
                               <Badge
                                 variant={client.hasNuvemshopIntegration ? "default" : "secondary"}
                                 className="h-7 gap-1 text-xs"
@@ -2349,18 +2376,20 @@ export default function ClientsPage() {
                                 <Store className="h-3 w-3" />
                                 {client.hasNuvemshopIntegration ? "Nuvemshop ✓" : "Nuvemshop"}
                               </Badge>
-                              <Badge
-                                variant={client.hasGa4Integration ? "default" : "secondary"}
-                                className="h-7 gap-1 text-xs"
-                              >
-                                GA4{client.hasGa4Integration ? " ✓" : ""}
-                              </Badge>
                               {client.hasNuvemshopIntegration && (
                                 <NuvemshopSyncButton
                                   clientId={client.id}
                                   clientName={client.name}
                                 />
                               )}
+                              </>}
+                              <Badge
+                                variant={client.hasGa4Integration ? "default" : "secondary"}
+                                className="h-7 gap-1 text-xs"
+                              >
+                                GA4{client.hasGa4Integration ? " ✓" : ""}
+                              </Badge>
+
                             </>
                           )}
                           <MetaAdsKeyDialog
@@ -2381,6 +2410,7 @@ export default function ClientsPage() {
                             clientId={client.id}
                             clientName={client.name}
                             currentPlatform={client.commercePlatform}
+                            dashboardType={client.dashboardType}
                             currentDataset={client.bigqueryDataset}
                             currentAttributionStartDate={client.attributionStartDate}
                           />

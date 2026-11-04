@@ -24,6 +24,12 @@ export interface CreateClientRequest {
   commercePlatform?: CreateClientRequestCommercePlatform;
   /** BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI. */
   bigqueryDataset?: string;
+  /** Braavo shop HTTPS domain. */
+  braavoDomain?: string;
+  /** Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update. */
+  braavoApiToken?: string;
+  /** Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update. */
+  braavoApiKey?: string;
   /** Optional Nuvemshop store id for B2C clients. */
   nuvemshopStoreId?: string;
   /** Optional Nuvemshop access token for B2C clients. Stored server-side and never returned. */

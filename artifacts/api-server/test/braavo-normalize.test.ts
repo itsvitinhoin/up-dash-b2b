@@ -1,0 +1,137 @@
+import { describe, expect, it } from "vitest";
+import {
+  braavoDate,
+  braavoDay,
+  braavoProductGroup,
+  normalizeBraavoCustomer,
+  normalizeBraavoOrder,
+  money,
+} from "../src/services/braavo-normalize";
+
+import { sampleOrder } from "./fixtures/braavo";
+
+describe("Braavo normalization", () => {
+  it("converts store timestamps to UTC without depending on the machine timezone", () => {
+    expect(braavoDate("2026-01-10 23:30:00")?.toISOString()).toBe(
+      "2026-01-11T02:30:00.000Z",
+    );
+    expect(braavoDay(braavoDate("2026-01-10 23:30:00")!)).toBe("2026-01-10");
+    expect(braavoDate("2026-01-10T23:30:00Z")?.toISOString()).toBe(
+      "2026-01-10T23:30:00.000Z",
+    );
+    expect(braavoDate("", false)).toBeNull();
+  });
+  it.each([
+    "",
+    "2026-02-30 10:00:00",
+    "2026-13-01 10:00:00",
+    "2026-01-01 25:00:00",
+  ])("rejects missing or invalid date %s", (date) =>
+    expect(() => braavoDate(date)).toThrow(),
+  );
+  it("keeps shipping and coupon discounts from being counted twice", () => {
+    const order = normalizeBraavoOrder(sampleOrder);
+    expect(order).toMatchObject({
+      amount: 100,
+      fulfilledAmount: 100,
+      grossAmount: 100,
+      discountAmount: 10,
+      shippingAmount: 10,
+      status: "APPROVED",
+      requestedQuantity: 2,
+      fulfilledQuantity: 2,
+    });
+    expect(order.items[0]).toMatchObject({
+      priceAtSale: 45,
+      grossPriceAtSale: 50,
+      discountAmount: 10,
+    });
+    expect(order.utmCampaign).toBe("verao");
+    expect(order.createdAt).not.toEqual(order.approvalDate);
+  });
+  it.each(["0", "1", "2"])(
+    "keeps payment %s pending regardless of delivery status",
+    (payment) => {
+      expect(
+        normalizeBraavoOrder({
+          ...sampleOrder,
+          status_pagamento: payment,
+          status_entrega: "23",
+        }),
+      ).toMatchObject({
+        status: "PENDING",
+        paid: false,
+        fulfilledAmount: 0,
+        fulfilledQuantity: 0,
+      });
+    },
+  );
+  it("removes paid revenue and quantities when canceled", () => {
+    expect(
+      normalizeBraavoOrder({ ...sampleOrder, status_pagamento: "6" }),
+    ).toMatchObject({
+      status: "REJECTED",
+      paid: false,
+      amount: 0,
+      fulfilledAmount: 0,
+      cancelledAmount: 100,
+      refundedAmount: 0,
+      fulfilledQuantity: 0,
+    });
+    expect(
+      normalizeBraavoOrder({ ...sampleOrder, status_entrega: "41" }).paid,
+    ).toBe(false);
+  });
+  it("recognizes delivery only after payment approval", () => {
+    expect(
+      normalizeBraavoOrder({ ...sampleOrder, status_entrega: "20" }).status,
+    ).toBe("SHIPPED");
+    expect(
+      normalizeBraavoOrder({ ...sampleOrder, status_entrega: "23" }).status,
+    ).toBe("DELIVERED");
+  });
+  it("refuses unknown statuses, missing details and missing approval dates", () => {
+    expect(() =>
+      normalizeBraavoOrder({ ...sampleOrder, status_pagamento: "99" }),
+    ).toThrow();
+    expect(() =>
+      normalizeBraavoOrder({ ...sampleOrder, produtos: undefined }),
+    ).toThrow();
+    expect(() =>
+      normalizeBraavoOrder({ ...sampleOrder, data_aprovado: "" }),
+    ).toThrow();
+  });
+  it("uses the stable customer ID and stores a document hash instead of plaintext", () => {
+    const customer = normalizeBraavoCustomer({
+      id: 12,
+      nome: "Ana",
+      pessoa: "1",
+      cpf: "111.222.333-44",
+      email: "ANA@example.invalid",
+      tel_1_pais: "55",
+      tel_1: "11999990000",
+      data_criado: "2026-01-01 10:00:00",
+    });
+    expect(customer).toMatchObject({
+      externalId: "braavo:12",
+      email: "ana@example.invalid",
+      documentLast4: "3344",
+      documentType: "CPF",
+      phone: "+5511999990000",
+      registrationStatus: "PENDING",
+    });
+    expect(customer.documentHash).toHaveLength(64);
+    expect(JSON.stringify(customer)).not.toContain("11122233344");
+  });
+  it("groups Braavo variants by product and preserves Nuvemshop grouping", () => {
+    expect(braavoProductGroup("braavo:100:501")).toBe("braavo:100");
+    expect(braavoProductGroup("braavo:101:502")).toBe("braavo:101");
+    expect(braavoProductGroup("100:501")).toBe("100");
+  });
+  it("does not silently replace absent money with zero", () => {
+    expect(() => money(undefined, true)).toThrow();
+    expect(() => money("R$100")).toThrow();
+    expect(money(0)).toBe(0);
+    expect(money(0.1 + 0.2)).toBe(0.3);
+  });
+});

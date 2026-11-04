@@ -110,6 +110,7 @@ export const ClientCommercePlatform = {
   NUVEMSHOP: "NUVEMSHOP",
   MANUAL: "MANUAL",
   VESTI: "VESTI",
+  BRAAVO: "BRAAVO",
 } as const;
 
 export interface Client {
@@ -131,6 +132,13 @@ export interface Client {
    * @nullable
    */
   bigqueryDataset?: string | null;
+  /**
+   * Braavo shop HTTPS domain.
+   * @nullable
+   */
+  braavoDomain?: string | null;
+  /** True when Braavo domain, API Token and API Key are configured. */
+  hasBraavoIntegration?: boolean;
   /**
    * Nuvemshop store id for B2C data ingestion.
    * @nullable
@@ -275,6 +283,7 @@ export const CreateClientRequestCommercePlatform = {
   NUVEMSHOP: "NUVEMSHOP",
   MANUAL: "MANUAL",
   VESTI: "VESTI",
+  BRAAVO: "BRAAVO",
 } as const;
 
 export interface CreateClientRequest {
@@ -293,6 +302,12 @@ export interface CreateClientRequest {
   commercePlatform?: CreateClientRequestCommercePlatform;
   /** BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI. */
   bigqueryDataset?: string;
+  /** Braavo shop HTTPS domain. */
+  braavoDomain?: string;
+  /** Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update. */
+  braavoApiToken?: string;
+  /** Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update. */
+  braavoApiKey?: string;
   /** Optional Nuvemshop store id for B2C clients. */
   nuvemshopStoreId?: string;
   /** Optional Nuvemshop access token for B2C clients. Stored server-side and never returned. */
@@ -331,6 +346,7 @@ export const UpdateClientRequestCommercePlatform = {
   NUVEMSHOP: "NUVEMSHOP",
   MANUAL: "MANUAL",
   VESTI: "VESTI",
+  BRAAVO: "BRAAVO",
 } as const;
 
 /**
@@ -366,6 +382,21 @@ export interface UpdateClientRequest {
    * @nullable
    */
   attributionStartDate?: string | null;
+  /**
+   * Braavo shop HTTPS domain.
+   * @nullable
+   */
+  braavoDomain?: string | null;
+  /**
+   * Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
+   * @nullable
+   */
+  braavoApiToken?: string | null;
+  /**
+   * Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
+   * @nullable
+   */
+  braavoApiKey?: string | null;
   /**
    * Nuvemshop store id. Pass null to clear it.
    * @nullable
@@ -455,6 +486,7 @@ export const ClientImportRowCommercePlatform = {
   NUVEMSHOP: "NUVEMSHOP",
   MANUAL: "MANUAL",
   VESTI: "VESTI",
+  BRAAVO: "BRAAVO",
 } as const;
 
 /**

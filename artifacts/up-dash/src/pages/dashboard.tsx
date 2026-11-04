@@ -1437,7 +1437,7 @@ function B2COrdersPanel({
         <div className="flex flex-col items-center justify-center py-8 text-center">
           <ShoppingBag className="h-8 w-8 text-muted-foreground mb-2" />
           <p className="text-sm font-medium">Nenhum pedido no período</p>
-          <p className="text-xs text-muted-foreground mt-1">Amplie o filtro de data ou sincronize a Nuvemshop.</p>
+          <p className="text-xs text-muted-foreground mt-1">Amplie o filtro de data ou sincronize a plataforma de e-commerce.</p>
         </div>
       ) : (
         <>
@@ -1501,7 +1501,7 @@ function B2COrdersPanel({
         <DialogContent className="max-h-[84vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Pedido #{selectedOrder?.externalId ?? selectedOrder?.id.slice(0, 8)}</DialogTitle>
-            <DialogDescription>Detalhes importados da Nuvemshop para o período filtrado.</DialogDescription>
+            <DialogDescription>Detalhes importados da plataforma de e-commerce para o período filtrado.</DialogDescription>
           </DialogHeader>
           {detailsLoading ? (
             <div className="space-y-2">

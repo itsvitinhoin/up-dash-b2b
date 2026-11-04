@@ -1,4 +1,4 @@
-import { and, isNotNull, isNull } from "drizzle-orm";
+import { and, ne, isNotNull, isNull } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { syncUpZeroClient } from "./upzero-sync";
@@ -37,7 +37,7 @@ async function runNightlySync(): Promise<void> {
       })
       .from(clientsTable)
       // Arquivado nao entra na atualizacao diaria.
-      .where(and(isNotNull(clientsTable.upZeroApiKey), isNull(clientsTable.archivedAt))) as {
+      .where(and(isNotNull(clientsTable.upZeroApiKey), isNull(clientsTable.archivedAt), ne(clientsTable.commercePlatform, "BRAAVO"))) as {
         id: string;
         name: string;
         upZeroApiKey: string;

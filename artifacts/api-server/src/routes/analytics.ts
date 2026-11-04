@@ -1,4 +1,5 @@
 import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
+import { braavoProductGroup } from "../services/braavo-normalize";
 import { Router, type IRouter } from "express";
 import { and, asc, desc, eq, gte, isNull, lte, sql, ilike, or, inArray, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -1234,12 +1235,13 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
   // *placed in the window* whose items match the category), so it must be
   // recomputed per window.
   let scopedCustomerIds: string[] | null = null;
-  if (channel || segment || utmSourceFilter || utmMediumFilter || utmCampaignFilter) {
+  const braavoAttribution = clientConfig?.commercePlatform === "BRAAVO";
+  if (segment || (!braavoAttribution && (channel || utmSourceFilter || utmMediumFilter || utmCampaignFilter))) {
     const custConds: SQL[] = [eq(customersTable.clientId, clientId)];
-    if (channel) custConds.push(eq(customersTable.utmSource, channel));
-    if (utmSourceFilter) custConds.push(eq(customersTable.utmSource, utmSourceFilter));
-    if (utmMediumFilter) custConds.push(eq(customersTable.utmMedium, utmMediumFilter));
-    if (utmCampaignFilter) custConds.push(eq(customersTable.utmCampaign, utmCampaignFilter));
+    if (channel && !braavoAttribution) custConds.push(eq(customersTable.utmSource, channel));
+    if (utmSourceFilter && !braavoAttribution) custConds.push(eq(customersTable.utmSource, utmSourceFilter));
+    if (utmMediumFilter && !braavoAttribution) custConds.push(eq(customersTable.utmMedium, utmMediumFilter));
+    if (utmCampaignFilter && !braavoAttribution) custConds.push(eq(customersTable.utmCampaign, utmCampaignFilter));
     if (segment) custConds.push(eq(customersTable.rfmSegment, segment));
     const rows = await db
       .select({ id: customersTable.id })
@@ -1321,6 +1323,12 @@ router.get("/analytics/dashboard", async (req, res): Promise<void> => {
     ];
     if (sellerId) orderConds.push(eq(ordersTable.sellerId, sellerId));
     if (stateFilter) orderConds.push(sql`UPPER(TRIM(${ordersTable.state})) = ${stateFilter}`);
+    if (braavoAttribution) {
+      if (channel) orderConds.push(eq(ordersTable.utmSource, channel));
+      if (utmSourceFilter) orderConds.push(eq(ordersTable.utmSource, utmSourceFilter));
+      if (utmMediumFilter) orderConds.push(eq(ordersTable.utmMedium, utmMediumFilter));
+      if (utmCampaignFilter) orderConds.push(eq(ordersTable.utmCampaign, utmCampaignFilter));
+    }
     const emptyWindow: WindowAggregates = {
       kpis: { ...ZERO_KPIS },
       dailyRevenue: [],
@@ -4771,8 +4779,7 @@ function computeProductLevel(
 function productGroupId(product: { externalId?: string | null; id: string }): string {
   const external = product.externalId?.trim();
   if (!external) return product.id;
-  const [parent] = external.split(":");
-  return parent || external;
+  return braavoProductGroup(external) || external;
 }
 
 function parseVariantName(name: string): { baseName: string; color: string | null; size: string | null } {
@@ -5053,11 +5060,12 @@ router.get("/analytics/products", async (req, res): Promise<void> => {
         const groupId = productGroupId(product);
         const parsed = parseVariantName(product.name);
         const external = normalizeProductLookup(product.externalId);
-        const parentExternal = normalizeProductLookup(product.externalId?.split(":")[0]);
+        const parentExternal = normalizeProductLookup(product.externalId?.startsWith("braavo:") ? product.externalId.split(":")[1] : product.externalId?.split(":")[0]);
         const skuKey = normalizeProductLookup(product.sku);
         const nameKey = normalizeProductLookup(product.name);
         const baseNameKey = normalizeProductLookup(parsed.baseName);
         if (external) variantByExternal.set(external, product.id);
+        if (product.externalId?.startsWith("braavo:")) variantByExternal.set(product.externalId.split(":")[2], product.id);
         if (skuKey) variantBySku.set(skuKey, product.id);
         if (nameKey) variantByName.set(nameKey, product.id);
         if (parentExternal) groupByExternalParent.set(parentExternal, groupId);
@@ -6591,9 +6599,9 @@ router.get("/analytics/orders-page", async (req, res): Promise<void> => {
         customerPhone: customersTable.phone,
         documentType: customersTable.documentType,
         documentLast4: customersTable.documentLast4,
-        customerUtmSource: customersTable.utmSource,
-        customerUtmMedium: customersTable.utmMedium,
-        customerUtmCampaign: customersTable.utmCampaign,
+        customerUtmSource: sql<string | null>`coalesce(${ordersTable.utmSource}, ${customersTable.utmSource})`,
+        customerUtmMedium: sql<string | null>`coalesce(${ordersTable.utmMedium}, ${customersTable.utmMedium})`,
+        customerUtmCampaign: sql<string | null>`coalesce(${ordersTable.utmCampaign}, ${customersTable.utmCampaign})`,
         state: ordersTable.state,
         city: ordersTable.city,
         refundStatusUnverified: ordersTable.refundStatusUnverified,

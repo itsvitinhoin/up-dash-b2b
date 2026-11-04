@@ -42,6 +42,21 @@ export interface UpdateClientRequest {
    */
   attributionStartDate?: string | null;
   /**
+   * Braavo shop HTTPS domain.
+   * @nullable
+   */
+  braavoDomain?: string | null;
+  /**
+   * Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
+   * @nullable
+   */
+  braavoApiToken?: string | null;
+  /**
+   * Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
+   * @nullable
+   */
+  braavoApiKey?: string | null;
+  /**
    * Nuvemshop store id. Pass null to clear it.
    * @nullable
    */
