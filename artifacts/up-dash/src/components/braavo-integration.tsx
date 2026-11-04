@@ -212,7 +212,7 @@ export function BraavoIntegration({
           toast.success(`Braavo sincronizada · ${clientName}`);
           break;
         }
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
       }
       if (stop.current)
         setMessage(
@@ -328,6 +328,12 @@ export function BraavoIntegration({
           role="status"
         >
           {syncing && <Loader2 className="mb-2 h-4 w-4 animate-spin" />}
+          {syncing && (
+            <p className="mb-2 text-xs text-muted-foreground">
+              Importação em ritmo reduzido: até uma chamada por segundo e pausa
+              de cinco segundos entre lotes.
+            </p>
+          )}
           <p>
             {message ||
               (status.data?.busy

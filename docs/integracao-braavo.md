@@ -52,7 +52,7 @@ Fontes oficiais: [manual Braavo](https://manual.braavo.com.br/#description/intro
 | Respostas | Dados em `ok`; falhas em `erro`, inclusive com HTTP 200 | Verificar HTTP, JSON e erro de negócio antes de persistir |
 | Paginação comum | `atual`, `limite`, resposta `pag` com `paginas`, `encontrados`, `exibindo` | Começar na página 1 e concluir todas as páginas; vários endpoints permitem até 500 registros |
 | Primeiras compras | Cursor `desde_id`, resposta `pag.proximo_id` | Começar em 0, avançar até `ok` vazio e detectar cursor sem avanço |
-| Limite de chamadas | Aproximadamente quatro requisições por segundo | Proposta conservadora de uma chamada a cada 350 ms por loja, com fila compartilhada entre jobs |
+| Limite de chamadas | Aproximadamente quatro requisições por segundo | Uma chamada por segundo por loja, com fila compartilhada entre jobs e pausa mínima de cinco segundos entre lotes |
 | Datas de alteração | `data_alterado` representa um dia `AAAA-MM-DD` | Percorrer os dias pendentes; não tratar como filtro de mínimo timestamp |
 | Datas de aprovação | Pedidos e primeiras compras aceitam `data_aprovado_1` e `data_aprovado_2` | Usar a faixa para reconciliação por aprovação, preservando pedidos pendentes na carga geral |
 
@@ -135,7 +135,7 @@ Há uma diferença atual a revisar: `daily-client-metrics.ts` agrega receita por
 6. Reconsultar pendentes conhecidos e reconciliar periodicamente o histórico. Confirmar com a Braavo se alterações de pagamento, entrega e estoque sempre atualizam `data_alterado` do recurso correspondente.
 7. Recalcular agregados afetados e registrar contagens, duração, falhas e completude em `sync_jobs`.
 
-Com uma consulta de detalhe por pedido, 10 mil pedidos exigem aproximadamente 58 minutos apenas para essas chamadas no intervalo proposto de 350 ms. A raiz do projeto configura funções com duração de 60 segundos. Executar a carga por lotes retomáveis ou worker durável; uma única requisição não comporta a importação inteira.
+Com uma consulta de detalhe por pedido, 10 mil pedidos exigem aproximadamente 2 horas e 47 minutos apenas para essas chamadas no intervalo de um segundo, além das pausas entre lotes. A raiz do projeto configura funções com duração de 60 segundos. Executar a carga por lotes retomáveis ou worker durável; uma única requisição não comporta a importação inteira.
 
 ## Webhooks
 
@@ -176,3 +176,7 @@ O conector está implementado na raiz. A ativação depende da migração e publ
 Na validação local, uma chamada autenticada `POST /api/produtos/buscar/todos` recebeu HTTP 405, `Content-Type: text/html; charset=UTF-8`, `Server: awselb/2.0` e uma página com título `Human Verification`. Isso identifica a interceptação pela proteção da loja, antes da resposta JSON esperada da API; não é evidência de chave inválida nem motivo para trocar o POST documentado por GET.
 
 O conector identifica essa página como `BRAAVO_ACCESS_BLOCKED`, interrompe o lote sem repetir o desafio e preserva o ponto de retomada. Solicitar à Braavo a revisão da regra de proteção que intercepta as rotas autenticadas `/api/*`, com uma configuração apropriada para integração entre servidores. Não enviar Token, Key ou cabeçalho Authorization no chamado. Depois da liberação, usar **Sincronizar** para retomar a carga preservada.
+
+## Ritmo reduzido de importação
+
+Para reduzir a frequência de acesso, as reservas compartilhadas no banco espaçam as chamadas em pelo menos um segundo e impõem cinco segundos sem novas chamadas após cada lote, inclusive em falhas. O navegador também aguarda cinco segundos antes de solicitar o próximo lote. A agenda usa a mesma fila e respeita a pausa, sem depender da interface. O limite do lote passa a 50 segundos para acomodar as consultas de detalhes mais lentas, mantendo as páginas e o ponto de retomada existentes. Essa redução não garante que a proteção anti-bot deixe de bloquear a integração.

@@ -25,6 +25,21 @@ vi.mock("../src/lib/auth", () => ({
   hashPassword: vi.fn(),
 }));
 
+// Keep real HTTP-contract handling and SQL reservations, but do not spend wall
+// time waiting for synthetic API responses. Slot spacing/cooldowns are checked
+// independently below against the real database.
+vi.mock("../src/services/braavo-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/services/braavo-api")>();
+  return {
+    ...actual,
+    BraavoApi: class extends actual.BraavoApi {
+      constructor(...[credentials, options]: ConstructorParameters<typeof actual.BraavoApi>) {
+        super(credentials, { ...options, sleep: async () => {}, deadline: Infinity });
+      }
+    },
+  };
+});
+
 const connection = process.env.BRAAVO_TEST_DATABASE_URL;
 let schema: typeof import("@workspace/db");
 let sync: typeof import("../src/services/braavo-sync");
@@ -368,13 +383,31 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
       ),
     );
     slots.sort((a, b) => a - b);
-    expect(slots[1] - slots[0]).toBeGreaterThanOrEqual(349);
-    expect(slots[3] - slots[0]).toBeGreaterThanOrEqual(1049);
+    expect(slots[1] - slots[0]).toBeGreaterThanOrEqual(999);
+    expect(slots[3] - slots[0]).toBeGreaterThanOrEqual(2999);
     await request(app)
       .patch("/clients/shop-a")
       .set("Authorization", "Bearer test-admin")
       .send({ braavoApiKey: "replacement" })
       .expect(409);
+  });
+
+  it("holds the next batch for five seconds without shortening queued shop requests", async () => {
+    const domain = "https://cooldown-shop.example.com";
+    await sync.deferBraavoBatch(domain);
+    expect(await sync.reserveBraavoSlot(domain) - Date.now()).toBeGreaterThan(4500);
+    const queuedUntil = Date.now() + 30000;
+    await schema.db.update(schema.braavoRequestSlotsTable)
+      .set({ nextAt: new Date(queuedUntil) })
+      .where(eq(schema.braavoRequestSlotsTable.domain, domain));
+    await sync.deferBraavoBatch(domain);
+    expect(await sync.reserveBraavoSlot(domain)).toBeGreaterThanOrEqual(queuedUntil);
+    // Finishing even a failed batch sets the same shared cooldown before release.
+    businessError = true;
+    await sync.runBraavoBatch("shop-a", "cron");
+    expect(await sync.reserveBraavoSlot("https://www.lacleo.com.br") - Date.now()).toBeGreaterThan(4500);
+    const [state] = await schema.db.select().from(schema.braavoSyncStatesTable);
+    expect(state.leaseId).toBeNull();
   });
 
   it("isolates shops with the same external customer, SKU and order IDs", async () => {

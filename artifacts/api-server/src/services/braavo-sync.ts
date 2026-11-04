@@ -20,6 +20,7 @@ import {
   BraavoError,
   braavoId,
   braavoRecord,
+  normalizeBraavoDomain,
   type BraavoRecord,
   type BraavoCredentials,
 } from "./braavo-api";
@@ -85,11 +86,20 @@ export async function getBraavoClient(clientId: string) {
 }
 export async function reserveBraavoSlot(domain: string): Promise<number> {
   const result = await db.execute<{ slot: string | number }>(sql`
-    INSERT INTO braavo_request_slots (domain, next_at) VALUES (${domain}, clock_timestamp() + interval '350 milliseconds')
-    ON CONFLICT (domain) DO UPDATE SET next_at = GREATEST(clock_timestamp(), braavo_request_slots.next_at) + interval '350 milliseconds'
-    RETURNING extract(epoch FROM next_at - interval '350 milliseconds') * 1000 AS slot
+    INSERT INTO braavo_request_slots (domain, next_at) VALUES (${domain}, clock_timestamp() + interval '1 second')
+    ON CONFLICT (domain) DO UPDATE SET next_at = GREATEST(clock_timestamp(), braavo_request_slots.next_at) + interval '1 second'
+    RETURNING extract(epoch FROM next_at - interval '1 second') * 1000 AS slot
   `);
   return Number(result.rows[0].slot);
+}
+
+export async function deferBraavoBatch(domain: string) {
+  // Shared by manual/cron jobs and clients using the same shop. Preserve any
+  // slots already queued beyond this cooldown rather than bringing them forward.
+  await db.execute(sql`
+    INSERT INTO braavo_request_slots (domain, next_at) VALUES (${normalizeBraavoDomain(domain)}, clock_timestamp() + interval '5 seconds')
+    ON CONFLICT (domain) DO UPDATE SET next_at = GREATEST(braavo_request_slots.next_at, clock_timestamp() + interval '5 seconds')
+  `);
 }
 
 export function initialBraavoCursor(
@@ -736,7 +746,7 @@ export async function runBraavoBatch(
       .where(and(eq(states.clientId, clientId), eq(states.leaseId, leaseId)));
     const api = new BraavoApi(credentials, {
       reserveSlot: reserveBraavoSlot,
-      deadline: Date.now() + 35_000,
+      deadline: Date.now() + 50_000,
     });
     const result = await runPage(clientId, leaseId, api, cursor);
     cursor = result.cursor;
@@ -802,6 +812,8 @@ export async function runBraavoBatch(
       message,
     };
   } finally {
+    // Set the shop-wide cooldown before releasing this client's batch lease.
+    await deferBraavoBatch(credentials.domain);
     await db
       .update(states)
       .set({ leaseId: null, leaseUntil: null, updatedAt: new Date() })
