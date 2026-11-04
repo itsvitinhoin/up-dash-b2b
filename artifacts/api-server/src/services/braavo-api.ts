@@ -216,7 +216,7 @@ export class BraavoApi {
         envelope.erro !== 0
       )
         throw new BraavoError(
-          "A Braavo retornou erro de negócio. Confira API Token, API Key e os filtros da consulta.",
+          "A Braavo recusou esta consulta. Tente novamente em alguns instantes; a sincronização continuará do último lote salvo.",
           "BRAAVO_BUSINESS_ERROR",
         );
       if (!Array.isArray(envelope.ok))
