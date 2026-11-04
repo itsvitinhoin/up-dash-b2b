@@ -103,6 +103,27 @@ describe("Braavo HTTP contract", () => {
     );
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it.each([403, 405, 503])("identifies HTML human verification (HTTP %s) without retrying it", async (status) => {
+    const { client, fetcher } = api([
+      new Response("<html><title>Human Verification</title></html>", {
+        status,
+        headers: { "content-type": "text/html; charset=UTF-8" },
+      }),
+    ]);
+    await expect(client.query("/produtos/buscar/todos")).rejects.toMatchObject({
+      code: "BRAAVO_ACCESS_BLOCKED",
+      message: expect.stringContaining("POST /api/produtos/buscar/todos"),
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("does not misclassify a JSON method refusal as invalid credentials or a challenge", async () => {
+    const { client, fetcher } = api([json({ erro: "Method not allowed" }, 405)]);
+    await expect(client.query("/produtos/buscar/todos")).rejects.toMatchObject({
+      code: "BRAAVO_ERROR",
+      message: "A Braavo recusou POST /api/produtos/buscar/todos (HTTP 405). Os lotes salvos foram preservados.",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it("retries transient errors with a reserved shop slot for every attempt", async () => {
     const { client, reserveSlot, sleep } = api([
       json({}, 429),

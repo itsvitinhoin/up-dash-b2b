@@ -169,4 +169,10 @@ Os testes do conector precisam cobrir erro em HTTP 200, autenticação inválida
 
 Na La Cleo, comparar um período fechado entre painel Braavo e Dash: pedidos por status, valor aprovado, frete, descontos, primeira compra e estoque de SKUs selecionados. Repetir a carga deve manter as contagens. Só liberar métricas financeiras e automações após fechar essas comparações.
 
-O conector está implementado na raiz. A ativação depende da migração e publicação desse código, do cadastro do cliente correto do Dash e da configuração de API Token + API Key. A conexão autenticada da La Cleo ainda não foi testada.
+O conector está implementado na raiz. A ativação depende da migração e publicação desse código, do cadastro do cliente correto do Dash e da configuração de API Token + API Key. A conexão autenticada da La Cleo foi validada localmente em 04/11/2026; a carga completa e a conciliação das métricas ainda estão pendentes.
+
+## Bloqueio por verificação humana
+
+Na validação local, uma chamada autenticada `POST /api/produtos/buscar/todos` recebeu HTTP 405, `Content-Type: text/html; charset=UTF-8`, `Server: awselb/2.0` e uma página com título `Human Verification`. Isso identifica a interceptação pela proteção da loja, antes da resposta JSON esperada da API; não é evidência de chave inválida nem motivo para trocar o POST documentado por GET.
+
+O conector identifica essa página como `BRAAVO_ACCESS_BLOCKED`, interrompe o lote sem repetir o desafio e preserva o ponto de retomada. Solicitar à Braavo a revisão da regra de proteção que intercepta as rotas autenticadas `/api/*`, com uma configuração apropriada para integração entre servidores. Não enviar Token, Key ou cabeçalho Authorization no chamado. Depois da liberação, usar **Sincronizar** para retomar a carga preservada.

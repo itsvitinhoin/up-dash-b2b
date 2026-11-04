@@ -191,6 +191,21 @@ export class BraavoApi {
           "Não foi possível consultar a Braavo. Confira o domínio HTTPS e tente novamente.",
         );
       }
+      // The shop's protection layer can intercept a valid API POST and return
+      // an HTML verification page instead of the API's JSON contract.
+      if (
+        !response.ok &&
+        response.headers.get("content-type")?.includes("text/html") &&
+        /<title>\s*Human Verification\s*<\/title>|awswaf-captcha|awswaf-challenge/i.test(
+          await response.clone().text(),
+        )
+      ) {
+        await response.body?.cancel();
+        throw new BraavoError(
+          `A proteção anti-bot da loja bloqueou POST /api${path} (HTTP ${response.status}). Solicite à Braavo a liberação desta rota para acesso autenticado pela API. Os lotes salvos foram preservados; retome a sincronização após a liberação.`,
+          "BRAAVO_ACCESS_BLOCKED",
+        );
+      }
       if ((response.status === 429 || response.status >= 500) && attempt < 2) {
         await response.body?.cancel();
         await (this.options.sleep ?? pause)(500 * 2 ** attempt);
@@ -198,7 +213,9 @@ export class BraavoApi {
       }
       if (!response.ok)
         throw new BraavoError(
-          `A Braavo recusou a consulta (HTTP ${response.status}). Confira as credenciais e a disponibilidade da loja.`,
+          response.status === 401
+            ? "A Braavo recusou a autenticação (HTTP 401). Confira API Token e API Key."
+            : `A Braavo recusou POST /api${path} (HTTP ${response.status}). Os lotes salvos foram preservados.`,
         );
       let envelope: BraavoRecord;
       try {
