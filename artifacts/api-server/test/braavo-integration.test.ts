@@ -340,6 +340,17 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     expect(day[0].approvedRevenue).toBe(0);
   }, 30000);
 
+  it("preserves negative inventory and continues through customers and orders", async () => {
+    stock = -1;
+    await cycle();
+    const data = await snapshot();
+    expect(data.products).toHaveLength(1);
+    expect(data.products[0].stock).toBe(-1);
+    expect(data.customers).toHaveLength(1);
+    expect(data.orders).toHaveLength(1);
+    expect(data.items[0].quantity).toBe(2);
+  });
+
   it("resumes a partial page at the failed record without refetching saved details", async () => {
     productIds = [100, 101, 102];
     failedProductId = 102;

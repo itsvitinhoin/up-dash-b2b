@@ -6,11 +6,26 @@ import {
   normalizeBraavoCustomer,
   normalizeBraavoOrder,
   money,
+  quantity,
+  stockQuantity,
 } from "../src/services/braavo-normalize";
 
 import { sampleOrder } from "./fixtures/braavo";
 
 describe("Braavo normalization", () => {
+  it.each([-1, "-1", "0", 12, "12.0", -2147483648, 2147483647])("preserves signed inventory balances: %s", (value) => {
+    expect(stockQuantity(value)).toBe(Number(value));
+  });
+  it.each([null, undefined, "", " ", true, [], {}, "abc", "0x10", 1.5, "-1.5", Infinity, NaN, -2147483649, 2147483648])("rejects missing, malformed or out-of-range stock: %s", (value) => {
+    expect(() => stockQuantity(value)).toThrow("estoque");
+  });
+  it("still rejects negative order-item quantities", () => {
+    expect(() => quantity(-1)).toThrow();
+    expect(() => normalizeBraavoOrder({
+      ...sampleOrder,
+      produtos: sampleOrder.produtos.map((item) => ({ ...item, quantidade: "-1" })),
+    })).toThrow("Quantidade");
+  });
   it("converts store timestamps to UTC without depending on the machine timezone", () => {
     expect(braavoDate("2026-01-10 23:30:00")?.toISOString()).toBe(
       "2026-01-11T02:30:00.000Z",

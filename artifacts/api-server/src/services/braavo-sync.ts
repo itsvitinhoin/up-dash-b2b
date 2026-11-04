@@ -30,7 +30,7 @@ import {
   normalizeBraavoCustomer,
   normalizeBraavoOrder,
   textValue,
-  quantity,
+  stockQuantity,
   money,
 } from "./braavo-normalize";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
@@ -264,7 +264,7 @@ async function persistSku(
     category: textValue(category?.nome),
     price: money(row.preco_venda, true),
     cost: row.preco_custo == null ? null : money(row.preco_custo),
-    stock: quantity(row.estoque),
+    stock: stockQuantity(row.estoque),
     imageUrl: textValue(product.imageUrl),
     status:
       String(row.ativo) === "1" && String(product.ativo) === "1"

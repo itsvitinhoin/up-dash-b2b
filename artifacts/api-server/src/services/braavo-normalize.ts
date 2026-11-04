@@ -31,6 +31,18 @@ export function quantity(value: unknown): number {
     throw new BraavoError("Quantidade ausente ou inválida na Braavo.");
   return number;
 }
+// Inventory is a signed balance, unlike the nonnegative units on an order.
+// Preserve negative source stock rather than stopping the import or zeroing it.
+export function stockQuantity(value: unknown): number {
+  const number = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^-?\d+(?:\.0+)?$/.test(value)
+      ? Number(value)
+      : NaN;
+  if (!Number.isInteger(number) || number < -2147483648 || number > 2147483647)
+    throw new BraavoError("Saldo de estoque ausente ou inválido na Braavo.", "INVALID_STOCK");
+  return number;
+}
 export function braavoDate(value: unknown, required = true): Date | null {
   if (
     (value === null ||

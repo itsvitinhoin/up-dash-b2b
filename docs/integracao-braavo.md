@@ -101,7 +101,7 @@ Reutilizar as tabelas locais `customers`, `products`, `orders`, `order_items`, `
 | Cliente `nome`, `email`, telefones | Campos de contato de `customers` | Normalizar telefone com país quando disponível; tratar ausência e mudança de e-mail sem fundir pessoas |
 | Cliente `cpf`, `cnpj` | Tipo, hash e últimos quatro dígitos | Reaproveitar a estratégia de documento do Dash |
 | SKU `id`, `ref`, `produto_id` | `products.externalId`, `sku` e vínculo ao produto pai | Uma linha por SKU; preservar o pai para agrupamento de variantes |
-| SKU `preco_venda`, `preco_custo`, `estoque` | `products.price`, `cost`, `stock` | Estoque zero é valor válido; estoque ausente não comprova ruptura |
+| SKU `preco_venda`, `preco_custo`, `estoque` | `products.price`, `cost`, `stock` | Preservar saldos inteiros, inclusive negativos; estoque ausente não comprova ruptura. A validação de estoque é separada das quantidades não negativas de itens de pedidos |
 | Pedido `id`, `usuario_id` | `orders.externalId` e `customerId` | Atualizar o mesmo pedido em reprocessamentos |
 | Pedido `data_criado`, `data_aprovado` | `orders.createdAt`, `approvalDate` | Preservar ambas as datas e converter no fuso confirmado |
 | Item `sku_id`, `quantidade`, variações | `order_items` e vínculo com `products` | Substituir itens e atualizar o pedido numa transação |
