@@ -56,7 +56,7 @@ Fontes oficiais: [manual Braavo](https://manual.braavo.com.br/#description/intro
 | Datas de alteração | `data_alterado` representa um dia `AAAA-MM-DD` | Percorrer os dias pendentes; não tratar como filtro de mínimo timestamp |
 | Datas de aprovação | Pedidos e primeiras compras aceitam `data_aprovado_1` e `data_aprovado_2` | Usar a faixa para reconciliação por aprovação, preservando pedidos pendentes na carga geral |
 
-Retentar somente consultas em falhas transitórias, com espera progressiva e limite de tentativas. Não repetir indefinidamente falhas de autenticação ou validação. O manual não especifica o status HTTP exato usado para excesso de chamadas, portanto confirmar a resposta real da loja. Uma carga interrompida precisa ficar incompleta no job, com ponto de retomada persistido.
+Consultas de leitura com falha transitória usam espera progressiva e limite de tentativas. Recusas genéricas em HTTP 200 podem ser confirmadas com no máximo duas novas consultas, após cinco e dez segundos, pois a validação local observou consultas idênticas voltarem a funcionar sem alteração de dados ou credenciais. Falhas reconhecidas de autenticação, permissão, validação ou registro não encontrado não são repetidas, assim como desafios anti-bot. O manual não especifica o status HTTP exato usado para excesso de chamadas. Uma carga interrompida permanece incompleta no job, com ponto de retomada persistido.
 
 As datas de registros vêm em exemplos como `2026-06-02 14:00:00`, sem offset. Confirmar o fuso da loja antes da conversão para UTC; `America/Sao_Paulo` é a hipótese inicial, compatível com as agregações atuais do Dash.
 
@@ -130,7 +130,7 @@ Há uma diferença atual a revisar: `daily-client-metrics.ts` agrega receita por
 1. Validar as credenciais numa consulta pequena e conferir amostras de pedidos pendentes, aprovados e cancelados. O manual informa que não há sandbox padrão: usar apenas buscas para essa validação.
 2. Importar categorias, variações, produtos, SKUs e clientes por páginas. Enriquecer fotos por produto, com cache; comparar a importação de itens em lote com o detalhamento individual para reduzir chamadas.
 3. Importar todos os status de pedidos e seus itens, preservando o histórico necessário à recompra. Carga apenas de aprovados não cobre conversões e cancelamentos posteriores.
-4. Persistir etapa, página ou cursor e último dia concluído. Confirmar o ponto de retomada somente depois de gravar o lote com sucesso.
+4. Persistir etapa, página, último dia concluído e IDs já gravados na página corrente. Confirmar cada ID somente depois de gravar o registro e suas atualizações relacionadas. Na retomada, reconsultar a lista da página, mas omitir os detalhes dos IDs já concluídos; limpar esses IDs ao trocar de página, dia ou etapa. Isso também permite continuar páginas interrompidas pelo limite de duração sem repetir os primeiros detalhes indefinidamente.
 5. Nas execuções seguintes, consultar cada dia de alteração pendente e reprocessar uma sobreposição, inicialmente hoje e ontem no fuso da loja. Retomar dias perdidos se a execução ficar indisponível por mais tempo.
 6. Reconsultar pendentes conhecidos e reconciliar periodicamente o histórico. Confirmar com a Braavo se alterações de pagamento, entrega e estoque sempre atualizam `data_alterado` do recurso correspondente.
 7. Recalcular agregados afetados e registrar contagens, duração, falhas e completude em `sync_jobs`.

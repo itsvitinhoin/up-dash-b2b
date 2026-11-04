@@ -82,11 +82,49 @@ describe("Braavo HTTP contract", () => {
   it("rejects business errors even with HTTP 200 without echoing their contents", async () => {
     const { client, fetcher } = api([
       json({ erro: "test-key exposed upstream" }),
+      json({ erro: "test-key exposed upstream" }),
+      json({ erro: "test-key exposed upstream" }),
     ]);
     await expect(client.query("/clientes/buscar/todos")).rejects.toMatchObject({
       code: "BRAAVO_BUSINESS_ERROR",
+      message: expect.not.stringContaining("test-key"),
     });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+  it("recovers an intermittent HTTP-200 refusal after spaced read-only retries", async () => {
+    const { client, fetcher, reserveSlot, sleep } = api([
+      json({ erro: { mensagem: "Consulta indisponível neste momento" } }),
+      json({ erro: { mensagem: "Consulta indisponível neste momento" } }),
+      json({ ok: [{ id: 7 }] }),
+    ]);
+    expect(await client.one("/produtos/buscar/id", 7)).toEqual({ id: 7 });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(reserveSlot).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledWith(5000);
+    expect(sleep).toHaveBeenCalledWith(10000);
+  });
+  it.each(["Token inválido", "invalid credential", "Sem permissão", "Campo obrigatório", "Nenhum registro encontrado."])("does not retry permanent API errors: %s", async (mensagem) => {
+    const { client, fetcher } = api([json({ erro: { mensagem } })]);
+    await expect(client.query("/produtos/buscar/todos")).rejects.toMatchObject({ code: "BRAAVO_BUSINESS_ERROR" });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("yields to the next batch when refusal backoff consumes the deadline", async () => {
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const fetcher = vi.fn().mockResolvedValue(json({ erro: { mensagem: "Consulta indisponível neste momento" } }));
+    try {
+      const client = new BraavoApi(credentials, {
+        fetch: fetcher,
+        resolve: async () => [{ address: "203.0.113.20" }],
+        reserveSlot: async () => now,
+        sleep: async (ms) => { now += ms; },
+        deadline: now + 4000,
+      });
+      await expect(client.query("/produtos/buscar/todos")).rejects.toMatchObject({ code: "BATCH_DEADLINE" });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      clock.mockRestore();
+    }
   });
   it.each([
     json({ ok: "not-an-array" }),

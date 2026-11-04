@@ -86,6 +86,15 @@ export function braavoId(value: unknown): string {
 const pause = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+function permanentBusinessError(error: unknown): boolean {
+  const message = typeof error === "string"
+    ? error
+    : error && typeof error === "object"
+      ? String((error as BraavoRecord).mensagem ?? (error as BraavoRecord).message ?? "")
+      : "";
+  return /credenc|credential|token|api.?key|autentic|autoriz|permiss|\bauth\b|obrigat|inv[aá]lid|n[aã]o encontrad|nenhum registro|not found/i.test(message);
+}
+
 export class BraavoApi {
   readonly domain: string;
   private validated = false;
@@ -231,11 +240,19 @@ export class BraavoApi {
         envelope.erro !== false &&
         envelope.erro !== "" &&
         envelope.erro !== 0
-      )
+      ) {
+        // Read-only queries sometimes receive a generic HTTP-200 refusal and
+        // succeed unchanged later. Confirm those at most twice, with backoff;
+        // never retry recognized credential, permission or validation failures.
+        if (attempt < 2 && !permanentBusinessError(envelope.erro)) {
+          await (this.options.sleep ?? pause)(5_000 * (attempt + 1));
+          continue;
+        }
         throw new BraavoError(
-          "A Braavo recusou esta consulta. Tente novamente em alguns instantes; a sincronização continuará do último lote salvo.",
+          `A Braavo recusou POST /api${path}${safeBody.id == null ? "" : ` (registro ${braavoId(safeBody.id)})`}. O ponto de retomada foi preservado; tente sincronizar novamente.`,
           "BRAAVO_BUSINESS_ERROR",
         );
+      }
       if (!Array.isArray(envelope.ok))
         throw new BraavoError(
           "A resposta Braavo não contém uma lista válida em ok.",

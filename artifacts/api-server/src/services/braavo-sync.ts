@@ -129,6 +129,9 @@ export function advanceBraavoCursor(
   cursor: BraavoCursor,
   complete: boolean,
 ): BraavoCursor {
+  // Record checkpoints belong only to the current page/day/phase.
+  const { processedIds: _processedIds, ...nextCursor } = cursor;
+  cursor = nextCursor;
   if (!complete) return { ...cursor, page: cursor.page + 1 };
   if (cursor.day && cursor.day < cursor.untilDay)
     return { ...cursor, page: 1, day: nextDay(cursor.day) };
@@ -550,7 +553,21 @@ async function runPage(
     for (const product of products)
       cache.set(`products:${product.externalId}`, product.data);
   }
+  const processedIds = new Set(cursor.processedIds ?? []);
+  let processed = 0;
+  async function checkpointRecord(id: string) {
+    processedIds.add(id);
+    await db.transaction(async (tx) => {
+      await assertLease(tx, clientId, leaseId);
+      await tx.update(states)
+        .set({ cursor: { ...cursor, processedIds: [...processedIds] } })
+        .where(eq(states.clientId, clientId));
+    });
+    processed++;
+  }
   for (const row of page.rows) {
+    const id = braavoId(row.id);
+    if (processedIds.has(id)) continue;
     if (cursor.phase === "orders") {
       await persistOrder(
         clientId,
@@ -558,6 +575,7 @@ async function runPage(
         await api.one("/pedidos/buscar/id", row.id),
         cache,
       );
+      await checkpointRecord(id);
       continue;
     }
     let data = row;
@@ -597,6 +615,9 @@ async function runPage(
           set: { data },
         });
     });
+    // Persist only after the record and its related updates are durable. A crash
+    // before this checkpoint safely replays the idempotent write, never skips it.
+    await checkpointRecord(id);
   }
   if (cursor.phase === "skus" && page.complete) {
     await db.transaction(async (tx) => {
@@ -614,7 +635,7 @@ async function runPage(
     });
   }
   return {
-    processed: page.rows.length,
+    processed,
     cursor: advanceBraavoCursor(cursor, page.complete),
   };
 }

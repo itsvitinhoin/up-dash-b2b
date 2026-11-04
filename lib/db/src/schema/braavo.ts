@@ -26,6 +26,7 @@ export type BraavoCursor = {
   full: boolean;
   startedAt: string;
   afterId?: string;
+  processedIds?: string[];
 };
 
 export const braavoSyncStatesTable = pgTable("braavo_sync_states", {

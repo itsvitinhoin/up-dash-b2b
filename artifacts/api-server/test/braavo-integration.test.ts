@@ -47,6 +47,8 @@ let app: express.Express;
 let order: Record<string, unknown>;
 let customers: Record<string, unknown>[];
 let businessError = false;
+let productIds = [100];
+let failedProductId: number | null = null;
 let stock = 5;
 const calls: {
   path: string;
@@ -88,6 +90,8 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
   beforeEach(async () => {
     calls.length = 0;
     businessError = false;
+    productIds = [100];
+    failedProductId = null;
     stock = 5;
     order = {
       ...structuredClone(sampleOrder),
@@ -160,8 +164,11 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
                 enderecos: [{ ativo: "1", cidade: "São Paulo", estado: "SP" }],
               })),
           });
-        if (path === "/api/produtos/buscar/id")
-          return Response.json({ ok: [product] });
+        if (path === "/api/produtos/buscar/id") {
+          if (body.id === failedProductId)
+            return Response.json({ erro: { mensagem: "Falha temporária" } });
+          return Response.json({ ok: [{ ...product, id: body.id }] });
+        }
         if (path === "/api/pedidos/buscar/id") {
           expect(body).toEqual({
             id: 7,
@@ -178,7 +185,7 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
             { id: 20, nome: "Tamanho", pai_id: 0 },
             { id: 22, nome: "M", pai_id: 20 },
           ],
-          produtos: [product],
+          produtos: productIds.map((id) => ({ ...product, id })),
           skus: [
             {
               id: 501,
@@ -332,6 +339,30 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
       .where(eq(schema.dailyClientMetricsTable.metricDate, "2026-01-10"));
     expect(day[0].approvedRevenue).toBe(0);
   }, 30000);
+
+  it("resumes a partial page at the failed record without refetching saved details", async () => {
+    productIds = [100, 101, 102];
+    failedProductId = 102;
+    const client = await sync.getBraavoClient("shop-a");
+    await schema.db.insert(schema.braavoSyncStatesTable).values({
+      clientId: "shop-a",
+      fingerprint: sync.braavoFingerprint(sync.braavoCredentials(client)),
+      cursor: { ...sync.initialBraavoCursor(new Date()), phase: "products" },
+    });
+    expect((await sync.runBraavoBatch("shop-a", "manual")).status).toBe("failed");
+    const [partial] = await schema.db.select().from(schema.braavoSyncStatesTable);
+    expect(partial.cursor).toMatchObject({ phase: "products", page: 1, processedIds: ["100", "101"] });
+    const saved = await schema.db.select().from(schema.braavoCatalogTable);
+    expect(saved).toHaveLength(2);
+    failedProductId = null;
+    calls.length = 0;
+    const resumed = await sync.runBraavoBatch("shop-a", "cron");
+    expect(resumed).toMatchObject({ status: "pending", phase: "skus", page: 1, processed: 1 });
+    expect(calls.filter((c) => c.path === "/api/produtos/buscar/id").map((c) => c.body.id)).toEqual([102]);
+    expect(await schema.db.select().from(schema.braavoCatalogTable)).toHaveLength(3);
+    const [advanced] = await schema.db.select().from(schema.braavoSyncStatesTable);
+    expect(advanced.cursor?.processedIds).toBeUndefined();
+  });
 
   it("keeps the checkpoint after an HTTP 200 business error and resumes successfully", async () => {
     businessError = true;
