@@ -188,6 +188,45 @@ describe("Braavo HTTP contract", () => {
     });
     expect(fetcher).not.toHaveBeenCalled();
   });
+  it("retries DNS failures before sending credentials and recovers", async () => {
+    const { client, fetcher, resolve, sleep } = api([json({ ok: [] })]);
+    resolve.mockRejectedValueOnce(Object.assign(new Error("lookup failed"), { code: "EAI_AGAIN" }))
+      .mockRejectedValueOnce(Object.assign(new Error("lookup failed"), { code: "ENOTFOUND" }));
+    await client.query("/produtos/buscar/todos");
+    expect(resolve).toHaveBeenCalledTimes(3);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(1000);
+    expect(sleep).toHaveBeenCalledWith(2000);
+  });
+  it("reports exhausted DNS as recoverable without calling the remote API", async () => {
+    const { client, fetcher, resolve } = api([]);
+    resolve.mockRejectedValue(new Error("resolver unavailable"));
+    await expect(client.query("/produtos/buscar/todos")).rejects.toMatchObject({ code: "BRAAVO_DNS_UNAVAILABLE", status: 503 });
+    expect(resolve).toHaveBeenCalledTimes(3);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("bounds a DNS lookup that never resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, fetcher, resolve } = api([]);
+      resolve.mockImplementation(() => new Promise(() => {}));
+      const result = expect(client.query("/produtos/buscar/todos")).rejects.toMatchObject({ code: "BRAAVO_DNS_UNAVAILABLE" });
+      await vi.advanceTimersByTimeAsync(15000);
+      await result;
+      expect(resolve).toHaveBeenCalledTimes(3);
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("still rejects private DNS results after a transient lookup failure", async () => {
+    const { client, fetcher, resolve } = api([]);
+    resolve.mockRejectedValueOnce(new Error("temporary lookup failure"))
+      .mockResolvedValue([{ address: "127.0.0.1" }]);
+    await expect(client.query("/produtos/buscar/todos")).rejects.toMatchObject({ code: "INVALID_DOMAIN" });
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it("stops before a reserved slot would exceed the request deadline", async () => {
     const fetcher = vi.fn();
     const client = new BraavoApi(credentials, {

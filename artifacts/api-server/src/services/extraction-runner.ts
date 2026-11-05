@@ -952,19 +952,20 @@ export async function runNuvemshopTransactionalExtraction(
 
 // One durable page per request. The caller continues the same offset while a
 // client's cycle is pending, keeping every server request bounded.
-export async function runBraavoTransactionalExtraction(trigger: ExtractionTrigger, options: { offset?: number } = {}) {
+export async function runBraavoTransactionalExtraction(trigger: ExtractionTrigger, options: { offset?: number; clientId?: string } = {}) {
   const offset = options.offset ?? 0;
   const [client] = await db.select({ id: clientsTable.id }).from(clientsTable).where(and(
+    options.clientId ? eq(clientsTable.id, options.clientId) : undefined,
     eq(clientsTable.isActive, true), isNull(clientsTable.archivedAt), eq(clientsTable.dashboardType, "B2C"), eq(clientsTable.commercePlatform, "BRAAVO"),
     sql`nullif(trim(${clientsTable.braavoDomain}), '') IS NOT NULL`,
     sql`nullif(trim(${clientsTable.braavoApiToken}), '') IS NOT NULL`,
     sql`nullif(trim(${clientsTable.braavoApiKey}), '') IS NOT NULL`,
   )).orderBy(clientsTable.id).offset(offset).limit(1);
-  if (!client) return { clients: 0, failed: 0, done: 0, pending: 0, nextOffset: offset };
+  if (!client) return { clients: 0, failed: 0, done: 0, pending: 0, nextOffset: offset, result: undefined };
   const result = await runBraavoBatch(client.id, trigger);
   return { clients: 1, clientId: client.id, failed: result.status === "failed" ? 1 : 0,
-    done: result.complete ? 1 : 0, pending: result.status === "pending" ? 1 : 0,
-    nextOffset: result.status === "pending" ? offset : offset + 1, result };
+    done: result.complete ? 1 : 0, pending: result.status === "pending" || result.status === "busy" ? 1 : 0,
+    nextOffset: result.status === "pending" || result.status === "busy" ? offset : offset + 1, result };
 }
 
 export async function runDailyMetricsBackfill(

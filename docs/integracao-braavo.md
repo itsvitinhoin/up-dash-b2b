@@ -1,6 +1,6 @@
 # Integração Braavo no UP Dash
 
-Estudo técnico de 3 de novembro de 2026 para adicionar `BRAAVO` como plataforma de comércio, usando a loja La Cleo como primeira conexão. O contrato documentado permite importar clientes, catálogo, SKUs, estoque, pedidos, itens, UTMs e primeiras compras para o modelo do Dash. A conexão autenticada e as regras financeiras ainda precisam ser validadas com a loja.
+Estudo técnico de 3 de novembro de 2026, atualizado após os testes locais, para adicionar `BRAAVO` como plataforma de comércio, usando a loja La Cleo como primeira conexão. A conexão autenticada foi validada; a carga completa e a conciliação das regras financeiras ainda precisam ser concluídas.
 
 ## Implementação disponível
 
@@ -17,10 +17,10 @@ As UTMs são persistidas por pedido e evento de compra; os filtros da visão pri
 Para ativar no ambiente publicado:
 
 1. Aplicar `lib/db/migrations/0043_braavo.sql` pelo fluxo de migrações do projeto, antes de publicar a API. A migração está registrada no journal; revisar outras migrações pendentes antes de executar `pnpm --filter @workspace/db migrate` com o banco do ambiente escolhido.
-2. Publicar API e frontend da raiz. A agenda Braavo foi acrescentada ao workflow de extrações: execução horária, um lote por chamada, com retomada persistida e exclusão de execuções simultâneas do workflow. A agenda só entra em operação quando o workflow estiver publicado e habilitado na branch padrão.
+2. Publicar API, frontend e a imagem do Cloud Run Job da raiz. A entrada `TASK=braavo_transactional` foi adicionada a `artifacts/api-server/src/jobs/upzero-sync-job.ts`, o executor já usado pelas demais plataformas. Configurar o recurso/agendamento Braavo pelo processo mantido pelo dev. O workflow GitHub de extrações está sem cron e serve apenas como alternativa manual; adicionar a plataforma nele não ativa atualização periódica em produção.
 3. Cadastrar a La Cleo, informar as chaves, testar a conexão e importar o histórico. Comparar um período fechado com o painel Braavo para confirmar frete, desconto, cancelamento e valor aprovado.
 
-A migração foi validada num PostgreSQL temporário. Os testes integrados usam respostas simuladas da Braavo e cobrem reprocessamento, pagamento tardio, cancelamento, atualização de e-mail, concorrência, isolamento de lojas, permissões e sigilo das chaves nas respostas. A interface foi verificada com dados fictícios no navegador. A conexão real depende das chaves da La Cleo; não houve alteração no banco publicado nem implantação nesta etapa.
+A migração foi validada num PostgreSQL temporário. Os testes integrados usam respostas simuladas da Braavo e cobrem reprocessamento, pagamento tardio, cancelamento, atualização de e-mail, concorrência, isolamento de lojas, permissões e sigilo das chaves nas respostas. A interface e a conexão real foram testadas no ambiente local, com uma carga ainda em andamento. Não houve alteração no banco publicado nem implantação de infraestrutura nesta etapa.
 
 Webhooks, recuperação de carrinhos e a fonte Braavo do monitor de produtos em campanha ficam como evolução. O monitor de anúncios por produto não faz parte desta entrega. As fórmulas iniciais usam `pedido_geral` como total com frete, os totais calculados dos itens sem descontar cupom novamente e `pedido_cancelado` como valor cancelado. Os campos originais de valores e status ficam no pedido para conferência; o valor efetivamente estornado não é inferido do status de entrega.
 
@@ -180,3 +180,13 @@ O conector identifica essa página como `BRAAVO_ACCESS_BLOCKED`, interrompe o lo
 ## Ritmo reduzido de importação
 
 Para reduzir a frequência de acesso, as reservas compartilhadas no banco espaçam as chamadas em pelo menos um segundo e impõem cinco segundos sem novas chamadas após cada lote, inclusive em falhas. O navegador também aguarda cinco segundos antes de solicitar o próximo lote. A agenda usa a mesma fila e respeita a pausa, sem depender da interface. O limite do lote passa a 50 segundos para acomodar as consultas de detalhes mais lentas, mantendo as páginas e o ponto de retomada existentes. Essa redução não garante que a proteção anti-bot deixe de bloquear a integração.
+
+## DNS e execução no Cloud Run do projeto
+
+A falha local de 04/11 interrompeu a carga durante a validação do domínio, antes de enviar a consulta autenticada. Em 05/11 o domínio voltou a resolver normalmente. Não foi preservado o código DNS original, portanto a causa externa exata não está confirmada. O conector agora limita cada resolução a cinco segundos e tenta até três vezes, com esperas de um e dois segundos. Se não recuperar, retorna `BRAAVO_DNS_UNAVAILABLE` e preserva o cursor. A validação de endereços públicos continua obrigatória; nenhuma credencial é enviada antes dela. Referência: [documentação de dns.lookup do Node.js](https://nodejs.org/api/dns.html#dnslookuphostname-options-callback).
+
+O entrypoint de produção aceita `TASK=braavo_transactional`, `TRIGGER=cron|manual`, `CLIENT_ID` opcional e `OFFSET` opcional. Ele chama `runBraavoTransactionalExtraction`/`runBraavoBatch`, compartilhando tabelas, leases, intervalo de chamadas e checkpoints com a API. Aguarda cinco segundos entre lotes. Falhas DNS esgotadas recebem no máximo três novas execuções do lote, após 30, 60 e 120 segundos; erros de validação e desafios anti-bot não são repetidos por esse executor.
+
+Cada invocação tem orçamento de 20 minutos e reserva espaço para concluir o lote corrente. Se restar trabalho, retorna `pending: 1`, sem marcar a importação completa; a próxima execução agendada retoma do cursor persistido. A imagem e a migração precisam ser publicadas antes da ativação. O dev deve criar/configurar o recurso Braavo usando a mesma imagem e configuração de banco dos jobs atuais, com `TASK=braavo_transactional`, e ligá-lo ao Cloud Scheduler pelo fluxo existente. Não substituir o `TASK` de um job de outra plataforma. Esta branch não cria nem altera recursos de produção.
+
+O script em `/private/tmp/updash-braavo-local-env` é apenas um executor do teste neste Mac e não faz parte do deploy. O banco e os dados locais também não são enviados ao banco de produção pelo push. As alterações permanecem na branch `codex/braavo-la-cleo` e no mesmo PR para revisão e incorporação pelo dev.

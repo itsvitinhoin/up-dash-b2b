@@ -21,6 +21,7 @@
  *   TASK=upzero_analytics      -> sync de eventos de comportamento UpZero
  *   TASK=meta_ads              -> sync de métricas de anúncio Meta
  *   TASK=nuvemshop_transactional -> sync de pedidos/clientes/produtos Nuvemshop
+ *   TASK=braavo_transactional   -> sync Braavo em lotes retomáveis, orçamento de 20min
  *   TASK=daily_metrics         -> recalcula métricas diárias agregadas
  *   TASK=hourly_bundle         -> roda upzero_analytics + meta_ads juntos
  *   TASK=whatsapp_fix_phone_waba -> corrige o waba_id de UM número em
@@ -77,6 +78,7 @@ import {
 } from "../services/extraction-runner";
 import { purgeExpiredClients, reconcileExcludedClients } from "../services/client-lifecycle";
 import { publishAdsAccounts, publishAdsAccountsSafely } from "../services/ads-accounts-publisher";
+import { runBraavoJob } from "../services/braavo-job";
 
 // Achado 25/08/2026: as migrations do lib/db (drizzle-kit) nunca rodam
 // sozinhas no deploy da Vercel -- alguém precisa disparar isso à mão contra
@@ -164,6 +166,9 @@ async function main() {
         allowPartial: envBool("ALLOW_PARTIAL"),
       });
       break;
+    case "braavo_transactional":
+      result = await runBraavoJob(trigger, { clientId, offset });
+      break;
     case "daily_metrics": {
       const dateFrom = process.env.DATE_FROM;
       const dateTo = process.env.DATE_TO;
@@ -205,7 +210,7 @@ async function main() {
       result = await publishAdsAccounts();
       break;
     default:
-      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, daily_metrics, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients, sync_ads_accounts.`);
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, braavo_transactional, daily_metrics, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients, sync_ads_accounts.`);
       process.exit(1);
   }
 

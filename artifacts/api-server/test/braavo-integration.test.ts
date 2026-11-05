@@ -419,6 +419,9 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
       .update(schema.braavoSyncStatesTable)
       .set({ leaseId: "other", leaseUntil: new Date(Date.now() + 60000) });
     expect((await sync.runBraavoBatch("shop-a", "cron")).status).toBe("busy");
+    const { runBraavoTransactionalExtraction } = await import("../src/services/extraction-runner");
+    expect(await runBraavoTransactionalExtraction("cron", { clientId: "shop-a" }))
+      .toMatchObject({ clients: 1, pending: 1, nextOffset: 0 });
     const slots = await Promise.all(
       Array.from({ length: 4 }, () =>
         sync.reserveBraavoSlot("https://another-shop.example.com"),
@@ -432,6 +435,13 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
       .set("Authorization", "Bearer test-admin")
       .send({ braavoApiKey: "replacement" })
       .expect(409);
+  });
+
+  it("filters the Cloud Run extraction to CLIENT_ID", async () => {
+    const { runBraavoTransactionalExtraction } = await import("../src/services/extraction-runner");
+    expect(await runBraavoTransactionalExtraction("cron", { clientId: "another-client" }))
+      .toMatchObject({ clients: 0, failed: 0 });
+    expect(calls).toHaveLength(0);
   });
 
   it("holds the next batch for five seconds without shortening queued shop requests", async () => {

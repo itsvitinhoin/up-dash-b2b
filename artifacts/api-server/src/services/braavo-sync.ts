@@ -46,6 +46,7 @@ export type BraavoBatchResult = {
   complete: boolean;
   jobId?: string | null;
   message?: string;
+  code?: string;
 };
 const PAGE_SIZE = 25;
 
@@ -831,6 +832,7 @@ export async function runBraavoBatch(
       complete: false,
       jobId,
       message,
+      code: error instanceof BraavoError ? error.code : "BRAAVO_PERSISTENCE_ERROR",
     };
   } finally {
     // Set the shop-wide cooldown before releasing this client's batch lease.

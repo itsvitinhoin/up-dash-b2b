@@ -133,16 +133,31 @@ export class BraavoApi {
         400,
       );
     if (!this.validated) {
-      let addresses: Array<{ address: string }>;
-      try {
-        addresses = await (
-          this.options.resolve ??
-          ((hostname) => lookup(hostname, { all: true }))
-        )(new URL(this.domain).hostname);
-      } catch {
-        throw new BraavoError(
-          "Não foi possível localizar o domínio da loja Braavo.",
-        );
+      let addresses: Array<{ address: string }> = [];
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const remaining = (this.options.deadline ?? Date.now() + 30_000) - Date.now();
+        if (remaining < 1_000)
+          throw new BraavoError("Lote pausado; a próxima execução continuará deste ponto.", "BATCH_DEADLINE", 202);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          addresses = await Promise.race([
+            (this.options.resolve ?? ((hostname) => lookup(hostname, { all: true })))(new URL(this.domain).hostname),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error("DNS timeout")), Math.min(5_000, remaining));
+            }),
+          ]);
+          break;
+        } catch {
+          if (attempt === 2)
+            throw new BraavoError(
+              "Não foi possível localizar o domínio da loja Braavo após três tentativas. O ponto salvo foi preservado; aguarde a conexão se recuperar.",
+              "BRAAVO_DNS_UNAVAILABLE",
+              503,
+            );
+          await (this.options.sleep ?? pause)(1_000 * 2 ** attempt);
+        } finally {
+          clearTimeout(timer);
+        }
       }
       if (
         !addresses.length ||
