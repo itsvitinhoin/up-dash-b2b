@@ -387,6 +387,49 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     expect((await snapshot()).orders).toHaveLength(1);
   }, 15000);
 
+  it("quarantines an invalid order, finishes the cycle and heals when the shop fixes it", async () => {
+    order.status_pagamento = "99";
+    await cycle();
+    let data = await snapshot();
+    expect(data.orders).toHaveLength(0);
+    const [issue] = await schema.db.select().from(schema.braavoRecordIssuesTable);
+    expect(issue).toMatchObject({ clientId: "shop-a", phase: "orders", externalId: "7", attempts: 1 });
+    expect(issue.reason).toContain("pagamento");
+    const status = await sync.getBraavoSyncStatus("shop-a");
+    expect(status.skippedRecords.total).toBe(1);
+    expect(status.skippedRecords.recent[0]).toMatchObject({ phase: "orders", externalId: "7" });
+    expect(status.cursor).toMatchObject({ phase: "done", skipped: 1 });
+    // The shop corrects the order: the next cycle imports it and clears the issue.
+    order.status_pagamento = "3";
+    await cycle();
+    data = await snapshot();
+    expect(data.orders).toHaveLength(1);
+    expect(await schema.db.select().from(schema.braavoRecordIssuesTable)).toHaveLength(0);
+    expect((await sync.getBraavoSyncStatus("shop-a")).skippedRecords.total).toBe(0);
+  }, 30000);
+
+  it("still stops on infrastructure errors and past the invalid-record ceiling", async () => {
+    // Network/credential errors are never quarantined (covered above by the HTTP 200 test).
+    // Past the ceiling the cause is a changed format, not dirty data: fail with the checkpoint kept.
+    await sync.runBraavoBatch("shop-a", "manual");
+    await schema.db
+      .update(schema.braavoSyncStatesTable)
+      .set({
+        cursor: sql`jsonb_set(cursor, '{skipped}', to_jsonb(${sync.MAX_SKIPPED_PER_CYCLE}::int))`,
+      });
+    order.status_pagamento = "99";
+    let failed;
+    for (let i = 0; i < 40 && !failed; i++) {
+      const result = await sync.runBraavoBatch("shop-a", "manual");
+      if (result.status === "failed") failed = result;
+      else if (result.complete) break;
+    }
+    expect(failed).toMatchObject({ status: "failed", code: "BRAAVO_TOO_MANY_INVALID" });
+    const [state] = await schema.db.select().from(schema.braavoSyncStatesTable);
+    expect(state.cursor).toMatchObject({ phase: "orders" });
+    expect(state.leaseId).toBeNull();
+  }, 40000);
+
   it("rolls back the order and its items if an item cannot be persisted", async () => {
     await cycle();
     const before = await snapshot();

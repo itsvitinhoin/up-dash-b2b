@@ -3,6 +3,7 @@ import {
   text,
   timestamp,
   jsonb,
+  integer,
   primaryKey,
 } from "drizzle-orm/pg-core";
 import { clientsTable } from "./clients";
@@ -27,6 +28,8 @@ export type BraavoCursor = {
   startedAt: string;
   afterId?: string;
   processedIds?: string[];
+  /** Invalid records quarantined so far in this cycle (see braavo_record_issues). */
+  skipped?: number;
 };
 
 export const braavoSyncStatesTable = pgTable("braavo_sync_states", {
@@ -62,6 +65,31 @@ export const braavoCatalogTable = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.clientId, table.kind, table.externalId] }),
+  ],
+);
+
+// Records the shop sent that cannot be imported (impossible value, unknown
+// status...). The batch continues past them instead of stalling the whole shop;
+// each row is removed automatically once a later import of that record succeeds.
+export const braavoRecordIssuesTable = pgTable(
+  "braavo_record_issues",
+  {
+    clientId: text("client_id")
+      .notNull()
+      .references(() => clientsTable.id, { onDelete: "cascade" }),
+    phase: text("phase").notNull(),
+    externalId: text("external_id").notNull(),
+    reason: text("reason").notNull(),
+    attempts: integer("attempts").notNull().default(1),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.clientId, table.phase, table.externalId] }),
   ],
 );
 

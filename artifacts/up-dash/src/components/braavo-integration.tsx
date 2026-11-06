@@ -95,6 +95,15 @@ type SyncStatus = {
   completedAt: string | null;
   error: string | null;
   busy: boolean;
+  skippedRecords?: {
+    total: number;
+    recent: {
+      phase: string;
+      externalId: string;
+      reason: string;
+      attempts: number;
+    }[];
+  };
 };
 const PHASES: Record<string, string> = {
   categories: "Categorias",
@@ -354,6 +363,27 @@ export function BraavoIntegration({
               {PHASES[status.data.cursor.phase] ?? status.data.cursor.phase} ·
               página {status.data.cursor.page}
             </p>
+          )}
+          {!!status.data?.skippedRecords?.total && (
+            <div className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+              <p className="font-medium">
+                {status.data.skippedRecords.total === 1
+                  ? "1 registro da Braavo foi ignorado por dados inválidos."
+                  : `${status.data.skippedRecords.total} registros da Braavo foram ignorados por dados inválidos.`}
+              </p>
+              <p className="mt-1">
+                A importação continua sem eles e tenta de novo a cada ciclo; se
+                a loja corrigir o dado, o registro entra sozinho. Mais recentes:
+              </p>
+              <ul className="mt-1 list-disc pl-4">
+                {status.data.skippedRecords.recent.slice(0, 5).map((item) => (
+                  <li key={`${item.phase}:${item.externalId}`}>
+                    {PHASES[item.phase] ?? item.phase} nº {item.externalId}:{" "}
+                    {item.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {status.data?.completedAt && (
             <p className="mt-1 text-xs text-muted-foreground">

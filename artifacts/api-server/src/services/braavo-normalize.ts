@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  BraavoError,
+  BraavoRecordError,
   braavoId,
   braavoRecord,
   type BraavoRecord,
@@ -11,7 +11,7 @@ export const textValue = (value: unknown): string | null =>
 export function money(value: unknown, required = false): number {
   if (value === null || value === undefined || value === "") {
     if (required)
-      throw new BraavoError("Valor financeiro obrigatório ausente na Braavo.");
+      throw new BraavoRecordError("Valor financeiro obrigatório ausente na Braavo.");
     return 0;
   }
   const number =
@@ -21,14 +21,14 @@ export function money(value: unknown, required = false): number {
         ? Number(value)
         : NaN;
   if (!Number.isFinite(number) || number < 0)
-    throw new BraavoError("Valor financeiro inválido na Braavo.");
+    throw new BraavoRecordError("Valor financeiro inválido na Braavo.");
   return Math.round((number + Number.EPSILON) * 100) / 100;
 }
 export function quantity(value: unknown): number {
   const number =
     value === null || value === "" || value === undefined ? NaN : Number(value);
   if (!Number.isSafeInteger(number) || number < 0)
-    throw new BraavoError("Quantidade ausente ou inválida na Braavo.");
+    throw new BraavoRecordError("Quantidade ausente ou inválida na Braavo.");
   return number;
 }
 // Inventory is a signed balance, unlike the nonnegative units on an order.
@@ -40,7 +40,7 @@ export function stockQuantity(value: unknown): number {
       ? Number(value)
       : NaN;
   if (!Number.isInteger(number) || number < -2147483648 || number > 2147483647)
-    throw new BraavoError("Saldo de estoque ausente ou inválido na Braavo.", "INVALID_STOCK");
+    throw new BraavoRecordError("Saldo de estoque ausente ou inválido na Braavo.", "INVALID_STOCK");
   return number;
 }
 export function braavoDate(value: unknown, required = true): Date | null {
@@ -53,11 +53,11 @@ export function braavoDate(value: unknown, required = true): Date | null {
   )
     return null;
   const raw = textValue(value);
-  if (!raw) throw new BraavoError("Data obrigatória ausente na Braavo.");
+  if (!raw) throw new BraavoRecordError("Data obrigatória ausente na Braavo.");
   const match = raw.match(
     /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?$/,
   );
-  if (!match) throw new BraavoError("Formato de data Braavo inválido.");
+  if (!match) throw new BraavoRecordError("Formato de data Braavo inválido.");
   const [, y, m, d, h, min, sec, offset] = match;
   const calendar = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
   if (
@@ -68,12 +68,12 @@ export function braavoDate(value: unknown, required = true): Date | null {
     Number(min) > 59 ||
     Number(sec) > 59
   )
-    throw new BraavoError("Data Braavo fora do calendário.");
+    throw new BraavoRecordError("Data Braavo fora do calendário.");
   const date = new Date(
     `${y}-${m}-${d}T${h}:${min}:${sec}${offset ?? "-03:00"}`,
   );
   if (!Number.isFinite(date.getTime()))
-    throw new BraavoError("Data Braavo inválida.");
+    throw new BraavoRecordError("Data Braavo inválida.");
   return date;
 }
 export function braavoDay(date = new Date()): string {
@@ -146,7 +146,7 @@ export function normalizeBraavoOrder(row: BraavoRecord) {
   const payment = String(row.status_pagamento),
     delivery = String(row.status_entrega ?? "0");
   if (!["0", "1", "2", "3", "6"].includes(payment))
-    throw new BraavoError(
+    throw new BraavoRecordError(
       "Status de pagamento Braavo desconhecido; pedido não importado.",
     );
   const cancelled = payment === "6" || ["41", "42", "43"].includes(delivery);
@@ -161,7 +161,18 @@ export function normalizeBraavoOrder(row: BraavoRecord) {
           ? "SHIPPED"
           : "APPROVED";
   const shippingAmount = money(row.frete_valor);
-  const discountAmount = money(row.desconto_valor);
+  // O desconto do pedido (cupom) vem em `pedido_desconto`. Em 114.556 pedidos reais
+  // de uma loja Braavo, `desconto_valor` nunca passou de zero enquanto
+  // `pedido_desconto` estava preenchido em 68.097. Usa `desconto_valor` só quando
+  // a loja não informa `pedido_desconto`. O total do pedido (`pedido_geral`) já
+  // vem líquido de desconto e de crédito da carteira; este campo é informativo.
+  const hasOrderDiscount =
+    row.pedido_desconto !== undefined &&
+    row.pedido_desconto !== null &&
+    row.pedido_desconto !== "";
+  const discountAmount = money(
+    hasOrderDiscount ? row.pedido_desconto : row.desconto_valor,
+  );
   const total =
     row.pedido_geral !== undefined &&
     row.pedido_geral !== null &&
@@ -169,20 +180,23 @@ export function normalizeBraavoOrder(row: BraavoRecord) {
       ? money(row.pedido_geral, true)
       : money(row.pedido_total, true) + shippingAmount;
   const reportedCancellation = money(row.pedido_cancelado);
-  if (reportedCancellation > total)
-    throw new BraavoError(
-      "Valor cancelado maior que o total do pedido Braavo.",
-    );
-  const cancelledAmount = cancelled ? total : reportedCancellation;
+  // Cancelado maior que o total acontece em pedidos antigos (arredondamento, como
+  // 300,00 contra 299,90). O valor líquido é max(0, total - cancelado), então
+  // limitar ao total não altera a receita. O valor original fica na auditoria.
+  const dataQuality: string[] = [];
+  if (reportedCancellation > total) dataQuality.push("cancelado_maior_que_total");
+  const cancelledAmount = cancelled
+    ? total
+    : Math.min(reportedCancellation, total);
   const net = money(Math.max(0, total - cancelledAmount));
   if (!Array.isArray(row.produtos))
-    throw new BraavoError("Pedido Braavo sem detalhamento dos itens.");
+    throw new BraavoRecordError("Pedido Braavo sem detalhamento dos itens.");
   const items = row.produtos.map((value) => {
     const item = braavoRecord(value);
     const productId = braavoId(item.produto_id),
       skuId = braavoId(item.sku_id);
     const q = quantity(item.quantidade);
-    if (q <= 0) throw new BraavoError("Item Braavo com quantidade inválida.");
+    if (q <= 0) throw new BraavoRecordError("Item Braavo com quantidade inválida.");
     const gross = money(item.preco_venda ?? item.preco, true);
     const itemTotal =
       item.calculado_preco_total !== undefined &&
@@ -191,7 +205,7 @@ export function normalizeBraavoOrder(row: BraavoRecord) {
         ? money(item.calculado_preco_total, true)
         : money(item.total, true) - money(item.desconto_vale_total);
     if (itemTotal < 0)
-      throw new BraavoError("Total líquido de item Braavo inválido.");
+      throw new BraavoRecordError("Total líquido de item Braavo inválido.");
     return {
       externalId: `braavo:${productId}:${skuId}`,
       sku: textValue(item.sku) ?? `braavo-${skuId}`,
@@ -208,7 +222,7 @@ export function normalizeBraavoOrder(row: BraavoRecord) {
   const createdAt = braavoDate(row.data_criado)!;
   const approvalDate = braavoDate(row.data_aprovado, false);
   if (paid && !approvalDate)
-    throw new BraavoError("Pedido aprovado Braavo sem data de aprovação.");
+    throw new BraavoRecordError("Pedido aprovado Braavo sem data de aprovação.");
   return {
     externalId: `braavo:${id}`,
     createdAt,
@@ -246,10 +260,14 @@ export function normalizeBraavoOrder(row: BraavoRecord) {
       pedido_total: row.pedido_total,
       pedido_geral: row.pedido_geral,
       pedido_cancelado: row.pedido_cancelado,
+      pedido_desconto: row.pedido_desconto,
+      pedido_carteira: row.pedido_carteira,
+      desconto_valor: row.desconto_valor,
       pagamento_valor: row.pagamento_valor,
       primeira_compra_status: row.primeira_compra_status,
       primeira_compra_data: row.primeira_compra_data,
       data_alterado: row.data_alterado,
+      ...(dataQuality.length ? { data_quality: dataQuality } : {}),
     },
     items,
     paid,

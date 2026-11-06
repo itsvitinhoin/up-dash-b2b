@@ -190,3 +190,46 @@ O entrypoint de produção aceita `TASK=braavo_transactional`, `TRIGGER=cron|man
 Cada invocação tem orçamento de 20 minutos e reserva espaço para concluir o lote corrente. Se restar trabalho, retorna `pending: 1`, sem marcar a importação completa; a próxima execução agendada retoma do cursor persistido. A imagem e a migração precisam ser publicadas antes da ativação. O dev deve criar/configurar o recurso Braavo usando a mesma imagem e configuração de banco dos jobs atuais, com `TASK=braavo_transactional`, e ligá-lo ao Cloud Scheduler pelo fluxo existente. Não substituir o `TASK` de um job de outra plataforma. Esta branch não cria nem altera recursos de produção.
 
 O script em `/private/tmp/updash-braavo-local-env` é apenas um executor do teste neste Mac e não faz parte do deploy. O banco e os dados locais também não são enviados ao banco de produção pelo push. As alterações permanecem na branch `codex/braavo-la-cleo` e no mesmo PR para revisão e incorporação pelo dev.
+
+## Registros inválidos e validação com dados reais
+
+Os campos financeiros foram conferidos contra o histórico completo de uma loja Braavo real já sincronizada para o BigQuery (114.556 pedidos, leitura apenas). O que isso mostrou:
+
+- `pedido_geral` = `pedido_total` + `frete_valor` - `pedido_desconto` - `pedido_carteira`. A diferença entre `pedido_total + frete` e `pedido_geral` ficou totalmente explicada por desconto e carteira nos 2.872 pedidos pagos de um mês. O valor do pedido no Dash (`pedido_geral` menos cancelado) **inclui o frete e já desconta cupom e crédito de carteira**.
+- `desconto_valor` veio zero em todos os pedidos e `pedido_desconto` estava preenchido em 68.097. O desconto gravado no pedido vem de `pedido_desconto`; `desconto_valor` só é usado quando a loja não informa o primeiro. O campo é informativo e não altera o valor do pedido.
+- Pagamento aprovado com entrega cancelada: nenhum caso nos dois meses conferidos.
+- Histórico antigo traz inconsistências pontuais: 17 pedidos de 2022 com cancelado maior que o total (em geral por arredondamento, 300,00 contra 299,90) e uma linha vazia.
+
+Tratamento:
+
+1. **Cancelado maior que o total** deixa de recusar o pedido. O valor é limitado ao total (o líquido, `max(0, total - cancelado)`, não muda), o original fica em `sourceMetadata.pedido_cancelado` e o pedido recebe `sourceMetadata.data_quality = ["cancelado_maior_que_total"]`.
+2. **Dado inválido de um único registro** (status de pagamento desconhecido, valor negativo ou ausente, data impossível, quantidade inválida) usa `BraavoRecordError`. O lote registra o problema em `braavo_record_issues` (etapa, ID, motivo, tentativas, datas), escreve um aviso no log e **continua**. O registro é reavaliado a cada ciclo e a pendência some sozinha quando ele passa a ser importado.
+3. **Erros de rede, bloqueio anti-bot, credencial, perda de lease ou banco continuam interrompendo o lote**, preservando o ponto de retomada. Só dado inválido de um registro é pulado.
+4. **Teto por ciclo:** mais de 100 registros inválidos no mesmo ciclo (`MAX_SKIPPED_PER_CYCLE`) interrompe o lote com `BRAAVO_TOO_MANY_INVALID`. Esse volume sugere mudança no formato da API, não histórico sujo, e não deve ser ignorado em silêncio.
+
+O estado `GET /clients/:clientId/braavo` devolve `skippedRecords` (total e os 20 mais recentes), a resposta do lote devolve `skipped` e a janela de conexão mostra o aviso. A tabela é criada pela migração `0044_braavo_record_issues.sql`.
+
+## Conferência da La Cleo com o painel (setembro/2026)
+
+Conferido em 06/11/2026 no painel da loja (Pedidos > Vendas > Filtrar por > Data Compra De/Até, aba Aprovados) contra a API, só com leituras, a 1 requisição por segundo e sem bloqueio anti-bot.
+
+| Item | Painel | API |
+| --- | --- | --- |
+| Pedidos criados em setembro | 689 | 689 |
+| Pedidos aprovados (`status_pagamento = 3`) | 576 | 576 |
+| Produtos | 204.018,49 | 204.018,49 |
+| Frete | 10.113,82 | 10.113,82 |
+| Desconto | 16.300,63 | 16.300,63 |
+| Carteira | 6.384,32 | 6.384,32 |
+| Total (`pedido_geral`) | 191.447,36 | 191.447,36 |
+
+Nas últimas 24 horas (05/11 09:43 a 06/11 09:43): 35 criados e 33 aprovados nos dois lados. Cancelados: 3 no painel e 2 na API, por critério de data possivelmente diferente (não verificado).
+
+**Valor do pedido.** `pedido_geral` é exatamente o Total do painel (produtos + frete - desconto - carteira). A regra do conector (`pedido_geral` menos `pedido_cancelado`, sem pedidos de entrega 41/42/43) dá 574 pedidos e R$ 170.058,32 em setembro.
+
+**Cancelamento (ponto em aberto).** O painel tem a coluna Estorno (54 pedidos, R$ 12.685,36) e a API tem `pedido_cancelado` (81 pedidos, R$ 20.337,31). 53 pedidos aparecem nos dois, e em 51 os valores são iguais ao centavo. Os outros 28 (R$ 7.665,81, todos com entrega 40 Concluído, 6 deles com o pedido inteiro cancelado) têm `pedido_cancelado` mas nenhum estorno no painel. A loja precisa dizer se esses cancelamentos são reais. Alternativas de valor para setembro: Total do painel R$ 191.447,36, Total menos Estorno R$ 178.762,00, regra do conector R$ 170.058,32.
+
+**Status de entrega no painel:** 23 Entregue, 40 Concluído, 41 Chargeback, 42 Devolvido ao remetente, 43 Cancelado. **Status de pagamento:** 0 Registrado, 1 Aguardando pagamento, 2 Em análise, 3 Aprovado, 6 Cancelado.
+
+**Escala.** A La Cleo tem cerca de 64 mil pedidos. A carga inicial busca o detalhe de cada pedido a 1 requisição por segundo, o que leva por volta de 18 horas só nos pedidos. O job agendado precisa rodar em lotes repetidos, retomando do ponto salvo.
+

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
-import { and, eq, gt, inArray, like, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, like, sql } from "drizzle-orm";
 import {
   db,
   clientsTable,
@@ -12,12 +12,14 @@ import {
   syncJobsTable,
   braavoSyncStatesTable as states,
   braavoCatalogTable as catalog,
+  braavoRecordIssuesTable as issues,
   BRAAVO_PHASES,
   type BraavoCursor,
 } from "@workspace/db";
 import {
   BraavoApi,
   BraavoError,
+  BraavoRecordError,
   braavoId,
   braavoRecord,
   normalizeBraavoDomain,
@@ -34,6 +36,7 @@ import {
   money,
 } from "./braavo-normalize";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
+import { logger } from "../lib/logger";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Client = typeof clientsTable.$inferSelect;
@@ -47,8 +50,77 @@ export type BraavoBatchResult = {
   jobId?: string | null;
   message?: string;
   code?: string;
+  /** Invalid records quarantined so far in the current cycle. */
+  skipped?: number;
 };
 const PAGE_SIZE = 25;
+
+// Legacy shops carry a few inconsistent records (17 in 114 thousand orders on a
+// real shop). Those are quarantined and the import continues. Past this ceiling
+// per cycle the cause is more likely a changed API format than dirty data, so the
+// batch fails loudly with its checkpoint preserved instead of ignoring everything.
+export const MAX_SKIPPED_PER_CYCLE = 100;
+
+type SkipCounter = { skipped: number };
+async function recordIssue(
+  clientId: string,
+  phase: string,
+  externalId: string,
+  reason: string,
+) {
+  await db
+    .insert(issues)
+    .values({ clientId, phase, externalId, reason })
+    .onConflictDoUpdate({
+      target: [issues.clientId, issues.phase, issues.externalId],
+      set: {
+        reason,
+        attempts: sql`${issues.attempts} + 1`,
+        lastSeenAt: new Date(),
+      },
+    });
+}
+/**
+ * Runs the validation/persistence of ONE record. Only BraavoRecordError (the
+ * record itself is invalid) is quarantined; network, anti-bot, credential,
+ * lease and database failures still propagate and stop the batch. A record that
+ * imports successfully clears any earlier issue, so fixes on the shop heal on
+ * their own.
+ */
+async function importRecord(
+  clientId: string,
+  phase: string,
+  externalId: string,
+  counter: SkipCounter,
+  work: () => Promise<void>,
+) {
+  try {
+    await work();
+  } catch (error) {
+    if (!(error instanceof BraavoRecordError)) throw error;
+    counter.skipped++;
+    await recordIssue(clientId, phase, externalId, error.message);
+    logger.warn(
+      { clientId, phase, externalId, reason: error.message },
+      "[braavo] registro inválido ignorado; a sincronização continua",
+    );
+    if (counter.skipped > MAX_SKIPPED_PER_CYCLE)
+      throw new BraavoError(
+        `Mais de ${MAX_SKIPPED_PER_CYCLE} registros inválidos neste ciclo. Isso sugere mudança no formato da Braavo e não dados antigos; confira os registros ignorados antes de retomar.`,
+        "BRAAVO_TOO_MANY_INVALID",
+      );
+    return;
+  }
+  await db
+    .delete(issues)
+    .where(
+      and(
+        eq(issues.clientId, clientId),
+        eq(issues.phase, phase),
+        eq(issues.externalId, externalId),
+      ),
+    );
+}
 
 export function braavoCredentials(client: Client): BraavoCredentials {
   if (
@@ -506,19 +578,34 @@ async function runPage(
       )
       .orderBy(ordersTable.externalId)
       .limit(10);
-    for (const row of rows)
-      await persistOrder(
-        clientId,
-        leaseId,
-        await api.one("/pedidos/buscar/id", row.externalId!.slice(7)),
-        cache,
+    const pendingCounter: SkipCounter = { skipped: cursor.skipped ?? 0 };
+    for (const row of rows) {
+      const detail = await api.one(
+        "/pedidos/buscar/id",
+        row.externalId!.slice(7),
       );
+      await importRecord(
+        clientId,
+        "pending",
+        row.externalId!.slice(7),
+        pendingCounter,
+        () => persistOrder(clientId, leaseId, detail, cache),
+      );
+    }
     return {
       processed: rows.length,
       cursor:
         rows.length < 10
-          ? { ...cursor, phase: "done" as const }
-          : { ...cursor, afterId: rows.at(-1)!.externalId! },
+          ? {
+              ...cursor,
+              phase: "done" as const,
+              skipped: pendingCounter.skipped,
+            }
+          : {
+              ...cursor,
+              afterId: rows.at(-1)!.externalId!,
+              skipped: pendingCounter.skipped,
+            },
     };
   }
   const paths = {
@@ -555,13 +642,20 @@ async function runPage(
       cache.set(`products:${product.externalId}`, product.data);
   }
   const processedIds = new Set(cursor.processedIds ?? []);
+  const counter: SkipCounter = { skipped: cursor.skipped ?? 0 };
   let processed = 0;
   async function checkpointRecord(id: string) {
     processedIds.add(id);
     await db.transaction(async (tx) => {
       await assertLease(tx, clientId, leaseId);
       await tx.update(states)
-        .set({ cursor: { ...cursor, processedIds: [...processedIds] } })
+        .set({
+          cursor: {
+            ...cursor,
+            processedIds: [...processedIds],
+            skipped: counter.skipped,
+          },
+        })
         .where(eq(states.clientId, clientId));
     });
     processed++;
@@ -570,51 +664,58 @@ async function runPage(
     const id = braavoId(row.id);
     if (processedIds.has(id)) continue;
     if (cursor.phase === "orders") {
-      await persistOrder(
-        clientId,
-        leaseId,
-        await api.one("/pedidos/buscar/id", row.id),
-        cache,
+      const detail = await api.one("/pedidos/buscar/id", row.id);
+      await importRecord(clientId, "orders", id, counter, () =>
+        persistOrder(clientId, leaseId, detail, cache),
       );
       await checkpointRecord(id);
       continue;
     }
-    let data = row;
-    if (cursor.phase === "customers")
-      data = { ...row, ...(await api.one("/clientes/buscar/id", row.id)) };
-    if (cursor.phase === "products") {
-      const detail = await api.one("/produtos/buscar/id", row.id);
-      const photos = Array.isArray(detail.fotos)
-        ? detail.fotos.map(braavoRecord)
-        : [];
-      data = {
-        id: detail.id,
-        nome: detail.nome,
-        ativo: detail.ativo,
-        descricao: detail.descricao,
-        categoria_id: detail.categoria_id,
-        imageUrl:
-          photos.map((photo) => textValue(photo.foto_1)).find(Boolean) ?? null,
-      };
-    }
-    await db.transaction(async (tx) => {
-      await assertLease(tx, clientId, leaseId);
-      if (cursor.phase === "customers") {
-        await persistCustomer(tx, clientId, data);
-        return;
+    // Fetch (network) stays outside the guarded step: only the validation and
+    // persistence of this record may be quarantined.
+    const detail =
+      cursor.phase === "customers"
+        ? await api.one("/clientes/buscar/id", row.id)
+        : cursor.phase === "products"
+          ? await api.one("/produtos/buscar/id", row.id)
+          : undefined;
+    await importRecord(clientId, cursor.phase, id, counter, async () => {
+      let data = row;
+      if (cursor.phase === "customers") data = { ...row, ...detail };
+      if (cursor.phase === "products") {
+        const photos = Array.isArray(detail!.fotos)
+          ? detail!.fotos.map(braavoRecord)
+          : [];
+        data = {
+          id: detail!.id,
+          nome: detail!.nome,
+          ativo: detail!.ativo,
+          descricao: detail!.descricao,
+          categoria_id: detail!.categoria_id,
+          imageUrl:
+            photos.map((photo) => textValue(photo.foto_1)).find(Boolean) ??
+            null,
+        };
       }
-      if (cursor.phase === "skus") {
-        await persistSku(tx, clientId, row, cache);
-        return;
-      }
-      const kind = cursor.phase as "categories" | "variations" | "products";
-      await tx
-        .insert(catalog)
-        .values({ clientId, kind, externalId: braavoId(row.id), data })
-        .onConflictDoUpdate({
-          target: [catalog.clientId, catalog.kind, catalog.externalId],
-          set: { data },
-        });
+      await db.transaction(async (tx) => {
+        await assertLease(tx, clientId, leaseId);
+        if (cursor.phase === "customers") {
+          await persistCustomer(tx, clientId, data);
+          return;
+        }
+        if (cursor.phase === "skus") {
+          await persistSku(tx, clientId, row, cache);
+          return;
+        }
+        const kind = cursor.phase as "categories" | "variations" | "products";
+        await tx
+          .insert(catalog)
+          .values({ clientId, kind, externalId: braavoId(row.id), data })
+          .onConflictDoUpdate({
+            target: [catalog.clientId, catalog.kind, catalog.externalId],
+            set: { data },
+          });
+      });
     });
     // Persist only after the record and its related updates are durable. A crash
     // before this checkpoint safely replays the idempotent write, never skips it.
@@ -637,7 +738,10 @@ async function runPage(
   }
   return {
     processed,
-    cursor: advanceBraavoCursor(cursor, page.complete),
+    cursor: {
+      ...advanceBraavoCursor(cursor, page.complete),
+      skipped: counter.skipped,
+    },
   };
 }
 
@@ -647,7 +751,24 @@ export async function getBraavoSyncStatus(clientId: string) {
     .select()
     .from(states)
     .where(eq(states.clientId, clientId));
+  const [{ total }] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(issues)
+    .where(eq(issues.clientId, clientId));
+  const recentIssues = await db
+    .select({
+      phase: issues.phase,
+      externalId: issues.externalId,
+      reason: issues.reason,
+      attempts: issues.attempts,
+      lastSeenAt: issues.lastSeenAt,
+    })
+    .from(issues)
+    .where(eq(issues.clientId, clientId))
+    .orderBy(desc(issues.lastSeenAt))
+    .limit(20);
   return {
+    skippedRecords: { total, recent: recentIssues },
     configured: Boolean(
       client.commercePlatform === "BRAAVO" &&
       client.braavoDomain &&
@@ -781,6 +902,7 @@ export async function runBraavoBatch(
       day: cursor.day,
       processed: result.processed,
       jobId,
+      skipped: cursor.skipped ?? 0,
     };
     await db.transaction(async (tx) => {
       await assertLease(tx, clientId, leaseId);

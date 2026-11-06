@@ -16,6 +16,17 @@ export class BraavoError extends Error {
     super(message);
   }
 }
+/**
+ * A single record from the shop is malformed or inconsistent (bad value, unknown
+ * status, impossible date). Unlike network, authentication, anti-bot or database
+ * failures, it says nothing about the health of the integration, so the batch may
+ * quarantine this record and continue instead of stalling the whole shop.
+ */
+export class BraavoRecordError extends BraavoError {
+  constructor(message: string, code = "INVALID_RECORD") {
+    super(message, code, 422);
+  }
+}
 
 export function normalizeBraavoDomain(value: string): string {
   let url: URL;
@@ -74,13 +85,13 @@ function publicAddress(address: string): boolean {
 
 export function braavoRecord(value: unknown): BraavoRecord {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new BraavoError("Resposta Braavo com estrutura inválida.");
+    throw new BraavoRecordError("Resposta Braavo com estrutura inválida.");
   return value as BraavoRecord;
 }
 export function braavoId(value: unknown): string {
   const id = String(value ?? "");
   if (!/^\d+$/.test(id) || !Number.isSafeInteger(Number(id)) || Number(id) <= 0)
-    throw new BraavoError("Identificador Braavo inválido.");
+    throw new BraavoRecordError("Identificador Braavo inválido.");
   return id;
 }
 const pause = (ms: number) =>
