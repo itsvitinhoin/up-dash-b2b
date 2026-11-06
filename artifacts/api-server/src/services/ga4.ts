@@ -98,6 +98,9 @@ async function getAdcAccessToken(): Promise<string | null> {
   return token;
 }
 
+// Exportado para a descoberta de propriedades (Admin API usa a mesma identidade e o mesmo escopo analytics.readonly).
+export { getAccessToken as getGa4AccessToken };
+
 async function getAccessToken(): Promise<string | null> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.token;
