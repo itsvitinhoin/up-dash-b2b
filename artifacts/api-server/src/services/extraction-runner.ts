@@ -18,12 +18,16 @@ import {
 import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
-import { resolveGa4SyncWindow } from "./ga4-daily-rules";
+import { earlierDate, resolveGa4SyncWindow } from "./ga4-daily-rules";
 import {
   clientIdsWithGa4History,
   clientIdsWithGa4ProductHistory,
+  lastStoredGa4DayByClient,
   syncGa4DailyForClient,
 } from "./ga4-daily-sync";
+import { isGa4BigQueryEnabled } from "./ga4-bigquery-rules";
+import { readGa4BigQueryCoverage, type Ga4BigQueryCoverage } from "./ga4-bigquery";
+import type { BigQueryLike } from "./excluded-clients-bq";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { syncPaidTouchpointsForCustomer } from "./paid-touchpoints";
 import { ERP_STATUS_FILTER } from "./erp-attribution";
@@ -988,6 +992,24 @@ export async function runGa4DailyExtraction(
   const clientIds = clients.map((client) => client.id);
   const withHistory = await clientIdsWithGa4History(clientIds);
   const withProductHistory = await clientIdsWithGa4ProductHistory(clientIds);
+  const lastStoredDay = await lastStoredGa4DayByClient(clientIds);
+
+  // BigQuery (up_global.ga4_daily): tem historico PROPRIO, independente do Postgres. Se nao deu para
+  // saber o que ja esta la, este turno pula o BigQuery em vez de adivinhar: errar para "sem historico"
+  // faria um backfill de 400 dias de todas as lojas a cada hora, e o Postgres segue normalmente.
+  let bq: BigQueryLike | null = null;
+  let bqCoverage = new Map<string, Ga4BigQueryCoverage>();
+  if (isGa4BigQueryEnabled()) {
+    try {
+      const candidate = bigquery as unknown as BigQueryLike;
+      bqCoverage = await readGa4BigQueryCoverage(candidate);
+      bq = candidate;
+    } catch (err) {
+      console.error("[ga4-daily] BigQuery indisponivel; este turno grava so no Postgres", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   let done = 0;
   let failed = 0;
@@ -998,18 +1020,42 @@ export async function runGa4DailyExtraction(
     if (!propertyId) continue;
     const jobId = await createJob(client.id, "ga4_daily", trigger);
     try {
-      const window = resolveGa4SyncWindow({
+      const postgresWindow = resolveGa4SyncWindow({
         hasHistory: withHistory.has(client.id),
         lookbackDays: options.lookbackDays,
+        lastStoredDay: lastStoredDay.get(client.id),
       });
       // Trafego e produtos tem historico separado: a tabela de produtos veio depois,
       // entao uma loja com 400 dias de trafego pode nao ter produto nenhum ainda.
       // Sem isso o backfill de produtos so pegaria os ultimos dias e a leitura
       // somaria um periodo parcial achando que esta completo.
-      const productFrom = withProductHistory.has(client.id)
-        ? window.from
+      const postgresProductFrom = withProductHistory.has(client.id)
+        ? postgresWindow.from
         : resolveGa4SyncWindow({ hasHistory: false, lookbackDays: options.lookbackDays }).from;
-      const result = await syncGa4DailyForClient({ clientId: client.id, propertyId, ...window, productFrom });
+
+      // Uma busca so no GA4 cobre o que falta nos dois destinos: a janela e a mais larga das duas.
+      // Gravar a janela larga no destino que ja estava em dia e inofensivo (as gravacoes sao idempotentes).
+      const coverage = bqCoverage.get(client.id);
+      const bqWindow = bq
+        ? resolveGa4SyncWindow({
+            hasHistory: Boolean(coverage),
+            lookbackDays: options.lookbackDays,
+            lastStoredDay: coverage?.lastDay,
+          })
+        : null;
+      const window = {
+        from: bqWindow ? earlierDate(postgresWindow.from, bqWindow.from) : postgresWindow.from,
+        to: postgresWindow.to,
+      };
+      const productFrom = bqWindow ? earlierDate(postgresProductFrom, bqWindow.from) : postgresProductFrom;
+      const result = await syncGa4DailyForClient({
+        clientId: client.id,
+        clientName: client.name,
+        propertyId,
+        ...window,
+        productFrom,
+        bigQuery: bq,
+      });
       await completeJob(jobId, { clientName: client.name, propertyId, ...result });
       clientResults.push({ clientId: client.id, clientName: client.name, status: "done", result });
       done += 1;

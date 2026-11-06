@@ -58,7 +58,46 @@ ao `analytics_ga4_view_item` que o legado mantém no BigQuery. O job busca tráf
 **antes** de gravar qualquer um (se um falhar, nada muda) e regrava a janela inteira de produtos
 (o GA4 revisa contagens recentes). `getGa4ProductViews` lê daqui, com o mesmo fallback ao vivo.
 
+## Também no BigQuery (`up_global.ga4_daily`) — 06/11/2026
+
+O mesmo job passa a gravar, a partir da MESMA busca no GA4, em duas tabelas do projeto
+`up-vesti-report` (dataset `up_global`, onde o `up_semantic` e a lista `ads_accounts` já moram). É o
+caminho para os agentes do Victor, e substitui aos poucos o pipeline antigo do `script-vesti-nuvem`
+(que grava em `up-nuvem-reports`, 4 propriedades fixas em `propriedades_ga4.json`).
+
+| Tabela | Uma linha por | Colunas |
+|---|---|---|
+| `ga4_daily` | cliente × dia (inclusive dia com zero) | `client_id`, `client_name`, `property_id`, `date`, `sessions`, `total_users`, `page_views`, `view_item`, `add_to_cart`, `begin_checkout`, `purchases`, `purchase_revenue`, `synced_at` |
+| `ga4_product_views_daily` | cliente × dia × item | `client_id`, `client_name`, `property_id`, `date`, `item_id`, `item_name`, `item_variant`, `items_viewed`, `synced_at` |
+
+Ambas particionadas por `date` e agrupadas por `client_id`; criadas sozinhas na primeira rodada
+(`CREATE TABLE IF NOT EXISTS`). Cliente novo com `ga4_property_id` cadastrado entra sem criar tabela.
+
+- **Gravação sem duplicar:** `ga4_daily` usa `MERGE` por (cliente, dia); os produtos vão para uma tabela
+  temporária (expira em 1 h) e a janela do cliente é trocada numa transação só. Falha no meio não deixa a tabela pela metade.
+- **Ordem:** produtos primeiro, diário por último. O diário é o marcador de cobertura: sem ele, o cliente não tem
+  histórico no BigQuery e a rodada seguinte refaz o backfill dos dois.
+- **Histórico próprio:** o BigQuery tem a sua cobertura (lida de `ga4_daily` no começo de cada rodada), independente do
+  Postgres. Uma busca no GA4 cobre a mais larga das duas janelas. Se não for possível ler a cobertura (erro do BigQuery),
+  aquela rodada grava só no Postgres.
+- **Retomada depois de job parado:** a janela agora recomeça no último dia guardado (Postgres e BigQuery), com teto de
+  `GA4_BACKFILL_DAYS`. Sem isso, o buraco de 21/10 a 03/11 de Giah e Jini (job parado) ficaria para sempre.
+- **Falhas separadas:** Postgres e BigQuery são gravados em paralelo e um não derruba o outro; `sync_jobs.error` mostra
+  `Postgres: …` e/ou `BigQuery: …`.
+- **Desligar:** `GA4_BIGQUERY=0` no job (volta a gravar só no Postgres). Sem credencial do Google (dev/teste) fica desligado sozinho.
+- **Correções incluídas:** `eventCount` → `itemsViewed` nas consultas por item (o Google recusava o pedido inteiro: foi o que
+  derrubou Giah/Jini desde 20/10) e aspas em `->>'productFrom'` (sem elas o Postgres leria uma coluna).
+  A conta do job (`…-compute@…`) precisa de escrita no dataset `up_global` — o publicador de `ads_accounts` já usa a mesma.
+
+Validação feita só com BigQuery de mentira nos testes e *dry-run* do Google (sintaxe das tabelas aceita; `MERGE`/`INSERT`
+só passaram da análise de sintaxe, a análise completa depende das tabelas existirem). A primeira rodada real precisa ser
+conferida: ver "Como conferir".
+
 ## Ordem de publicação (importante)
+
+> **Cuidado com `:latest`:** o job horário (`upzero-sync-job-hourly`) usa a tag `:latest`. Em 03/11 e 04/11 builds da `main`
+> sobrescreveram `:latest` sem o `ga4_daily` e o GA4 parou de rodar em silêncio. Faça este código entrar na `main` ANTES do
+> próximo build da `main`, ou o build seguinte apaga o GA4 de novo.
 
 1. **Banco de produção** (`up_dash_b2b`, Cloud SQL Studio): rodar, nesta ordem,
    `lib/db/migrations/0043_ga4_daily_metrics.sql` e `0044_ga4_product_views_daily.sql` (as duas idempotentes; a 0043 já foi aplicada em 20/10). Antes do deploy
@@ -96,14 +135,35 @@ WHERE j.job_type = 'ga4_daily' AND j.status = 'failed'
 ORDER BY j.created_at DESC LIMIT 20;
 ```
 
+No BigQuery (`up-vesti-report`):
+
+```sql
+-- quem já está lá e até quando (deve bater com o Postgres)
+SELECT client_name, MIN(date) AS de, MAX(date) AS ate, COUNT(*) AS dias, SUM(sessions) AS sessoes
+FROM `up-vesti-report.up_global.ga4_daily`
+WHERE date >= DATE '2000-01-01'
+GROUP BY client_name ORDER BY client_name;
+
+-- Giah/Jini: as sessões por dia devem ser IGUAIS às do pipeline antigo (mesmas propriedades)
+SELECT a.date, a.sessions AS novo, b.sessions AS antigo
+FROM `up-vesti-report.up_global.ga4_daily` a
+JOIN `up-nuvem-reports.analytics_ga4_traffic.giah_studio` b ON b.date = a.date
+WHERE a.client_name = 'Giah Studio' AND a.date >= DATE '2026-10-01' AND a.sessions != b.sessions;
+```
+
 ## Rollback
 
 Reverter o commit (a lista volta a chamar o GA4 ao vivo). A tabela pode ficar; não
-atrapalha nada.
+atrapalha nada. Só o BigQuery: `GA4_BIGQUERY=0` no job. As tabelas `up_global.ga4_*` podem ficar.
 
 ## Fora deste passo (de propósito)
 
 - A decisão estrutural continua sendo levar o backend pro Cloud Run (us-central1,
   junto do banco) e o botão "Sincronizar" da Nuvemshop disparar o job existente.
 - Acesso da service account às 4 propriedades que recusam é ação humana no GA4
-  (Administrador → Gerenciamento de acesso → Leitor).
+  (Administrador → Gerenciamento de acesso → Leitor). Em 06/11 são 5: Aiyu, Hot Pink, Pêo, Sonmur e Sooé.
+- **Excluir cliente de vez (lixeira de 90 dias):** a limpeza do BigQuery apaga linhas de tabelas `up_global` com coluna
+  `tenant` e as tabelas por propriedade do pipeline antigo; as novas `ga4_daily` / `ga4_product_views_daily` usam
+  `client_id` e ainda NÃO entram nessa limpeza. Falta um `DELETE ... WHERE client_id = @id` em `purge_archived_clients`.
+- Tráfego por origem/mídia/campanha (tabela própria) e alerta de dado parado.
+- Descoberta das propriedades que a conta enxerga (exige ativar a Analytics Admin API no projeto).

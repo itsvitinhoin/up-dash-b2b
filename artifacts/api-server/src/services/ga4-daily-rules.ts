@@ -25,21 +25,45 @@ export function saoPauloDate(value: Date): string {
   return new Date(value.getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+export function diffDays(from: string, to: string): number {
+  const [fy, fm, fd] = from.split("-").map((part) => Number.parseInt(part, 10));
+  const [ty, tm, td] = to.split("-").map((part) => Number.parseInt(part, 10));
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000);
+}
+
+export function earlierDate(a: string, b: string): string {
+  return a <= b ? a : b;
+}
+
 // Sem historico guardado (cliente novo ou GA4 recem-ligado): backfill largo
 // uma vez. Depois so os ultimos dias, porque o GA4 ainda revisa os numeros de
 // ontem e anteontem. `lookbackDays` explicito (LOOKBACK_DAYS) sempre vence.
+//
+// `lastStoredDay` cobre o job que ficou parado: com so os ultimos 3 dias, quem
+// voltasse depois de 2 semanas deixaria um buraco permanente no meio do historico
+// (aconteceu em 21/10-03/11 com Giah e Jini). Com ele, a janela recomeca no ultimo
+// dia guardado (menos o recuo), limitada ao tamanho do backfill.
 export function resolveGa4SyncWindow(params: {
   hasHistory: boolean;
   now?: Date;
   lookbackDays?: number;
+  lastStoredDay?: string | null;
 }): { from: string; to: string } {
   const to = saoPauloDate(params.now ?? new Date());
-  const days =
-    params.lookbackDays && params.lookbackDays > 0
-      ? params.lookbackDays
-      : params.hasHistory
-        ? positiveOr(GA4_LOOKBACK_DAYS, 3)
-        : positiveOr(GA4_BACKFILL_DAYS, 400);
+  const lookback = positiveOr(GA4_LOOKBACK_DAYS, 3);
+  const maxDays = positiveOr(GA4_BACKFILL_DAYS, 400);
+  let days: number;
+  if (params.lookbackDays && params.lookbackDays > 0) {
+    days = params.lookbackDays;
+  } else if (!params.hasHistory) {
+    days = maxDays;
+  } else {
+    days = lookback;
+    if (params.lastStoredDay) {
+      const sinceLast = diffDays(shiftDate(params.lastStoredDay, -(lookback - 1)), to) + 1;
+      days = Math.min(maxDays, Math.max(lookback, sinceLast));
+    }
+  }
   return { from: shiftDate(to, -(days - 1)), to };
 }
 

@@ -25,6 +25,9 @@ export interface Ga4DailyMetrics {
   addToCarts: number;
   checkouts: number;
   purchases: number;
+  // Só o envio ao BigQuery usa estes dois (o Postgres não tem as colunas). Ausente = 0.
+  totalUsers?: number;
+  purchaseRevenue?: number;
 }
 
 export interface Ga4ProductViewMetric {
@@ -229,7 +232,12 @@ export async function fetchGa4DailyMetrics(params: {
   const report = await runReport(params.propertyId, {
     dateRanges: [{ startDate: params.dateFrom, endDate: params.dateTo }],
     dimensions: [{ name: "date" }],
-    metrics: [{ name: "sessions" }, { name: "screenPageViews" }],
+    metrics: [
+      { name: "sessions" },
+      { name: "screenPageViews" },
+      { name: "totalUsers" },
+      { name: "purchaseRevenue" },
+    ],
     orderBys: [{ dimension: { dimensionName: "date" } }],
   });
 
@@ -261,6 +269,8 @@ export async function fetchGa4DailyMetrics(params: {
       addToCarts: 0,
       checkouts: 0,
       purchases: 0,
+      totalUsers: metricValue(row, 2),
+      purchaseRevenue: metricValue(row, 3),
     });
   }
   for (const row of eventsReport.rows ?? []) {
@@ -301,7 +311,9 @@ export async function fetchGa4ProductViewMetrics(params: {
       { name: "itemName" },
       { name: "itemVariant" },
     ],
-    metrics: [{ name: "eventCount" }],
+    // itemsViewed, nao eventCount: eventCount (escopo de evento) e incompativel com as
+    // dimensoes de item e o Google recusa o pedido inteiro ("Please remove eventCount").
+    metrics: [{ name: "itemsViewed" }],
     dimensionFilter: {
       filter: {
         fieldName: "eventName",
@@ -355,7 +367,9 @@ export async function fetchGa4ProductViewsDaily(params: {
         { name: "itemName" },
         { name: "itemVariant" },
       ],
-      metrics: [{ name: "eventCount" }],
+      // Mesmo motivo de fetchGa4ProductViewMetrics: desde 20/10 esta chamada derrubava o job
+      // inteiro das lojas que o Google deixava ler (Giah, Jini) com "incompatible dimensions & metrics".
+      metrics: [{ name: "itemsViewed" }],
       dimensionFilter: {
         filter: {
           fieldName: "eventName",

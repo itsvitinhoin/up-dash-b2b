@@ -1,6 +1,8 @@
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, ga4DailyMetricsTable, ga4ProductViewsDailyTable, syncJobsTable } from "@workspace/db";
 import { aggregateGa4Rows, fillGa4Days, isGa4StoreUsable, toStoredProductViews } from "./ga4-daily-rules";
+import type { BigQueryLike } from "./excluded-clients-bq";
+import { writeGa4ToBigQuery, type Ga4BigQueryWrite } from "./ga4-bigquery";
 import {
   fetchGa4DailyMetrics,
   fetchGa4FunnelMetrics,
@@ -33,19 +35,39 @@ export async function clientIdsWithGa4ProductHistory(clientIds: string[]): Promi
         inArray(syncJobsTable.clientId, clientIds),
         eq(syncJobsTable.jobType, "ga4_daily"),
         eq(syncJobsTable.status, "done"),
-        sql`${syncJobsTable.result}->>productFrom IS NOT NULL`,
+        sql`${syncJobsTable.result}->>'productFrom' IS NOT NULL`,
       ),
     );
   return new Set(rows.map((row) => row.clientId));
 }
 
+// Ultimo dia que cada cliente tem em ga4_daily_metrics. Serve para o job que ficou parado retomar de onde
+// parou em vez de so olhar os ultimos dias (ver resolveGa4SyncWindow).
+export async function lastStoredGa4DayByClient(clientIds: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (clientIds.length === 0) return result;
+  const rows = await db
+    .select({
+      clientId: ga4DailyMetricsTable.clientId,
+      lastDay: sql<string>`MAX(${ga4DailyMetricsTable.metricDate})::text`,
+    })
+    .from(ga4DailyMetricsTable)
+    .where(inArray(ga4DailyMetricsTable.clientId, clientIds))
+    .groupBy(ga4DailyMetricsTable.clientId);
+  for (const row of rows) if (row.lastDay) result.set(row.clientId, row.lastDay);
+  return result;
+}
+
 export async function syncGa4DailyForClient(params: {
   clientId: string;
+  clientName?: string;
   propertyId: string;
   from: string;
   // Inicio da janela de produtos (>= 1o dia do backfill); padrao = from.
   productFrom?: string;
   to: string;
+  // Presente = grava tambem em up_global.ga4_daily / ga4_product_views_daily. Ausente = so o Postgres.
+  bigQuery?: BigQueryLike | null;
 }): Promise<{
   from: string;
   to: string;
@@ -53,6 +75,7 @@ export async function syncGa4DailyForClient(params: {
   days: number;
   sessions: number;
   productViewRows: number;
+  bigQuery: Ga4BigQueryWrite | null;
 }> {
   const fetched = await fetchGa4DailyMetrics({
     propertyId: params.propertyId,
@@ -78,7 +101,8 @@ export async function syncGa4DailyForClient(params: {
   if (fetchedProductViews === null) throw new Error("GA4 sem credencial ao buscar visualizacoes de produto.");
   const productViews = toStoredProductViews(fetchedProductViews);
 
-  const rows = fillGa4Days(params.from, params.to, fetched).map((row) => ({
+  const filled = fillGa4Days(params.from, params.to, fetched);
+  const rows = filled.map((row) => ({
     clientId: params.clientId,
     metricDate: row.date,
     sessions: row.sessions,
@@ -90,46 +114,72 @@ export async function syncGa4DailyForClient(params: {
     syncedAt: new Date(),
   }));
 
-  // Lotes pequenos: um backfill de 400 dias passa de 60k parametros se for de uma vez.
-  const BATCH = 200;
-  for (let i = 0; i < rows.length; i += BATCH) {
-    await db
-      .insert(ga4DailyMetricsTable)
-      .values(rows.slice(i, i + BATCH))
-      .onConflictDoUpdate({
-        target: [ga4DailyMetricsTable.clientId, ga4DailyMetricsTable.metricDate],
-        set: {
-          sessions: sql`excluded.sessions`,
-          pageViews: sql`excluded.page_views`,
-          productViews: sql`excluded.product_views`,
-          addToCarts: sql`excluded.add_to_carts`,
-          checkouts: sql`excluded.checkouts`,
-          purchases: sql`excluded.purchases`,
-          syncedAt: sql`excluded.synced_at`,
-        },
-      });
-  }
-
-  // Troca a janela inteira (apaga e regrava): o GA4 revisa contagens recentes e
-  // um item que sumiu da revisao nao pode ficar com o numero velho.
-  const PRODUCT_BATCH = 1000;
-  await db.transaction(async (tx) => {
-    await tx
-      .delete(ga4ProductViewsDailyTable)
-      .where(
-        and(
-          eq(ga4ProductViewsDailyTable.clientId, params.clientId),
-          gte(ga4ProductViewsDailyTable.metricDate, productFrom),
-          lte(ga4ProductViewsDailyTable.metricDate, params.to),
-        ),
-      );
-    const syncedAt = new Date();
-    for (let i = 0; i < productViews.length; i += PRODUCT_BATCH) {
-      await tx.insert(ga4ProductViewsDailyTable).values(
-        productViews.slice(i, i + PRODUCT_BATCH).map((row) => ({ clientId: params.clientId, ...row, syncedAt })),
-      );
+  const writePostgres = async (): Promise<void> => {
+    // Lotes pequenos: um backfill de 400 dias passa de 60k parametros se for de uma vez.
+    const BATCH = 200;
+    for (let i = 0; i < rows.length; i += BATCH) {
+      await db
+        .insert(ga4DailyMetricsTable)
+        .values(rows.slice(i, i + BATCH))
+        .onConflictDoUpdate({
+          target: [ga4DailyMetricsTable.clientId, ga4DailyMetricsTable.metricDate],
+          set: {
+            sessions: sql`excluded.sessions`,
+            pageViews: sql`excluded.page_views`,
+            productViews: sql`excluded.product_views`,
+            addToCarts: sql`excluded.add_to_carts`,
+            checkouts: sql`excluded.checkouts`,
+            purchases: sql`excluded.purchases`,
+            syncedAt: sql`excluded.synced_at`,
+          },
+        });
     }
-  });
+
+    // Troca a janela inteira (apaga e regrava): o GA4 revisa contagens recentes e
+    // um item que sumiu da revisao nao pode ficar com o numero velho.
+    const PRODUCT_BATCH = 1000;
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(ga4ProductViewsDailyTable)
+        .where(
+          and(
+            eq(ga4ProductViewsDailyTable.clientId, params.clientId),
+            gte(ga4ProductViewsDailyTable.metricDate, productFrom),
+            lte(ga4ProductViewsDailyTable.metricDate, params.to),
+          ),
+        );
+      const syncedAt = new Date();
+      for (let i = 0; i < productViews.length; i += PRODUCT_BATCH) {
+        await tx.insert(ga4ProductViewsDailyTable).values(
+          productViews.slice(i, i + PRODUCT_BATCH).map((row) => ({ clientId: params.clientId, ...row, syncedAt })),
+        );
+      }
+    });
+  };
+
+  const writeBigQuery = async (): Promise<Ga4BigQueryWrite | null> => {
+    if (!params.bigQuery) return null;
+    return writeGa4ToBigQuery(params.bigQuery, {
+      client: {
+        clientId: params.clientId,
+        clientName: params.clientName ?? params.clientId,
+        propertyId: params.propertyId,
+      },
+      daily: filled,
+      from: params.from,
+      productViews,
+      productFrom,
+      to: params.to,
+    });
+  };
+
+  // Os dois destinos andam separados: se um falhar o outro termina mesmo assim (o Postgres alimenta as
+  // telas, o BigQuery alimenta os agentes), e o erro de cada um aparece em sync_jobs.error com o nome do destino.
+  const [postgres, bigQuery] = await Promise.allSettled([writePostgres(), writeBigQuery()]);
+  const failures: string[] = [];
+  if (postgres.status === "rejected") failures.push(`Postgres: ${errorMessage(postgres.reason)}`);
+  if (bigQuery.status === "rejected") failures.push(`BigQuery: ${errorMessage(bigQuery.reason)}`);
+  if (failures.length > 0) throw new Error(failures.join(" | "));
 
   return {
     from: params.from,
@@ -138,7 +188,12 @@ export async function syncGa4DailyForClient(params: {
     days: rows.length,
     sessions: rows.reduce((sum, row) => sum + row.sessions, 0),
     productViewRows: productViews.length,
+    bigQuery: bigQuery.status === "fulfilled" ? bigQuery.value : null,
   };
+}
+
+function errorMessage(reason: unknown): string {
+  return reason instanceof Error ? reason.message : String(reason);
 }
 
 // Usado pela lista de clientes: soma de sessoes por cliente no periodo, so de
@@ -272,7 +327,7 @@ async function storeCovers(params: { clientId: string; dateFrom: string }): Prom
         .from(ga4DailyMetricsTable)
         .where(eq(ga4DailyMetricsTable.clientId, params.clientId)),
       db
-        .select({ earliest: sql<string | null>`MIN(${syncJobsTable.result}->>productFrom)` })
+        .select({ earliest: sql<string | null>`MIN(${syncJobsTable.result}->>'productFrom')` })
         .from(syncJobsTable)
         .where(
           and(

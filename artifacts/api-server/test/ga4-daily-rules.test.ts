@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateGa4Rows,
   dayRange,
+  diffDays,
+  earlierDate,
   fillGa4Days,
   isGa4StoreUsable,
   resolveGa4SyncWindow,
@@ -62,6 +64,52 @@ describe("resolveGa4SyncWindow", () => {
       from: "2026-10-20",
       to: "2026-10-20",
     });
+  });
+
+  describe("retomada depois de job parado (lastStoredDay)", () => {
+    const later = new Date("2026-11-06T15:00:00.000Z");
+
+    it("recomeça no último dia guardado (menos o recuo), sem deixar buraco no meio", () => {
+      // Caso real: Giah/Jini pararam em 20/10 e o job voltou em 06/11.
+      const { from, to } = resolveGa4SyncWindow({ hasHistory: true, now: later, lastStoredDay: "2026-10-20" });
+      expect(to).toBe("2026-11-06");
+      expect(from).toBe("2026-10-18");
+    });
+
+    it("job em dia continua olhando só os últimos 3 dias", () => {
+      expect(resolveGa4SyncWindow({ hasHistory: true, now: later, lastStoredDay: "2026-11-06" })).toEqual({
+        from: "2026-11-04",
+        to: "2026-11-06",
+      });
+    });
+
+    it("nunca passa do tamanho do backfill", () => {
+      const { from, to } = resolveGa4SyncWindow({ hasHistory: true, now: later, lastStoredDay: "2020-01-01" });
+      expect(dayRange(from, to)).toHaveLength(400);
+    });
+
+    it("sem histórico ignora lastStoredDay e faz o backfill largo", () => {
+      const { from, to } = resolveGa4SyncWindow({ hasHistory: false, now: later, lastStoredDay: "2026-10-20" });
+      expect(dayRange(from, to)).toHaveLength(400);
+    });
+
+    it("LOOKBACK_DAYS explícito vence também aqui", () => {
+      expect(
+        resolveGa4SyncWindow({ hasHistory: true, now: later, lastStoredDay: "2026-10-20", lookbackDays: 2 }),
+      ).toEqual({ from: "2026-11-05", to: "2026-11-06" });
+    });
+  });
+});
+
+describe("diffDays / earlierDate", () => {
+  it("conta dias corridos atravessando mês e ano", () => {
+    expect(diffDays("2026-10-20", "2026-11-06")).toBe(17);
+    expect(diffDays("2025-12-31", "2026-01-01")).toBe(1);
+    expect(diffDays("2026-03-01", "2026-03-01")).toBe(0);
+  });
+  it("escolhe a data mais antiga", () => {
+    expect(earlierDate("2026-10-18", "2025-09-16")).toBe("2025-09-16");
+    expect(earlierDate("2026-10-18", "2026-10-18")).toBe("2026-10-18");
   });
 });
 

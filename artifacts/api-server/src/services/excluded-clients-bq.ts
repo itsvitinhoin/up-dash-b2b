@@ -34,7 +34,7 @@ export type BigQueryLike = {
   };
 };
 
-async function runQuery(bq: BigQueryLike, options: Omit<QueryOptions, "location">) {
+export async function runQuery(bq: BigQueryLike, options: Omit<QueryOptions, "location">) {
   const [job] = await bq.createQueryJob({ ...options, location: BIGQUERY_LOCATION });
   const [rows] = await job.getQueryResults();
   const affected = Number(job.metadata?.statistics?.query?.numDmlAffectedRows ?? 0);
