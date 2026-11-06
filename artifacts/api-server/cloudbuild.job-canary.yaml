@@ -1,0 +1,42 @@
+# Build SO DA IMAGEM, para testar uma versao do job sem mexer em producao.
+#
+# Diferente de cloudbuild.job.yaml, este arquivo NAO:
+#   - move a tag :latest (o job horario upzero-sync-job-hourly usa :latest);
+#   - roda `gcloud run jobs update` (o outro arquivo atualiza upzero-sync-job,
+#     upzero-sync-job-paid-touchpoints e upzero-sync-job-braavo para a imagem nova).
+# Ele so empurra gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:<_TAG>.
+#
+# Em 03-04/11/2026 builds da main sobrescreveram :latest sem o ga4_daily e o GA4 parou de
+# rodar sem ninguem perceber; por isso a trava abaixo recusa _TAG=latest.
+#
+# Uso (da raiz do repo; ver docs/ga4-canario.md):
+#   gcloud builds submit --project=up-vesti-report --config=artifacts/api-server/cloudbuild.job-canary.yaml \
+#     --substitutions=_TAG=ga4-canary-<sha-curto> .
+substitutions:
+  _TAG: ga4-canary
+
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        case "${_TAG}" in
+          latest|"") echo "ERRO: _TAG nao pode ser 'latest' nem vazio (mexeria no job horario de producao)."; exit 1 ;;
+        esac
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-f"
+      - "artifacts/api-server/Dockerfile.job"
+      - "-t"
+      - "gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:${_TAG}"
+      - "."
+
+# O Cloud Build empurra estas imagens no fim; so a tag de teste.
+images:
+  - "gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:${_TAG}"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
