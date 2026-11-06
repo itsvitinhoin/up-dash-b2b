@@ -20,7 +20,7 @@ import { runBraavoBatch } from "./braavo-sync";
 import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
-import { earlierDate, isWideGa4Window, resolveGa4SyncWindow, shouldStartGa4Client } from "./ga4-daily-rules";
+import { earlierDate, isWideGa4Window, resolveGa4SyncWindow, shouldRefundBackfillSlot, shouldStartGa4Client } from "./ga4-daily-rules";
 import {
   clientIdsWithGa4History,
   clientIdsWithGa4ProductHistory,
@@ -1063,6 +1063,7 @@ export async function runGa4DailyExtraction(
       }
     }
     if (wide) wideStarted += 1;
+    const clientStartedMs = Date.now();
     const jobId = await createJob(client.id, "ga4_daily", trigger);
     try {
       const result = await syncGa4DailyForClient({
@@ -1087,6 +1088,8 @@ export async function runGa4DailyExtraction(
       clientResults.push({ clientId: client.id, clientName: client.name, status: "failed", error: message });
       await failJob(jobId, err);
       failed += 1;
+      // Falha logo (sem acesso, por exemplo) devolve a vaga de backfill: senão os sem acesso travam a fila inteira.
+      if (shouldRefundBackfillSlot({ wide, failed: true, elapsedMs: Date.now() - clientStartedMs })) wideStarted -= 1;
     }
   }
 

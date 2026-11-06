@@ -7,6 +7,7 @@ import {
   fillGa4Days,
   isGa4StoreUsable,
   isWideGa4Window,
+  shouldRefundBackfillSlot,
   shouldStartGa4Client,
   resolveGa4SyncWindow,
   saoPauloDate,
@@ -128,6 +129,41 @@ describe("backfill em lote com limite", () => {
 
   it("e quando já começaram N backfills nesta rodada", () => {
     expect(shouldStartGa4Client({ ...base, wide: true, wideStarted: 3 })).toEqual({ start: false, reason: "limite" });
+  });
+});
+
+describe("shouldRefundBackfillSlot (quem falha logo não ocupa vaga)", () => {
+  it("backfill largo que falha em poucos segundos (sem acesso) devolve a vaga", () => {
+    expect(shouldRefundBackfillSlot({ wide: true, failed: true, elapsedMs: 2_000 })).toBe(true);
+  });
+  it("falha depois de trabalhar muito (30 s ou mais) NÃO devolve: gastou tempo da rodada", () => {
+    expect(shouldRefundBackfillSlot({ wide: true, failed: true, elapsedMs: 30_000 })).toBe(false);
+    expect(shouldRefundBackfillSlot({ wide: true, failed: true, elapsedMs: 120_000 })).toBe(false);
+  });
+  it("cliente em dia (janela curta) não tem vaga para devolver, e sucesso nunca devolve", () => {
+    expect(shouldRefundBackfillSlot({ wide: false, failed: true, elapsedMs: 1_000 })).toBe(false);
+    expect(shouldRefundBackfillSlot({ wide: true, failed: false, elapsedMs: 1_000 })).toBe(false);
+  });
+  it("simulação da fila real: com 3 sem acesso à frente, os 3 da frente que funcionam ainda entram", () => {
+    const queue = [
+      { name: "Aiyu", works: false },
+      { name: "Coqueta", works: true },
+      { name: "Hot Pink", works: false },
+      { name: "Incentive", works: true },
+      { name: "Sonmur", works: false },
+      { name: "Sooe", works: true },
+      { name: "Vn11", works: true },
+      { name: "Vogabox", works: true },
+    ];
+    let wideStarted = 0;
+    const done: string[] = [];
+    for (const client of queue) {
+      if (!shouldStartGa4Client({ wide: true, elapsedMs: 0, budgetMs: 8 * 60_000, wideStarted, maxWide: 3 }).start) continue;
+      wideStarted += 1;
+      if (client.works) done.push(client.name);
+      else if (shouldRefundBackfillSlot({ wide: true, failed: true, elapsedMs: 2_000 })) wideStarted -= 1;
+    }
+    expect(done).toEqual(["Coqueta", "Incentive", "Sooe"]);
   });
 });
 

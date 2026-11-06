@@ -91,6 +91,15 @@ export function shouldStartGa4Client(params: {
   return { start: true };
 }
 
+// Cliente que falha LOGO (ex.: sem acesso ao GA4, ~2 s) quase nao gastou tempo da rodada. Se contasse como backfill, os sem acesso
+// (que nunca ficam em dia e por isso sao sempre "largos") ocupariam as vagas toda hora e travariam quem vem depois na fila:
+// em 06/11 Aiyu ja tomava 1 das 3 vagas, e com Hot Pink e Sonmur sobraria vaga nenhuma para Sooe, Vn11 e Vogabox.
+export const GA4_QUICK_FAILURE_MS = 30_000;
+
+export function shouldRefundBackfillSlot(params: { wide: boolean; failed: boolean; elapsedMs: number }): boolean {
+  return params.wide && params.failed && params.elapsedMs < GA4_QUICK_FAILURE_MS;
+}
+
 // O GA4 so devolve os dias que tiveram trafego. Preenche os demais com zero
 // pra que "existe linha" signifique "este dia ja foi sincronizado".
 export function fillGa4Days(from: string, to: string, fetched: Ga4DailyMetrics[]): Ga4DailyMetrics[] {
