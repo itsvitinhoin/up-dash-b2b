@@ -175,15 +175,36 @@ export async function deferBraavoBatch(domain: string) {
   `);
 }
 
+const DEFAULT_FULL_REFRESH_DAYS = 7;
+
+/**
+ * Intervalo, em dias, entre recargas completas (a rotina entre elas só busca o que
+ * mudou). Vem de BRAAVO_FULL_REFRESH_DAYS; sem a variável vale 7. Em lojas grandes
+ * (a La Cleo tem ~64 mil pedidos, ~18 h de chamadas a 1 por segundo) uma recarga
+ * completa a cada 7 dias não termina com poucas execuções por dia e segura as
+ * atualizações incrementais; por isso o job pode usar um intervalo maior e a
+ * recarga completa passa a ser uma decisão manual. Valor inválido falha alto.
+ */
+export function braavoFullRefreshDays(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_FULL_REFRESH_DAYS;
+  const days = Number(raw);
+  if (!Number.isInteger(days) || days < 1 || days > 3650)
+    throw new Error(
+      `BRAAVO_FULL_REFRESH_DAYS inválido ("${raw}"): use um número inteiro de dias entre 1 e 3650 (padrão ${DEFAULT_FULL_REFRESH_DAYS}).`,
+    );
+  return days;
+}
+
 export function initialBraavoCursor(
   now: Date,
   completedAt?: Date | null,
   fullCompletedAt?: Date | null,
+  fullRefreshDays = DEFAULT_FULL_REFRESH_DAYS,
 ): BraavoCursor {
   const full =
     !completedAt ||
     !fullCompletedAt ||
-    now.getTime() - fullCompletedAt.getTime() >= 7 * 86_400_000;
+    now.getTime() - fullCompletedAt.getTime() >= fullRefreshDays * 86_400_000;
   const untilDay = braavoDay(now);
   const fromDay = full ? null : nextDay(braavoDay(completedAt!), -1);
   return {
@@ -849,6 +870,7 @@ export async function runBraavoBatch(
               : state.completedAt
             : null,
           fingerprint === state.fingerprint ? state.fullCompletedAt : null,
+          braavoFullRefreshDays(process.env.BRAAVO_FULL_REFRESH_DAYS),
         )
       : state.cursor!;
     if (newCycle || !jobId) {

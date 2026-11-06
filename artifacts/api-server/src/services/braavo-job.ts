@@ -1,5 +1,26 @@
 import { runBraavoTransactionalExtraction, type ExtractionTrigger } from "./extraction-runner";
 
+const DEFAULT_JOB_MINUTES = 20;
+const MAX_JOB_MINUTES = 1440;
+
+/**
+ * Orçamento de uma execução do job, em milissegundos, a partir de
+ * BRAAVO_JOB_MAX_MINUTES (minutos). Sem a variável vale o padrão (20 min), que é o
+ * que a rotina agendada usa. Uma carga histórica grande pode rodar numa execução
+ * longa (até 24 h, o limite do Cloud Run) disparada à mão com a variável e um
+ * `--task-timeout` compatível. Valor inválido falha alto: um erro de digitação não
+ * pode cair em silêncio no padrão e deixar a carga parada.
+ */
+export function braavoJobMaxDurationMs(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const minutes = Number(raw);
+  if (!Number.isFinite(minutes) || minutes < 1 || minutes > MAX_JOB_MINUTES)
+    throw new Error(
+      `BRAAVO_JOB_MAX_MINUTES inválido ("${raw}"): use um número de minutos entre 1 e ${MAX_JOB_MINUTES} (padrão ${DEFAULT_JOB_MINUTES}).`,
+    );
+  return Math.round(minutes * 60_000);
+}
+
 /** Cloud Run entry: use the same durable batches as manual/API imports. */
 export async function runBraavoJob(
   trigger: ExtractionTrigger,
@@ -13,7 +34,7 @@ export async function runBraavoJob(
   const extract = dependencies.extract ?? runBraavoTransactionalExtraction;
   const sleep = dependencies.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = dependencies.now ?? Date.now;
-  const duration = options.maxDurationMs ?? 20 * 60_000;
+  const duration = options.maxDurationMs ?? DEFAULT_JOB_MINUTES * 60_000;
   if (!Number.isFinite(duration) || duration < 55_000)
     throw new Error("O orçamento do job Braavo deve ser de pelo menos 55 segundos.");
   const deadline = now() + duration;

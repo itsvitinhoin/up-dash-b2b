@@ -22,6 +22,7 @@
  *   TASK=meta_ads              -> sync de métricas de anúncio Meta
  *   TASK=nuvemshop_transactional -> sync de pedidos/clientes/produtos Nuvemshop
  *   TASK=braavo_transactional   -> sync Braavo em lotes retomáveis, orçamento de 20min
+ *                                  (BRAAVO_JOB_MAX_MINUTES muda o orçamento; BRAAVO_FULL_REFRESH_DAYS, o intervalo da recarga completa)
  *   TASK=daily_metrics         -> recalcula métricas diárias agregadas
  *   TASK=hourly_bundle         -> roda upzero_analytics + meta_ads juntos
  *   TASK=whatsapp_fix_phone_waba -> corrige o waba_id de UM número em
@@ -78,7 +79,7 @@ import {
 } from "../services/extraction-runner";
 import { purgeExpiredClients, reconcileExcludedClients } from "../services/client-lifecycle";
 import { publishAdsAccounts, publishAdsAccountsSafely } from "../services/ads-accounts-publisher";
-import { runBraavoJob } from "../services/braavo-job";
+import { braavoJobMaxDurationMs, runBraavoJob } from "../services/braavo-job";
 
 // Achado 25/08/2026: as migrations do lib/db (drizzle-kit) nunca rodam
 // sozinhas no deploy da Vercel -- alguém precisa disparar isso à mão contra
@@ -167,7 +168,11 @@ async function main() {
       });
       break;
     case "braavo_transactional":
-      result = await runBraavoJob(trigger, { clientId, offset });
+      result = await runBraavoJob(trigger, {
+        clientId,
+        offset,
+        maxDurationMs: braavoJobMaxDurationMs(process.env.BRAAVO_JOB_MAX_MINUTES),
+      });
       break;
     case "daily_metrics": {
       const dateFrom = process.env.DATE_FROM;

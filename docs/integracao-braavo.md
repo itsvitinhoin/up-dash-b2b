@@ -233,3 +233,33 @@ Nas últimas 24 horas (05/11 09:43 a 06/11 09:43): 35 criados e 33 aprovados nos
 
 **Escala.** A La Cleo tem cerca de 64 mil pedidos. A carga inicial busca o detalhe de cada pedido a 1 requisição por segundo, o que leva por volta de 18 horas só nos pedidos. O job agendado precisa rodar em lotes repetidos, retomando do ponto salvo.
 
+## Operação do job (carga completa e rotina)
+
+Recurso: Cloud Run Job `upzero-sync-job-braavo` (us-central1, mesma imagem dos outros jobs, `TASK=braavo_transactional`, sem retentativas, `--task-timeout=30m` para a rotina). Variáveis opcionais do job:
+
+| Variável | Padrão | Para quê |
+| --- | --- | --- |
+| `BRAAVO_JOB_MAX_MINUTES` | 20 | Orçamento de uma execução, de 1 a 1440 minutos |
+| `BRAAVO_FULL_REFRESH_DAYS` | 7 | Intervalo entre recargas completas (inteiro, de 1 a 3650 dias) |
+
+Valor inválido derruba a execução com mensagem clara, em vez de cair no padrão em silêncio.
+
+**0. Uma vez, ao criar o job.** Grave no próprio job o intervalo da recarga completa. Ele precisa valer também para a rotina agendada, por isso não pode ser só uma variável de execução:
+
+```bash
+gcloud run jobs update upzero-sync-job-braavo --project=up-vesti-report --region=us-central1 \n  --update-env-vars="BRAAVO_FULL_REFRESH_DAYS=90"
+```
+
+**1. Carga completa (uma vez por loja grande).** A La Cleo tem cerca de 64 mil pedidos, e o detalhe de cada um custa uma chamada a 1 por segundo (~18 h só nos pedidos). Em vez de uma agenda frequente, dispare uma execução longa à mão, que roda na nuvem e retoma do ponto salvo. O orçamento longo e o tempo máximo valem só para essa execução:
+
+```bash
+gcloud run jobs execute upzero-sync-job-braavo --project=up-vesti-report --region=us-central1 \n  --task-timeout=24h --update-env-vars="BRAAVO_JOB_MAX_MINUTES=1400" --async
+```
+
+Se ela terminar antes de a carga acabar (o limite do Cloud Run é 24 h), repita o mesmo comando: o cursor persiste e a execução continua de onde parou. Acompanhe pelo estado da integração (fase, página e registros ignorados) na janela da loja no dash.
+
+**2. Rotina (depois da carga).** Agenda de 1 a 2 vezes ao dia chamando o job com o orçamento padrão. Depois da primeira carga completa, cada ciclo busca só o que mudou, do dia anterior à última conclusão até hoje, e termina em minutos.
+
+**3. Recarga completa.** Com `BRAAVO_FULL_REFRESH_DAYS` alto no job (ou na agenda), a recarga completa deixa de acontecer sozinha e passa a ser decisão manual: repita o passo 1. Sem isso, o código refaria a carga completa a cada 7 dias, e com poucas execuções curtas por dia ela não terminaria e seguraria as atualizações do dia.
+
+`BRAAVO_FULL_REFRESH_DAYS` fica gravada no job; `BRAAVO_JOB_MAX_MINUTES` é passada só na execução longa. Uma sincronização disparada pelo botão do dash (API na Vercel) usa os padrões.

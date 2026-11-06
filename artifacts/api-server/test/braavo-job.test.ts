@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../src/services/extraction-runner", () => ({ runBraavoTransactionalExtraction: vi.fn() }));
-import { runBraavoJob } from "../src/services/braavo-job";
+import { braavoJobMaxDurationMs, runBraavoJob } from "../src/services/braavo-job";
 
 const empty = { clients: 0, done: 0, failed: 0, pending: 0, nextOffset: 1 };
 const batch = (overrides = {}) => ({ clients: 1, done: 0, failed: 0, pending: 1, nextOffset: 0, result: { status: "pending" }, ...overrides });
@@ -51,5 +51,21 @@ describe("Braavo Cloud Run job", () => {
     const deps = fixture([dns, dns, dns, dns, empty]);
     expect(await runBraavoJob("cron", {}, deps)).toMatchObject({ failed: 1, pending: 0, batches: 4 });
     expect(deps.sleep.mock.calls.map(([ms]) => ms)).toEqual([30000, 60000, 120000, 5000]);
+  });
+
+  it("lets one long execution carry a historical load when BRAAVO_JOB_MAX_MINUTES is set", async () => {
+    expect(braavoJobMaxDurationMs(undefined)).toBeUndefined();
+    expect(braavoJobMaxDurationMs("")).toBeUndefined();
+    expect(braavoJobMaxDurationMs("20")).toBe(20 * 60_000);
+    expect(braavoJobMaxDurationMs("1380")).toBe(1380 * 60_000);
+    // Com o orçamento longo a execução segue lote a lote até a carga terminar (não para aos 20 min).
+    const longRun = fixture([batch(), batch(), batch(), batch({ pending: 0, done: 1, nextOffset: 1, result: { status: "done" } }), empty]);
+    const long = await runBraavoJob("manual", { maxDurationMs: braavoJobMaxDurationMs("1380") }, longRun);
+    expect(long).toMatchObject({ pending: 0, done: 1 });
+  });
+
+  it("rejects an invalid BRAAVO_JOB_MAX_MINUTES instead of silently using the default", () => {
+    for (const bad of ["abc", "0", "-5", "1441", "NaN"])
+      expect(() => braavoJobMaxDurationMs(bad)).toThrow(/BRAAVO_JOB_MAX_MINUTES inválido/);
   });
 });
