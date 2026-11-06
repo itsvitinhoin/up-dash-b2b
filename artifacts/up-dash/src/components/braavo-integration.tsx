@@ -40,7 +40,7 @@ export function BraavoCredentialFields({
           id={`${id}-domain`}
           value={value.domain}
           onChange={(e) => onChange({ ...value, domain: e.target.value })}
-          placeholder="https://www.lacleo.com.br"
+          placeholder="https://www.sualoja.com.br"
           disabled={disabled}
           autoComplete="off"
         />
@@ -246,7 +246,7 @@ export function BraavoIntegration({
         setOpen(value);
         if (value) {
           setFields({
-            domain: domain ?? "https://www.lacleo.com.br",
+            domain: domain ?? "",
             apiToken: "",
             apiKey: "",
           });

@@ -1584,7 +1584,7 @@ export default function ClientsPage() {
   const [newCurrencyCode, setNewCurrencyCode] = useState("BRL");
   const [newDashboardType, setNewDashboardType] = useState<"B2B" | "B2C">(selectedDashboardMode);
   const [newCommercePlatform, setNewCommercePlatform] = useState<"UPZERO" | "NUVEMSHOP" | "BRAAVO">(selectedDashboardMode === "B2C" ? "NUVEMSHOP" : "UPZERO");
-  const [newBraavo, setNewBraavo] = useState<BraavoFields>({ domain: "https://www.lacleo.com.br", apiToken: "", apiKey: "" });
+  const [newBraavo, setNewBraavo] = useState<BraavoFields>({ domain: "", apiToken: "", apiKey: "" });
   const [newNuvemshopStoreId, setNewNuvemshopStoreId] = useState("");
   const [newNuvemshopAccessToken, setNewNuvemshopAccessToken] = useState("");
   const [newGa4MeasurementId, setNewGa4MeasurementId] = useState("");
@@ -1772,7 +1772,7 @@ export default function ClientsPage() {
           setNewMetaAdAccountId("");
           setNewCurrencyCode("BRL");
           setNewDashboardType(selectedDashboardMode);
-          setNewBraavo({ domain: "https://www.lacleo.com.br", apiToken: "", apiKey: "" });
+          setNewBraavo({ domain: "", apiToken: "", apiKey: "" });
           setNewNuvemshopStoreId("");
           setNewNuvemshopAccessToken("");
           setNewGa4MeasurementId("");
@@ -1900,7 +1900,7 @@ export default function ClientsPage() {
             setNewCurrencyCode("BRL");
             setNewDashboardType(selectedDashboardMode);
             setNewCommercePlatform(selectedDashboardMode === "B2C" ? "NUVEMSHOP" : "UPZERO");
-            setNewBraavo({ domain: "https://www.lacleo.com.br", apiToken: "", apiKey: "" });
+            setNewBraavo({ domain: "", apiToken: "", apiKey: "" });
             setNewNuvemshopStoreId("");
             setNewNuvemshopAccessToken("");
             setNewGa4MeasurementId("");
@@ -1942,7 +1942,7 @@ export default function ClientsPage() {
                   <Select value={newCommercePlatform} onValueChange={(value) => {
                     const platform = value === "BRAAVO" ? "BRAAVO" : "NUVEMSHOP";
                     setNewCommercePlatform(platform);
-                    if (platform === "BRAAVO") { if (!newName.trim()) setNewName("La Cleo"); if (!newApiKey.trim()) setNewApiKey(generateApiKey()); }
+                    if (platform === "BRAAVO") { if (!newApiKey.trim()) setNewApiKey(generateApiKey()); }
                   }}>
                     <SelectTrigger id="commercePlatform"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem value="NUVEMSHOP">Nuvemshop</SelectItem><SelectItem value="BRAAVO">Braavo</SelectItem></SelectContent>
