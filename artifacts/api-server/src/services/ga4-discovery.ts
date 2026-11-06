@@ -2,7 +2,7 @@
 // SO LE (Admin API + clientes do dash + up_global.dataset_tid_map). Nao grava nada em lugar nenhum; o resultado vai para o log.
 // Roda como TASK=ga4_discover, com a MESMA identidade do ga4_daily (conta de servico do job), entao responde exatamente
 // "o que o job consegue ler hoje". Regras de cruzamento: ga4-discovery-rules.ts.
-import { isNull } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { BIGQUERY_PROJECT, runQuery, type BigQueryLike } from "./excluded-clients-bq";
@@ -13,8 +13,11 @@ import {
   parseDataStreams,
   type DiscoveryEntry,
   type DiscoveryReport,
+  selectRegistrations,
   type Ga4KnownClient,
   type Ga4VisibleProperty,
+  type Registration,
+  type SkippedRegistration,
 } from "./ga4-discovery-rules";
 
 const ADMIN_BASE = "https://analyticsadmin.googleapis.com/v1beta";
@@ -169,9 +172,30 @@ export type Ga4DiscoverySummary = DiscoveryReport & {
   streamErrors: string[];
   tidMapRows: number;
   tidMapError: string | null;
+  /** apply=false (padrao): o que SERIA registrado. apply=true: o que foi registrado. */
+  apply: boolean;
+  registrations: Registration[];
+  registrationsSkipped: SkippedRegistration[];
 };
 
-export async function runGa4Discovery(options: { bq?: BigQueryLike | null } = {}): Promise<Ga4DiscoverySummary> {
+/**
+ * Grava ga4_property_id so em cliente que ainda NAO tem propriedade (campo vazio). O WHERE repete essa condicao, entao uma
+ * corrida com alguem que cadastrou na tela nao sobrescreve nada.
+ */
+async function applyRegistrations(registrations: Registration[]): Promise<Registration[]> {
+  const written: Registration[] = [];
+  for (const registration of registrations) {
+    const updated = await db
+      .update(clientsTable)
+      .set({ ga4PropertyId: registration.propertyId })
+      .where(and(eq(clientsTable.id, registration.clientId), or(isNull(clientsTable.ga4PropertyId), eq(clientsTable.ga4PropertyId, ""))))
+      .returning({ id: clientsTable.id });
+    if (updated.length > 0) written.push(registration);
+  }
+  return written;
+}
+
+export async function runGa4Discovery(options: { bq?: BigQueryLike | null; apply?: boolean } = {}): Promise<Ga4DiscoverySummary> {
   let bq: BigQueryLike | null = options.bq ?? null;
   if (options.bq === undefined) {
     try {
@@ -197,5 +221,30 @@ export async function runGa4Discovery(options: { bq?: BigQueryLike | null } = {}
   }
   for (const message of errors) logger.warn(`[ga4-discover] fluxos nao lidos: ${message}`);
 
-  return { jobType: "ga4_discover", ...report, streamErrors: errors, tidMapRows, tidMapError };
+  // Registro automatico pelo ID de medicao. Por padrao so MOSTRA o que faria (APPLY=1 grava).
+  const apply = options.apply === true;
+  const selection = selectRegistrations(report);
+  let registrations = selection.apply;
+  if (apply) registrations = await applyRegistrations(selection.apply);
+  for (const registration of registrations) {
+    logger.info(
+      `[ga4-discover] ${apply ? "REGISTRADO   " : "REGISTRARIA  "}${registration.clientName} | ${registration.measurementId} -> propriedade ${registration.propertyId}`,
+    );
+  }
+  for (const skipped of selection.skipped) logger.warn(`[ga4-discover] NAO REGISTRA  ${skipped.clientName}: ${skipped.reason}`);
+  logger.info(
+    { apply, registrations: registrations.length, skipped: selection.skipped.length },
+    apply ? "[ga4-discover] registro concluido" : "[ga4-discover] simulacao: nada foi gravado (rode com APPLY=1 para registrar)",
+  );
+
+  return {
+    jobType: "ga4_discover",
+    ...report,
+    streamErrors: errors,
+    tidMapRows,
+    tidMapError,
+    apply,
+    registrations,
+    registrationsSkipped: selection.skipped,
+  };
 }

@@ -6,6 +6,8 @@ import {
   earlierDate,
   fillGa4Days,
   isGa4StoreUsable,
+  isWideGa4Window,
+  shouldStartGa4Client,
   resolveGa4SyncWindow,
   saoPauloDate,
   shiftDate,
@@ -98,6 +100,34 @@ describe("resolveGa4SyncWindow", () => {
         resolveGa4SyncWindow({ hasHistory: true, now: later, lastStoredDay: "2026-10-20", lookbackDays: 2 }),
       ).toEqual({ from: "2026-11-05", to: "2026-11-06" });
     });
+  });
+});
+
+describe("backfill em lote com limite", () => {
+  it("janela de até 31 dias é curta; acima disso é larga", () => {
+    expect(isWideGa4Window("2026-10-07", "2026-11-06")).toBe(false); // 31 dias
+    expect(isWideGa4Window("2026-10-06", "2026-11-06")).toBe(true); // 32 dias
+    expect(isWideGa4Window("2026-11-04", "2026-11-06")).toBe(false);
+    expect(isWideGa4Window("2025-10-03", "2026-11-06")).toBe(true);
+  });
+
+  const base = { elapsedMs: 0, budgetMs: 8 * 60_000, wideStarted: 0, maxWide: 3 };
+
+  it("cliente em dia sempre roda, mesmo sem tempo e depois do limite", () => {
+    expect(shouldStartGa4Client({ ...base, wide: false, elapsedMs: 99 * 60_000, wideStarted: 99 })).toEqual({ start: true });
+  });
+
+  it("backfill largo roda enquanto há tempo e vaga", () => {
+    expect(shouldStartGa4Client({ ...base, wide: true })).toEqual({ start: true });
+    expect(shouldStartGa4Client({ ...base, wide: true, wideStarted: 2, elapsedMs: 7 * 60_000 })).toEqual({ start: true });
+  });
+
+  it("backfill largo é adiado quando o tempo da rodada acabou (protege o limite de 15 min do job)", () => {
+    expect(shouldStartGa4Client({ ...base, wide: true, elapsedMs: 8 * 60_000 + 1 })).toEqual({ start: false, reason: "tempo" });
+  });
+
+  it("e quando já começaram N backfills nesta rodada", () => {
+    expect(shouldStartGa4Client({ ...base, wide: true, wideStarted: 3 })).toEqual({ start: false, reason: "limite" });
   });
 });
 

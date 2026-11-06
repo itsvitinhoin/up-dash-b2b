@@ -67,6 +67,30 @@ export function resolveGa4SyncWindow(params: {
   return { from: shiftDate(to, -(days - 1)), to };
 }
 
+// ── Backfill em lote com limite ─────────────────────────────────────────────
+// Registrar muitos clientes de uma vez (a descoberta acha dezenas) faria a PRIMEIRA rodada tentar 400 dias de todos: cerca de
+// 2 minutos cada, contra o limite de 15 minutos do job horario, que tambem roda UpZero e Meta no mesmo processo. Entao:
+// quem esta em dia (janela curta) passa primeiro; backfill largo so comeca se ainda ha tempo e ate N por rodada. O resto
+// fica para a rodada seguinte (a cobertura so e gravada quando o cliente termina, entao nada fica pela metade).
+export const GA4_WIDE_WINDOW_DAYS = 31;
+
+export function isWideGa4Window(from: string, to: string): boolean {
+  return diffDays(from, to) + 1 > GA4_WIDE_WINDOW_DAYS;
+}
+
+export function shouldStartGa4Client(params: {
+  wide: boolean;
+  elapsedMs: number;
+  budgetMs: number;
+  wideStarted: number;
+  maxWide: number;
+}): { start: boolean; reason?: "tempo" | "limite" } {
+  if (!params.wide) return { start: true };
+  if (params.elapsedMs > params.budgetMs) return { start: false, reason: "tempo" };
+  if (params.wideStarted >= params.maxWide) return { start: false, reason: "limite" };
+  return { start: true };
+}
+
 // O GA4 so devolve os dias que tiveram trafego. Preenche os demais com zero
 // pra que "existe linha" signifique "este dia ja foi sincronizado".
 export function fillGa4Days(from: string, to: string, fetched: Ga4DailyMetrics[]): Ga4DailyMetrics[] {

@@ -3,6 +3,7 @@ import {
   buildDiscoveryReport,
   parseAccountSummaries,
   parseDataStreams,
+  selectRegistrations,
   type Ga4KnownClient,
   type Ga4VisibleProperty,
 } from "../src/services/ga4-discovery-rules";
@@ -144,5 +145,48 @@ describe("buildDiscoveryReport", () => {
     const report = buildDiscoveryReport([], [client("Aiyu", "G-AIYU", "5"), client("Hirus", "G-HIRU")]);
     expect(report.counts.visibleProperties).toBe(0);
     expect(report.entries.map((e) => e.status)).toEqual(["cadastrada_invisivel", "invisivel"]);
+  });
+});
+
+describe("selectRegistrations (o que a descoberta pode registrar sozinha)", () => {
+  const visible = [prop("111", "Vogabox GA4", ["G-VOGA"]), prop("222", "Giah", ["G-GIAH"]), prop("333", "Compartilhada", ["G-SHARED"])];
+
+  it("registra o cliente do dash cujo ID de medição aponta para uma propriedade visível e que ainda não tem propriedade", () => {
+    const { apply, skipped } = selectRegistrations(buildDiscoveryReport(visible, [client("Vogabox", "G-VOGA")]));
+    expect(apply).toEqual([{ clientId: "id-Vogabox", clientName: "Vogabox", propertyId: "111", measurementId: "G-VOGA" }]);
+    expect(skipped).toEqual([]);
+  });
+
+  it("não mexe em quem já está cadastrado, em DIVERGE, em sem acesso nem em invisível", () => {
+    const report = buildDiscoveryReport(visible, [
+      client("Giah", "G-GIAH", "222"),
+      client("Errada", "G-VOGA", "222"),
+      client("Aiyu", "G-AIYU", "523834127"),
+      client("Hirus", "G-HIRU"),
+    ]);
+    expect(selectRegistrations(report).apply).toEqual([]);
+  });
+
+  it("propriedade reivindicada por dois clientes é AMBÍGUA: não registra nenhum dos dois, diz o motivo", () => {
+    const report = buildDiscoveryReport(visible, [client("Loja A", "G-SHARED"), client("Loja B", "G-SHARED")]);
+    const { apply, skipped } = selectRegistrations(report);
+    expect(apply).toEqual([]);
+    expect(skipped.map((s) => s.clientName).sort()).toEqual(["Loja A", "Loja B"]);
+    expect(skipped[0].reason).toContain("mais de um cliente");
+  });
+
+  it("propriedade que já está cadastrada em OUTRO cliente não é duplicada", () => {
+    const report = buildDiscoveryReport(visible, [client("Giah", "G-GIAH", "222"), client("Giah 2", "G-GIAH")]);
+    const { apply, skipped } = selectRegistrations(report);
+    expect(apply).toEqual([]);
+    expect(skipped[0]).toMatchObject({ clientName: "Giah 2" });
+    expect(skipped[0].reason).toContain("ja esta cadastrada em outro cliente");
+  });
+
+  it("cliente que só existe no cadastro antigo (sem clientId) não é registrado, fica como pendência", () => {
+    const orphan: Ga4KnownClient = { clientName: "mazarin (fora do dash)", clientId: null, measurementId: "G-VOGA", registeredPropertyId: null, source: "teste" };
+    const { apply, skipped } = selectRegistrations(buildDiscoveryReport(visible, [orphan]));
+    expect(apply).toEqual([]);
+    expect(skipped[0].reason).toContain("nao e cliente do dash");
   });
 });

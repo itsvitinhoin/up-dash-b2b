@@ -101,7 +101,64 @@ async function getAdcAccessToken(): Promise<string | null> {
 // Exportado para a descoberta de propriedades (Admin API usa a mesma identidade e o mesmo escopo analytics.readonly).
 export { getAccessToken as getGa4AccessToken };
 
+// ── Chave da AGENCIA (OAuth) ────────────────────────────────────────────────
+// A conta da agencia (upagency.oficial) enxerga os GA4 de todos os clientes (100 contas / 132 propriedades em 06/11/2026);
+// a conta de servico so enxerga os poucos que alguem liberou a mao (5). Com GA4_OAUTH_REFRESH_TOKEN (+ client id/secret do
+// "login com Google") configurados, a leitura usa a agencia e ninguem precisa liberar nada cliente por cliente.
+// Se o Google recusar a chave (senha trocada, acesso revogado), NAO derruba o job: avisa no log e cai na conta de servico.
+type AgencyOAuth = { clientId: string; clientSecret: string; refreshToken: string };
+
+function readAgencyOAuth(): AgencyOAuth | null {
+  const refreshToken = process.env.GA4_OAUTH_REFRESH_TOKEN?.trim();
+  const clientId = process.env.GA4_OAUTH_CLIENT_ID?.trim();
+  const clientSecret = process.env.GA4_OAUTH_CLIENT_SECRET?.trim();
+  return refreshToken && clientId && clientSecret ? { clientId, clientSecret, refreshToken } : null;
+}
+
+let agencyToken: { token: string; expiresAt: number } | null = null;
+let agencyRefusedUntil = 0;
+
+async function getAgencyAccessToken(): Promise<string | null> {
+  const config = readAgencyOAuth();
+  if (!config) return null;
+  if (agencyToken && agencyToken.expiresAt > Date.now() + 60_000) return agencyToken.token;
+  // Recusada ha pouco: nao martela o Google a cada chamada, usa a reserva por 5 minutos.
+  if (Date.now() < agencyRefusedUntil) return null;
+
+  const response = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      refresh_token: config.refreshToken,
+    }),
+  }).catch((err: unknown) => {
+    console.warn("[ga4] nao consegui falar com o Google para renovar a chave da agencia; usando a conta de servico", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  });
+  if (!response) {
+    agencyRefusedUntil = Date.now() + 5 * 60_000;
+    return null;
+  }
+  const body = (await response.json().catch(() => null)) as { access_token?: string; expires_in?: number; error?: string } | null;
+  if (!response.ok || !body?.access_token) {
+    agencyRefusedUntil = Date.now() + 5 * 60_000;
+    console.warn("[ga4] o Google recusou a chave da agencia; usando a conta de servico (gere a chave de novo: scripts/ga4-agency-token.mjs)", {
+      error: body?.error ?? response.status,
+    });
+    return null;
+  }
+  agencyToken = { token: body.access_token, expiresAt: Date.now() + Math.max(60, body.expires_in ?? 3600) * 1000 };
+  return agencyToken.token;
+}
+
 async function getAccessToken(): Promise<string | null> {
+  const agency = await getAgencyAccessToken();
+  if (agency) return agency;
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.token;
   }

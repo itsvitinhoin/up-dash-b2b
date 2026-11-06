@@ -42,7 +42,8 @@
  *     funcionou parou (job parado, cliente que perdeu acesso, BigQuery atrasado); cliente que nunca leu é só aviso no log.
  *     GA4_FRESHNESS_MAX_AGE_HOURS (padrão 6). Ver docs/ga4-alerta.md.
  *   TASK=ga4_discover -> só LÊ: lista pela Admin API as propriedades GA4 que a identidade do job enxerga e cruza com os clientes
- *     conhecidos (ID de medição G-… do dash e de up_global.dataset_tid_map). Não grava nada; o resultado sai no log.
+ *     conhecidos (ID de medição G-… do dash e de up_global.dataset_tid_map). Por padrão não grava nada (só mostra o que registraria);
+ *     APPLY=1 preenche ga4_property_id dos clientes que ainda não têm e casam pelo ID de medição. O resultado sai no log.
  *
  *   TRIGGER=cron|manual   -> como fica registrado em sync_jobs (padrão: cron)
  *   CLIENT_ID=xxx         -> restringe a um cliente só (todas as tasks exceto hourly_bundle/daily_metrics)
@@ -228,7 +229,8 @@ async function main() {
       result = await publishAdsAccounts();
       break;
     case "ga4_discover":
-      result = await runGa4Discovery();
+      // APPLY=1 grava ga4_property_id nos clientes que casam pelo ID de medicao; sem isso so mostra o que faria.
+      result = await runGa4Discovery({ apply: process.env.APPLY === "1" });
       break;
     case "check_data_freshness":
       // Nao grava nada: so confere se o GA4 esta chegando. `failed` = problemas, e o exit(1) do fim vira a execucao falha

@@ -20,7 +20,7 @@ import { runBraavoBatch } from "./braavo-sync";
 import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
-import { earlierDate, resolveGa4SyncWindow } from "./ga4-daily-rules";
+import { earlierDate, isWideGa4Window, resolveGa4SyncWindow, shouldStartGa4Client } from "./ga4-daily-rules";
 import {
   clientIdsWithGa4History,
   clientIdsWithGa4ProductHistory,
@@ -1004,11 +1004,13 @@ export async function runGa4DailyExtraction(
   let failed = 0;
   const clientResults: NonNullable<ExtractionRunSummary["clientResults"]> = [];
 
-  for (const client of clients) {
-    const propertyId = client.ga4PropertyId?.trim();
-    if (!propertyId) continue;
-    const jobId = await createJob(client.id, "ga4_daily", trigger);
-    try {
+  // Planeja ANTES de rodar: quem ja esta em dia (janela curta) passa primeiro; quem precisa de backfill largo (cliente novo,
+  // GA4 recem-ligado, job parado por muito tempo) vai depois, com limite de tempo e de quantidade por rodada (ver
+  // shouldStartGa4Client). O resto fica para a proxima rodada; rodada manual de UM cliente nao tem limite.
+  const plans = clients
+    .flatMap((client) => {
+      const propertyId = client.ga4PropertyId?.trim();
+      if (!propertyId) return [];
       const postgresWindow = resolveGa4SyncWindow({
         hasHistory: withHistory.has(client.id),
         lookbackDays: options.lookbackDays,
@@ -1037,6 +1039,32 @@ export async function runGa4DailyExtraction(
         to: postgresWindow.to,
       };
       const productFrom = bqWindow ? earlierDate(postgresProductFrom, bqWindow.from) : postgresProductFrom;
+      // "Largo" vale tambem quando so os PRODUTOS precisam de backfill (e o que mais pesa: um item por produto por dia).
+      return [{ client, propertyId, window, productFrom, wide: isWideGa4Window(earlierDate(window.from, productFrom), window.to) }];
+    })
+    .sort((a, b) => Number(a.wide) - Number(b.wide));
+
+  const gated = trigger === "cron" && !options.clientId;
+  const minutes = Number.parseFloat(process.env.GA4_RUN_BUDGET_MINUTES ?? "");
+  const budgetMs = (Number.isFinite(minutes) && minutes > 0 ? minutes : 8) * 60_000;
+  const maxWideEnv = Number.parseInt(process.env.GA4_MAX_BACKFILLS_PER_RUN ?? "", 10);
+  const maxWide = Number.isFinite(maxWideEnv) && maxWideEnv > 0 ? maxWideEnv : 3;
+  const runStartedMs = Date.now();
+  let wideStarted = 0;
+  let deferred = 0;
+
+  for (const { client, propertyId, window, productFrom, wide } of plans) {
+    if (gated) {
+      const gate = shouldStartGa4Client({ wide, elapsedMs: Date.now() - runStartedMs, budgetMs, wideStarted, maxWide });
+      if (!gate.start) {
+        deferred += 1;
+        console.warn("[ga4-daily] backfill adiado para a proxima rodada", { clientName: client.name, reason: gate.reason });
+        continue;
+      }
+    }
+    if (wide) wideStarted += 1;
+    const jobId = await createJob(client.id, "ga4_daily", trigger);
+    try {
       const result = await syncGa4DailyForClient({
         clientId: client.id,
         clientName: client.name,
@@ -1070,7 +1098,7 @@ export async function runGa4DailyExtraction(
     clientResults,
     done,
     failed,
-    skipped: 0,
+    skipped: deferred,
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
   };

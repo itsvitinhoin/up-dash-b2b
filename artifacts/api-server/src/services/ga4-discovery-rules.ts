@@ -53,6 +53,49 @@ export type DiscoveryReport = {
   } & Record<DiscoveryStatus, number>;
 };
 
+export type Registration = { clientId: string; clientName: string; propertyId: string; measurementId: string };
+export type SkippedRegistration = { clientName: string; reason: string };
+
+/**
+ * O que a descoberta pode REGISTRAR sozinha: so cliente do dash (tem clientId) que ainda nao tem propriedade e cujo ID de
+ * medicao aponta para UMA propriedade visivel. Fica de fora, com o motivo: propriedade que mais de um cliente reivindica
+ * (ambiguo, alguem decide) e propriedade que JA esta cadastrada em outro cliente (duplicar leria o mesmo GA4 duas vezes).
+ * DIVERGE nunca e alterado: erro de cadastro e decisao humana.
+ */
+export function selectRegistrations(report: DiscoveryReport): { apply: Registration[]; skipped: SkippedRegistration[] } {
+  const claims = new Map<string, number>();
+  for (const entry of report.entries) {
+    if (entry.status === "cadastrar" && entry.foundPropertyId) claims.set(entry.foundPropertyId, (claims.get(entry.foundPropertyId) ?? 0) + 1);
+  }
+  const alreadyRegistered = new Set(
+    report.entries
+      .filter((entry) => entry.registeredPropertyId)
+      .map((entry) => entry.registeredPropertyId as string),
+  );
+
+  const apply: Registration[] = [];
+  const skipped: SkippedRegistration[] = [];
+  for (const entry of report.entries) {
+    if (entry.status !== "cadastrar") continue;
+    if (!entry.clientId) {
+      skipped.push({ clientName: entry.clientName, reason: "nao e cliente do dash (so existe no cadastro antigo)" });
+      continue;
+    }
+    const propertyId = entry.foundPropertyId;
+    if (!propertyId || !entry.measurementId) continue;
+    if ((claims.get(propertyId) ?? 0) > 1) {
+      skipped.push({ clientName: entry.clientName, reason: `a propriedade ${propertyId} e reivindicada por mais de um cliente` });
+      continue;
+    }
+    if (alreadyRegistered.has(propertyId)) {
+      skipped.push({ clientName: entry.clientName, reason: `a propriedade ${propertyId} ja esta cadastrada em outro cliente` });
+      continue;
+    }
+    apply.push({ clientId: entry.clientId, clientName: entry.clientName, propertyId, measurementId: entry.measurementId });
+  }
+  return { apply, skipped };
+}
+
 type AccountSummariesPage = {
   accountSummaries?: Array<{
     account?: string;
