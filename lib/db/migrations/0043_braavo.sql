@@ -6,6 +6,7 @@ ALTER TABLE "clients"
 ALTER TABLE "clients" DROP CONSTRAINT IF EXISTS "clients_commerce_platform_check";
 ALTER TABLE "clients" ADD CONSTRAINT "clients_commerce_platform_check"
   CHECK ("commerce_platform" IN ('UPZERO', 'NUVEMSHOP', 'MANUAL', 'VESTI', 'BRAAVO'));
+ALTER TABLE "clients" DROP CONSTRAINT IF EXISTS "clients_braavo_b2c_check";
 ALTER TABLE "clients" ADD CONSTRAINT "clients_braavo_b2c_check"
   CHECK ("commerce_platform" <> 'BRAAVO' OR "dashboard_type" = 'B2C');
 --> statement-breakpoint
@@ -17,7 +18,7 @@ ALTER TABLE "orders"
   ADD COLUMN IF NOT EXISTS "utm_term" text,
   ADD COLUMN IF NOT EXISTS "source_metadata" jsonb;
 --> statement-breakpoint
-CREATE TABLE "braavo_sync_states" (
+CREATE TABLE IF NOT EXISTS "braavo_sync_states" (
   "client_id" text PRIMARY KEY REFERENCES "clients"("id") ON DELETE CASCADE,
   "fingerprint" text NOT NULL,
   "job_id" text,
@@ -29,14 +30,14 @@ CREATE TABLE "braavo_sync_states" (
   "error" text,
   "updated_at" timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE "braavo_catalog" (
+CREATE TABLE IF NOT EXISTS "braavo_catalog" (
   "client_id" text NOT NULL REFERENCES "clients"("id") ON DELETE CASCADE,
   "kind" text NOT NULL,
   "external_id" text NOT NULL,
   "data" jsonb NOT NULL,
   PRIMARY KEY ("client_id", "kind", "external_id")
 );
-CREATE TABLE "braavo_request_slots" (
+CREATE TABLE IF NOT EXISTS "braavo_request_slots" (
   "domain" text PRIMARY KEY,
   "next_at" timestamptz NOT NULL
 );
