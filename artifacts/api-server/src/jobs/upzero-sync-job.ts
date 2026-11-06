@@ -38,6 +38,9 @@
  *   TASK=sync_excluded_clients -> só republica a lista de excluídos em up_global.excluded_clients (os outros programas leem essa lista)
  *   TASK=sync_ads_accounts -> só republica a lista de contas de anúncio em up_global.ads_accounts (a coleta do backend-dash lê essa lista);
  *     também roda de hora em hora dentro do hourly_bundle e quando o cadastro de um cliente muda
+ *   TASK=check_data_freshness -> só LÊ: confere se o GA4 está chegando (Postgres e up_global.ga4_daily). Sai com código 1 se algo que já
+ *     funcionou parou (job parado, cliente que perdeu acesso, BigQuery atrasado); cliente que nunca leu é só aviso no log.
+ *     GA4_FRESHNESS_MAX_AGE_HOURS (padrão 6). Ver docs/ga4-alerta.md.
  *
  *   TRIGGER=cron|manual   -> como fica registrado em sync_jobs (padrão: cron)
  *   CLIENT_ID=xxx         -> restringe a um cliente só (todas as tasks exceto hourly_bundle/daily_metrics)
@@ -82,6 +85,7 @@ import {
 } from "../services/extraction-runner";
 import { purgeExpiredClients, reconcileExcludedClients } from "../services/client-lifecycle";
 import { publishAdsAccounts, publishAdsAccountsSafely } from "../services/ads-accounts-publisher";
+import { runGa4FreshnessCheck } from "../services/ga4-freshness";
 import { braavoJobMaxDurationMs, runBraavoJob } from "../services/braavo-job";
 
 // Achado 25/08/2026: as migrations do lib/db (drizzle-kit) nunca rodam
@@ -220,8 +224,13 @@ async function main() {
     case "sync_ads_accounts":
       result = await publishAdsAccounts();
       break;
+    case "check_data_freshness":
+      // Nao grava nada: so confere se o GA4 esta chegando. `failed` = problemas, e o exit(1) do fim vira a execucao falha
+      // que o alerta do Cloud Monitoring observa.
+      result = await runGa4FreshnessCheck();
+      break;
     default:
-      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, braavo_transactional, daily_metrics, ga4_daily, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients, sync_ads_accounts.`);
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, braavo_transactional, daily_metrics, ga4_daily, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients, sync_ads_accounts, check_data_freshness.`);
       process.exit(1);
   }
 

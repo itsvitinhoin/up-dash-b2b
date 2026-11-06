@@ -11,6 +11,7 @@ import {
 import {
   buildMergeGa4DailyQuery,
   buildSwapProductsQuery,
+  deleteGa4Rows,
   ensureGa4Tables,
   mergeGa4Daily,
   readGa4BigQueryCoverage,
@@ -279,6 +280,48 @@ describe("replaceGa4ProductViews", () => {
 
   it("não aceita nome de tabela temporária fora do padrão (nada de SQL montado com entrada solta)", () => {
     expect(() => buildSwapProductsQuery("x`; DROP TABLE y; --", "c1", "2026-10-01", "2026-11-06")).toThrow();
+  });
+});
+
+describe("deleteGa4Rows (exclusão definitiva do cliente)", () => {
+  it("apaga por client_id nas DUAS tabelas e soma as linhas removidas", async () => {
+    const calls: Array<{ query: string; params?: Record<string, unknown> }> = [];
+    const affected = [400, 113487];
+    const bq: BigQueryLike = {
+      createQueryJob: async (options) => {
+        calls.push({ query: options.query, params: options.params });
+        const n = affected[calls.length - 1];
+        return [{ getQueryResults: async () => [[]], metadata: { statistics: { query: { numDmlAffectedRows: String(n) } } } }] as never;
+      },
+      dataset: () => {
+        throw new Error("nao usado");
+      },
+    };
+    expect(await deleteGa4Rows(bq, "c1")).toBe(400 + 113487);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].query).toContain("DELETE FROM `up-vesti-report.up_global.ga4_daily`");
+    expect(calls[1].query).toContain("DELETE FROM `up-vesti-report.up_global.ga4_product_views_daily`");
+    for (const call of calls) {
+      expect(call.query).toContain("client_id = @client_id");
+      expect(call.params).toEqual({ client_id: "c1" });
+    }
+  });
+
+  it("tabela que ainda não existe conta como nada a apagar (não trava a exclusão)", async () => {
+    const notFound = Object.assign(new Error("Not found: Table up-vesti-report:up_global.ga4_daily"), { code: 404 });
+    const { bq } = fakeBigQuery(() => notFound);
+    expect(await deleteGa4Rows(bq, "c1")).toBe(0);
+  });
+
+  it("outro erro do BigQuery sobe, para o cliente continuar na lixeira e tentar de novo depois", async () => {
+    const { bq } = fakeBigQuery(() => Object.assign(new Error("Access Denied"), { code: 403 }));
+    await expect(deleteGa4Rows(bq, "c1")).rejects.toThrow("Access Denied");
+  });
+
+  it("client_id vazio é recusado (nunca um DELETE sem dono)", async () => {
+    const { bq, calls } = fakeBigQuery();
+    await expect(deleteGa4Rows(bq, "  ")).rejects.toThrow();
+    expect(calls).toHaveLength(0);
   });
 });
 

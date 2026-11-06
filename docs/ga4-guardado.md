@@ -166,8 +166,10 @@ atrapalha nada. Só o BigQuery: `GA4_BIGQUERY=0` no job. As tabelas `up_global.g
   junto do banco) e o botão "Sincronizar" da Nuvemshop disparar o job existente.
 - Acesso da service account às 4 propriedades que recusam é ação humana no GA4
   (Administrador → Gerenciamento de acesso → Leitor). Em 06/11 são 5: Aiyu, Hot Pink, Pêo, Sonmur e Sooé.
-- **Excluir cliente de vez (lixeira de 90 dias):** a limpeza do BigQuery apaga linhas de tabelas `up_global` com coluna
-  `tenant` e as tabelas por propriedade do pipeline antigo; as novas `ga4_daily` / `ga4_product_views_daily` usam
-  `client_id` e ainda NÃO entram nessa limpeza. Falta um `DELETE ... WHERE client_id = @id` em `purge_archived_clients`.
-- Tráfego por origem/mídia/campanha (tabela própria) e alerta de dado parado.
+- **Feito em 06/11 (branch `feature/ga4-acabamento`):** a exclusão definitiva (lixeira de 90 dias) agora também apaga as linhas do
+  cliente em `up_global.ga4_daily` / `ga4_product_views_daily` (chave `client_id`; respeita `BQ_PURGE_ENABLED`); o campo
+  "Propriedade GA4" existe na edição de qualquer cliente (B2C e B2B), não só na criação; a verificação de dado parado
+  (`TASK=check_data_freshness`) está em `docs/ga4-alerta.md`.
+- Tráfego por origem/mídia/campanha (tabela própria): fase 2, depende do que os agentes do Victor precisam.
 - Descoberta das propriedades que a conta enxerga (exige ativar a Analytics Admin API no projeto).
+- Backoff para cliente sem acesso: hoje cada um registra uma linha `failed` em `sync_jobs` por hora até virar Leitor.

@@ -246,6 +246,30 @@ export async function replaceGa4ProductViews(
   return bqRows.length;
 }
 
+/**
+ * Apaga TODAS as linhas de GA4 do cliente nas duas tabelas (exclusao definitiva, depois da lixeira de 90 dias).
+ * Estas tabelas usam client_id (nao `tenant`), por isso a limpeza generica de up_global nao as alcanca. Tabela que
+ * ainda nao existe conta como "nada a apagar". Devolve quantas linhas sairam.
+ */
+export async function deleteGa4Rows(bq: BigQueryLike, clientId: string): Promise<number> {
+  if (!clientId.trim()) throw new Error("client_id vazio: nao apaga GA4 sem saber de quem");
+  let total = 0;
+  for (const table of [DAILY_SQL, PRODUCTS_SQL]) {
+    try {
+      // O filtro de data "toca" todas as particoes (e satisfaz tabelas que exijam filtro de particao).
+      const { dmlAffectedRows } = await runQuery(bq, {
+        query: `DELETE FROM ${table} WHERE client_id = @client_id AND \`date\` >= DATE '2000-01-01'`,
+        params: { client_id: clientId },
+        types: { client_id: "STRING" },
+      });
+      total += dmlAffectedRows;
+    } catch (err) {
+      if (!isNotFound(err)) throw err;
+    }
+  }
+  return total;
+}
+
 export type Ga4BigQueryWrite = { dailyRows: number; productRows: number };
 
 /**

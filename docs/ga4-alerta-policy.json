@@ -1,0 +1,44 @@
+{
+  "displayName": "GA4: verificação de dado parado falhou ou não rodou",
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "O job `upzero-sync-job-freshness` (TASK=check_data_freshness) falhou, ou parou de rodar.\n\n**Falhou** = algo que já funcionava parou: o `ga4_daily` não está rodando (confira a imagem `:latest` de `upzero-sync-job-hourly`), um cliente perdeu o acesso ao GA4, ou o BigQuery (`up_global.ga4_daily`) está atrasado.\n\nVeja o motivo exato nos logs do job: `textPayload:\"[ga4-freshness] PROBLEMA\"`. Roteiro: docs/ga4-alerta.md."
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Execução do upzero-sync-job-freshness terminou com falha",
+      "conditionThreshold": {
+        "filter": "resource.type = \"cloud_run_job\" AND resource.labels.job_name = \"upzero-sync-job-freshness\" AND metric.type = \"run.googleapis.com/job/completed_execution_count\" AND metric.labels.result = \"failed\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "3600s",
+            "perSeriesAligner": "ALIGN_SUM",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": { "count": 1 }
+      }
+    },
+    {
+      "displayName": "O upzero-sync-job-freshness parou de rodar (nenhuma execução em 3h)",
+      "conditionAbsent": {
+        "filter": "resource.type = \"cloud_run_job\" AND resource.labels.job_name = \"upzero-sync-job-freshness\" AND metric.type = \"run.googleapis.com/job/completed_execution_count\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "3600s",
+            "perSeriesAligner": "ALIGN_SUM",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "duration": "10800s",
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "alertStrategy": { "autoClose": "86400s" },
+  "enabled": true
+}

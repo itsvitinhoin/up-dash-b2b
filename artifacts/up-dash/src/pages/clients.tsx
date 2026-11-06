@@ -61,6 +61,7 @@ import { NewVestiClientDialog } from "@/components/vesti-client-onboarding";
 import { ApiTokensDialog } from "@/components/api-tokens";
 import { AdsHistorySection } from "@/components/ads-history";
 import { isManualB2C, newClientPlatform, newClientProblem } from "@/lib/client-create-rules";
+import { GA4_READER_ACCOUNT, parseGa4PropertyInput } from "@/lib/ga4-property-rules";
 import { formatCurrency, formatNumber, formatPercentage } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import {
@@ -1090,6 +1091,146 @@ function VisibleTabsDialog({
               <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx("Salvando…")}</>
             ) : (
               "Salvar"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Propriedade GA4 do cliente (B2C e B2B). Antes so dava para informar na CRIACAO de um cliente B2C; clientes que ja
+// existem e todos os B2B ficavam sem GA4. So o ID numerico e necessario para o job guardar o historico do GA4.
+function Ga4PropertyDialog({
+  clientId,
+  clientName,
+  currentPropertyId,
+}: {
+  clientId: string;
+  clientName: string;
+  currentPropertyId: string | null | undefined;
+}) {
+  const { tx } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const updateMutation = useUpdateClient();
+  const queryClient = useQueryClient();
+
+  function handleOpen(o: boolean) {
+    if (o) {
+      setValue(currentPropertyId ?? "");
+      setProblem(null);
+      updateMutation.reset();
+    }
+    setOpen(o);
+  }
+
+  function handleSave() {
+    const parsed = parseGa4PropertyInput(value);
+    if (!parsed.ok) {
+      setProblem(parsed.message);
+      return;
+    }
+    setProblem(null);
+    updateMutation.mutate(
+      { clientId, data: { ga4PropertyId: parsed.value } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+          setOpen(false);
+          toast.success(parsed.value ? "Propriedade GA4 salva" : "Propriedade GA4 removida");
+        },
+        onError: () => {
+          toast.error("Não foi possível salvar a propriedade GA4");
+        },
+      },
+    );
+  }
+
+  const hasProperty = !!currentPropertyId?.trim();
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={`h-7 gap-1 text-xs ${hasProperty ? "text-emerald-400 hover:text-emerald-300" : ""}`}
+          title={tx("Propriedade GA4 (histórico do GA4 guardado todo dia)")}
+        >
+          <BarChart2 className="h-3 w-3" />
+          {hasProperty ? "Propriedade GA4 ✓" : "Propriedade GA4"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <BarChart2 className="h-4 w-4" /> Propriedade GA4
+          </DialogTitle>
+          <DialogDescription>
+            ID numérico da propriedade GA4 de <strong>{clientName}</strong>. Com ele o sistema guarda o GA4 todo dia (na primeira vez traz
+            os últimos 400 dias). Para funcionar, a conta <span className="font-mono">{GA4_READER_ACCOUNT}</span> precisa ser{" "}
+            <strong>Leitor</strong> da propriedade no GA4 (Administrador → Gerenciamento de acesso).
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2">
+          <Label htmlFor={`ga4-property-${clientId}`}>{tx("ID da propriedade GA4")}</Label>
+          <Input
+            id={`ga4-property-${clientId}`}
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setProblem(null);
+            }}
+            autoComplete="off"
+            data-1p-ignore
+            data-lpignore="true"
+            inputMode="numeric"
+            placeholder="387817325"
+            className="font-mono text-xs"
+          />
+          <p className="text-xs text-muted-foreground">
+            {tx("Fica em Administrador → Detalhes da propriedade. Não é o ID de medição (G-…).")}
+          </p>
+          {hasProperty && value.trim() !== (currentPropertyId ?? "") && value.trim() !== "" && (
+            <p className="text-xs text-amber-400 flex items-center gap-1">
+              <AlertCircle className="h-3 w-3 shrink-0" />
+              {tx("Ao trocar o ID, os dias já guardados continuam com o ID antigo.")}
+            </p>
+          )}
+          {hasProperty && !value.trim() && (
+            <p className="text-xs text-amber-400 flex items-center gap-1">
+              <AlertCircle className="h-3 w-3 shrink-0" />
+              {tx("Salvar com o campo vazio remove a propriedade: o GA4 deste cliente deixa de ser atualizado.")}
+            </p>
+          )}
+          {problem && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{problem}</AlertDescription>
+            </Alert>
+          )}
+          {updateMutation.isError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{tx("Não foi possível salvar. Tente novamente.")}</AlertDescription>
+            </Alert>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={updateMutation.isPending}>
+            {tx("Cancelar")}
+          </Button>
+          <Button onClick={handleSave} disabled={updateMutation.isPending}>
+            {updateMutation.isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx("Salvando…")}
+              </>
+            ) : (
+              "Salvar propriedade"
             )}
           </Button>
         </DialogFooter>
@@ -2396,6 +2537,11 @@ export default function ClientsPage() {
                             clientId={client.id}
                             clientName={client.name}
                             currentAdAccountId={client.metaAdAccountId}
+                          />
+                          <Ga4PropertyDialog
+                            clientId={client.id}
+                            clientName={client.name}
+                            currentPropertyId={client.ga4PropertyId}
                           />
                           <ClientCredentialsDialog
                             clientId={client.id}

@@ -16,6 +16,7 @@ import {
   type ExcludedRow,
 } from "./excluded-clients-rules";
 import { deleteTenantRows, dropDataset, dropGa4Tables, readTombstones, replaceExcludedRows, type BigQueryLike } from "./excluded-clients-bq";
+import { deleteGa4Rows } from "./ga4-bigquery";
 
 export type ClientLoginUser = { id: string; email: string };
 
@@ -147,6 +148,8 @@ export type PurgeClientBigQuery = {
   droppedGa4Tables: string[];
   skippedDatasets: Array<{ dataset: string; reason: DatasetSkipReason }>;
   deletedGlobalRows: number;
+  /** Linhas do GA4 apagadas de up_global.ga4_daily / ga4_product_views_daily (chave client_id, nao tenant). */
+  deletedGa4Rows: number;
 };
 
 /** O que seria feito no BigQuery se o cliente fosse apagado agora (só leitura do Postgres; não chama o BigQuery). */
@@ -185,6 +188,7 @@ export async function purgeClientCompletely(
     droppedGa4Tables: [],
     skippedDatasets: plan.skipped,
     deletedGlobalRows: 0,
+    deletedGa4Rows: 0,
   };
 
   if (available) {
@@ -198,6 +202,9 @@ export async function purgeClientCompletely(
         bigquery.droppedGa4Tables.push(...(await dropGa4Tables(bq, dataset)));
         if (await dropDataset(bq, dataset)) bigquery.droppedDatasets.push(dataset);
       }
+      // GA4 guardado no BigQuery: chave client_id, vale para QUALQUER cliente com propriedade (inclusive os sem dataset
+      // Vesti, como as lojas Nuvemshop), por isso fica fora do laco por dataset acima.
+      bigquery.deletedGa4Rows = await deleteGa4Rows(bq, client.id);
     }
   }
 
