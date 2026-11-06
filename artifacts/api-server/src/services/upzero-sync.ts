@@ -542,6 +542,8 @@ interface UpZeroOrderItem {
   variant_id?: string | null;
   sku?: string | null;
   qty?: number;
+  /** Quantidade originalmente pedida; `qty` é a quantidade atual (menor quando unidades foram cortadas). */
+  original_qty?: number | string | null;
   quantity?: number;
   requested_qty?: number | string | null;
   quantity_requested?: number | string | null;
@@ -1185,6 +1187,21 @@ function getOrderRequestedAmount(o: UpZeroOrder): number {
     o.amount,
     o.subtotal,
   ) ?? 0;
+}
+
+// Total do pedido como o painel da UP Zero mostra: o valor pedido menos as unidades cortadas (`original_qty` - `qty`, a preço do item).
+// A API manda `discount` = 0 nesses casos: o "desconto" do painel é a unidade cortada. Item removido por inteiro continua somado, igual ao painel.
+// Conferido contra o painel: MX Fashion (14 de 14 pedidos pagos, set/2026) e Kalli (29 de 29).
+export function getOrderPanelAmount(o: UpZeroOrder): number {
+  const requested = getOrderRequestedAmount(o);
+  const cut = (o.items ?? []).reduce((sum, item) => {
+    const qty = firstNumber(item.qty);
+    const original = firstNumber(item.original_qty);
+    const price = firstNumber(item.unit_price);
+    if (qty === null || original === null || price === null || original <= qty) return sum;
+    return sum + (original - qty) * price;
+  }, 0);
+  return Math.round((requested - cut) * 100) / 100;
 }
 
 function getOrderFulfilledAmount(o: UpZeroOrder, requestedAmount: number, status: ReturnType<typeof mapOrderStatus>): number {
@@ -2052,9 +2069,9 @@ export async function syncUpZeroClient(
           o.quantidade_atendida, o.qtd_atendida,
         ) ?? itemQuantities.reduce((sum, item) => sum + item.fulfilled, 0),
       ));
-      // `amount` is intentionally the requested value because the dashboard's
-      // revenue KPIs and product sales views represent demand/solicitation.
-      const amount = getOrderRequestedAmount(o);
+      // `amount` é o total do pedido como o painel da UP Zero o mostra (pedido menos unidades cortadas),
+      // que é o número que o time confere. Ver getOrderPanelAmount.
+      const amount = getOrderPanelAmount(o);
       const fulfilledAmount = getOrderFulfilledAmount(o, amount, status);
       const createdAt = new Date(o.created_at);
       const approvalDate =
