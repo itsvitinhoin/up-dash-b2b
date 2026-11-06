@@ -321,7 +321,7 @@ async function persistCustomer(
     .returning({ id: customersTable.id });
   return customer.id;
 }
-async function persistSku(
+export async function persistSku(
   tx: Tx,
   clientId: string,
   row: BraavoRecord,
@@ -330,8 +330,14 @@ async function persistSku(
   const skuId = braavoId(row.id),
     productId = braavoId(row.produto_id);
   const product = cache.get(`products:${productId}`);
+  // Dado desta loja (SKU órfão, ou produto criado depois da fase de produtos), não
+  // falha de integração: é registrado e a carga continua. O SKU volta sozinho no
+  // ciclo seguinte, quando o produto já estiver no catálogo.
   if (!product)
-    throw new BraavoError("SKU Braavo sem produto correspondente no catálogo.");
+    throw new BraavoRecordError(
+      "SKU Braavo sem produto correspondente no catálogo.",
+      "SKU_WITHOUT_PRODUCT",
+    );
   const externalId = `braavo:${productId}:${skuId}`;
   const ref = textValue(row.ref) ?? `braavo-${skuId}`;
   const [existingRef] = await tx
