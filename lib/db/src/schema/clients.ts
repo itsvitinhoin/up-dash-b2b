@@ -37,7 +37,7 @@ export const clientsTable = pgTable(
     metaAdAccountId: text("meta_ad_account_id"),
     upZeroApiKey: text("up_zero_api_key"),
     dashboardType: text("dashboard_type", { enum: ["B2B", "B2C"] }).notNull().default("B2B"),
-    commercePlatform: text("commerce_platform", { enum: ["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"] })
+    commercePlatform: text("commerce_platform", { enum: ["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"] })
       .notNull()
       .default("UPZERO"),
     nuvemshopStoreId: text("nuvemshop_store_id"),
@@ -59,6 +59,9 @@ export const clientsTable = pgTable(
     // pedido 11/08/2026 pra esconder abas de clients sem a integração
     // correspondente (ex: ERP) em vez de mostrar tela vazia/erro.
     hiddenNavItems: text("hidden_nav_items").array(),
+    braavoDomain: text("braavo_domain"),
+    braavoApiToken: text("braavo_api_token"),
+    braavoApiKey: text("braavo_api_key"),
     ga4MeasurementId: text("ga4_measurement_id"),
     ga4PropertyId: text("ga4_property_id"),
     // Cliente Vesti: a partir de que dia vale a atribuição paga (piso). Null = usa a lista antiga em services/vesti-attribution.ts (ou nenhum piso).

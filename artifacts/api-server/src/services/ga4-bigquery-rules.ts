@@ -9,7 +9,22 @@ import { isBigQueryAvailable } from "./excluded-clients-rules";
 // tabela por propriedade como no pipeline antigo (up-nuvem-reports.analytics_ga4_traffic):
 // cliente novo com propriedade cadastrada entra sozinho, sem criar tabela nem lista fixa.
 
-export const GA4_BQ_DATASET = "up_global";
+export const GA4_BQ_DEFAULT_DATASET = "up_global";
+
+/**
+ * Dataset de destino. Padrao up_global (o que os agentes leem). GA4_BQ_DATASET desvia para outro dataset, usado na
+ * primeira rodada de teste (job canario) para nao sujar o dado de producao. O nome entra em SQL, entao so aceita
+ * letras, numeros e _; um valor invalido da ERRO em vez de cair no padrao, para que um erro de digitacao no canario
+ * nunca acabe gravando em up_global.
+ */
+export function resolveGa4BigQueryDataset(env: Record<string, string | undefined> = process.env): string {
+  const value = (env.GA4_BQ_DATASET ?? "").trim();
+  if (!value) return GA4_BQ_DEFAULT_DATASET;
+  if (!/^[A-Za-z0-9_]+$/.test(value)) throw new Error(`GA4_BQ_DATASET invalido: "${value}" (use so letras, numeros e _)`);
+  return value;
+}
+
+export const GA4_BQ_DATASET = resolveGa4BigQueryDataset();
 export const GA4_BQ_DAILY_TABLE = "ga4_daily";
 export const GA4_BQ_PRODUCTS_TABLE = "ga4_product_views_daily";
 

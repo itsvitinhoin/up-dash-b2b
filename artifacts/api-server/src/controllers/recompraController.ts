@@ -77,6 +77,7 @@ const GetRecompraFiltersQueryParams = z.object({
   tipo: z.enum(RECOMPRA_TIPO_VALUES).default("erp"),
   estado: z.coerce.string().trim().optional(),
   vendedora: z.coerce.string().trim().optional(),
+  vendedoraId: z.coerce.string().trim().optional(),
   origem: z.coerce.string().trim().optional(),
 });
 
@@ -91,12 +92,13 @@ function parsedFilters(req: Request, res: Response): RecompraFilters | null {
     tipo: parsed.data.tipo as RecompraTipoFilter,
     estado: parsed.data.estado || undefined,
     vendedora: parsed.data.vendedora || undefined,
+    vendedoraId: parsed.data.vendedoraId || undefined,
     origem: parsed.data.origem || undefined,
   };
 }
 
 function filtersCacheKey(filters: RecompraFilters): string {
-  return `${filters.status}:${filters.tipo}:${filters.estado ?? ""}:${filters.vendedora ?? ""}:${filters.origem ?? ""}`;
+  return `${filters.status}:${filters.tipo}:${filters.estado ?? ""}:${filters.vendedora ?? ""}:${filters.vendedoraId ?? ""}:${filters.origem ?? ""}`;
 }
 
 export async function getDashboard(req: Request, res: Response): Promise<void> {

@@ -7,6 +7,7 @@
  */
 
 export interface MarketingKpis {
+  purchases?: number;
   totalSpend: number;
   attributedRevenue: number;
   roas: number;

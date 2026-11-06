@@ -363,16 +363,21 @@ export type ErpDashboard = {
 // mas quebra pro Miredata (Obzee/Vogabox), que usa FATURADO/FINALIZADO/
 // ESPERA/CANCELADO/EXCLUIDO -- só essa negação generaliza pros dois.
 export const ERP_CANCELLED_STATUSES = ["CANCELADO", "EXCLUIDO"];
+/** Pedido que ainda nao e venda paga: so sai da conta quando o chamador pede `paidOnly` (cards da Visao geral; decisao do time em 27/10/2026). */
+export const ERP_UNPAID_STATUSES = ["ESPERA"];
 
 export async function fetchErpDashboard(
   clientId: string,
   dataset: string,
   dateFrom: string,
   dateTo: string,
+  options: { paidOnly?: boolean } = {},
 ): Promise<ErpDashboard> {
   const pedidos = vestiTable(dataset, "pedidos_erp");
   const clientes = vestiTable(dataset, "clientes_erp");
   const cancelledList = ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ");
+  // Lista que SAI das contas de receita/pedidos/clientes. Os contadores de cancelado continuam usando so `cancelledList`.
+  const excludedList = (options.paidOnly ? [...ERP_CANCELLED_STATUSES, ...ERP_UNPAID_STATUSES] : ERP_CANCELLED_STATUSES).map((s) => `'${s}'`).join(", ");
 
   // Achado 26/08/2026 (ClickUp Vogabox item 4.3): "novo"/"recorrente"
   // aqui usava "total de pedidos na vida toda <= 1", contado até HOJE
@@ -414,22 +419,22 @@ export async function fetchErpDashboard(
         FROM all_orders o
         JOIN customer_documents c
           ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
-        WHERE o.customer_id IS NOT NULL AND o.status NOT IN (${cancelledList})
+        WHERE o.customer_id IS NOT NULL AND o.status NOT IN (${excludedList})
         GROUP BY o.customer_id
       )
       SELECT
         o.date,
-        COUNTIF(o.status NOT IN (${cancelledList})) AS orders,
-        COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.gross_amount)), 0) AS gross_revenue,
-        COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.discount_amount)), 0) AS discount_amount,
-        COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.net_amount)), 0) AS net_revenue,
-        COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, COALESCE(o.return_amount, 0))), 0) AS return_amount,
-        COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.sold_quantity)), 0) AS quantity,
-        COALESCE(SUM(IF(o.status IN (${cancelledList}), 0, o.returned_quantity)), 0) AS returned_quantity,
+        COUNTIF(o.status NOT IN (${excludedList})) AS orders,
+        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, o.gross_amount)), 0) AS gross_revenue,
+        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, o.discount_amount)), 0) AS discount_amount,
+        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, o.net_amount)), 0) AS net_revenue,
+        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, COALESCE(o.return_amount, 0))), 0) AS return_amount,
+        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, o.sold_quantity)), 0) AS quantity,
+        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, o.returned_quantity)), 0) AS returned_quantity,
         COUNTIF(o.status IN (${cancelledList})) AS cancelled_orders,
         COALESCE(SUM(IF(o.status IN (${cancelledList}), o.net_amount, 0)), 0) AS cancelled_amount,
-        COUNT(DISTINCT IF(o.status NOT IN (${cancelledList}) AND ch.first_order_date >= @dateFrom, o.customer_id, NULL)) AS new_customers,
-        COUNT(DISTINCT IF(o.status NOT IN (${cancelledList}) AND ch.first_order_date < @dateFrom, o.customer_id, NULL)) AS returning_customers
+        COUNT(DISTINCT IF(o.status NOT IN (${excludedList}) AND ch.first_order_date >= @dateFrom, o.customer_id, NULL)) AS new_customers,
+        COUNT(DISTINCT IF(o.status NOT IN (${excludedList}) AND ch.first_order_date < @dateFrom, o.customer_id, NULL)) AS returning_customers
       FROM orders o
       LEFT JOIN customer_history ch ON ch.customer_id = o.customer_id
       GROUP BY o.date
@@ -473,7 +478,7 @@ export async function fetchErpDashboard(
         FROM all_orders o
         JOIN customer_documents c
           ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
-        WHERE o.customer_id IS NOT NULL AND o.status NOT IN (${cancelledList})
+        WHERE o.customer_id IS NOT NULL AND o.status NOT IN (${excludedList})
         GROUP BY o.customer_id
       ),
       period_buyers AS (
@@ -483,7 +488,7 @@ export async function fetchErpDashboard(
           ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
         WHERE o.date BETWEEN @dateFrom AND @dateTo
           AND o.customer_id IS NOT NULL
-          AND o.status NOT IN (${cancelledList})
+          AND o.status NOT IN (${excludedList})
       )
       SELECT
         COUNT(*) AS unique_customers,
@@ -525,7 +530,7 @@ export async function fetchErpDashboard(
       FROM orders o
       LEFT JOIN customer_documents c
         ON c.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
-      WHERE o.customer_id IS NOT NULL AND o.status NOT IN (${cancelledList})
+      WHERE o.customer_id IS NOT NULL AND o.status NOT IN (${excludedList})
       GROUP BY o.customer_id
     `,
     params: { dateFrom, dateTo },
@@ -586,31 +591,31 @@ export async function fetchErpDashboard(
       SELECT
         ARRAY(
           SELECT AS STRUCT status AS label, COUNT(*) AS orders,
-            SUM(IF(status IN (${cancelledList}), 0, net_amount)) AS revenue
+            SUM(IF(status IN (${excludedList}), 0, net_amount)) AS revenue
           FROM enriched GROUP BY status ORDER BY orders DESC
         ) AS statuses,
         ARRAY(
           SELECT AS STRUCT payment_method AS label, COUNT(*) AS orders,
-            SUM(IF(status IN (${cancelledList}), 0, net_amount)) AS revenue
-          FROM enriched WHERE status NOT IN (${cancelledList})
+            SUM(IF(status IN (${excludedList}), 0, net_amount)) AS revenue
+          FROM enriched WHERE status NOT IN (${excludedList})
           GROUP BY payment_method ORDER BY revenue DESC LIMIT 10
         ) AS payments,
         ARRAY(
           SELECT AS STRUCT seller AS label, COUNT(*) AS orders,
             SUM(net_amount) AS revenue, COUNT(DISTINCT customer_id) AS customers
-          FROM enriched WHERE status NOT IN (${cancelledList})
+          FROM enriched WHERE status NOT IN (${excludedList})
           GROUP BY seller ORDER BY revenue DESC LIMIT 10
         ) AS sellers,
         ARRAY(
           SELECT AS STRUCT store_name AS label, COUNT(*) AS orders,
             SUM(net_amount) AS revenue
-          FROM enriched WHERE status NOT IN (${cancelledList})
+          FROM enriched WHERE status NOT IN (${excludedList})
           GROUP BY store_name ORDER BY revenue DESC
         ) AS stores,
         ARRAY(
           SELECT AS STRUCT state AS label, COUNT(*) AS orders,
             SUM(net_amount) AS revenue, COUNT(DISTINCT customer_id) AS customers
-          FROM enriched WHERE status NOT IN (${cancelledList})
+          FROM enriched WHERE status NOT IN (${excludedList})
           GROUP BY state ORDER BY revenue DESC LIMIT 15
         ) AS states
     `,

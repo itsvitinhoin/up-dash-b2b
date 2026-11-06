@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { BigQueryLike } from "../src/services/excluded-clients-bq";
 import {
   buildGa4DailyBqRows,
@@ -6,6 +6,7 @@ import {
   chunk,
   GA4_BQ_PRODUCT_BATCH,
   isGa4BigQueryEnabled,
+  resolveGa4BigQueryDataset,
 } from "../src/services/ga4-bigquery-rules";
 import {
   buildMergeGa4DailyQuery,
@@ -119,6 +120,50 @@ describe("isGa4BigQueryEnabled", () => {
   it("GA4_BIGQUERY=0 desliga mesmo com credencial", () => {
     expect(isGa4BigQueryEnabled({ CLOUD_RUN_JOB: "x", GA4_BIGQUERY: "0" })).toBe(false);
     expect(isGa4BigQueryEnabled({ CLOUD_RUN_JOB: "x", GA4_BIGQUERY: "off" })).toBe(false);
+  });
+});
+
+describe("resolveGa4BigQueryDataset", () => {
+  it("sem variável usa up_global", () => {
+    expect(resolveGa4BigQueryDataset({})).toBe("up_global");
+    expect(resolveGa4BigQueryDataset({ GA4_BQ_DATASET: "  " })).toBe("up_global");
+  });
+  it("aceita um dataset de teste", () => {
+    expect(resolveGa4BigQueryDataset({ GA4_BQ_DATASET: "ga4_teste" })).toBe("ga4_teste");
+  });
+  it("nome inválido dá erro em vez de cair em up_global (erro de digitação no canário não pode gravar em produção)", () => {
+    expect(() => resolveGa4BigQueryDataset({ GA4_BQ_DATASET: "ga4-teste" })).toThrow("GA4_BQ_DATASET");
+    expect(() => resolveGa4BigQueryDataset({ GA4_BQ_DATASET: "x`; DROP SCHEMA up_global; --" })).toThrow();
+  });
+});
+
+describe("dataset de teste (GA4_BQ_DATASET) nas consultas", () => {
+  it("troca o dataset em todas as tabelas e cria o dataset antes das tabelas", async () => {
+    vi.resetModules();
+    vi.stubEnv("GA4_BQ_DATASET", "ga4_teste");
+    try {
+      const mod = await import("../src/services/ga4-bigquery");
+      const { bq, calls } = fakeBigQuery();
+      await mod.ensureGa4Tables(bq);
+      expect(calls.map((c) => c.query.trim().split(/\s+/).slice(0, 3).join(" "))).toEqual([
+        "CREATE SCHEMA IF",
+        "CREATE TABLE IF",
+        "CREATE TABLE IF",
+      ]);
+      expect(calls[0].query).toContain("`up-vesti-report.ga4_teste`");
+      expect(calls[1].query).toContain("up-vesti-report.ga4_teste.ga4_daily");
+      expect(calls[2].query).toContain("up-vesti-report.ga4_teste.ga4_product_views_daily");
+      expect(mod.buildMergeGa4DailyQuery(client, [], "2026-11-01", "2026-11-06").query).not.toContain("up_global");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it("no padrão (up_global) não tenta criar o dataset", async () => {
+    const { bq, calls } = fakeBigQuery();
+    await ensureGa4Tables(bq);
+    expect(calls.some((c) => c.query.includes("CREATE SCHEMA"))).toBe(false);
   });
 });
 

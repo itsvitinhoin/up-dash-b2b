@@ -1,3 +1,5 @@
+import { saoPauloDateOnly, coerceDateQuery as coerceClientsQuery } from "../lib/reporting-period";
+import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
 import { Router, type IRouter } from "express";
 import { and, eq, gte, ilike, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -13,6 +15,8 @@ import {
   clientUserAccessesTable,
   sessionsTable,
   commercialAutomationJobsTable,
+  braavoSyncStatesTable,
+  productsTable,
 } from "@workspace/db";
 import {
   CreateClientBody,
@@ -44,6 +48,7 @@ import {
   purgeClientCompletely,
   reconcileExcludedClients,
 } from "../services/client-lifecycle";
+import { publishAdsAccountsSafely } from "../services/ads-accounts-publisher";
 import {
   OnboardingError,
   groupSyncStoresByDataset,
@@ -58,6 +63,7 @@ import {
   listVestiSyncStores,
   setVestiSyncStoreActive,
 } from "../services/vesti-sync-service";
+import { BraavoError, normalizeBraavoDomain } from "../services/braavo-api";
 
 const router: IRouter = Router();
 
@@ -76,8 +82,10 @@ function getGlobalMetaAccessToken(fallback?: string | null): string | null {
 }
 
 function clientPublicFields<T extends typeof clientsTable.$inferSelect>(client: T) {
+  const { braavoApiToken: _braavoToken, braavoApiKey: _braavoKey, ...publicClient } = client;
   return {
-    ...client,
+    ...publicClient,
+    hasBraavoIntegration: Boolean(client.commercePlatform === "BRAAVO" && client.braavoDomain && client.braavoApiToken && client.braavoApiKey),
     hasNuvemshopIntegration: Boolean(
       client.nuvemshopStoreId?.trim() && client.nuvemshopAccessToken?.trim(),
     ),
@@ -91,31 +99,12 @@ function clientPublicFields<T extends typeof clientsTable.$inferSelect>(client: 
   };
 }
 
-// Coerce ISO date-time strings on the query before zod sees them — orval
-// generates `z.coerce.date()` for date-time params, but Express delivers
-// strings, and we want graceful fallback if either bound is missing.
-function coerceClientsQuery(query: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...query };
-  for (const key of ["dateFrom", "dateTo"]) {
-    const v = out[key];
-    if (typeof v === "string" && v.length > 0) {
-      const parsed = new Date(v);
-      if (!Number.isNaN(parsed.getTime())) {
-        if (key === "dateTo" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
-          parsed.setUTCHours(23, 59, 59, 999);
-        }
-        out[key] = parsed;
-      }
-    }
-  }
-  return out;
-}
-
 function toGa4Date(value: Date): string {
-  return value.toISOString().slice(0, 10);
+  return saoPauloDateOnly(value);
 }
 
 router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "private, no-store");
   const parsed = ListClientsQueryParams.safeParse(
     coerceClientsQuery(req.query as Record<string, unknown>),
   );
@@ -195,20 +184,20 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     const prevTo = new Date(dateFrom.getTime() - 1);
     const prevFrom = new Date(prevTo.getTime() - lengthMs);
 
-    // Requested revenue/orders per client in the window. The client list uses
-    // demand created in the period, so it intentionally does not filter final
-    // order status.
+    // Same paid-order population, revenue and Brasília day as Dashboard and Diário.
     const orderAgg = (winFrom: Date, winTo: Date) =>
       db
         .select({
           clientId: ordersTable.clientId,
-          revenue: sql<number>`COALESCE(SUM(${ordersTable.amount}), 0)::float`,
+          revenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(sql`${clientsTable.dashboardType} = 'B2C'`)}), 0)::float`,
           orders: sql<number>`COUNT(*)::int`,
         })
         .from(ordersTable)
+        .innerJoin(clientsTable, eq(clientsTable.id, ordersTable.clientId))
         .where(
           and(
             inArray(ordersTable.clientId, ids),
+            paidOrderStatus(),
             gte(ordersTable.createdAt, winFrom),
             lte(ordersTable.createdAt, winTo),
           ),
@@ -421,13 +410,23 @@ router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
   }
   const adminId = req.user?.sub ?? null;
   const dashboardType = parsed.data.dashboardType ?? (
-    parsed.data.commercePlatform === "NUVEMSHOP" ? "B2C" : "B2B"
+    ["NUVEMSHOP", "BRAAVO"].includes(parsed.data.commercePlatform ?? "") ? "B2C" : "B2B"
   );
   const commercePlatform = parsed.data.commercePlatform ?? (
     dashboardType === "B2C" ? "NUVEMSHOP" : "UPZERO"
   );
+  if (commercePlatform === "BRAAVO" && dashboardType !== "B2C") {
+    res.status(400).json({ message: "A plataforma Braavo está disponível apenas para B2C." }); return;
+  }
+  let braavoDomain: string | undefined;
+  try { braavoDomain = parsed.data.braavoDomain?.trim() ? normalizeBraavoDomain(parsed.data.braavoDomain) : undefined; }
+  catch (error) { res.status(400).json({ message: error instanceof BraavoError ? error.message : "Domínio Braavo inválido." }); return; }
+  if (parsed.data.braavoApiToken?.includes(":")) { res.status(400).json({ message: "API Token Braavo não pode conter dois-pontos." }); return; }
   const values = {
     ...parsed.data,
+    braavoDomain,
+    braavoApiToken: parsed.data.braavoApiToken?.trim() || undefined,
+    braavoApiKey: parsed.data.braavoApiKey?.trim() || undefined,
     dashboardType,
     commercePlatform,
     metaAdAccountId: parsed.data.metaAdAccountId?.trim()
@@ -450,11 +449,17 @@ router.post("/clients", requireAdmin, async (req, res): Promise<void> => {
       : undefined,
     adminId,
   };
-  const [created] = await db
-    .insert(clientsTable)
-    .values(values)
-    .returning();
-  res.status(201).json(GetClientResponse.parse(clientPublicFields(created)));
+  try {
+    const [created] = await db.insert(clientsTable).values(values).returning();
+    if (created.metaAdAccountId) await publishAdsAccountsSafely("cliente criado");
+    res.status(201).json(GetClientResponse.parse(clientPublicFields(created)));
+  } catch (error) {
+    // Drizzle errors can include SQL parameters, including the integration keys.
+    // Never forward the underlying exception to Express's HTML error handler.
+    const pgCode = (error as { cause?: { code?: string }; code?: string })?.cause?.code ?? (error as { code?: string })?.code;
+    const status = pgCode === "23505" ? 409 : 503;
+    res.status(status).json({ error: true, code: pgCode === "23505" ? "CLIENT_CONFLICT" : "CLIENT_SAVE_FAILED", message: pgCode === "23505" ? "Já existe um cliente com esse nome, e-mail ou chave interna." : "Não foi possível salvar o cliente. Tente novamente.", status });
+  }
 });
 
 const ImportRowSchema = z.object({
@@ -462,7 +467,7 @@ const ImportRowSchema = z.object({
   email: z.string().email("invalid email"),
   apiKey: z.string().min(1, "apiKey is required"),
   dashboardType: z.enum(["B2B", "B2C"]).optional(),
-  commercePlatform: z.enum(["UPZERO", "NUVEMSHOP", "MANUAL"]).optional(),
+  commercePlatform: z.enum(["UPZERO", "NUVEMSHOP", "MANUAL", "BRAAVO"]).optional(),
   currency: z.string().optional(),
   locale: z.string().optional(),
 });
@@ -489,7 +494,7 @@ router.post("/clients/import", requireAdmin, async (req, res): Promise<void> => 
     email: string;
     apiKey: string;
     dashboardType?: "B2B" | "B2C";
-    commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL";
+    commercePlatform?: "UPZERO" | "NUVEMSHOP" | "MANUAL" | "BRAAVO";
     currency?: string;
     locale?: string;
     adminId: string | null;
@@ -516,11 +521,15 @@ router.post("/clients/import", requireAdmin, async (req, res): Promise<void> => 
       continue;
     }
     const dashboardType = rowParsed.data.dashboardType ?? (
-      rowParsed.data.commercePlatform === "NUVEMSHOP" ? "B2C" : "B2B"
+      ["NUVEMSHOP", "BRAAVO"].includes(rowParsed.data.commercePlatform ?? "") ? "B2C" : "B2B"
     );
     const commercePlatform = rowParsed.data.commercePlatform ?? (
       dashboardType === "B2C" ? "NUVEMSHOP" : "UPZERO"
     );
+    if (commercePlatform === "BRAAVO" && dashboardType !== "B2C") {
+      errors.push({ index: i, field: "dashboardType", message: "Braavo exige B2C." });
+      continue;
+    }
     validRows.push({ originalIndex: i, ...rowParsed.data, dashboardType, commercePlatform, adminId });
   }
 
@@ -765,6 +774,7 @@ router.post("/clients/vesti", requireAdmin, async (req, res): Promise<void> => {
     } catch (err) {
       logger.warn({ err: err instanceof Error ? err.message : String(err) }, "cliente Vesti criado, mas não consegui atualizar a lista de excluídos");
     }
+    await publishAdsAccountsSafely("cliente Vesti criado");
     res.status(201).json({
       client: GetClientResponse.parse(clientPublicFields(result.created.client)),
       dataset: result.dataset,
@@ -1085,10 +1095,6 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
   }
   if ("dashboardType" in bodyParsed.data) {
     updates.dashboardType = bodyParsed.data.dashboardType;
-    if (!("commercePlatform" in bodyParsed.data)) {
-      updates.commercePlatform =
-        bodyParsed.data.dashboardType === "B2C" ? "NUVEMSHOP" : "UPZERO";
-    }
   }
   if ("commercePlatform" in bodyParsed.data) {
     updates.commercePlatform = bodyParsed.data.commercePlatform;
@@ -1139,6 +1145,14 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
     const apiSecret = bodyParsed.data.ga4ApiSecret?.trim();
     updates.ga4ApiSecret = apiSecret || null;
   }
+  for (const field of ["braavoApiToken", "braavoApiKey"] as const) {
+    if (field in bodyParsed.data) updates[field] = bodyParsed.data[field]?.trim() || null;
+  }
+  if (updates.braavoApiToken?.includes(":")) { res.status(400).json({ message: "API Token Braavo não pode conter dois-pontos." }); return; }
+  if ("braavoDomain" in bodyParsed.data) {
+    try { updates.braavoDomain = bodyParsed.data.braavoDomain?.trim() ? normalizeBraavoDomain(bodyParsed.data.braavoDomain) : null; }
+    catch (error) { res.status(400).json({ message: error instanceof BraavoError ? error.message : "Domínio Braavo inválido." }); return; }
+  }
   if (Object.keys(updates).length === 0) {
     res.status(400).json({
       error: true,
@@ -1148,11 +1162,37 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
     });
     return;
   }
-  const [updated] = await db
-    .update(clientsTable)
-    .set(updates)
-    .where(eq(clientsTable.id, clientId))
-    .returning();
+  let updated: typeof clientsTable.$inferSelect | undefined;
+  try {
+    updated = await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(clientsTable).where(eq(clientsTable.id, clientId)).for("no key update");
+      if (!current) return undefined;
+      if (updates.dashboardType && updates.dashboardType !== current.dashboardType && !("commercePlatform" in updates)) {
+        updates.commercePlatform = updates.dashboardType === "B2C" ? "NUVEMSHOP" : "UPZERO";
+      }
+      const platform = updates.commercePlatform ?? current.commercePlatform;
+      if (platform === "BRAAVO" && (updates.dashboardType ?? current.dashboardType) !== "B2C") throw new BraavoError("A plataforma Braavo está disponível apenas para B2C.", "INVALID_CLIENT", 400);
+      const changingConnection = ["braavoDomain", "braavoApiToken", "braavoApiKey", "commercePlatform", "dashboardType"].some((key) => key in updates);
+      if (changingConnection) {
+        const [state] = await tx.select().from(braavoSyncStatesTable).where(eq(braavoSyncStatesTable.clientId, clientId)).for("update");
+        if (state?.leaseUntil && state.leaseUntil > new Date()) throw new BraavoError("Aguarde o lote Braavo terminar antes de alterar a conexão.", "SYNC_BUSY", 409);
+        const domainChanged = "braavoDomain" in updates && updates.braavoDomain !== current.braavoDomain;
+        if ((platform === "BRAAVO" && current.commercePlatform !== "BRAAVO") || (current.commercePlatform === "BRAAVO" && (platform !== "BRAAVO" || domainChanged))) {
+          const occupied = await tx.execute<{ has_data: boolean }>(sql`
+            SELECT EXISTS(SELECT 1 FROM ${ordersTable} WHERE ${ordersTable.clientId} = ${clientId})
+              OR EXISTS(SELECT 1 FROM ${customersTable} WHERE ${customersTable.clientId} = ${clientId})
+              OR EXISTS(SELECT 1 FROM ${productsTable} WHERE ${productsTable.clientId} = ${clientId}) AS has_data
+          `);
+          if (occupied.rows[0].has_data) throw new BraavoError("Este cliente já possui dados. Cadastre outro cliente para trocar a loja ou a plataforma sem misturar históricos.", "SOURCE_CHANGE_CONFLICT", 409);
+        }
+      }
+      const [row] = await tx.update(clientsTable).set(updates).where(eq(clientsTable.id, clientId)).returning();
+      return row;
+    });
+  } catch (error) {
+    const status = error instanceof BraavoError ? error.status : 503;
+    res.status(status).json({ error: true, code: error instanceof BraavoError ? error.code : "CLIENT_SAVE_FAILED", message: error instanceof BraavoError ? error.message : "Não foi possível salvar a conexão. Tente novamente.", status }); return;
+  }
   if (!updated) {
     res.status(404).json({
       error: true,
@@ -1161,6 +1201,10 @@ router.patch("/clients/:clientId", requireAdmin, async (req, res): Promise<void>
       status: 404,
     });
     return;
+  }
+  // A lista de contas de anúncio (up_global.ads_accounts) usa estes campos; só republica quando algum mudou.
+  if (Object.keys(updates).some((key) => key === "metaAdAccountId" || key === "isActive" || key === "commercePlatform" || key === "name")) {
+    await publishAdsAccountsSafely("cliente editado");
   }
   res.json(GetClientResponse.parse(clientPublicFields(updated)));
 });
@@ -1209,6 +1253,7 @@ router.post("/clients/:clientId/archive", requireAdmin, async (req, res): Promis
   // Avisa os outros programas (script-vesti-nuvem, backend-dash) para pararem de atualizar este cliente. O banco do painel manda:
   // se a publicacao falhar, o cliente continua excluido e a limpeza noturna republica a lista.
   await reconcileExcludedClients().catch((err) => logger.error({ err, clientId }, "Failed to publish excluded clients list"));
+  await publishAdsAccountsSafely("cliente excluído");
   logger.warn({ clientId, name: existing.name, by: req.user?.email }, "Client excluded (archived)");
   res.json(GetClientResponse.parse(clientPublicFields(updated ?? existing)));
 });
@@ -1230,6 +1275,7 @@ router.post("/clients/:clientId/restore", requireAdmin, async (req, res): Promis
     return;
   }
   await reconcileExcludedClients().catch((err) => logger.error({ err, clientId }, "Failed to publish excluded clients list"));
+  await publishAdsAccountsSafely("cliente recuperado");
   logger.warn({ clientId, name: updated.name, by: req.user?.email }, "Client recovered (restored from archive)");
   res.json(GetClientResponse.parse(clientPublicFields(updated)));
 });
@@ -1408,12 +1454,12 @@ router.post("/clients/:clientId/sync/upzero", requireAdmin, async (req, res): Pr
     return;
   }
   const { clientId } = parsed.data;
-  const [client] = await db.select({ upZeroApiKey: clientsTable.upZeroApiKey }).from(clientsTable).where(eq(clientsTable.id, clientId));
+  const [client] = await db.select({ upZeroApiKey: clientsTable.upZeroApiKey, commercePlatform: clientsTable.commercePlatform }).from(clientsTable).where(eq(clientsTable.id, clientId));
   if (!client) {
     res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
     return;
   }
-  if (!client.upZeroApiKey) {
+  if (!client.upZeroApiKey || client.commercePlatform === "BRAAVO") {
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "No UP Zero API key configured for this client", status: 400 });
     return;
   }
@@ -1496,6 +1542,7 @@ router.post("/clients/:clientId/sync/nuvemshop", requireAdmin, async (req, res):
   const [client] = await db
     .select({
       dashboardType: clientsTable.dashboardType,
+      commercePlatform: clientsTable.commercePlatform,
       storeId: clientsTable.nuvemshopStoreId,
       accessToken: clientsTable.nuvemshopAccessToken,
     })
@@ -1505,7 +1552,7 @@ router.post("/clients/:clientId/sync/nuvemshop", requireAdmin, async (req, res):
     res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
     return;
   }
-  if (client.dashboardType !== "B2C") {
+  if (client.dashboardType !== "B2C" || client.commercePlatform !== "NUVEMSHOP") {
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "Nuvemshop sync is only available for B2C clients", status: 400 });
     return;
   }
@@ -1589,12 +1636,12 @@ router.get("/clients/:clientId/sync/upzero/probe", requireAdmin, async (req, res
     return;
   }
   const { clientId } = parsed.data;
-  const [client] = await db.select({ upZeroApiKey: clientsTable.upZeroApiKey }).from(clientsTable).where(eq(clientsTable.id, clientId));
+  const [client] = await db.select({ upZeroApiKey: clientsTable.upZeroApiKey, commercePlatform: clientsTable.commercePlatform }).from(clientsTable).where(eq(clientsTable.id, clientId));
   if (!client) {
     res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
     return;
   }
-  if (!client.upZeroApiKey) {
+  if (!client.upZeroApiKey || client.commercePlatform === "BRAAVO") {
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "No UP Zero API key configured for this client", status: 400 });
     return;
   }

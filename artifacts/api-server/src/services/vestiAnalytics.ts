@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db, clientsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
+import { vestiSalesView } from "./vesti-sales-view";
 import { stateFromPhoneDdd } from "../lib/phoneState";
 import { getOpenAIClient, isAIConfigured } from "../lib/openai";
 import { addDaysToDateOnly } from "../lib/httpQuery";
@@ -50,6 +51,8 @@ export type VestiFilters = {
   sellerId?: string;
   channel?: string;
   color?: string;
+  /** UF do pedido (SP, MG...). Só casa pedido que tem estado; ver fetchVestiStateCoverage. */
+  state?: string;
 };
 
 export type VestiKpis = {
@@ -63,6 +66,8 @@ export type VestiKpis = {
   customers: number;
   repeatCustomers: number;
   requestedRevenue: number;
+  /** Faturamento só dos pedidos PAGOS (`revenue` conta todos os pedidos, por paridade com o legado). */
+  paidRevenue: number;
   newBuyers: number;
   returningBuyers: number;
   retentionPct: number;
@@ -92,6 +97,7 @@ const ZERO_VESTI_KPIS: VestiKpis = {
   customers: 0,
   repeatCustomers: 0,
   requestedRevenue: 0,
+  paidRevenue: 0,
   newBuyers: 0,
   returningBuyers: 0,
   retentionPct: 0,
@@ -130,6 +136,11 @@ function buildFilterClause(alias: string, view: string, produtos: string, filter
       WHERE ARRAY_LENGTH(p2.categories) > 0 AND UPPER(p2.categories[SAFE_OFFSET(0)].name) = UPPER(@category)
     )`);
     params.category = filters.category;
+  }
+  if (filters.state) {
+    // `estado` vem da Vesti já como UF; UPPER nos dois lados para não depender da caixa. Pedido sem estado (coluna vazia) não casa.
+    parts.push(`UPPER(${alias}.estado) = UPPER(@state)`);
+    params.state = filters.state;
   }
   if (filters.color) {
     // Mesmo padrão da categoria: cor vem do array `colors` do catálogo
@@ -181,6 +192,7 @@ async function fetchKpis(
     SELECT
       COALESCE(SUM(v.valor_reservado), 0) AS revenue,
       COALESCE(SUM(v.valor_solicitado), 0) AS requested_revenue,
+      COALESCE(SUM(IF(v.pago, v.valor_reservado, 0)), 0) AS paid_revenue,
       COUNT(DISTINCT v.pedido_id) AS leads,
       COUNT(DISTINCT IF(v.pago, v.pedido_id, NULL)) AS approved_leads,
       COUNT(DISTINCT IF(v.pago, v.cliente_id, NULL)) AS customers,
@@ -223,6 +235,7 @@ async function fetchKpis(
     customers: Number(row.customers) || 0,
     repeatCustomers: Number(row.repeat_customers) || 0,
     requestedRevenue,
+    paidRevenue: Number(row.paid_revenue) || 0,
     newBuyers,
     returningBuyers,
     retentionPct: totalBuyers > 0 ? (returningBuyers / totalBuyers) * 100 : 0,
@@ -324,6 +337,27 @@ async function fetchRevenueByCategory(
   }));
 }
 
+/**
+ * Fração (0 a 1) dos pedidos PAGOS da janela que têm estado preenchido, ignorando o filtro de estado. A Vesti não manda o estado em todos os
+ * clientes (medido em 26/10/2026, 90 dias: Fiore 100%, Vogabox 22%, Tuba Plus 0%, Estime 0%); a tela usa isto para avisar que filtrar por estado
+ * esconderia a maior parte dos pedidos. Sem pedido pago na janela devolve null.
+ */
+export async function fetchVestiStateCoverage(dataset: string, dateFrom: string, dateTo: string): Promise<number | null> {
+  const view = vestiSalesView(dataset);
+  const query = `
+    SELECT
+      COUNT(DISTINCT IF(pago, pedido_id, NULL)) AS pagos,
+      COUNT(DISTINCT IF(pago AND estado IS NOT NULL AND TRIM(estado) != '', pedido_id, NULL)) AS pagos_com_estado
+    FROM ${view}
+    WHERE data_ref BETWEEN @dateFrom AND @dateTo
+  `;
+  const [rows] = await bigquery.query({ query, params: { dateFrom, dateTo } });
+  const row = rows[0] as Record<string, number> | undefined;
+  const total = Number(row?.pagos) || 0;
+  if (total <= 0) return null;
+  return Math.min(1, (Number(row?.pagos_com_estado) || 0) / total);
+}
+
 async function fetchStateRevenue(
   view: string,
   winFrom: string,
@@ -349,7 +383,7 @@ export async function computeVestiWindow(
   filters: VestiFilters = {},
   full = true,
 ): Promise<VestiWindow> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const produtos = vestiTable(dataset, "produtos_vesti");
   const filter = buildFilterClause("v", view, produtos, filters);
 
@@ -393,7 +427,7 @@ export async function fetchVestiOrderStatusBreakdown(
   dateTo: string,
   filters: VestiFilters = {},
 ): Promise<VestiOrderStatusBreakdown> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const produtos = vestiTable(dataset, "produtos_vesti");
   const filter = buildFilterClause("v", view, produtos, filters);
   const query = `
@@ -423,7 +457,7 @@ export async function computeVestiStateRevenue(
   winFrom: string,
   winTo: string,
 ): Promise<{ state: string; revenue: number }[]> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   return fetchStateRevenue(view, winFrom, winTo);
 }
 
@@ -468,7 +502,7 @@ export async function fetchVestiAttributedCustomers(
 ): Promise<VestiAttributedCustomer[]> {
   const clientes = vestiTable(dataset, "clientes_atribuidos_consolidados");
   const clientesVesti = vestiTable(dataset, "clientes_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   // Achado 26/08/2026 (ClickUp Vogabox item 1.6, confirmado pelo Marcelo:
   // é o mesmo filtro `onlyAttributed` do dashboard legado,
@@ -665,7 +699,7 @@ export async function fetchVestiOrdersPage(
   limit: number,
   search: string | undefined,
 ): Promise<VestiOrdersPage> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
   const clientes = vestiTable(dataset, "clientes_vesti");
   const offset = (page - 1) * limit;
@@ -838,7 +872,7 @@ export type VestiOrderDetail = {
 };
 
 export async function fetchVestiOrderDetail(dataset: string, pedidoId: string): Promise<VestiOrderDetail | null> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientes = vestiTable(dataset, "clientes_vesti");
 
   const query = `
@@ -974,7 +1008,7 @@ export async function fetchVestiCustomersPage(
   sortDir: "asc" | "desc",
   filters: VestiCustomersFilters,
 ): Promise<VestiCustomersPage> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientes = vestiTable(dataset, "clientes_vesti");
   const offset = (page - 1) * limit;
 
@@ -1091,7 +1125,7 @@ export type VestiCustomerDetail = {
 };
 
 export async function fetchVestiCustomerDetail(dataset: string, customerId: string): Promise<VestiCustomerDetail | null> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientes = vestiTable(dataset, "clientes_vesti");
 
   const [custRows] = await bigquery.query({
@@ -1517,7 +1551,7 @@ export async function fetchVestiCustomerSummary(
   dateTo: string | null,
 ): Promise<VestiCustomerSummary> {
   const clientes = vestiTable(dataset, "clientes_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const dateFilter = dateFrom && dateTo ? "AND DATE(created_at) BETWEEN @dateFrom AND @dateTo" : "";
   const params: Record<string, unknown> = dateFrom && dateTo ? { dateFrom, dateTo } : {};
 
@@ -1688,7 +1722,7 @@ export async function fetchVestiProductsPage(
 ): Promise<VestiProductRow[]> {
   const produtos = vestiTable(dataset, "produtos_vesti");
   const estoques = vestiTable(dataset, "estoques_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const conditions: string[] = [];
   const params: Record<string, unknown> = { limit: filters.limit };
@@ -1758,7 +1792,7 @@ export async function fetchVestiProductsSummary(
   dateFrom: string,
   dateTo: string,
 ): Promise<VestiProductsSummary> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const [rows] = await bigquery.query({
     query: `
       SELECT
@@ -1805,7 +1839,7 @@ export type VestiProductDetail = {
 export async function fetchVestiProductDetail(dataset: string, productId: string): Promise<VestiProductDetail | null> {
   const produtos = vestiTable(dataset, "produtos_vesti");
   const estoques = vestiTable(dataset, "estoques_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const [prodRows] = await bigquery.query({
     query: `SELECT id, code, name, price, created_at, categories[SAFE_OFFSET(0)].name AS category FROM ${produtos} WHERE id = @productId LIMIT 1`,
@@ -1935,7 +1969,7 @@ export type VestiDailyBreakdown = {
 };
 
 export async function fetchVestiDailyBreakdown(dataset: string, dateFrom: string, dateTo: string): Promise<VestiDailyBreakdown> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const produtos = vestiTable(dataset, "produtos_vesti");
   const params = { dateFrom, dateTo };
 
@@ -2027,12 +2061,12 @@ function vestiPctChange(current: number, previous: number): number | null {
 
 function vestiDailyHeuristic(params: {
   kpis: VestiDailyMetricSet;
-  prevKpis: VestiDailyMetricSet;
+  prevKpis: VestiDailyMetricSet | null;
   campaigns: Array<{ name: string; spend: number; roas: number; purchases: number }>;
   breakdown: VestiDailyBreakdown;
 }): { generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" } {
-  const revenueChange = vestiPctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue);
-  const salesChange = vestiPctChange(params.kpis.sales, params.prevKpis.sales);
+  const revenueChange = params.prevKpis ? vestiPctChange(params.kpis.approvedRevenue, params.prevKpis.approvedRevenue) : null;
+  const salesChange = params.prevKpis ? vestiPctChange(params.kpis.sales, params.prevKpis.sales) : null;
   const topCampaign = params.campaigns[0];
   const topProduct = params.breakdown.products[0];
   const topCategory = params.breakdown.categories[0];
@@ -2064,13 +2098,13 @@ export async function generateVestiDailyReportText(params: {
   dateFrom: string;
   dateTo: string;
   kpis: VestiDailyMetricSet;
-  prevKpis: VestiDailyMetricSet;
+  prevKpis: VestiDailyMetricSet | null;
   campaigns: Array<{ name: string; spend: number; purchases: number; revenue: number; roas: number; cpa: number }>;
   breakdown: VestiDailyBreakdown;
 }): Promise<{ generalAnalysis: string; reportSummary: string[]; source: "ai" | "heuristic" }> {
   const heuristic = vestiDailyHeuristic(params);
   const ai = getOpenAIClient();
-  if (!ai || !isAIConfigured()) return heuristic;
+  if (!ai || !isAIConfigured() || !params.prevKpis) return heuristic;
 
   try {
     const completion = await ai.chat.completions.create({
@@ -2152,10 +2186,21 @@ function deriveVestiRfmSegment(recencyDays: number, frequency: number, monetary:
   return "Lost";
 }
 
+export type VestiRfmOrder = {
+  id: string;
+  externalId: string | null;
+  status: string;
+  amount: number;
+  fulfilledAmount: number;
+  requestedQuantity: number;
+  fulfilledQuantity: number;
+  createdAt: string;
+};
+
 export type VestiRfm = {
   segments: Array<{ segment: string; customerCount: number; revenue: number; avgTicket: number; pct: number }>;
   composition: Array<{ month: string; Champions: number; Loyal: number; Potential: number; AtRisk: number; Lost: number }>;
-  customers: Array<{ id: string; name: string | null; email: string; segment: string; recencyDays: number; frequency: number; monetary: number }>;
+  customers: Array<{ id: string; name: string | null; email: string; segment: string; recencyDays: number; frequency: number; monetary: number; latestOrders: VestiRfmOrder[] }>;
   total: number;
 };
 
@@ -2165,7 +2210,7 @@ export async function fetchVestiRfm(
   dateTo: string,
   filters: { segment?: string; sortBy: string; sortDir: "asc" | "desc"; page: number; limit: number },
 ): Promise<VestiRfm> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientes = vestiTable(dataset, "clientes_vesti");
 
   const [rows] = await bigquery.query({
@@ -2271,7 +2316,53 @@ export async function fetchVestiRfm(
     return dir * ((a[key] ?? 0) - (b[key] ?? 0));
   });
   const offset = (filters.page - 1) * filters.limit;
-  const customers = sorted.slice(offset, offset + filters.limit).map((row) => ({
+  const pageRows = sorted.slice(offset, offset + filters.limit);
+
+  // Últimos 3 pedidos de cada cliente da página (o contrato `GetRfmResponse` exige `latestOrders`; sem isso a resposta dava 500 em todo cliente Vesti).
+  // Mesmo desenho do lado B2C: histórico do cliente, sem recorte de período.
+  const latestOrdersByCustomer = new Map<string, VestiRfmOrder[]>();
+  if (pageRows.length > 0) {
+    const [orderRows] = await bigquery.query({
+      query: `
+        WITH pedidos AS (
+          SELECT
+            pedido_id,
+            ANY_VALUE(cliente_id) AS cliente_id,
+            ANY_VALUE(pedido_code) AS pedido_code,
+            ANY_VALUE(status_pedido) AS status_pedido,
+            COALESCE(SUM(valor_solicitado), 0) AS amount,
+            COALESCE(SUM(valor_reservado), 0) AS fulfilled_amount,
+            COALESCE(SUM(produto_quantidade_solicitada), 0) AS requested_quantity,
+            COALESCE(SUM(produto_quantidade_reservada), 0) AS fulfilled_quantity,
+            ANY_VALUE(data_ref) AS created_at
+          FROM ${view}
+          WHERE cliente_id IN UNNEST(@customerIds)
+          GROUP BY pedido_id
+        )
+        SELECT * FROM pedidos
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY cliente_id ORDER BY created_at DESC, pedido_id DESC) <= 3
+        ORDER BY cliente_id, created_at DESC, pedido_id DESC
+      `,
+      params: { customerIds: pageRows.map((row) => row.id) },
+    });
+    for (const r of orderRows as Array<Record<string, unknown>>) {
+      const key = String(r.cliente_id);
+      const list = latestOrdersByCustomer.get(key) ?? [];
+      list.push({
+        id: String(r.pedido_id),
+        externalId: r.pedido_code != null ? String(r.pedido_code) : null,
+        status: (r.status_pedido as string) || "Sem status",
+        amount: Number(r.amount) || 0,
+        fulfilledAmount: Number(r.fulfilled_amount) || 0,
+        requestedQuantity: Number(r.requested_quantity) || 0,
+        fulfilledQuantity: Number(r.fulfilled_quantity) || 0,
+        createdAt: toDateOnly(r.created_at),
+      });
+      latestOrdersByCustomer.set(key, list);
+    }
+  }
+
+  const customers = pageRows.map((row) => ({
     id: row.id,
     name: row.name,
     email: row.email,
@@ -2279,6 +2370,7 @@ export async function fetchVestiRfm(
     recencyDays: row.recencyDays,
     frequency: row.frequency,
     monetary: row.monetary,
+    latestOrders: latestOrdersByCustomer.get(row.id) ?? [],
   }));
 
   return { segments, composition, customers, total: sorted.length };
@@ -2294,7 +2386,7 @@ export type VestiGeography = {
 };
 
 export async function fetchVestiGeography(dataset: string, dateFrom: string, dateTo: string): Promise<VestiGeography> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const clientes = vestiTable(dataset, "clientes_vesti");
 
   // `estado` vem vazio na maior parte das linhas (mesma limitação já
@@ -2405,7 +2497,7 @@ export async function fetchVestiStock(
 ): Promise<VestiStock> {
   const produtos = vestiTable(dataset, "produtos_vesti");
   const estoques = vestiTable(dataset, "estoques_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const [fromY, fromM, fromD] = dateFrom.split("-").map(Number);
   const [toY, toM, toD] = dateTo.split("-").map(Number);
@@ -2604,7 +2696,7 @@ export async function fetchVestiStock(
 export type VestiSellerRow = { id: string; name: string; email: null; totalOrders: number; totalRevenue: number; avgTicket: number };
 
 export async function fetchVestiSellers(dataset: string, limit: number): Promise<VestiSellerRow[]> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const [rows] = await bigquery.query({
     query: `
       WITH pedidos AS (
@@ -2699,7 +2791,7 @@ async function fetchVestiSellerKpisAndSeries(
 }
 
 export async function fetchVestiSellerDetail(dataset: string, sellerName: string, dateFrom: string, dateTo: string, prevDateFrom: string, prevDateTo: string): Promise<VestiSellerDetail> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const produtos = vestiTable(dataset, "produtos_vesti");
 
   const [current, prev, [categoryRows], [stateRows], [existsRows]] = await Promise.all([
@@ -2758,7 +2850,7 @@ export async function fetchVestiSellerOrders(
   page: number,
   limit: number,
 ): Promise<{ rows: VestiSellerOrderRow[]; total: number }> {
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
   const offset = (page - 1) * limit;
 
   const [[listRows], [countRows]] = await Promise.all([
@@ -3031,7 +3123,7 @@ export async function fetchVestiScaleData(
 ): Promise<VestiScaleData> {
   const produtos = vestiTable(dataset, "produtos_vesti");
   const estoques = vestiTable(dataset, "estoques_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const [
     [productRows],
@@ -3180,44 +3272,6 @@ export async function fetchVestiScaleData(
   };
 }
 
-// Investimento Meta Ads via BigQuery (05/08/2026) — descoberto que existe
-// um dataset global `data_ads_global` (mesmo projeto `up-vesti-report`)
-// já ingerido por outro pipeline com o gasto real de dezenas de contas de
-// anúncio (uma por marca, ex: "[ATACADO] Vogabox" = act_1328518845320770).
-// Isso resolve o card de Investimento/ROAS ficar zerado pra client Vesti
-// sem token de API do Meta configurado (que é a maioria) — usa esse dado
-// já pronto em vez de depender da API ao vivo do Graph, que precisa de
-// access token por client. `adAccountId` vem de `clients.metaAdAccountId`
-// (não é segredo, só o ID da conta — precisa ser preenchido manualmente
-// olhando o dataset por enquanto, não tem join automático confiável por
-// nome de marca).
-export type VestiMetaSpendSummary = { spend: number; leads: number; purchases: number; purchaseValue: number };
-
-export async function fetchVestiMetaSpendFromBigQuery(
-  adAccountId: string,
-  dateFrom: string,
-  dateTo: string,
-): Promise<VestiMetaSpendSummary> {
-  const query = `
-    SELECT
-      COALESCE(SUM(spend), 0) AS spend,
-      COALESCE(SUM(leads_qty), 0) AS leads,
-      COALESCE(SUM(purchases_qty), 0) AS purchases,
-      COALESCE(SUM(purchase_value), 0) AS purchase_value
-    FROM ${vestiTable("data_ads_global", "ads_insights_account")}
-    WHERE ad_account_id = @adAccountId
-      AND date_start BETWEEN @dateFrom AND @dateTo
-  `;
-  const [rows] = await bigquery.query({ query, params: { adAccountId, dateFrom, dateTo } });
-  const row = (rows as Array<Record<string, unknown>>)[0];
-  return {
-    spend: Number(row?.spend) || 0,
-    leads: Number(row?.leads) || 0,
-    purchases: Number(row?.purchases) || 0,
-    purchaseValue: Number(row?.purchase_value) || 0,
-  };
-}
-
 // Marketing (Vesti) — "caminho rápido" combinado com o time (04/08/2026):
 // não existe UTM de campanha em pedido nativo Vesti, então em vez de tentar
 // cruzar por e-mail com o `stape_logs` (frágil, e-mail nem sempre vem no
@@ -3256,7 +3310,7 @@ export async function fetchVestiMarketingData(dataset: string, dateFrom: string,
   const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
   const pedidosAtribuidos = vestiTable(dataset, "pedidos_atribuidos_consolidados");
   const clientesVesti = vestiTable(dataset, "clientes_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const startDate = await resolveAttributionStartDateForDataset(dataset);
   const startDateClause = startDate ? "AND pa.data_ref >= @startDate" : "";
@@ -3386,7 +3440,7 @@ export async function fetchVestiUtmData(dataset: string, dateFrom: string, dateT
   const clientesAtribuidos = vestiTable(dataset, "clientes_atribuidos_consolidados");
   const pedidosAtribuidos = vestiTable(dataset, "pedidos_atribuidos_consolidados");
   const clientesVesti = vestiTable(dataset, "clientes_vesti");
-  const view = vestiTable(dataset, "dashboard_vendas_view");
+  const view = vestiSalesView(dataset);
 
   const startDate = await resolveAttributionStartDateForDataset(dataset);
   const startDateClause = startDate ? "AND pa.data_ref >= @startDate" : "";

@@ -97,7 +97,7 @@ type PerformanceResponse = {
     returnAmount: number;
     attributedRevenue: number;
     unattributedRevenue: number;
-    mediaSpend: number;
+    mediaSpend: number | null;
     roas: number | null;
     mer: number | null;
     cogs: number;
@@ -733,7 +733,8 @@ export default function PerformancePage() {
       comparisonValue: k?.mediaSpend ?? null,
       previousValue: pk?.mediaSpend,
       source: "ERP · Ecommerce · Meta Ads",
-      format: formatCurrency,
+      format: (value: number) => k?.mediaSpend == null ? "—" : formatCurrency(value),
+      info: k?.mediaSpend == null ? tx("Investimento indisponível; falha de leitura não significa gasto zero.") : undefined,
       icon: Megaphone,
       iconClass: "bg-amber-500/10 text-amber-400",
       sparkColor: "#0458fe",

@@ -110,6 +110,7 @@ export const ClientCommercePlatform = {
   NUVEMSHOP: "NUVEMSHOP",
   MANUAL: "MANUAL",
   VESTI: "VESTI",
+  BRAAVO: "BRAAVO",
 } as const;
 
 export interface Client {
@@ -131,6 +132,13 @@ export interface Client {
    * @nullable
    */
   bigqueryDataset?: string | null;
+  /**
+   * Braavo shop HTTPS domain.
+   * @nullable
+   */
+  braavoDomain?: string | null;
+  /** True when Braavo domain, API Token and API Key are configured. */
+  hasBraavoIntegration?: boolean;
   /**
    * Nuvemshop store id for B2C data ingestion.
    * @nullable
@@ -275,6 +283,7 @@ export const CreateClientRequestCommercePlatform = {
   NUVEMSHOP: "NUVEMSHOP",
   MANUAL: "MANUAL",
   VESTI: "VESTI",
+  BRAAVO: "BRAAVO",
 } as const;
 
 export interface CreateClientRequest {
@@ -293,6 +302,12 @@ export interface CreateClientRequest {
   commercePlatform?: CreateClientRequestCommercePlatform;
   /** BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI. */
   bigqueryDataset?: string;
+  /** Braavo shop HTTPS domain. */
+  braavoDomain?: string;
+  /** Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update. */
+  braavoApiToken?: string;
+  /** Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update. */
+  braavoApiKey?: string;
   /** Optional Nuvemshop store id for B2C clients. */
   nuvemshopStoreId?: string;
   /** Optional Nuvemshop access token for B2C clients. Stored server-side and never returned. */
@@ -331,6 +346,7 @@ export const UpdateClientRequestCommercePlatform = {
   NUVEMSHOP: "NUVEMSHOP",
   MANUAL: "MANUAL",
   VESTI: "VESTI",
+  BRAAVO: "BRAAVO",
 } as const;
 
 /**
@@ -366,6 +382,21 @@ export interface UpdateClientRequest {
    * @nullable
    */
   attributionStartDate?: string | null;
+  /**
+   * Braavo shop HTTPS domain.
+   * @nullable
+   */
+  braavoDomain?: string | null;
+  /**
+   * Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
+   * @nullable
+   */
+  braavoApiToken?: string | null;
+  /**
+   * Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
+   * @nullable
+   */
+  braavoApiKey?: string | null;
   /**
    * Nuvemshop store id. Pass null to clear it.
    * @nullable
@@ -455,6 +486,7 @@ export const ClientImportRowCommercePlatform = {
   NUVEMSHOP: "NUVEMSHOP",
   MANUAL: "MANUAL",
   VESTI: "VESTI",
+  BRAAVO: "BRAAVO",
 } as const;
 
 /**
@@ -540,6 +572,8 @@ export interface DashboardKpis {
   repeatCustomers: number;
   /** Sum of ALL order amounts in the period regardless of status (PENDING included). */
   requestedRevenue: number;
+  /** Revenue of PAID orders only. Vesti: sum of reserved value where the order is paid (the `revenue` field there counts every order). Other platforms already report paid-only revenue in `revenue` and may omit this. */
+  paidRevenue?: number;
   /** Distinct buyers whose first ever purchase falls in this window. */
   newBuyers: number;
   /** Distinct buyers who had at least one prior order before this window. */
@@ -603,6 +637,10 @@ export interface OrderStatusBreakdown {
 
 export interface DashboardResponse {
   kpis: DashboardKpis;
+  /** Share (0 to 1) of the period's paid orders that carry a state (UF), ignoring the `state` filter.
+Lets the UI warn when filtering by state would hide most orders. Null when there are no paid orders.
+ */
+  stateCoverage?: number | null;
   revenueOverTime: TimeSeriesPoint[];
   ordersOverTime: TimeSeriesPoint[];
   leadsOverTime: TimeSeriesPoint[];
@@ -1421,6 +1459,7 @@ export interface CreateSavedViewRequest {
 }
 
 export interface MarketingKpis {
+  purchases?: number;
   totalSpend: number;
   attributedRevenue: number;
   roas: number;
@@ -1513,9 +1552,30 @@ export interface MetaTopCreatives {
   leads: MetaCreativeMetric[];
 }
 
+export interface MetaMarketingSummary {
+  spend: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+  purchases: number;
+  revenue: number;
+  reach: number | null;
+  frequency: number | null;
+  ctr: number | null;
+  cpc: number | null;
+  cpm: number | null;
+  roas: number | null;
+  cpa: number | null;
+  cpl: number | null;
+}
+
 export interface MarketingResponse {
+  revenueSource?: "META" | "ECOMMERCE";
+  metaSummary?: MetaMarketingSummary | null;
+  prevMetaSummary?: MetaMarketingSummary | null;
+  purchasesOverTime?: TimeSeriesPoint[];
   kpis: MarketingKpis;
-  prevKpis: MarketingKpis;
+  prevKpis: MarketingKpis | null;
   leadsOverTime: TimeSeriesPoint[];
   revenueOverTime: TimeSeriesPoint[];
   spendOverTime: TimeSeriesPoint[];
@@ -1898,6 +1958,12 @@ export type GetDashboardParams = {
    * Restrict order metrics to a single seller.
    */
   sellerId?: string;
+  /**
+   * Restrict order metrics to orders shipped to a single Brazilian state (UF, e.g. SP, MG).
+Only orders with a known state match; see `stateCoverage` in the response.
+
+   */
+  state?: string;
   /**
    * Restrict to orders from customers acquired via a UTM source (e.g. instagram, google).
    */

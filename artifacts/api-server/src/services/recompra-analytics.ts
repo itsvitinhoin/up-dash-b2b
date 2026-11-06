@@ -84,6 +84,7 @@ import { buildPurchaseProgression } from "./purchase-progression";
 //   ver a exceção no item "Tipo" acima.)
 import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import { bigquery, vestiTable } from "../lib/bigquery";
+import { vestiSalesView } from "./vesti-sales-view";
 import { db, ordersTable, sellersTable, customersTable } from "@workspace/db";
 import { resolveErpCustomerIdentities, type ErpContactInfo } from "./erp-identity";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, standardTouchpointWindow, TOUCHPOINT_LOOKBACK_DAYS, type TouchpointCandidate } from "./paid-touchpoints";
@@ -144,6 +145,8 @@ export type RecompraFilters = {
   tipo: RecompraTipoFilter;
   estado?: string;
   vendedora?: string;
+  /** Id da vendedora no cadastro do site (UpZero/Nuvemshop): a Visão geral filtra por id; `vendedora` (nome) continua para ERP e Vesti. */
+  vendedoraId?: string;
   origem?: string; // só tem efeito quando tipo começa com "anuncios-"
 };
 
@@ -427,8 +430,11 @@ async function findRecompraCandidates(params: {
   }
 
   // Lado site: customer_id já é o customer_id estável, sem resolução.
-  const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000Z`);
-  const dateToExclusiveDate = new Date(params.dateToExclusive);
+  // O recorte do site conta o dia no horário de Brasília (UTC-3, sem horário de verão desde 2019), como o resto do dash.
+  // Antes cortava à meia-noite UTC e pedidos entre 21h e 24h do último dia caíam no dia seguinte (27/10/2026: 1 a 11 pedidos em lojas grandes).
+  const BRT_OFFSET_MS = 3 * 60 * 60 * 1000;
+  const dateFromDate = new Date(Date.parse(`${params.dateFrom}T00:00:00.000Z`) + BRT_OFFSET_MS);
+  const dateToExclusiveDate = new Date(Date.parse(params.dateToExclusive) + BRT_OFFSET_MS);
   const siteStatuses = SITE_STATUS_BY_FILTER[params.filters.status];
   const siteConditions = [
     eq(ordersTable.clientId, params.clientId),
@@ -437,6 +443,7 @@ async function findRecompraCandidates(params: {
     inArray(ordersTable.status, siteStatuses),
   ];
   if (params.filters.estado) siteConditions.push(eq(ordersTable.state, params.filters.estado));
+  if (params.filters.vendedoraId) siteConditions.push(eq(ordersTable.sellerId, params.filters.vendedoraId));
   const siteQuery = db
     .select({
       id: ordersTable.id,
@@ -469,7 +476,7 @@ async function findRecompraCandidates(params: {
   // as demais trazem 0) -- por isso SUM, nunca ANY_VALUE, nesses dois
   // campos (ver vestiAnalytics.ts:26-29 e fetchVestiOrdersPage).
   if (params.vestiDataset) {
-    const vendasView = vestiTable(params.vestiDataset, "dashboard_vendas_view");
+    const vendasView = vestiSalesView(params.vestiDataset);
     const vestiStatusClause = VESTI_STATUS_CLAUSE_BY_FILTER[params.filters.status];
     // `data_ref` é DATE (não TIMESTAMP) em dashboard_vendas_view -- ao
     // contrário de data_criado do ERP, não aceita comparar com string ISO
@@ -617,7 +624,7 @@ async function fetchFullHistory(params: {
   // mapear -- só ERP precisa dessa indireção). Sempre pago=true (PDF
   // seção 6: "Status não muda o histórico positivo"), sem teto de data.
   if (params.vestiDataset) {
-    const vendasView = vestiTable(params.vestiDataset, "dashboard_vendas_view");
+    const vendasView = vestiSalesView(params.vestiDataset);
     const [vestiRows] = await bigquery.query({
       query: `
         SELECT pedido_id, ANY_VALUE(cliente_id) AS cliente_id, ANY_VALUE(data_ref) AS requested_at,
@@ -1330,7 +1337,7 @@ async function fetchAllPositiveEventsForClient(params: {
   }
 
   if (params.vestiDataset) {
-    const vendasView = vestiTable(params.vestiDataset, "dashboard_vendas_view");
+    const vendasView = vestiSalesView(params.vestiDataset);
     const [vestiRows] = await bigquery.query({
       query: `
         SELECT pedido_id, ANY_VALUE(cliente_id) AS cliente_id, ANY_VALUE(data_ref) AS requested_at,

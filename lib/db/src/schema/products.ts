@@ -18,6 +18,7 @@ export const productsTable = pgTable(
       .notNull()
       .references(() => clientsTable.id, { onDelete: "cascade" }),
     externalId: text("external_id"),
+    sourceSyncedAt: timestamp("source_synced_at", { withTimezone: true }),
     sku: text("sku").notNull(),
     name: text("name").notNull(),
     description: text("description"),

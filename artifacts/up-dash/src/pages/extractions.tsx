@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { queryOpts } from "@/lib/query-opts";
 
 type ExtractionStatus = "pending" | "running" | "done" | "failed";
-type ExtractionJobType = "upzero_transactional" | "upzero_analytics" | "meta_ads";
+type ExtractionJobType = "upzero_transactional" | "upzero_analytics" | "meta_ads" | "nuvemshop_transactional" | "braavo_transactional" | "daily_metrics";
 type ExtractionTrigger = "manual" | "cron";
 
 type ExtractionJob = {
@@ -51,6 +51,9 @@ const TYPE_LABEL: Record<ExtractionJobType, string> = {
   upzero_transactional: "UP Zero pedidos/clientes",
   upzero_analytics: "UP Zero analytics",
   meta_ads: "Meta Ads",
+  nuvemshop_transactional: "Nuvemshop",
+  braavo_transactional: "Braavo B2C",
+  daily_metrics: "Métricas diárias",
 };
 
 const STATUS_STYLE: Record<ExtractionStatus, string> = {
@@ -123,6 +126,10 @@ function resultSummary(job: ExtractionJob) {
       `Produtos +${String(result.productsCreated ?? 0)}/${String(result.productsUpdated ?? 0)}`,
       `Eventos +${String(result.eventsCreated ?? 0)}`,
     ].join(" · ");
+  }
+
+  if (job.jobType === "braavo_transactional") {
+    return result.complete ? "Importação concluída" : `${String(result.phase ?? "Importando")} · página ${String(result.page ?? 1)} · retomada disponível`;
   }
 
   if (job.jobType === "upzero_analytics") {

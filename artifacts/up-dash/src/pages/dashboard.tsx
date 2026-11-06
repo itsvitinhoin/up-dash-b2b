@@ -1437,7 +1437,7 @@ function B2COrdersPanel({
         <div className="flex flex-col items-center justify-center py-8 text-center">
           <ShoppingBag className="h-8 w-8 text-muted-foreground mb-2" />
           <p className="text-sm font-medium">Nenhum pedido no período</p>
-          <p className="text-xs text-muted-foreground mt-1">Amplie o filtro de data ou sincronize a Nuvemshop.</p>
+          <p className="text-xs text-muted-foreground mt-1">Amplie o filtro de data ou sincronize a plataforma de e-commerce.</p>
         </div>
       ) : (
         <>
@@ -1501,7 +1501,7 @@ function B2COrdersPanel({
         <DialogContent className="max-h-[84vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Pedido #{selectedOrder?.externalId ?? selectedOrder?.id.slice(0, 8)}</DialogTitle>
-            <DialogDescription>Detalhes importados da Nuvemshop para o período filtrado.</DialogDescription>
+            <DialogDescription>Detalhes importados da plataforma de e-commerce para o período filtrado.</DialogDescription>
           </DialogHeader>
           {detailsLoading ? (
             <div className="space-y-2">
@@ -1618,6 +1618,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
       dateTo: format(dateRange.to, "yyyy-MM-dd"),
       category: filters.category ?? undefined,
       sellerId: filters.sellerId ?? undefined,
+      state: filters.state ?? undefined,
       channel: filters.channel ?? undefined,
       color: filters.color ?? undefined,
       segment: filters.segment ?? undefined,
@@ -1671,7 +1672,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
     dateTo: format(dateRange.to, "yyyy-MM-dd"),
   };
   const { data: insight, isLoading: insightLoading } = useGetInsight(insightParams, {
-    query: queryOpts({ enabled }),
+    query: queryOpts({ enabled: enabled && organization === "ecommerce" }),
   });
   const regenerateInsight = useRegenerateInsight({
     mutation: {
@@ -1689,13 +1690,13 @@ export default function DashboardPage({ organization = "executive" }: { organiza
     isLoading: alertsLoading,
   } = useGetAlerts(
     { clientId, horizonDays: 14, lookbackDays: 30, limit: 8 },
-    { query: queryOpts({ enabled }) },
+    { query: queryOpts({ enabled: enabled && organization === "ecommerce" }) },
   );
 
   // Top sellers (mini leaderboard on the dashboard)
   const { data: topSellersData, isLoading: topSellersLoading } = useGetSellers(
     { clientId, limit: 5 },
-    { query: queryOpts({ enabled: enabled && !isB2C }) },
+    { query: queryOpts({ enabled: enabled && !isB2C && organization === "ecommerce" }) },
   );
   const {
     data: campaignCustomers,
@@ -1719,7 +1720,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         `/api/analytics/campaign-customers?${params.toString()}`,
       );
     },
-    enabled: enabled && !isB2C,
+    enabled: enabled && !isB2C && organization === "ecommerce",
     staleTime: 2 * 60 * 1000,
     gcTime: 15 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -1935,6 +1936,16 @@ export default function DashboardPage({ organization = "executive" }: { organiza
           </AlertDescription>
         </Alert>
       )}
+      {/* Filtro Estado: se o estado só vem em parte dos pedidos pagos, o número filtrado mostra só essa parte. Avisa em vez de esconder. */}
+      {filters.state && typeof data?.stateCoverage === "number" && data.stateCoverage < 0.6 && (
+        <Alert className="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300 no-print" data-testid="state-coverage-warning">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Estado informado em parte dos pedidos</AlertTitle>
+          <AlertDescription>
+            Só {Math.round(data.stateCoverage * 100)}% dos pedidos pagos deste cliente no período têm estado. Os números filtrados por {filters.state} mostram apenas esses pedidos.
+          </AlertDescription>
+        </Alert>
+      )}
       {/* Live indicator + export toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 no-print">
         <motion.div
@@ -1970,7 +1981,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
 
       <OverviewOrganization
         ecommerce={organization === "ecommerce"}
-        attributedRoas={isB2C ? undefined : { value: campaignCustomers?.summary?.roas, previous: campaignPrevious.data?.summary?.roas, loading: campaignCustomersLoading }}
+        attributedRoas={isB2C ? undefined : { value: campaignCustomers?.summary?.roas, previous: campaignPrevious.data?.summary?.roas, loading: campaignCustomersLoading, revenue: campaignCustomers?.summary?.fulfilledValue, spend: campaignCustomers?.summary?.investment }}
         cards={{
         revenue: (
           <DashboardKpiCard
@@ -2201,6 +2212,8 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         }}
       />
 
+      {/* So na pagina E-commerce: na Visao geral depois dos cards fica apenas o Desempenho diario (pedido do time, 27/10/2026) */}
+      {organization === "ecommerce" && (
       <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
         {isB2C ? (
           <B2COrdersPanel
@@ -2220,6 +2233,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
           />
         )}
       </motion.div>
+      )}
 
       {/* Chart + insight */}
       <motion.div
@@ -2228,7 +2242,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         variants={fadeVariants}
         className="grid grid-cols-1 lg:grid-cols-3 gap-4"
       >
-        <Card className="lg:col-span-2 p-5 bg-card border-border">
+        <Card className={organization === "ecommerce" ? "lg:col-span-2 p-5 bg-card border-border" : "lg:col-span-3 p-5 bg-card border-border"}>
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
             <div>
               <h2 className="text-base font-semibold leading-tight">{t("dashboard.chart.title")}</h2>
@@ -2367,7 +2381,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         </Card>
 
         {/* AI insight card */}
-        {!insightDismissed && (
+        {organization === "ecommerce" && !insightDismissed && (
           <Card
             className="p-5 bg-gradient-to-br from-primary/[0.04] via-card to-card border-border relative overflow-hidden flex flex-col"
             data-testid="ai-insight-card"
@@ -2435,6 +2449,8 @@ export default function DashboardPage({ organization = "executive" }: { organiza
         )}
       </motion.div>
 
+      {organization === "ecommerce" && (
+        <>
       {isB2C && (
         <motion.div
           initial="hidden"
@@ -2816,6 +2832,8 @@ export default function DashboardPage({ organization = "executive" }: { organiza
             </div>
           )}
         </Card>
+      )}
+        </>
       )}
 
       <DrillDownPanel date={drillDate} onClose={() => setDrillDate(null)} />

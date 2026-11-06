@@ -3,7 +3,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startScheduler } from "./services/scheduler";
 import { db, syncJobsTable } from "@workspace/db";
-import { inArray } from "drizzle-orm";
+import { and, ne, inArray } from "drizzle-orm";
 
 const rawPort = process.env["PORT"];
 
@@ -33,7 +33,7 @@ async function cleanupOrphanedSyncJobs(): Promise<void> {
         status: "failed",
         error: "Server restarted while sync was in progress — please try again.",
       })
-      .where(inArray(syncJobsTable.status, ["pending", "running"]))
+      .where(and(inArray(syncJobsTable.status, ["pending", "running"]), ne(syncJobsTable.jobType, "braavo_transactional")))
       .returning({ id: syncJobsTable.id });
 
     if (updated.length > 0) {

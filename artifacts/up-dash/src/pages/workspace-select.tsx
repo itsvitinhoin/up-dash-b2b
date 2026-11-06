@@ -21,9 +21,9 @@ const options: Array<{
   {
     mode: "B2C",
     title: "Painel B2C",
-    description: "Clientes Nuvemshop, com faturamento, pedidos pagos e eventos de ecommerce.",
+    description: "Clientes Nuvemshop e Braavo, com faturamento, pedidos pagos e eventos de ecommerce.",
     icon: Store,
-    bullets: ["Nuvemshop", "Meta", "GA4", "E-commerce"],
+    bullets: ["Nuvemshop", "Braavo", "Meta", "GA4"],
   },
 ];
 

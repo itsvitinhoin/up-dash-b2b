@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
 import {
   listExtractionJobs,
+  runBraavoTransactionalExtraction,
   runDailyMetricsBackfill,
   runHourlyExtractionBundle,
   runNuvemshopTransactionalExtraction,
@@ -111,6 +112,13 @@ router.get("/cron/extractions/upzero-transactional", async (req, res): Promise<v
   sendCronResult(res, result);
 });
 
+router.get("/cron/extractions/braavo", async (req, res): Promise<void> => {
+  if (!(await verifyCronRequest(req, res))) return;
+  const parsed = z.object({ offset: z.coerce.number().int().min(0).default(0) }).safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ message: "Offset inválido." }); return; }
+  sendCronResult(res, await runBraavoTransactionalExtraction("cron", parsed.data));
+});
+
 const CronNuvemshopQuery = z.object({
   clientId: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(10).optional(),
@@ -163,7 +171,7 @@ router.use("/extractions", authenticate);
 const ListExtractionsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
   status: z.enum(["pending", "running", "done", "failed"]).optional(),
-  jobType: z.enum(["upzero_transactional", "upzero_analytics", "meta_ads", "nuvemshop_transactional", "daily_metrics", "paid_touchpoints", "ga4_daily"]).optional(),
+  jobType: z.enum(["upzero_transactional", "upzero_analytics", "meta_ads", "nuvemshop_transactional", "braavo_transactional", "daily_metrics", "paid_touchpoints", "ga4_daily"]).optional(),
   trigger: z.enum(["manual", "cron"]).optional(),
   clientId: z.coerce.string().optional(),
 });

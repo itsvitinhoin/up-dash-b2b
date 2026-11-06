@@ -119,13 +119,23 @@ export const ListClientsResponse = zod.object({
         .enum(["B2B", "B2C"])
         .describe("Dashboard family for this client."),
       commercePlatform: zod
-        .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+        .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
         .describe("Primary commerce data source for this client."),
       bigqueryDataset: zod
         .string()
         .nullish()
         .describe(
           "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
+        ),
+      braavoDomain: zod
+        .string()
+        .nullish()
+        .describe("Braavo shop HTTPS domain."),
+      hasBraavoIntegration: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when Braavo domain, API Token and API Key are configured.",
         ),
       nuvemshopStoreId: zod
         .string()
@@ -282,7 +292,7 @@ export const CreateClientBody = zod.object({
     .optional()
     .describe("Dashboard family for this client. Defaults to B2B."),
   commercePlatform: zod
-    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
     .optional()
     .describe("Primary commerce data source. Defaults from dashboardType."),
   bigqueryDataset: zod
@@ -290,6 +300,19 @@ export const CreateClientBody = zod.object({
     .optional()
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI.",
+    ),
+  braavoDomain: zod.string().optional().describe("Braavo shop HTTPS domain."),
+  braavoApiToken: zod
+    .string()
+    .optional()
+    .describe(
+      "Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.",
+    ),
+  braavoApiKey: zod
+    .string()
+    .optional()
+    .describe(
+      "Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.",
     ),
   nuvemshopStoreId: zod
     .string()
@@ -352,7 +375,7 @@ export const ImportClientsBodyItem = zod
       .optional()
       .describe("Dashboard family for this client. Defaults to B2B."),
     commercePlatform: zod
-      .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+      .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
       .optional()
       .describe("Primary commerce data source. Defaults from dashboardType."),
     currency: zod
@@ -410,7 +433,7 @@ export const GetClientResponse = zod.object({
     .enum(["B2B", "B2C"])
     .describe("Dashboard family for this client."),
   commercePlatform: zod
-    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
     .describe("Primary commerce data source for this client."),
   bigqueryDataset: zod
     .string()
@@ -418,6 +441,11 @@ export const GetClientResponse = zod.object({
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
     ),
+  braavoDomain: zod.string().nullish().describe("Braavo shop HTTPS domain."),
+  hasBraavoIntegration: zod
+    .boolean()
+    .optional()
+    .describe("True when Braavo domain, API Token and API Key are configured."),
   nuvemshopStoreId: zod
     .string()
     .nullish()
@@ -564,7 +592,7 @@ export const UpdateClientBody = zod
       .optional()
       .describe("Dashboard family for this client."),
     commercePlatform: zod
-      .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+      .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
       .optional()
       .describe("Primary commerce data source."),
     bigqueryDataset: zod
@@ -578,6 +606,19 @@ export const UpdateClientBody = zod
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .nullish()
       .describe("Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Pass null to clear it."),
+    braavoDomain: zod.string().nullish().describe("Braavo shop HTTPS domain."),
+    braavoApiToken: zod
+      .string()
+      .nullish()
+      .describe(
+        "Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.",
+      ),
+    braavoApiKey: zod
+      .string()
+      .nullish()
+      .describe(
+        "Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.",
+      ),
     nuvemshopStoreId: zod
       .string()
       .nullish()
@@ -623,7 +664,7 @@ export const UpdateClientResponse = zod.object({
     .enum(["B2B", "B2C"])
     .describe("Dashboard family for this client."),
   commercePlatform: zod
-    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI"])
+    .enum(["UPZERO", "NUVEMSHOP", "MANUAL", "VESTI", "BRAAVO"])
     .describe("Primary commerce data source for this client."),
   bigqueryDataset: zod
     .string()
@@ -631,6 +672,11 @@ export const UpdateClientResponse = zod.object({
     .describe(
       "BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.",
     ),
+  braavoDomain: zod.string().nullish().describe("Braavo shop HTTPS domain."),
+  hasBraavoIntegration: zod
+    .boolean()
+    .optional()
+    .describe("True when Braavo domain, API Token and API Key are configured."),
   nuvemshopStoreId: zod
     .string()
     .nullish()
@@ -817,6 +863,12 @@ export const GetDashboardQueryParams = zod.object({
     .string()
     .optional()
     .describe("Restrict order metrics to a single seller."),
+  state: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict order metrics to orders shipped to a single Brazilian state (UF, e.g. SP, MG). Only orders with a known state match; see `stateCoverage` in the response.",
+    ),
   channel: zod.coerce
     .string()
     .optional()
@@ -877,6 +929,12 @@ export const GetDashboardResponse = zod.object({
       .describe(
         "Sum of ALL order amounts in the period regardless of status (PENDING included).",
       ),
+    paidRevenue: zod
+      .number()
+      .optional()
+      .describe(
+        "Revenue of PAID orders only. Vesti: sum of reserved value where the order is paid (the `revenue` field there counts every order). Other platforms already report paid-only revenue in `revenue` and may omit this.",
+      ),
     newBuyers: zod
       .number()
       .describe(
@@ -891,6 +949,12 @@ export const GetDashboardResponse = zod.object({
       .number()
       .describe("returningBuyers \/ (newBuyers + returningBuyers) \* 100."),
   }),
+  stateCoverage: zod
+    .number()
+    .nullish()
+    .describe(
+      "Share (0 to 1) of the period's paid orders that carry a state (UF), ignoring the `state` filter. Lets the UI warn when filtering by state would hide most orders. Null when there are no paid orders.",
+    ),
   revenueOverTime: zod.array(
     zod.object({
       date: zod.string(),
@@ -955,6 +1019,12 @@ export const GetDashboardResponse = zod.object({
         .number()
         .describe(
           "Sum of ALL order amounts in the period regardless of status (PENDING included).",
+        ),
+      paidRevenue: zod
+        .number()
+        .optional()
+        .describe(
+          "Revenue of PAID orders only. Vesti: sum of reserved value where the order is paid (the `revenue` field there counts every order). Other platforms already report paid-only revenue in `revenue` and may omit this.",
         ),
       newBuyers: zod
         .number()
@@ -2909,7 +2979,42 @@ export const GetMarketingQueryParams = zod.object({
 });
 
 export const GetMarketingResponse = zod.object({
+  revenueSource: zod.enum(["META", "ECOMMERCE"]).optional(),
+  purchasesOverTime: zod.array(zod.object({date: zod.string(), value: zod.number()})).optional(),
+  metaSummary: zod.object({
+    spend: zod.number(),
+    impressions: zod.number(),
+    clicks: zod.number(),
+    leads: zod.number(),
+    purchases: zod.number(),
+    revenue: zod.number(),
+    reach: zod.number().nullable(),
+    frequency: zod.number().nullable(),
+    ctr: zod.number().nullable(),
+    cpc: zod.number().nullable(),
+    cpm: zod.number().nullable(),
+    roas: zod.number().nullable(),
+    cpa: zod.number().nullable(),
+    cpl: zod.number().nullable(),
+  }).nullish(),
+  prevMetaSummary: zod.object({
+    spend: zod.number(),
+    impressions: zod.number(),
+    clicks: zod.number(),
+    leads: zod.number(),
+    purchases: zod.number(),
+    revenue: zod.number(),
+    reach: zod.number().nullable(),
+    frequency: zod.number().nullable(),
+    ctr: zod.number().nullable(),
+    cpc: zod.number().nullable(),
+    cpm: zod.number().nullable(),
+    roas: zod.number().nullable(),
+    cpa: zod.number().nullable(),
+    cpl: zod.number().nullable(),
+  }).nullish(),
   kpis: zod.object({
+    purchases: zod.number().optional(),
     totalSpend: zod.number(),
     attributedRevenue: zod.number(),
     roas: zod.number(),
@@ -2920,6 +3025,7 @@ export const GetMarketingResponse = zod.object({
     cpa: zod.number(),
   }),
   prevKpis: zod.object({
+    purchases: zod.number().optional(),
     totalSpend: zod.number(),
     attributedRevenue: zod.number(),
     roas: zod.number(),
@@ -2928,7 +3034,7 @@ export const GetMarketingResponse = zod.object({
     approvalRate: zod.number(),
     cpl: zod.number(),
     cpa: zod.number(),
-  }),
+  }).nullable(),
   leadsOverTime: zod.array(
     zod.object({
       date: zod.string(),

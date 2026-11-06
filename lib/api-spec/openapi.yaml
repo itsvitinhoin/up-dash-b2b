@@ -427,6 +427,13 @@ paths:
             type: string
           description: Restrict order metrics to a single seller.
         - in: query
+          name: state
+          schema:
+            type: string
+          description: |
+            Restrict order metrics to orders shipped to a single Brazilian state (UF, e.g. SP, MG).
+            Only orders with a known state match; see `stateCoverage` in the response.
+        - in: query
           name: channel
           schema:
             type: string
@@ -1866,11 +1873,17 @@ components:
           description: Dashboard family for this client.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI, BRAAVO]
           description: Primary commerce data source for this client.
         bigqueryDataset:
           type: ["string", "null"]
           description: BigQuery dataset (project up-vesti-report) this client reads analytics from. Only used when commercePlatform is VESTI.
+        braavoDomain:
+          type: ["string", "null"]
+          description: Braavo shop HTTPS domain.
+        hasBraavoIntegration:
+          type: boolean
+          description: True when Braavo domain, API Token and API Key are configured.
         nuvemshopStoreId:
           type: ["string", "null"]
           description: Nuvemshop store id for B2C data ingestion.
@@ -2030,11 +2043,20 @@ components:
           description: Dashboard family for this client. Defaults to B2B.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI, BRAAVO]
           description: Primary commerce data source. Defaults from dashboardType.
         bigqueryDataset:
           type: string
           description: BigQuery dataset (project up-vesti-report) this client reads analytics from. Required when commercePlatform is VESTI.
+        braavoDomain:
+          type: string
+          description: Braavo shop HTTPS domain.
+        braavoApiToken:
+          type: string
+          description: Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
+        braavoApiKey:
+          type: string
+          description: Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
         nuvemshopStoreId:
           type: string
           description: Optional Nuvemshop store id for B2C clients.
@@ -2077,7 +2099,7 @@ components:
           description: Dashboard family for this client.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI, BRAAVO]
           description: Primary commerce data source.
         bigqueryDataset:
           type: ["string", "null"]
@@ -2086,6 +2108,15 @@ components:
           type: ["string", "null"]
           format: date
           description: Vesti clients: day (YYYY-MM-DD) from which paid attribution counts. Pass null to clear it.
+        braavoDomain:
+          type: ["string", "null"]
+          description: Braavo shop HTTPS domain.
+        braavoApiToken:
+          type: ["string", "null"]
+          description: Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
+        braavoApiKey:
+          type: ["string", "null"]
+          description: Braavo credential. Stored server-side and never returned. Omit to keep; null clears on update.
         nuvemshopStoreId:
           type: ["string", "null"]
           description: Nuvemshop store id. Pass null to clear it.
@@ -2175,7 +2206,7 @@ components:
           description: Dashboard family for this client. Defaults to B2B.
         commercePlatform:
           type: string
-          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI]
+          enum: [UPZERO, NUVEMSHOP, MANUAL, VESTI, BRAAVO]
           description: Primary commerce data source. Defaults from dashboardType.
         currency:
           type: string
@@ -2267,6 +2298,9 @@ components:
         requestedRevenue:
           type: number
           description: Sum of ALL order amounts in the period regardless of status (PENDING included).
+        paidRevenue:
+          type: number
+          description: Revenue of PAID orders only. Vesti: sum of reserved value where the order is paid (the `revenue` field there counts every order). Other platforms already report paid-only revenue in `revenue` and may omit this.
         newBuyers:
           type: integer
           description: Distinct buyers whose first ever purchase falls in this window.
@@ -2356,6 +2390,12 @@ components:
       properties:
         kpis:
           $ref: "#/components/schemas/DashboardKpis"
+        stateCoverage:
+          type: number
+          nullable: true
+          description: |
+            Share (0 to 1) of the period's paid orders that carry a state (UF), ignoring the `state` filter.
+            Lets the UI warn when filtering by state would hide most orders. Null when there are no paid orders.
         revenueOverTime:
           type: array
           items:
@@ -3714,6 +3754,8 @@ components:
     MarketingKpis:
       type: object
       properties:
+        purchases:
+          type: integer
         totalSpend:
           type: number
         attributedRevenue:
@@ -3869,13 +3911,63 @@ components:
             $ref: "#/components/schemas/MetaCreativeMetric"
       required: [ctr, cpl, leads]
 
+    MetaMarketingSummary:
+      type: object
+      properties:
+        spend:
+          type: number
+        impressions:
+          type: number
+        clicks:
+          type: number
+        leads:
+          type: number
+        purchases:
+          type: number
+        revenue:
+          type: number
+        reach:
+          type: ["number", "null"]
+        frequency:
+          type: ["number", "null"]
+        ctr:
+          type: ["number", "null"]
+        cpc:
+          type: ["number", "null"]
+        cpm:
+          type: ["number", "null"]
+        roas:
+          type: ["number", "null"]
+        cpa:
+          type: ["number", "null"]
+        cpl:
+          type: ["number", "null"]
+      required: [spend, impressions, clicks, leads, purchases, revenue, reach, frequency, ctr, cpc, cpm, roas, cpa, cpl]
+
     MarketingResponse:
       type: object
       properties:
+        revenueSource:
+          type: string
+          enum: [META, ECOMMERCE]
+        metaSummary:
+          anyOf:
+            - $ref: "#/components/schemas/MetaMarketingSummary"
+            - type: "null"
+        prevMetaSummary:
+          anyOf:
+            - $ref: "#/components/schemas/MetaMarketingSummary"
+            - type: "null"
+        purchasesOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
         kpis:
           $ref: "#/components/schemas/MarketingKpis"
         prevKpis:
-          $ref: "#/components/schemas/MarketingKpis"
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/MarketingKpis"
         leadsOverTime:
           type: array
           items:

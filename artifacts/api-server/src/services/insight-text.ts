@@ -71,9 +71,10 @@ export function dashboardInsight(
 // ───────── Marketing ─────────
 export function marketingInsight(
   language: InsightLanguage,
-  kpis: { roas: number; totalSpend: number; attributedRevenue: number; approvedLeads: number; cpa: number; cpl: number; approvalRate: number },
+  kpis: { roas: number; totalSpend: number; attributedRevenue: number; approvedLeads: number; cpa: number; cpl: number; approvalRate: number; purchases?: number },
   roasTrend: number,
   topPlatform: string,
+  isB2C = false,
 ): InsightText {
   const { n, t } = tools(language);
   const roasPct = (roasTrend * 100).toFixed(1);
@@ -90,7 +91,11 @@ export function marketingInsight(
       `Você investiu R$${n(kpis.totalSpend)} em canais pagos e gerou R$${n(kpis.attributedRevenue)} em receita atribuída. ${topPlatform} é a plataforma com melhor desempenho.`,
       `유료 채널에 R$${n(kpis.totalSpend)}를 투자해 R$${n(kpis.attributedRevenue)}의 귀속 매출을 만들었습니다. ${topPlatform}이(가) 가장 성과가 좋은 플랫폼입니다.`,
     ),
-    bullets: [
+    bullets: isB2C ? [
+      t(`${kpis.purchases ?? 0} purchases at R$${kpis.cpa.toFixed(2)} cost per purchase`, `${kpis.purchases ?? 0} compras com custo por compra de R$${n(kpis.cpa, 2)}`, `구매 ${kpis.purchases ?? 0}건, 구매당 비용 R$${n(kpis.cpa, 2)}`),
+      t(`Attributed revenue: R$${kpis.attributedRevenue.toFixed(2)}`, `Receita atribuída: R$${n(kpis.attributedRevenue, 2)}`, `귀속 매출: R$${n(kpis.attributedRevenue, 2)}`),
+      t("Review purchases and cost per purchase across creatives", "Compare compras e custo por compra entre os criativos", "크리에이티브별 구매와 구매당 비용을 비교하세요"),
+    ] : [
       t(`${kpis.approvedLeads} approved leads at R$${kpis.cpa.toFixed(0)} CPA`, `${kpis.approvedLeads} leads aprovados com CPA de R$${n(kpis.cpa)}`, `승인 리드 ${kpis.approvedLeads}건, CPA R$${n(kpis.cpa)}`),
       t(`Cost per lead is R$${kpis.cpl.toFixed(0)} — ${kpis.approvalRate.toFixed(0)}% approval rate`, `Custo por lead de R$${n(kpis.cpl)} — ${n(kpis.approvalRate)}% de aprovação`, `리드당 비용 R$${n(kpis.cpl)} — 승인율 ${n(kpis.approvalRate)}%`),
       up

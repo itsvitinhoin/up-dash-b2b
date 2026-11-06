@@ -64,7 +64,7 @@ A lista também é republicada a cada exclusão/recuperação feita pela tela (s
   serviço `api-vesti-report` — que rebuilda em push de QUALQUER branch —, serviço `up-dash-backend` e job `up-jobs`).
 - **Limpeza automática:** Cloud Scheduler `upzero-sync-job-purge-schedule` (us-central1, `30 0 * * *` UTC) chama `upzero-sync-job:run` com
   `{"overrides":{"containerOverrides":[{"env":[{"name":"TASK","value":"purge_archived_clients"},{"name":"TRIGGER","value":"cron"}]}]}}`.
-  Para ver sem apagar: `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=purge_archived_clients,DRY_RUN=1 --wait`.
+  Para ver sem apagar: `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars="TASK=purge_archived_clients,DRY_RUN=1" --wait`.
 - **Teste real (Idrissi, cliente Vesti):** excluído e apagado de vez; o sync da Vesti o pulou, o dataset `idrissi` foi apagado do BigQuery e a lápide ficou na lista.
 
 ## Como foi testado

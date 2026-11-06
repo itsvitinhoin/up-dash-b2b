@@ -52,7 +52,7 @@ só publicar depois de Aiyu e Hot Pink terem acesso.
 
 ## Visualizações por produto (tabela de produtos B2C)
 
-Também guardadas: `ga4_product_views_daily` (migration 0044), uma linha por
+Também guardadas: `ga4_product_views_daily` (migration 0046, antes 0044), uma linha por
 (cliente, dia, item) do evento `view_item`, gravada pelo mesmo job `ga4_daily` — o equivalente
 ao `analytics_ga4_view_item` que o legado mantém no BigQuery. O job busca tráfego e produtos
 **antes** de gravar qualquer um (se um falhar, nada muda) e regrava a janela inteira de produtos
@@ -84,6 +84,9 @@ Ambas particionadas por `date` e agrupadas por `client_id`; criadas sozinhas na 
   `GA4_BACKFILL_DAYS`. Sem isso, o buraco de 21/10 a 03/11 de Giah e Jini (job parado) ficaria para sempre.
 - **Falhas separadas:** Postgres e BigQuery são gravados em paralelo e um não derruba o outro; `sync_jobs.error` mostra
   `Postgres: …` e/ou `BigQuery: …`.
+- **Dataset de teste:** `GA4_BQ_DATASET=ga4_teste` desvia as duas tabelas para outro dataset (criado sozinho se não existir),
+  para a primeira rodada num job canário sem tocar em `up_global`. Nome inválido dá erro, nunca cai no padrão. Para virar
+  produção basta tirar a variável. Apagar o dataset de teste depois é manual.
 - **Desligar:** `GA4_BIGQUERY=0` no job (volta a gravar só no Postgres). Sem credencial do Google (dev/teste) fica desligado sozinho.
 - **Correções incluídas:** `eventCount` → `itemsViewed` nas consultas por item (o Google recusava o pedido inteiro: foi o que
   derrubou Giah/Jini desde 20/10) e aspas em `->>'productFrom'` (sem elas o Postgres leria uma coluna).
@@ -100,7 +103,8 @@ conferida: ver "Como conferir".
 > próximo build da `main`, ou o build seguinte apaga o GA4 de novo.
 
 1. **Banco de produção** (`up_dash_b2b`, Cloud SQL Studio): rodar, nesta ordem,
-   `lib/db/migrations/0043_ga4_daily_metrics.sql` e `0044_ga4_product_views_daily.sql` (as duas idempotentes; a 0043 já foi aplicada em 20/10). Antes do deploy
+   `lib/db/migrations/0045_ga4_daily_metrics.sql` e `0046_ga4_product_views_daily.sql` (as duas idempotentes; renumeradas em 06/11 por
+   causa das `0043`/`0044` do Braavo na main — o conteúdo é o mesmo das antigas `0043`/`0044`, que **já estão aplicadas em produção**: as duas tabelas existem lá). Antes do deploy
    da Vercel — se faltar, a lista abre sem o GA4 (aviso no log), mas não é o
    objetivo.
 2. **Imagem do job** (build é manual, da raiz do repo):

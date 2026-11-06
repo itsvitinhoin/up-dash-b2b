@@ -306,15 +306,29 @@
     {
       "idx": 43,
       "version": "7",
-      "when": 1792510944581,
-      "tag": "0043_ga4_daily_metrics",
+      "when": 1793664000000,
+      "tag": "0043_braavo",
       "breakpoints": true
     },
     {
       "idx": 44,
       "version": "7",
-      "when": 1792516396946,
-      "tag": "0044_ga4_product_views_daily",
+      "when": 1793836800000,
+      "tag": "0044_braavo_record_issues",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1793923200000,
+      "tag": "0045_ga4_daily_metrics",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1793926800000,
+      "tag": "0046_ga4_product_views_daily",
       "breakpoints": true
     }
   ]

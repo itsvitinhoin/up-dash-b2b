@@ -11,12 +11,16 @@ import assistantRouter from "./assistant";
 import orchestratorRouter from "./orchestrator";
 import portfolioReportRouter from "./portfolio-report";
 import apiTokensRouter from "./api-tokens";
+import adsHistoryRouter from "./ads-history";
+import { braavoRouter } from "./braavo";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(authRouter);
+router.use(adsHistoryRouter);
 router.use(clientsRouter);
+router.use(braavoRouter);
 router.use(portfolioReportRouter);
 router.use(analyticsRouter);
 router.use(notificationsRouter);

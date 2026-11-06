@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { db, clientsTable, eventsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
-import { fetchMetaMarketingData } from "./meta-ads";
+import { fetchStoredMarketingData } from "./stored-marketing";
 import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution, fetchVestiFunnelEventCounts } from "./erpAnalytics";
 import {
   calculatePerformanceRatios,
@@ -10,17 +10,8 @@ import {
 } from "./performanceMetrics";
 
 const CANCELLED_STATUSES = ["CANCELADO", "EXCLUIDO"];
-
-function getMetaAccessToken(fallback?: string | null): string | null {
-  return (
-    process.env.META_ADS_API_KEY ??
-    process.env.META_ACCESS_TOKEN ??
-    process.env.META_API_KEY ??
-    process.env.META_TOKEN ??
-    fallback ??
-    null
-  );
-}
+// Venda ainda nao paga (so sai da conta com `paidOnly`, usado pelos cards da Visao geral).
+const UNPAID_STATUSES = ["ESPERA"];
 
 function dateOnly(value: unknown): string {
   if (
@@ -101,7 +92,7 @@ export type PerformanceDashboard = {
     returnAmount: number;
     attributedRevenue: number;
     unattributedRevenue: number;
-    mediaSpend: number;
+    mediaSpend: number | null;
     roas: number | null;
     mer: number | null;
     cogs: number;
@@ -114,6 +105,12 @@ export type PerformanceDashboard = {
     attributionCoveragePct: number;
     uniqueBuyers: number;
     newBuyers: number;
+    /** Faturamento líquido e pedidos do ERP dos compradores novos do período (mesma base de `newBuyers`). */
+    newBuyersRevenue: number;
+    newBuyersOrders: number;
+    /** Idem para os compradores recorrentes (já tinham compra paga antes do período): base ERP dos cards de Recompra. */
+    returningBuyersRevenue: number;
+    returningBuyersOrders: number;
     returningBuyers: number;
     retentionPct: number;
     totalQuantity: number;
@@ -193,12 +190,13 @@ export async function fetchPerformanceDashboard(
   dataset: string,
   dateFrom: string,
   dateTo: string,
+  options: { paidOnly?: boolean } = {},
 ): Promise<PerformanceDashboard> {
   const pedidos = vestiTable(dataset, "pedidos_erp");
   const clientes = vestiTable(dataset, "clientes_erp");
-  const cancelledList = CANCELLED_STATUSES.map((status) => `'${status}'`).join(
-    ", ",
-  );
+  const cancelledList = (options.paidOnly ? [...CANCELLED_STATUSES, ...UNPAID_STATUSES] : CANCELLED_STATUSES)
+    .map((status) => `'${status}'`)
+    .join(", ");
 
   const customerDayQuery = `
     WITH all_orders AS (
@@ -353,7 +351,7 @@ export async function fetchPerformanceDashboard(
     eventSummaryResult,
     clientRows,
   ] = await Promise.all([
-    fetchErpDashboard(clientId, dataset, dateFrom, dateTo),
+    fetchErpDashboard(clientId, dataset, dateFrom, dateTo, options),
     bigquery.query({ query: customerDayQuery, params: { dateFrom, dateTo } }),
     bigquery.query({ query: itemSummaryQuery, params: { dateFrom, dateTo } }),
     bigquery.query({ query: breakdownQuery, params: { dateFrom, dateTo } }),
@@ -383,7 +381,6 @@ export async function fetchPerformanceDashboard(
   });
   const vestiMatcher = hasUnmatchedDocuments ? await matchErpDocumentsWithVestiAttribution(dataset) : null;
   const client = clientRows[0];
-  const token = getMetaAccessToken(client?.metaAdsApiKey);
 
   let mediaStatus: PerformanceDashboard["sources"]["media"]["status"] =
     "not_configured";
@@ -406,10 +403,10 @@ export async function fetchPerformanceDashboard(
     purchases: number;
     cpl: number | null;
   }> = [];
-  if (token && client?.metaAdAccountId) {
+  // Gasto e campanhas lidos do dado guardado (BigQuery), sem Meta ao vivo: só a conta de anúncio importa, não o token.
+  if (client?.metaAdAccountId) {
     try {
-      const meta = await fetchMetaMarketingData({
-        accessToken: token,
+      const meta = await fetchStoredMarketingData({
         adAccountId: client.metaAdAccountId,
         since: dateFrom,
         until: dateTo,
@@ -597,6 +594,22 @@ export async function fetchPerformanceDashboard(
     }));
   };
 
+  // Compradores novos: o que eles compraram no período no ERP (base única dos cards de Novos clientes, decisão do time em 27/10/2026).
+  let newBuyersRevenue = 0;
+  let newBuyersOrders = 0;
+  let returningBuyersRevenue = 0;
+  let returningBuyersOrders = 0;
+  for (const row of customerDays) {
+    const document = row.document ?? row.customer_id;
+    if (!row.is_identified || !document) continue;
+    if (buyerTypeByDocument[document] === "NEW") {
+      newBuyersRevenue += Number(row.net_revenue) || 0;
+      newBuyersOrders += Number(row.orders) || 0;
+    } else if (buyerTypeByDocument[document] === "RETURNING") {
+      returningBuyersRevenue += Number(row.net_revenue) || 0;
+      returningBuyersOrders += Number(row.orders) || 0;
+    }
+  }
   const newBuyers = Object.values(buyerTypeByDocument).filter(
     (type) => type === "NEW",
   ).length;
@@ -785,7 +798,7 @@ export async function fetchPerformanceDashboard(
       returnAmount: erp.kpis.returnAmount,
       attributedRevenue,
       unattributedRevenue: Math.max(0, erp.kpis.netRevenue - attributedRevenue),
-      mediaSpend,
+      mediaSpend: mediaStatus === "connected" ? mediaSpend : null,
       roas: ratios.roas,
       mer: ratios.mer,
       cogs,
@@ -798,6 +811,10 @@ export async function fetchPerformanceDashboard(
       attributionCoveragePct: percentage(attributedOrders, erp.kpis.orders),
       uniqueBuyers: periodBuyerDocuments.size,
       newBuyers,
+      newBuyersRevenue,
+      newBuyersOrders,
+      returningBuyersRevenue,
+      returningBuyersOrders,
       returningBuyers,
       retentionPct: percentage(returningBuyers, periodBuyerDocuments.size),
       totalQuantity: erp.kpis.totalQuantity,

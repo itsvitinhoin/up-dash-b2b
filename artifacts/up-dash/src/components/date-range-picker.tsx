@@ -91,6 +91,14 @@ const presets: Preset[] = [
     },
   },
   {
+    id: "90d",
+    label: "90 dias",
+    getRange: () => {
+      const to = today();
+      return { from: subDays(to, 89), to };
+    },
+  },
+  {
     id: "this-month",
     label: "Este mês",
     getRange: () => {

@@ -1,0 +1,60 @@
+CORREÇÃO E VALIDAÇÃO DAS DIVERGÊNCIAS — 21/10/2026
+
+Branch: codex/reconcile-dashboard-metrics
+Base: github/main, ae7e147ba174fe0c22fedc900e9f7a357f03442f
+Trabalho feito em worktree isolado. Sem merge, push, deploy ou alteração da main.
+
+REGRAS UNIFICADAS
+- Dia do relatório: Brasília. 20/10/2026 = 20/10 03:00:00Z até 21/10 02:59:59.999Z.
+- Pedidos: createdAt dentro do período e status atual APPROVED, SHIPPED ou DELIVERED.
+- Receita paga B2C: fulfilledAmount. B2B do site: amount, com os mesmos status pagos.
+- Clientes, Dashboard, Diário e o faturamento de Anúncios usam essa população paga.
+- Receita solicitada continua separada no Dashboard.
+- Cadastros B2B: customers.createdAt no período de Brasília.
+- Aprovados: membros dessa coorte com registrationStatus atual APPROVED.
+  Não significa aprovações realizadas naquele período, e não inclui cadastros antigos só por terem sido aprovados no dia.
+- Funil não usa mais o maior valor entre rastreamento e base cadastral.
+- Séries diárias usam o mesmo fuso e a mesma base dos totais.
+- Dashboard lê fatos atuais; a existência de um agregado diário antigo não autoriza usá-lo como total atualizado.
+
+MÍDIA
+- Datas civis preservadas na consulta ao Meta; 20/10 não avança automaticamente para 21/10.
+- Leitura compartilhada por conta, credencial, período e filtro de campanha; erros não entram no cache.
+- Total, séries, anúncios e campanhas vêm do mesmo conjunto de Insights por anúncio/dia.
+- Valores monetários agregados em centavos, antes de converter para reais.
+- Fuso da conta lido no Meta. Conta UTC−2 usa dados horários: dia 20 em Brasília inclui 20/10 01h a 21/10 00h na conta.
+- Falha/incompletude/ausência de integração: HTTP 503 MEDIA_UNAVAILABLE nos endpoints corrigidos.
+- Nenhuma leitura de mídia falha é substituída por rateio de criativos armazenados nesses endpoints.
+- Zero só é mantido quando uma consulta válida confirma ausência de gasto.
+- Falha apenas do período anterior: dados atuais preservados; comparação nula.
+- Vesti diferencia zero confirmado de ausência/falha de leitura; dados ausentes do BigQuery não viram zero.
+- Card de investimento da Performance fica indisponível quando a fonte de mídia não está conectada.
+
+VALIDAÇÃO
+- 39 arquivos de teste e 302 testes passaram na suíte sem produção.
+- 15 testes novos: 6 de endpoints com PostgreSQL em memória (PGlite), 5 de fuso/agregação monetária e 4 de leitura do Meta.
+- PostgreSQL de teste criado a partir das definições Drizzle reais. Dados sintéticos incluem fronteiras do dia,
+  valores solicitado/pago diferentes, pedidos pendentes/recusados, cadastros antigos aprovados no dia,
+  rastreamento maior que a coorte, agregado diário deliberadamente desatualizado e atualização posterior de status.
+- Testes de endpoint confirmam igualdade de receita/pedidos, igualdade de cadastros/aprovados,
+  igualdade de investimento entre Diário e Anúncios e entre card, plataforma e soma de campanhas.
+- Tests de mídia confirmam alinhamento UTC−2, falhas explícitas, rejeição de payload incompleto,
+  ausência de credencial, retry após erro e aceitação de zero confirmado.
+- pnpm run typecheck: passou para bibliotecas, API, frontend, scripts e sandbox.
+- Builds da API e do frontend: passaram. Avisos existentes de sourcemap/tamanho de bundle não impedem o build.
+- Navegador local: resposta MEDIA_UNAVAILABLE simulada exibiu a mensagem de investimento indisponível e campos sem valor;
+  não apresentou R$ 0,00 como resultado da falha.
+- git diff --check: sem erros.
+
+COMANDOS DE REGRESSÃO FOCADA
+pnpm --filter @workspace/api-server exec vitest run test/metrics-reconciliation.test.ts test/meta-reporting.test.ts test/meta-read.test.ts
+pnpm run typecheck
+pnpm --filter @workspace/api-server run build
+PORT=5178 BASE_PATH=/ pnpm --filter @workspace/up-dash run build
+
+LIMITES DA VALIDAÇÃO
+A validação usa dados e respostas externas simulados, consultas PostgreSQL reais e preview local.
+Não reconsultou os registros de cada marca em produção nem confirmou a resposta ao vivo do Meta para Kalli.
+A suíte geral excluiu smoke.test.ts e portfolio-report-route.test.ts; não foi apontada ao banco de produção.
+Não realizou backfill, migração de banco ou publicação. As diferenças históricas por marca devem ser reconciliadas
+novamente em um ambiente de revisão autenticado antes da promoção para produção.

@@ -109,6 +109,20 @@ steps:
       - "--region=us-central1"
       - "--image=gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:$SHORT_SHA"
 
+  # Terceiro recurso (06/11/2026) -- Braavo (La Cleo). Mesma imagem, TASK=braavo_transactional
+  # fixo desde a criação (gcloud run jobs create upzero-sync-job-braavo, ver
+  # docs/integracao-braavo.md, seção "Operação do job"). Só atualiza a imagem.
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "jobs"
+      - "update"
+      - "upzero-sync-job-braavo"
+      - "--project=up-vesti-report"
+      - "--region=us-central1"
+      - "--image=gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:$SHORT_SHA"
+
 images:
   - "gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:$SHORT_SHA"
   - "gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:latest"

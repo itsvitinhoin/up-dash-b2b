@@ -5,11 +5,12 @@ import { db, clientsTable } from "@workspace/db";
 import { GetDashboardQueryParams, GetDashboardResponse, GetGeographyQueryParams, GetGeographyResponse, GetJourneyQueryParams, GetJourneyResponse, GetMarketingQueryParams, GetMarketingResponse, GetUtmQueryParams, GetUtmResponse } from "@workspace/api-zod";
 import { addDaysToDateOnly, coerceDateQuery, dateRange, queryDateOnly, requireClient, saoPauloDateOnly, saoPauloDateOnlyEnd, saoPauloDateOnlyStart } from "../lib/httpQuery";
 import { cached } from "../lib/queryCache";
-import { fetchMetaMarketingData, upsertMetaCreatives } from "../services/meta-ads";
+import { MediaReadError, upsertMetaCreatives } from "../services/meta-ads";
 import {
   resolveVestiDataset,
   computeVestiWindow,
   computeVestiStateRevenue,
+  fetchVestiStateCoverage,
   fetchVestiOrderStatusBreakdown,
   fetchVestiAttributedCustomers,
   fetchVestiFunnel,
@@ -20,38 +21,91 @@ import {
   fetchVestiScaleData,
   fetchVestiMarketingData,
   fetchVestiUtmData,
-  fetchVestiMetaSpendFromBigQuery,
   type VestiFilters,
 } from "../services/vestiAnalytics";
+import {
+  fetchStoredAds,
+  fetchStoredAdsDaily,
+  fetchStoredCampaigns,
+  spendSeries,
+  toMetaAdMetric,
+  topCreativesFromStored,
+  totalSpend,
+  type StoredAd,
+  type StoredAdsDay,
+  type StoredCampaign,
+} from "../services/vesti-ads-stored";
 
-// Duplicado de propósito (mesmo padrão de routes/analytics.ts e
-// routes/clients.ts) — evita import circular controller↔routes.
-function getGlobalMetaAccessToken(fallback?: string | null): string | null {
-  return process.env.META_ADS_API_KEY ?? process.env.META_ACCESS_TOKEN ?? process.env.META_API_KEY ?? process.env.META_TOKEN ?? fallback ?? null;
+// Gasto de anúncios (Meta) do cliente Vesti: lido SÓ do dado guardado (BigQuery `data_ads_global.ads_insights_account`, coletado pelo sync),
+// nunca do Graph ao vivo (decisão de 19/10/2026; antes o ao vivo vinha primeiro e o guardado era só fallback quando vinha zero).
+// Ver services/vesti-ads-stored.ts. O dia de HOJE só aparece depois da próxima coleta.
+// Regra "indisponível não é zero" (conciliação de 21/10/2026): sem conta cadastrada = 0 (não há o que ler);
+// falha ou leitura incompleta do BigQuery = MediaReadError (HTTP 503 MEDIA_UNAVAILABLE), nunca R$ 0,00.
+async function loadStoredAds(
+  client: { metaAdAccountId?: string | null } | undefined,
+  dateFromOnly: string,
+  dateToOnly: string,
+): Promise<StoredAdsDay[]> {
+  const account = client?.metaAdAccountId;
+  if (!account) return [];
+  try {
+    return await cached(`vesti:ads-stored:${account}:${dateFromOnly}:${dateToOnly}`, VESTI_CACHE_TTL_MS, () =>
+      fetchStoredAdsDaily(account, dateFromOnly, dateToOnly),
+    );
+  } catch (err) {
+    console.warn("[vesti] gasto de anúncios guardado indisponível:", err);
+    throw new MediaReadError();
+  }
 }
 
-// Fallback de investimento Meta Ads (05/08/2026): a maioria dos clients
-// Vesti não tem token de API do Meta configurado (metaAdsApiKey), então a
-// chamada ao vivo no Graph API nunca acontece e o card fica zerado — mesmo
-// quando a marca tem campanha ativa. Só que o gasto real já existe
-// pré-ingerido no BigQuery (`data_ads_global.ads_insights_account`, outro
-// pipeline). Se a chamada ao vivo não trouxe nada mas o client tem
-// `metaAdAccountId` cadastrado, busca de lá em vez de deixar em zero.
+// Campanhas e anúncios do período, também só do dado guardado. Mesma regra do gasto: sem conta = lista vazia; falha de leitura = 503.
+async function loadStoredList<T>(
+  kind: "campaigns" | "ads",
+  client: { metaAdAccountId?: string | null } | undefined,
+  dateFromOnly: string,
+  dateToOnly: string,
+  fetcher: (account: string, from: string, to: string) => Promise<T[]>,
+): Promise<T[]> {
+  const account = client?.metaAdAccountId;
+  if (!account) return [];
+  try {
+    return await cached(`vesti:ads-stored-${kind}:${account}:${dateFromOnly}:${dateToOnly}`, VESTI_CACHE_TTL_MS, () => fetcher(account, dateFromOnly, dateToOnly));
+  } catch (err) {
+    console.warn(`[vesti] ${kind === "ads" ? "anúncios" : "campanhas"} guardados indisponíveis:`, err);
+    throw new MediaReadError();
+  }
+}
+
+const loadStoredCampaigns = (client: { metaAdAccountId?: string | null } | undefined, from: string, to: string): Promise<StoredCampaign[]> =>
+  loadStoredList("campaigns", client, from, to, fetchStoredCampaigns);
+
+const loadStoredAdList = (client: { metaAdAccountId?: string | null } | undefined, from: string, to: string): Promise<StoredAd[]> =>
+  loadStoredList("ads", client, from, to, fetchStoredAds);
+
+// A tabela `creatives` (Postgres) alimenta a lista de clientes e o relatório do portfólio; continua sendo atualizada ao abrir estas telas,
+// agora a partir do dado guardado (antes, do Meta ao vivo). Melhor esforço: nunca derruba a tela. Dívida conhecida: escrever ao ler.
+async function syncCreativesCache(
+  clientId: string,
+  client: { metaAdAccountId?: string | null } | undefined,
+  dateFromOnly: string,
+  dateToOnly: string,
+  ads?: StoredAd[],
+): Promise<void> {
+  if (!client?.metaAdAccountId) return;
+  try {
+    const list = ads ?? (await loadStoredAdList(client, dateFromOnly, dateToOnly));
+    await upsertMetaCreatives(clientId, list.map((ad) => toMetaAdMetric(ad, dateFromOnly, dateToOnly)));
+  } catch (err) {
+    console.warn("[vesti] Creative cache write failed:", err);
+  }
+}
+
 async function resolveVestiInvestment(
   client: { metaAdAccountId?: string | null } | undefined,
   dateFromOnly: string,
   dateToOnly: string,
-  liveSpend: number,
 ): Promise<number> {
-  if (liveSpend > 0) return liveSpend;
-  if (!client?.metaAdAccountId) return 0;
-  try {
-    const bq = await fetchVestiMetaSpendFromBigQuery(client.metaAdAccountId, dateFromOnly, dateToOnly);
-    return bq.spend;
-  } catch (err) {
-    console.warn("[vesti] Meta spend BigQuery fallback failed:", err);
-    return 0;
-  }
+  return totalSpend(await loadStoredAds(client, dateFromOnly, dateToOnly));
 }
 
 function pctChange(current: number, previous: number): number | null {
@@ -117,13 +171,14 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
   const { from, to } = dateRange(parsed.data.dateFrom, parsed.data.dateTo);
   const dateFromOnly = queryDateOnly(rawQuery, "dateFrom", from);
   const dateToOnly = queryDateOnly(rawQuery, "dateTo", to);
-  const { category, sellerId, channel, color, compare } = parsed.data;
+  const { category, sellerId, channel, color, state, compare } = parsed.data;
 
   const vestiFilters: VestiFilters = {
     category: category || undefined,
     sellerId: sellerId || undefined,
     channel: channel || undefined,
     color: color || undefined,
+    state: state?.trim() || undefined,
   };
   const filterKey = JSON.stringify(vestiFilters);
 
@@ -192,9 +247,20 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
         ]
       : [];
 
+  // Cobertura de estado dos pedidos pagos (aviso do filtro Estado na tela). Nunca derruba o painel: falhou = sem aviso.
+  const stateCoverage = await cached(
+    `vesti:state-coverage:${dataset}:${dateFromOnly}:${dateToOnly}`,
+    VESTI_CACHE_TTL_MS,
+    () => fetchVestiStateCoverage(dataset, dateFromOnly, dateToOnly).catch((err) => {
+      console.warn("[vesti] cobertura de estado indisponível:", err instanceof Error ? err.message : err);
+      return null;
+    }),
+  );
+
   res.json(
     GetDashboardResponse.parse({
       kpis: vestiCurrent.kpis,
+      stateCoverage,
       revenueOverTime: vestiCurrent.dailyRevenue,
       ordersOverTime: vestiCurrent.dailyOrders,
       leadsOverTime: vestiCurrent.dailyLeads,
@@ -257,23 +323,13 @@ export async function getCampaignCustomers(req: Request, res: Response): Promise
     () => fetchVestiAttributedCustomers(dataset, dateFromOnly, dateToOnly),
   );
 
-  // Investimento (Meta Ads) — mesmo padrão do getScale/getMarketing: só
-  // busca se o client tiver conta de anúncio configurada, senão fica 0
+  // Investimento (Meta Ads): só do dado guardado, e só se o client tiver conta de anúncio configurada, senão fica 0
   // (não é bug, é cliente sem Meta Ads ligado ainda).
   const [client] = await db
-    .select({ metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .select({ metaAdAccountId: clientsTable.metaAdAccountId })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
-  const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
-  const metaCurrent =
-    metaAccessToken && client?.metaAdAccountId
-      ? await fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: dateFromOnly, until: dateToOnly }).catch((err) => {
-          console.warn("[vesti-campaign-customers] Meta spend fetch failed:", err);
-          return null;
-        })
-      : null;
-  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
-  const investment = await resolveVestiInvestment(client, dateFromOnly, dateToOnly, metaCurrent?.summary.spend ?? 0);
+  const investment = await resolveVestiInvestment(client, dateFromOnly, dateToOnly);
 
   let rows = attributed.map((c, index) => {
     const touch = { source: "UP Agency", medium: null, campaign: null, occurredAt: c.firstTouchAt };
@@ -423,7 +479,7 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
   }
 
   const [client] = await db
-    .select({ name: clientsTable.name, metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .select({ name: clientsTable.name, metaAdAccountId: clientsTable.metaAdAccountId })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
 
@@ -437,30 +493,15 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
   const prevDateFromOnly = saoPauloDateOnly(prevFrom);
   const prevDateToOnly = saoPauloDateOnly(prevTo);
 
-  const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
-  const [metaCurrent, metaPrev] = await Promise.all([
-    metaAccessToken && client?.metaAdAccountId
-      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: dateFromOnly, until: dateToOnly }).catch((err) => {
-          console.warn("[vesti-daily-report] Meta current fetch failed:", err);
-          return null;
-        })
-      : Promise.resolve(null),
-    metaAccessToken && client?.metaAdAccountId
-      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: prevDateFromOnly, until: prevDateToOnly }).catch((err) => {
-          console.warn("[vesti-daily-report] Meta previous fetch failed:", err);
-          return null;
-        })
-      : Promise.resolve(null),
-  ]);
-  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
-
-  const [currentWindow, prevWindow, breakdown, currentMediaSpend, prevMediaSpend] = await Promise.all([
+  const [currentWindow, prevWindow, breakdown, currentMediaSpend, prevMediaSpend, storedCampaigns] = await Promise.all([
     cached(`vesti:window:${dataset}:${dateFromOnly}:${dateToOnly}:{}`, 5 * 60 * 1000, () => computeVestiWindow(dataset, dateFromOnly, dateToOnly, {}, false)),
     cached(`vesti:window:${dataset}:${prevDateFromOnly}:${prevDateToOnly}:{}`, 5 * 60 * 1000, () => computeVestiWindow(dataset, prevDateFromOnly, prevDateToOnly, {}, false)),
     cached(`vesti:daily-breakdown:${dataset}:${dateFromOnly}:${dateToOnly}`, 5 * 60 * 1000, () => fetchVestiDailyBreakdown(dataset, dateFromOnly, dateToOnly)),
-    resolveVestiInvestment(client, dateFromOnly, dateToOnly, metaCurrent?.summary.spend ?? 0),
-    resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly, metaPrev?.summary.spend ?? 0),
+    resolveVestiInvestment(client, dateFromOnly, dateToOnly),
+    resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly).catch(() => null),
+    loadStoredCampaigns(client, dateFromOnly, dateToOnly),
   ]);
+  await syncCreativesCache(clientId, client, dateFromOnly, dateToOnly);
 
   const kpis = {
     approvedRevenue: currentWindow.kpis.revenue,
@@ -470,7 +511,7 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
     costPerPurchase: currentWindow.kpis.orders > 0 ? currentMediaSpend / currentWindow.kpis.orders : 0,
     roas: currentMediaSpend > 0 ? currentWindow.kpis.revenue / currentMediaSpend : 0,
   };
-  const prevKpis = {
+  const prevKpis = prevMediaSpend === null ? null : {
     approvedRevenue: prevWindow.kpis.revenue,
     sales: prevWindow.kpis.orders,
     avgTicket: prevWindow.kpis.avgTicket,
@@ -479,15 +520,15 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
     roas: prevMediaSpend > 0 ? prevWindow.kpis.revenue / prevMediaSpend : 0,
   };
 
-  const campaigns = (metaCurrent?.campaigns ?? [])
+  const campaigns = storedCampaigns
     .map((campaign) => ({
       id: campaign.id,
       name: campaign.name,
       spend: campaign.spend,
       purchases: campaign.purchases,
       revenue: campaign.revenue,
-      roas: campaign.roas ?? (campaign.spend > 0 ? campaign.revenue / campaign.spend : 0),
-      cpa: campaign.cpa ?? (campaign.purchases > 0 ? campaign.spend / campaign.purchases : 0),
+      roas: campaign.spend > 0 ? campaign.revenue / campaign.spend : 0,
+      cpa: campaign.purchases > 0 ? campaign.spend / campaign.purchases : 0,
       clicks: campaign.clicks,
       impressions: campaign.impressions,
     }))
@@ -511,12 +552,12 @@ export async function getDailyReport(req: Request, res: Response): Promise<void>
     kpis,
     prevKpis,
     changes: {
-      approvedRevenue: pctChange(kpis.approvedRevenue, prevKpis.approvedRevenue),
-      sales: pctChange(kpis.sales, prevKpis.sales),
-      avgTicket: pctChange(kpis.avgTicket, prevKpis.avgTicket),
-      costPerPurchase: pctChange(kpis.costPerPurchase, prevKpis.costPerPurchase),
-      mediaSpend: pctChange(kpis.mediaSpend, prevKpis.mediaSpend),
-      roas: pctChange(kpis.roas, prevKpis.roas),
+      approvedRevenue: prevKpis ? pctChange(kpis.approvedRevenue, prevKpis.approvedRevenue) : null,
+      sales: prevKpis ? pctChange(kpis.sales, prevKpis.sales) : null,
+      avgTicket: prevKpis ? pctChange(kpis.avgTicket, prevKpis.avgTicket) : null,
+      costPerPurchase: prevKpis ? pctChange(kpis.costPerPurchase, prevKpis.costPerPurchase) : null,
+      mediaSpend: prevKpis ? pctChange(kpis.mediaSpend, prevKpis.mediaSpend) : null,
+      roas: prevKpis ? pctChange(kpis.roas, prevKpis.roas) : null,
     },
     campaigns,
     products: breakdown.products,
@@ -670,7 +711,7 @@ export async function getScale(req: Request, res: Response): Promise<void> {
   }
 
   const [client] = await db
-    .select({ name: clientsTable.name, metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .select({ name: clientsTable.name, metaAdAccountId: clientsTable.metaAdAccountId })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
 
@@ -704,26 +745,9 @@ export async function getScale(req: Request, res: Response): Promise<void> {
   const rollingAvgTicket = rollingOrders > 0 ? rollingRevenue / rollingOrders : 0;
   const rollingMonthlyTurnoverPct = scaleData.currentSalesPower > 0 ? (rollingMonthlyRevenue / scaleData.currentSalesPower) * 100 : 0;
 
-  const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
-  const [metaCurrent, metaRolling] = await Promise.all([
-    metaAccessToken && client?.metaAdAccountId
-      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: dateFromOnly, until: dateToOnly }).catch((err) => {
-          console.warn("[vesti-scale] Meta current fetch failed:", err);
-          return null;
-        })
-      : Promise.resolve(null),
-    metaAccessToken && client?.metaAdAccountId
-      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: rollingDateFromOnly, until: rollingDateToOnly }).catch((err) => {
-          console.warn("[vesti-scale] Meta rolling fetch failed:", err);
-          return null;
-        })
-      : Promise.resolve(null),
-  ]);
-  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
-
   const [mediaSpend, rollingMediaSpend] = await Promise.all([
-    resolveVestiInvestment(client, dateFromOnly, dateToOnly, metaCurrent?.summary.spend ?? 0),
-    resolveVestiInvestment(client, rollingDateFromOnly, rollingDateToOnly, metaRolling?.summary.spend ?? 0),
+    resolveVestiInvestment(client, dateFromOnly, dateToOnly),
+    resolveVestiInvestment(client, rollingDateFromOnly, rollingDateToOnly),
   ]);
   const monthlyMediaSpend = mediaSpend / months;
   const rollingMonthlyMediaSpend = rollingMediaSpend / rollingMonths;
@@ -859,7 +883,7 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
   }
 
   const [client] = await db
-    .select({ metaAdsApiKey: clientsTable.metaAdsApiKey, metaAdAccountId: clientsTable.metaAdAccountId })
+    .select({ metaAdAccountId: clientsTable.metaAdAccountId })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
 
@@ -878,27 +902,13 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
     cached(`vesti:marketing:${dataset}:${prevDateFromOnly}:${prevDateToOnly}`, 5 * 60 * 1000, () => fetchVestiMarketingData(dataset, prevDateFromOnly, prevDateToOnly)),
   ]);
 
-  const metaAccessToken = getGlobalMetaAccessToken(client?.metaAdsApiKey);
-  const [metaCurrent, metaPrev] = await Promise.all([
-    metaAccessToken && client?.metaAdAccountId
-      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: dateFromOnly, until: dateToOnly }).catch((err) => {
-          console.warn("[vesti-marketing] Meta current fetch failed:", err);
-          return null;
-        })
-      : Promise.resolve(null),
-    metaAccessToken && client?.metaAdAccountId
-      ? fetchMetaMarketingData({ accessToken: metaAccessToken, adAccountId: client.metaAdAccountId, since: prevDateFromOnly, until: prevDateToOnly }).catch((err) => {
-          console.warn("[vesti-marketing] Meta previous fetch failed:", err);
-          return null;
-        })
-      : Promise.resolve(null),
+  const [storedAdsCurrent, storedAdList, prevSpend] = await Promise.all([
+    loadStoredAds(client, dateFromOnly, dateToOnly),
+    loadStoredAdList(client, dateFromOnly, dateToOnly),
+    resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly).catch(() => null),
   ]);
-  if (metaCurrent) await upsertMetaCreatives(clientId, metaCurrent.ads);
-
-  const [spend, prevSpend] = await Promise.all([
-    resolveVestiInvestment(client, dateFromOnly, dateToOnly, metaCurrent?.summary.spend ?? 0),
-    resolveVestiInvestment(client, prevDateFromOnly, prevDateToOnly, metaPrev?.summary.spend ?? 0),
-  ]);
+  const spend = totalSpend(storedAdsCurrent);
+  await syncCreativesCache(clientId, client, dateFromOnly, dateToOnly, storedAdList);
 
   const buildKpis = (channel: typeof channelData, spend: number) => {
     const roas = spend > 0 ? channel.totalAttributedRevenue / spend : 0;
@@ -916,39 +926,21 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
     };
   };
 
-  const allAds = metaCurrent?.ads ?? [];
+  const allAds = storedAdList.map((ad) => toMetaAdMetric(ad, dateFromOnly, dateToOnly));
   const filteredAds = utmSource ? allAds.filter((ad) => ad.name.toLowerCase().includes(utmSource.toLowerCase())) : allAds;
   const creativesOffset = (creativesPage - 1) * creativesPageSize;
   const pagedAds = filteredAds.slice(creativesOffset, creativesOffset + creativesPageSize);
 
-  // Imagem do criativo (05/08/2026): `fetchMetaMarketingData` já busca a
-  // imagem real via uma chamada extra no Graph API, mas só pros top-N por
-  // métrica (`metaCurrent.topCreatives` — evita 1 chamada por anúncio,
-  // que seria caro/lento pra lista inteira). O `creatives` aqui embaixo
-  // sempre mandava `imageUrl: null` fixo, mesmo pros anúncios que JÁ
-  // tinham imagem buscada. Reaproveita o que já foi buscado em vez de
-  // não usar de propósito.
-  const creativeImageById = new Map<string, string | null>();
-  for (const group of [metaCurrent?.topCreatives?.ctr, metaCurrent?.topCreatives?.cpl, metaCurrent?.topCreatives?.leads]) {
-    for (const creative of group ?? []) {
-      if (!creativeImageById.has(creative.id)) {
-        creativeImageById.set(creative.id, creative.imageUrl ?? creative.thumbnailUrl ?? null);
-      }
-    }
-  }
-
-  const spendByDay = new Map<string, number>();
-  for (const point of metaCurrent?.daily ?? []) {
-    spendByDay.set(point.date, (spendByDay.get(point.date) ?? 0) + point.spend);
-  }
+  // Imagem do criativo: a miniatura do anúncio vem guardada (`ads_details.thumbnail_url`) para TODOS os anúncios, não só para o top.
+  const creativeImageById = new Map<string, string | null>(storedAdList.map((ad) => [ad.id, ad.thumbnailUrl]));
 
   res.json(
     GetMarketingResponse.parse({
       kpis: buildKpis(channelData, spend),
-      prevKpis: buildKpis(prevChannelData, prevSpend),
+      prevKpis: prevSpend === null ? null : buildKpis(prevChannelData, prevSpend),
       leadsOverTime: channelData.leadsOverTime,
       revenueOverTime: channelData.revenueOverTime,
-      spendOverTime: Array.from(spendByDay.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value })),
+      spendOverTime: spendSeries(storedAdsCurrent),
       creatives: pagedAds.map((ad) => ({
         id: ad.id,
         name: ad.name,
@@ -981,7 +973,7 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
       // com o caminho UpZero (analytics.ts) -- quebrava Marketing pra
       // QUALQUER client Vesti. Mesmo default usado lá quando não tem Meta
       // Ads conectado.
-      topCreatives: metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] },
+      topCreatives: topCreativesFromStored(storedAdList),
       stateBreakdown: [],
       ageBreakdown: [],
       creativesTotal: filteredAds.length,

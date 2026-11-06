@@ -900,9 +900,13 @@ export function AppLayout({ children }: AppLayoutProps) {
       : navTitleKeys[location]
         ? t(navTitleKeys[location], tx(meta.title))
         : tx(meta.title));
+  // Visão geral: a linha de filtros tem só Vendedora e Estado (FilterBar variant="overview"); o período fica no seletor do topo, igual às outras
+  // páginas. Os botões 7/30/90 dias não aparecem aqui (o seletor do topo já tem essas opções e mais).
+  const isOverviewRoute = location === "/" || location === "/dashboard";
+  const paidOnlyText = language === "pt" ? "só pedidos pagos" : language === "ko" ? "결제 완료 주문만" : "paid orders only";
   const subtitleText =
     location === "/" || location === "/dashboard"
-      ? `${new Intl.DateTimeFormat(language === "pt" ? "pt-BR" : language === "ko" ? "ko-KR" : "en-US", { weekday: "long", day: "numeric", month: "long" }).format(new Date())} · ${DESIGN_DEMO ? "prévia visual" : t("page.dashboard.live", "live data")}`
+      ? `${new Intl.DateTimeFormat(language === "pt" ? "pt-BR" : language === "ko" ? "ko-KR" : "en-US", { weekday: "long", day: "numeric", month: "long" }).format(new Date())} · ${DESIGN_DEMO ? "prévia visual" : t("page.dashboard.live", "live data")} · ${paidOnlyText}`
       : pageTranslationKey
         ? t(`page.${pageTranslationKey}.subtitle`, tx(meta.subtitle))
         : tx(meta.subtitle);
@@ -1646,9 +1650,9 @@ export function AppLayout({ children }: AppLayoutProps) {
             </p>
           )}
           {(meta.hasDateRange || meta.hasFilterBar) && (
-            <div className="up-control-panel up-glass-panel no-print">
-              <div className="up-operation-row">
-                {meta.hasDateRange && (
+            <div className={`up-control-panel up-glass-panel no-print${isOverviewRoute ? " up-control-panel--single" : ""}`}>
+              <div className="up-operation-row" hidden={isOverviewRoute}>
+                {meta.hasDateRange && !isOverviewRoute && (
                   <div
                     className="up-period-chips"
                     role="group"
@@ -1688,7 +1692,9 @@ export function AppLayout({ children }: AppLayoutProps) {
                   </div>
                 )}
               </div>
-              {meta.hasFilterBar && <FilterBar />}
+              {meta.hasFilterBar && (
+                <FilterBar variant={isOverviewRoute ? "overview" : "default"} />
+              )}
             </div>
           )}
           <div className="up-page-content" aria-busy={isGlobalSwitchLoading || activeDataLoads > 0}>

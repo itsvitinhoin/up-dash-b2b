@@ -10,6 +10,48 @@ on:
   workflow_dispatch:
 
 jobs:
+  braavo-transactional:
+    name: Braavo B2C transactional extraction
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: braavo-transactional
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Continue Braavo imports in durable batches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_RUN_ID: ${{ github.run_id }}
+        run: |
+          offset=0
+          total_failed=0
+          while true; do
+            response_file="$(mktemp)"
+            status_code=$(curl --show-error --silent --max-time 65 --output "$response_file" --write-out "%{http_code}" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Repository: ${GH_REPOSITORY}" \
+              -H "X-GitHub-Run-Id: ${GH_RUN_ID}" \
+              "https://www.grupoup-dash.com.br/api/cron/extractions/braavo?offset=${offset}")
+            node -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!p.result || !Number.isInteger(p.result.clients) || !Number.isInteger(p.result.nextOffset)) process.exit(1);' "$response_file"
+            cat "$response_file"
+            processed=$(node -e 'const p=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); console.log(p.result.clients)' "$response_file")
+            next_offset=$(node -e 'const p=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); console.log(p.result.nextOffset)' "$response_file")
+            if [ "$status_code" -ge 400 ]; then
+              total_failed=$((total_failed + 1))
+              offset=$((offset + 1))
+            else
+              offset="$next_offset"
+            fi
+            rm -f "$response_file"
+            if [ "$processed" = "0" ]; then break; fi
+            sleep 1
+          done
+          if [ "$total_failed" -gt 0 ]; then exit 1; fi
+
   hourly:
     name: Hourly analytics and Meta extraction
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 * * * *'

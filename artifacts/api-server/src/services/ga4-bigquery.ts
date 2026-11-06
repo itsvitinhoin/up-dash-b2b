@@ -8,6 +8,7 @@ import { BIGQUERY_PROJECT, runQuery, type BigQueryLike } from "./excluded-client
 import {
   GA4_BQ_DAILY_TABLE,
   GA4_BQ_DATASET,
+  GA4_BQ_DEFAULT_DATASET,
   GA4_BQ_PRODUCTS_TABLE,
   GA4_BQ_PRODUCT_BATCH,
   buildGa4DailyBqRows,
@@ -54,8 +55,12 @@ CLUSTER BY client_id`;
 // Criar as tabelas uma vez por processo basta: o job roda de hora em hora, cada rodada e um processo novo.
 const ensured = new WeakSet<object>();
 
+// Dataset de teste (GA4_BQ_DATASET) ainda nao existe: cria. O up_global padrao ja existe e nao e criado por aqui.
+export const ENSURE_GA4_DATASET_QUERY = `CREATE SCHEMA IF NOT EXISTS \`${BIGQUERY_PROJECT}.${GA4_BQ_DATASET}\` OPTIONS (location = 'US')`;
+
 export async function ensureGa4Tables(bq: BigQueryLike): Promise<void> {
   if (ensured.has(bq)) return;
+  if (GA4_BQ_DATASET !== GA4_BQ_DEFAULT_DATASET) await runQuery(bq, { query: ENSURE_GA4_DATASET_QUERY });
   await runQuery(bq, { query: ENSURE_GA4_DAILY_QUERY });
   await runQuery(bq, { query: ENSURE_GA4_PRODUCTS_QUERY });
   ensured.add(bq);
