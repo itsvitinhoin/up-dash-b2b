@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
-import { and, desc, eq, gt, inArray, like, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, like, min, sql } from "drizzle-orm";
 import {
   db,
   clientsTable,
@@ -397,6 +397,54 @@ export async function persistSku(
       set: values,
     });
 }
+/**
+ * Totais de TODOS os clientes e produtos da loja numa só passada (agregação em
+ * conjunto). Usado ao fim da carga completa, que adia esses recálculos para não
+ * refazê-los a cada um dos ~64 mil pedidos. Mesmo resultado dos totais por pedido.
+ */
+async function refreshAllEntityTotals(tx: Tx, clientId: string) {
+  await tx.execute(sql`
+    UPDATE customers c SET total_orders = COALESCE(s.n, 0), total_spent = COALESCE(s.spent, 0),
+      first_purchase_at = s.first_at, last_purchase_at = s.last_at
+    FROM (
+      SELECT c2.id, a.n, a.spent, a.first_at, a.last_at
+      FROM customers c2
+      LEFT JOIN (
+        SELECT customer_id, count(*)::int AS n, sum(fulfilled_amount) AS spent,
+          min(created_at) AS first_at, max(created_at) AS last_at
+        FROM orders
+        WHERE client_id = ${clientId} AND status IN ('APPROVED','SHIPPED','DELIVERED')
+        GROUP BY customer_id
+      ) a ON a.customer_id = c2.id
+      WHERE c2.client_id = ${clientId}
+    ) s
+    WHERE c.client_id = ${clientId} AND c.id = s.id
+  `);
+  await tx.execute(sql`
+    UPDATE products p SET total_sold = COALESCE(s.total_sold, 0), total_revenue = COALESCE(s.total_revenue, 0)
+    FROM (SELECT target.id,
+        sum(oi.fulfilled_quantity) FILTER (WHERE o.status IN ('APPROVED','SHIPPED','DELIVERED'))::int AS total_sold,
+        sum(oi.fulfilled_quantity * oi.price_at_sale) FILTER (WHERE o.status IN ('APPROVED','SHIPPED','DELIVERED')) AS total_revenue
+      FROM products target
+      LEFT JOIN order_items oi ON oi.product_id = target.id
+      LEFT JOIN orders o ON o.id = oi.order_id AND o.client_id = ${clientId}
+      WHERE target.client_id = ${clientId}
+      GROUP BY target.id) s
+    WHERE p.client_id = ${clientId} AND p.id = s.id
+  `);
+}
+async function consolidateBraavoAggregates(clientId: string, leaseId: string) {
+  await db.transaction(async (tx) => {
+    await assertLease(tx, clientId, leaseId);
+    await refreshAllEntityTotals(tx, clientId);
+  });
+  const [{ first }] = await db
+    .select({ first: min(ordersTable.createdAt) })
+    .from(ordersTable)
+    .where(and(eq(ordersTable.clientId, clientId), like(ordersTable.externalId, "braavo:%")));
+  if (first)
+    await refreshDailyClientMetrics({ clientId, from: first, to: new Date() });
+}
 async function refreshEntityTotals(
   tx: Tx,
   clientId: string,
@@ -432,6 +480,8 @@ async function persistOrder(
   leaseId: string,
   row: BraavoRecord,
   cache: Map<string, BraavoRecord>,
+  /** Carga completa: totais e métricas do dia são recalculados uma vez no fim. */
+  deferAggregates = false,
 ) {
   const normalized = normalizeBraavoOrder(row);
   const { items, paid, ...values } = normalized;
@@ -576,13 +626,15 @@ async function persistOrder(
             eq(eventsTable.externalSourceId, eventId),
           ),
         );
-    await refreshEntityTotals(
-      tx,
-      clientId,
-      [...new Set([customerId, ...(previous ? [previous.customerId] : [])])],
-      [...productIds],
-    );
+    if (!deferAggregates)
+      await refreshEntityTotals(
+        tx,
+        clientId,
+        [...new Set([customerId, ...(previous ? [previous.customerId] : [])])],
+        [...productIds],
+      );
   });
+  if (deferAggregates) return;
   // Refresh the original creation day, even for a payment/cancellation years later.
   await refreshDailyClientMetrics({
     clientId,
@@ -799,7 +851,7 @@ async function runPage(
         ? { ...row, produtos: itemsByOrder.get(id) ?? [] }
         : await api.one("/pedidos/buscar/id", row.id);
       await importRecord(clientId, "orders", id, counter, () =>
-        persistOrder(clientId, leaseId, detail, cache),
+        persistOrder(clientId, leaseId, detail, cache, bulkOrders),
       );
       await checkpointRecord(id);
       continue;
@@ -854,12 +906,15 @@ async function runPage(
     // before this checkpoint safely replays the idempotent write, never skips it.
     await checkpointRecord(id);
   }
-  if (bulkOrders && page.complete)
+  if (bulkOrders && page.complete) {
+    // Última página da carga completa: agora sim os totais e as métricas por dia.
+    await consolidateBraavoAggregates(clientId, leaseId);
     await db
       .delete(catalog)
       .where(
         and(eq(catalog.clientId, clientId), eq(catalog.kind, "order_items")),
       );
+  }
   if (cursor.phase === "skus" && page.complete) {
     await db.transaction(async (tx) => {
       await assertLease(tx, clientId, leaseId);
