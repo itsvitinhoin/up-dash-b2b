@@ -602,17 +602,14 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
       email: "changed@example.invalid",
     });
     customers.push({ ...customers[0], id: 13 });
-    for (let i = 0; i < 20; i++) {
-      const result = await sync.runBraavoBatch("shop-a", "manual");
-      if (result.status === "failed") {
-        expect(result.message).toContain("Conflito de e-mail");
-        expect((await snapshot()).customers).toHaveLength(1);
-        return;
-      }
-    }
-    throw new Error(
-      "A collision between customer identities was not rejected.",
-    );
+    // O conflito é de dado de UM cliente: o ciclo termina, as contas não se fundem e o
+    // caso fica registrado para revisão (antes derrubava a sincronização da loja toda).
+    await cycle();
+    expect((await snapshot()).customers).toHaveLength(1);
+    const status = await sync.getBraavoSyncStatus("shop-a");
+    expect(status.skippedRecords.total).toBe(1);
+    expect(status.skippedRecords.recent[0]).toMatchObject({ phase: "customers", externalId: "13" });
+    expect(status.skippedRecords.recent[0].reason).toContain("Conflito de e-mail");
   }, 30000);
 
   it("incremental cycle reads only SKUs changed in the window and keeps the untouched ones active", async () => {

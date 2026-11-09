@@ -326,10 +326,13 @@ async function persistCustomer(
       // não informa e-mail, sem fundir duas contas só pelo e-mail.
       normalized.email = `braavo-${braavoId(row.id)}@unknown.local`;
     } else
-    throw new BraavoError(
-      "Conflito de e-mail entre clientes distintos; revise o cadastro na Braavo.",
-      "CUSTOMER_IDENTITY_CONFLICT",
-    );
+      // Dado desta loja (duas contas com o mesmo e-mail), não falha de integração:
+      // o cliente é registrado em braavo_record_issues, as contas continuam separadas
+      // (nada é fundido) e o resto da sincronização segue.
+      throw new BraavoRecordError(
+        "Conflito de e-mail entre clientes distintos; revise o cadastro na Braavo.",
+        "CUSTOMER_IDENTITY_CONFLICT",
+      );
   }
   const { createdAt, registrationStatus, ...update } = normalized;
   const [customer] = await tx
