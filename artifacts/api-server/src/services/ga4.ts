@@ -475,7 +475,9 @@ export interface Ga4TrafficDay {
 // Origem do trafego POR DIA (canal, origem, midia e campanha da SESSAO) com as vendas de cada uma: o que liga anuncio -> visita ->
 // compra. So vai para o BigQuery (up_global.ga4_traffic_daily). A combinacao de campos foi conferida em 09/11/2026 em 3 propriedades
 // (400 dias): so metricas que o Google aceita com dimensoes de sessao, e compras/receita fecham com o diario; as visitas ficam a menos
-// de 1% (o Google soma por sessao, o diario por dia). Pagina com offset porque 400 dias x origens passam de 10 mil linhas.
+// de 1% (o Google soma por sessao, o diario por dia). Excecao conhecida: com a CAMPANHA no meio uma sessao pode cair em mais de uma
+// campanha e a soma de visitas passa do total (Sline Vesti: +6,5%; sem a campanha o desvio fica em +0,4%). Pagina com offset porque
+// 400 dias x origens passam de 10 mil linhas.
 export async function fetchGa4TrafficDaily(params: {
   propertyId?: string | null;
   dateFrom: string;
@@ -526,8 +528,20 @@ export async function fetchGa4TrafficDaily(params: {
         purchases: metricValue(row, 5),
         purchaseRevenue: metricValue(row, 6),
       };
-      // Linha sem nada medido nao diz nada: o GA4 as devolve em combinacoes raras.
-      if (day.sessions + day.totalUsers + day.addToCarts + day.checkouts + day.purchases + day.purchaseRevenue <= 0) continue;
+      // Linha sem nada medido nao diz nada: o GA4 as devolve em combinacoes raras. So descarta se TODAS as metricas forem zero. Somar e
+      // comparar com zero descartava tambem a linha de estorno (receita negativa, ex.: R$ -3.048 com 16 sessoes): na Lila Rosa isso
+      // tirou 395 linhas, 7,4 mil sessoes e 184 compras e deixou a receita 11% acima da real (conferido contra o GA4 em 09/11/2026).
+      if (
+        day.sessions === 0 &&
+        day.totalUsers === 0 &&
+        day.engagedSessions === 0 &&
+        day.addToCarts === 0 &&
+        day.checkouts === 0 &&
+        day.purchases === 0 &&
+        day.purchaseRevenue === 0
+      ) {
+        continue;
+      }
       out.push(day);
     }
     if (rows.length < PAGE) break;

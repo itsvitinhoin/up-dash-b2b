@@ -535,6 +535,17 @@ describe("buildGa4TrafficBqRows", () => {
     expect(row.sessions).toBe(0);
     expect(row.purchase_revenue).toBe(10.46);
   });
+
+  it("receita negativa (estorno) é mantida e abate a venda da mesma chave", () => {
+    const rows = buildGa4TrafficBqRows(client, [
+      trafficDay("2026-11-05", "google", "cpc", "Marca", 10, 2, 300),
+      trafficDay("2026-11-05", "google", "cpc", "Marca", 0, 0, -120.5),
+      trafficDay("2026-11-06", "(direct)", "(none)", "(direct)", 16, 0, -3048),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ sessions: 10, purchases: 2, purchase_revenue: 179.5 });
+    expect(rows[1]).toMatchObject({ sessions: 16, purchase_revenue: -3048 });
+  });
 });
 
 describe("replaceGa4Traffic", () => {

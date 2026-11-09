@@ -241,8 +241,18 @@ Como funciona e o que lembrar:
   ~9,4 s por tabela e cliente, medido). Com a origem do tráfego a rodada horária foi de ~6,5 para ~10 min num limite de 15 (o job é
   sequencial: quanto mais clientes, mais tempo). O `MERGE` leva ~2,8 s. O mesmo vale para os produtos. Se um cliente passar do limite
   de linhas do lote numa rodada curta, ele cai sozinho no caminho longo.
-- **Somas por origem não fecham 100% com a tabela diária:** compras e receita fecham; sessões e carrinho podem diferir até ~1% (o Google
-  soma por sessão, o diário por dia). `total_users` **não** é aditivo entre linhas.
+- **Somas por origem não fecham 100% com a tabela diária:** compras e receita fecham **exatamente** (conferido ao vivo na Lila Rosa:
+  17.634 compras e R$ 3.449.999 nos dois); sessões e carrinho podem diferir até ~1% (o Google soma por sessão, o diário por dia).
+  `total_users` **não** é aditivo entre linhas. Receita pode ser **negativa** numa linha (estorno atribuído àquela origem): é dado
+  real e entra na soma.
+- **Exceção conhecida, a campanha:** o Google pode contar a mesma sessão em mais de uma campanha. Na Sline Vesti a soma de sessões por
+  dia, campanha incluída, passa do total em 6,5% (dias de agosto: +15 a +20%); sem a campanha o desvio é de +0,4% (medido ao vivo em
+  09/11). Para total de visitas use `ga4_daily`; por campanha, leia como "sessões em que a campanha apareceu". Compras e receita não sofrem.
+- **Correção de 09/11 (primeira versão perdia estornos):** o filtro de "linha sem nada medido" somava as métricas e descartava a linha
+  quando dava zero ou menos; linha de estorno (ex.: 16 sessões e R$ -3.048) sumia. Na Lila Rosa: 395 linhas, 7,4 mil sessões e 184
+  compras fora e receita 11% acima da real. Agora só some a linha em que TODAS as métricas são zero. As linhas gravadas antes da
+  correção só se refazem com um reprocesso largo (execução manual de `ga4_daily` com `LOOKBACK_DAYS=400`); a rodada horária relê só os
+  últimos dias.
 - A exclusão definitiva de cliente (`deleteGa4Rows`) apaga as **três** tabelas.
 - **Ainda não vigiado pelo alerta de dado parado** (`docs/ga4-alerta.md`): se a origem do tráfego falhar sozinha, só aparece no log
   (`[ga4-daily] origem do trafego nao gravada`) e em `sync_jobs.result.trafficError`. Próximo passo possível: regra de cobertura.

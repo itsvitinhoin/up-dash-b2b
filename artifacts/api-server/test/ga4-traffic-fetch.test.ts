@@ -127,6 +127,35 @@ describe("fetchGa4TrafficDaily (origem do tráfego por dia)", () => {
     expect(rows?.[0].source).toBe("google");
   });
 
+  it("mantém a linha de ESTORNO (receita negativa) e a visita sem compra: só some a linha em que tudo é zero", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementationOnce(async () => token())
+        .mockImplementationOnce(async () =>
+          json({
+            rows: [
+              // 16 sessoes e R$ -3.048 (estorno atribuido a essa origem): a soma das metricas e negativa, mas e dado real
+              row("20251008", "Direct", "(not set)", "(not set)", "(not set)", [16, 17, 9, 0, 0, 0, -3048]),
+              // estorno num dia sem visita nenhuma dessa origem
+              row("20251009", "Paid Social", "facebook", "cpm", "Remarketing", [0, 0, 0, 0, 0, 0, -330]),
+              // compra com receita negativa: a compra conta
+              row("20251010", "Direct", "(direct)", "(none)", "(direct)", [8, 10, 4, 0, 0, 2, -220]),
+              row("20251011", "Direct", "(direct)", "(none)", "(direct)", [0, 0, 0, 0, 0, 0, 0]),
+            ],
+          }),
+        ),
+    );
+    const { fetchGa4TrafficDaily } = await loadGa4();
+    const rows = await fetchGa4TrafficDaily({ propertyId: "340915266", dateFrom: "2025-10-08", dateTo: "2025-10-11" });
+    expect(rows?.map((r) => [r.date, r.sessions, r.purchases, r.purchaseRevenue])).toEqual([
+      ["2025-10-08", 16, 0, -3048],
+      ["2025-10-09", 0, 0, -330],
+      ["2025-10-10", 8, 2, -220],
+    ]);
+  });
+
   it("pagina com offset quando a primeira página vem cheia (400 dias x origens passam de 100 mil linhas em lojas grandes)", async () => {
     const fullPage = Array.from({ length: 100_000 }, (_, i) => row("20261108", "Referral", `site${i}`, "referral", "(not set)", [1, 1, 1, 0, 0, 0, 0]));
     const fetchMock = vi
