@@ -100,6 +100,19 @@ export function shouldRefundBackfillSlot(params: { wide: boolean; failed: boolea
   return params.wide && params.failed && params.elapsedMs < GA4_QUICK_FAILURE_MS;
 }
 
+// ── Produtos: onde guardar ──────────────────────────────────────────────────
+// A tabela de visualizacoes de produto do Postgres (ga4_product_views_daily) so e lida pela tela de Produtos do B2C. Cliente B2B nao tem
+// tela que a use, e o BigQuery (up_global.ga4_product_views_daily) ja guarda tudo: em 09/11/2026 eram 395 mil linhas de 14 clientes B2B
+// (36% da tabela, que sozinha pesava 323 MB de um banco de 1,8 GB, num servidor pequeno) que ninguem lia.
+// So deixa de gravar quando o BigQuery esta disponivel NESTE turno; sem ele o Postgres segue sendo o unico destino e nada se perde.
+export function shouldStoreGa4ProductViewsInPostgres(params: {
+  dashboardType: string | null | undefined;
+  bigQueryAvailable: boolean;
+}): boolean {
+  if (!params.bigQueryAvailable) return true;
+  return params.dashboardType !== "B2B";
+}
+
 // O GA4 so devolve os dias que tiveram trafego. Preenche os demais com zero
 // pra que "existe linha" signifique "este dia ja foi sincronizado".
 export function fillGa4Days(from: string, to: string, fetched: Ga4DailyMetrics[]): Ga4DailyMetrics[] {

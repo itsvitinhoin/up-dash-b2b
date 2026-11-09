@@ -20,7 +20,14 @@ import { runBraavoBatch } from "./braavo-sync";
 import { documentLast4, hashDocument } from "./upzero/customers";
 import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
-import { earlierDate, isWideGa4Window, resolveGa4SyncWindow, shouldRefundBackfillSlot, shouldStartGa4Client } from "./ga4-daily-rules";
+import {
+  earlierDate,
+  isWideGa4Window,
+  resolveGa4SyncWindow,
+  shouldRefundBackfillSlot,
+  shouldStartGa4Client,
+  shouldStoreGa4ProductViewsInPostgres,
+} from "./ga4-daily-rules";
 import {
   clientIdsWithGa4History,
   clientIdsWithGa4ProductHistory,
@@ -1073,6 +1080,11 @@ export async function runGa4DailyExtraction(
         ...window,
         productFrom,
         bigQuery: bq,
+        // B2B: produtos so no BigQuery (a tela de Produtos e B2C); ver shouldStoreGa4ProductViewsInPostgres.
+        storeProductViewsInPostgres: shouldStoreGa4ProductViewsInPostgres({
+          dashboardType: client.dashboardType,
+          bigQueryAvailable: bq !== null,
+        }),
       });
       await completeJob(jobId, { clientName: client.name, propertyId, ...result });
       clientResults.push({ clientId: client.id, clientName: client.name, status: "done", result });

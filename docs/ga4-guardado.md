@@ -177,3 +177,28 @@ atrapalha nada. Só o BigQuery: `GA4_BIGQUERY=0` no job. As tabelas `up_global.g
 - Tráfego por origem/mídia/campanha (tabela própria): fase 2, depende do que os agentes do Victor precisam.
 - Descoberta das propriedades que a conta enxerga (exige ativar a Analytics Admin API no projeto).
 - Backoff para cliente sem acesso: hoje cada um registra uma linha `failed` em `sync_jobs` por hora até virar Leitor.
+
+## Onde ficam os produtos (09/11/2026)
+
+O GA4 vai para **dois lugares**: o Postgres do painel (alimenta as telas B2C) e o BigQuery `up_global` (análises e agentes). Para
+**visualizações de produto** (`ga4_product_views_daily`) a regra agora é:
+
+| Cliente | Postgres | BigQuery |
+|---|---|---|
+| **B2C** | grava (a tela de **Produtos** lê de lá) | grava |
+| **B2B** | **não grava** (nenhuma tela B2B lê) | grava |
+
+Por quê: em 09/11 a tabela do Postgres tinha 1,1 milhão de linhas e 323 MB num banco de 1,8 GB (servidor `db-f1-micro`), e **395 mil
+linhas** (36%) eram de 14 clientes B2B que ninguém lia. A tabela **diária** (`ga4_daily_metrics`, 1,8 MB) continua para todos: o
+alerta de "propriedade sem visitas" e a retomada do job dependem dela.
+
+Como funciona (`shouldStoreGa4ProductViewsInPostgres`, `syncGa4DailyForClient`):
+
+- Só deixa de gravar quando o **BigQuery está disponível naquela rodada**; sem BigQuery o Postgres segue como único destino.
+- A **cópia antiga** do cliente B2B no Postgres é apagada na própria rodada horária, **depois** de o BigQuery gravar com sucesso
+  (se o BigQuery falhar, nada é apagado). O número apagado aparece em `sync_jobs.result.prunedProductRows`. Rodadas seguintes só
+  fazem uma contagem.
+- O espaço em disco **não encolhe sozinho** (o Postgres reaproveita o espaço liberado; devolver ao sistema exige `VACUUM FULL`,
+  que trava a tabela por alguns segundos — não é necessário). O ganho é parar de gravar e de manter 395 mil linhas inúteis.
+- Telas B2B que passarem a mostrar GA4 devem **ler do BigQuery** (`up_global.ga4_daily` / `ga4_product_views_daily`).
+- Fase 2 (não feita): levar os produtos do B2C também para o BigQuery e deixar só a tabela diária no Postgres.

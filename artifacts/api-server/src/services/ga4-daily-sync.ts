@@ -68,6 +68,10 @@ export async function syncGa4DailyForClient(params: {
   to: string;
   // Presente = grava tambem em up_global.ga4_daily / ga4_product_views_daily. Ausente = so o Postgres.
   bigQuery?: BigQueryLike | null;
+  // false = os produtos ficam so no BigQuery (cliente B2B, ver shouldStoreGa4ProductViewsInPostgres): nao grava a tabela de produtos do
+  // Postgres e apaga a copia antiga do cliente, mas so depois de o BigQuery ter gravado nesta rodada. Sem BigQuery grava no Postgres
+  // mesmo assim. Padrao: true.
+  storeProductViewsInPostgres?: boolean;
 }): Promise<{
   from: string;
   to: string;
@@ -75,6 +79,8 @@ export async function syncGa4DailyForClient(params: {
   days: number;
   sessions: number;
   productViewRows: number;
+  /** Linhas de produto da copia antiga do Postgres apagadas nesta rodada (0 quando nao havia nada ou quando o cliente guarda produtos no Postgres). */
+  prunedProductRows: number;
   bigQuery: Ga4BigQueryWrite | null;
 }> {
   const fetched = await fetchGa4DailyMetrics({
@@ -100,6 +106,8 @@ export async function syncGa4DailyForClient(params: {
   });
   if (fetchedProductViews === null) throw new Error("GA4 sem credencial ao buscar visualizacoes de produto.");
   const productViews = toStoredProductViews(fetchedProductViews);
+  // Sem BigQuery nao ha segunda copia: ai o Postgres guarda os produtos de qualquer jeito.
+  const storeProducts = params.storeProductViewsInPostgres !== false || !params.bigQuery;
 
   const filled = fillGa4Days(params.from, params.to, fetched);
   const rows = filled.map((row) => ({
@@ -134,6 +142,8 @@ export async function syncGa4DailyForClient(params: {
           },
         });
     }
+
+    if (!storeProducts) return;
 
     // Troca a janela inteira (apaga e regrava): o GA4 revisa contagens recentes e
     // um item que sumiu da revisao nao pode ficar com o numero velho.
@@ -181,6 +191,27 @@ export async function syncGa4DailyForClient(params: {
   if (bigQuery.status === "rejected") failures.push(`BigQuery: ${errorMessage(bigQuery.reason)}`);
   if (failures.length > 0) throw new Error(failures.join(" | "));
 
+  // Produtos de cliente B2B ficam so no BigQuery: apaga a copia antiga do banco do painel, mas SO depois de o BigQuery ter gravado
+  // (sem ele nao ha segunda copia). Falha aqui nao derruba o job: o dado do GA4 ja foi guardado.
+  let prunedProductRows = 0;
+  if (!storeProducts && bigQuery.status === "fulfilled" && bigQuery.value) {
+    try {
+      const [{ n }] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(ga4ProductViewsDailyTable)
+        .where(eq(ga4ProductViewsDailyTable.clientId, params.clientId));
+      if (n > 0) {
+        await db.delete(ga4ProductViewsDailyTable).where(eq(ga4ProductViewsDailyTable.clientId, params.clientId));
+        prunedProductRows = n;
+      }
+    } catch (err) {
+      console.warn("[ga4-daily] nao consegui apagar a copia antiga de produtos do Postgres", {
+        clientId: params.clientId,
+        error: errorMessage(err),
+      });
+    }
+  }
+
   return {
     from: params.from,
     to: params.to,
@@ -188,6 +219,7 @@ export async function syncGa4DailyForClient(params: {
     days: rows.length,
     sessions: rows.reduce((sum, row) => sum + row.sessions, 0),
     productViewRows: productViews.length,
+    prunedProductRows,
     bigQuery: bigQuery.status === "fulfilled" ? bigQuery.value : null,
   };
 }
