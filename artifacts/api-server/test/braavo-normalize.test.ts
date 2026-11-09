@@ -196,3 +196,23 @@ describe("Braavo normalization", () => {
     expect(() => normalizeBraavoCustomer({ id: 0 })).toThrow(BraavoRecordError);
   });
 });
+
+describe("Braavo order items from the bulk endpoint", () => {
+  it("gives the same order as the per-order detail when calculado_preco_total is missing", () => {
+    // A carga em lote não traz calculado_preco_*; o cálculo de reserva (total - vale)
+    // coincidiu com o campo nos 120 itens de 40 pedidos pagos conferidos na La Cleo.
+    const withCalc = sampleOrder.produtos.map((item) => ({
+      ...item,
+      calculado_preco_total: String(Number(item.total) - Number(item.desconto_vale_total ?? 0)),
+    }));
+    const bulk = sampleOrder.produtos.map(({ calculado_preco_total: _a, calculado_preco_venda: _b, ...item }: Record<string, unknown>) => item);
+    const a = normalizeBraavoOrder({ ...sampleOrder, produtos: withCalc });
+    const b = normalizeBraavoOrder({ ...sampleOrder, produtos: bulk });
+    expect(b.amount).toBe(a.amount);
+    expect(b.items.map((i) => i.priceAtSale)).toEqual(a.items.map((i) => i.priceAtSale));
+    expect(b.items.map((i) => i.discountAmount)).toEqual(a.items.map((i) => i.discountAmount));
+  });
+  it("accepts an order with an empty item list from the bulk copy as a valid order without items", () => {
+    expect(() => normalizeBraavoOrder({ ...sampleOrder, produtos: [] })).not.toThrow();
+  });
+});

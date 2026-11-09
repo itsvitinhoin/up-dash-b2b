@@ -229,8 +229,13 @@ export function advanceBraavoCursor(
   if (!complete) return { ...cursor, page: cursor.page + 1 };
   if (cursor.day && cursor.day < cursor.untilDay)
     return { ...cursor, page: 1, day: nextDay(cursor.day) };
-  const phase =
-    BRAAVO_PHASES[BRAAVO_PHASES.indexOf(cursor.phase) + 1] ?? "done";
+  let phase = BRAAVO_PHASES[BRAAVO_PHASES.indexOf(cursor.phase) + 1] ?? "done";
+  // Os itens em lote só servem à carga completa; o ciclo incremental, pequeno,
+  // continua lendo o detalhe de cada pedido alterado.
+  if (phase === "order_items" && !cursor.full) phase = "orders";
+  // Na carga completa todos os pedidos acabaram de ser lidos ao vivo, então a
+  // conferência dos pendentes seria só repetir essas mesmas consultas.
+  if (phase === "pending" && cursor.full) phase = "done";
   return {
     ...cursor,
     phase,
@@ -641,10 +646,19 @@ async function runPage(
     products: "produtos",
     skus: "skus",
     customers: "clientes",
+    order_items: "pedidos_produtos",
     orders: "pedidos",
   };
   if (cursor.phase === "done") return { processed: 0, cursor };
-  const limit = ["products", "orders"].includes(cursor.phase) ? 10 : PAGE_SIZE;
+  // Carga completa: pedidos e itens em lote, 100 por chamada (a API aceita; o
+  // detalhe individual era 1 chamada por pedido). Demais fases mantêm o tamanho antigo.
+  const bulkOrders = cursor.phase === "orders" && cursor.full;
+  const limit =
+    cursor.phase === "order_items" || bulkOrders
+      ? 100
+      : ["products", "orders"].includes(cursor.phase)
+        ? 10
+        : PAGE_SIZE;
   const page = await api.page(
     `/${paths[cursor.phase]}/buscar/todos`,
     cursor.page,
@@ -667,6 +681,64 @@ async function runPage(
       );
     for (const product of products)
       cache.set(`products:${product.externalId}`, product.data);
+  }
+  if (cursor.phase === "order_items") {
+    await db.transaction(async (tx) => {
+      await assertLease(tx, clientId, leaseId);
+      // Primeira página: descarta cópia de um ciclo anterior interrompido.
+      if (cursor.page === 1)
+        await tx
+          .delete(catalog)
+          .where(
+            and(eq(catalog.clientId, clientId), eq(catalog.kind, "order_items")),
+          );
+      if (page.rows.length)
+        await tx
+          .insert(catalog)
+          .values(
+            page.rows.map((row) => ({
+              clientId,
+              kind: "order_items" as const,
+              externalId: braavoId(row.id),
+              data: row,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [catalog.clientId, catalog.kind, catalog.externalId],
+            set: { data: sql`excluded.data` },
+          });
+    });
+    return {
+      processed: page.rows.length,
+      cursor: {
+        ...advanceBraavoCursor(cursor, page.complete),
+        skipped: cursor.skipped ?? 0,
+      },
+    };
+  }
+  // Itens dos pedidos desta página, vindos da cópia feita na fase anterior.
+  const itemsByOrder = new Map<string, BraavoRecord[]>();
+  if (bulkOrders && page.rows.length) {
+    const orderIds = page.rows.map((row) => braavoId(row.id));
+    const staged = await db
+      .select({ data: catalog.data })
+      .from(catalog)
+      .where(
+        and(
+          eq(catalog.clientId, clientId),
+          eq(catalog.kind, "order_items"),
+          sql`${catalog.data}->>'pedido_id' IN (${sql.join(
+            orderIds.map((id) => sql`${id}`),
+            sql`,`,
+          )})`,
+        ),
+      );
+    for (const { data } of staged) {
+      const key = braavoId(data.pedido_id);
+      itemsByOrder.set(key, [...(itemsByOrder.get(key) ?? []), data]);
+    }
+    for (const list of itemsByOrder.values())
+      list.sort((a, b) => Number(braavoId(a.id)) - Number(braavoId(b.id)));
   }
   const processedIds = new Set(cursor.processedIds ?? []);
   const counter: SkipCounter = { skipped: cursor.skipped ?? 0 };
@@ -691,7 +763,9 @@ async function runPage(
     const id = braavoId(row.id);
     if (processedIds.has(id)) continue;
     if (cursor.phase === "orders") {
-      const detail = await api.one("/pedidos/buscar/id", row.id);
+      const detail = bulkOrders
+        ? { ...row, produtos: itemsByOrder.get(id) ?? [] }
+        : await api.one("/pedidos/buscar/id", row.id);
       await importRecord(clientId, "orders", id, counter, () =>
         persistOrder(clientId, leaseId, detail, cache),
       );
@@ -748,6 +822,12 @@ async function runPage(
     // before this checkpoint safely replays the idempotent write, never skips it.
     await checkpointRecord(id);
   }
+  if (bulkOrders && page.complete)
+    await db
+      .delete(catalog)
+      .where(
+        and(eq(catalog.clientId, clientId), eq(catalog.kind, "order_items")),
+      );
   if (cursor.phase === "skus" && page.complete) {
     await db.transaction(async (tx) => {
       await assertLease(tx, clientId, leaseId);

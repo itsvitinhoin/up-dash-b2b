@@ -201,6 +201,13 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
           ],
           clientes: customers,
           pedidos: [order],
+          // Itens em lote: os mesmos itens que o detalhe do pedido traz, sem os calculado_*.
+          pedidos_produtos: (
+            (order.produtos as Record<string, unknown>[] | undefined) ?? []
+          ).map(({ calculado_preco_total: _t, calculado_preco_venda: _v, ...item }) => ({
+            ...item,
+            pedido_id: order.id,
+          })),
         };
         const source = sources[path.split("/")[2]];
         if (!source) throw new Error(`Unexpected external request: ${path}`);
@@ -248,6 +255,21 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
       events: await schema.db.select().from(schema.eventsTable),
     };
   }
+
+  it("full load takes the order items in bulk, never asks the detail of each order, and clears the copy", async () => {
+    await cycle();
+    expect(calls.filter((c) => c.path === "/api/pedidos/buscar/id")).toHaveLength(0);
+    const bulk = calls.filter((c) => c.path === "/api/pedidos_produtos/buscar/todos");
+    expect(bulk.length).toBeGreaterThan(0);
+    expect(bulk[0].body.limite).toBe(100);
+    const first = await snapshot();
+    expect(first.orders).toHaveLength(1);
+    expect(first.items).toHaveLength(1);
+    // O valor do item vem do cálculo de reserva (total - vale): 100 - 10 = 90 por 2 unidades.
+    expect(Number(first.items[0].priceAtSale)).toBe(45);
+    const staged = await schema.db.execute(sql`SELECT count(*)::int AS n FROM braavo_catalog WHERE kind = 'order_items'`);
+    expect(Number((staged.rows[0] as { n: number }).n)).toBe(0);
+  });
 
   it("imports the full cycle and reimports without duplicating orders, items or purchases", async () => {
     await cycle();

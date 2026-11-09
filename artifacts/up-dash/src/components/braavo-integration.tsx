@@ -111,6 +111,7 @@ const PHASES: Record<string, string> = {
   products: "Produtos",
   skus: "Estoque e SKUs",
   customers: "Clientes",
+  order_items: "Itens dos pedidos",
   orders: "Pedidos",
   pending: "Conferência de pagamentos",
   done: "Concluído",

@@ -134,7 +134,7 @@ export class BraavoApi {
 
   async query(path: string, body: BraavoRecord = {}): Promise<BraavoRecord> {
     if (
-      !/^\/(?:clientes|categorias|variacoes|produtos|skus|pedidos)\/buscar\/(?:todos|id)$/.test(
+      !/^\/(?:clientes|categorias|variacoes|produtos|skus|pedidos|pedidos_produtos)\/buscar\/(?:todos|id)$/.test(
         path,
       )
     )
