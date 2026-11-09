@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
-import { and, desc, eq, gt, inArray, like, min, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gt, inArray, like, min, sql } from "drizzle-orm";
 import {
   db,
   clientsTable,
@@ -441,7 +441,7 @@ async function refreshAllEntityTotals(tx: Tx, clientId: string) {
     WHERE p.client_id = ${clientId} AND p.id = s.id
   `);
 }
-async function consolidateBraavoAggregates(clientId: string, leaseId: string) {
+export async function consolidateBraavoAggregates(clientId: string, leaseId: string) {
   await db.transaction(async (tx) => {
     await assertLease(tx, clientId, leaseId);
     await refreshAllEntityTotals(tx, clientId);
@@ -483,7 +483,7 @@ async function refreshEntityTotals(
     WHERE p.client_id=${clientId} AND p.id=s.id
   `);
 }
-async function persistOrder(
+export async function persistOrder(
   clientId: string,
   leaseId: string,
   row: BraavoRecord,
@@ -660,6 +660,451 @@ async function persistOrder(
     });
 }
 
+// ---------------------------------------------------------------------------
+// Carga completa em lote (clientes e pedidos)
+//
+// Cada pedido/cliente gravado um a um custava ~25 idas e vindas ao banco (~0,45 s), o
+// que limitava a carga a ~130 pedidos/min e deixava uma loja de 115 mil pedidos em
+// ~15 h. Aqui a página inteira (100 registros) é validada em memória e gravada em
+// poucos comandos dentro de UMA transação. O resultado no banco é o mesmo da gravação
+// registro a registro (há um teste que compara os dois). Um registro inválido é
+// registrado e pulado, como antes; erro de banco/rede/lease derruba a página inteira,
+// que é refeita inteira (tudo é idempotente).
+// ---------------------------------------------------------------------------
+const BULK_BATCH_BUDGET_MS = 25_000;
+const UPSERT_CHUNK = 500;
+
+function chunks<T>(list: T[], size = UPSERT_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+/** SET col = excluded.col para as colunas informadas (upsert em várias linhas). */
+function excludedSet(table: Parameters<typeof getTableColumns>[0], keys: string[]) {
+  const columns = getTableColumns(table) as Record<string, { name: string }>;
+  return Object.fromEntries(
+    keys.map((key) => [key, sql.raw(`excluded."${columns[key].name}"`)]),
+  );
+}
+
+type Validated<T> = { row: BraavoRecord; id: string; value: T };
+/**
+ * Valida a página em memória. Inválidos (BraavoRecordError) são anotados em lote em
+ * braavo_record_issues; qualquer outro erro sobe. Respeita o teto de inválidos do ciclo.
+ */
+async function validateBulk<T>(
+  clientId: string,
+  phase: string,
+  rows: BraavoRecord[],
+  counter: SkipCounter,
+  check: (row: BraavoRecord) => T,
+): Promise<Validated<T>[]> {
+  const good: Validated<T>[] = [];
+  const bad: { id: string; reason: string }[] = [];
+  for (const row of rows) {
+    const id = braavoId(row.id);
+    try {
+      good.push({ row, id, value: check(row) });
+    } catch (error) {
+      if (!(error instanceof BraavoRecordError)) throw error;
+      bad.push({ id, reason: error.message });
+    }
+  }
+  if (bad.length) {
+    counter.skipped += bad.length;
+    await recordIssuesBulk(clientId, phase, bad);
+    for (const b of bad)
+      logger.warn(
+        { clientId, phase, externalId: b.id, reason: b.reason },
+        "[braavo] registro inválido ignorado; a sincronização continua",
+      );
+    assertSkipCeiling(counter);
+  }
+  return good;
+}
+async function recordIssuesBulk(
+  clientId: string,
+  phase: string,
+  bad: { id: string; reason: string }[],
+) {
+  await db
+    .insert(issues)
+    .values(bad.map((b) => ({ clientId, phase, externalId: b.id, reason: b.reason })))
+    .onConflictDoUpdate({
+      target: [issues.clientId, issues.phase, issues.externalId],
+      set: {
+        reason: sql`excluded.reason`,
+        attempts: sql`${issues.attempts} + 1`,
+        lastSeenAt: new Date(),
+      },
+    });
+}
+function assertSkipCeiling(counter: SkipCounter) {
+  if (counter.skipped > MAX_SKIPPED_PER_CYCLE)
+    throw new BraavoError(
+      `Mais de ${MAX_SKIPPED_PER_CYCLE} registros inválidos neste ciclo. Isso sugere mudança no formato da Braavo e não dados antigos; confira os registros ignorados antes de retomar.`,
+      "BRAAVO_TOO_MANY_INVALID",
+    );
+}
+async function clearIssues(tx: Tx, clientId: string, phase: string, ids: string[]) {
+  for (const part of chunks(ids))
+    await tx
+      .delete(issues)
+      .where(
+        and(
+          eq(issues.clientId, clientId),
+          eq(issues.phase, phase),
+          inArray(issues.externalId, part),
+        ),
+      );
+}
+
+/** Itens de pedido / endereços copiados na fase anterior, agrupados por dono (ordem por id). */
+async function loadStagedByOwner(
+  clientId: string,
+  kind: "order_items" | "customer_addresses",
+  ownerField: "pedido_id" | "usuario_id",
+  ownerIds: string[],
+) {
+  const out = new Map<string, BraavoRecord[]>();
+  if (!ownerIds.length) return out;
+  const staged = await db
+    .select({ data: catalog.data })
+    .from(catalog)
+    .where(
+      and(
+        eq(catalog.clientId, clientId),
+        eq(catalog.kind, kind),
+        sql`${catalog.data}->>${ownerField} IN (${sql.join(
+          ownerIds.map((id) => sql`${id}`),
+          sql`,`,
+        )})`,
+      ),
+    );
+  for (const { data } of staged) {
+    const key = braavoId(data[ownerField]);
+    out.set(key, [...(out.get(key) ?? []), data]);
+  }
+  // Mesma ordem do detalhe (por id): o cadastro usa o primeiro endereço ativo.
+  for (const list of out.values())
+    list.sort((a, b) => Number(braavoId(a.id)) - Number(braavoId(b.id)));
+  return out;
+}
+
+type OrderNorm = ReturnType<typeof normalizeBraavoOrder>;
+type CustomerNorm = ReturnType<typeof normalizeBraavoCustomer>;
+const snapshotOf = (row: BraavoRecord) => ({
+  id: row.usuario_id,
+  nome: row.usuario_nome,
+  email: row.usuario_email,
+  tel_1: row.usuario_tel_1,
+  pessoa: row.usuario_pessoa,
+  cpf: row.usuario_cpf,
+  cnpj: row.usuario_cnpj,
+});
+
+/**
+ * Grava uma página de pedidos (já com `produtos`) numa transação só. Totais de
+ * cliente/produto e métricas por dia ficam para o fim da carga completa.
+ */
+export async function persistOrdersBulk(
+  clientId: string,
+  leaseId: string,
+  rows: BraavoRecord[],
+  cache: Map<string, BraavoRecord>,
+  counter: SkipCounter,
+) {
+  if (!rows.length) return;
+  // Clientes que já existem (leitura), para saber de quem precisa do resumo do pedido.
+  const wantedCustomers = [
+    ...new Set(rows.map((row) => `braavo:${braavoId(row.usuario_id)}`)),
+  ];
+  const known = new Map<string, string>();
+  for (const part of chunks(wantedCustomers))
+    for (const c of await db
+      .select({ id: customersTable.id, externalId: customersTable.externalId })
+      .from(customersTable)
+      .where(
+        and(eq(customersTable.clientId, clientId), inArray(customersTable.externalId, part)),
+      ))
+      known.set(c.externalId!, c.id);
+
+  type Prepared = { order: OrderNorm; snapshot?: CustomerNorm };
+  const valid = await validateBulk<Prepared>(clientId, "orders", rows, counter, (row) => {
+    const order = normalizeBraavoOrder(row);
+    const ext = `braavo:${braavoId(row.usuario_id)}`;
+    return {
+      order,
+      snapshot: known.has(ext)
+        ? undefined
+        : normalizeBraavoCustomer(snapshotOf(row), order.createdAt),
+    };
+  });
+  if (!valid.length) return;
+
+  await db.transaction(async (tx) => {
+    await assertLease(tx, clientId, leaseId);
+
+    // 1) Clientes que só existem no resumo do pedido (conta antiga, etc.).
+    const toCreate = new Map<string, CustomerNorm>();
+    for (const { value } of valid)
+      if (value.snapshot) {
+        const ext = value.snapshot.externalId;
+        const prev = toCreate.get(ext);
+        if (!prev || value.snapshot.createdAt < prev.createdAt)
+          toCreate.set(ext, value.snapshot);
+      }
+    const customerIdByExt = new Map(known);
+    if (toCreate.size) {
+      const list = [...toCreate.values()];
+      const taken = new Map<string, string>();
+      for (const part of chunks(list.map((c) => c.email)))
+        for (const t of await tx
+          .select({ email: customersTable.email, externalId: customersTable.externalId })
+          .from(customersTable)
+          .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.email, part))))
+          taken.set(t.email, t.externalId!);
+      const usedNow = new Set<string>();
+      for (const c of list) {
+        // E-mail de outra conta (já gravada ou desta mesma página): cliente próprio,
+        // com o e-mail de reserva, sem fundir duas contas só pelo e-mail.
+        const owner = taken.get(c.email);
+        if ((owner && owner !== c.externalId) || usedNow.has(c.email))
+          c.email = `braavo-${c.externalId.slice(7)}@unknown.local`;
+        usedNow.add(c.email);
+      }
+      for (const part of chunks(list)) {
+        const created = await tx
+          .insert(customersTable)
+          .values(part.map((c) => ({ clientId, ...c })))
+          .onConflictDoUpdate({
+            target: [customersTable.clientId, customersTable.externalId],
+            set: excludedSet(customersTable, [
+              "name",
+              "state",
+              "city",
+              "email",
+              "phone",
+              "documentType",
+              "documentHash",
+              "documentLast4",
+            ]),
+          })
+          .returning({ id: customersTable.id, externalId: customersTable.externalId });
+        for (const c of created) customerIdByExt.set(c.externalId!, c.id);
+      }
+    }
+
+    // 2) Pedidos que já existiam: os itens antigos saem antes de reinserir.
+    const externalIds = valid.map(({ value }) => value.order.externalId);
+    const previous: string[] = [];
+    for (const part of chunks(externalIds))
+      for (const p of await tx
+        .select({ id: ordersTable.id })
+        .from(ordersTable)
+        .where(and(eq(ordersTable.clientId, clientId), inArray(ordersTable.externalId, part))))
+        previous.push(p.id);
+    for (const part of chunks(previous))
+      await tx.delete(orderItemsTable).where(inArray(orderItemsTable.orderId, part));
+
+    // 3) Pedidos (upsert em várias linhas).
+    const orderRows = valid.map(({ row, value }) => {
+      const { items: _items, paid: _paid, ...values } = value.order;
+      return {
+        clientId,
+        customerId: customerIdByExt.get(`braavo:${braavoId(row.usuario_id)}`)!,
+        ...values,
+      };
+    });
+    const orderKeys = Object.keys(orderRows[0]).filter(
+      (key) => key !== "clientId" && key !== "externalId",
+    );
+    const orderIdByExt = new Map<string, string>();
+    for (const part of chunks(orderRows)) {
+      const saved = await tx
+        .insert(ordersTable)
+        .values(part)
+        .onConflictDoUpdate({
+          target: [ordersTable.clientId, ordersTable.externalId],
+          set: excludedSet(ordersTable, orderKeys),
+        })
+        .returning({ id: ordersTable.id, externalId: ordersTable.externalId });
+      for (const o of saved) orderIdByExt.set(o.externalId!, o.id);
+    }
+
+    // 4) Produtos dos itens (variantes antigas apagadas viram "arquivadas").
+    const productInfo = new Map<string, { name: string; price: number }>();
+    for (const { value } of valid)
+      for (const item of value.order.items)
+        if (!productInfo.has(item.externalId))
+          productInfo.set(item.externalId, { name: item.name, price: item.grossPriceAtSale });
+    const productIdByExt = new Map<string, string>();
+    const productExts = [...productInfo.keys()];
+    for (const part of chunks(productExts))
+      for (const p of await tx
+        .select({ id: productsTable.id, externalId: productsTable.externalId })
+        .from(productsTable)
+        .where(and(eq(productsTable.clientId, clientId), inArray(productsTable.externalId, part))))
+        productIdByExt.set(p.externalId!, p.id);
+    const missingProducts = productExts.filter((ext) => !productIdByExt.has(ext));
+    for (const part of chunks(missingProducts)) {
+      const inserted = await tx
+        .insert(productsTable)
+        .values(
+          part.map((ext) => ({
+            clientId,
+            externalId: ext,
+            sku: `braavo-archive-${ext.split(":").at(-1)}`,
+            name: productInfo.get(ext)!.name,
+            price: productInfo.get(ext)!.price,
+            status: "INACTIVE" as const,
+          })),
+        )
+        .onConflictDoNothing({ target: [productsTable.clientId, productsTable.externalId] })
+        .returning({ id: productsTable.id, externalId: productsTable.externalId });
+      for (const p of inserted) productIdByExt.set(p.externalId!, p.id);
+    }
+
+    // 5) Itens.
+    const itemRows = valid.flatMap(({ value }) =>
+      value.order.items.map((item) => {
+        const {
+          externalId,
+          sku: _sku,
+          name: _name,
+          variation1,
+          variation2,
+          ...itemValues
+        } = item;
+        return {
+          orderId: orderIdByExt.get(value.order.externalId)!,
+          productId: productIdByExt.get(externalId)!,
+          ...itemValues,
+          ...variantLabels(cache, variation1, variation2),
+        };
+      }),
+    );
+    for (const part of chunks(itemRows)) await tx.insert(orderItemsTable).values(part);
+
+    // 6) Eventos de compra: pagos entram/atualizam, os demais saem.
+    const paid = valid.filter(({ value }) => value.order.paid);
+    const unpaid = valid.filter(({ value }) => !value.order.paid);
+    for (const part of chunks(paid))
+      await tx
+        .insert(eventsTable)
+        .values(
+          part.map(({ row, value }) => ({
+            clientId,
+            customerId: customerIdByExt.get(`braavo:${braavoId(row.usuario_id)}`)!,
+            orderId: orderIdByExt.get(value.order.externalId)!,
+            eventType: "PURCHASE" as const,
+            externalSourceId: `braavo:purchase:${braavoId(row.id)}`,
+            createdAt: value.order.approvalDate!,
+            metadata: {
+              source: "braavo",
+              utm_source: value.order.utmSource,
+              utm_medium: value.order.utmMedium,
+              utm_campaign: value.order.utmCampaign,
+              utm_content: value.order.utmContent,
+              utm_term: value.order.utmTerm,
+            },
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [eventsTable.clientId, eventsTable.eventType, eventsTable.externalSourceId],
+          targetWhere: sql`external_source_id IS NOT NULL`,
+          set: excludedSet(eventsTable, ["customerId", "createdAt", "metadata"]),
+        });
+    for (const part of chunks(unpaid))
+      await tx.delete(eventsTable).where(
+        and(
+          eq(eventsTable.clientId, clientId),
+          eq(eventsTable.eventType, "PURCHASE"),
+          inArray(
+            eventsTable.externalSourceId,
+            part.map(({ row }) => `braavo:purchase:${braavoId(row.id)}`),
+          ),
+        ),
+      );
+
+    await clearIssues(tx, clientId, "orders", valid.map((v) => v.id));
+  });
+}
+
+/**
+ * Grava uma página de clientes (listagem + endereços copiados) numa transação só.
+ * Conta que repete o e-mail de outra é registrada (nada é fundido), como no modo
+ * registro a registro.
+ */
+export async function persistCustomersBulk(
+  clientId: string,
+  leaseId: string,
+  rows: BraavoRecord[],
+  addresses: Map<string, BraavoRecord[]>,
+  counter: SkipCounter,
+) {
+  if (!rows.length) return;
+  const valid = await validateBulk<CustomerNorm>(clientId, "customers", rows, counter, (row) =>
+    normalizeBraavoCustomer({ ...row, enderecos: addresses.get(braavoId(row.id)) ?? [] }),
+  );
+  if (!valid.length) return;
+
+  // E-mails já usados por OUTRA conta (leitura) e repetidos dentro da própria página.
+  const owners = new Map<string, string>();
+  for (const part of chunks(valid.map((v) => v.value.email)))
+    for (const t of await db
+      .select({ email: customersTable.email, externalId: customersTable.externalId })
+      .from(customersTable)
+      .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.email, part))))
+      owners.set(t.email, t.externalId!);
+  const accepted: Validated<CustomerNorm>[] = [];
+  const conflicts: Validated<CustomerNorm>[] = [];
+  const claimed = new Map<string, string>();
+  for (const v of valid) {
+    const holder = owners.get(v.value.email) ?? claimed.get(v.value.email);
+    if (holder && holder !== v.value.externalId) conflicts.push(v);
+    else {
+      accepted.push(v);
+      claimed.set(v.value.email, v.value.externalId);
+    }
+  }
+  if (conflicts.length) {
+    counter.skipped += conflicts.length;
+    await recordIssuesBulk(
+      clientId,
+      "customers",
+      conflicts.map((v) => ({
+        id: v.id,
+        reason: "Conflito de e-mail entre clientes distintos; revise o cadastro na Braavo.",
+      })),
+    );
+    assertSkipCeiling(counter);
+  }
+
+  await db.transaction(async (tx) => {
+    await assertLease(tx, clientId, leaseId);
+    for (const part of chunks(accepted))
+      await tx
+        .insert(customersTable)
+        .values(part.map((v) => ({ clientId, ...v.value })))
+        .onConflictDoUpdate({
+          target: [customersTable.clientId, customersTable.externalId],
+          set: excludedSet(customersTable, [
+            "name",
+            "state",
+            "city",
+            "email",
+            "phone",
+            "documentType",
+            "documentHash",
+            "documentLast4",
+            "createdAt",
+          ]),
+        });
+    await clearIssues(tx, clientId, "customers", accepted.map((v) => v.id));
+  });
+}
+
 async function runPage(
   clientId: string,
   leaseId: string,
@@ -816,54 +1261,47 @@ async function runPage(
       cursor: { ...current, skipped: cursor.skipped ?? 0 },
     };
   }
-  // Endereços dos clientes desta página, vindos da cópia feita na fase anterior.
-  const addressesByCustomer = new Map<string, BraavoRecord[]>();
-  if (bulkCustomers && page.rows.length) {
-    const customerIds = page.rows.map((row) => braavoId(row.id));
-    const staged = await db
-      .select({ data: catalog.data })
-      .from(catalog)
-      .where(
-        and(
-          eq(catalog.clientId, clientId),
-          eq(catalog.kind, "customer_addresses"),
-          sql`${catalog.data}->>'usuario_id' IN (${sql.join(
-            customerIds.map((id) => sql`${id}`),
-            sql`,`,
-          )})`,
-        ),
-      );
-    for (const { data } of staged) {
-      const key = braavoId(data.usuario_id);
-      addressesByCustomer.set(key, [...(addressesByCustomer.get(key) ?? []), data]);
+  if (bulkOrders || bulkCustomers) {
+    // Carga completa: a página inteira vai para o banco em poucos comandos e várias
+    // páginas são lidas por ciclo (cada ciclo do job custa pausas fixas de ~7 s).
+    const batchStarted = Date.now();
+    const counter: SkipCounter = { skipped: cursor.skipped ?? 0 };
+    const phase = cursor.phase;
+    let current = cursor;
+    let currentPage = page;
+    let done = 0;
+    for (;;) {
+      const ids = currentPage.rows.map((row) => braavoId(row.id));
+      if (bulkOrders) {
+        const items = await loadStagedByOwner(clientId, "order_items", "pedido_id", ids);
+        const withItems = currentPage.rows.map((row) => ({
+          ...row,
+          produtos: items.get(braavoId(row.id)) ?? [],
+        }));
+        await persistOrdersBulk(clientId, leaseId, withItems, cache, counter);
+      } else {
+        const addresses = await loadStagedByOwner(clientId, "customer_addresses", "usuario_id", ids);
+        await persistCustomersBulk(clientId, leaseId, currentPage.rows, addresses, counter);
+      }
+      done += currentPage.rows.length;
+      if (currentPage.complete) {
+        if (bulkOrders)
+          // Última página da carga completa: agora sim os totais e as métricas por dia.
+          await consolidateBraavoAggregates(clientId, leaseId);
+        await db
+          .delete(catalog)
+          .where(
+            and(
+              eq(catalog.clientId, clientId),
+              eq(catalog.kind, bulkOrders ? "order_items" : "customer_addresses"),
+            ),
+          );
+      }
+      current = advanceBraavoCursor(current, currentPage.complete);
+      if (current.phase !== phase || Date.now() - batchStarted > BULK_BATCH_BUDGET_MS) break;
+      currentPage = await api.page(`/${paths[phase]}/buscar/todos`, current.page, limit);
     }
-    // Mesma ordem do detalhe (por id): o cadastro usa o primeiro endereço ativo.
-    for (const list of addressesByCustomer.values())
-      list.sort((a, b) => Number(braavoId(a.id)) - Number(braavoId(b.id)));
-  }
-  // Itens dos pedidos desta página, vindos da cópia feita na fase anterior.
-  const itemsByOrder = new Map<string, BraavoRecord[]>();
-  if (bulkOrders && page.rows.length) {
-    const orderIds = page.rows.map((row) => braavoId(row.id));
-    const staged = await db
-      .select({ data: catalog.data })
-      .from(catalog)
-      .where(
-        and(
-          eq(catalog.clientId, clientId),
-          eq(catalog.kind, "order_items"),
-          sql`${catalog.data}->>'pedido_id' IN (${sql.join(
-            orderIds.map((id) => sql`${id}`),
-            sql`,`,
-          )})`,
-        ),
-      );
-    for (const { data } of staged) {
-      const key = braavoId(data.pedido_id);
-      itemsByOrder.set(key, [...(itemsByOrder.get(key) ?? []), data]);
-    }
-    for (const list of itemsByOrder.values())
-      list.sort((a, b) => Number(braavoId(a.id)) - Number(braavoId(b.id)));
+    return { processed: done, cursor: { ...current, skipped: counter.skipped } };
   }
   const processedIds = new Set(cursor.processedIds ?? []);
   const counter: SkipCounter = { skipped: cursor.skipped ?? 0 };
@@ -888,11 +1326,9 @@ async function runPage(
     const id = braavoId(row.id);
     if (processedIds.has(id)) continue;
     if (cursor.phase === "orders") {
-      const detail = bulkOrders
-        ? { ...row, produtos: itemsByOrder.get(id) ?? [] }
-        : await api.one("/pedidos/buscar/id", row.id);
+      const detail = await api.one("/pedidos/buscar/id", row.id);
       await importRecord(clientId, "orders", id, counter, () =>
-        persistOrder(clientId, leaseId, detail, cache, bulkOrders),
+        persistOrder(clientId, leaseId, detail, cache),
       );
       await checkpointRecord(id);
       continue;
@@ -901,9 +1337,7 @@ async function runPage(
     // persistence of this record may be quarantined.
     const detail =
       cursor.phase === "customers"
-        ? bulkCustomers
-          ? { enderecos: addressesByCustomer.get(id) ?? [] }
-          : await api.one("/clientes/buscar/id", row.id)
+        ? await api.one("/clientes/buscar/id", row.id)
         : cursor.phase === "products"
           ? await api.one("/produtos/buscar/id", row.id)
           : undefined;
@@ -948,21 +1382,6 @@ async function runPage(
     // Persist only after the record and its related updates are durable. A crash
     // before this checkpoint safely replays the idempotent write, never skips it.
     await checkpointRecord(id);
-  }
-  if (bulkCustomers && page.complete)
-    await db
-      .delete(catalog)
-      .where(
-        and(eq(catalog.clientId, clientId), eq(catalog.kind, "customer_addresses")),
-      );
-  if (bulkOrders && page.complete) {
-    // Última página da carga completa: agora sim os totais e as métricas por dia.
-    await consolidateBraavoAggregates(clientId, leaseId);
-    await db
-      .delete(catalog)
-      .where(
-        and(eq(catalog.clientId, clientId), eq(catalog.kind, "order_items")),
-      );
   }
   // Só a carga completa viu TODOS os SKUs; no incremental (só os que mudaram) isto
   // marcaria como inativo todo SKU que simplesmente não mudou.

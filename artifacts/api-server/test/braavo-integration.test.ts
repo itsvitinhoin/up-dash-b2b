@@ -282,6 +282,79 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     };
   }
 
+  it("bulk page write produces the same database as writing each order one by one", async () => {
+    // Mesma página de pedidos gravada pelos dois caminhos em lojas diferentes.
+    await schema.db.insert(schema.clientsTable).values({
+      id: "shop-b", name: "Loja B", email: "b@example.invalid", apiKey: "internal-test-key-b",
+      dashboardType: "B2C", commercePlatform: "BRAAVO", braavoDomain: "https://www.lojab.com.br",
+      braavoApiToken: "tb", braavoApiKey: "kb",
+    });
+    await schema.db.insert(schema.braavoSyncStatesTable).values({
+      clientId: "shop-b", fingerprint: "fp-shop-b", leaseId: "lease-shop-b", leaseUntil: new Date(Date.now() + 600000),
+    });
+    const mk = (id: number, over: Record<string, unknown>, items: Record<string, unknown>[] = []) => ({
+      ...structuredClone(sampleOrder), id, data_alterado: "2026-01-10 10:00:00", ...over,
+      produtos: (items.length ? items : sampleOrder.produtos).map((it, i) => ({ ...it, id: id * 10 + i })),
+    });
+    const lines = [
+      mk(101, {}),
+      mk(102, { usuario_id: 12 }),                                                   // mesmo cliente
+      mk(103, { usuario_id: 77, usuario_email: "novo@example.invalid", usuario_nome: "Novo" }), // cliente só no pedido
+      mk(104, { usuario_id: 77, usuario_email: "novo@example.invalid" }),            // mesmo cliente novo, 2º pedido
+      mk(105, { usuario_id: 78, usuario_email: "ana@example.invalid" }),             // e-mail de OUTRA conta
+      mk(106, { status_pagamento: "6" }),                                            // cancelado
+      mk(107, { status_pagamento: "1" }),                                            // pendente
+      mk(108, { status_entrega: "23" }),                                             // entregue
+      mk(109, { status_entrega: "21" }),                                             // enviado
+      mk(110, { status_pagamento: "9" }),                                            // INVÁLIDO (status desconhecido)
+      mk(111, {}, [
+        { ...sampleOrder.produtos[0], produto_id: 555, sku_id: 556, nome: "Produto antigo", quantidade: 1, preco_venda: 20, total: 20, desconto_vale_total: 0, calculado_preco_total: 20 },
+        { ...sampleOrder.produtos[0], produto_id: 100, sku_id: 501 },
+      ]),                                                                            // produto que não existe mais
+      mk(112, { utm_source: null, utm_medium: null, utm_campaign: null }),
+    ];
+    // Clientes e catálogo que já existem na loja, iguais nas duas lojas.
+    await cycle("shop-a"); // monta cliente 12, produto 100, SKU 501 em shop-a pelo ciclo normal
+    // Reinicia as lojas para comparar só a gravação dos pedidos acima.
+    const cache = new Map<string, Record<string, unknown>>();
+    const counterA = { skipped: 0 }, counterB = { skipped: 0 };
+    await schema.db.execute(sql`DELETE FROM events`);
+    await schema.db.execute(sql`DELETE FROM order_items`);
+    await schema.db.execute(sql`DELETE FROM orders`);
+    await schema.db.execute(sql`DELETE FROM customers WHERE external_id <> 'braavo:12'`);
+    // Loja B recebe o mesmo cliente 12 e produtos de A.
+    await schema.db.execute(sql`INSERT INTO customers (id, client_id, external_id, email, name, state, city, created_at)
+      SELECT 'b-' || id, 'shop-b', external_id, email, name, state, city, created_at FROM customers WHERE client_id = 'shop-a'`);
+    await schema.db.execute(sql`INSERT INTO products (id, client_id, external_id, sku, name, price, status)
+      SELECT 'b-' || id, 'shop-b', external_id, sku, name, price, status FROM products WHERE client_id = 'shop-a'`);
+    await schema.db.execute(sql`UPDATE braavo_sync_states SET lease_id = 'lease-shop-a', lease_until = now() + interval '10 minutes' WHERE client_id = 'shop-a'`);
+
+    await sync.persistOrdersBulk("shop-a", "lease-shop-a", lines as never, cache as never, counterA);
+    for (const line of lines)
+      try { await sync.persistOrder("shop-b", "lease-shop-b", line as never, cache as never, true); }
+      catch (e) { if ((e as { code?: string }).code !== "INVALID_RECORD") throw e; counterB.skipped++; }
+    await sync.consolidateBraavoAggregates("shop-a", "lease-shop-a");
+    await sync.consolidateBraavoAggregates("shop-b", "lease-shop-b");
+
+    expect(counterA.skipped).toBe(1); // só o pedido 110
+    expect(counterB.skipped).toBe(1);
+    const dump = async (cid: string) => {
+      const orders = (await schema.db.execute(sql`SELECT external_id, status, amount, fulfilled_amount, gross_amount, discount_amount, shipping_amount, cancelled_amount, requested_quantity, fulfilled_quantity, utm_source, utm_medium, utm_campaign, state, city, approval_date, created_at, source_metadata FROM orders WHERE client_id = ${cid} ORDER BY external_id`)).rows;
+      const items = (await schema.db.execute(sql`SELECT o.external_id AS pedido, p.external_id AS produto, oi.quantity, oi.fulfilled_quantity, oi.price_at_sale, oi.gross_price_at_sale, oi.discount_amount, oi.size, oi.color FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id WHERE o.client_id = ${cid} ORDER BY o.external_id, p.external_id, oi.quantity`)).rows;
+      const customers = (await schema.db.execute(sql`SELECT external_id, email, name, state, city, total_orders, total_spent, first_purchase_at, last_purchase_at FROM customers WHERE client_id = ${cid} ORDER BY external_id`)).rows;
+      const events = (await schema.db.execute(sql`SELECT e.external_source_id, e.event_type, e.created_at, e.metadata, c.external_id AS cliente FROM events e LEFT JOIN customers c ON c.id = e.customer_id WHERE e.client_id = ${cid} ORDER BY e.external_source_id`)).rows;
+      const products = (await schema.db.execute(sql`SELECT external_id, sku, status, total_sold, total_revenue FROM products WHERE client_id = ${cid} ORDER BY external_id`)).rows;
+      const metrics = (await schema.db.execute(sql`SELECT metric_date, approved_orders, requested_orders, approved_revenue, requested_revenue, new_buyers, returning_buyers FROM daily_client_metrics WHERE client_id = ${cid} ORDER BY metric_date`)).rows;
+      return { orders, items, customers, events, products, metrics };
+    };
+    const [a, b] = [await dump("shop-a"), await dump("shop-b")];
+    expect(a.orders).toHaveLength(11);
+    expect(a.customers.map((c) => c.external_id)).toEqual(expect.arrayContaining(["braavo:12", "braavo:77", "braavo:78"]));
+    // O cliente 78 repete o e-mail da conta 12: fica com e-mail de reserva, sem fundir.
+    expect(a.customers.find((c) => c.external_id === "braavo:78")?.email).toBe("braavo-78@unknown.local");
+    expect(a).toEqual(b);
+  }, 60000);
+
   it("full load reads customers in bulk with their addresses and never asks each customer's detail", async () => {
     await cycle();
     expect(calls.filter((c) => c.path === "/api/clientes/buscar/id")).toHaveLength(0);
@@ -295,6 +368,15 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     expect(snap.customers[0]).toMatchObject({ city: "São Paulo", state: "SP" });
     const staged = await schema.db.execute(sql`SELECT count(*)::int AS n FROM braavo_catalog WHERE kind = 'customer_addresses'`);
     expect(Number((staged.rows[0] as { n: number }).n)).toBe(0);
+  }, 30000);
+
+  it("bulk customer page registers a repeated email instead of merging two accounts", async () => {
+    customers.push({ ...customers[0], id: 13, nome: "Outra conta" }); // mesmo e-mail do 12
+    await cycle(); // carga completa: clientes em lote
+    const snap = await snapshot();
+    expect(snap.customers.map((c) => c.externalId)).toEqual(["braavo:12"]);
+    const status = await sync.getBraavoSyncStatus("shop-a");
+    expect(status.skippedRecords.recent.map((r) => [r.phase, r.externalId])).toContainEqual(["customers", "13"]);
   }, 30000);
 
   it("full load takes the order items in bulk, never asks the detail of each order, and clears the copy", async () => {
