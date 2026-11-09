@@ -21,6 +21,18 @@ export function braavoJobMaxDurationMs(raw: string | undefined): number | undefi
   return Math.round(minutes * 60_000);
 }
 
+/**
+ * Falhas de conectividade com a loja (DNS ou rede) costumam ser passageiras. Numa
+ * carga de muitas horas, desistir depois de 3 tentativas em 2 s derruba tudo por uma
+ * oscilação curta; por isso o job espera e repete o MESMO ponto, com espera que dobra
+ * (30 s, 1, 2, 4, 8 min) e para em 10 min, até ~46 min no total. Se a queda é maior que
+ * isso, falha como antes e a próxima execução retoma do ponto salvo. Numa execução curta
+ * o orçamento do job continua limitando a espera.
+ */
+const CONNECTIVITY_CODES = new Set(["BRAAVO_DNS_UNAVAILABLE", "BRAAVO_NETWORK_UNAVAILABLE"]);
+const MAX_CONNECTIVITY_RETRIES = 8;
+const MAX_CONNECTIVITY_WAIT_MS = 10 * 60_000;
+
 /** Cloud Run entry: use the same durable batches as manual/API imports. */
 export async function runBraavoJob(
   trigger: ExtractionTrigger,
@@ -39,20 +51,24 @@ export async function runBraavoJob(
     throw new Error("O orçamento do job Braavo deve ser de pelo menos 55 segundos.");
   const deadline = now() + duration;
   let offset = options.offset ?? 0;
-  let done = 0, failed = 0, batches = 0, dnsRetries = 0;
+  let done = 0, failed = 0, batches = 0, connectivityRetries = 0;
   // Leave room for the API's 50-second batch plus its final checkpoint writes.
   while (now() + 55_000 <= deadline) {
     const batch = await extract(trigger, { clientId: options.clientId, offset });
     if (!batch.clients)
       return { jobType: "braavo_transactional", done, failed, pending: 0, batches, nextOffset: offset };
     batches++;
-    if (batch.failed && batch.result?.code === "BRAAVO_DNS_UNAVAILABLE" && dnsRetries < 3) {
-      const wait = 30_000 * 2 ** dnsRetries++;
+    if (
+      batch.failed &&
+      CONNECTIVITY_CODES.has(String(batch.result?.code)) &&
+      connectivityRetries < MAX_CONNECTIVITY_RETRIES
+    ) {
+      const wait = Math.min(30_000 * 2 ** connectivityRetries++, MAX_CONNECTIVITY_WAIT_MS);
       if (now() + wait + 55_000 > deadline) break;
       await sleep(wait);
       continue;
     }
-    dnsRetries = 0;
+    connectivityRetries = 0;
     done += batch.done;
     failed += batch.failed;
     offset = batch.nextOffset;

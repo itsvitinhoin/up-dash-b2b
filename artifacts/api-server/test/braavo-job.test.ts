@@ -48,9 +48,23 @@ describe("Braavo Cloud Run job", () => {
   });
   it("bounds retries when DNS remains unavailable", async () => {
     const dns = batch({ failed: 1, pending: 0, nextOffset: 1, result: { status: "failed", code: "BRAAVO_DNS_UNAVAILABLE" } });
-    const deps = fixture([dns, dns, dns, dns, empty]);
-    expect(await runBraavoJob("cron", {}, deps)).toMatchObject({ failed: 1, pending: 0, batches: 4 });
-    expect(deps.sleep.mock.calls.map(([ms]) => ms)).toEqual([30000, 60000, 120000, 5000]);
+    const deps = fixture([dns, dns, dns, dns, dns, dns, dns, dns, dns, empty]);
+    expect(await runBraavoJob("cron", { maxDurationMs: 24 * 3_600_000 }, deps)).toMatchObject({ failed: 1, pending: 0, batches: 9 });
+    // 30 s dobrando até 10 min, 8 esperas (~46 min), depois falha e segue.
+    expect(deps.sleep.mock.calls.map(([ms]) => ms)).toEqual([30000, 60000, 120000, 240000, 480000, 600000, 600000, 600000, 5000]);
+  });
+  it("waits and retries the same point after a network failure instead of dropping a long load", async () => {
+    const net = batch({ failed: 1, pending: 0, nextOffset: 1, result: { status: "failed", code: "BRAAVO_NETWORK_UNAVAILABLE" } });
+    const deps = fixture([net, net, batch({ done: 1, pending: 0, nextOffset: 1 }), empty]);
+    expect(await runBraavoJob("cron", { maxDurationMs: 24 * 3_600_000 }, deps)).toMatchObject({ done: 1, failed: 0 });
+    expect(deps.extract.mock.calls.slice(0, 3).map((call) => call[1].offset)).toEqual([0, 0, 0]);
+    expect(deps.sleep.mock.calls.slice(0, 2).map(([ms]) => ms)).toEqual([30000, 60000]);
+  });
+  it("does not wait past the budget of a short scheduled run", async () => {
+    const net = batch({ failed: 1, pending: 0, nextOffset: 1, result: { status: "failed", code: "BRAAVO_NETWORK_UNAVAILABLE" } });
+    const deps = fixture([net]);
+    expect(await runBraavoJob("cron", { maxDurationMs: 80_000 }, deps)).toMatchObject({ pending: 1, batches: 1 });
+    expect(deps.sleep).not.toHaveBeenCalled();
   });
 
   it("lets one long execution carry a historical load when BRAAVO_JOB_MAX_MINUTES is set", async () => {

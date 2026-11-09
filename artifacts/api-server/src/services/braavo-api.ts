@@ -222,8 +222,12 @@ export class BraavoApi {
           await (this.options.sleep ?? pause)(500 * 2 ** attempt);
           continue;
         }
+        // Código próprio: o job espera e repete este mesmo ponto (como no DNS), em vez
+        // de derrubar uma carga longa por uma oscilação de rede da loja.
         throw new BraavoError(
           "Não foi possível consultar a Braavo. Confira o domínio HTTPS e tente novamente.",
+          "BRAAVO_NETWORK_UNAVAILABLE",
+          503,
         );
       }
       // The shop's protection layer can intercept a valid API POST and return
