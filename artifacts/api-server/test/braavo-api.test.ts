@@ -103,10 +103,20 @@ describe("Braavo HTTP contract", () => {
     expect(sleep).toHaveBeenCalledWith(5000);
     expect(sleep).toHaveBeenCalledWith(10000);
   });
-  it.each(["Token inválido", "invalid credential", "Sem permissão", "Campo obrigatório", "Nenhum registro encontrado."])("does not retry permanent API errors: %s", async (mensagem) => {
+  it.each(["Token inválido", "invalid credential", "Sem permissão", "Campo obrigatório"])("does not retry permanent API errors: %s", async (mensagem) => {
     const { client, fetcher } = api([json({ erro: { mensagem } })]);
     await expect(client.query("/produtos/buscar/todos")).rejects.toMatchObject({ code: "BRAAVO_BUSINESS_ERROR" });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("treats 'Nenhum registro encontrado.' on a listing as an empty page, not a failure", async () => {
+    const { client, fetcher } = api([json({ erro: { mensagem: "Nenhum registro encontrado." } })]);
+    const page = await client.page("/produtos/buscar/todos", 1, 10, { data_alterado: "2026-11-07" });
+    expect(page).toEqual({ rows: [], complete: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("still fails when a single record is not found by id", async () => {
+    const { client } = api([json({ erro: { mensagem: "Nenhum registro encontrado." } })]);
+    await expect(client.one("/pedidos/buscar/id", 5)).rejects.toMatchObject({ code: "BRAAVO_BUSINESS_ERROR" });
   });
   it("yields to the next batch when refusal backoff consumes the deadline", async () => {
     let now = Date.now();

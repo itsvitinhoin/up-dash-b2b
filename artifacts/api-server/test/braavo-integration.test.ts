@@ -233,6 +233,9 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
         );
         const limit = Number(body.limite),
           page = Number(body.atual);
+        // Como a Braavo real: listagem sem resultado é "erro" com HTTP 200, não lista vazia.
+        if (rows.length === 0)
+          return Response.json({ erro: { mensagem: "Nenhum registro encontrado." } });
         return Response.json({
           ok: rows.slice((page - 1) * limit, page * limit),
           pag: {
@@ -605,6 +608,22 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     throw new Error(
       "A collision between customer identities was not rejected.",
     );
+  }, 30000);
+
+  it("finishes a cycle when a listing comes back empty, as the real Braavo answers it", async () => {
+    productIds = []; // /produtos/buscar/todos -> erro "Nenhum registro encontrado." com HTTP 200
+    await cycle();
+    const state = await sync.getBraavoSyncStatus("shop-a");
+    expect(state.error).toBeNull();
+    expect(state.cursor?.phase).toBe("done");
+  }, 30000);
+
+  it("finishes a cycle when a listing comes back empty, as the real Braavo answers it", async () => {
+    productIds = []; // /produtos/buscar/todos -> erro "Nenhum registro encontrado." com HTTP 200
+    await cycle();
+    const state = await sync.getBraavoSyncStatus("shop-a");
+    expect(state.error).toBeNull();
+    expect(state.cursor?.phase).toBe("done");
   }, 30000);
 
   it("keeps an old order whose account is gone and whose email now belongs to another customer", async () => {

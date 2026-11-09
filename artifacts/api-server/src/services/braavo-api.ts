@@ -271,6 +271,22 @@ export class BraavoApi {
         envelope.erro !== "" &&
         envelope.erro !== 0
       ) {
+        // Uma listagem sem resultado (ex.: nenhum produto alterado naquele dia)
+        // volta como erro "Nenhum registro encontrado." com HTTP 200. Não é falha:
+        // é a lista vazia. Sem isso a rotina diária cai quase todo dia, no primeiro
+        // dia sem alteração de produtos.
+        if (
+          path.endsWith("/todos") &&
+          /nenhum registro encontrado/i.test(
+            typeof envelope.erro === "string"
+              ? envelope.erro
+              : String(braavoRecord(envelope.erro).mensagem ?? ""),
+          )
+        )
+          return {
+            ok: [],
+            pag: { atual: Number(body.atual ?? 1), paginas: 0, encontrados: 0, exibindo: 0 },
+          };
         // Read-only queries sometimes receive a generic HTTP-200 refusal and
         // succeed unchanged later. Confirm those at most twice, with backoff;
         // never retry recognized credential, permission or validation failures.
