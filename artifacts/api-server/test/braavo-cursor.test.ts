@@ -52,6 +52,8 @@ describe("Braavo cycle phases: bulk order items only in the full load", () => {
 
   it("incremental cycle keeps reading each changed order and still rechecks pending ones", () => {
     const inc = { ...base, full: false, fromDay: "2026-11-09" };
+    const afterProducts = advanceBraavoCursor({ ...inc, phase: "products", day: "2026-11-10" }, true);
+    expect(afterProducts).toMatchObject({ phase: "skus", day: "2026-11-09" }); // SKUs também por dia
     const afterCustomers = advanceBraavoCursor({ ...inc, phase: "customers", day: "2026-11-10" }, true);
     expect(afterCustomers).toMatchObject({ phase: "orders", day: "2026-11-09" });
     expect(advanceBraavoCursor({ ...afterCustomers, day: "2026-11-10" }, true)).toMatchObject({ phase: "pending" });

@@ -219,8 +219,12 @@ export function initialBraavoCursor(
     startedAt: now.toISOString(),
   };
 }
+// Fases que o ciclo incremental lê dia a dia (filtro data_alterado). Os SKUs entram
+// aqui: sem isso a rotina relia o catálogo todo (27 mil SKUs, 1.100 páginas) a cada
+// ciclo e gastava os 20 minutos só nessa etapa. A Braavo devolve só os SKUs que
+// mudaram naquele dia (estoque e preço), umas dezenas por dia.
 const dailyPhase = (phase: string) =>
-  ["products", "customers", "orders"].includes(phase);
+  ["products", "skus", "customers", "orders"].includes(phase);
 export function advanceBraavoCursor(
   cursor: BraavoCursor,
   complete: boolean,
@@ -915,7 +919,9 @@ async function runPage(
         and(eq(catalog.clientId, clientId), eq(catalog.kind, "order_items")),
       );
   }
-  if (cursor.phase === "skus" && page.complete) {
+  // Só a carga completa viu TODOS os SKUs; no incremental (só os que mudaram) isto
+  // marcaria como inativo todo SKU que simplesmente não mudou.
+  if (cursor.phase === "skus" && page.complete && cursor.full) {
     await db.transaction(async (tx) => {
       await assertLease(tx, clientId, leaseId);
       await tx

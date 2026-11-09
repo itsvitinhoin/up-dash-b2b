@@ -50,6 +50,7 @@ let businessError = false;
 let productIds = [100];
 let failedProductId: number | null = null;
 let fillerItems = 0;
+let untouchedSku = false;
 let stock = 5;
 const calls: {
   path: string;
@@ -94,6 +95,7 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     productIds = [100];
     failedProductId = null;
     fillerItems = 0;
+    untouchedSku = false;
     stock = 5;
     order = {
       ...structuredClone(sampleOrder),
@@ -189,6 +191,9 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
           ],
           produtos: productIds.map((id) => ({ ...product, id })),
           skus: [
+            ...(untouchedSku
+              ? [{ id: 502, produto_id: 100, ref: "REF-G", ativo: "1", estoque: 3, preco_venda: 50, preco_custo: 20, var1_id: 11, var2_id: 22, data_alterado: "2020-01-01 10:00:00" }]
+              : []),
             {
               id: 501,
               produto_id: 100,
@@ -610,13 +615,21 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     );
   }, 30000);
 
-  it("finishes a cycle when a listing comes back empty, as the real Braavo answers it", async () => {
-    productIds = []; // /produtos/buscar/todos -> erro "Nenhum registro encontrado." com HTTP 200
-    await cycle();
-    const state = await sync.getBraavoSyncStatus("shop-a");
-    expect(state.error).toBeNull();
-    expect(state.cursor?.phase).toBe("done");
-  }, 30000);
+  it("incremental cycle reads only SKUs changed in the window and keeps the untouched ones active", async () => {
+    untouchedSku = true; // SKU 502 só aparece no catálogo completo (data_alterado de 2020)
+    await cycle(); // carga completa: vê os dois SKUs
+    let skus = await schema.db.select().from(schema.productsTable);
+    expect(skus.filter((p) => p.status === "ACTIVE")).toHaveLength(2);
+    calls.length = 0;
+    await cycle(); // incremental
+    const skuCalls = calls.filter((c) => c.path === "/api/skus/buscar/todos");
+    expect(skuCalls.length).toBeGreaterThan(0);
+    expect(skuCalls.every((c) => typeof c.body.data_alterado === "string")).toBe(true);
+    skus = await schema.db.select().from(schema.productsTable);
+    // O SKU que não mudou continua ativo e com estoque (não é "visto" no incremental).
+    expect(skus.filter((p) => p.status === "ACTIVE")).toHaveLength(2);
+    expect(skus.find((p) => p.sku === "REF-G")?.stock).toBe(3);
+  }, 40000);
 
   it("finishes a cycle when a listing comes back empty, as the real Braavo answers it", async () => {
     productIds = []; // /produtos/buscar/todos -> erro "Nenhum registro encontrado." com HTTP 200
