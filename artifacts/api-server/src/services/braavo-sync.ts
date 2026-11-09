@@ -239,6 +239,7 @@ export function advanceBraavoCursor(
   // Os itens em lote só servem à carga completa; o ciclo incremental, pequeno,
   // continua lendo o detalhe de cada pedido alterado.
   if (phase === "order_items" && !cursor.full) phase = "orders";
+  if (phase === "customer_addresses" && !cursor.full) phase = "customers";
   // Na carga completa todos os pedidos acabaram de ser lidos ao vivo, então a
   // conferência dos pendentes seria só repetir essas mesmas consultas.
   if (phase === "pending" && cursor.full) phase = "done";
@@ -718,6 +719,7 @@ async function runPage(
     products: "produtos",
     skus: "skus",
     customers: "clientes",
+    customer_addresses: "enderecos",
     order_items: "pedidos_produtos",
     orders: "pedidos",
   };
@@ -725,8 +727,14 @@ async function runPage(
   // Carga completa: pedidos e itens em lote, 100 por chamada (a API aceita; o
   // detalhe individual era 1 chamada por pedido). Demais fases mantêm o tamanho antigo.
   const bulkOrders = cursor.phase === "orders" && cursor.full;
+  // Idem clientes: a listagem traz o cadastro inteiro (confirmado igual ao detalhe) e
+  // os endereços vêm da cópia em lote, então não há consulta por cliente.
+  const bulkCustomers = cursor.phase === "customers" && cursor.full;
   const limit =
-    cursor.phase === "order_items" || bulkOrders
+    cursor.phase === "order_items" ||
+    cursor.phase === "customer_addresses" ||
+    bulkOrders ||
+    bulkCustomers
       ? 100
       : ["products", "orders"].includes(cursor.phase)
         ? 10
@@ -754,7 +762,8 @@ async function runPage(
     for (const product of products)
       cache.set(`products:${product.externalId}`, product.data);
   }
-  if (cursor.phase === "order_items") {
+  if (cursor.phase === "order_items" || cursor.phase === "customer_addresses") {
+    const stageKind = cursor.phase;
     // Cada ciclo do job custa pausas fixas (~7 s). Gravar uma página por ciclo
     // deixava a cópia de 188 mil itens em ~4 h; aqui lemos várias páginas por ciclo,
     // dentro do orçamento do lote. A gravação é idempotente: se o ciclo cair no meio,
@@ -771,7 +780,7 @@ async function runPage(
           await tx
             .delete(catalog)
             .where(
-              and(eq(catalog.clientId, clientId), eq(catalog.kind, "order_items")),
+              and(eq(catalog.clientId, clientId), eq(catalog.kind, stageKind)),
             );
         if (currentPage.rows.length)
           await tx
@@ -779,7 +788,7 @@ async function runPage(
             .values(
               currentPage.rows.map((row) => ({
                 clientId,
-                kind: "order_items" as const,
+                kind: stageKind,
                 externalId: braavoId(row.id),
                 data: row,
               })),
@@ -792,12 +801,12 @@ async function runPage(
       copied += currentPage.rows.length;
       current = advanceBraavoCursor(current, currentPage.complete);
       if (
-        current.phase !== "order_items" ||
+        current.phase !== stageKind ||
         Date.now() - batchStarted > ITEMS_BATCH_BUDGET_MS
       )
         break;
       currentPage = await api.page(
-        `/${paths.order_items}/buscar/todos`,
+        `/${paths[stageKind]}/buscar/todos`,
         current.page,
         limit,
       );
@@ -806,6 +815,31 @@ async function runPage(
       processed: copied,
       cursor: { ...current, skipped: cursor.skipped ?? 0 },
     };
+  }
+  // Endereços dos clientes desta página, vindos da cópia feita na fase anterior.
+  const addressesByCustomer = new Map<string, BraavoRecord[]>();
+  if (bulkCustomers && page.rows.length) {
+    const customerIds = page.rows.map((row) => braavoId(row.id));
+    const staged = await db
+      .select({ data: catalog.data })
+      .from(catalog)
+      .where(
+        and(
+          eq(catalog.clientId, clientId),
+          eq(catalog.kind, "customer_addresses"),
+          sql`${catalog.data}->>'usuario_id' IN (${sql.join(
+            customerIds.map((id) => sql`${id}`),
+            sql`,`,
+          )})`,
+        ),
+      );
+    for (const { data } of staged) {
+      const key = braavoId(data.usuario_id);
+      addressesByCustomer.set(key, [...(addressesByCustomer.get(key) ?? []), data]);
+    }
+    // Mesma ordem do detalhe (por id): o cadastro usa o primeiro endereço ativo.
+    for (const list of addressesByCustomer.values())
+      list.sort((a, b) => Number(braavoId(a.id)) - Number(braavoId(b.id)));
   }
   // Itens dos pedidos desta página, vindos da cópia feita na fase anterior.
   const itemsByOrder = new Map<string, BraavoRecord[]>();
@@ -867,7 +901,9 @@ async function runPage(
     // persistence of this record may be quarantined.
     const detail =
       cursor.phase === "customers"
-        ? await api.one("/clientes/buscar/id", row.id)
+        ? bulkCustomers
+          ? { enderecos: addressesByCustomer.get(id) ?? [] }
+          : await api.one("/clientes/buscar/id", row.id)
         : cursor.phase === "products"
           ? await api.one("/produtos/buscar/id", row.id)
           : undefined;
@@ -913,6 +949,12 @@ async function runPage(
     // before this checkpoint safely replays the idempotent write, never skips it.
     await checkpointRecord(id);
   }
+  if (bulkCustomers && page.complete)
+    await db
+      .delete(catalog)
+      .where(
+        and(eq(catalog.clientId, clientId), eq(catalog.kind, "customer_addresses")),
+      );
   if (bulkOrders && page.complete) {
     // Última página da carga completa: agora sim os totais e as métricas por dia.
     await consolidateBraavoAggregates(clientId, leaseId);

@@ -207,6 +207,10 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
             },
           ],
           clientes: customers,
+          // Endereços em lote (mesmos campos que o detalhe do cliente traz em `enderecos`).
+          enderecos: customers.flatMap((c) =>
+            [{ id: Number(c.id) * 10, usuario_id: c.id, ativo: "0", cidade: "Campinas", estado: "SP" },
+             { id: Number(c.id) * 10 + 1, usuario_id: c.id, ativo: "1", cidade: "São Paulo", estado: "SP" }]),
           pedidos: [order],
           // Itens em lote: os mesmos itens que o detalhe do pedido traz, sem os calculado_*.
           pedidos_produtos: (
@@ -277,6 +281,21 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
       events: await schema.db.select().from(schema.eventsTable),
     };
   }
+
+  it("full load reads customers in bulk with their addresses and never asks each customer's detail", async () => {
+    await cycle();
+    expect(calls.filter((c) => c.path === "/api/clientes/buscar/id")).toHaveLength(0);
+    const addr = calls.filter((c) => c.path === "/api/enderecos/buscar/todos");
+    expect(addr.length).toBeGreaterThan(0);
+    expect(addr[0].body.limite).toBe(100);
+    const cust = calls.filter((c) => c.path === "/api/clientes/buscar/todos");
+    expect(cust[0].body.limite).toBe(100);
+    const snap = await snapshot();
+    // Primeiro endereço ATIVO (id maior, vindo depois na lista) define cidade/estado.
+    expect(snap.customers[0]).toMatchObject({ city: "São Paulo", state: "SP" });
+    const staged = await schema.db.execute(sql`SELECT count(*)::int AS n FROM braavo_catalog WHERE kind = 'customer_addresses'`);
+    expect(Number((staged.rows[0] as { n: number }).n)).toBe(0);
+  }, 30000);
 
   it("full load takes the order items in bulk, never asks the detail of each order, and clears the copy", async () => {
     await cycle();

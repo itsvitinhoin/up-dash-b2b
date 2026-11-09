@@ -13,6 +13,9 @@ export const BRAAVO_PHASES = [
   "variations",
   "products",
   "skus",
+  // Só na carga completa: copia os endereços de todos os clientes em lote, para ler a
+  // lista de clientes sem uma consulta de detalhe por cliente.
+  "customer_addresses",
   "customers",
   // Só na carga completa: copia os itens de todos os pedidos em lote (100 por chamada)
   // para o catálogo, em vez de uma chamada de detalhe por pedido.
@@ -61,7 +64,7 @@ export const braavoCatalogTable = pgTable(
       .notNull()
       .references(() => clientsTable.id, { onDelete: "cascade" }),
     kind: text("kind", {
-      enum: ["categories", "variations", "products", "order_items"],
+      enum: ["categories", "variations", "products", "order_items", "customer_addresses"],
     }).notNull(),
     externalId: text("external_id").notNull(),
     data: jsonb("data").$type<Record<string, unknown>>().notNull(),

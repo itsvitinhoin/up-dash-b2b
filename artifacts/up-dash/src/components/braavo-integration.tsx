@@ -110,6 +110,7 @@ const PHASES: Record<string, string> = {
   variations: "Variações",
   products: "Produtos",
   skus: "Estoque e SKUs",
+  customer_addresses: "Endereços dos clientes",
   customers: "Clientes",
   order_items: "Itens dos pedidos",
   orders: "Pedidos",
