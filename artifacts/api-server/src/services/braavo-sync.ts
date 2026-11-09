@@ -300,6 +300,8 @@ async function persistCustomer(
   clientId: string,
   row: BraavoRecord,
   fallbackCreatedAt?: Date,
+  /** Cliente reconstruído do resumo do pedido (não veio da lista de clientes). */
+  fromOrderSnapshot = false,
 ) {
   const normalized = normalizeBraavoCustomer(row, fallbackCreatedAt);
   const [collision] = await tx
@@ -312,11 +314,19 @@ async function persistCustomer(
       ),
     );
   // Do not merge two people merely because their email is equal.
-  if (collision && collision.externalId !== normalized.externalId)
+  if (collision && collision.externalId !== normalized.externalId) {
+    if (fromOrderSnapshot) {
+      // Pedido antigo de uma conta que já não está na lista de clientes e cujo e-mail
+      // hoje é de outro cadastro (ex.: a pessoa se recadastrou). O pedido é histórico
+      // real: fica com um cliente próprio, com o e-mail de reserva usado quando a loja
+      // não informa e-mail, sem fundir duas contas só pelo e-mail.
+      normalized.email = `braavo-${braavoId(row.id)}@unknown.local`;
+    } else
     throw new BraavoError(
       "Conflito de e-mail entre clientes distintos; revise o cadastro na Braavo.",
       "CUSTOMER_IDENTITY_CONFLICT",
     );
+  }
   const { createdAt, registrationStatus, ...update } = normalized;
   const [customer] = await tx
     .insert(customersTable)
@@ -453,6 +463,7 @@ async function persistOrder(
           cnpj: row.usuario_cnpj,
         },
         values.createdAt,
+        true,
       ));
     const [previous] = await tx
       .select({ id: ordersTable.id, customerId: ordersTable.customerId })

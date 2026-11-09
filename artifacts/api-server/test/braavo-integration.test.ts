@@ -607,6 +607,17 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     );
   }, 30000);
 
+  it("keeps an old order whose account is gone and whose email now belongs to another customer", async () => {
+    // Conta 99 não está na lista de clientes e usa o e-mail que hoje é do cliente 12.
+    order = { ...order, usuario_id: 99, usuario_email: "ana@example.invalid", usuario_nome: "Ana (conta antiga)" };
+    await cycle();
+    const snap = await snapshot();
+    expect(snap.orders).toHaveLength(1);
+    expect(snap.customers).toHaveLength(2);
+    const emails = snap.customers.map((c) => c.email).sort();
+    expect(emails).toEqual(["ana@example.invalid", "braavo-99@unknown.local"]);
+  }, 30000);
+
   it("resumes from the cycle observation day when the previous import spanned several days", async () => {
     const fingerprint = sync.braavoFingerprint({
       domain: "https://www.lacleo.com.br",
