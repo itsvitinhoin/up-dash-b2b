@@ -23,5 +23,8 @@ export function parseGa4PropertyInput(raw: string): Ga4PropertyParse {
   return { ok: true, value: text };
 }
 
-/** Conta de servico do job: precisa ser Leitor da propriedade para o GA4 ser lido. */
-export const GA4_READER_ACCOUNT = "928204832932-compute@developer.gserviceaccount.com";
+/**
+ * Conta que precisa ser Leitor da propriedade para o GA4 ser lido: a conta da agencia. Desde 06/11/2026 o job le com a chave
+ * dela; a conta de servico do job ficou so de reserva e NAO deve mais ser pedida ao cliente.
+ */
+export const GA4_READER_ACCOUNT = "upagency.oficial@gmail.com";

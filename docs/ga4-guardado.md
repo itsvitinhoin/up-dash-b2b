@@ -109,6 +109,10 @@ conferida: ver "Como conferir".
    objetivo.
 2. **Imagem do job** (build é manual, da raiz do repo):
    `gcloud builds submit --project=up-vesti-report --config=artifacts/api-server/cloudbuild.job.yaml --substitutions=SHORT_SHA=$(git rev-parse --short HEAD) .`
+   > **Atualizado em 06/11/2026:** o job agora le com a chave da conta da agencia (`upagency.oficial@gmail.com`), e a conta de servico
+   > abaixo ficou so de reserva. A conta que o cliente precisa pôr como **Leitor** da propriedade e a da agencia — ver
+   > `docs/ga4-agencia.md`. O texto antigo a seguir fica como historico.
+
 3. **Credencial do GA4: nao precisa de chave.** Dentro do Cloud Run o job usa a
    identidade da propria execucao (ADC), igual ao `script-vesti-nuvem` (que le o GA4
    todo dia sem arquivo de chave: `credentials.json` esta no `.dockerignore`). O job

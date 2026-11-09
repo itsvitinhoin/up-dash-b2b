@@ -37,7 +37,8 @@ describe("parseGa4PropertyInput (campo Propriedade GA4 na edição do cliente)",
     expect(parseGa4PropertyInput("https://analytics.google.com/analytics/web/#/p387817325/").ok).toBe(false);
   });
 
-  it("mostra a conta de serviço que precisa ser Leitor (a mesma do job)", () => {
-    expect(GA4_READER_ACCOUNT).toBe("928204832932-compute@developer.gserviceaccount.com");
+  it("mostra a conta da agência como a que precisa ser Leitor (a que o job usa para ler), não a conta de serviço", () => {
+    expect(GA4_READER_ACCOUNT).toBe("upagency.oficial@gmail.com");
+    expect(GA4_READER_ACCOUNT).not.toContain("gserviceaccount");
   });
 });

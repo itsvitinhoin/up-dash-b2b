@@ -5,7 +5,7 @@
 // do Cloud Run falha -> um alerta do Cloud Monitoring sobre execucao falha avisa (ver docs/ga4-alerta.md). Aviso
 // (cliente que nunca leu, falta acesso) so aparece no log.
 import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
-import { db, clientsTable, syncJobsTable } from "@workspace/db";
+import { db, clientsTable, ga4DailyMetricsTable, syncJobsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import type { BigQueryLike } from "./excluded-clients-bq";
 import { readGa4BigQueryCoverage, type Ga4BigQueryCoverage } from "./ga4-bigquery";
@@ -29,6 +29,11 @@ export type Ga4FreshnessSummary = {
 };
 
 const RECENT_ATTEMPTS_DAYS = 3;
+
+function envPositiveInt(name: string): number | undefined {
+  const value = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
 
 export async function runGa4FreshnessCheck(
   options: { bq?: BigQueryLike | null; now?: Date; maxAgeHours?: number } = {},
@@ -74,6 +79,34 @@ export async function runGa4FreshnessCheck(
     for (const row of attempts) if (!lastAttempt.has(row.clientId)) lastAttempt.set(row.clientId, { at: row.at, status: row.status, error: row.error });
   }
 
+  // Trafego: a propriedade ainda recebe visitas? Le so o que ja esta guardado (uma linha por cliente e dia, com zeros nos dias
+  // sem visita). Regra secundaria: se esta leitura falhar, as demais continuam e o log avisa (nao derruba a verificacao).
+  const traffic = new Map<string, { storedDays: number; firstSyncedAt: Date | null; lastTrafficDay: string | null }>();
+  if (ids.length > 0) {
+    try {
+      const rows = await db
+        .select({
+          clientId: ga4DailyMetricsTable.clientId,
+          storedDays: sql<number>`COUNT(*)::int`,
+          firstSyncedEpoch: sql<string | number | null>`EXTRACT(EPOCH FROM MIN(${ga4DailyMetricsTable.syncedAt}))`,
+          lastTrafficDay: sql<string | null>`TO_CHAR(MAX(CASE WHEN ${ga4DailyMetricsTable.sessions} > 0 THEN ${ga4DailyMetricsTable.metricDate} END), 'YYYY-MM-DD')`,
+        })
+        .from(ga4DailyMetricsTable)
+        .where(inArray(ga4DailyMetricsTable.clientId, ids))
+        .groupBy(ga4DailyMetricsTable.clientId);
+      for (const row of rows) {
+        const epoch = row.firstSyncedEpoch === null ? Number.NaN : Number(row.firstSyncedEpoch);
+        traffic.set(row.clientId, {
+          storedDays: Number(row.storedDays) || 0,
+          firstSyncedAt: Number.isFinite(epoch) ? new Date(epoch * 1000) : null,
+          lastTrafficDay: row.lastTrafficDay ?? null,
+        });
+      }
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : String(err) }, "[ga4-freshness] nao consegui ler o trafego guardado; pulei a regra de visitas");
+    }
+  }
+
   const bigQueryEnabled = options.bq !== undefined ? options.bq !== null : isGa4BigQueryEnabled();
   let coverage = new Map<string, Ga4BigQueryCoverage>();
   let bigQueryReadable = true;
@@ -98,6 +131,9 @@ export async function runGa4FreshnessCheck(
       lastRunStatus: attempt?.status ?? null,
       lastError: attempt?.error ?? null,
       bigQueryLastDay: coverage.get(client.id)?.lastDay ?? null,
+      storedDays: traffic.get(client.id)?.storedDays ?? 0,
+      firstSyncedAt: traffic.get(client.id)?.firstSyncedAt ?? null,
+      lastTrafficDay: traffic.get(client.id)?.lastTrafficDay ?? null,
     };
   });
 
@@ -106,6 +142,9 @@ export async function runGa4FreshnessCheck(
     maxAgeHours: Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : DEFAULT_MAX_AGE_HOURS,
     bigQueryEnabled,
     bigQueryReadable,
+    noTrafficDays: envPositiveInt("GA4_NO_TRAFFIC_DAYS"),
+    stoppedAlertDays: envPositiveInt("GA4_STOPPED_ALERT_DAYS"),
+    newClientDays: envPositiveInt("GA4_NEW_CLIENT_DAYS"),
   });
 
   const problems = findings.filter((finding) => finding.severity === "problem");

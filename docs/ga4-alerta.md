@@ -17,10 +17,23 @@ no BigQuery. Regras (testadas em `test/ga4-freshness-rules.test.ts`):
 | Postgres em dia, mas BigQuery atrasado (mais de 1 dia) ou sem nenhuma linha | **problema** | |
 | Não foi possível ler o BigQuery | **problema** | |
 | Cliente cadastrado que **nunca** conseguiu ler (falta acesso no GA4) | aviso | só no log |
+| Cliente **cadastrado há até 3 dias** e sem nenhuma visita nos últimos 7 dias (quase sempre o ID da propriedade está errado — caso Vn11/Obzee) | **problema** | `sem_trafego_novo` |
+| Cliente que **tinha visitas e parou há 7 a 21 dias** (o site pode ter trocado de GA4 — caso Sooé, que gravou zeros por 3 semanas) | **problema** | `parou_trafego` |
+| Sem visitas há mais tempo que isso (já é conhecido) | aviso | `sem_trafego`; os números guardados dele são zeros, não dados |
 
 Com **problema** o job sai com código 1 → a execução do Cloud Run falha → o alerta dispara. **Aviso não dispara alerta**:
 senão o alerta ficaria vermelho para sempre por causa das lojas sem acesso e ninguém mais olharia.
 Limite de 6h ajustável com `GA4_FRESHNESS_MAX_AGE_HOURS`.
+
+**Visitas (09/11/2026).** Sincronizar em dia não basta: a regra olha as sessões guardadas em `ga4_daily_metrics` (uma linha por cliente e
+dia, com zeros nos dias sem visita). "Cadastrado há quanto tempo" é o `MIN(synced_at)` do cliente. Quem nunca tem histórico guardado
+ainda (backfill pendente) não é julgado. Um cliente com visita nos últimos 7 dias nunca gera achado. Limites ajustáveis:
+`GA4_NO_TRAFFIC_DAYS` (7), `GA4_STOPPED_ALERT_DAYS` (21), `GA4_NEW_CLIENT_DAYS` (3). A mensagem do problema diz o que fazer: conferir o
+`G-…` da etiqueta do site e achar a propriedade que tem esse `G-…`.
+
+Validado em 09/11 contra os dados reais (somente leitura): 26 clientes, 14 saudáveis, **2 problemas** (Vn11 e Obzee, `sem_trafego_novo`,
+porque foram cadastrados há menos de 3 dias com uma propriedade sem visitas — viram aviso sozinhos depois da janela) e 10 avisos (os 7
+recém-cadastrados que ainda não terminaram o backfill, mais Aiyu, Hot Pink e Sonmur sem acesso). Nenhum cliente saudável foi acusado.
 
 Validado em 06/11 contra os dados reais (somente leitura): 7 clientes, 2 saudáveis, 0 problemas, 5 avisos (Aiyu, Hot Pink,
 Pêo, Sonmur e Sooé, sem acesso) e código de saída 0. Com o relógio simulado 24h à frente: `job_parado`, código de saída 1.
