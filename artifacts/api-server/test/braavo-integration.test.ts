@@ -49,6 +49,7 @@ let customers: Record<string, unknown>[];
 let businessError = false;
 let productIds = [100];
 let failedProductId: number | null = null;
+let fillerItems = 0;
 let stock = 5;
 const calls: {
   path: string;
@@ -92,6 +93,7 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     businessError = false;
     productIds = [100];
     failedProductId = null;
+    fillerItems = 0;
     stock = 5;
     order = {
       ...structuredClone(sampleOrder),
@@ -204,10 +206,22 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
           // Itens em lote: os mesmos itens que o detalhe do pedido traz, sem os calculado_*.
           pedidos_produtos: (
             (order.produtos as Record<string, unknown>[] | undefined) ?? []
-          ).map(({ calculado_preco_total: _t, calculado_preco_venda: _v, ...item }) => ({
-            ...item,
-            pedido_id: order.id,
-          })),
+          )
+            .map(({ calculado_preco_total: _t, calculado_preco_venda: _v, ...item }) => ({
+              ...item,
+              pedido_id: order.id,
+            }))
+            // Itens de outros pedidos, só para ocupar várias páginas de 100.
+            .concat(
+              Array.from({ length: fillerItems }, (_, i) => ({
+                id: 9000 + i,
+                pedido_id: 999,
+                produto_id: 100,
+                sku_id: 501,
+                quantidade: 1,
+                total: 10,
+              })) as never,
+            ),
         };
         const source = sources[path.split("/")[2]];
         if (!source) throw new Error(`Unexpected external request: ${path}`);
@@ -267,6 +281,25 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     expect(first.items).toHaveLength(1);
     // O valor do item vem do cálculo de reserva (total - vale): 100 - 10 = 90 por 2 unidades.
     expect(Number(first.items[0].priceAtSale)).toBe(45);
+    const staged = await schema.db.execute(sql`SELECT count(*)::int AS n FROM braavo_catalog WHERE kind = 'order_items'`);
+    expect(Number((staged.rows[0] as { n: number }).n)).toBe(0);
+  });
+
+  it("copies several pages of order items in one cycle and still ends with a clean catalog", async () => {
+    fillerItems = 250; // 251 itens = 3 páginas de 100
+    let itemsCallsInFirstItemsBatch: number | null = null;
+    for (let i = 0; i < 40; i++) {
+      calls.length = 0;
+      const r = await sync.runBraavoBatch("shop-a", "manual");
+      if (r.status === "failed") throw new Error(r.message);
+      const n = calls.filter((c) => c.path === "/api/pedidos_produtos/buscar/todos").length;
+      if (n > 0 && itemsCallsInFirstItemsBatch === null) itemsCallsInFirstItemsBatch = n;
+      if (r.complete) break;
+    }
+    // As 3 páginas foram lidas no MESMO ciclo, não uma por ciclo.
+    expect(itemsCallsInFirstItemsBatch).toBe(3);
+    const snap = await snapshot();
+    expect(snap.items).toHaveLength(1);
     const staged = await schema.db.execute(sql`SELECT count(*)::int AS n FROM braavo_catalog WHERE kind = 'order_items'`);
     expect(Number((staged.rows[0] as { n: number }).n)).toBe(0);
   });

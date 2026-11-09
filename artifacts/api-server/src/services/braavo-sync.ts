@@ -54,6 +54,8 @@ export type BraavoBatchResult = {
   skipped?: number;
 };
 const PAGE_SIZE = 25;
+// Orçamento para ler páginas de itens em lote num único ciclo (o lote inteiro tem 50 s).
+const ITEMS_BATCH_BUDGET_MS = 30_000;
 
 // Legacy shops carry a few inconsistent records (17 in 114 thousand orders on a
 // real shop). Those are quarantined and the import continues. Past this ceiling
@@ -683,37 +685,56 @@ async function runPage(
       cache.set(`products:${product.externalId}`, product.data);
   }
   if (cursor.phase === "order_items") {
-    await db.transaction(async (tx) => {
-      await assertLease(tx, clientId, leaseId);
-      // Primeira página: descarta cópia de um ciclo anterior interrompido.
-      if (cursor.page === 1)
-        await tx
-          .delete(catalog)
-          .where(
-            and(eq(catalog.clientId, clientId), eq(catalog.kind, "order_items")),
-          );
-      if (page.rows.length)
-        await tx
-          .insert(catalog)
-          .values(
-            page.rows.map((row) => ({
-              clientId,
-              kind: "order_items" as const,
-              externalId: braavoId(row.id),
-              data: row,
-            })),
-          )
-          .onConflictDoUpdate({
-            target: [catalog.clientId, catalog.kind, catalog.externalId],
-            set: { data: sql`excluded.data` },
-          });
-    });
+    // Cada ciclo do job custa pausas fixas (~7 s). Gravar uma página por ciclo
+    // deixava a cópia de 188 mil itens em ~4 h; aqui lemos várias páginas por ciclo,
+    // dentro do orçamento do lote. A gravação é idempotente: se o ciclo cair no meio,
+    // as páginas são refeitas sem duplicar.
+    const batchStarted = Date.now();
+    let current = cursor;
+    let currentPage = page;
+    let copied = 0;
+    for (;;) {
+      await db.transaction(async (tx) => {
+        await assertLease(tx, clientId, leaseId);
+        // Primeira página: descarta cópia de um ciclo anterior interrompido.
+        if (current.page === 1)
+          await tx
+            .delete(catalog)
+            .where(
+              and(eq(catalog.clientId, clientId), eq(catalog.kind, "order_items")),
+            );
+        if (currentPage.rows.length)
+          await tx
+            .insert(catalog)
+            .values(
+              currentPage.rows.map((row) => ({
+                clientId,
+                kind: "order_items" as const,
+                externalId: braavoId(row.id),
+                data: row,
+              })),
+            )
+            .onConflictDoUpdate({
+              target: [catalog.clientId, catalog.kind, catalog.externalId],
+              set: { data: sql`excluded.data` },
+            });
+      });
+      copied += currentPage.rows.length;
+      current = advanceBraavoCursor(current, currentPage.complete);
+      if (
+        current.phase !== "order_items" ||
+        Date.now() - batchStarted > ITEMS_BATCH_BUDGET_MS
+      )
+        break;
+      currentPage = await api.page(
+        `/${paths.order_items}/buscar/todos`,
+        current.page,
+        limit,
+      );
+    }
     return {
-      processed: page.rows.length,
-      cursor: {
-        ...advanceBraavoCursor(cursor, page.complete),
-        skipped: cursor.skipped ?? 0,
-      },
+      processed: copied,
+      cursor: { ...current, skipped: cursor.skipped ?? 0 },
     };
   }
   // Itens dos pedidos desta página, vindos da cópia feita na fase anterior.
