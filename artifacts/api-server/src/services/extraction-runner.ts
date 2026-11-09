@@ -24,6 +24,7 @@ import {
   earlierDate,
   isWideGa4Window,
   resolveGa4SyncWindow,
+  resolveGa4TrafficFrom,
   shouldRefundBackfillSlot,
   shouldStartGa4Client,
   shouldStoreGa4ProductViewsInPostgres,
@@ -31,6 +32,7 @@ import {
 import {
   clientIdsWithGa4History,
   clientIdsWithGa4ProductHistory,
+  lastGa4TrafficToByClient,
   lastStoredGa4DayByClient,
   syncGa4DailyForClient,
 } from "./ga4-daily-sync";
@@ -1011,6 +1013,10 @@ export async function runGa4DailyExtraction(
   let failed = 0;
   const clientResults: NonNullable<ExtractionRunSummary["clientResults"]> = [];
 
+  // Origem do trafego (so BigQuery): ultimo dia gravado com sucesso por cliente, o marcador dessa tabela (ver resolveGa4TrafficFrom).
+  // Sem BigQuery neste turno ela nao roda e o marcador nao anda.
+  const lastTrafficTo = bq ? await lastGa4TrafficToByClient(clientIds) : new Map<string, string>();
+
   // Planeja ANTES de rodar: quem ja esta em dia (janela curta) passa primeiro; quem precisa de backfill largo (cliente novo,
   // GA4 recem-ligado, job parado por muito tempo) vai depois, com limite de tempo e de quantidade por rodada (ver
   // shouldStartGa4Client). O resto fica para a proxima rodada; rodada manual de UM cliente nao tem limite.
@@ -1046,8 +1052,14 @@ export async function runGa4DailyExtraction(
         to: postgresWindow.to,
       };
       const productFrom = bqWindow ? earlierDate(postgresProductFrom, bqWindow.from) : postgresProductFrom;
-      // "Largo" vale tambem quando so os PRODUTOS precisam de backfill (e o que mais pesa: um item por produto por dia).
-      return [{ client, propertyId, window, productFrom, wide: isWideGa4Window(earlierDate(window.from, productFrom), window.to) }];
+      const trafficFrom = resolveGa4TrafficFrom({
+        bigQueryAvailable: bq !== null,
+        lastTrafficTo: lastTrafficTo.get(client.id),
+        lookbackDays: options.lookbackDays,
+      });
+      // "Largo" vale tambem quando so os PRODUTOS ou a ORIGEM DO TRAFEGO precisam de backfill (o que mais pesa: um item por produto por dia).
+      const earliest = earlierDate(earlierDate(window.from, productFrom), trafficFrom ?? window.from);
+      return [{ client, propertyId, window, productFrom, trafficFrom, wide: isWideGa4Window(earliest, window.to) }];
     })
     .sort((a, b) => Number(a.wide) - Number(b.wide));
 
@@ -1060,7 +1072,7 @@ export async function runGa4DailyExtraction(
   let wideStarted = 0;
   let deferred = 0;
 
-  for (const { client, propertyId, window, productFrom, wide } of plans) {
+  for (const { client, propertyId, window, productFrom, trafficFrom, wide } of plans) {
     if (gated) {
       const gate = shouldStartGa4Client({ wide, elapsedMs: Date.now() - runStartedMs, budgetMs, wideStarted, maxWide });
       if (!gate.start) {
@@ -1079,6 +1091,7 @@ export async function runGa4DailyExtraction(
         propertyId,
         ...window,
         productFrom,
+        trafficFrom,
         bigQuery: bq,
         // B2B: produtos so no BigQuery (a tela de Produtos e B2C); ver shouldStoreGa4ProductViewsInPostgres.
         storeProductViewsInPostgres: shouldStoreGa4ProductViewsInPostgres({

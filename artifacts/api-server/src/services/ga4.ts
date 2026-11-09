@@ -456,3 +456,81 @@ export async function fetchGa4ProductViewsDaily(params: {
   }
   return out;
 }
+
+export interface Ga4TrafficDay {
+  date: string;
+  channelGroup: string;
+  source: string;
+  medium: string;
+  campaign: string;
+  sessions: number;
+  totalUsers: number;
+  engagedSessions: number;
+  addToCarts: number;
+  checkouts: number;
+  purchases: number;
+  purchaseRevenue: number;
+}
+
+// Origem do trafego POR DIA (canal, origem, midia e campanha da SESSAO) com as vendas de cada uma: o que liga anuncio -> visita ->
+// compra. So vai para o BigQuery (up_global.ga4_traffic_daily). A combinacao de campos foi conferida em 09/11/2026 em 3 propriedades
+// (400 dias): so metricas que o Google aceita com dimensoes de sessao, e compras/receita fecham com o diario; as visitas ficam a menos
+// de 1% (o Google soma por sessao, o diario por dia). Pagina com offset porque 400 dias x origens passam de 10 mil linhas.
+export async function fetchGa4TrafficDaily(params: {
+  propertyId?: string | null;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<Ga4TrafficDay[] | null> {
+  if (!params.propertyId) return null;
+  const token = await getAccessToken();
+  if (!token) return null;
+
+  const PAGE = 100_000;
+  const out: Ga4TrafficDay[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const report = await runReport(params.propertyId, {
+      dateRanges: [{ startDate: params.dateFrom, endDate: params.dateTo }],
+      dimensions: [
+        { name: "date" },
+        { name: "sessionDefaultChannelGroup" },
+        { name: "sessionSource" },
+        { name: "sessionMedium" },
+        { name: "sessionCampaignName" },
+      ],
+      metrics: [
+        { name: "sessions" },
+        { name: "totalUsers" },
+        { name: "engagedSessions" },
+        { name: "addToCarts" },
+        { name: "checkouts" },
+        { name: "ecommercePurchases" },
+        { name: "purchaseRevenue" },
+      ],
+      orderBys: [{ dimension: { dimensionName: "date" } }],
+      limit: PAGE,
+      offset,
+    });
+    const rows = report.rows ?? [];
+    for (const row of rows) {
+      const day: Ga4TrafficDay = {
+        date: ga4Date(row.dimensionValues?.[0]?.value),
+        channelGroup: row.dimensionValues?.[1]?.value?.trim() ?? "",
+        source: row.dimensionValues?.[2]?.value?.trim() ?? "",
+        medium: row.dimensionValues?.[3]?.value?.trim() ?? "",
+        campaign: row.dimensionValues?.[4]?.value?.trim() ?? "",
+        sessions: metricValue(row, 0),
+        totalUsers: metricValue(row, 1),
+        engagedSessions: metricValue(row, 2),
+        addToCarts: metricValue(row, 3),
+        checkouts: metricValue(row, 4),
+        purchases: metricValue(row, 5),
+        purchaseRevenue: metricValue(row, 6),
+      };
+      // Linha sem nada medido nao diz nada: o GA4 as devolve em combinacoes raras.
+      if (day.sessions + day.totalUsers + day.addToCarts + day.checkouts + day.purchases + day.purchaseRevenue <= 0) continue;
+      out.push(day);
+    }
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}

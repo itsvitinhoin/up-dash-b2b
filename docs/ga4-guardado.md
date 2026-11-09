@@ -202,3 +202,43 @@ Como funciona (`shouldStoreGa4ProductViewsInPostgres`, `syncGa4DailyForClient`):
   que trava a tabela por alguns segundos — não é necessário). O ganho é parar de gravar e de manter 395 mil linhas inúteis.
 - Telas B2B que passarem a mostrar GA4 devem **ler do BigQuery** (`up_global.ga4_daily` / `ga4_product_views_daily`).
 - Fase 2 (não feita): levar os produtos do B2C também para o BigQuery e deixar só a tabela diária no Postgres.
+
+## Origem do tráfego (09/11/2026)
+
+Tabela nova **só no BigQuery**: `up_global.ga4_traffic_daily` (particionada por `date`, agrupada por `client_id`). Uma linha por
+cliente, dia, **canal, origem, mídia e campanha da sessão**, com o que cada uma trouxe:
+
+| Coluna | O que é |
+|---|---|
+| `channel_group`, `source`, `medium`, `campaign` | `sessionDefaultChannelGroup`, `sessionSource`, `sessionMedium`, `sessionCampaignName` (vazio vira `(not set)`) |
+| `sessions`, `total_users`, `engaged_sessions` | visitas, usuários e sessões engajadas |
+| `add_to_cart`, `begin_checkout`, `purchases`, `purchase_revenue` | funil de venda e receita (atribuição do GA4) |
+
+Exemplo — de onde vieram as vendas de um cliente nos últimos 30 dias:
+
+```sql
+SELECT channel_group, source, medium, SUM(sessions) sessoes, SUM(purchases) compras, ROUND(SUM(purchase_revenue)) receita
+FROM `up-vesti-report.up_global.ga4_traffic_daily`
+WHERE client_name = 'La Cleo' AND `date` >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 30 DAY)
+GROUP BY 1, 2, 3 ORDER BY receita DESC
+```
+
+Como funciona e o que lembrar:
+
+- **Mesmo job `ga4_daily`, mesmo acesso (Leitor da agência):** nenhuma permissão nova. Histórico de **400 dias** no primeiro ciclo
+  e depois atualização de hora em hora (relê os últimos dias). Tamanho medido: 7 mil a 25 mil linhas por cliente em 400 dias.
+- **Janela e marcador próprios.** O marcador é o último dia gravado com sucesso, em `sync_jobs.result.trafficTo`
+  (`resolveGa4TrafficFrom`, `lastGa4TrafficToByClient`). Sem marcador → backfill largo; com marcador → recomeça dali. Falha só dessa
+  tabela **não derruba** o diário nem os produtos: o erro vai em `sync_jobs.result.trafficError`, o marcador não anda e a rodada
+  seguinte refaz o que faltou.
+- **Troca de janela, sem duplicar:** as linhas novas vão para uma tabela temporária (lotes de 3000) e a janela do cliente é trocada
+  numa transação só (mesmo desenho dos produtos). Rodar duas vezes a mesma janela não duplica. Validado em 09/11 contra o BigQuery
+  de verdade, num dataset temporário (7 mil linhas em 3 lotes, somas, repetição, troca de janela, janela vazia e exclusão do cliente).
+- **Somas por origem não fecham 100% com a tabela diária:** compras e receita fecham; sessões e carrinho podem diferir até ~1% (o Google
+  soma por sessão, o diário por dia). `total_users` **não** é aditivo entre linhas.
+- A exclusão definitiva de cliente (`deleteGa4Rows`) apaga as **três** tabelas.
+- **Ainda não vigiado pelo alerta de dado parado** (`docs/ga4-alerta.md`): se a origem do tráfego falhar sozinha, só aparece no log
+  (`[ga4-daily] origem do trafego nao gravada`) e em `sync_jobs.result.trafficError`. Próximo passo possível: regra de cobertura.
+- **Depois da publicação**, para não esperar 8 rodadas (limite de 3 backfills largos por hora): rodar uma vez
+  `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=ga4_daily,TRIGGER=manual --wait`
+  (os clientes sem acesso fazem a execução sair com erro e o Cloud Run repete uma vez; é esperado e a segunda passada não refaz nada).

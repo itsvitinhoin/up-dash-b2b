@@ -67,6 +67,26 @@ export function resolveGa4SyncWindow(params: {
   return { from: shiftDate(to, -(days - 1)), to };
 }
 
+// Origem do trafego (up_global.ga4_traffic_daily, so no BigQuery): janela PROPRIA. A tabela veio depois do diario e roda isolada (se
+// falhar, o diario e os produtos seguem), entao nao pode pegar carona na janela do diario: um dia que ela perdeu nunca mais seria
+// refeito. O marcador e o ultimo dia que o job gravou com SUCESSO (sync_jobs.result.trafficTo): sem ele, backfill largo; com ele,
+// recomeca dali (menos o recuo), e uma falha so da origem do trafego se recupera sozinha na rodada seguinte.
+// null = sem BigQuery neste turno: a origem do trafego nao roda (nao tem copia no Postgres) e o marcador nao anda.
+export function resolveGa4TrafficFrom(params: {
+  bigQueryAvailable: boolean;
+  lastTrafficTo?: string | null;
+  lookbackDays?: number;
+  now?: Date;
+}): string | null {
+  if (!params.bigQueryAvailable) return null;
+  return resolveGa4SyncWindow({
+    hasHistory: Boolean(params.lastTrafficTo),
+    lookbackDays: params.lookbackDays,
+    lastStoredDay: params.lastTrafficTo,
+    now: params.now,
+  }).from;
+}
+
 // ── Backfill em lote com limite ─────────────────────────────────────────────
 // Registrar muitos clientes de uma vez (a descoberta acha dezenas) faria a PRIMEIRA rodada tentar 400 dias de todos: cerca de
 // 2 minutos cada, contra o limite de 15 minutos do job horario, que tambem roda UpZero e Meta no mesmo processo. Entao:

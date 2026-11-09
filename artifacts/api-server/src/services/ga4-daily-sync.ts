@@ -8,9 +8,11 @@ import {
   fetchGa4FunnelMetrics,
   fetchGa4ProductViewMetrics,
   fetchGa4ProductViewsDaily,
+  fetchGa4TrafficDaily,
   type Ga4DailyMetrics,
   type Ga4FunnelMetrics,
   type Ga4ProductViewMetric,
+  type Ga4TrafficDay,
 } from "./ga4";
 
 export async function clientIdsWithGa4History(clientIds: string[]): Promise<Set<string>> {
@@ -58,6 +60,31 @@ export async function lastStoredGa4DayByClient(clientIds: string[]): Promise<Map
   return result;
 }
 
+// Ultimo dia de ORIGEM DO TRAFEGO que o job gravou com sucesso para cada cliente (sync_jobs.result.trafficTo). E o marcador de
+// cobertura dessa tabela (ver resolveGa4TrafficFrom): ela nao pode usar o do diario porque roda isolada e pode falhar sozinha, e
+// um cliente sem nenhuma venda recente nao tem linhas que sirvam de marcador no proprio BigQuery.
+export async function lastGa4TrafficToByClient(clientIds: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (clientIds.length === 0) return result;
+  const rows = await db
+    .select({
+      clientId: syncJobsTable.clientId,
+      lastTo: sql<string | null>`MAX(${syncJobsTable.result}->>'trafficTo')`,
+    })
+    .from(syncJobsTable)
+    .where(
+      and(
+        inArray(syncJobsTable.clientId, clientIds),
+        eq(syncJobsTable.jobType, "ga4_daily"),
+        eq(syncJobsTable.status, "done"),
+        sql`${syncJobsTable.result}->>'trafficTo' IS NOT NULL`,
+      ),
+    )
+    .groupBy(syncJobsTable.clientId);
+  for (const row of rows) if (row.lastTo) result.set(row.clientId, row.lastTo);
+  return result;
+}
+
 export async function syncGa4DailyForClient(params: {
   clientId: string;
   clientName?: string;
@@ -72,6 +99,8 @@ export async function syncGa4DailyForClient(params: {
   // Postgres e apaga a copia antiga do cliente, mas so depois de o BigQuery ter gravado nesta rodada. Sem BigQuery grava no Postgres
   // mesmo assim. Padrao: true.
   storeProductViewsInPostgres?: boolean;
+  // Inicio da janela de ORIGEM DO TRAFEGO (so BigQuery; ver resolveGa4TrafficFrom). Ausente/null = nao busca nem grava.
+  trafficFrom?: string | null;
 }): Promise<{
   from: string;
   to: string;
@@ -81,6 +110,13 @@ export async function syncGa4DailyForClient(params: {
   productViewRows: number;
   /** Linhas de produto da copia antiga do Postgres apagadas nesta rodada (0 quando nao havia nada ou quando o cliente guarda produtos no Postgres). */
   prunedProductRows: number;
+  /** Linhas de origem do trafego gravadas no BigQuery nesta rodada. */
+  trafficRows: number;
+  /** Janela de origem do trafego gravada COM SUCESSO (null = nao rodou ou falhou: o marcador nao anda). `trafficTo` vira o marcador. */
+  trafficFrom: string | null;
+  trafficTo: string | null;
+  /** Falha so da origem do trafego (busca no GA4 ou gravacao no BigQuery); o diario e os produtos seguiram normalmente. */
+  trafficError: string | null;
   bigQuery: Ga4BigQueryWrite | null;
 }> {
   const fetched = await fetchGa4DailyMetrics({
@@ -108,6 +144,25 @@ export async function syncGa4DailyForClient(params: {
   const productViews = toStoredProductViews(fetchedProductViews);
   // Sem BigQuery nao ha segunda copia: ai o Postgres guarda os produtos de qualquer jeito.
   const storeProducts = params.storeProductViewsInPostgres !== false || !params.bigQuery;
+
+  // Origem do trafego: so com BigQuery (nao ha copia no Postgres) e ISOLADA. Tabela nova: se a busca falhar, o diario e os produtos
+  // seguem, o marcador nao anda e a proxima rodada refaz a janela que faltou.
+  const trafficFrom = params.bigQuery ? (params.trafficFrom ?? null) : null;
+  let traffic: Ga4TrafficDay[] | undefined;
+  let trafficFetchError: string | null = null;
+  if (trafficFrom) {
+    try {
+      const fetchedTraffic = await fetchGa4TrafficDaily({
+        propertyId: params.propertyId,
+        dateFrom: trafficFrom,
+        dateTo: params.to,
+      });
+      if (fetchedTraffic === null) throw new Error("GA4 sem credencial ao buscar a origem do trafego.");
+      traffic = fetchedTraffic;
+    } catch (err) {
+      trafficFetchError = `busca no GA4: ${errorMessage(err)}`;
+    }
+  }
 
   const filled = fillGa4Days(params.from, params.to, fetched);
   const rows = filled.map((row) => ({
@@ -180,6 +235,7 @@ export async function syncGa4DailyForClient(params: {
       productViews,
       productFrom,
       to: params.to,
+      ...(traffic && trafficFrom ? { traffic, trafficFrom } : {}),
     });
   };
 
@@ -212,6 +268,16 @@ export async function syncGa4DailyForClient(params: {
     }
   }
 
+  const bigQueryWrite = bigQuery.status === "fulfilled" ? bigQuery.value : null;
+  const trafficError = trafficFetchError ?? (bigQueryWrite?.trafficError ? `gravacao no BigQuery: ${bigQueryWrite.trafficError}` : null);
+  const trafficWritten = Boolean(traffic && trafficFrom && bigQueryWrite && !bigQueryWrite.trafficError);
+  if (trafficError) {
+    console.warn("[ga4-daily] origem do trafego nao gravada; o resto seguiu e a proxima rodada refaz a janela", {
+      clientId: params.clientId,
+      error: trafficError,
+    });
+  }
+
   return {
     from: params.from,
     to: params.to,
@@ -220,7 +286,11 @@ export async function syncGa4DailyForClient(params: {
     sessions: rows.reduce((sum, row) => sum + row.sessions, 0),
     productViewRows: productViews.length,
     prunedProductRows,
-    bigQuery: bigQuery.status === "fulfilled" ? bigQuery.value : null,
+    trafficRows: bigQueryWrite?.trafficRows ?? 0,
+    trafficFrom: trafficWritten ? trafficFrom : null,
+    trafficTo: trafficWritten ? params.to : null,
+    trafficError,
+    bigQuery: bigQueryWrite,
   };
 }
 

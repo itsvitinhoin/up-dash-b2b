@@ -30,6 +30,7 @@ vi.mock("../src/services/ga4", () => ({
     { date: "2026-11-08", itemId: "sku-1", itemName: "Camiseta", itemVariant: null, views: 3 },
     { date: "2026-11-08", itemId: "sku-2", itemName: "Calca", itemVariant: "P", views: 2 },
   ]),
+  fetchGa4TrafficDaily: vi.fn(async () => []),
   fetchGa4FunnelMetrics: vi.fn(async () => null),
   fetchGa4ProductViewMetrics: vi.fn(async () => null),
 }));

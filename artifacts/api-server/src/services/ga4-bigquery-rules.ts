@@ -1,4 +1,4 @@
-import type { Ga4DailyMetrics } from "./ga4";
+import type { Ga4DailyMetrics, Ga4TrafficDay } from "./ga4";
 import type { StoredProductViewKey } from "./ga4-daily-rules";
 import { isBigQueryAvailable } from "./excluded-clients-rules";
 
@@ -27,10 +27,14 @@ export function resolveGa4BigQueryDataset(env: Record<string, string | undefined
 export const GA4_BQ_DATASET = resolveGa4BigQueryDataset();
 export const GA4_BQ_DAILY_TABLE = "ga4_daily";
 export const GA4_BQ_PRODUCTS_TABLE = "ga4_product_views_daily";
+// Origem do trafego (canal, origem, midia, campanha) por dia: so no BigQuery, nao ha copia no Postgres.
+export const GA4_BQ_TRAFFIC_TABLE = "ga4_traffic_daily";
 
 // Linhas por consulta de carga dos produtos. Cada linha vai como parametro da consulta
 // (limite de ~10 MB por requisicao); com nome de produto e variante fica em ~250 bytes.
 export const GA4_BQ_PRODUCT_BATCH = 4000;
+// Idem para a origem do trafego: origem, midia e campanha (ate ~110 caracteres medidos) ficam em ~400 bytes por linha.
+export const GA4_BQ_TRAFFIC_BATCH = 3000;
 
 export type Ga4BqClient = { clientId: string; clientName: string; propertyId: string };
 
@@ -58,6 +62,24 @@ export type Ga4ProductBqRow = {
   item_name: string;
   item_variant: string;
   items_viewed: number;
+};
+
+export type Ga4TrafficBqRow = {
+  client_id: string;
+  client_name: string;
+  property_id: string;
+  date: string;
+  channel_group: string;
+  source: string;
+  medium: string;
+  campaign: string;
+  sessions: number;
+  total_users: number;
+  engaged_sessions: number;
+  add_to_cart: number;
+  begin_checkout: number;
+  purchases: number;
+  purchase_revenue: number;
 };
 
 function whole(value: number | undefined): number {
@@ -98,6 +120,56 @@ export function buildGa4ProductBqRows(client: Ga4BqClient, rows: StoredProductVi
     item_variant: row.itemVariant,
     items_viewed: whole(row.views),
   }));
+}
+
+function label(value: string | null | undefined): string {
+  const text = (value ?? "").trim();
+  return text || "(not set)";
+}
+
+/**
+ * Uma linha por (dia, canal, origem, midia, campanha). Texto vazio vira "(not set)", o mesmo nome que o GA4 usa, e linhas que
+ * caem na mesma chave depois de normalizar sao SOMADAS (a tabela do BigQuery nao tem chave primaria: duplicar aqui contaria
+ * a venda duas vezes).
+ */
+export function buildGa4TrafficBqRows(client: Ga4BqClient, rows: Ga4TrafficDay[]): Ga4TrafficBqRow[] {
+  const byKey = new Map<string, Ga4TrafficBqRow>();
+  for (const row of rows) {
+    const channelGroup = label(row.channelGroup);
+    const source = label(row.source);
+    const medium = label(row.medium);
+    const campaign = label(row.campaign);
+    const key = [row.date, channelGroup, source, medium, campaign].join("\u0000");
+    const current = byKey.get(key);
+    if (current) {
+      current.sessions += whole(row.sessions);
+      current.total_users += whole(row.totalUsers);
+      current.engaged_sessions += whole(row.engagedSessions);
+      current.add_to_cart += whole(row.addToCarts);
+      current.begin_checkout += whole(row.checkouts);
+      current.purchases += whole(row.purchases);
+      current.purchase_revenue = money(current.purchase_revenue + money(row.purchaseRevenue));
+      continue;
+    }
+    byKey.set(key, {
+      client_id: client.clientId,
+      client_name: client.clientName,
+      property_id: client.propertyId,
+      date: row.date,
+      channel_group: channelGroup,
+      source,
+      medium,
+      campaign,
+      sessions: whole(row.sessions),
+      total_users: whole(row.totalUsers),
+      engaged_sessions: whole(row.engagedSessions),
+      add_to_cart: whole(row.addToCarts),
+      begin_checkout: whole(row.checkouts),
+      purchases: whole(row.purchases),
+      purchase_revenue: money(row.purchaseRevenue),
+    });
+  }
+  return [...byKey.values()];
 }
 
 export function chunk<T>(items: T[], size: number): T[][] {
