@@ -296,11 +296,47 @@ describe("replaceGa4ProductViews", () => {
   it("se um lote falhar a troca NÃO acontece (a tabela de verdade fica como estava) e a temporária é apagada", async () => {
     const { bq, calls } = fakeBigQuery((query) => (query.startsWith("INSERT INTO") ? new Error("quota") : []));
     await expect(
-      replaceGa4ProductViews(bq, client, manyItems(50), "2026-10-01", "2026-11-06", ids),
+      replaceGa4ProductViews(bq, client, manyItems(GA4_BQ_PRODUCT_BATCH + 1), "2026-10-01", "2026-11-06", ids),
     ).rejects.toThrow("quota");
     const kinds = calls.map((c) => c.query.trim().split(/\s+/)[0]);
     expect(kinds).toEqual(["CREATE", "INSERT", "DROP"]);
     expect(calls.some((c) => c.query.includes("BEGIN TRANSACTION"))).toBe(false);
+  });
+
+  it("janela curta (cabe num lote): uma consulta só (MERGE), sem tabela temporária nem transação", async () => {
+    const { bq, calls } = fakeBigQuery();
+    const written = await replaceGa4ProductViews(bq, client, manyItems(50), "2026-11-07", "2026-11-09", ids);
+    expect(written).toBe(50);
+    expect(calls).toHaveLength(1);
+    const [merge] = calls;
+    expect(merge.query).toMatch(/^MERGE `up-vesti-report\.up_global\.ga4_product_views_daily` T/);
+    expect(merge.query).toContain("NULLIF(r.item_id, '')"); // o mesmo "vazio vira NULL" da troca por tabela temporária
+    expect(merge.query).toContain("T.item_variant IS NOT DISTINCT FROM S.item_variant"); // variante vazia (NULL) também casa
+    expect(merge.query).toContain("GROUP BY"); // chave repetida na origem é somada, nunca erro de MERGE
+    expect(merge.query).toContain("WHEN NOT MATCHED BY SOURCE AND T.client_id = @client_id");
+    expect(merge.query).toContain("THEN DELETE"); // o que o GA4 deixou de devolver sai, só dentro da janela e deste cliente
+    expect(merge.query).not.toContain("BEGIN TRANSACTION");
+    expect(merge.query).not.toContain("_stg_");
+    expect((merge.params?.rows as unknown[]).length).toBe(50);
+    expect(merge.params).toMatchObject({ client_id: "c1", from_date: "2026-11-07", to_date: "2026-11-09" });
+  });
+
+  it("no limite do lote ainda é uma consulta só; uma linha a mais passa pela tabela temporária", async () => {
+    const exact = fakeBigQuery();
+    expect(await replaceGa4ProductViews(exact.bq, client, manyItems(GA4_BQ_PRODUCT_BATCH), "2026-11-05", "2026-11-06", ids)).toBe(
+      GA4_BQ_PRODUCT_BATCH,
+    );
+    expect(exact.calls.map((c) => c.query.trim().split(/\s+/)[0])).toEqual(["MERGE"]);
+
+    const over = fakeBigQuery();
+    await replaceGa4ProductViews(over.bq, client, manyItems(GA4_BQ_PRODUCT_BATCH + 1), "2026-11-05", "2026-11-06", ids);
+    expect(over.calls.map((c) => c.query.trim().split(/\s+/)[0])).toEqual(["CREATE", "INSERT", "INSERT", "BEGIN", "DROP"]);
+  });
+
+  it("janela curta: se o MERGE falhar o erro sobe e nada mais é chamado (uma instrução só, entra tudo ou nada)", async () => {
+    const { bq, calls } = fakeBigQuery(() => new Error("cota"));
+    await expect(replaceGa4ProductViews(bq, client, manyItems(5), "2026-11-05", "2026-11-06", ids)).rejects.toThrow("cota");
+    expect(calls).toHaveLength(1);
   });
 
   it("loja sem nenhum view_item na janela só limpa o que estava lá", async () => {
@@ -364,21 +400,27 @@ describe("writeGa4ToBigQuery", () => {
   const productViews = toStoredProductViews([productDay("2026-11-05", "A1", 4)]);
   const base = { client, daily, from: "2026-11-05", productViews, productFrom: "2026-11-05", to: "2026-11-06", newId: () => "abc12345" };
 
+  // Posição do MERGE de cada tabela (janela curta = uma consulta por tabela); -1 se a tabela não foi tocada por MERGE.
+  const mergeOn = (calls: Array<{ query: string }>, table: string) =>
+    calls.findIndex((c) => c.query.startsWith("MERGE") && c.query.includes(`.${table}\``));
+
   it("grava os produtos primeiro e o diário por último (o diário é o marcador de cobertura)", async () => {
     const { bq, calls } = fakeBigQuery();
     const result = await writeGa4ToBigQuery(bq, base);
     expect(result).toEqual({ dailyRows: 2, productRows: 1, trafficRows: 0 });
-    const merge = calls.findIndex((c) => c.query.startsWith("MERGE"));
-    const swap = calls.findIndex((c) => c.query.includes("BEGIN TRANSACTION"));
-    expect(swap).toBeGreaterThan(-1);
-    expect(merge).toBe(calls.length - 1);
-    expect(swap).toBeLessThan(merge);
+    const products = mergeOn(calls, "ga4_product_views_daily");
+    const dailyMerge = mergeOn(calls, "ga4_daily");
+    expect(products).toBeGreaterThan(-1);
+    expect(dailyMerge).toBe(calls.length - 1);
+    expect(products).toBeLessThan(dailyMerge);
   });
 
   it("se os produtos falharem o diário não é gravado, então a próxima rodada refaz o backfill dos dois", async () => {
-    const { bq, calls } = fakeBigQuery((query) => (query.includes("BEGIN TRANSACTION") ? new Error("conflito") : []));
+    const { bq, calls } = fakeBigQuery((query) =>
+      query.startsWith("MERGE") && query.includes("ga4_product_views_daily") ? new Error("conflito") : [],
+    );
     await expect(writeGa4ToBigQuery(bq, base)).rejects.toThrow("conflito");
-    expect(calls.some((c) => c.query.startsWith("MERGE"))).toBe(false);
+    expect(mergeOn(calls, "ga4_daily")).toBe(-1);
   });
 
   describe("com a origem do tráfego", () => {
@@ -392,14 +434,23 @@ describe("writeGa4ToBigQuery", () => {
       const { bq, calls } = fakeBigQuery();
       const result = await writeGa4ToBigQuery(bq, withTraffic);
       expect(result).toEqual({ dailyRows: 2, productRows: 1, trafficRows: 2 });
-      const swaps = calls.map((c, i) => (c.query.includes("BEGIN TRANSACTION") ? i : -1)).filter((i) => i >= 0);
-      const merge = calls.findIndex((c) => c.query.startsWith("MERGE"));
-      expect(swaps).toHaveLength(2);
-      expect(calls[swaps[0]].query).toContain("ga4_product_views_daily");
-      expect(calls[swaps[1]].query).toContain("ga4_traffic_daily");
-      expect(calls[swaps[1]].params).toEqual({ client_id: "c1", from_date: "2026-11-03", to_date: "2026-11-06" });
-      expect(merge).toBe(calls.length - 1);
-      expect(swaps[1]).toBeLessThan(merge);
+      const products = mergeOn(calls, "ga4_product_views_daily");
+      const trafficMerge = mergeOn(calls, "ga4_traffic_daily");
+      const dailyMerge = mergeOn(calls, "ga4_daily");
+      expect(products).toBeGreaterThan(-1);
+      expect(products).toBeLessThan(trafficMerge);
+      expect(trafficMerge).toBeLessThan(dailyMerge);
+      expect(dailyMerge).toBe(calls.length - 1);
+      expect(calls[trafficMerge].params).toMatchObject({ client_id: "c1", from_date: "2026-11-03", to_date: "2026-11-06" });
+      expect(calls.some((c) => c.query.includes("BEGIN TRANSACTION"))).toBe(false); // janela curta: nenhuma tabela temporária
+    });
+
+    it("com tudo em janela curta cada cliente custa 3 consultas (produtos, origem do tráfego e diário)", async () => {
+      const { bq, calls } = fakeBigQuery();
+      await ensureGa4Tables(bq); // criar as tabelas é por processo, não por cliente
+      const before = calls.length;
+      await writeGa4ToBigQuery(bq, withTraffic);
+      expect(calls.length - before).toBe(3);
     });
 
     it("sem a origem do tráfego nenhuma consulta toca a tabela dela (além de criá-la)", async () => {
@@ -410,11 +461,21 @@ describe("writeGa4ToBigQuery", () => {
     });
 
     it("se SÓ a origem do tráfego falhar o diário e os produtos são gravados e o erro volta em trafficError (isolada)", async () => {
-      const { bq, calls } = fakeBigQuery((query) => (query.includes("ga4_traffic_stg_") && query.startsWith("CREATE") ? new Error("cota do BigQuery") : []));
+      const { bq, calls } = fakeBigQuery((query) =>
+        query.startsWith("MERGE") && query.includes("ga4_traffic_daily") ? new Error("cota do BigQuery") : [],
+      );
       const result = await writeGa4ToBigQuery(bq, withTraffic);
       expect(result).toMatchObject({ dailyRows: 2, productRows: 1, trafficRows: 0, trafficError: "cota do BigQuery" });
-      expect(calls.some((c) => c.query.startsWith("MERGE"))).toBe(true);
-      expect(calls.some((c) => c.query.includes("BEGIN TRANSACTION") && c.query.includes("ga4_product_views_daily"))).toBe(true);
+      expect(mergeOn(calls, "ga4_daily")).toBeGreaterThan(-1);
+      expect(mergeOn(calls, "ga4_product_views_daily")).toBeGreaterThan(-1);
+    });
+
+    it("o mesmo isolamento vale na janela longa (tabela temporária): falha ao criá-la não derruba produtos nem diário", async () => {
+      const { bq, calls } = fakeBigQuery((query) => (query.includes("ga4_traffic_stg_") && query.startsWith("CREATE") ? new Error("cota do BigQuery") : []));
+      const bigTraffic = Array.from({ length: GA4_BQ_TRAFFIC_BATCH + 1 }, (_, i) => trafficDay("2026-11-05", `origem${i}`, "referral", "(not set)", 1));
+      const result = await writeGa4ToBigQuery(bq, { ...base, traffic: bigTraffic, trafficFrom: "2025-10-06" });
+      expect(result).toMatchObject({ dailyRows: 2, productRows: 1, trafficRows: 0, trafficError: "cota do BigQuery" });
+      expect(mergeOn(calls, "ga4_daily")).toBe(calls.length - 1);
     });
   });
 });
@@ -499,9 +560,46 @@ describe("replaceGa4Traffic", () => {
 
   it("se um lote falhar a troca NÃO acontece (a tabela de verdade fica como estava) e a temporária é apagada", async () => {
     const { bq, calls } = fakeBigQuery((query) => (query.startsWith("INSERT INTO") ? new Error("quota") : []));
-    await expect(replaceGa4Traffic(bq, client, manyOrigins(50), "2025-10-06", "2026-11-09", ids)).rejects.toThrow("quota");
+    await expect(
+      replaceGa4Traffic(bq, client, manyOrigins(GA4_BQ_TRAFFIC_BATCH + 1), "2025-10-06", "2026-11-09", ids),
+    ).rejects.toThrow("quota");
     expect(calls.map((c) => c.query.trim().split(/\s+/)[0])).toEqual(["CREATE", "INSERT", "DROP"]);
     expect(calls.some((c) => c.query.includes("BEGIN TRANSACTION"))).toBe(false);
+  });
+
+  it("janela curta (cabe num lote): uma consulta só (MERGE), sem tabela temporária nem transação", async () => {
+    const { bq, calls } = fakeBigQuery();
+    const written = await replaceGa4Traffic(bq, client, manyOrigins(150), "2026-11-07", "2026-11-09", ids);
+    expect(written).toBe(150);
+    expect(calls).toHaveLength(1);
+    const [merge] = calls;
+    expect(merge.query).toMatch(/^MERGE `up-vesti-report\.up_global\.ga4_traffic_daily` T/);
+    expect(merge.query).toContain("T.channel_group = S.channel_group AND T.source = S.source");
+    expect(merge.query).toContain("T.medium = S.medium AND T.campaign = S.campaign");
+    expect(merge.query).toContain("WHEN NOT MATCHED BY SOURCE AND T.client_id = @client_id");
+    expect(merge.query).toContain("THEN DELETE"); // a origem que o GA4 deixou de devolver sai, só dentro da janela e deste cliente
+    expect(merge.query).not.toContain("BEGIN TRANSACTION");
+    expect(merge.query).not.toContain("_stg_");
+    expect((merge.params?.rows as unknown[]).length).toBe(150);
+    expect(merge.params).toMatchObject({ client_id: "c1", from_date: "2026-11-07", to_date: "2026-11-09" });
+  });
+
+  it("no limite do lote ainda é uma consulta só; uma linha a mais passa pela tabela temporária", async () => {
+    const exact = fakeBigQuery();
+    expect(await replaceGa4Traffic(exact.bq, client, manyOrigins(GA4_BQ_TRAFFIC_BATCH), "2026-11-05", "2026-11-06", ids)).toBe(
+      GA4_BQ_TRAFFIC_BATCH,
+    );
+    expect(exact.calls.map((c) => c.query.trim().split(/\s+/)[0])).toEqual(["MERGE"]);
+
+    const over = fakeBigQuery();
+    await replaceGa4Traffic(over.bq, client, manyOrigins(GA4_BQ_TRAFFIC_BATCH + 1), "2026-11-05", "2026-11-06", ids);
+    expect(over.calls.map((c) => c.query.trim().split(/\s+/)[0])).toEqual(["CREATE", "INSERT", "INSERT", "BEGIN", "DROP"]);
+  });
+
+  it("janela curta: se o MERGE falhar o erro sobe e nada mais é chamado (uma instrução só, entra tudo ou nada)", async () => {
+    const { bq, calls } = fakeBigQuery(() => new Error("cota"));
+    await expect(replaceGa4Traffic(bq, client, manyOrigins(5), "2026-11-05", "2026-11-06", ids)).rejects.toThrow("cota");
+    expect(calls).toHaveLength(1);
   });
 
   it("janela sem nenhuma sessão só limpa o que estava lá", async () => {

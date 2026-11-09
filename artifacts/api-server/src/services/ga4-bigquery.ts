@@ -241,10 +241,52 @@ export function buildDeleteProductsWindowQuery(clientId: string, from: string, t
 }
 
 /**
+ * Janela curta (as linhas cabem num lote): troca a janela do cliente numa consulta so. Atualiza o que continua, insere o que e novo e
+ * apaga, dentro da janela, o que o GA4 deixou de devolver. O resultado e o mesmo da troca por tabela temporaria, que gastava 4
+ * consultas (~9 s por cliente e tabela, medido em 09/11/2026 contra ~2,8 s do MERGE): com dezenas de clientes a rodada horaria passava
+ * de 9 minutos num limite de 15. O GROUP BY garante uma linha por chave (o MERGE recusa chave repetida) e soma se alguma repetir.
+ */
+export function buildMergeProductsWindowQuery(
+  rows: ReturnType<typeof buildGa4ProductBqRows>,
+  clientId: string,
+  from: string,
+  to: string,
+) {
+  return {
+    query: `MERGE ${PRODUCTS_SQL} T
+      USING (
+        SELECT client_id, ANY_VALUE(client_name) AS client_name, ANY_VALUE(property_id) AS property_id, day AS \`date\`,
+               item_id, item_name, item_variant, SUM(items_viewed) AS items_viewed
+        FROM (
+          SELECT r.client_id, r.client_name, r.property_id, DATE(r.date) AS day, NULLIF(r.item_id, '') AS item_id,
+                 NULLIF(r.item_name, '') AS item_name, NULLIF(r.item_variant, '') AS item_variant, r.items_viewed
+          FROM UNNEST(@rows) AS r
+          WHERE DATE(r.date) BETWEEN DATE(@from_date) AND DATE(@to_date)
+        )
+        GROUP BY client_id, day, item_id, item_name, item_variant
+      ) S
+      ON T.client_id = S.client_id AND T.\`date\` = S.\`date\`
+         AND T.item_id IS NOT DISTINCT FROM S.item_id
+         AND T.item_name IS NOT DISTINCT FROM S.item_name
+         AND T.item_variant IS NOT DISTINCT FROM S.item_variant
+         AND T.\`date\` BETWEEN DATE(@from_date) AND DATE(@to_date)
+      WHEN MATCHED THEN UPDATE SET
+        client_name = S.client_name, property_id = S.property_id, items_viewed = S.items_viewed, synced_at = CURRENT_TIMESTAMP()
+      WHEN NOT MATCHED BY TARGET THEN INSERT
+        (client_id, client_name, property_id, \`date\`, item_id, item_name, item_variant, items_viewed, synced_at)
+      VALUES
+        (S.client_id, S.client_name, S.property_id, S.\`date\`, S.item_id, S.item_name, S.item_variant, S.items_viewed, CURRENT_TIMESTAMP())
+      WHEN NOT MATCHED BY SOURCE AND T.client_id = @client_id AND T.\`date\` BETWEEN DATE(@from_date) AND DATE(@to_date) THEN DELETE`,
+    params: { rows, client_id: clientId, from_date: from, to_date: to },
+    types: { rows: [PRODUCT_ROW_TYPES], client_id: "STRING", from_date: "STRING", to_date: "STRING" },
+  };
+}
+
+/**
  * Troca as visualizacoes de produto da janela [from, to] do cliente. O GA4 revisa contagens recentes e um item
- * que sumiu da revisao nao pode ficar com o numero velho, por isso apaga e regrava a janela. As linhas novas
- * vao primeiro para uma tabela temporaria, em lotes; so no fim a troca acontece, de uma vez. Se um lote falhar,
- * a tabela de verdade nao muda.
+ * que sumiu da revisao nao pode ficar com o numero velho, por isso apaga e regrava a janela. Janela curta: uma consulta so (MERGE).
+ * Janela longa (backfill): as linhas novas vao primeiro para uma tabela temporaria, em lotes; so no fim a troca acontece, de uma
+ * vez. Nos dois casos, se algo falhar a tabela de verdade nao muda.
  */
 export async function replaceGa4ProductViews(
   bq: BigQueryLike,
@@ -259,6 +301,10 @@ export async function replaceGa4ProductViews(
     // Loja sem nenhum view_item na janela: so limpa o que estava la.
     await runQuery(bq, buildDeleteProductsWindowQuery(client.clientId, from, to));
     return 0;
+  }
+  if (bqRows.length <= GA4_BQ_PRODUCT_BATCH) {
+    await runQuery(bq, buildMergeProductsWindowQuery(bqRows, client.clientId, from, to));
+    return bqRows.length;
   }
   const stagingId = `ga4_product_views_stg_${newId()}`;
   await runQuery(bq, buildCreateStagingQuery(stagingId));
@@ -353,9 +399,46 @@ export function buildDeleteTrafficWindowQuery(clientId: string, from: string, to
 }
 
 /**
+ * Janela curta (as linhas cabem num lote): troca a janela do cliente numa consulta so, como em buildMergeProductsWindowQuery. A chave
+ * e (cliente, dia, canal, origem, midia, campanha), unica porque buildGa4TrafficBqRows ja soma as linhas que caem na mesma chave.
+ */
+export function buildMergeTrafficWindowQuery(
+  rows: ReturnType<typeof buildGa4TrafficBqRows>,
+  clientId: string,
+  from: string,
+  to: string,
+) {
+  return {
+    query: `MERGE ${TRAFFIC_SQL} T
+      USING (
+        SELECT r.client_id, r.client_name, r.property_id, DATE(r.date) AS \`date\`, r.channel_group, r.source, r.medium, r.campaign,
+               r.sessions, r.total_users, r.engaged_sessions, r.add_to_cart, r.begin_checkout, r.purchases, r.purchase_revenue
+        FROM UNNEST(@rows) AS r
+        WHERE DATE(r.date) BETWEEN DATE(@from_date) AND DATE(@to_date)
+      ) S
+      ON T.client_id = S.client_id AND T.\`date\` = S.\`date\` AND T.channel_group = S.channel_group AND T.source = S.source
+         AND T.medium = S.medium AND T.campaign = S.campaign AND T.\`date\` BETWEEN DATE(@from_date) AND DATE(@to_date)
+      WHEN MATCHED THEN UPDATE SET
+        client_name = S.client_name, property_id = S.property_id, sessions = S.sessions, total_users = S.total_users,
+        engaged_sessions = S.engaged_sessions, add_to_cart = S.add_to_cart, begin_checkout = S.begin_checkout,
+        purchases = S.purchases, purchase_revenue = S.purchase_revenue, synced_at = CURRENT_TIMESTAMP()
+      WHEN NOT MATCHED BY TARGET THEN INSERT
+        (client_id, client_name, property_id, \`date\`, channel_group, source, medium, campaign, sessions, total_users,
+         engaged_sessions, add_to_cart, begin_checkout, purchases, purchase_revenue, synced_at)
+      VALUES
+        (S.client_id, S.client_name, S.property_id, S.\`date\`, S.channel_group, S.source, S.medium, S.campaign, S.sessions,
+         S.total_users, S.engaged_sessions, S.add_to_cart, S.begin_checkout, S.purchases, S.purchase_revenue, CURRENT_TIMESTAMP())
+      WHEN NOT MATCHED BY SOURCE AND T.client_id = @client_id AND T.\`date\` BETWEEN DATE(@from_date) AND DATE(@to_date) THEN DELETE`,
+    params: { rows, client_id: clientId, from_date: from, to_date: to },
+    types: { rows: [TRAFFIC_ROW_TYPES], client_id: "STRING", from_date: "STRING", to_date: "STRING" },
+  };
+}
+
+/**
  * Troca a origem do trafego da janela [from, to] do cliente. O GA4 revisa as contagens recentes e uma origem que sumiu da revisao
- * nao pode ficar com o numero velho, por isso apaga e regrava a janela, com as linhas novas antes numa tabela temporaria (em lotes)
- * e a troca de uma vez no fim: se um lote falhar, a tabela de verdade nao muda.
+ * nao pode ficar com o numero velho, por isso apaga e regrava a janela. Janela curta: uma consulta so (MERGE). Janela longa
+ * (backfill): as linhas novas vao antes para uma tabela temporaria (em lotes) e a troca e feita de uma vez no fim. Nos dois casos, se
+ * algo falhar a tabela de verdade nao muda.
  */
 export async function replaceGa4Traffic(
   bq: BigQueryLike,
@@ -370,6 +453,10 @@ export async function replaceGa4Traffic(
     // Sem nenhuma sessao na janela: so limpa o que estava la.
     await runQuery(bq, buildDeleteTrafficWindowQuery(client.clientId, from, to));
     return 0;
+  }
+  if (bqRows.length <= GA4_BQ_TRAFFIC_BATCH) {
+    await runQuery(bq, buildMergeTrafficWindowQuery(bqRows, client.clientId, from, to));
+    return bqRows.length;
   }
   const stagingId = `ga4_traffic_stg_${newId()}`;
   await runQuery(bq, buildCreateTrafficStagingQuery(stagingId));

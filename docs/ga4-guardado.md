@@ -73,8 +73,9 @@ caminho para os agentes do Victor, e substitui aos poucos o pipeline antigo do `
 Ambas particionadas por `date` e agrupadas por `client_id`; criadas sozinhas na primeira rodada
 (`CREATE TABLE IF NOT EXISTS`). Cliente novo com `ga4_property_id` cadastrado entra sem criar tabela.
 
-- **Gravação sem duplicar:** `ga4_daily` usa `MERGE` por (cliente, dia); os produtos vão para uma tabela
-  temporária (expira em 1 h) e a janela do cliente é trocada numa transação só. Falha no meio não deixa a tabela pela metade.
+- **Gravação sem duplicar:** `ga4_daily` usa `MERGE` por (cliente, dia). Os produtos, em janela curta (até 4000 linhas, o caso da
+  rodada horária), também usam um `MERGE` só (atualiza, insere e apaga o que o GA4 deixou de devolver); em janela longa (backfill) vão
+  para uma tabela temporária (expira em 1 h) e a janela do cliente é trocada numa transação só. Falha no meio não deixa a tabela pela metade.
 - **Ordem:** produtos primeiro, diário por último. O diário é o marcador de cobertura: sem ele, o cliente não tem
   histórico no BigQuery e a rodada seguinte refaz o backfill dos dois.
 - **Histórico próprio:** o BigQuery tem a sua cobertura (lida de `ga4_daily` no começo de cada rodada), independente do
@@ -231,9 +232,15 @@ Como funciona e o que lembrar:
   (`resolveGa4TrafficFrom`, `lastGa4TrafficToByClient`). Sem marcador → backfill largo; com marcador → recomeça dali. Falha só dessa
   tabela **não derruba** o diário nem os produtos: o erro vai em `sync_jobs.result.trafficError`, o marcador não anda e a rodada
   seguinte refaz o que faltou.
-- **Troca de janela, sem duplicar:** as linhas novas vão para uma tabela temporária (lotes de 3000) e a janela do cliente é trocada
-  numa transação só (mesmo desenho dos produtos). Rodar duas vezes a mesma janela não duplica. Validado em 09/11 contra o BigQuery
-  de verdade, num dataset temporário (7 mil linhas em 3 lotes, somas, repetição, troca de janela, janela vazia e exclusão do cliente).
+- **Troca de janela, sem duplicar:** janela curta (até 3000 linhas, o caso da rodada horária) é **um `MERGE` só**: atualiza o que
+  continua, insere o que é novo e apaga, dentro da janela e do cliente, o que o GA4 deixou de devolver. Janela longa (backfill) vai
+  para uma tabela temporária (lotes de 3000) e a janela do cliente é trocada numa transação só. Rodar duas vezes a mesma janela não
+  duplica nos dois caminhos. Validado em 09/11 contra o BigQuery de verdade, num dataset temporário (7 mil linhas em 3 lotes, somas,
+  repetição, troca de janela, janela vazia, backfill seguido de rodada curta, cliente de controle intacto e exclusão do cliente).
+- **Por que dois caminhos (tempo da rodada horária):** a primeira versão trocava a janela sempre por tabela temporária (4 consultas,
+  ~9,4 s por tabela e cliente, medido). Com a origem do tráfego a rodada horária foi de ~6,5 para ~10 min num limite de 15 (o job é
+  sequencial: quanto mais clientes, mais tempo). O `MERGE` leva ~2,8 s. O mesmo vale para os produtos. Se um cliente passar do limite
+  de linhas do lote numa rodada curta, ele cai sozinho no caminho longo.
 - **Somas por origem não fecham 100% com a tabela diária:** compras e receita fecham; sessões e carrinho podem diferir até ~1% (o Google
   soma por sessão, o diário por dia). `total_users` **não** é aditivo entre linhas.
 - A exclusão definitiva de cliente (`deleteGa4Rows`) apaga as **três** tabelas.
