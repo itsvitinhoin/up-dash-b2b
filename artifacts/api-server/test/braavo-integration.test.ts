@@ -214,8 +214,8 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
           clientes: customers,
           // Endereços em lote (mesmos campos que o detalhe do cliente traz em `enderecos`).
           enderecos: customers.flatMap((c) =>
-            [{ id: Number(c.id) * 10, usuario_id: c.id, ativo: "0", cidade: "Campinas", estado: "SP" },
-             { id: Number(c.id) * 10 + 1, usuario_id: c.id, ativo: "1", cidade: "São Paulo", estado: "SP" }]),
+            [{ id: Number(c.id) * 10, usuario_id: c.id, ativo: "0", cidade: "Campinas", estado: "SP", data_alterado: c.data_criado },
+             { id: Number(c.id) * 10 + 1, usuario_id: c.id, ativo: "1", cidade: "São Paulo", estado: "SP", data_alterado: c.data_criado }]),
           pedidos: [order],
           // Itens em lote: os mesmos itens que o detalhe do pedido traz, sem os calculado_*.
           pedidos_produtos: (
@@ -303,6 +303,84 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     expect(calls.filter((c) => c.path === "/api/pedidos/buscar/id").length).toBeGreaterThan(0); // detalhe por pedido
     expect(calls.filter((c) => c.path === "/api/pedidos_produtos/buscar/todos")).toHaveLength(0);
   }, 40000);
+
+  it("incremental customer bulk write equals one-by-one (new with addresses, new without, repeated email, existing unchanged address)", async () => {
+    for (const id of ["shop-c1", "shop-c2"]) {
+      await schema.db.insert(schema.clientsTable).values({
+        id, name: id, email: id + "@example.invalid", apiKey: "k-" + id, dashboardType: "B2C",
+        commercePlatform: "BRAAVO", braavoDomain: `https://www.${id}.com.br`, braavoApiToken: "t", braavoApiKey: "k",
+      });
+      await schema.db.insert(schema.braavoSyncStatesTable).values({
+        clientId: id, fingerprint: "fp-" + id, leaseId: "lease-" + id, leaseUntil: new Date(Date.now() + 600000),
+      });
+      await schema.db.insert(schema.customersTable).values({
+        clientId: id, externalId: "braavo:30", email: "maria@example.invalid", name: "Maria", state: "RJ", city: "Niterói",
+        createdAt: new Date("2025-01-01T10:00:00Z"),
+      });
+    }
+    const base = (id: number, over: Record<string, unknown> = {}) => ({
+      id, ativo: "1", pessoa: "1", nome: "Cliente " + id, email: `c${id}@example.invalid`, cpf: "11122233344",
+      tel_1_pais: "55", tel_1: "11999990000", data_criado: "2026-11-09 10:00:00", data_alterado: "2026-11-09 11:00:00", ...over,
+    });
+    const addr = (id: number, owner: number, ativo: string, cidade: string, estado: string) => ({ id, usuario_id: owner, ativo, cidade, estado });
+    const rows = [
+      base(31),                                                       // novo, com 2 endereços (o 2º é o ativo)
+      base(32),                                                       // novo, sem endereço
+      base(33, { email: "c31@example.invalid" }),                     // e-mail repetido do 31
+      base(30, { nome: "Maria Souza", email: "maria@example.invalid", data_criado: "2025-01-01 10:00:00" }), // antigo, endereço não mudou
+    ];
+    const staged = new Map<string, Record<string, unknown>[]>([
+      ["31", [addr(1, 31, "0", "Campinas", "SP"), addr(2, 31, "1", "Santos", "SP")]],
+    ]);
+    // Para o caminho um a um, o detalhe traz TODOS os endereços (o do cliente 30 não mudou).
+    const full = new Map(staged);
+    full.set("30", [addr(5, 30, "1", "Niterói", "RJ")]);
+    const bulkCounter = { skipped: 0 }, oneCounter = { skipped: 0 };
+    await sync.persistCustomersBulk("shop-c1", "lease-shop-c1", rows as never, staged as never, bulkCounter, { keepAddress: new Set(["30"]) });
+    for (const row of rows)
+      try {
+        await schema.db.transaction((tx) => sync.persistCustomer(tx, "shop-c2", { ...row, enderecos: full.get(String(row.id)) ?? [] } as never));
+      } catch (e) {
+        if ((e as { code?: string }).code !== "CUSTOMER_IDENTITY_CONFLICT") throw e;
+        oneCounter.skipped++;
+      }
+    expect(bulkCounter.skipped).toBe(1);
+    expect(oneCounter.skipped).toBe(1);
+    const dump = async (cid: string) =>
+      (await schema.db.execute(sql`SELECT external_id, email, name, phone, document_type, document_hash, document_last4, state, city, created_at FROM customers WHERE client_id = ${cid} ORDER BY external_id`)).rows;
+    const [a, b] = [await dump("shop-c1"), await dump("shop-c2")];
+    expect(a.map((c) => c.external_id)).toEqual(["braavo:30", "braavo:31", "braavo:32"]);
+    expect(a.find((c) => c.external_id === "braavo:31")).toMatchObject({ state: "SP", city: "Santos" }); // o endereço ativo
+    expect(a.find((c) => c.external_id === "braavo:30")).toMatchObject({ name: "Maria Souza", state: "RJ", city: "Niterói" }); // não perdeu o endereço
+    expect(a).toEqual(b);
+  }, 60000);
+
+  it("incremental cycle reads changed customers in bulk with addresses from the period listing, and categories in bulk", async () => {
+    await cycle(); // carga completa
+    customers.push({
+      id: 13, nome: "Beatriz", email: "beatriz@example.invalid", pessoa: "1", cpf: "55566677788",
+      data_criado: `${today()} 09:00:00`, data_alterado: `${today()} 10:00:00`,
+    });
+    customers[0] = { ...customers[0], nome: "Ana Maria", data_alterado: `${today()} 10:30:00` };
+    calls.length = 0;
+    await cycle(); // incremental
+    expect(calls.filter((c) => c.path === "/api/clientes/buscar/id")).toHaveLength(0);
+    const addr = calls.filter((c) => c.path === "/api/enderecos/buscar/todos");
+    expect(addr.length).toBeGreaterThan(0);
+    expect(addr.every((c) => c.body.limite === 100 && typeof c.body.data_alterado === "string")).toBe(true);
+    const cat = calls.filter((c) => c.path === "/api/categorias/buscar/todos" || c.path === "/api/variacoes/buscar/todos");
+    expect(cat.length).toBeGreaterThan(0);
+    expect(cat.every((c) => c.body.limite === 100)).toBe(true);
+    const snap = await snapshot();
+    const beatriz = snap.customers.find((c) => c.externalId === "braavo:13");
+    expect(beatriz).toMatchObject({ name: "Beatriz", city: "São Paulo", state: "SP" });
+    // O cliente antigo mudou de nome, mas as listas de endereços do período o incluem (mock devolve todos): continua com cidade.
+    expect(snap.customers.find((c) => c.externalId === "braavo:12")).toMatchObject({ name: "Ana Maria" });
+    const staged = await schema.db.execute(sql`SELECT count(*)::int AS n FROM braavo_catalog WHERE kind IN ('customer_addresses','customer_addresses_day')`);
+    expect(Number((staged.rows[0] as { n: number }).n)).toBe(0);
+    const cats = await schema.db.execute(sql`SELECT kind, count(*)::int AS n FROM braavo_catalog WHERE kind IN ('categories','variations') GROUP BY kind ORDER BY kind`);
+    expect(cats.rows).toEqual([{ kind: "categories", n: 1 }, { kind: "variations", n: 4 }]);
+  }, 60000);
 
   it("incremental cycle reads changed orders in bulk, never asks each order's detail, and clears the copy", async () => {
     await cycle(); // carga completa

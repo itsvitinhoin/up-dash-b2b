@@ -300,7 +300,7 @@ function variantLabels(
   }
   return { color, size };
 }
-async function persistCustomer(
+export async function persistCustomer(
   tx: Tx,
   clientId: string,
   row: BraavoRecord,
@@ -1004,7 +1004,94 @@ async function ensureItemsForCreationDays(
   }
 }
 
-async function clearItemStaging(clientId: string, kinds: ("order_items" | "order_items_day" | "customer_addresses")[]) {
+
+/**
+ * Ciclo incremental de clientes em lote: os endereços alterados em cada dia da janela vêm
+ * da listagem de endereços (filtro data_alterado), copiados uma vez por ciclo (marca
+ * `customer_addresses_day`). Conferido na Viva Dress: 25 de 25 clientes novos têm exatamente
+ * os endereços do detalhe usando só essa listagem do dia.
+ */
+async function ensureAddressesForWindow(
+  clientId: string,
+  leaseId: string,
+  api: BraavoApi,
+  fromDay: string,
+  untilDay: string,
+) {
+  const days: string[] = [];
+  for (let day = fromDay; day <= untilDay && days.length < 400; day = nextDay(day)) days.push(day);
+  const loaded = new Set(
+    (
+      await db
+        .select({ day: catalog.externalId })
+        .from(catalog)
+        .where(
+          and(
+            eq(catalog.clientId, clientId),
+            eq(catalog.kind, "customer_addresses_day"),
+            inArray(catalog.externalId, days),
+          ),
+        )
+    ).map((m) => m.day),
+  );
+  for (const day of days) {
+    if (loaded.has(day)) continue;
+    const addresses: BraavoRecord[] = [];
+    for (let pageNumber = 1; ; pageNumber++) {
+      const result = await api.page("/enderecos/buscar/todos", pageNumber, 100, { data_alterado: day });
+      addresses.push(...result.rows);
+      if (result.complete) break;
+    }
+    await db.transaction(async (tx) => {
+      await assertLease(tx, clientId, leaseId);
+      for (const part of chunks(addresses))
+        await tx
+          .insert(catalog)
+          .values(
+            part.map((row) => ({
+              clientId,
+              kind: "customer_addresses" as const,
+              externalId: braavoId(row.id),
+              data: row,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [catalog.clientId, catalog.kind, catalog.externalId],
+            set: { data: sql`excluded.data` },
+          });
+      await tx
+        .insert(catalog)
+        .values({ clientId, kind: "customer_addresses_day", externalId: day, data: { addresses: addresses.length } })
+        .onConflictDoNothing();
+    });
+  }
+}
+
+/** Categorias e variações em lote: uma gravação por página de 100 em vez de uma por registro. */
+async function upsertCatalogRows(
+  clientId: string,
+  leaseId: string,
+  kind: "categories" | "variations",
+  rows: BraavoRecord[],
+) {
+  if (!rows.length) return;
+  await db.transaction(async (tx) => {
+    await assertLease(tx, clientId, leaseId);
+    for (const part of chunks(rows))
+      await tx
+        .insert(catalog)
+        .values(part.map((row) => ({ clientId, kind, externalId: braavoId(row.id), data: row })))
+        .onConflictDoUpdate({
+          target: [catalog.clientId, catalog.kind, catalog.externalId],
+          set: { data: sql`excluded.data` },
+        });
+  });
+}
+
+async function clearItemStaging(
+  clientId: string,
+  kinds: ("order_items" | "order_items_day" | "customer_addresses" | "customer_addresses_day")[],
+) {
   await db
     .delete(catalog)
     .where(and(eq(catalog.clientId, clientId), inArray(catalog.kind, kinds)));
@@ -1284,6 +1371,8 @@ export async function persistCustomersBulk(
   rows: BraavoRecord[],
   addresses: Map<string, BraavoRecord[]>,
   counter: SkipCounter,
+  /** Clientes que já existem sem endereço novo: cidade e estado ficam como estão. */
+  options: { keepAddress?: Set<string> } = {},
 ) {
   if (!rows.length) return;
   const valid = await validateBulk<CustomerNorm>(clientId, "customers", rows, counter, (row) =>
@@ -1325,24 +1414,22 @@ export async function persistCustomersBulk(
 
   await db.transaction(async (tx) => {
     await assertLease(tx, clientId, leaseId);
-    for (const part of chunks(accepted))
-      await tx
-        .insert(customersTable)
-        .values(part.map((v) => ({ clientId, ...v.value })))
-        .onConflictDoUpdate({
-          target: [customersTable.clientId, customersTable.externalId],
-          set: excludedSet(customersTable, [
-            "name",
-            "state",
-            "city",
-            "email",
-            "phone",
-            "documentType",
-            "documentHash",
-            "documentLast4",
-            "createdAt",
-          ]),
-        });
+    const keep = options.keepAddress ?? new Set<string>();
+    const withAddress = accepted.filter((v) => !keep.has(v.id));
+    const withoutAddress = accepted.filter((v) => keep.has(v.id));
+    const baseKeys = ["name", "email", "phone", "documentType", "documentHash", "documentLast4", "createdAt"];
+    for (const [group, keys] of [
+      [withAddress, [...baseKeys, "state", "city"]],
+      [withoutAddress, baseKeys],
+    ] as const)
+      for (const part of chunks([...group]))
+        await tx
+          .insert(customersTable)
+          .values(part.map((v) => ({ clientId, ...v.value })))
+          .onConflictDoUpdate({
+            target: [customersTable.clientId, customersTable.externalId],
+            set: excludedSet(customersTable, [...keys]),
+          });
     await clearIssues(tx, clientId, "customers", accepted.map((v) => v.id));
   });
 }
@@ -1421,13 +1508,19 @@ async function runPage(
   const bulkSkus = cursor.phase === "skus" && cursor.full;
   // Ciclo incremental de pedidos também em lote (itens pelo dia de criação).
   const bulkOrdersInc = cursor.phase === "orders" && !cursor.full && cursor.bulk === true;
+  const bulkCustomersInc = cursor.phase === "customers" && !cursor.full && cursor.bulk === true;
+  // Categorias e variações: lista pequena, relida inteira todo ciclo; em lote leva segundos.
+  const bulkCatalog =
+    (cursor.phase === "categories" || cursor.phase === "variations") && cursor.bulk === true;
   const limit =
     cursor.phase === "order_items" ||
     cursor.phase === "customer_addresses" ||
     bulkOrders ||
     bulkCustomers ||
     bulkSkus ||
-    bulkOrdersInc
+    bulkOrdersInc ||
+    bulkCustomersInc ||
+    bulkCatalog
       ? 100
       : ["products", "orders"].includes(cursor.phase)
         ? 10
@@ -1493,7 +1586,7 @@ async function runPage(
       cursor: { ...current, skipped: cursor.skipped ?? 0 },
     };
   }
-  if (bulkOrders || bulkCustomers || bulkSkus || bulkOrdersInc) {
+  if (bulkOrders || bulkCustomers || bulkSkus || bulkOrdersInc || bulkCustomersInc || bulkCatalog) {
     // Carga completa: a página inteira vai para o banco em poucos comandos e várias
     // páginas são lidas por ciclo (cada ciclo do job custa pausas fixas de ~7 s).
     const batchStarted = Date.now();
@@ -1504,7 +1597,31 @@ async function runPage(
     let done = 0;
     for (;;) {
       const ids = currentPage.rows.map((row) => braavoId(row.id));
-      if (bulkSkus) {
+      if (bulkCatalog) {
+        await upsertCatalogRows(clientId, leaseId, phase as "categories" | "variations", currentPage.rows);
+      } else if (bulkCustomersInc) {
+        await ensureAddressesForWindow(clientId, leaseId, api, cursor.fromDay ?? cursor.untilDay, cursor.untilDay);
+        const addresses = await loadStagedByOwner(clientId, "customer_addresses", "usuario_id", ids);
+        const known = new Set<string>();
+        for (const part of chunks(ids.map((id) => `braavo:${id}`)))
+          for (const c of await db
+            .select({ externalId: customersTable.externalId })
+            .from(customersTable)
+            .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.externalId, part))))
+            known.add(c.externalId!.slice(7));
+        const keepAddress = new Set<string>();
+        for (const row of currentPage.rows) {
+          const id = braavoId(row.id);
+          if (!known.has(id)) continue; // novo: os endereços do período já estão na cópia
+          if ((addresses.get(id)?.length ?? 0) === 0) keepAddress.add(id); // sem endereço novo
+          else {
+            // Endereço mudou: a escolha do endereço ativo precisa do conjunto inteiro.
+            const detail = await api.one("/clientes/buscar/id", row.id);
+            addresses.set(id, (Array.isArray(detail.enderecos) ? detail.enderecos : []).map(braavoRecord));
+          }
+        }
+        await persistCustomersBulk(clientId, leaseId, currentPage.rows, addresses, counter, { keepAddress });
+      } else if (bulkSkus) {
         await preloadProducts(clientId, currentPage.rows, cache);
         await persistSkusBulk(clientId, leaseId, currentPage.rows, cache, counter);
       } else if (bulkOrders || bulkOrdersInc) {
@@ -1524,7 +1641,7 @@ async function runPage(
       done += currentPage.rows.length;
       if (currentPage.complete) {
         if (bulkSkus) await deactivateUnseenSkus(clientId, leaseId, cursor.startedAt);
-        else if (!bulkOrdersInc) {
+        else if (!bulkOrdersInc && !bulkCustomersInc && !bulkCatalog) {
           if (bulkOrders)
             // Última página da carga completa: agora sim os totais e as métricas por dia.
             await consolidateBraavoAggregates(clientId, leaseId);
@@ -1542,6 +1659,8 @@ async function runPage(
       // Saiu da fase de pedidos do ciclo incremental: a cópia dos itens não serve mais.
       if (bulkOrdersInc && current.phase !== phase)
         await clearItemStaging(clientId, ["order_items", "order_items_day"]);
+      if (bulkCustomersInc && current.phase !== phase)
+        await clearItemStaging(clientId, ["customer_addresses", "customer_addresses_day"]);
       if (current.phase !== phase || Date.now() - batchStarted > BULK_BATCH_BUDGET_MS) break;
       currentPage = await api.page(
         `/${paths[phase]}/buscar/todos`,
@@ -1756,7 +1875,7 @@ export async function runBraavoBatch(
       : state.cursor!;
     // Ciclo novo começa sem cópia de itens/endereços de um ciclo anterior (interrompido).
     if (newCycle)
-      await clearItemStaging(clientId, ["order_items", "order_items_day", "customer_addresses"]);
+      await clearItemStaging(clientId, ["order_items", "order_items_day", "customer_addresses", "customer_addresses_day"]);
     if (newCycle || !jobId) {
       if (jobId)
         await db

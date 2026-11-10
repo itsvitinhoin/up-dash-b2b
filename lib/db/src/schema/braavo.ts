@@ -70,7 +70,7 @@ export const braavoCatalogTable = pgTable(
       .notNull()
       .references(() => clientsTable.id, { onDelete: "cascade" }),
     kind: text("kind", {
-      enum: ["categories", "variations", "products", "order_items", "customer_addresses", "order_items_day"],
+      enum: ["categories", "variations", "products", "order_items", "customer_addresses", "order_items_day", "customer_addresses_day"],
     }).notNull(),
     externalId: text("external_id").notNull(),
     data: jsonb("data").$type<Record<string, unknown>>().notNull(),
