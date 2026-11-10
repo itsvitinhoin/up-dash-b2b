@@ -355,6 +355,25 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     expect(a).toEqual(b);
   }, 60000);
 
+  it("backfill mode picks only stores without a completed full load", async () => {
+    const extraction = await import("../src/services/extraction-runner");
+    await schema.db.insert(schema.clientsTable).values({
+      id: "shop-0", name: "Loja 0", email: "z@example.invalid", apiKey: "internal-test-key-0",
+      dashboardType: "B2C", commercePlatform: "BRAAVO", braavoDomain: "https://www.loja0.com.br",
+      braavoApiToken: "t0", braavoApiKey: "k0",
+    });
+    // shop-0 (id menor) já tem carga completa concluída; shop-a ainda não.
+    await schema.db.insert(schema.braavoSyncStatesTable).values({
+      clientId: "shop-0", fingerprint: "fp0", completedAt: new Date(), fullCompletedAt: new Date(),
+    });
+    const all = await extraction.runBraavoTransactionalExtraction("cron", { offset: 0, mode: "all" });
+    expect(all.clientId).toBe("shop-0"); // modo todas: pela ordem de id
+    const backfill = await extraction.runBraavoTransactionalExtraction("cron", { offset: 0, mode: "backfill" });
+    expect(backfill.clientId).toBe("shop-a"); // só quem ainda não concluiu a carga
+    const next = await extraction.runBraavoTransactionalExtraction("cron", { offset: 1, mode: "backfill" });
+    expect(next.clients).toBe(0); // não há outra loja pendente
+  }, 40000);
+
   it("full load reads customers in bulk with their addresses and never asks each customer's detail", async () => {
     await cycle();
     expect(calls.filter((c) => c.path === "/api/clientes/buscar/id")).toHaveLength(0);

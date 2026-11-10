@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../src/services/extraction-runner", () => ({ runBraavoTransactionalExtraction: vi.fn() }));
-import { braavoJobMaxDurationMs, runBraavoJob } from "../src/services/braavo-job";
+import { braavoJobMaxDurationMs, braavoJobMode, runBraavoJob } from "../src/services/braavo-job";
 
 const empty = { clients: 0, done: 0, failed: 0, pending: 0, nextOffset: 1 };
 const batch = (overrides = {}) => ({ clients: 1, done: 0, failed: 0, pending: 1, nextOffset: 0, result: { status: "pending" }, ...overrides });
@@ -98,6 +98,19 @@ describe("Braavo Cloud Run job", () => {
     const longRun = fixture([batch(), batch(), batch(), batch({ pending: 0, done: 1, nextOffset: 1, result: { status: "done" } }), empty]);
     const long = await runBraavoJob("manual", { maxDurationMs: braavoJobMaxDurationMs("1380") }, longRun);
     expect(long).toMatchObject({ pending: 0, done: 1 });
+  });
+
+  it("reads BRAAVO_JOB_MODE, defaults to all stores and fails loudly on a typo", () => {
+    expect(braavoJobMode(undefined)).toBe("all");
+    expect(braavoJobMode("")).toBe("all");
+    expect(braavoJobMode("ALL")).toBe("all");
+    expect(braavoJobMode(" backfill ")).toBe("backfill");
+    expect(() => braavoJobMode("backfil")).toThrow(/BRAAVO_JOB_MODE inválido/);
+  });
+  it("passes the mode on to the extraction", async () => {
+    const deps = fixture([empty]);
+    await runBraavoJob("cron", { mode: "backfill" }, deps);
+    expect(deps.extract.mock.calls[0][1]).toMatchObject({ mode: "backfill", offset: 0 });
   });
 
   it("rejects an invalid BRAAVO_JOB_MAX_MINUTES instead of silently using the default", () => {

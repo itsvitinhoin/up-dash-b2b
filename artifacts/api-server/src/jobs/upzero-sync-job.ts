@@ -22,7 +22,8 @@
  *   TASK=meta_ads              -> sync de métricas de anúncio Meta
  *   TASK=nuvemshop_transactional -> sync de pedidos/clientes/produtos Nuvemshop
  *   TASK=braavo_transactional   -> sync Braavo em lotes retomáveis, orçamento de 20min
- *                                  (BRAAVO_JOB_MAX_MINUTES muda o orçamento; BRAAVO_FULL_REFRESH_DAYS, o intervalo da recarga completa)
+ *                                  (BRAAVO_JOB_MAX_MINUTES muda o orçamento; BRAAVO_FULL_REFRESH_DAYS, o intervalo da recarga completa;
+ *                                  BRAAVO_JOB_MODE=backfill processa só lojas sem carga completa concluída)
  *   TASK=daily_metrics         -> recalcula métricas diárias agregadas
  *   TASK=ga4_daily             -> sessões/eventos diários do GA4 -> ga4_daily_metrics
  *     (LOOKBACK_DAYS=N força a janela; sem histórico faz backfill de GA4_BACKFILL_DAYS)
@@ -90,7 +91,7 @@ import { purgeExpiredClients, reconcileExcludedClients } from "../services/clien
 import { publishAdsAccounts, publishAdsAccountsSafely } from "../services/ads-accounts-publisher";
 import { runGa4FreshnessCheck } from "../services/ga4-freshness";
 import { runGa4Discovery } from "../services/ga4-discovery";
-import { braavoJobMaxDurationMs, runBraavoJob } from "../services/braavo-job";
+import { braavoJobMaxDurationMs, braavoJobMode, runBraavoJob } from "../services/braavo-job";
 
 // Achado 25/08/2026: as migrations do lib/db (drizzle-kit) nunca rodam
 // sozinhas no deploy da Vercel -- alguém precisa disparar isso à mão contra
@@ -183,6 +184,7 @@ async function main() {
         clientId,
         offset,
         maxDurationMs: braavoJobMaxDurationMs(process.env.BRAAVO_JOB_MAX_MINUTES),
+        mode: braavoJobMode(process.env.BRAAVO_JOB_MODE),
       });
       break;
     case "daily_metrics": {

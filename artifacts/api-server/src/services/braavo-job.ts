@@ -1,4 +1,16 @@
-import { runBraavoTransactionalExtraction, type ExtractionTrigger } from "./extraction-runner";
+import { runBraavoTransactionalExtraction, type BraavoJobMode, type ExtractionTrigger } from "./extraction-runner";
+
+/**
+ * Modo do job a partir de BRAAVO_JOB_MODE: sem a variável (ou "all") processa todas as
+ * lojas, como a rotina; "backfill" processa só as lojas sem carga completa concluída
+ * (é o que a agenda horária de backfill usa). Valor inválido falha alto.
+ */
+export function braavoJobMode(raw: string | undefined): BraavoJobMode {
+  const value = (raw ?? "").trim().toLowerCase();
+  if (value === "" || value === "all") return "all";
+  if (value === "backfill") return "backfill";
+  throw new Error(`BRAAVO_JOB_MODE inválido ("${raw}"): use "all" (padrão) ou "backfill".`);
+}
 
 const DEFAULT_JOB_MINUTES = 20;
 const MAX_JOB_MINUTES = 1440;
@@ -45,7 +57,7 @@ const DEFAULT_CLIENT_SLICE_MS = 6 * 60_000;
 /** Cloud Run entry: use the same durable batches as manual/API imports. */
 export async function runBraavoJob(
   trigger: ExtractionTrigger,
-  options: { clientId?: string; offset?: number; maxDurationMs?: number; sliceMs?: number } = {},
+  options: { clientId?: string; offset?: number; maxDurationMs?: number; sliceMs?: number; mode?: BraavoJobMode } = {},
   dependencies: {
     extract?: typeof runBraavoTransactionalExtraction;
     sleep?: (ms: number) => Promise<void>;
@@ -67,7 +79,7 @@ export async function runBraavoJob(
   const pendingStores = new Set<number>(); // lojas que ficaram pendentes e pedem nova passada
   // Leave room for the API's 50-second batch plus its final checkpoint writes.
   while (now() + 55_000 <= deadline) {
-    const batch = await extract(trigger, { clientId: options.clientId, offset });
+    const batch = await extract(trigger, { clientId: options.clientId, offset, mode: options.mode });
     if (!batch.clients) {
       // Fim da lista. Se alguma loja ficou pendente, dá a volta e retoma por ela.
       if (rotate && pendingStores.size > 0) {

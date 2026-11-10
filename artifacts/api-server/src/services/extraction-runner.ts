@@ -1134,10 +1134,17 @@ export async function runGa4DailyExtraction(
 
 // One durable page per request. The caller continues the same offset while a
 // client's cycle is pending, keeping every server request bounded.
-export async function runBraavoTransactionalExtraction(trigger: ExtractionTrigger, options: { offset?: number; clientId?: string } = {}) {
+/** "all" = todas as lojas (rotina); "backfill" = só as que ainda não terminaram a carga completa. */
+export type BraavoJobMode = "all" | "backfill";
+
+export async function runBraavoTransactionalExtraction(trigger: ExtractionTrigger, options: { offset?: number; clientId?: string; mode?: BraavoJobMode } = {}) {
   const offset = options.offset ?? 0;
   const [client] = await db.select({ id: clientsTable.id }).from(clientsTable).where(and(
     options.clientId ? eq(clientsTable.id, options.clientId) : undefined,
+    // Backfill automático: só lojas sem carga completa concluída (cadastro novo ou carga em andamento).
+    options.mode === "backfill"
+      ? sql`NOT EXISTS (SELECT 1 FROM braavo_sync_states s WHERE s.client_id = ${clientsTable.id} AND s.full_completed_at IS NOT NULL)`
+      : undefined,
     eq(clientsTable.isActive, true), isNull(clientsTable.archivedAt), eq(clientsTable.dashboardType, "B2C"), eq(clientsTable.commercePlatform, "BRAAVO"),
     sql`nullif(trim(${clientsTable.braavoDomain}), '') IS NOT NULL`,
     sql`nullif(trim(${clientsTable.braavoApiToken}), '') IS NOT NULL`,
