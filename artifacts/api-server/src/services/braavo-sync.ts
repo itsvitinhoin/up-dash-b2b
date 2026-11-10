@@ -1797,7 +1797,22 @@ export async function runBraavoBatch(
       reserveSlot: reserveBraavoSlot,
       deadline: Date.now() + 50_000,
     });
+    const phaseBefore = cursor.phase;
     const result = await runPage(clientId, leaseId, api, cursor);
+    // Registro de fase concluída: o horário do log de cada fase dá a duração dela, e é o
+    // que permite saber onde o ciclo gasta tempo (antes só se via o total da execução).
+    if (result.cursor.phase !== phaseBefore)
+      logger.info(
+        {
+          clientId,
+          phase: phaseBefore,
+          nextPhase: result.cursor.phase,
+          full: cursor.full,
+          bulk: cursor.bulk === true,
+          day: cursor.day,
+        },
+        "[braavo] fase concluída",
+      );
     cursor = result.cursor;
     const complete = cursor.phase === "done";
     const response: BraavoBatchResult = {
