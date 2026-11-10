@@ -33,6 +33,12 @@ export type BraavoCursor = {
   full: boolean;
   startedAt: string;
   afterId?: string;
+  /**
+   * Ciclo criado por um código que lê os pedidos do incremental em lote (páginas de 100).
+   * Ciclo sem esta marca, já em andamento quando o código mudou, termina pelo caminho
+   * antigo (páginas de 10): trocar o tamanho da página no meio da fase pularia pedidos.
+   */
+  bulk?: boolean;
   processedIds?: string[];
   /** Invalid records quarantined so far in this cycle (see braavo_record_issues). */
   skipped?: number;

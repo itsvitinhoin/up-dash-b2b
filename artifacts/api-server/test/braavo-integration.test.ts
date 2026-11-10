@@ -291,6 +291,19 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     };
   }
 
+  it("a cycle already running before the bulk change finishes its orders the old way", async () => {
+    await cycle(); // carga completa
+    const day = today();
+    // Ciclo incremental "antigo": sem a marca `bulk`, parado no começo da fase de pedidos.
+    await schema.db.execute(sql`UPDATE braavo_sync_states SET completed_at = now(), cursor = ${JSON.stringify({
+      phase: "orders", page: 1, day, fromDay: day, untilDay: day, full: false, startedAt: new Date().toISOString(),
+    })}::jsonb`);
+    calls.length = 0;
+    await sync.runBraavoBatch("shop-a", "manual");
+    expect(calls.filter((c) => c.path === "/api/pedidos/buscar/id").length).toBeGreaterThan(0); // detalhe por pedido
+    expect(calls.filter((c) => c.path === "/api/pedidos_produtos/buscar/todos")).toHaveLength(0);
+  }, 40000);
+
   it("incremental cycle reads changed orders in bulk, never asks each order's detail, and clears the copy", async () => {
     await cycle(); // carga completa
     const day = String(order.data_criado).slice(0, 10);

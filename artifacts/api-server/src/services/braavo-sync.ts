@@ -216,6 +216,7 @@ export function initialBraavoCursor(
     untilDay,
     full,
     startedAt: now.toISOString(),
+    bulk: true,
   };
 }
 // Fases que o ciclo incremental lê dia a dia (filtro data_alterado). Os SKUs entram
@@ -1419,7 +1420,7 @@ async function runPage(
   // Idem SKUs: na carga completa são ~20 mil e cada um custava uma transação própria.
   const bulkSkus = cursor.phase === "skus" && cursor.full;
   // Ciclo incremental de pedidos também em lote (itens pelo dia de criação).
-  const bulkOrdersInc = cursor.phase === "orders" && !cursor.full;
+  const bulkOrdersInc = cursor.phase === "orders" && !cursor.full && cursor.bulk === true;
   const limit =
     cursor.phase === "order_items" ||
     cursor.phase === "customer_addresses" ||

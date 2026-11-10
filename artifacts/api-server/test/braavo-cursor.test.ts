@@ -6,7 +6,7 @@ const daysAgo = (days: number) => new Date(now.getTime() - days * 86_400_000);
 
 describe("Braavo cycle: full load versus small incremental window", () => {
   it("starts with a full load when the shop was never completed", () => {
-    expect(initialBraavoCursor(now)).toMatchObject({ full: true, fromDay: null, phase: "categories", untilDay: "2026-11-10" });
+    expect(initialBraavoCursor(now)).toMatchObject({ full: true, fromDay: null, phase: "categories", untilDay: "2026-11-10", bulk: true });
   });
 
   it("after a full load the next cycles only look at a small window up to today", () => {
