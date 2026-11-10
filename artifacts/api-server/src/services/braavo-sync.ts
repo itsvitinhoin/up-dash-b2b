@@ -1552,6 +1552,10 @@ export async function getBraavoSyncStatus(clientId: string) {
     ),
     cursor: state?.cursor ?? null,
     completedAt: state?.completedAt ?? null,
+    /** Fim da carga completa (histórico inteiro). Sem isso, a loja ainda precisa do backfill. */
+    fullCompletedAt: state?.fullCompletedAt ?? null,
+    /** Última atividade do job nesta loja; serve para saber se uma carga já está rodando. */
+    lastActivityAt: state?.updatedAt ?? null,
     error: state?.error ?? null,
     busy: Boolean(state?.leaseUntil && state.leaseUntil > new Date()),
   };

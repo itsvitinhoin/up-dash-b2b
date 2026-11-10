@@ -25,6 +25,11 @@ vi.mock("../src/lib/auth", () => ({
   hashPassword: vi.fn(),
 }));
 
+vi.mock("../src/services/cloud-run-jobs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/services/cloud-run-jobs")>();
+  return { ...actual, runBraavoBackfillJob: vi.fn(async () => ({ execution: "projects/p/locations/l/jobs/j/executions/exec-1" })) };
+});
+
 // Keep real HTTP-contract handling and SQL reservations, but do not spend wall
 // time waiting for synthetic API responses. Slot spacing/cooldowns are checked
 // independently below against the real database.
@@ -416,6 +421,81 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     expect(a.find((p) => p.external_id === "braavo:100:9")?.stock).toBe(-3);
     expect(a).toEqual(b);
   }, 60000);
+
+  describe("backfill na nuvem (botão do painel)", () => {
+    const post = (id = "shop-a", token = "test-admin") =>
+      request(app).post(`/clients/${id}/braavo/backfill`).set("Authorization", `Bearer ${token}`);
+    const runner = async () => (await import("../src/services/cloud-run-jobs")).runBraavoBackfillJob as unknown as ReturnType<typeof vi.fn>;
+
+    it("starts the cloud job for one store and never runs the load in the request", async () => {
+      const run = await runner();
+      run.mockClear();
+      const res = await post();
+      expect(res.status).toBe(202);
+      expect(res.body).toMatchObject({ started: true });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run).toHaveBeenCalledWith("shop-a");
+    });
+
+    it("is restricted to administrators", async () => {
+      const run = await runner();
+      run.mockClear();
+      expect((await post("shop-a", "test-client")).status).toBe(403);
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it("refuses a store whose full load is already done", async () => {
+      const run = await runner();
+      run.mockClear();
+      await schema.db.insert(schema.braavoSyncStatesTable).values({
+        clientId: "shop-a", fingerprint: "fp", completedAt: new Date(), fullCompletedAt: new Date(),
+      });
+      const res = await post();
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("ALREADY_LOADED");
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it("refuses while a batch holds the lease or the job touched the store a minute ago", async () => {
+      const run = await runner();
+      run.mockClear();
+      await schema.db.insert(schema.braavoSyncStatesTable).values({
+        clientId: "shop-a", fingerprint: "fp", leaseId: "x", leaseUntil: new Date(Date.now() + 60_000),
+      });
+      expect((await post()).body.code).toBe("ALREADY_RUNNING");
+      await schema.db.execute(sql`UPDATE braavo_sync_states SET lease_until = now() - interval '1 minute', updated_at = now()`);
+      const recent = await post();
+      expect(recent.status).toBe(409);
+      expect(recent.body.code).toBe("ALREADY_RUNNING");
+      expect(run).not.toHaveBeenCalled();
+      // Parada há mais de 3 minutos: pode retomar.
+      await schema.db.execute(sql`UPDATE braavo_sync_states SET updated_at = now() - interval '10 minutes'`);
+      expect((await post()).status).toBe(202);
+    });
+
+    it("needs the connection saved first", async () => {
+      const run = await runner();
+      run.mockClear();
+      await schema.db.insert(schema.clientsTable).values({
+        id: "shop-n", name: "Sem conexao", email: "n@example.invalid", apiKey: "k-n", dashboardType: "B2C",
+        commercePlatform: "BRAAVO",
+      });
+      const res = await post("shop-n");
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("NOT_CONFIGURED");
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it("does not leak Google's error to the browser when the cloud call fails", async () => {
+      const run = await runner();
+      const { CloudRunJobError } = await import("../src/services/cloud-run-jobs");
+      run.mockRejectedValueOnce(new CloudRunJobError("Não foi possível iniciar a carga na nuvem agora. Tente de novo em instantes.", "CLOUD_RUN_UNAVAILABLE"));
+      const res = await post();
+      expect(res.status).toBe(502);
+      expect(res.body.code).toBe("CLOUD_RUN_UNAVAILABLE");
+      expect(JSON.stringify(res.body)).not.toMatch(/googleapis|projects\//);
+    });
+  });
 
   it("backfill mode picks only stores without a completed full load", async () => {
     const extraction = await import("../src/services/extraction-runner");

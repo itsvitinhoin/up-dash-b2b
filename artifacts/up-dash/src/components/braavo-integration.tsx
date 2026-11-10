@@ -5,7 +5,7 @@ import {
   getListClientsQueryKey,
   useUpdateClient,
 } from "@workspace/api-client-react";
-import { Loader2, Plug, RefreshCw, Square } from "lucide-react";
+import { CloudUpload, Loader2, Plug, RefreshCw, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -93,6 +93,7 @@ type SyncStatus = {
   configured: boolean;
   cursor: { phase: string; page: number } | null;
   completedAt: string | null;
+  fullCompletedAt?: string | null;
   error: string | null;
   busy: boolean;
   skippedRecords?: {
@@ -196,6 +197,25 @@ export function BraavoIntegration({
       setMessage(errorMessage(error));
     } finally {
       setTesting(false);
+    }
+  }
+  async function startCloudBackfill() {
+    setSyncing(true);
+    setMessage("");
+    try {
+      const result = await customFetch<{ started: boolean; message: string }>(
+        `${base}/backfill`,
+        { method: "POST" },
+      );
+      setMessage(result.message);
+      toast.success(`Carga iniciada na nuvem · ${clientName}`);
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setSyncing(false);
+      await queryClient.invalidateQueries({
+        queryKey: ["braavo-status", clientId],
+      });
     }
   }
   async function synchronize() {
@@ -321,6 +341,25 @@ export function BraavoIntegration({
             <RefreshCw className="mr-2 h-4 w-4" />
             Sincronizar
           </Button>
+          {status.data && !status.data.fullCompletedAt && (
+            <Button
+              disabled={
+                busy ||
+                status.data.busy ||
+                !configured ||
+                Boolean(
+                  fields.apiToken || fields.apiKey || fields.domain !== domain,
+                )
+              }
+              onClick={() => {
+                void startCloudBackfill();
+              }}
+              title="Carrega o histórico inteiro na nuvem. Pode fechar a janela: continua sozinha."
+            >
+              <CloudUpload className="mr-2 h-4 w-4" />
+              Carregar histórico na nuvem
+            </Button>
+          )}
           {syncing && (
             <Button
               variant="outline"

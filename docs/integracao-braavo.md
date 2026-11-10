@@ -290,3 +290,13 @@ gcloud scheduler jobs create http upzero-sync-job-braavo-backfill-schedule \
 Sem nenhuma loja pendente a execução termina em segundos. Acompanhe a carga pela janela da loja no dash (fase, página, registros ignorados). Uma loja do porte da Viva Dress (115 mil pedidos e 115 mil clientes) leva umas 8 h, ou seja, umas 9 rodadas.
 
 Ritmo medido na carga completa (Viva Dress, 09/11/2026): produtos ~40/min (consulta de detalhe para a foto), SKUs e clientes em lote, itens e pedidos em lote com gravação por página.
+
+
+### Botão "Carregar histórico na nuvem" (começa na hora)
+
+Na janela da integração Braavo, enquanto a loja ainda não terminou a carga completa, aparece o botão **Carregar histórico na nuvem**. Ele chama `POST /clients/:clientId/braavo/backfill` (só administrador), que liga o job `upzero-sync-job-braavo` **só para aquela loja**, com orçamento de 24 h (`BRAAVO_JOB_MAX_MINUTES=1400`, timeout 86400 s). A carga roda na nuvem: dá para fechar a janela, e o estado (fase, página, ignorados) aparece na própria janela. Se passar de 24 h, a agenda de backfill horária continua do ponto salvo.
+
+- **Recusas (409/400):** carga completa já concluída, carga já em andamento (lease ativo ou atividade do job nos últimos 3 minutos) e conexão ainda não salva.
+- **Permissão:** a API usa a mesma service account do BigQuery (`GOOGLE_APPLICATION_CREDENTIALS_JSON`); o papel de editor dela já inclui `run.jobs.run` e `run.jobs.runWithOverrides`, então não há permissão nova. A rota só envia `CLIENT_ID` e `BRAAVO_JOB_MAX_MINUTES`; não dá para trocar a `TASK` nem outras variáveis do job por ela.
+- **Configuração opcional da API:** `BRAAVO_CLOUD_RUN_PROJECT` (padrão `up-vesti-report`), `BRAAVO_CLOUD_RUN_REGION` (`us-central1`) e `BRAAVO_CLOUD_RUN_JOB` (`upzero-sync-job-braavo`).
+- **Nota de segurança:** a service account da Vercel (`bigquery-vesti-access`) tem papel de editor no projeto e uma chave sem validade. Vale trocar a chave e, quando possível, reduzir o papel.
