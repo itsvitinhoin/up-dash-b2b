@@ -224,6 +224,7 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
             .map(({ calculado_preco_total: _t, calculado_preco_venda: _v, ...item }) => ({
               ...item,
               pedido_id: order.id,
+              data_criado: order.data_criado,
             }))
             // Itens de outros pedidos, só para ocupar várias páginas de 100.
             .concat(
@@ -241,9 +242,12 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
         if (!source) throw new Error(`Unexpected external request: ${path}`);
         const rows = source.filter(
           (row) =>
-            !body.data_alterado ||
-            !row.data_alterado ||
-            String(row.data_alterado).startsWith(String(body.data_alterado)),
+            (!body.data_alterado ||
+              !row.data_alterado ||
+              String(row.data_alterado).startsWith(String(body.data_alterado))) &&
+            (!body.data_criado ||
+              !row.data_criado ||
+              String(row.data_criado).startsWith(String(body.data_criado))),
         );
         const limit = Number(body.limite),
           page = Number(body.atual);
@@ -286,6 +290,87 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
       events: await schema.db.select().from(schema.eventsTable),
     };
   }
+
+  it("incremental cycle reads changed orders in bulk, never asks each order's detail, and clears the copy", async () => {
+    await cycle(); // carga completa
+    const day = String(order.data_criado).slice(0, 10);
+    order = { ...order, status_pagamento: "6", data_alterado: `${today()} 11:00:00` }; // pago -> cancelado hoje
+    calls.length = 0;
+    await cycle(); // incremental
+    expect(calls.filter((c) => c.path === "/api/pedidos/buscar/id")).toHaveLength(0);
+    const byCreation = calls.filter((c) => c.path === "/api/pedidos_produtos/buscar/todos");
+    expect(byCreation.length).toBeGreaterThan(0);
+    expect(byCreation.every((c) => c.body.data_criado === day && c.body.limite === 100)).toBe(true);
+    const snap = await snapshot();
+    expect(snap.orders[0]).toMatchObject({ status: "REJECTED" });
+    expect(snap.items).toHaveLength(1); // itens refeitos a partir do lote
+    // Cancelado: os totais do cliente e do produto voltam a zero (recalculados no incremental).
+    expect(snap.customers[0]).toMatchObject({ totalOrders: 0, totalSpent: 0 });
+    const staged = await schema.db.execute(sql`SELECT count(*)::int AS n FROM braavo_catalog WHERE kind IN ('order_items','order_items_day')`);
+    expect(Number((staged.rows[0] as { n: number }).n)).toBe(0);
+  }, 40000);
+
+  it("incremental bulk write equals one-by-one, including a second pass that changes orders", async () => {
+    for (const id of ["shop-i1", "shop-i2"]) {
+      await schema.db.insert(schema.clientsTable).values({
+        id, name: id, email: id + "@example.invalid", apiKey: "k-" + id, dashboardType: "B2C",
+        commercePlatform: "BRAAVO", braavoDomain: `https://www.${id}.com.br`, braavoApiToken: "t", braavoApiKey: "k",
+      });
+      await schema.db.insert(schema.braavoSyncStatesTable).values({
+        clientId: id, fingerprint: "fp-" + id, leaseId: "lease-" + id, leaseUntil: new Date(Date.now() + 600000),
+      });
+      await schema.db.insert(schema.customersTable).values({
+        clientId: id, externalId: "braavo:12", email: "ana@example.invalid", name: "Ana", state: "SP", city: "São Paulo",
+      });
+      await schema.db.insert(schema.productsTable).values({
+        clientId: id, externalId: "braavo:100:501", sku: "REF-M", name: "Vestido", price: 50, status: "ACTIVE",
+      });
+    }
+    const cache = new Map<string, Record<string, unknown>>();
+    const mk = (id: number, over: Record<string, unknown>, items?: Record<string, unknown>[]) => ({
+      ...structuredClone(sampleOrder), id, data_alterado: "2026-01-10 10:00:00", ...over,
+      produtos: (items ?? sampleOrder.produtos).map((it, i) => ({ ...it, id: id * 10 + i })),
+    });
+    const antigo = { ...sampleOrder.produtos[0], produto_id: 555, sku_id: 556, nome: "Produto antigo", quantidade: 1, preco_venda: 20, total: 20, desconto_vale_total: 0, calculado_preco_total: 20 };
+    const first = [
+      mk(201, {}),
+      mk(202, { data_criado: "2026-02-03 10:00:00", data_aprovado: "2026-02-04 09:00:00" }),
+      mk(203, { usuario_id: 77, usuario_email: "novo@example.invalid", usuario_nome: "Novo", data_criado: "2026-03-01 10:00:00", data_aprovado: "2026-03-01 11:00:00" }),
+      mk(204, { status_pagamento: "1", data_aprovado: null }),
+      mk(205, { status_entrega: "21" }),
+      mk(206, {}, [antigo, sampleOrder.produtos[0]]),
+    ];
+    // Segunda passada: o que acontece num ciclo incremental com pedidos que já existem.
+    const second = [
+      mk(201, { status_pagamento: "6" }),                                   // pago -> cancelado
+      mk(204, { status_pagamento: "3", data_aprovado: "2026-04-05 10:00:00" }), // pendente -> pago, noutro dia
+      mk(205, { status_entrega: "23" }),                                    // enviado -> entregue
+      mk(206, {}, [sampleOrder.produtos[0]]),                               // um item saiu (produto antigo deixa de contar)
+      mk(207, { usuario_id: 12, data_criado: "2026-04-06 08:00:00", data_aprovado: "2026-04-06 09:00:00" }), // novo pedido
+    ];
+    const counterA = { skipped: 0 };
+    for (const pass of [first, second]) {
+      await sync.persistOrdersBulk("shop-i1", "lease-shop-i1", pass as never, cache as never, counterA, { refreshAggregates: true });
+      for (const line of pass) await sync.persistOrder("shop-i2", "lease-shop-i2", line as never, cache as never, false);
+    }
+    expect(counterA.skipped).toBe(0);
+    const dump = async (cid: string) => ({
+      orders: (await schema.db.execute(sql`SELECT external_id, status, amount, fulfilled_amount, gross_amount, discount_amount, shipping_amount, cancelled_amount, requested_quantity, fulfilled_quantity, state, city, approval_date, created_at FROM orders WHERE client_id = ${cid} ORDER BY external_id`)).rows,
+      items: (await schema.db.execute(sql`SELECT o.external_id AS pedido, p.external_id AS produto, oi.quantity, oi.fulfilled_quantity, oi.price_at_sale, oi.gross_price_at_sale, oi.discount_amount, oi.size, oi.color FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN products p ON p.id = oi.product_id WHERE o.client_id = ${cid} ORDER BY o.external_id, p.external_id, oi.quantity`)).rows,
+      customers: (await schema.db.execute(sql`SELECT external_id, email, name, total_orders, total_spent, first_purchase_at, last_purchase_at FROM customers WHERE client_id = ${cid} ORDER BY external_id`)).rows,
+      events: (await schema.db.execute(sql`SELECT e.external_source_id, e.created_at, c.external_id AS cliente FROM events e LEFT JOIN customers c ON c.id = e.customer_id WHERE e.client_id = ${cid} AND e.event_type = 'PURCHASE' ORDER BY e.external_source_id`)).rows,
+      products: (await schema.db.execute(sql`SELECT external_id, status, total_sold, total_revenue FROM products WHERE client_id = ${cid} ORDER BY external_id`)).rows,
+      metrics: (await schema.db.execute(sql`SELECT metric_date, approved_orders, requested_orders, approved_revenue, requested_revenue, new_buyers, returning_buyers FROM daily_client_metrics WHERE client_id = ${cid} ORDER BY metric_date`)).rows,
+    });
+    const [a, b] = [await dump("shop-i1"), await dump("shop-i2")];
+    expect(a.orders).toHaveLength(7);
+    expect(a.orders.find((o) => o.external_id === "braavo:201")?.status).toBe("REJECTED");
+    expect(a.orders.find((o) => o.external_id === "braavo:204")?.status).toBe("APPROVED");
+    expect(a.orders.find((o) => o.external_id === "braavo:205")?.status).toBe("DELIVERED");
+    expect(a.items.filter((i) => i.pedido === "braavo:206")).toHaveLength(1);
+    expect(a.metrics.length).toBeGreaterThan(2); // dias de criação e de aprovação diferentes
+    expect(a).toEqual(b);
+  }, 60000);
 
   it("bulk page write produces the same database as writing each order one by one", async () => {
     // Mesma página de pedidos gravada pelos dois caminhos em lojas diferentes.

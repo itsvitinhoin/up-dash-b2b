@@ -936,9 +936,83 @@ const snapshotOf = (row: BraavoRecord) => ({
   cnpj: row.usuario_cnpj,
 });
 
+
 /**
- * Grava uma página de pedidos (já com `produtos`) numa transação só. Totais de
- * cliente/produto e métricas por dia ficam para o fim da carga completa.
+ * Ciclo incremental em lote: os itens de um pedido que mudou vêm da listagem de itens
+ * do DIA EM QUE O PEDIDO FOI CRIADO (filtro data_criado), em páginas de 100, em vez de uma
+ * consulta de detalhe por pedido. Conferido na Viva Dress: 90 de 90 pedidos antigos e
+ * 239 de 239 de um dia têm exatamente os itens do detalhe. Cada dia é copiado uma vez por
+ * ciclo (marca `order_items_day`) e a cópia é apagada no fim da fase de pedidos.
+ */
+async function ensureItemsForCreationDays(
+  clientId: string,
+  leaseId: string,
+  api: BraavoApi,
+  rows: BraavoRecord[],
+) {
+  const days = [...new Set(rows.map((row) => String(row.data_criado ?? "").slice(0, 10)))].filter(
+    (day) => /^\d{4}-\d{2}-\d{2}$/.test(day),
+  );
+  if (!days.length) return;
+  const loaded = new Set(
+    (
+      await db
+        .select({ day: catalog.externalId })
+        .from(catalog)
+        .where(
+          and(
+            eq(catalog.clientId, clientId),
+            eq(catalog.kind, "order_items_day"),
+            inArray(catalog.externalId, days),
+          ),
+        )
+    ).map((m) => m.day),
+  );
+  for (const day of days) {
+    if (loaded.has(day)) continue;
+    const items: BraavoRecord[] = [];
+    for (let pageNumber = 1; ; pageNumber++) {
+      const result = await api.page("/pedidos_produtos/buscar/todos", pageNumber, 100, {
+        data_criado: day,
+      });
+      items.push(...result.rows);
+      if (result.complete) break;
+    }
+    await db.transaction(async (tx) => {
+      await assertLease(tx, clientId, leaseId);
+      for (const part of chunks(items))
+        await tx
+          .insert(catalog)
+          .values(
+            part.map((row) => ({
+              clientId,
+              kind: "order_items" as const,
+              externalId: braavoId(row.id),
+              data: row,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [catalog.clientId, catalog.kind, catalog.externalId],
+            set: { data: sql`excluded.data` },
+          });
+      await tx
+        .insert(catalog)
+        .values({ clientId, kind: "order_items_day", externalId: day, data: { items: items.length } })
+        .onConflictDoNothing();
+    });
+  }
+}
+
+async function clearItemStaging(clientId: string, kinds: ("order_items" | "order_items_day" | "customer_addresses")[]) {
+  await db
+    .delete(catalog)
+    .where(and(eq(catalog.clientId, clientId), inArray(catalog.kind, kinds)));
+}
+
+/**
+ * Grava uma página de pedidos (já com `produtos`) numa transação só. Na carga completa,
+ * totais de cliente/produto e métricas por dia ficam para o fim; no ciclo incremental
+ * (`refreshAggregates`) são recalculados aqui para os clientes, produtos e dias tocados.
  */
 export async function persistOrdersBulk(
   clientId: string,
@@ -946,6 +1020,7 @@ export async function persistOrdersBulk(
   rows: BraavoRecord[],
   cache: Map<string, BraavoRecord>,
   counter: SkipCounter,
+  options: { refreshAggregates?: boolean } = {},
 ) {
   if (!rows.length) return;
   // Clientes que já existem (leitura), para saber de quem precisa do resumo do pedido.
@@ -1031,14 +1106,25 @@ export async function persistOrdersBulk(
     // 2) Pedidos que já existiam: os itens antigos saem antes de reinserir.
     const externalIds = valid.map(({ value }) => value.order.externalId);
     const previous: string[] = [];
+    const previousCustomerIds = new Set<string>();
+    const previousProductIds = new Set<string>();
     for (const part of chunks(externalIds))
       for (const p of await tx
-        .select({ id: ordersTable.id })
+        .select({ id: ordersTable.id, customerId: ordersTable.customerId })
         .from(ordersTable)
-        .where(and(eq(ordersTable.clientId, clientId), inArray(ordersTable.externalId, part))))
+        .where(and(eq(ordersTable.clientId, clientId), inArray(ordersTable.externalId, part)))) {
         previous.push(p.id);
-    for (const part of chunks(previous))
+        previousCustomerIds.add(p.customerId);
+      }
+    for (const part of chunks(previous)) {
+      if (options.refreshAggregates)
+        for (const it of await tx
+          .select({ productId: orderItemsTable.productId })
+          .from(orderItemsTable)
+          .where(inArray(orderItemsTable.orderId, part)))
+          previousProductIds.add(it.productId);
       await tx.delete(orderItemsTable).where(inArray(orderItemsTable.orderId, part));
+    }
 
     // 3) Pedidos (upsert em várias linhas).
     const orderRows = valid.map(({ row, value }) => {
@@ -1160,8 +1246,30 @@ export async function persistOrdersBulk(
         ),
       );
 
+    if (options.refreshAggregates) {
+      const customerIds = new Set(previousCustomerIds);
+      for (const { row } of valid) {
+        const id = customerIdByExt.get(`braavo:${braavoId(row.usuario_id)}`);
+        if (id) customerIds.add(id);
+      }
+      await refreshEntityTotals(tx, clientId, [...customerIds], [
+        ...new Set([...previousProductIds, ...productIdByExt.values()]),
+      ]);
+    }
     await clearIssues(tx, clientId, "orders", valid.map((v) => v.id));
   });
+  if (options.refreshAggregates) {
+    // Métricas do dia de criação (e do dia da aprovação, quando é outro), como no
+    // registro a registro: um recálculo por dia distinto, não por pedido.
+    const days = new Map<string, Date>();
+    for (const { value } of valid) {
+      days.set(braavoDay(value.order.createdAt), value.order.createdAt);
+      const approved = value.order.approvalDate;
+      if (approved) days.set(braavoDay(approved), approved);
+    }
+    for (const date of days.values())
+      await refreshDailyClientMetrics({ clientId, from: date, to: date });
+  }
 }
 
 /**
@@ -1310,12 +1418,15 @@ async function runPage(
   const bulkCustomers = cursor.phase === "customers" && cursor.full;
   // Idem SKUs: na carga completa são ~20 mil e cada um custava uma transação própria.
   const bulkSkus = cursor.phase === "skus" && cursor.full;
+  // Ciclo incremental de pedidos também em lote (itens pelo dia de criação).
+  const bulkOrdersInc = cursor.phase === "orders" && !cursor.full;
   const limit =
     cursor.phase === "order_items" ||
     cursor.phase === "customer_addresses" ||
     bulkOrders ||
     bulkCustomers ||
-    bulkSkus
+    bulkSkus ||
+    bulkOrdersInc
       ? 100
       : ["products", "orders"].includes(cursor.phase)
         ? 10
@@ -1381,7 +1492,7 @@ async function runPage(
       cursor: { ...current, skipped: cursor.skipped ?? 0 },
     };
   }
-  if (bulkOrders || bulkCustomers || bulkSkus) {
+  if (bulkOrders || bulkCustomers || bulkSkus || bulkOrdersInc) {
     // Carga completa: a página inteira vai para o banco em poucos comandos e várias
     // páginas são lidas por ciclo (cada ciclo do job custa pausas fixas de ~7 s).
     const batchStarted = Date.now();
@@ -1395,13 +1506,16 @@ async function runPage(
       if (bulkSkus) {
         await preloadProducts(clientId, currentPage.rows, cache);
         await persistSkusBulk(clientId, leaseId, currentPage.rows, cache, counter);
-      } else if (bulkOrders) {
+      } else if (bulkOrders || bulkOrdersInc) {
+        if (bulkOrdersInc) await ensureItemsForCreationDays(clientId, leaseId, api, currentPage.rows);
         const items = await loadStagedByOwner(clientId, "order_items", "pedido_id", ids);
         const withItems = currentPage.rows.map((row) => ({
           ...row,
           produtos: items.get(braavoId(row.id)) ?? [],
         }));
-        await persistOrdersBulk(clientId, leaseId, withItems, cache, counter);
+        await persistOrdersBulk(clientId, leaseId, withItems, cache, counter, {
+          refreshAggregates: bulkOrdersInc,
+        });
       } else {
         const addresses = await loadStagedByOwner(clientId, "customer_addresses", "usuario_id", ids);
         await persistCustomersBulk(clientId, leaseId, currentPage.rows, addresses, counter);
@@ -1409,7 +1523,7 @@ async function runPage(
       done += currentPage.rows.length;
       if (currentPage.complete) {
         if (bulkSkus) await deactivateUnseenSkus(clientId, leaseId, cursor.startedAt);
-        else {
+        else if (!bulkOrdersInc) {
           if (bulkOrders)
             // Última página da carga completa: agora sim os totais e as métricas por dia.
             await consolidateBraavoAggregates(clientId, leaseId);
@@ -1424,8 +1538,16 @@ async function runPage(
         }
       }
       current = advanceBraavoCursor(current, currentPage.complete);
+      // Saiu da fase de pedidos do ciclo incremental: a cópia dos itens não serve mais.
+      if (bulkOrdersInc && current.phase !== phase)
+        await clearItemStaging(clientId, ["order_items", "order_items_day"]);
       if (current.phase !== phase || Date.now() - batchStarted > BULK_BATCH_BUDGET_MS) break;
-      currentPage = await api.page(`/${paths[phase]}/buscar/todos`, current.page, limit);
+      currentPage = await api.page(
+        `/${paths[phase]}/buscar/todos`,
+        current.page,
+        limit,
+        current.day ? { data_alterado: current.day } : {},
+      );
     }
     return { processed: done, cursor: { ...current, skipped: counter.skipped } };
   }
@@ -1631,6 +1753,9 @@ export async function runBraavoBatch(
           braavoFullRefreshDays(process.env.BRAAVO_FULL_REFRESH_DAYS),
         )
       : state.cursor!;
+    // Ciclo novo começa sem cópia de itens/endereços de um ciclo anterior (interrompido).
+    if (newCycle)
+      await clearItemStaging(clientId, ["order_items", "order_items_day", "customer_addresses"]);
     if (newCycle || !jobId) {
       if (jobId)
         await db
