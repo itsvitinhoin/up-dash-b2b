@@ -268,7 +268,7 @@ cliente, dia e produto (`item_id`, `item_name`, `item_variant`), com o funil do 
 
 | Coluna | O que é |
 |---|---|
-| `items_viewed` | unidades vistas (igual a `view_item` de `ga4_daily` e a `ga4_product_views_daily.items_viewed`) |
+| `items_viewed` | unidades vistas (igual a `ga4_product_views_daily.items_viewed` em todos os clientes) |
 | `items_added_to_cart`, `items_checked_out` | unidades que foram ao carrinho e ao checkout |
 | `items_purchased` | unidades compradas |
 | `item_revenue` | receita dos itens **líquida de estornos** (= `gross_item_revenue` − `item_refund_amount`) |
@@ -298,17 +298,29 @@ Como funciona e o que lembrar:
   linhas) é **um `MERGE` só**; o backfill passa por tabela temporária (mesmo desenho da origem do tráfego). Validado em 10/11 contra o BigQuery de
   verdade, num dataset temporário (repetição sem duplicar, item que sumiu sai, variante vazia como NULL, chave repetida soma, receita
   negativa de estorno fica, backfill de 7 mil linhas seguido de rodada curta, cliente de controle intacto e exclusão do cliente).
-- **Tem linha que a tabela de visualizações não tem:** produto que foi ao carrinho ou foi comprado num dia **sem** visualização (de 0,7% a
-  1,4% das linhas nas 3 propriedades sondadas). A tabela é um superconjunto de `ga4_product_views_daily`; as duas se juntam por (cliente,
-  dia, `item_id`, `item_name`, `item_variant`) com `IS NOT DISTINCT FROM`, porque variante vazia é NULL (e `(not set)` fica como o GA4 mandou).
-- **Unidades não são eventos nem pedidos.** Conferido nos mesmos 15 dias em Giah, La Cleo e Lila Rosa: `items_viewed` = `view_item` do
-  diário; unidades no carrinho = eventos de carrinho (até 2% acima); unidades no checkout e unidades compradas são de 2 a 2,7 vezes os
-  eventos de checkout e as compras (pedido com mais de um item).
-- **Receita:** `item_revenue` é preço × quantidade, líquida de estornos (Lila Rosa: bruta 125,7 mil − estornada 13,4 mil = 112,3 mil, igual à
-  `purchase_revenue` do diário). Pode ficar **acima** da do diário (La Cleo: +4,3% no período, provavelmente desconto aplicado ao pedido;
-  não verificado) e pode ser **negativa** numa linha só de estorno (é dado real; não filtre `> 0`).
+- **Backfill de 10/11 (execução manual de `ga4_daily`):** 23 clientes, 400 dias (desde 07/10/2025), 1,62 milhão de linhas, 62 minutos, sem
+  nenhum erro de tabela isolada. As visualizações do funil batem **exatamente** com `ga4_product_views_daily` nos 22 clientes que têm linhas,
+  sem duplicata, e a receita líquida é igual a bruta − estornada em todos.
+- **Tem linha que a tabela de visualizações não tem:** produto que foi ao carrinho ou foi comprado num dia **sem** visualização. A tabela
+  é um superconjunto de `ga4_product_views_daily`; as duas se juntam por (cliente, dia, `item_id`, `item_name`, `item_variant`) com
+  `IS NOT DISTINCT FROM`, porque variante vazia é NULL (e `(not set)` fica como o GA4 mandou). **A fração dessas linhas varia muito** (de 1% a
+  75% no histórico de 400 dias, conforme o cliente): na janela recente de 3 propriedades sondadas era de 0,7% a 1,4%, mas na Giah foi de
+  13% a 31% até ago/2026 e de 0,5% a 0,7% desde set/2026 (provável mudança no rastreamento da loja; não verificado), e na Adama pulou de ~25% para ~75% em
+  jun/2026, quando carrinho e compra passaram a mandar a variante e a visualização continuou sem ela.
+- **Nível do produto:** em algumas lojas `item_id` é o produto, em outras é cada variante (Giah: um id por tamanho, nome no formato
+  `PRODUTO (COR, TAMANHO)`). Olhe os ids e nomes do cliente antes de agrupar.
+- **Unidades não são eventos nem pedidos.** Conferido nos mesmos 15 dias em Giah, La Cleo e Lila Rosa: unidades no carrinho = eventos de
+  carrinho (até 2% acima); unidades no checkout e unidades compradas são de 2 a 2,7 vezes os eventos de checkout e as compras (pedido com
+  mais de um item). Nos B2B é bem mais: Adama teve 25 mil unidades em 937 pedidos. E `items_viewed` só é igual ao `view_item` de `ga4_daily` onde o
+  evento manda os itens (Giah, Jini, Lila Rosa, Nbloom, Pêo, Sooé, Threesix); em B2B como Coqueta o diário tem 419 mil eventos e os itens, 85 mil.
+- **Receita, comparada com a `purchase_revenue` de `ga4_daily` no período todo:** igual (até 0,1%) em Giah, Jini, Lila Rosa, Pêo, Sooé e
+  Threesix; perto (−2% a +5%) em La Cleo, Le Ricard e Sline Vesti; **acima** (+6% a +20%) em Adama, Cocci, Coqueta, Estime, Fiore, Hirus,
+  Incentive, Oxigenio e Vogabox (provável desconto no pedido; não verificado); **abaixo** na CELEB (−17%) e **quase inutilizável** em Lipcem (−65%) e Nbloom (−99,8%: 3 unidades compradas
+  contra 322 pedidos), onde o evento de compra não manda todos os itens. Pode ser **negativa** numa linha só de estorno
+  (é dado real; não filtre `> 0`).
 - A exclusão definitiva de cliente (`deleteGa4Rows`) apaga as **quatro** tabelas.
 - **Vigiado pelo alerta de dado parado** (regra `funil_produto_parado`, a mesma da origem do tráfego; ver `docs/ga4-alerta.md`).
 - **Depois da publicação**, para não esperar 8 rodadas (limite de 3 backfills largos por hora): rodar uma vez
   `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=ga4_daily,TRIGGER=manual --wait`
-  (sem marcador, o funil faz o backfill de 400 dias; o resto fica na janela curta).
+  (sem marcador, o funil faz o backfill de 400 dias; o resto fica na janela curta). Foi o que se fez em 10/11. Enquanto a execução manual
+  não termina, a rodada horária adia os clientes que ainda não tiveram o funil (só uma rodada de atraso para eles).
