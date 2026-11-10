@@ -177,15 +177,14 @@ export async function deferBraavoBatch(domain: string) {
   `);
 }
 
-const DEFAULT_FULL_REFRESH_DAYS = 7;
+const DEFAULT_FULL_REFRESH_DAYS = 90;
 
 /**
  * Intervalo, em dias, entre recargas completas (a rotina entre elas só busca o que
- * mudou). Vem de BRAAVO_FULL_REFRESH_DAYS; sem a variável vale 7. Em lojas grandes
- * (a La Cleo tem ~64 mil pedidos, ~18 h de chamadas a 1 por segundo) uma recarga
- * completa a cada 7 dias não termina com poucas execuções por dia e segura as
- * atualizações incrementais; por isso o job pode usar um intervalo maior e a
- * recarga completa passa a ser uma decisão manual. Valor inválido falha alto.
+ * mudou). Vem de BRAAVO_FULL_REFRESH_DAYS; sem a variável vale 90. O padrão precisa
+ * ser alto também fora do job da nuvem: a API do painel (Vercel) não tem a variável, e
+ * com 7 dias um clique em "Sincronizar" numa loja grande, uma semana depois da carga,
+ * começaria sozinho uma recarga completa. Valor inválido falha alto.
  */
 export function braavoFullRefreshDays(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === "") return DEFAULT_FULL_REFRESH_DAYS;

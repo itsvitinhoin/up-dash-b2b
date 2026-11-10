@@ -240,7 +240,7 @@ Recurso: Cloud Run Job `upzero-sync-job-braavo` (us-central1, mesma imagem dos o
 | Variável | Padrão | Para quê |
 | --- | --- | --- |
 | `BRAAVO_JOB_MAX_MINUTES` | 20 | Orçamento de uma execução, de 1 a 1440 minutos |
-| `BRAAVO_FULL_REFRESH_DAYS` | 7 | Intervalo entre recargas completas (inteiro, de 1 a 3650 dias) |
+| `BRAAVO_FULL_REFRESH_DAYS` | 90 | Intervalo entre recargas completas (inteiro, de 1 a 3650 dias) |
 
 Valor inválido derruba a execução com mensagem clara, em vez de cair no padrão em silêncio.
 
@@ -260,6 +260,6 @@ Se ela terminar antes de a carga acabar (o limite do Cloud Run é 24 h), repita 
 
 **2. Rotina (depois da carga).** Agenda de 1 a 2 vezes ao dia chamando o job com o orçamento padrão. Depois da primeira carga completa, cada ciclo busca só o que mudou, do dia anterior à última conclusão até hoje, e termina em minutos.
 
-**3. Recarga completa.** Com `BRAAVO_FULL_REFRESH_DAYS` alto no job (ou na agenda), a recarga completa deixa de acontecer sozinha e passa a ser decisão manual: repita o passo 1. Sem isso, o código refaria a carga completa a cada 7 dias, e com poucas execuções curtas por dia ela não terminaria e seguraria as atualizações do dia.
+**3. Recarga completa.** Com `BRAAVO_FULL_REFRESH_DAYS` alto no job (ou na agenda), a recarga completa deixa de acontecer sozinha e passa a ser decisão manual: repita o passo 1. O padrão do código é 90 dias (era 7): a API do painel não tem esta variável, e com 7 dias um clique em Sincronizar numa loja grande, uma semana depois da carga, começaria uma recarga completa sozinho.
 
 `BRAAVO_FULL_REFRESH_DAYS` fica gravada no job; `BRAAVO_JOB_MAX_MINUTES` é passada só na execução longa. Uma sincronização disparada pelo botão do dash (API na Vercel) usa os padrões.

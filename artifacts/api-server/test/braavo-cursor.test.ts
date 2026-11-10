@@ -18,21 +18,22 @@ describe("Braavo cycle: full load versus small incremental window", () => {
     });
   });
 
-  it("repeats the full load after 7 days by default", () => {
-    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(6.9))).toMatchObject({ full: false });
-    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(7))).toMatchObject({ full: true, fromDay: null });
-    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(8))).toMatchObject({ full: true });
+  it("repeats the full load only after 90 days by default, so a panel click a week later stays incremental", () => {
+    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(8))).toMatchObject({ full: false });
+    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(89.9))).toMatchObject({ full: false });
+    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(90))).toMatchObject({ full: true, fromDay: null });
+    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(91))).toMatchObject({ full: true });
   });
 
-  it("keeps small windows for a huge shop when the full-refresh interval is raised", () => {
-    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(8), 90)).toMatchObject({ full: false });
-    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(91), 90)).toMatchObject({ full: true });
+  it("lets the full-refresh interval be lowered explicitly", () => {
+    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(6.9), 7)).toMatchObject({ full: false });
+    expect(initialBraavoCursor(now, daysAgo(0.2), daysAgo(8), 7)).toMatchObject({ full: true });
   });
 
   it("reads BRAAVO_FULL_REFRESH_DAYS and fails loudly on a typo", () => {
-    expect(braavoFullRefreshDays(undefined)).toBe(7);
-    expect(braavoFullRefreshDays("")).toBe(7);
-    expect(braavoFullRefreshDays("90")).toBe(90);
+    expect(braavoFullRefreshDays(undefined)).toBe(90);
+    expect(braavoFullRefreshDays("")).toBe(90);
+    expect(braavoFullRefreshDays("30")).toBe(30);
     for (const bad of ["abc", "0", "-1", "1.5", "3651"])
       expect(() => braavoFullRefreshDays(bad)).toThrow(/BRAAVO_FULL_REFRESH_DAYS inválido/);
   });
