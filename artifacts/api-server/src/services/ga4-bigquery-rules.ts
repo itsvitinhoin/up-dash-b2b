@@ -1,4 +1,4 @@
-import type { Ga4DailyMetrics, Ga4TrafficDay } from "./ga4";
+import type { Ga4DailyMetrics, Ga4ProductFunnelDay, Ga4TrafficDay } from "./ga4";
 import type { StoredProductViewKey } from "./ga4-daily-rules";
 import { isBigQueryAvailable } from "./excluded-clients-rules";
 
@@ -29,12 +29,16 @@ export const GA4_BQ_DAILY_TABLE = "ga4_daily";
 export const GA4_BQ_PRODUCTS_TABLE = "ga4_product_views_daily";
 // Origem do trafego (canal, origem, midia, campanha) por dia: so no BigQuery, nao ha copia no Postgres.
 export const GA4_BQ_TRAFFIC_TABLE = "ga4_traffic_daily";
+// Funil por produto (visto, carrinho, checkout, comprado e receita do item) por dia: so no BigQuery, nao ha copia no Postgres.
+export const GA4_BQ_PRODUCT_FUNNEL_TABLE = "ga4_product_funnel_daily";
 
 // Linhas por consulta de carga dos produtos. Cada linha vai como parametro da consulta
 // (limite de ~10 MB por requisicao); com nome de produto e variante fica em ~250 bytes.
 export const GA4_BQ_PRODUCT_BATCH = 4000;
 // Idem para a origem do trafego: origem, midia e campanha (ate ~110 caracteres medidos) ficam em ~400 bytes por linha.
 export const GA4_BQ_TRAFFIC_BATCH = 3000;
+// Funil por produto: mesma conta, com 14 campos por linha.
+export const GA4_BQ_PRODUCT_FUNNEL_BATCH = 3000;
 
 export type Ga4BqClient = { clientId: string; clientName: string; propertyId: string };
 
@@ -80,6 +84,23 @@ export type Ga4TrafficBqRow = {
   begin_checkout: number;
   purchases: number;
   purchase_revenue: number;
+};
+
+export type Ga4ProductFunnelBqRow = {
+  client_id: string;
+  client_name: string;
+  property_id: string;
+  date: string;
+  item_id: string;
+  item_name: string;
+  item_variant: string;
+  items_viewed: number;
+  items_added_to_cart: number;
+  items_checked_out: number;
+  items_purchased: number;
+  item_revenue: number;
+  gross_item_revenue: number;
+  item_refund_amount: number;
 };
 
 function whole(value: number | undefined): number {
@@ -167,6 +188,49 @@ export function buildGa4TrafficBqRows(client: Ga4BqClient, rows: Ga4TrafficDay[]
       begin_checkout: whole(row.checkouts),
       purchases: whole(row.purchases),
       purchase_revenue: money(row.purchaseRevenue),
+    });
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Uma linha por (dia, produto, nome, variante). Item sem id, nome ou variante vira texto vazio (o BigQuery guarda NULL, como na tabela
+ * de visualizacoes de produto, entao as duas se juntam pelas mesmas chaves) e linhas que caem na mesma chave depois de normalizar sao
+ * SOMADAS: a tabela nao tem chave primaria e duplicar contaria a venda duas vezes. Receita negativa (estorno) e dado real e fica.
+ */
+export function buildGa4ProductFunnelBqRows(client: Ga4BqClient, rows: Ga4ProductFunnelDay[]): Ga4ProductFunnelBqRow[] {
+  const byKey = new Map<string, Ga4ProductFunnelBqRow>();
+  for (const row of rows) {
+    const itemId = (row.itemId ?? "").trim();
+    const itemName = (row.itemName ?? "").trim();
+    const itemVariant = (row.itemVariant ?? "").trim();
+    const key = [row.date, itemId, itemName, itemVariant].join("\u0000");
+    const current = byKey.get(key);
+    if (current) {
+      current.items_viewed += whole(row.itemsViewed);
+      current.items_added_to_cart += whole(row.itemsAddedToCart);
+      current.items_checked_out += whole(row.itemsCheckedOut);
+      current.items_purchased += whole(row.itemsPurchased);
+      current.item_revenue = money(current.item_revenue + money(row.itemRevenue));
+      current.gross_item_revenue = money(current.gross_item_revenue + money(row.grossItemRevenue));
+      current.item_refund_amount = money(current.item_refund_amount + money(row.itemRefundAmount));
+      continue;
+    }
+    byKey.set(key, {
+      client_id: client.clientId,
+      client_name: client.clientName,
+      property_id: client.propertyId,
+      date: row.date,
+      item_id: itemId,
+      item_name: itemName,
+      item_variant: itemVariant,
+      items_viewed: whole(row.itemsViewed),
+      items_added_to_cart: whole(row.itemsAddedToCart),
+      items_checked_out: whole(row.itemsCheckedOut),
+      items_purchased: whole(row.itemsPurchased),
+      item_revenue: money(row.itemRevenue),
+      gross_item_revenue: money(row.grossItemRevenue),
+      item_refund_amount: money(row.itemRefundAmount),
     });
   }
   return [...byKey.values()];

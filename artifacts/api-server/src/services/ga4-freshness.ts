@@ -30,6 +30,38 @@ export type Ga4FreshnessSummary = {
 
 const RECENT_ATTEMPTS_DAYS = 3;
 
+type IsolatedTableKey = "trafficTo" | "productFunnelTo";
+
+// Quando foi a ultima gravacao COM SUCESSO de uma tabela isolada de cada cliente (o resultado do job guarda `key` so quando a tabela foi
+// escrita). A chave vem de um tipo fechado (entra no SQL como texto), nunca de fora. Falha de leitura devolve null: a regra daquela
+// tabela fica sem julgar, e a verificacao inteira segue.
+async function readLastOkByClient(ids: string[], key: IsolatedTableKey): Promise<Map<string, Date> | null> {
+  if (ids.length === 0) return new Map();
+  try {
+    const rows = await db
+      .select({
+        clientId: syncJobsTable.clientId,
+        at: sql<string | null>`MAX(COALESCE(${syncJobsTable.finishedAt}, ${syncJobsTable.createdAt}))`,
+      })
+      .from(syncJobsTable)
+      .where(
+        and(
+          eq(syncJobsTable.jobType, "ga4_daily"),
+          eq(syncJobsTable.status, "done"),
+          inArray(syncJobsTable.clientId, ids),
+          sql`${syncJobsTable.result}->>${sql.raw(`'${key}'`)} IS NOT NULL`,
+        ),
+      )
+      .groupBy(syncJobsTable.clientId);
+    const found = new Map<string, Date>();
+    for (const row of rows) if (row.at) found.set(row.clientId, new Date(row.at));
+    return found;
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err), key }, "[ga4-freshness] nao consegui ler a gravacao de uma tabela isolada; pulei essa regra");
+    return null;
+  }
+}
+
 function envPositiveInt(name: string): number | undefined {
   const value = Number.parseInt(process.env[name] ?? "", 10);
   return Number.isFinite(value) && value > 0 ? value : undefined;
@@ -52,8 +84,13 @@ export async function runGa4FreshnessCheck(
 
   const lastDone = new Map<string, Date>();
   const lastAttempt = new Map<string, { at: Date; status: string; error: string | null }>();
-  // Origem do trafego: erro (sync_jobs.result.trafficError) da rodada CONCLUIDA mais recente de cada cliente.
-  const latestTrafficError = new Map<string, string | null>();
+  // Tabelas isoladas (origem do trafego e funil por produto): na rodada CONCLUIDA mais recente de cada cliente, o erro de cada uma
+  // (sync_jobs.result.trafficError / productFunnelError) e se a rodada ja chegou a TENTAR (a chave trafficTo / productFunnelTo existe no
+  // resultado, mesmo nula: so o job com a tabela nova a escreve).
+  const latestDone = new Map<
+    string,
+    { trafficError: string | null; trafficAttempted: boolean; productFunnelError: string | null; productFunnelAttempted: boolean }
+  >();
   if (ids.length > 0) {
     // Ultimo sucesso de cada cliente, de QUALQUER data: "nunca sincronizou" so vale para quem nunca teve um.
     const done = await db
@@ -75,44 +112,32 @@ export async function runGa4FreshnessCheck(
         error: syncJobsTable.error,
         at: syncJobsTable.createdAt,
         trafficError: sql<string | null>`${syncJobsTable.result}->>'trafficError'`,
+        trafficAttempted: sql<boolean>`(${syncJobsTable.result}->'trafficTo') IS NOT NULL`,
+        productFunnelError: sql<string | null>`${syncJobsTable.result}->>'productFunnelError'`,
+        productFunnelAttempted: sql<boolean>`(${syncJobsTable.result}->'productFunnelTo') IS NOT NULL`,
       })
       .from(syncJobsTable)
       .where(and(eq(syncJobsTable.jobType, "ga4_daily"), inArray(syncJobsTable.clientId, ids), gte(syncJobsTable.createdAt, since)))
       .orderBy(desc(syncJobsTable.createdAt));
     for (const row of attempts) {
       if (!lastAttempt.has(row.clientId)) lastAttempt.set(row.clientId, { at: row.at, status: row.status, error: row.error });
-      if (row.status === "done" && !latestTrafficError.has(row.clientId)) latestTrafficError.set(row.clientId, row.trafficError ?? null);
+      if (row.status === "done" && !latestDone.has(row.clientId)) {
+        latestDone.set(row.clientId, {
+          trafficError: row.trafficError ?? null,
+          trafficAttempted: Boolean(row.trafficAttempted),
+          productFunnelError: row.productFunnelError ?? null,
+          productFunnelAttempted: Boolean(row.productFunnelAttempted),
+        });
+      }
     }
   }
 
-  // Origem do trafego (up_global.ga4_traffic_daily, so BigQuery): quando foi a ULTIMA gravacao com sucesso de cada cliente. O job deixa
-  // sync_jobs.result.trafficTo preenchido so quando a tabela foi gravada (inclusive com zero linhas); falha dela nao preenche. Regra
-  // secundaria: se esta leitura falhar, as demais continuam e a regra de origem do trafego fica sem julgar (undefined), com aviso no log.
-  const trafficOriginLastOk = new Map<string, Date>();
-  let trafficOriginReadable = false;
-  if (ids.length > 0) {
-    try {
-      const rows = await db
-        .select({
-          clientId: syncJobsTable.clientId,
-          at: sql<string | null>`MAX(COALESCE(${syncJobsTable.finishedAt}, ${syncJobsTable.createdAt}))`,
-        })
-        .from(syncJobsTable)
-        .where(
-          and(
-            eq(syncJobsTable.jobType, "ga4_daily"),
-            eq(syncJobsTable.status, "done"),
-            inArray(syncJobsTable.clientId, ids),
-            sql`${syncJobsTable.result}->>'trafficTo' IS NOT NULL`,
-          ),
-        )
-        .groupBy(syncJobsTable.clientId);
-      for (const row of rows) if (row.at) trafficOriginLastOk.set(row.clientId, new Date(row.at));
-      trafficOriginReadable = true;
-    } catch (err) {
-      logger.warn({ err: err instanceof Error ? err.message : String(err) }, "[ga4-freshness] nao consegui ler a origem do trafego; pulei essa regra");
-    }
-  }
+  // Tabelas isoladas do BigQuery (origem do trafego em up_global.ga4_traffic_daily e funil por produto em ga4_product_funnel_daily):
+  // quando foi a ULTIMA gravacao com sucesso de cada cliente. O job deixa sync_jobs.result.trafficTo / productFunnelTo preenchido so quando
+  // a tabela foi gravada (inclusive com zero linhas); falha dela nao preenche. Regra secundaria: se a leitura de uma falhar, as demais
+  // continuam e a regra daquela tabela fica sem julgar (null aqui -> undefined na entrada), com aviso no log.
+  const trafficOriginLastOk = await readLastOkByClient(ids, "trafficTo");
+  const productFunnelLastOk = await readLastOkByClient(ids, "productFunnelTo");
 
   // Trafego: a propriedade ainda recebe visitas? Le so o que ja esta guardado (uma linha por cliente e dia, com zeros nos dias
   // sem visita). Regra secundaria: se esta leitura falhar, as demais continuam e o log avisa (nao derruba a verificacao).
@@ -169,8 +194,12 @@ export async function runGa4FreshnessCheck(
       storedDays: traffic.get(client.id)?.storedDays ?? 0,
       firstSyncedAt: traffic.get(client.id)?.firstSyncedAt ?? null,
       lastTrafficDay: traffic.get(client.id)?.lastTrafficDay ?? null,
-      trafficOriginLastOkAt: trafficOriginReadable ? (trafficOriginLastOk.get(client.id) ?? null) : undefined,
-      trafficOriginError: trafficOriginReadable ? (latestTrafficError.get(client.id) ?? null) : undefined,
+      trafficOriginLastOkAt: trafficOriginLastOk ? (trafficOriginLastOk.get(client.id) ?? null) : undefined,
+      trafficOriginError: trafficOriginLastOk ? (latestDone.get(client.id)?.trafficError ?? null) : undefined,
+      trafficOriginAttempted: latestDone.get(client.id)?.trafficAttempted,
+      productFunnelLastOkAt: productFunnelLastOk ? (productFunnelLastOk.get(client.id) ?? null) : undefined,
+      productFunnelError: productFunnelLastOk ? (latestDone.get(client.id)?.productFunnelError ?? null) : undefined,
+      productFunnelAttempted: latestDone.get(client.id)?.productFunnelAttempted,
     };
   });
 

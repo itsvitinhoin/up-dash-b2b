@@ -6,11 +6,13 @@ import { writeGa4ToBigQuery, type Ga4BigQueryWrite } from "./ga4-bigquery";
 import {
   fetchGa4DailyMetrics,
   fetchGa4FunnelMetrics,
+  fetchGa4ProductFunnelDaily,
   fetchGa4ProductViewMetrics,
   fetchGa4ProductViewsDaily,
   fetchGa4TrafficDaily,
   type Ga4DailyMetrics,
   type Ga4FunnelMetrics,
+  type Ga4ProductFunnelDay,
   type Ga4ProductViewMetric,
   type Ga4TrafficDay,
 } from "./ga4";
@@ -85,6 +87,29 @@ export async function lastGa4TrafficToByClient(clientIds: string[]): Promise<Map
   return result;
 }
 
+// Idem para o FUNIL POR PRODUTO (sync_jobs.result.productFunnelTo): marcador de cobertura de ga4_product_funnel_daily, pelos mesmos motivos.
+export async function lastGa4ProductFunnelToByClient(clientIds: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (clientIds.length === 0) return result;
+  const rows = await db
+    .select({
+      clientId: syncJobsTable.clientId,
+      lastTo: sql<string | null>`MAX(${syncJobsTable.result}->>'productFunnelTo')`,
+    })
+    .from(syncJobsTable)
+    .where(
+      and(
+        inArray(syncJobsTable.clientId, clientIds),
+        eq(syncJobsTable.jobType, "ga4_daily"),
+        eq(syncJobsTable.status, "done"),
+        sql`${syncJobsTable.result}->>'productFunnelTo' IS NOT NULL`,
+      ),
+    )
+    .groupBy(syncJobsTable.clientId);
+  for (const row of rows) if (row.lastTo) result.set(row.clientId, row.lastTo);
+  return result;
+}
+
 export async function syncGa4DailyForClient(params: {
   clientId: string;
   clientName?: string;
@@ -101,6 +126,8 @@ export async function syncGa4DailyForClient(params: {
   storeProductViewsInPostgres?: boolean;
   // Inicio da janela de ORIGEM DO TRAFEGO (so BigQuery; ver resolveGa4TrafficFrom). Ausente/null = nao busca nem grava.
   trafficFrom?: string | null;
+  // Inicio da janela do FUNIL POR PRODUTO (so BigQuery; ver resolveGa4ProductFunnelFrom). Ausente/null = nao busca nem grava.
+  productFunnelFrom?: string | null;
 }): Promise<{
   from: string;
   to: string;
@@ -117,6 +144,13 @@ export async function syncGa4DailyForClient(params: {
   trafficTo: string | null;
   /** Falha so da origem do trafego (busca no GA4 ou gravacao no BigQuery); o diario e os produtos seguiram normalmente. */
   trafficError: string | null;
+  /** Linhas do funil por produto gravadas no BigQuery nesta rodada. */
+  productFunnelRows: number;
+  /** Janela do funil por produto gravada COM SUCESSO (null = nao rodou ou falhou: o marcador nao anda). `productFunnelTo` vira o marcador. */
+  productFunnelFrom: string | null;
+  productFunnelTo: string | null;
+  /** Falha so do funil por produto (busca no GA4 ou gravacao no BigQuery); o resto seguiu normalmente. */
+  productFunnelError: string | null;
   bigQuery: Ga4BigQueryWrite | null;
 }> {
   const fetched = await fetchGa4DailyMetrics({
@@ -161,6 +195,24 @@ export async function syncGa4DailyForClient(params: {
       traffic = fetchedTraffic;
     } catch (err) {
       trafficFetchError = `busca no GA4: ${errorMessage(err)}`;
+    }
+  }
+
+  // Funil por produto: so com BigQuery e ISOLADO, como a origem do trafego (marcador e janela proprios).
+  const productFunnelFrom = params.bigQuery ? (params.productFunnelFrom ?? null) : null;
+  let productFunnel: Ga4ProductFunnelDay[] | undefined;
+  let productFunnelFetchError: string | null = null;
+  if (productFunnelFrom) {
+    try {
+      const fetchedFunnel = await fetchGa4ProductFunnelDaily({
+        propertyId: params.propertyId,
+        dateFrom: productFunnelFrom,
+        dateTo: params.to,
+      });
+      if (fetchedFunnel === null) throw new Error("GA4 sem credencial ao buscar o funil por produto.");
+      productFunnel = fetchedFunnel;
+    } catch (err) {
+      productFunnelFetchError = `busca no GA4: ${errorMessage(err)}`;
     }
   }
 
@@ -236,6 +288,7 @@ export async function syncGa4DailyForClient(params: {
       productFrom,
       to: params.to,
       ...(traffic && trafficFrom ? { traffic, trafficFrom } : {}),
+      ...(productFunnel && productFunnelFrom ? { productFunnel, productFunnelFrom } : {}),
     });
   };
 
@@ -277,6 +330,15 @@ export async function syncGa4DailyForClient(params: {
       error: trafficError,
     });
   }
+  const productFunnelError =
+    productFunnelFetchError ?? (bigQueryWrite?.productFunnelError ? `gravacao no BigQuery: ${bigQueryWrite.productFunnelError}` : null);
+  const productFunnelWritten = Boolean(productFunnel && productFunnelFrom && bigQueryWrite && !bigQueryWrite.productFunnelError);
+  if (productFunnelError) {
+    console.warn("[ga4-daily] funil por produto nao gravado; o resto seguiu e a proxima rodada refaz a janela", {
+      clientId: params.clientId,
+      error: productFunnelError,
+    });
+  }
 
   return {
     from: params.from,
@@ -290,6 +352,10 @@ export async function syncGa4DailyForClient(params: {
     trafficFrom: trafficWritten ? trafficFrom : null,
     trafficTo: trafficWritten ? params.to : null,
     trafficError,
+    productFunnelRows: bigQueryWrite?.productFunnelRows ?? 0,
+    productFunnelFrom: productFunnelWritten ? productFunnelFrom : null,
+    productFunnelTo: productFunnelWritten ? params.to : null,
+    productFunnelError,
     bigQuery: bigQueryWrite,
   };
 }

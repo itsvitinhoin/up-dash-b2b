@@ -180,3 +180,61 @@ describe("runGa4FreshnessCheck: origem do tráfego", () => {
     expect(r.findings).toEqual([]);
   });
 });
+
+describe("runGa4FreshnessCheck: funil por produto", () => {
+  const okBoth = { trafficTo: "2026-11-10", trafficError: null, productFunnelTo: "2026-11-10", productFunnelError: null };
+
+  it("funil parado enquanto o diário e a origem do tráfego seguem: PROBLEMA do funil, com o erro da rodada mais recente", async () => {
+    await client("c-funil", "La Cleo", 24 * 30);
+    await job("c-funil", 9, "done", okBoth); // última gravação de verdade das duas tabelas, há ~9h
+    for (const h of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      await job("c-funil", h, "done", { trafficTo: "2026-11-10", trafficError: null, productFunnelTo: null, productFunnelError: "busca no GA4: boom do funil" });
+    }
+
+    const r = await runGa4FreshnessCheck({ bq: fakeBigQuery(["c-funil"]), now: NOW });
+
+    expect(r).toMatchObject({ total: 1, healthy: 0, problems: 1, failed: 1 });
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ severity: "problem", kind: "funil_produto_parado", clientName: "La Cleo" });
+    expect(r.findings[0].message).toContain("nao e gravado ha");
+    expect(r.findings[0].message).toContain("boom do funil");
+    expect(vi.mocked(logger.error).mock.calls[0][1]).toContain("[ga4-freshness] PROBLEMA La Cleo");
+  });
+
+  it("logo depois de um deploy com a tabela nova: as rodadas ainda não trazem a chave productFunnelTo, então nada é cobrado", async () => {
+    await client("c-antigo", "Em Dia", 24 * 30);
+    for (const h of [1, 2, 3]) await job("c-antigo", h, "done", { trafficTo: "2026-11-10", trafficError: null }); // resultado do job antigo
+
+    const r = await runGa4FreshnessCheck({ bq: fakeBigQuery(["c-antigo"]), now: NOW });
+
+    expect(r).toMatchObject({ healthy: 1, problems: 0, warnings: 0 });
+    expect(r.findings).toEqual([]);
+  });
+
+  it("a rodada já tentou o funil e nunca conseguiu gravar: problema 'nunca foi gravado', com o erro", async () => {
+    await client("c-nunca", "Jini", 47);
+    for (const h of [1, 2, 24, 47]) {
+      await job("c-nunca", h, "done", { trafficTo: "2026-11-10", trafficError: null, productFunnelTo: null, productFunnelError: "gravacao no BigQuery: cota" });
+    }
+
+    const r = await runGa4FreshnessCheck({ bq: fakeBigQuery(["c-nunca"]), now: NOW });
+
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ severity: "problem", kind: "funil_produto_parado" });
+    expect(r.findings[0].message).toContain("nunca foi gravado");
+    expect(r.findings[0].message).toContain("cota");
+  });
+
+  it("job que FALHOU não vale como gravação do funil, e as duas tabelas isoladas são avaliadas de forma independente", async () => {
+    await client("c-dois", "Silencioso", 24 * 30);
+    await job("c-dois", 12, "done", okBoth);
+    for (const h of [2, 3, 4]) await job("c-dois", h, "done", { trafficTo: null, trafficError: "busca no GA4: falhou a origem", productFunnelTo: null, productFunnelError: null });
+    await job("c-dois", 1, "failed", { trafficTo: "2026-11-10", productFunnelTo: "2026-11-10" }, "timeout");
+
+    const r = await runGa4FreshnessCheck({ bq: fakeBigQuery(["c-dois"]), now: NOW });
+
+    expect(r.findings.map((f) => f.kind).sort()).toEqual(["funil_produto_parado", "origem_trafego_parada"]);
+    expect(r.findings.find((f) => f.kind === "funil_produto_parado")?.message).toContain("Nenhum erro registrado");
+    expect(r.findings.find((f) => f.kind === "origem_trafego_parada")?.message).toContain("falhou a origem");
+  });
+});

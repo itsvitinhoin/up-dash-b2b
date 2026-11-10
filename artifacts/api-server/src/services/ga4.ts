@@ -548,3 +548,90 @@ export async function fetchGa4TrafficDaily(params: {
   }
   return out;
 }
+
+export interface Ga4ProductFunnelDay {
+  date: string;
+  itemId: string | null;
+  itemName: string | null;
+  itemVariant: string | null;
+  /** Unidades vistas (view_item). */
+  itemsViewed: number;
+  /** Unidades colocadas no carrinho. */
+  itemsAddedToCart: number;
+  /** Unidades que chegaram ao checkout. */
+  itemsCheckedOut: number;
+  /** Unidades compradas (nao e o numero de pedidos). */
+  itemsPurchased: number;
+  /** Receita dos itens LIQUIDA de estornos (= bruta - estornado); pode ser negativa num dia so de estorno. */
+  itemRevenue: number;
+  grossItemRevenue: number;
+  itemRefundAmount: number;
+}
+
+// Funil POR PRODUTO e por dia (visto -> carrinho -> checkout -> comprado, com a receita do item): o que as visualizacoes de produto
+// sozinhas nao respondem. So vai para o BigQuery (up_global.ga4_product_funnel_daily). Sondado ao vivo em 10/11/2026 em 3 propriedades:
+// as 7 metricas de item aceitam juntas as dimensoes data + item + nome + variante; itemsViewed sai igual com e sem o filtro view_item (por
+// isso o filtro nao e usado aqui); itemRevenue = bruta - estornada. Metricas de item NAO se misturam com as de evento (compras do dia,
+// receita da compra) no mesmo pedido: a conferencia com o diario e feita comparando as duas tabelas.
+export async function fetchGa4ProductFunnelDaily(params: {
+  propertyId?: string | null;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<Ga4ProductFunnelDay[] | null> {
+  if (!params.propertyId) return null;
+  const token = await getAccessToken();
+  if (!token) return null;
+
+  const PAGE = 100_000;
+  const out: Ga4ProductFunnelDay[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const report = await runReport(params.propertyId, {
+      dateRanges: [{ startDate: params.dateFrom, endDate: params.dateTo }],
+      dimensions: [{ name: "date" }, { name: "itemId" }, { name: "itemName" }, { name: "itemVariant" }],
+      metrics: [
+        { name: "itemsViewed" },
+        { name: "itemsAddedToCart" },
+        { name: "itemsCheckedOut" },
+        { name: "itemsPurchased" },
+        { name: "itemRevenue" },
+        { name: "grossItemRevenue" },
+        { name: "itemRefundAmount" },
+      ],
+      orderBys: [{ dimension: { dimensionName: "date" } }],
+      limit: PAGE,
+      offset,
+    });
+    const rows = report.rows ?? [];
+    for (const row of rows) {
+      const day: Ga4ProductFunnelDay = {
+        date: ga4Date(row.dimensionValues?.[0]?.value),
+        itemId: row.dimensionValues?.[1]?.value?.trim() || null,
+        itemName: row.dimensionValues?.[2]?.value?.trim() || null,
+        itemVariant: row.dimensionValues?.[3]?.value?.trim() || null,
+        itemsViewed: metricValue(row, 0),
+        itemsAddedToCart: metricValue(row, 1),
+        itemsCheckedOut: metricValue(row, 2),
+        itemsPurchased: metricValue(row, 3),
+        itemRevenue: metricValue(row, 4),
+        grossItemRevenue: metricValue(row, 5),
+        itemRefundAmount: metricValue(row, 6),
+      };
+      // So descarta a linha em que TUDO e zero (o GA4 quase nao as devolve). Somar e comparar com zero descartaria o estorno (receita
+      // liquida negativa), como aconteceu na origem do trafego em 09/11/2026.
+      if (
+        day.itemsViewed === 0 &&
+        day.itemsAddedToCart === 0 &&
+        day.itemsCheckedOut === 0 &&
+        day.itemsPurchased === 0 &&
+        day.itemRevenue === 0 &&
+        day.grossItemRevenue === 0 &&
+        day.itemRefundAmount === 0
+      ) {
+        continue;
+      }
+      out.push(day);
+    }
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}

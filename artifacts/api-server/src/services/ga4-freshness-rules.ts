@@ -33,6 +33,7 @@ export type Ga4FreshnessKind =
   | "parou_trafego" // tinha visitas e parou ha pouco: o site pode ter trocado de GA4
   | "sem_trafego" // sem visitas ha bastante tempo (pendencia ja conhecida)
   | "origem_trafego_parada" // o GA4 sincroniza em dia, mas a origem do trafego (ga4_traffic_daily) nao esta sendo gravada
+  | "funil_produto_parado" // idem para o funil por produto (ga4_product_funnel_daily)
   | "bigquery_atrasado" // o Postgres esta em dia mas o BigQuery nao
   | "bigquery_sem_dados" // sincronizou no Postgres e nada chegou ao BigQuery
   | "bigquery_indisponivel"; // nao deu para ler o BigQuery, entao nao da para garantir
@@ -70,6 +71,17 @@ export type Ga4ClientHealthInput = {
   trafficOriginLastOkAt?: Date | null;
   /** Erro da origem do trafego na rodada concluida mais recente (sync_jobs.result.trafficError); null = nenhum registrado. */
   trafficOriginError?: string | null;
+  /**
+   * A rodada concluida mais recente ja chegou a tentar a origem do trafego (o resultado traz a chave trafficTo, mesmo nula)? false = o job
+   * ainda nao passou por este cliente com essa tabela, entao "nunca gravada" nao e falha. undefined = nao se sabe: conta como tentou.
+   */
+  trafficOriginAttempted?: boolean;
+  /** Idem para o funil por produto (up_global.ga4_product_funnel_daily): ultima gravacao com sucesso (sync_jobs.result.productFunnelTo). */
+  productFunnelLastOkAt?: Date | null;
+  /** Erro do funil por produto na rodada concluida mais recente (sync_jobs.result.productFunnelError). */
+  productFunnelError?: string | null;
+  /** A rodada mais recente ja tentou o funil por produto (chave productFunnelTo presente)? */
+  productFunnelAttempted?: boolean;
 };
 
 export type Ga4FreshnessOptions = {
@@ -148,32 +160,76 @@ function stamp(date: Date): string {
   return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
-// "A origem do trafego esta sendo gravada?" Devolve null quando esta tudo bem ou quando ainda nao da para julgar (nao foi possivel
-// ler, ou o cliente e novo demais para dizer "ha quanto tempo": sem ultima gravacao e sem inicio de historico).
-function trafficOriginFinding(
+// Tabelas do BigQuery gravadas de forma ISOLADA (origem do trafego e funil por produto): cada uma tem a ultima gravacao com sucesso, o
+// erro da rodada mais recente e se a rodada ja chegou a TENTAR gravar (a ultima rodada concluida traz a chave do marcador no resultado).
+type IsolatedTable = {
+  kind: "origem_trafego_parada" | "funil_produto_parado";
+  /** Como a mensagem chama a tabela, ex.: "a origem do trafego (up_global.ga4_traffic_daily)". */
+  label: string;
+  /** "gravada" / "gravado", concordando com o rotulo. */
+  written: string;
+  /** Trecho do log para procurar e a chave de sync_jobs.result com o erro. */
+  logHint: string;
+  errorKey: string;
+  lastOkAt: Date | null | undefined;
+  error: string | null | undefined;
+  attempted: boolean | undefined;
+};
+
+function isolatedTables(c: Ga4ClientHealthInput): IsolatedTable[] {
+  return [
+    {
+      kind: "origem_trafego_parada",
+      label: "a origem do trafego (up_global.ga4_traffic_daily)",
+      written: "gravada",
+      logHint: "[ga4-daily] origem do trafego nao gravada",
+      errorKey: "trafficError",
+      lastOkAt: c.trafficOriginLastOkAt,
+      error: c.trafficOriginError,
+      attempted: c.trafficOriginAttempted,
+    },
+    {
+      kind: "funil_produto_parado",
+      label: "o funil por produto (up_global.ga4_product_funnel_daily)",
+      written: "gravado",
+      logHint: "[ga4-daily] funil por produto nao gravado",
+      errorKey: "productFunnelError",
+      lastOkAt: c.productFunnelLastOkAt,
+      error: c.productFunnelError,
+      attempted: c.productFunnelAttempted,
+    },
+  ];
+}
+
+// "Essa tabela esta sendo gravada?" Devolve null quando esta tudo bem ou quando ainda nao da para julgar (nao foi possivel ler, o cliente e
+// novo demais para dizer "ha quanto tempo": sem ultima gravacao e sem inicio de historico, ou uma tabela NOVA que o job ainda nao
+// chegou a tentar neste cliente, como logo depois de um deploy: sem a chave no resultado nao ha falha, so uma rodada que ainda nao passou).
+function isolatedTableFinding(
   c: Ga4ClientHealthInput,
   now: Date,
   cfg: { maxAge: number; stoppedAlertDays: number },
+  table: IsolatedTable,
 ): Omit<Ga4FreshnessFinding, "clientId" | "clientName"> | null {
-  if (c.trafficOriginLastOkAt === undefined) return null;
+  if (table.lastOkAt === undefined) return null;
+  if (table.lastOkAt === null && table.attempted === false) return null;
   // Referencia: a ultima gravacao. Se nunca gravou, o comeco do historico do cliente: ate maxAge horas depois dele ainda e a primeira
   // rodada (ou uma falha passageira), e nao um problema.
-  const reference = c.trafficOriginLastOkAt ?? c.firstSyncedAt ?? null;
+  const reference = table.lastOkAt ?? c.firstSyncedAt ?? null;
   if (!reference) return null;
   const ageHours = hoursSince(reference, now);
   if (ageHours <= cfg.maxAge) return null;
 
-  const where = c.trafficOriginLastOkAt
-    ? `nao e gravada ha ${Math.floor(ageHours)}h (ultima gravacao: ${stamp(reference)})`
-    : `nunca foi gravada (o cliente sincroniza o GA4 desde ${stamp(reference)})`;
+  const where = table.lastOkAt
+    ? `nao e ${table.written} ha ${Math.floor(ageHours)}h (ultima gravacao: ${stamp(reference)})`
+    : `nunca foi ${table.written} (o cliente sincroniza o GA4 desde ${stamp(reference)})`;
   const known = ageHours / 24 > cfg.stoppedAlertDays;
-  const why = c.trafficOriginError
-    ? `Ultimo erro: ${short(c.trafficOriginError)}.`
+  const why = table.error
+    ? `Ultimo erro: ${short(table.error)}.`
     : "Nenhum erro registrado: a rodada pode nem ter tentado (BigQuery fora do ar naquela rodada).";
   return {
     severity: known ? "warning" : "problem",
-    kind: "origem_trafego_parada",
-    message: `${c.clientName}: a origem do trafego (up_global.ga4_traffic_daily) ${where}, embora o resto do GA4 sincronize em dia${known ? " (ja e conhecido)" : ""}. ${why} Procure "[ga4-daily] origem do trafego nao gravada" no log do upzero-sync-job-hourly e sync_jobs.result.trafficError.`,
+    kind: table.kind,
+    message: `${c.clientName}: ${table.label} ${where}, embora o resto do GA4 sincronize em dia${known ? " (ja e conhecido)" : ""}. ${why} Procure "${table.logHint}" no log do upzero-sync-job-hourly e sync_jobs.result.${table.errorKey}.`,
   };
 }
 
@@ -269,13 +325,16 @@ export function evaluateGa4Freshness(
         });
       }
 
-      // A origem do trafego e uma tabela a parte, gravada de forma isolada: o diario pode estar em dia e ela nao. Nao empilha em cima de
-      // um problema do BigQuery do mesmo cliente (a causa e a mesma) nem quando o BigQuery nao pode ser lido (ja e UM problema do job).
+      // A origem do trafego e o funil por produto sao tabelas a parte, gravadas de forma isolada: o diario pode estar em dia e elas nao. Nao
+      // empilha em cima de um problema do BigQuery do mesmo cliente (a causa e a mesma) nem quando o BigQuery nao pode ser lido (ja e UM
+      // problema do job).
       if (!bigQueryProblem) {
-        const origin = trafficOriginFinding(c, now, { maxAge, stoppedAlertDays: trafficCfg.stoppedAlertDays });
-        if (origin) {
-          add({ ...base, ...origin });
-          quiet.add(c.clientId);
+        for (const table of isolatedTables(c)) {
+          const finding = isolatedTableFinding(c, now, { maxAge, stoppedAlertDays: trafficCfg.stoppedAlertDays }, table);
+          if (finding) {
+            add({ ...base, ...finding });
+            quiet.add(c.clientId);
+          }
         }
       }
     }

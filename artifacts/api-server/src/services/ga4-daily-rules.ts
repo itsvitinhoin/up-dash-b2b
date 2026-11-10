@@ -87,6 +87,22 @@ export function resolveGa4TrafficFrom(params: {
   }).from;
 }
 
+// Funil por produto (up_global.ga4_product_funnel_daily, so no BigQuery): mesma ideia da origem do trafego, com marcador proprio
+// (sync_jobs.result.productFunnelTo). Sem marcador, backfill largo; com ele, recomeca dali (menos o recuo); null = sem BigQuery neste turno.
+export function resolveGa4ProductFunnelFrom(params: {
+  bigQueryAvailable: boolean;
+  lastProductFunnelTo?: string | null;
+  lookbackDays?: number;
+  now?: Date;
+}): string | null {
+  return resolveGa4TrafficFrom({
+    bigQueryAvailable: params.bigQueryAvailable,
+    lastTrafficTo: params.lastProductFunnelTo,
+    lookbackDays: params.lookbackDays,
+    now: params.now,
+  });
+}
+
 // ── Backfill em lote com limite ─────────────────────────────────────────────
 // Registrar muitos clientes de uma vez (a descoberta acha dezenas) faria a PRIMEIRA rodada tentar 400 dias de todos: cerca de
 // 2 minutos cada, contra o limite de 15 minutos do job horario, que tambem roda UpZero e Meta no mesmo processo. Entao:

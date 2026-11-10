@@ -21,6 +21,7 @@ no BigQuery. Regras (testadas em `test/ga4-freshness-rules.test.ts`):
 | Cliente que **tinha visitas e parou há 7 a 21 dias** (o site pode ter trocado de GA4 — caso Sooé, que gravou zeros por 3 semanas) | **problema** | `parou_trafego` |
 | Sem visitas há mais tempo que isso (já é conhecido) | aviso | `sem_trafego`; os números guardados dele são zeros, não dados |
 | O GA4 sincroniza em dia, mas a **origem do tráfego** (`up_global.ga4_traffic_daily`) não é gravada há mais de 6h (ou nunca foi, passadas 6h do início do histórico) | **problema** (aviso depois de 21 dias) | `origem_trafego_parada` |
+| O mesmo para o **funil por produto** (`up_global.ga4_product_funnel_daily`) | **problema** (aviso depois de 21 dias) | `funil_produto_parado` |
 
 Com **problema** o job sai com código 1 → a execução do Cloud Run falha → o alerta dispara. **Aviso não dispara alerta**:
 senão o alerta ficaria vermelho para sempre por causa das lojas sem acesso e ninguém mais olharia.
@@ -43,6 +44,12 @@ com o BigQuery fora do ar) e onde procurar: `[ga4-daily] origem do trafego nao g
 10/11 contra os dados reais (somente leitura, Postgres e BigQuery): 26 clientes, 21 saudáveis, 0 problemas, 5 avisos (Aiyu, Hot Pink e
 Sonmur sem acesso; Obzee e Vn11 sem visitas, já conhecidos), nenhum falso positivo. Os testes usam um Postgres em memória e cobrem a falha
 com erro, a rodada que não tentou, a que falhou (não vale como gravação), o cliente novo e o BigQuery desligado.
+
+**Funil por produto (10/11/2026).** Mesma regra, outra tabela (`ga4_product_funnel_daily`; chaves `productFunnelTo` e `productFunnelError` em
+`sync_jobs.result`; mensagem com `[ga4-daily] funil por produto nao gravado`). Um detalhe que vale para toda tabela nova: o "nunca foi
+gravado" só conta quando a rodada concluída mais recente do cliente **já traz a chave do marcador** no resultado (mesmo nula), isto é, quando o job
+com a tabela nova já passou por ele. Logo depois de um deploy, enquanto o backfill ainda está na fila, não há falha a cobrar e o e-mail não
+dispara à toa; a mesma proteção vale para a origem do tráfego. Já uma gravação que existia e parou há mais de 6h continua sendo problema.
 
 Validado em 09/11 contra os dados reais (somente leitura): 26 clientes, 14 saudáveis, **2 problemas** (Vn11 e Obzee, `sem_trafego_novo`,
 porque foram cadastrados há menos de 3 dias com uma propriedade sem visitas — viram aviso sozinhos depois da janela) e 10 avisos (os 7

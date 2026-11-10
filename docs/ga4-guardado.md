@@ -260,3 +260,55 @@ Como funciona e o que lembrar:
 - **Depois da publicação**, para não esperar 8 rodadas (limite de 3 backfills largos por hora): rodar uma vez
   `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=ga4_daily,TRIGGER=manual --wait`
   (os clientes sem acesso fazem a execução sair com erro e o Cloud Run repete uma vez; é esperado e a segunda passada não refaz nada).
+
+## Funil por produto (10/11/2026)
+
+Tabela nova **só no BigQuery**: `up_global.ga4_product_funnel_daily` (particionada por `date`, agrupada por `client_id`). Uma linha por
+cliente, dia e produto (`item_id`, `item_name`, `item_variant`), com o funil do item:
+
+| Coluna | O que é |
+|---|---|
+| `items_viewed` | unidades vistas (igual a `view_item` de `ga4_daily` e a `ga4_product_views_daily.items_viewed`) |
+| `items_added_to_cart`, `items_checked_out` | unidades que foram ao carrinho e ao checkout |
+| `items_purchased` | unidades compradas |
+| `item_revenue` | receita dos itens **líquida de estornos** (= `gross_item_revenue` − `item_refund_amount`) |
+| `gross_item_revenue`, `item_refund_amount` | receita bruta e valor estornado |
+
+Exemplo — o que mais vendeu nos últimos 30 dias e quanto das visualizações virou compra:
+
+```sql
+SELECT item_id, ANY_VALUE(item_name) AS produto, SUM(items_viewed) AS vistos, SUM(items_added_to_cart) AS carrinho,
+       SUM(items_purchased) AS comprados, ROUND(SUM(item_revenue)) AS receita,
+       ROUND(SAFE_DIVIDE(SUM(items_purchased), SUM(items_viewed)) * 100, 2) AS compra_por_visto_pct
+FROM `up-vesti-report.up_global.ga4_product_funnel_daily`
+WHERE client_name = 'Giah Studio' AND `date` >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 30 DAY)
+GROUP BY item_id
+ORDER BY receita DESC
+LIMIT 10
+```
+
+Como funciona e o que lembrar:
+
+- **Mesmo job `ga4_daily`, mesmo acesso (Leitor da agência):** nenhuma permissão nova. Histórico de **400 dias** no primeiro ciclo e depois
+  de hora em hora (relê os últimos dias). Sondado ao vivo em 10/11 em 3 propriedades: as 7 métricas de item aceitam juntas as dimensões
+  dia + item + nome + variante, e `itemsViewed` sai igual com e sem o filtro `view_item` (por isso a busca não usa filtro).
+- **Janela e marcador próprios**, como a origem do tráfego: `sync_jobs.result.productFunnelTo` é o último dia gravado com sucesso
+  (`resolveGa4ProductFunnelFrom`, `lastGa4ProductFunnelToByClient`). Falha só dessa tabela **não derruba** o diário, os produtos nem a
+  origem do tráfego: o erro vai em `productFunnelError`, o marcador não anda e a rodada seguinte refaz a janela. Janela curta (até 3000
+  linhas) é **um `MERGE` só**; o backfill passa por tabela temporária (mesmo desenho da origem do tráfego). Validado em 10/11 contra o BigQuery de
+  verdade, num dataset temporário (repetição sem duplicar, item que sumiu sai, variante vazia como NULL, chave repetida soma, receita
+  negativa de estorno fica, backfill de 7 mil linhas seguido de rodada curta, cliente de controle intacto e exclusão do cliente).
+- **Tem linha que a tabela de visualizações não tem:** produto que foi ao carrinho ou foi comprado num dia **sem** visualização (de 0,7% a
+  1,4% das linhas nas 3 propriedades sondadas). A tabela é um superconjunto de `ga4_product_views_daily`; as duas se juntam por (cliente,
+  dia, `item_id`, `item_name`, `item_variant`) com `IS NOT DISTINCT FROM`, porque variante vazia é NULL (e `(not set)` fica como o GA4 mandou).
+- **Unidades não são eventos nem pedidos.** Conferido nos mesmos 15 dias em Giah, La Cleo e Lila Rosa: `items_viewed` = `view_item` do
+  diário; unidades no carrinho = eventos de carrinho (até 2% acima); unidades no checkout e unidades compradas são de 2 a 2,7 vezes os
+  eventos de checkout e as compras (pedido com mais de um item).
+- **Receita:** `item_revenue` é preço × quantidade, líquida de estornos (Lila Rosa: bruta 125,7 mil − estornada 13,4 mil = 112,3 mil, igual à
+  `purchase_revenue` do diário). Pode ficar **acima** da do diário (La Cleo: +4,3% no período, provavelmente desconto aplicado ao pedido;
+  não verificado) e pode ser **negativa** numa linha só de estorno (é dado real; não filtre `> 0`).
+- A exclusão definitiva de cliente (`deleteGa4Rows`) apaga as **quatro** tabelas.
+- **Vigiado pelo alerta de dado parado** (regra `funil_produto_parado`, a mesma da origem do tráfego; ver `docs/ga4-alerta.md`).
+- **Depois da publicação**, para não esperar 8 rodadas (limite de 3 backfills largos por hora): rodar uma vez
+  `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=ga4_daily,TRIGGER=manual --wait`
+  (sem marcador, o funil faz o backfill de 400 dias; o resto fica na janela curta).

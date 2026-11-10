@@ -2,7 +2,7 @@
 // grava sem duplicar e informa ate que dia cada cliente ja esta la. Recebe o cliente do BigQuery por
 // parametro (BigQueryLike) para dar para testar sem a nuvem. Mesmo desenho de ads-accounts-bq.ts.
 import { randomBytes } from "node:crypto";
-import type { Ga4DailyMetrics, Ga4TrafficDay } from "./ga4";
+import type { Ga4DailyMetrics, Ga4ProductFunnelDay, Ga4TrafficDay } from "./ga4";
 import type { StoredProductViewKey } from "./ga4-daily-rules";
 import { BIGQUERY_PROJECT, runQuery, type BigQueryLike } from "./excluded-clients-bq";
 import {
@@ -11,10 +11,13 @@ import {
   GA4_BQ_DEFAULT_DATASET,
   GA4_BQ_PRODUCTS_TABLE,
   GA4_BQ_PRODUCT_BATCH,
+  GA4_BQ_PRODUCT_FUNNEL_BATCH,
+  GA4_BQ_PRODUCT_FUNNEL_TABLE,
   GA4_BQ_TRAFFIC_BATCH,
   GA4_BQ_TRAFFIC_TABLE,
   buildGa4DailyBqRows,
   buildGa4ProductBqRows,
+  buildGa4ProductFunnelBqRows,
   buildGa4TrafficBqRows,
   chunk,
   type Ga4BqClient,
@@ -23,6 +26,7 @@ import {
 const DAILY_SQL = `\`${BIGQUERY_PROJECT}.${GA4_BQ_DATASET}.${GA4_BQ_DAILY_TABLE}\``;
 const PRODUCTS_SQL = `\`${BIGQUERY_PROJECT}.${GA4_BQ_DATASET}.${GA4_BQ_PRODUCTS_TABLE}\``;
 const TRAFFIC_SQL = `\`${BIGQUERY_PROJECT}.${GA4_BQ_DATASET}.${GA4_BQ_TRAFFIC_TABLE}\``;
+const PRODUCT_FUNNEL_SQL = `\`${BIGQUERY_PROJECT}.${GA4_BQ_DATASET}.${GA4_BQ_PRODUCT_FUNNEL_TABLE}\``;
 
 export const ENSURE_GA4_DAILY_QUERY = `CREATE TABLE IF NOT EXISTS ${DAILY_SQL} (
   client_id STRING NOT NULL,
@@ -79,6 +83,28 @@ export const ENSURE_GA4_TRAFFIC_QUERY = `CREATE TABLE IF NOT EXISTS ${TRAFFIC_SQ
 PARTITION BY \`date\`
 CLUSTER BY client_id`;
 
+// Funil por produto: por dia e item, quantas unidades foram vistas, foram ao carrinho, ao checkout e foram compradas, e a receita do
+// item (liquida de estornos, bruta e estornada). Sem chave primaria (BigQuery): a troca de janela (replaceGa4ProductFunnel) impede duplicar.
+export const ENSURE_GA4_PRODUCT_FUNNEL_QUERY = `CREATE TABLE IF NOT EXISTS ${PRODUCT_FUNNEL_SQL} (
+  client_id STRING NOT NULL,
+  client_name STRING,
+  property_id STRING NOT NULL,
+  \`date\` DATE NOT NULL,
+  item_id STRING,
+  item_name STRING,
+  item_variant STRING,
+  items_viewed INT64,
+  items_added_to_cart INT64,
+  items_checked_out INT64,
+  items_purchased INT64,
+  item_revenue FLOAT64,
+  gross_item_revenue FLOAT64,
+  item_refund_amount FLOAT64,
+  synced_at TIMESTAMP
+)
+PARTITION BY \`date\`
+CLUSTER BY client_id`;
+
 // Criar as tabelas uma vez por processo basta: o job roda de hora em hora, cada rodada e um processo novo.
 const ensured = new WeakSet<object>();
 
@@ -91,6 +117,7 @@ export async function ensureGa4Tables(bq: BigQueryLike): Promise<void> {
   await runQuery(bq, { query: ENSURE_GA4_DAILY_QUERY });
   await runQuery(bq, { query: ENSURE_GA4_PRODUCTS_QUERY });
   await runQuery(bq, { query: ENSURE_GA4_TRAFFIC_QUERY });
+  await runQuery(bq, { query: ENSURE_GA4_PRODUCT_FUNNEL_QUERY });
   ensured.add(bq);
 }
 
@@ -472,15 +499,184 @@ export async function replaceGa4Traffic(
   return bqRows.length;
 }
 
+// ── Funil por produto: mesma troca de janela da origem do trafego (um MERGE na janela curta; tabela temporaria + transacao na longa) ──
+
+const PRODUCT_FUNNEL_STAGING_ID_RE = /^ga4_product_funnel_stg_[a-f0-9]{8,32}$/;
+
+const PRODUCT_FUNNEL_ROW_TYPES = {
+  client_id: "STRING",
+  client_name: "STRING",
+  property_id: "STRING",
+  date: "STRING",
+  item_id: "STRING",
+  item_name: "STRING",
+  item_variant: "STRING",
+  items_viewed: "INT64",
+  items_added_to_cart: "INT64",
+  items_checked_out: "INT64",
+  items_purchased: "INT64",
+  item_revenue: "FLOAT64",
+  gross_item_revenue: "FLOAT64",
+  item_refund_amount: "FLOAT64",
+};
+
+function productFunnelStagingSql(stagingId: string): string {
+  if (!PRODUCT_FUNNEL_STAGING_ID_RE.test(stagingId)) throw new Error(`nome de tabela temporaria invalido: "${stagingId}"`);
+  return `\`${BIGQUERY_PROJECT}.${GA4_BQ_DATASET}.${stagingId}\``;
+}
+
+export function buildCreateProductFunnelStagingQuery(stagingId: string) {
+  return {
+    query: `CREATE TABLE ${productFunnelStagingSql(stagingId)} (
+      client_id STRING, client_name STRING, property_id STRING, \`date\` DATE,
+      item_id STRING, item_name STRING, item_variant STRING,
+      items_viewed INT64, items_added_to_cart INT64, items_checked_out INT64, items_purchased INT64,
+      item_revenue FLOAT64, gross_item_revenue FLOAT64, item_refund_amount FLOAT64
+    ) OPTIONS (expiration_timestamp = TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR))`,
+  };
+}
+
+export function buildInsertProductFunnelStagingQuery(stagingId: string, rows: ReturnType<typeof buildGa4ProductFunnelBqRows>) {
+  return {
+    query: `INSERT INTO ${productFunnelStagingSql(stagingId)}
+        (client_id, client_name, property_id, \`date\`, item_id, item_name, item_variant, items_viewed, items_added_to_cart,
+         items_checked_out, items_purchased, item_revenue, gross_item_revenue, item_refund_amount)
+      SELECT r.client_id, r.client_name, r.property_id, DATE(r.date), r.item_id, r.item_name, r.item_variant, r.items_viewed,
+             r.items_added_to_cart, r.items_checked_out, r.items_purchased, r.item_revenue, r.gross_item_revenue, r.item_refund_amount
+      FROM UNNEST(@rows) AS r`,
+    params: { rows },
+    types: { rows: [PRODUCT_FUNNEL_ROW_TYPES] },
+  };
+}
+
+/** Troca a janela do cliente por inteiro, numa transacao so (ou entra tudo, ou nada). */
+export function buildSwapProductFunnelQuery(stagingId: string, clientId: string, from: string, to: string) {
+  return {
+    query: `BEGIN TRANSACTION;
+      DELETE FROM ${PRODUCT_FUNNEL_SQL}
+        WHERE client_id = @client_id AND \`date\` BETWEEN DATE(@from_date) AND DATE(@to_date);
+      INSERT INTO ${PRODUCT_FUNNEL_SQL}
+        (client_id, client_name, property_id, \`date\`, item_id, item_name, item_variant, items_viewed, items_added_to_cart,
+         items_checked_out, items_purchased, item_revenue, gross_item_revenue, item_refund_amount, synced_at)
+      SELECT client_id, client_name, property_id, \`date\`, NULLIF(item_id, ''), NULLIF(item_name, ''), NULLIF(item_variant, ''),
+             items_viewed, items_added_to_cart, items_checked_out, items_purchased, item_revenue, gross_item_revenue,
+             item_refund_amount, CURRENT_TIMESTAMP()
+      FROM ${productFunnelStagingSql(stagingId)};
+      COMMIT TRANSACTION;`,
+    params: { client_id: clientId, from_date: from, to_date: to },
+    types: { client_id: "STRING", from_date: "STRING", to_date: "STRING" },
+  };
+}
+
+export function buildDeleteProductFunnelWindowQuery(clientId: string, from: string, to: string) {
+  return {
+    query: `DELETE FROM ${PRODUCT_FUNNEL_SQL}
+      WHERE client_id = @client_id AND \`date\` BETWEEN DATE(@from_date) AND DATE(@to_date)`,
+    params: { client_id: clientId, from_date: from, to_date: to },
+    types: { client_id: "STRING", from_date: "STRING", to_date: "STRING" },
+  };
+}
+
 /**
- * Apaga TODAS as linhas de GA4 do cliente nas tres tabelas (exclusao definitiva, depois da lixeira de 90 dias).
+ * Janela curta (as linhas cabem num lote): troca a janela do cliente numa consulta so, como em buildMergeTrafficWindowQuery. A chave e
+ * (cliente, dia, produto, nome, variante), com item_* vazio guardado como NULL (como em ga4_product_views_daily); o GROUP BY garante uma
+ * linha por chave (o MERGE recusa chave repetida) e soma se alguma repetir.
+ */
+export function buildMergeProductFunnelWindowQuery(
+  rows: ReturnType<typeof buildGa4ProductFunnelBqRows>,
+  clientId: string,
+  from: string,
+  to: string,
+) {
+  return {
+    query: `MERGE ${PRODUCT_FUNNEL_SQL} T
+      USING (
+        SELECT client_id, ANY_VALUE(client_name) AS client_name, ANY_VALUE(property_id) AS property_id, day AS \`date\`,
+               item_id, item_name, item_variant,
+               SUM(items_viewed) AS items_viewed, SUM(items_added_to_cart) AS items_added_to_cart,
+               SUM(items_checked_out) AS items_checked_out, SUM(items_purchased) AS items_purchased,
+               SUM(item_revenue) AS item_revenue, SUM(gross_item_revenue) AS gross_item_revenue,
+               SUM(item_refund_amount) AS item_refund_amount
+        FROM (
+          SELECT r.client_id, r.client_name, r.property_id, DATE(r.date) AS day, NULLIF(r.item_id, '') AS item_id,
+                 NULLIF(r.item_name, '') AS item_name, NULLIF(r.item_variant, '') AS item_variant,
+                 r.items_viewed, r.items_added_to_cart, r.items_checked_out, r.items_purchased,
+                 r.item_revenue, r.gross_item_revenue, r.item_refund_amount
+          FROM UNNEST(@rows) AS r
+          WHERE DATE(r.date) BETWEEN DATE(@from_date) AND DATE(@to_date)
+        )
+        GROUP BY client_id, day, item_id, item_name, item_variant
+      ) S
+      ON T.client_id = S.client_id AND T.\`date\` = S.\`date\`
+         AND T.item_id IS NOT DISTINCT FROM S.item_id
+         AND T.item_name IS NOT DISTINCT FROM S.item_name
+         AND T.item_variant IS NOT DISTINCT FROM S.item_variant
+         AND T.\`date\` BETWEEN DATE(@from_date) AND DATE(@to_date)
+      WHEN MATCHED THEN UPDATE SET
+        client_name = S.client_name, property_id = S.property_id, items_viewed = S.items_viewed,
+        items_added_to_cart = S.items_added_to_cart, items_checked_out = S.items_checked_out, items_purchased = S.items_purchased,
+        item_revenue = S.item_revenue, gross_item_revenue = S.gross_item_revenue, item_refund_amount = S.item_refund_amount,
+        synced_at = CURRENT_TIMESTAMP()
+      WHEN NOT MATCHED BY TARGET THEN INSERT
+        (client_id, client_name, property_id, \`date\`, item_id, item_name, item_variant, items_viewed, items_added_to_cart,
+         items_checked_out, items_purchased, item_revenue, gross_item_revenue, item_refund_amount, synced_at)
+      VALUES
+        (S.client_id, S.client_name, S.property_id, S.\`date\`, S.item_id, S.item_name, S.item_variant, S.items_viewed,
+         S.items_added_to_cart, S.items_checked_out, S.items_purchased, S.item_revenue, S.gross_item_revenue,
+         S.item_refund_amount, CURRENT_TIMESTAMP())
+      WHEN NOT MATCHED BY SOURCE AND T.client_id = @client_id AND T.\`date\` BETWEEN DATE(@from_date) AND DATE(@to_date) THEN DELETE`,
+    params: { rows, client_id: clientId, from_date: from, to_date: to },
+    types: { rows: [PRODUCT_FUNNEL_ROW_TYPES], client_id: "STRING", from_date: "STRING", to_date: "STRING" },
+  };
+}
+
+/**
+ * Troca o funil por produto da janela [from, to] do cliente. O GA4 revisa as contagens recentes e um item que sumiu da revisao nao
+ * pode ficar com o numero velho, por isso apaga e regrava a janela. Janela curta: uma consulta so (MERGE). Janela longa (backfill): as
+ * linhas novas vao antes para uma tabela temporaria (em lotes) e a troca e feita de uma vez no fim. Nos dois casos, se algo falhar a
+ * tabela de verdade nao muda.
+ */
+export async function replaceGa4ProductFunnel(
+  bq: BigQueryLike,
+  client: Ga4BqClient,
+  rows: Ga4ProductFunnelDay[],
+  from: string,
+  to: string,
+  newId: () => string = () => randomBytes(8).toString("hex"),
+): Promise<number> {
+  const bqRows = buildGa4ProductFunnelBqRows(client, rows);
+  if (bqRows.length === 0) {
+    // Nenhum item com movimento na janela: so limpa o que estava la.
+    await runQuery(bq, buildDeleteProductFunnelWindowQuery(client.clientId, from, to));
+    return 0;
+  }
+  if (bqRows.length <= GA4_BQ_PRODUCT_FUNNEL_BATCH) {
+    await runQuery(bq, buildMergeProductFunnelWindowQuery(bqRows, client.clientId, from, to));
+    return bqRows.length;
+  }
+  const stagingId = `ga4_product_funnel_stg_${newId()}`;
+  await runQuery(bq, buildCreateProductFunnelStagingQuery(stagingId));
+  try {
+    for (const batch of chunk(bqRows, GA4_BQ_PRODUCT_FUNNEL_BATCH)) {
+      await runQuery(bq, buildInsertProductFunnelStagingQuery(stagingId, batch));
+    }
+    await runQuery(bq, buildSwapProductFunnelQuery(stagingId, client.clientId, from, to));
+  } finally {
+    // Limpeza de cortesia; se falhar, a expiracao de 1 hora recolhe a tabela.
+    await runQuery(bq, { query: `DROP TABLE IF EXISTS ${productFunnelStagingSql(stagingId)}` }).catch(() => undefined);
+  }
+  return bqRows.length;
+}
+
+/**
+ * Apaga TODAS as linhas de GA4 do cliente nas quatro tabelas (exclusao definitiva, depois da lixeira de 90 dias).
  * Estas tabelas usam client_id (nao `tenant`), por isso a limpeza generica de up_global nao as alcanca. Tabela que
  * ainda nao existe conta como "nada a apagar". Devolve quantas linhas sairam.
  */
 export async function deleteGa4Rows(bq: BigQueryLike, clientId: string): Promise<number> {
   if (!clientId.trim()) throw new Error("client_id vazio: nao apaga GA4 sem saber de quem");
   let total = 0;
-  for (const table of [DAILY_SQL, PRODUCTS_SQL, TRAFFIC_SQL]) {
+  for (const table of [DAILY_SQL, PRODUCTS_SQL, TRAFFIC_SQL, PRODUCT_FUNNEL_SQL]) {
     try {
       // O filtro de data "toca" todas as particoes (e satisfaz tabelas que exijam filtro de particao).
       const { dmlAffectedRows } = await runQuery(bq, {
@@ -503,15 +699,20 @@ export type Ga4BigQueryWrite = {
   trafficRows: number;
   /** Motivo da falha SO da origem do trafego: ela e isolada e nao impede o diario nem os produtos. */
   trafficError?: string;
+  /** Linhas gravadas em ga4_product_funnel_daily (0 quando o funil por produto nao foi enviado ou falhou). */
+  productFunnelRows: number;
+  /** Motivo da falha SO do funil por produto: ele tambem e isolado. */
+  productFunnelError?: string;
 };
 
 /**
- * Grava o que veio do GA4 num cliente: PRODUTOS primeiro, ORIGEM DO TRAFEGO depois e DIARIO por ultimo. O diario e o marcador de
- * cobertura (readGa4BigQueryCoverage), entao se os produtos falharem o diario nao e gravado e a proxima
+ * Grava o que veio do GA4 num cliente: PRODUTOS primeiro, ORIGEM DO TRAFEGO e FUNIL POR PRODUTO depois e DIARIO por ultimo. O diario e
+ * o marcador de cobertura (readGa4BigQueryCoverage), entao se os produtos falharem o diario nao e gravado e a proxima
  * rodada refaz o backfill dos dois em vez de achar que o cliente ja esta completo.
  *
- * A origem do trafego e uma tabela NOVA e fica isolada: se ela falhar, o erro vai em `trafficError` e o resto segue (o marcador
- * dela e proprio, ver resolveGa4TrafficFrom, e a proxima rodada refaz a janela que faltou).
+ * A origem do trafego e o funil por produto sao tabelas NOVAS e ficam isoladas: se uma falhar, o erro vai em `trafficError` /
+ * `productFunnelError` e o resto segue (o marcador de cada uma e proprio, ver resolveGa4TrafficFrom e resolveGa4ProductFunnelFrom, e a
+ * proxima rodada refaz a janela que faltou).
  */
 export async function writeGa4ToBigQuery(
   bq: BigQueryLike,
@@ -525,6 +726,9 @@ export async function writeGa4ToBigQuery(
     /** Ausente = nao envia a origem do trafego. */
     traffic?: Ga4TrafficDay[];
     trafficFrom?: string;
+    /** Ausente = nao envia o funil por produto. */
+    productFunnel?: Ga4ProductFunnelDay[];
+    productFunnelFrom?: string;
     newId?: () => string;
   },
 ): Promise<Ga4BigQueryWrite> {
@@ -546,6 +750,29 @@ export async function writeGa4ToBigQuery(
       trafficError = err instanceof Error ? err.message : String(err);
     }
   }
+  let productFunnelRows = 0;
+  let productFunnelError: string | undefined;
+  if (params.productFunnel && params.productFunnelFrom) {
+    try {
+      productFunnelRows = await replaceGa4ProductFunnel(
+        bq,
+        params.client,
+        params.productFunnel,
+        params.productFunnelFrom,
+        params.to,
+        params.newId,
+      );
+    } catch (err) {
+      productFunnelError = err instanceof Error ? err.message : String(err);
+    }
+  }
   const dailyRows = await mergeGa4Daily(bq, params.client, params.daily, params.from, params.to);
-  return { dailyRows, productRows, trafficRows, ...(trafficError ? { trafficError } : {}) };
+  return {
+    dailyRows,
+    productRows,
+    trafficRows,
+    ...(trafficError ? { trafficError } : {}),
+    productFunnelRows,
+    ...(productFunnelError ? { productFunnelError } : {}),
+  };
 }

@@ -332,3 +332,103 @@ describe("evaluateGa4Freshness: a origem do tráfego está sendo gravada?", () =
     expect(r.healthy).toBe(1);
   });
 });
+
+// Funil por produto (10/11/2026): a mesma regra da origem do tráfego, aplicada a outra tabela isolada (up_global.ga4_product_funnel_daily).
+describe("evaluateGa4Freshness: o funil por produto está sendo gravado?", () => {
+  const daysAgo = (d: number) => new Date(NOW.getTime() - d * 24 * 3_600_000);
+  // Cliente que sincroniza em dia, cadastrado há 30 dias, com as duas tabelas isoladas gravadas há 1 hora e a rodada já tendo tentado as duas.
+  const funnel = (over: Partial<Ga4ClientHealthInput> = {}): Ga4ClientHealthInput =>
+    healthy({
+      firstSyncedAt: daysAgo(30),
+      trafficOriginLastOkAt: hoursAgo(1),
+      trafficOriginError: null,
+      trafficOriginAttempted: true,
+      productFunnelLastOkAt: hoursAgo(1),
+      productFunnelError: null,
+      productFunnelAttempted: true,
+      ...over,
+    });
+
+  it("gravado há pouco (até 6h): nenhum achado e o cliente conta como saudável", () => {
+    const r = run([funnel(), funnel({ clientId: "c2", clientName: "Jini", productFunnelLastOkAt: hoursAgo(5) })]);
+    expect(r.findings).toEqual([]);
+    expect(r.healthy).toBe(2);
+  });
+
+  it("quem chama sem informar o funil (chamadores antigos, ou não deu para ler) não é julgado", () => {
+    expect(run([healthy({ firstSyncedAt: daysAgo(30) })]).findings).toEqual([]);
+    expect(run([funnel({ productFunnelLastOkAt: undefined, productFunnelError: undefined })]).findings).toEqual([]);
+  });
+
+  it("parado há mais de 6h com o resto do GA4 em dia é PROBLEMA, e a mensagem traz o erro e onde procurar (no masculino)", () => {
+    const r = run([funnel({ clientName: "La Cleo", productFunnelLastOkAt: hoursAgo(10), productFunnelError: "busca no GA4: Please remove itemRefundAmount" })]);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ severity: "problem", kind: "funil_produto_parado", clientName: "La Cleo" });
+    const message = r.findings[0].message;
+    expect(message).toContain("o funil por produto (up_global.ga4_product_funnel_daily)");
+    expect(message).toContain("nao e gravado ha 10h");
+    expect(message).toContain("2026-11-06 08:00 UTC");
+    expect(message).toContain("itemRefundAmount");
+    expect(message).toContain("[ga4-daily] funil por produto nao gravado");
+    expect(message).toContain("sync_jobs.result.productFunnelError");
+    expect(r.healthy).toBe(0);
+  });
+
+  it("limite: 6h ainda passa (uma ou outra rodada ruim); 7h é problema", () => {
+    expect(run([funnel({ productFunnelLastOkAt: hoursAgo(6) })]).findings).toEqual([]);
+    expect(run([funnel({ productFunnelLastOkAt: hoursAgo(7) })]).findings[0]).toMatchObject({ severity: "problem", kind: "funil_produto_parado" });
+  });
+
+  it("nunca gravado e a rodada TENTOU (a chave existe no resultado): depois de 6h do início do histórico é problema", () => {
+    const never = (hours: number) => funnel({ productFunnelLastOkAt: null, productFunnelAttempted: true, firstSyncedAt: hoursAgo(hours) });
+    expect(run([never(3)]).findings).toEqual([]); // ainda a primeira rodada
+    const r = run([never(30)]);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ severity: "problem", kind: "funil_produto_parado" });
+    expect(r.findings[0].message).toContain("nunca foi gravado");
+  });
+
+  it("tabela NOVA que a rodada ainda não tentou neste cliente (deploy recente, backfill na fila) não é falha: sem a chave não há o que cobrar", () => {
+    const r = run([funnel({ productFunnelLastOkAt: null, productFunnelAttempted: false, firstSyncedAt: daysAgo(30) })]);
+    expect(r.findings).toEqual([]);
+  });
+
+  it("a mesma proteção vale para a origem do tráfego (tabela nova num cliente que ainda não passou pela rodada)", () => {
+    const r = run([funnel({ trafficOriginLastOkAt: null, trafficOriginAttempted: false, firstSyncedAt: daysAgo(30) })]);
+    expect(r.findings).toEqual([]);
+  });
+
+  it("as duas tabelas isoladas podem parar juntas: dois achados, cada um com o seu nome", () => {
+    const r = run([funnel({ trafficOriginLastOkAt: hoursAgo(9), productFunnelLastOkAt: hoursAgo(9) })]);
+    expect(r.findings.map((f) => f.kind).sort()).toEqual(["funil_produto_parado", "origem_trafego_parada"]);
+  });
+
+  it("só o funil parado: um achado só, e a origem do tráfego em dia não é acusada", () => {
+    const r = run([funnel({ productFunnelLastOkAt: hoursAgo(12) })]);
+    expect(r.findings.map((f) => f.kind)).toEqual(["funil_produto_parado"]);
+  });
+
+  it("depois de 21 dias vira AVISO (já é conhecido): o alerta não pode ficar vermelho para sempre", () => {
+    expect(run([funnel({ productFunnelLastOkAt: daysAgo(21) })]).findings[0]).toMatchObject({ severity: "problem" });
+    const r = run([funnel({ productFunnelLastOkAt: daysAgo(22) })]);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ severity: "warning", kind: "funil_produto_parado" });
+    expect(r.findings[0].message).toContain("ja e conhecido");
+    expect(r.healthy).toBe(0);
+  });
+
+  it("não empilha: cliente que parou de sincronizar fica só com parou_de_atualizar; problema do BigQuery do cliente também fica sozinho", () => {
+    const parou = run([funnel({ lastDoneAt: hoursAgo(30), productFunnelLastOkAt: hoursAgo(30) })]);
+    expect(parou.findings.map((f) => f.kind)).toEqual(["parou_de_atualizar"]);
+    const bigquery = run([funnel({ bigQueryLastDay: "2026-11-01", productFunnelLastOkAt: hoursAgo(20) })]);
+    expect(bigquery.findings.map((f) => f.kind)).toEqual(["bigquery_atrasado"]);
+  });
+
+  it("BigQuery desligado ou ilegível: a tabela nem é gravada, não há o que cobrar (e é UM problema do job, não um por cliente)", () => {
+    expect(run([funnel({ productFunnelLastOkAt: hoursAgo(20) })], { bigQueryEnabled: false }).findings).toEqual([]);
+    const ilegivel = run([funnel({ productFunnelLastOkAt: hoursAgo(20) }), funnel({ clientId: "c2", clientName: "Jini", productFunnelLastOkAt: hoursAgo(20) })], {
+      bigQueryReadable: false,
+    });
+    expect(ilegivel.findings.map((f) => f.kind)).toEqual(["bigquery_indisponivel"]);
+  });
+});
