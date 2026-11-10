@@ -36,10 +36,32 @@ describe("Braavo Cloud Run job", () => {
     expect(await runBraavoJob("cron", {}, deps)).toMatchObject({ failed: 1, pending: 0 });
     expect(deps.extract.mock.calls.map((call) => call[1].offset)).toEqual([0, 1]);
   });
-  it("keeps a busy client's offset instead of skipping it", async () => {
-    const deps = fixture([batch({ result: { status: "busy" } }), batch({ done: 1, pending: 0, nextOffset: 1 }), empty]);
-    await runBraavoJob("cron", {}, deps);
-    expect(deps.extract.mock.calls.map((call) => call[1].offset)).toEqual([0, 0, 1]);
+  it("moves past a busy client and comes back to it before finishing", async () => {
+    const deps = fixture([
+      batch({ result: { status: "busy" } }),               // loja 0 ocupada por outra execução
+      batch({ done: 1, pending: 0, nextOffset: 2 }),       // loja 1 conclui
+      empty,                                               // fim da lista: ficou pendente, dá a volta
+      batch({ done: 1, pending: 0, nextOffset: 1 }),       // loja 0 agora conclui
+      empty,                                               // fim e nada pendente
+    ]);
+    const result = await runBraavoJob("cron", {}, deps);
+    expect(deps.extract.mock.calls.map((call) => call[1].offset)).toEqual([0, 1, 2, 0, 1]);
+    expect(result).toMatchObject({ done: 2, pending: 0 });
+  });
+  it("gives each client a time slice so a long one cannot starve the next", async () => {
+    const pendingA = batch({ nextOffset: 0 });
+    const deps = fixture([pendingA, pendingA, pendingA, batch({ done: 1, pending: 0, nextOffset: 2 }), empty,
+      batch({ done: 1, pending: 0, nextOffset: 1 }), empty]);
+    const result = await runBraavoJob("cron", { sliceMs: 10_000, maxDurationMs: 600_000 }, deps);
+    // A (offset 0) usa a fatia de 10 s (3 lotes) e cede; B (offset 1) conclui; volta a A.
+    expect(deps.extract.mock.calls.map((call) => call[1].offset)).toEqual([0, 0, 0, 1, 2, 0, 1]);
+    expect(result).toMatchObject({ done: 2, pending: 0 });
+  });
+  it("does not rotate when the run is restricted to one client", async () => {
+    const pendingA = batch({ nextOffset: 0 });
+    const deps = fixture([pendingA, pendingA, pendingA, pendingA, batch({ done: 1, pending: 0, nextOffset: 1 }), empty]);
+    await runBraavoJob("manual", { clientId: "only", sliceMs: 5_000, maxDurationMs: 600_000 }, deps);
+    expect(deps.extract.mock.calls.map((call) => call[1].offset)).toEqual([0, 0, 0, 0, 0, 1]);
   });
   it("returns pending when the job budget cannot fit another batch", async () => {
     const deps = fixture([batch()]);

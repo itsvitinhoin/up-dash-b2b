@@ -33,10 +33,19 @@ const CONNECTIVITY_CODES = new Set(["BRAAVO_DNS_UNAVAILABLE", "BRAAVO_NETWORK_UN
 const MAX_CONNECTIVITY_RETRIES = 8;
 const MAX_CONNECTIVITY_WAIT_MS = 10 * 60_000;
 
+/**
+ * Rodízio entre lojas. Sem isto, o job ficava no primeiro cliente até o orçamento
+ * acabar (um cliente grande, em atualização longa ou ocupado por outra execução,
+ * deixava os demais sem atualizar por dias). Cada cliente ganha uma fatia de tempo por
+ * rodada; passada a fatia, o job segue para o próximo e volta ao que ficou pendente
+ * antes de o orçamento terminar. Com CLIENT_ID (uma loja só) não há rodízio.
+ */
+const DEFAULT_CLIENT_SLICE_MS = 6 * 60_000;
+
 /** Cloud Run entry: use the same durable batches as manual/API imports. */
 export async function runBraavoJob(
   trigger: ExtractionTrigger,
-  options: { clientId?: string; offset?: number; maxDurationMs?: number } = {},
+  options: { clientId?: string; offset?: number; maxDurationMs?: number; sliceMs?: number } = {},
   dependencies: {
     extract?: typeof runBraavoTransactionalExtraction;
     sleep?: (ms: number) => Promise<void>;
@@ -52,11 +61,22 @@ export async function runBraavoJob(
   const deadline = now() + duration;
   let offset = options.offset ?? 0;
   let done = 0, failed = 0, batches = 0, connectivityRetries = 0;
+  const sliceMs = options.sliceMs ?? DEFAULT_CLIENT_SLICE_MS;
+  const rotate = !options.clientId;
+  let sliceStart = now();
+  const pendingStores = new Set<number>(); // lojas que ficaram pendentes e pedem nova passada
   // Leave room for the API's 50-second batch plus its final checkpoint writes.
   while (now() + 55_000 <= deadline) {
     const batch = await extract(trigger, { clientId: options.clientId, offset });
-    if (!batch.clients)
+    if (!batch.clients) {
+      // Fim da lista. Se alguma loja ficou pendente, dá a volta e retoma por ela.
+      if (rotate && pendingStores.size > 0) {
+        offset = 0;
+        sliceStart = now();
+        continue;
+      }
       return { jobType: "braavo_transactional", done, failed, pending: 0, batches, nextOffset: offset };
+    }
     batches++;
     if (
       batch.failed &&
@@ -71,7 +91,17 @@ export async function runBraavoJob(
     connectivityRetries = 0;
     done += batch.done;
     failed += batch.failed;
-    offset = batch.nextOffset;
+    const stayed = batch.nextOffset === offset; // pendente ou ocupada: não terminou a loja
+    if (stayed) pendingStores.add(offset);
+    else pendingStores.delete(offset);
+    const busy = batch.result?.status === "busy";
+    if (rotate && stayed && (busy || now() - sliceStart >= sliceMs)) {
+      offset += 1; // próxima loja; esta é retomada na volta
+      sliceStart = now();
+    } else {
+      offset = batch.nextOffset;
+      if (!stayed) sliceStart = now();
+    }
     await sleep(5_000);
   }
   // A time-bounded job is not a completed import: the next scheduled execution
