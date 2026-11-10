@@ -254,8 +254,9 @@ Como funciona e o que lembrar:
   correção só se refazem com um reprocesso largo (execução manual de `ga4_daily` com `LOOKBACK_DAYS=400`); a rodada horária relê só os
   últimos dias.
 - A exclusão definitiva de cliente (`deleteGa4Rows`) apaga as **três** tabelas.
-- **Ainda não vigiado pelo alerta de dado parado** (`docs/ga4-alerta.md`): se a origem do tráfego falhar sozinha, só aparece no log
-  (`[ga4-daily] origem do trafego nao gravada`) e em `sync_jobs.result.trafficError`. Próximo passo possível: regra de cobertura.
+- **Vigiado pelo alerta de dado parado** (10/11, regra `origem_trafego_parada` em `docs/ga4-alerta.md`): se a origem do tráfego deixar de
+  ser gravada por mais de 6h num cliente que sincroniza em dia, o job de conferência sai com erro e o e-mail dispara. O motivo vem em
+  `sync_jobs.result.trafficError` e no log (`[ga4-daily] origem do trafego nao gravada`).
 - **Depois da publicação**, para não esperar 8 rodadas (limite de 3 backfills largos por hora): rodar uma vez
   `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=ga4_daily,TRIGGER=manual --wait`
   (os clientes sem acesso fazem a execução sair com erro e o Cloud Run repete uma vez; é esperado e a segunda passada não refaz nada).

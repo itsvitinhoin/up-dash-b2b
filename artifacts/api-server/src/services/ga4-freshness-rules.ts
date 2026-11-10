@@ -15,6 +15,12 @@ import { diffDays, saoPauloDate } from "./ga4-daily-rules";
 // gravado nao e dado: parece uma loja parada. Por isso o alerta olha tambem se a propriedade AINDA recebe sessoes, com a mesma
 // regra de nao ficar vermelho para sempre: so e PROBLEMA enquanto e novidade (cadastro recente, ou parou ha pouco);
 // depois que vira conhecido (ex.: Vn11, parado desde dez/2025) passa a aviso.
+//
+// Origem do trafego (10/11/2026): up_global.ga4_traffic_daily e gravada de forma ISOLADA (se ela falha, o diario e os produtos seguem em
+// dia e o job termina "done"). Sem olhar a propria tabela, uma falha so dela ficaria invisivel: o numero de visitas e o de produtos
+// continuariam chegando, e a tabela de onde veio cada venda pararia de andar. O job deixa em sync_jobs.result.trafficTo o ultimo dia
+// gravado com sucesso; aqui se olha QUANDO foi a ultima gravacao. Mesma regra de nao ficar vermelho para sempre: depois de
+// stoppedAlertDays vira aviso (ja e conhecido).
 
 /** Conta que precisa ser Leitor da propriedade (a que o job usa para ler; a conta de servico e so reserva). */
 export const GA4_AGENCY_READER = "upagency.oficial@gmail.com";
@@ -26,6 +32,7 @@ export type Ga4FreshnessKind =
   | "sem_trafego_novo" // cadastrado ha pouco e sem visita nenhuma recente: quase sempre o ID da propriedade esta errado
   | "parou_trafego" // tinha visitas e parou ha pouco: o site pode ter trocado de GA4
   | "sem_trafego" // sem visitas ha bastante tempo (pendencia ja conhecida)
+  | "origem_trafego_parada" // o GA4 sincroniza em dia, mas a origem do trafego (ga4_traffic_daily) nao esta sendo gravada
   | "bigquery_atrasado" // o Postgres esta em dia mas o BigQuery nao
   | "bigquery_sem_dados" // sincronizou no Postgres e nada chegou ao BigQuery
   | "bigquery_indisponivel"; // nao deu para ler o BigQuery, entao nao da para garantir
@@ -56,6 +63,13 @@ export type Ga4ClientHealthInput = {
   firstSyncedAt?: Date | null;
   /** Ultimo dia (YYYY-MM-DD) com sessoes > 0 entre os dias guardados; null = nenhum dia teve visita. */
   lastTrafficDay?: string | null;
+  /**
+   * Quando a origem do trafego (up_global.ga4_traffic_daily) foi gravada com sucesso pela ultima vez: o ga4_daily terminou e deixou
+   * sync_jobs.result.trafficTo. null = nunca. undefined = nao deu para ler (a regra nao julga).
+   */
+  trafficOriginLastOkAt?: Date | null;
+  /** Erro da origem do trafego na rodada concluida mais recente (sync_jobs.result.trafficError); null = nenhum registrado. */
+  trafficOriginError?: string | null;
 };
 
 export type Ga4FreshnessOptions = {
@@ -127,6 +141,39 @@ function trafficFinding(
     severity: "warning",
     kind: "sem_trafego",
     message: `${c.clientName}: a propriedade ${c.propertyId} esta sem visitas${quietDays !== null ? ` ha ${quietDays} dias` : ""}${last}. Os numeros guardados dela sao zeros, nao dados: acerte a propriedade ou tire o cliente do GA4.`,
+  };
+}
+
+function stamp(date: Date): string {
+  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+// "A origem do trafego esta sendo gravada?" Devolve null quando esta tudo bem ou quando ainda nao da para julgar (nao foi possivel
+// ler, ou o cliente e novo demais para dizer "ha quanto tempo": sem ultima gravacao e sem inicio de historico).
+function trafficOriginFinding(
+  c: Ga4ClientHealthInput,
+  now: Date,
+  cfg: { maxAge: number; stoppedAlertDays: number },
+): Omit<Ga4FreshnessFinding, "clientId" | "clientName"> | null {
+  if (c.trafficOriginLastOkAt === undefined) return null;
+  // Referencia: a ultima gravacao. Se nunca gravou, o comeco do historico do cliente: ate maxAge horas depois dele ainda e a primeira
+  // rodada (ou uma falha passageira), e nao um problema.
+  const reference = c.trafficOriginLastOkAt ?? c.firstSyncedAt ?? null;
+  if (!reference) return null;
+  const ageHours = hoursSince(reference, now);
+  if (ageHours <= cfg.maxAge) return null;
+
+  const where = c.trafficOriginLastOkAt
+    ? `nao e gravada ha ${Math.floor(ageHours)}h (ultima gravacao: ${stamp(reference)})`
+    : `nunca foi gravada (o cliente sincroniza o GA4 desde ${stamp(reference)})`;
+  const known = ageHours / 24 > cfg.stoppedAlertDays;
+  const why = c.trafficOriginError
+    ? `Ultimo erro: ${short(c.trafficOriginError)}.`
+    : "Nenhum erro registrado: a rodada pode nem ter tentado (BigQuery fora do ar naquela rodada).";
+  return {
+    severity: known ? "warning" : "problem",
+    kind: "origem_trafego_parada",
+    message: `${c.clientName}: a origem do trafego (up_global.ga4_traffic_daily) ${where}, embora o resto do GA4 sincronize em dia${known ? " (ja e conhecido)" : ""}. ${why} Procure "[ga4-daily] origem do trafego nao gravada" no log do upzero-sync-job-hourly e sync_jobs.result.trafficError.`,
   };
 }
 
@@ -202,8 +249,10 @@ export function evaluateGa4Freshness(
       continue; // ja e problema; nao empilhar o do BigQuery
     }
 
+    let bigQueryProblem = false;
     if (options.bigQueryEnabled && options.bigQueryReadable !== false) {
       if (!c.bigQueryLastDay) {
+        bigQueryProblem = true;
         add({
           ...base,
           severity: "problem",
@@ -211,12 +260,23 @@ export function evaluateGa4Freshness(
           message: `${c.clientName}: sincroniza no Postgres mas nao tem nenhuma linha em up_global.ga4_daily.`,
         });
       } else if (diffDays(c.bigQueryLastDay, today) > 1) {
+        bigQueryProblem = true;
         add({
           ...base,
           severity: "problem",
           kind: "bigquery_atrasado",
           message: `${c.clientName}: o BigQuery esta ate ${c.bigQueryLastDay} (hoje e ${today}); o Postgres esta em dia.`,
         });
+      }
+
+      // A origem do trafego e uma tabela a parte, gravada de forma isolada: o diario pode estar em dia e ela nao. Nao empilha em cima de
+      // um problema do BigQuery do mesmo cliente (a causa e a mesma) nem quando o BigQuery nao pode ser lido (ja e UM problema do job).
+      if (!bigQueryProblem) {
+        const origin = trafficOriginFinding(c, now, { maxAge, stoppedAlertDays: trafficCfg.stoppedAlertDays });
+        if (origin) {
+          add({ ...base, ...origin });
+          quiet.add(c.clientId);
+        }
       }
     }
 

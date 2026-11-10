@@ -212,3 +212,123 @@ describe("evaluateGa4Freshness: a propriedade ainda recebe visitas?", () => {
     expect(r.findings.filter((f) => f.severity === "problem")).toHaveLength(0);
   });
 });
+
+// Origem do tráfego (10/11/2026): up_global.ga4_traffic_daily é gravada de forma ISOLADA. Se ela falha, o diário e os produtos seguem em
+// dia e o job termina "done": sem olhar a própria tabela a falha ficaria invisível. NOW = 06/11 18:00 UTC.
+describe("evaluateGa4Freshness: a origem do tráfego está sendo gravada?", () => {
+  const daysAgo = (d: number) => new Date(NOW.getTime() - d * 24 * 3_600_000);
+  // Cliente que sincroniza em dia, cadastrado há 30 dias, com a origem do tráfego gravada há 1 hora.
+  const origin = (over: Partial<Ga4ClientHealthInput> = {}): Ga4ClientHealthInput =>
+    healthy({ firstSyncedAt: daysAgo(30), trafficOriginLastOkAt: hoursAgo(1), trafficOriginError: null, ...over });
+
+  it("gravada há pouco (até 6h): nenhum achado e o cliente conta como saudável", () => {
+    const r = run([origin(), origin({ clientId: "c2", clientName: "Jini", trafficOriginLastOkAt: hoursAgo(5) })]);
+    expect(r.findings).toEqual([]);
+    expect(r.healthy).toBe(2);
+  });
+
+  it("quem chama sem informar a origem (chamadores antigos, ou não deu para ler) não é julgado", () => {
+    expect(run([healthy({ firstSyncedAt: daysAgo(30) })]).findings).toEqual([]);
+    expect(run([origin({ trafficOriginLastOkAt: undefined, trafficOriginError: undefined })]).findings).toEqual([]);
+  });
+
+  it("parada há mais de 6h com o resto do GA4 em dia é PROBLEMA, e a mensagem traz o erro e onde procurar", () => {
+    const r = run([
+      origin({ clientName: "La Cleo", trafficOriginLastOkAt: hoursAgo(10), trafficOriginError: "busca no GA4: Please remove sessionCampaignName" }),
+    ]);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ severity: "problem", kind: "origem_trafego_parada", clientName: "La Cleo" });
+    const message = r.findings[0].message;
+    expect(message).toContain("ha 10h");
+    expect(message).toContain("2026-11-06 08:00 UTC");
+    expect(message).toContain("ga4_traffic_daily");
+    expect(message).toContain("sessionCampaignName");
+    expect(message).toContain("trafficError");
+    expect(r.healthy).toBe(0);
+  });
+
+  it("limite: 6h ainda passa (uma ou outra rodada ruim); 7h é problema", () => {
+    expect(run([origin({ trafficOriginLastOkAt: hoursAgo(6) })]).findings).toEqual([]);
+    expect(run([origin({ trafficOriginLastOkAt: hoursAgo(7) })]).findings[0]).toMatchObject({ severity: "problem", kind: "origem_trafego_parada" });
+  });
+
+  it("o limite acompanha o das demais regras (maxAgeHours)", () => {
+    expect(run([origin({ trafficOriginLastOkAt: hoursAgo(3) })], { maxAgeHours: 2 }).findings[0]).toMatchObject({ kind: "origem_trafego_parada" });
+    expect(run([origin({ trafficOriginLastOkAt: hoursAgo(10) })], { maxAgeHours: 12 }).findings).toEqual([]);
+  });
+
+  it("nunca gravada: até 6h depois do início do histórico ainda é a primeira rodada; depois disso é problema", () => {
+    const never = (hours: number) => origin({ trafficOriginLastOkAt: null, firstSyncedAt: hoursAgo(hours) });
+    expect(run([never(3)]).findings).toEqual([]);
+    const r = run([never(30)]);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ severity: "problem", kind: "origem_trafego_parada" });
+    expect(r.findings[0].message).toContain("nunca foi gravada");
+    expect(r.findings[0].message).toContain("2026-11-05 12:00 UTC");
+  });
+
+  it("nunca gravada e sem saber desde quando o cliente sincroniza: não julga", () => {
+    expect(run([origin({ trafficOriginLastOkAt: null, firstSyncedAt: null })]).findings).toEqual([]);
+  });
+
+  it("sem erro registrado a mensagem explica que a rodada pode nem ter tentado", () => {
+    const r = run([origin({ trafficOriginLastOkAt: hoursAgo(9), trafficOriginError: null })]);
+    expect(r.findings[0].message).toContain("Nenhum erro registrado");
+  });
+
+  it("depois de 21 dias vira AVISO (já é conhecido): o alerta não pode ficar vermelho para sempre", () => {
+    expect(run([origin({ trafficOriginLastOkAt: daysAgo(21) })]).findings[0]).toMatchObject({ severity: "problem" });
+    const r = run([origin({ trafficOriginLastOkAt: daysAgo(22) })]);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ severity: "warning", kind: "origem_trafego_parada" });
+    expect(r.findings[0].message).toContain("ja e conhecido");
+    expect(r.findings.filter((f) => f.severity === "problem")).toHaveLength(0);
+    expect(r.healthy).toBe(0); // sincroniza, mas a origem do tráfego está parada: não conta como saudável
+    expect(run([origin({ trafficOriginLastOkAt: hoursAgo(72) })], { stoppedAlertDays: 2 }).findings[0]).toMatchObject({ severity: "warning" });
+  });
+
+  it("cliente que parou de sincronizar fica só com parou_de_atualizar (não empilha)", () => {
+    const r = run([origin({ lastDoneAt: hoursAgo(30), trafficOriginLastOkAt: hoursAgo(30) })]);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ kind: "parou_de_atualizar" });
+  });
+
+  it("quem nunca sincronizou segue só como aviso de acesso (a origem do tráfego não é cobrada)", () => {
+    const r = run([noAccess({ trafficOriginLastOkAt: null, firstSyncedAt: daysAgo(30) })]);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ severity: "warning", kind: "nunca_sincronizou" });
+  });
+
+  it("não empilha em cima de um problema do BigQuery do mesmo cliente (a causa é a mesma)", () => {
+    const atrasado = run([origin({ bigQueryLastDay: "2026-11-01", trafficOriginLastOkAt: hoursAgo(20) })]);
+    expect(atrasado.findings.map((f) => f.kind)).toEqual(["bigquery_atrasado"]);
+    const semDados = run([origin({ bigQueryLastDay: null, trafficOriginLastOkAt: null })]);
+    expect(semDados.findings.map((f) => f.kind)).toEqual(["bigquery_sem_dados"]);
+  });
+
+  it("GA4_BIGQUERY desligado: a tabela nem é gravada, não há o que cobrar", () => {
+    expect(run([origin({ trafficOriginLastOkAt: hoursAgo(20) })], { bigQueryEnabled: false }).findings).toEqual([]);
+  });
+
+  it("BigQuery ilegível: UM problema (do job), não um por cliente", () => {
+    const r = run(
+      [origin({ trafficOriginLastOkAt: hoursAgo(20) }), origin({ clientId: "c2", clientName: "Jini", trafficOriginLastOkAt: hoursAgo(20) })],
+      { bigQueryReadable: false },
+    );
+    expect(r.findings.map((f) => f.kind)).toEqual(["bigquery_indisponivel"]);
+  });
+
+  it("convive com a regra de visitas: são problemas diferentes e os dois aparecem", () => {
+    const r = run([
+      origin({ trafficOriginLastOkAt: hoursAgo(20), storedDays: 400, firstSyncedAt: daysAgo(40), lastTrafficDay: "2025-12-04" }),
+    ]);
+    expect(r.findings.map((f) => f.kind).sort()).toEqual(["origem_trafego_parada", "sem_trafego"]);
+  });
+
+  it("um cliente com a origem do tráfego parada não esconde nem contamina os demais", () => {
+    const r = run([origin({ trafficOriginLastOkAt: hoursAgo(20) }), origin({ clientId: "c2", clientName: "Jini" })]);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0].clientName).toBe("Giah Studio");
+    expect(r.healthy).toBe(1);
+  });
+});

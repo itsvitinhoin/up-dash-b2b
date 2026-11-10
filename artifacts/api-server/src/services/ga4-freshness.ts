@@ -52,6 +52,8 @@ export async function runGa4FreshnessCheck(
 
   const lastDone = new Map<string, Date>();
   const lastAttempt = new Map<string, { at: Date; status: string; error: string | null }>();
+  // Origem do trafego: erro (sync_jobs.result.trafficError) da rodada CONCLUIDA mais recente de cada cliente.
+  const latestTrafficError = new Map<string, string | null>();
   if (ids.length > 0) {
     // Ultimo sucesso de cada cliente, de QUALQUER data: "nunca sincronizou" so vale para quem nunca teve um.
     const done = await db
@@ -72,11 +74,44 @@ export async function runGa4FreshnessCheck(
         status: syncJobsTable.status,
         error: syncJobsTable.error,
         at: syncJobsTable.createdAt,
+        trafficError: sql<string | null>`${syncJobsTable.result}->>'trafficError'`,
       })
       .from(syncJobsTable)
       .where(and(eq(syncJobsTable.jobType, "ga4_daily"), inArray(syncJobsTable.clientId, ids), gte(syncJobsTable.createdAt, since)))
       .orderBy(desc(syncJobsTable.createdAt));
-    for (const row of attempts) if (!lastAttempt.has(row.clientId)) lastAttempt.set(row.clientId, { at: row.at, status: row.status, error: row.error });
+    for (const row of attempts) {
+      if (!lastAttempt.has(row.clientId)) lastAttempt.set(row.clientId, { at: row.at, status: row.status, error: row.error });
+      if (row.status === "done" && !latestTrafficError.has(row.clientId)) latestTrafficError.set(row.clientId, row.trafficError ?? null);
+    }
+  }
+
+  // Origem do trafego (up_global.ga4_traffic_daily, so BigQuery): quando foi a ULTIMA gravacao com sucesso de cada cliente. O job deixa
+  // sync_jobs.result.trafficTo preenchido so quando a tabela foi gravada (inclusive com zero linhas); falha dela nao preenche. Regra
+  // secundaria: se esta leitura falhar, as demais continuam e a regra de origem do trafego fica sem julgar (undefined), com aviso no log.
+  const trafficOriginLastOk = new Map<string, Date>();
+  let trafficOriginReadable = false;
+  if (ids.length > 0) {
+    try {
+      const rows = await db
+        .select({
+          clientId: syncJobsTable.clientId,
+          at: sql<string | null>`MAX(COALESCE(${syncJobsTable.finishedAt}, ${syncJobsTable.createdAt}))`,
+        })
+        .from(syncJobsTable)
+        .where(
+          and(
+            eq(syncJobsTable.jobType, "ga4_daily"),
+            eq(syncJobsTable.status, "done"),
+            inArray(syncJobsTable.clientId, ids),
+            sql`${syncJobsTable.result}->>'trafficTo' IS NOT NULL`,
+          ),
+        )
+        .groupBy(syncJobsTable.clientId);
+      for (const row of rows) if (row.at) trafficOriginLastOk.set(row.clientId, new Date(row.at));
+      trafficOriginReadable = true;
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : String(err) }, "[ga4-freshness] nao consegui ler a origem do trafego; pulei essa regra");
+    }
   }
 
   // Trafego: a propriedade ainda recebe visitas? Le so o que ja esta guardado (uma linha por cliente e dia, com zeros nos dias
@@ -134,6 +169,8 @@ export async function runGa4FreshnessCheck(
       storedDays: traffic.get(client.id)?.storedDays ?? 0,
       firstSyncedAt: traffic.get(client.id)?.firstSyncedAt ?? null,
       lastTrafficDay: traffic.get(client.id)?.lastTrafficDay ?? null,
+      trafficOriginLastOkAt: trafficOriginReadable ? (trafficOriginLastOk.get(client.id) ?? null) : undefined,
+      trafficOriginError: trafficOriginReadable ? (latestTrafficError.get(client.id) ?? null) : undefined,
     };
   });
 

@@ -20,6 +20,7 @@ no BigQuery. Regras (testadas em `test/ga4-freshness-rules.test.ts`):
 | Cliente **cadastrado há até 3 dias** e sem nenhuma visita nos últimos 7 dias (quase sempre o ID da propriedade está errado — caso Vn11/Obzee) | **problema** | `sem_trafego_novo` |
 | Cliente que **tinha visitas e parou há 7 a 21 dias** (o site pode ter trocado de GA4 — caso Sooé, que gravou zeros por 3 semanas) | **problema** | `parou_trafego` |
 | Sem visitas há mais tempo que isso (já é conhecido) | aviso | `sem_trafego`; os números guardados dele são zeros, não dados |
+| O GA4 sincroniza em dia, mas a **origem do tráfego** (`up_global.ga4_traffic_daily`) não é gravada há mais de 6h (ou nunca foi, passadas 6h do início do histórico) | **problema** (aviso depois de 21 dias) | `origem_trafego_parada` |
 
 Com **problema** o job sai com código 1 → a execução do Cloud Run falha → o alerta dispara. **Aviso não dispara alerta**:
 senão o alerta ficaria vermelho para sempre por causa das lojas sem acesso e ninguém mais olharia.
@@ -30,6 +31,18 @@ dia, com zeros nos dias sem visita). "Cadastrado há quanto tempo" é o `MIN(syn
 ainda (backfill pendente) não é julgado. Um cliente com visita nos últimos 7 dias nunca gera achado. Limites ajustáveis:
 `GA4_NO_TRAFFIC_DAYS` (7), `GA4_STOPPED_ALERT_DAYS` (21), `GA4_NEW_CLIENT_DAYS` (3). A mensagem do problema diz o que fazer: conferir o
 `G-…` da etiqueta do site e achar a propriedade que tem esse `G-…`.
+
+**Origem do tráfego (10/11/2026).** `ga4_traffic_daily` é gravada de forma isolada: se só ela falha, o diário e os produtos seguem em dia
+e o job termina `done`, e ninguém veria. O job grava em `sync_jobs.result.trafficTo` o último dia gravado com sucesso (só quando a tabela
+foi mesmo escrita, inclusive com zero linhas) e em `trafficError` o motivo da falha; a verificação olha **quando** foi a última gravação
+de cada cliente e o erro da rodada mais recente. Não julga: cliente que nunca sincronizou (já é aviso), que parou de sincronizar (já é
+problema), com problema no BigQuery (mesma causa), BigQuery desligado (`GA4_BIGQUERY=0`) ou ilegível (um problema só, do job) e cliente
+cujo histórico começou há menos de 6h. Mesmo limite de 6h (`GA4_FRESHNESS_MAX_AGE_HOURS`) e mesma saída para aviso depois de 21 dias
+(`GA4_STOPPED_ALERT_DAYS`). A mensagem traz o último erro (ou diz que nenhum foi registrado: a rodada pode nem ter tentado, por exemplo
+com o BigQuery fora do ar) e onde procurar: `[ga4-daily] origem do trafego nao gravada` no log de `upzero-sync-job-hourly`. Validado em
+10/11 contra os dados reais (somente leitura, Postgres e BigQuery): 26 clientes, 21 saudáveis, 0 problemas, 5 avisos (Aiyu, Hot Pink e
+Sonmur sem acesso; Obzee e Vn11 sem visitas, já conhecidos), nenhum falso positivo. Os testes usam um Postgres em memória e cobrem a falha
+com erro, a rodada que não tentou, a que falhou (não vale como gravação), o cliente novo e o BigQuery desligado.
 
 Validado em 09/11 contra os dados reais (somente leitura): 26 clientes, 14 saudáveis, **2 problemas** (Vn11 e Obzee, `sem_trafego_novo`,
 porque foram cadastrados há menos de 3 dias com uma propriedade sem visitas — viram aviso sozinhos depois da janela) e 10 avisos (os 7
