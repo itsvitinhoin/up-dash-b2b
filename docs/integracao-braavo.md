@@ -263,3 +263,30 @@ Se ela terminar antes de a carga acabar (o limite do Cloud Run é 24 h), repita 
 **3. Recarga completa.** Com `BRAAVO_FULL_REFRESH_DAYS` alto no job (ou na agenda), a recarga completa deixa de acontecer sozinha e passa a ser decisão manual: repita o passo 1. O padrão do código é 90 dias (era 7): a API do painel não tem esta variável, e com 7 dias um clique em Sincronizar numa loja grande, uma semana depois da carga, começaria uma recarga completa sozinho.
 
 `BRAAVO_FULL_REFRESH_DAYS` fica gravada no job; `BRAAVO_JOB_MAX_MINUTES` é passada só na execução longa. Uma sincronização disparada pelo botão do dash (API na Vercel) usa os padrões.
+
+
+## Backfill automático de loja nova
+
+Cadastrar a loja no painel (domínio, nome, Token e Key, **Salvar conexão**) basta: a carga completa roda sozinha, sem navegador aberto e sem comando manual. Uma agenda horária chama o mesmo job no modo `backfill`, que só pega lojas **sem carga completa concluída** e trabalha nelas por até 55 minutos por rodada, retomando do ponto salvo. A rotina das 3 vezes por dia continua cuidando das lojas já carregadas.
+
+| Variável | Padrão | Para quê |
+| --- | --- | --- |
+| `BRAAVO_JOB_MODE` | `all` | `all`: todas as lojas (rotina). `backfill`: só lojas sem carga completa concluída. Valor inválido falha alto |
+
+Agenda (criada uma vez; não precisa de job novo, as variáveis vão no corpo da chamada):
+
+```bash
+gcloud scheduler jobs create http upzero-sync-job-braavo-backfill-schedule \
+  --project=up-vesti-report --location=us-central1 \
+  --schedule="30 * * * *" --time-zone="America/Sao_Paulo" \
+  --uri="https://us-central1-run.googleapis.com/v2/projects/up-vesti-report/locations/us-central1/jobs/upzero-sync-job-braavo:run" \
+  --http-method=POST --attempt-deadline=180s --max-retry-attempts=0 \
+  --oauth-service-account-email="928204832932-compute@developer.gserviceaccount.com" \
+  --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
+  --headers="Content-Type=application/json" \
+  --message-body='{"overrides":{"timeout":"3600s","containerOverrides":[{"env":[{"name":"BRAAVO_JOB_MODE","value":"backfill"},{"name":"BRAAVO_JOB_MAX_MINUTES","value":"55"}]}]}}'
+```
+
+Sem nenhuma loja pendente a execução termina em segundos. Acompanhe a carga pela janela da loja no dash (fase, página, registros ignorados). Uma loja do porte da Viva Dress (115 mil pedidos e 115 mil clientes) leva umas 8 h, ou seja, umas 9 rodadas.
+
+Ritmo medido na carga completa (Viva Dress, 09/11/2026): produtos ~40/min (consulta de detalhe para a foto), SKUs e clientes em lote, itens e pedidos em lote com gravação por página.

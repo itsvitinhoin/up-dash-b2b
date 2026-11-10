@@ -355,6 +355,68 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     expect(a).toEqual(b);
   }, 60000);
 
+  it("bulk SKU page write produces the same products as writing each SKU one by one", async () => {
+    for (const id of ["shop-s1", "shop-s2"]) {
+      await schema.db.insert(schema.clientsTable).values({
+        id, name: id, email: id + "@example.invalid", apiKey: "k-" + id, dashboardType: "B2C",
+        commercePlatform: "BRAAVO", braavoDomain: `https://www.${id}.com.br`, braavoApiToken: "t", braavoApiKey: "k",
+      });
+      await schema.db.insert(schema.braavoSyncStatesTable).values({
+        clientId: id, fingerprint: "fp-" + id, leaseId: "lease-" + id, leaseUntil: new Date(Date.now() + 600000),
+      });
+      // Produto que já existe com a ref "REF-DUP" de OUTRO SKU: a ref nova do mesmo valor precisa de sufixo.
+      await schema.db.insert(schema.productsTable).values({
+        clientId: id, externalId: "braavo:900:9001", sku: "REF-JA-EXISTE", name: "Antigo", price: 10, status: "ACTIVE",
+      });
+    }
+    const cache = new Map<string, Record<string, unknown>>([
+      ["categories:1", { nome: "Vestidos" }],
+      ["variations:10", { nome: "Cor", pai_id: 0 }], ["variations:11", { nome: "Preto", pai_id: 10 }],
+      ["variations:20", { nome: "Tamanho", pai_id: 0 }], ["variations:22", { nome: "M", pai_id: 20 }],
+      ["products:100", { nome: "Vestido", ativo: "1", categoria_id: 1, descricao: "Longo", imageUrl: "https://i.example.invalid/100.webp" }],
+      ["products:101", { nome: "Blusa", ativo: "1", categoria_id: 1 }],
+      ["products:102", { nome: "Saia inativa", ativo: "0", categoria_id: 1 }],
+    ]);
+    const sku = (id: number, produto: number, over: Record<string, unknown> = {}) => ({
+      id, produto_id: produto, ref: "REF-" + id, ativo: "1", estoque: 5, preco_venda: 50, preco_custo: 20, var1_id: 11, var2_id: 22, ...over,
+    });
+    const rows = [
+      sku(1, 100),                                          // completo, cor e tamanho
+      sku(2, 100, { var2_id: null }),                       // só cor
+      sku(3, 100, { var1_id: null, var2_id: null }),        // sem variação
+      sku(4, 101, { ref: "REF-IGUAL" }),                    // ref repetida (1º fica com ela)
+      sku(5, 101, { ref: "REF-IGUAL" }),                    // 2º com a mesma ref: ganha sufixo
+      sku(6, 101, { ref: "REF-JA-EXISTE" }),                // ref já usada por produto antigo de outro SKU
+      sku(7, 102),                                          // produto inativo
+      sku(8, 100, { ativo: "0" }),                          // SKU inativo
+      sku(9, 100, { estoque: -3 }),                         // saldo negativo é válido
+      sku(10, 100, { preco_custo: null }),                  // sem custo
+      sku(11, 999),                                         // produto que não existe: ignorado
+      sku(12, 100, { estoque: "abc" }),                     // estoque inválido: ignorado
+      sku(13, 100, { ref: null }),                          // sem ref: usa braavo-<id>
+    ];
+    const bulkCounter = { skipped: 0 }, oneCounter = { skipped: 0 };
+    await sync.persistSkusBulk("shop-s1", "lease-shop-s1", rows as never, cache as never, bulkCounter);
+    for (const row of rows)
+      try {
+        await schema.db.transaction((tx) => sync.persistSku(tx, "shop-s2", row as never, cache as never));
+      } catch (e) {
+        if ((e as { code?: string }).code !== "INVALID_RECORD" && (e as { code?: string }).code !== "SKU_WITHOUT_PRODUCT" && (e as { code?: string }).code !== "INVALID_STOCK") throw e;
+        oneCounter.skipped++;
+      }
+    expect(bulkCounter.skipped).toBe(2); // SKUs 11 e 12
+    expect(oneCounter.skipped).toBe(2);
+    const dump = async (cid: string) =>
+      (await schema.db.execute(sql`SELECT external_id, sku, name, description, category, price, cost, stock, image_url, status FROM products WHERE client_id = ${cid} ORDER BY external_id`)).rows;
+    const [a, b] = [await dump("shop-s1"), await dump("shop-s2")];
+    expect(a).toHaveLength(12); // 11 SKUs válidos + o produto antigo que já existia
+    expect(a.find((p) => p.external_id === "braavo:101:5")?.sku).toBe("REF-IGUAL#braavo-5");
+    expect(a.find((p) => p.external_id === "braavo:101:6")?.sku).toBe("REF-JA-EXISTE#braavo-6");
+    expect(a.find((p) => p.external_id === "braavo:100:13")?.sku).toBe("braavo-13");
+    expect(a.find((p) => p.external_id === "braavo:100:9")?.stock).toBe(-3);
+    expect(a).toEqual(b);
+  }, 60000);
+
   it("backfill mode picks only stores without a completed full load", async () => {
     const extraction = await import("../src/services/extraction-runner");
     await schema.db.insert(schema.clientsTable).values({

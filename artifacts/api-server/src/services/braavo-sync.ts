@@ -790,6 +790,140 @@ async function loadStagedByOwner(
   return out;
 }
 
+
+/** Produtos do catálogo desta página de SKUs, para o cache (nome, categoria, foto...). */
+async function preloadProducts(
+  clientId: string,
+  rows: BraavoRecord[],
+  cache: Map<string, BraavoRecord>,
+) {
+  if (!rows.length) return;
+  const productIds = [...new Set(rows.map((row) => braavoId(row.produto_id)))];
+  for (const part of chunks(productIds))
+    for (const product of await db
+      .select()
+      .from(catalog)
+      .where(
+        and(
+          eq(catalog.clientId, clientId),
+          eq(catalog.kind, "products"),
+          inArray(catalog.externalId, part),
+        ),
+      ))
+      cache.set(`products:${product.externalId}`, product.data);
+}
+
+/**
+ * Só a carga completa viu TODOS os SKUs; no incremental (só os que mudaram) isto
+ * marcaria como inativo todo SKU que simplesmente não mudou.
+ */
+async function deactivateUnseenSkus(clientId: string, leaseId: string, startedAt: string) {
+  await db.transaction(async (tx) => {
+    await assertLease(tx, clientId, leaseId);
+    await tx
+      .update(productsTable)
+      .set({ status: "INACTIVE", stock: 0 })
+      .where(
+        and(
+          eq(productsTable.clientId, clientId),
+          like(productsTable.externalId, "braavo:%"),
+          sql`${productsTable.sourceSyncedAt} < ${startedAt}::timestamptz`,
+        ),
+      );
+  });
+}
+
+/**
+ * Grava uma página de SKUs numa transação só (carga completa). O cache já deve ter os
+ * produtos desta página. Mesma regra do registro a registro: SKU sem produto vai para
+ * braavo_record_issues; referência (ref) já usada por OUTRO SKU ganha o sufixo
+ * `#braavo-<id>`.
+ */
+export async function persistSkusBulk(
+  clientId: string,
+  leaseId: string,
+  rows: BraavoRecord[],
+  cache: Map<string, BraavoRecord>,
+  counter: SkipCounter,
+) {
+  if (!rows.length) return;
+  const valid = await validateBulk(clientId, "skus", rows, counter, (row) => {
+    const skuId = braavoId(row.id),
+      productId = braavoId(row.produto_id);
+    const product = cache.get(`products:${productId}`);
+    if (!product)
+      throw new BraavoRecordError(
+        "SKU Braavo sem produto correspondente no catálogo.",
+        "SKU_WITHOUT_PRODUCT",
+      );
+    const { color, size } = variantLabels(cache, row.var1_id, row.var2_id);
+    const name = textValue(product.nome) ?? `Produto ${productId}`;
+    const category = cache.get(`categories:${product.categoria_id}`);
+    return {
+      externalId: `braavo:${productId}:${skuId}`,
+      skuId,
+      ref: textValue(row.ref) ?? `braavo-${skuId}`,
+      values: {
+        name:
+          color && size
+            ? `${name} (${color}, ${size})`
+            : [name, color ?? size].filter(Boolean).join(" - "),
+        description: textValue(product.descricao),
+        category: textValue(category?.nome),
+        price: money(row.preco_venda, true),
+        cost: row.preco_custo == null ? null : money(row.preco_custo),
+        stock: stockQuantity(row.estoque),
+        imageUrl: textValue(product.imageUrl),
+        status:
+          String(row.ativo) === "1" && String(product.ativo) === "1"
+            ? ("ACTIVE" as const)
+            : ("INACTIVE" as const),
+      },
+    };
+  });
+  if (!valid.length) return;
+
+  await db.transaction(async (tx) => {
+    await assertLease(tx, clientId, leaseId);
+    const owner = new Map<string, string>();
+    for (const part of chunks(valid.map((v) => v.value.ref)))
+      for (const p of await tx
+        .select({ sku: productsTable.sku, externalId: productsTable.externalId })
+        .from(productsTable)
+        .where(and(eq(productsTable.clientId, clientId), inArray(productsTable.sku, part))))
+        owner.set(p.sku, p.externalId!);
+    const syncedAt = new Date();
+    const byExternalId = new Map<string, typeof productsTable.$inferInsert>();
+    for (const { value } of valid) {
+      const holder = owner.get(value.ref);
+      const sku =
+        holder && holder !== value.externalId
+          ? `${value.ref}#braavo-${value.skuId}`
+          : value.ref;
+      owner.set(sku, value.externalId);
+      byExternalId.set(value.externalId, {
+        clientId,
+        externalId: value.externalId,
+        sku,
+        ...value.values,
+        sourceSyncedAt: syncedAt,
+      });
+    }
+    for (const part of chunks([...byExternalId.values()]))
+      await tx
+        .insert(productsTable)
+        .values(part)
+        .onConflictDoUpdate({
+          target: [productsTable.clientId, productsTable.externalId],
+          set: excludedSet(productsTable, [
+            "sku", "name", "description", "category", "price", "cost",
+            "stock", "imageUrl", "status", "sourceSyncedAt",
+          ]),
+        });
+    await clearIssues(tx, clientId, "skus", valid.map((v) => v.id));
+  });
+}
+
 type OrderNorm = ReturnType<typeof normalizeBraavoOrder>;
 type CustomerNorm = ReturnType<typeof normalizeBraavoCustomer>;
 const snapshotOf = (row: BraavoRecord) => ({
@@ -1174,11 +1308,14 @@ async function runPage(
   // Idem clientes: a listagem traz o cadastro inteiro (confirmado igual ao detalhe) e
   // os endereços vêm da cópia em lote, então não há consulta por cliente.
   const bulkCustomers = cursor.phase === "customers" && cursor.full;
+  // Idem SKUs: na carga completa são ~20 mil e cada um custava uma transação própria.
+  const bulkSkus = cursor.phase === "skus" && cursor.full;
   const limit =
     cursor.phase === "order_items" ||
     cursor.phase === "customer_addresses" ||
     bulkOrders ||
-    bulkCustomers
+    bulkCustomers ||
+    bulkSkus
       ? 100
       : ["products", "orders"].includes(cursor.phase)
         ? 10
@@ -1189,23 +1326,7 @@ async function runPage(
     limit,
     cursor.day ? { data_alterado: cursor.day } : {},
   );
-  if (cursor.phase === "skus" && page.rows.length) {
-    const productIds = [
-      ...new Set(page.rows.map((row) => braavoId(row.produto_id))),
-    ];
-    const products = await db
-      .select()
-      .from(catalog)
-      .where(
-        and(
-          eq(catalog.clientId, clientId),
-          eq(catalog.kind, "products"),
-          inArray(catalog.externalId, productIds),
-        ),
-      );
-    for (const product of products)
-      cache.set(`products:${product.externalId}`, product.data);
-  }
+  if (cursor.phase === "skus") await preloadProducts(clientId, page.rows, cache);
   if (cursor.phase === "order_items" || cursor.phase === "customer_addresses") {
     const stageKind = cursor.phase;
     // Cada ciclo do job custa pausas fixas (~7 s). Gravar uma página por ciclo
@@ -1260,7 +1381,7 @@ async function runPage(
       cursor: { ...current, skipped: cursor.skipped ?? 0 },
     };
   }
-  if (bulkOrders || bulkCustomers) {
+  if (bulkOrders || bulkCustomers || bulkSkus) {
     // Carga completa: a página inteira vai para o banco em poucos comandos e várias
     // páginas são lidas por ciclo (cada ciclo do job custa pausas fixas de ~7 s).
     const batchStarted = Date.now();
@@ -1271,7 +1392,10 @@ async function runPage(
     let done = 0;
     for (;;) {
       const ids = currentPage.rows.map((row) => braavoId(row.id));
-      if (bulkOrders) {
+      if (bulkSkus) {
+        await preloadProducts(clientId, currentPage.rows, cache);
+        await persistSkusBulk(clientId, leaseId, currentPage.rows, cache, counter);
+      } else if (bulkOrders) {
         const items = await loadStagedByOwner(clientId, "order_items", "pedido_id", ids);
         const withItems = currentPage.rows.map((row) => ({
           ...row,
@@ -1284,17 +1408,20 @@ async function runPage(
       }
       done += currentPage.rows.length;
       if (currentPage.complete) {
-        if (bulkOrders)
-          // Última página da carga completa: agora sim os totais e as métricas por dia.
-          await consolidateBraavoAggregates(clientId, leaseId);
-        await db
-          .delete(catalog)
-          .where(
-            and(
-              eq(catalog.clientId, clientId),
-              eq(catalog.kind, bulkOrders ? "order_items" : "customer_addresses"),
-            ),
-          );
+        if (bulkSkus) await deactivateUnseenSkus(clientId, leaseId, cursor.startedAt);
+        else {
+          if (bulkOrders)
+            // Última página da carga completa: agora sim os totais e as métricas por dia.
+            await consolidateBraavoAggregates(clientId, leaseId);
+          await db
+            .delete(catalog)
+            .where(
+              and(
+                eq(catalog.clientId, clientId),
+                eq(catalog.kind, bulkOrders ? "order_items" : "customer_addresses"),
+              ),
+            );
+        }
       }
       current = advanceBraavoCursor(current, currentPage.complete);
       if (current.phase !== phase || Date.now() - batchStarted > BULK_BATCH_BUDGET_MS) break;
@@ -1382,23 +1509,8 @@ async function runPage(
     // before this checkpoint safely replays the idempotent write, never skips it.
     await checkpointRecord(id);
   }
-  // Só a carga completa viu TODOS os SKUs; no incremental (só os que mudaram) isto
-  // marcaria como inativo todo SKU que simplesmente não mudou.
-  if (cursor.phase === "skus" && page.complete && cursor.full) {
-    await db.transaction(async (tx) => {
-      await assertLease(tx, clientId, leaseId);
-      await tx
-        .update(productsTable)
-        .set({ status: "INACTIVE", stock: 0 })
-        .where(
-          and(
-            eq(productsTable.clientId, clientId),
-            like(productsTable.externalId, "braavo:%"),
-            sql`${productsTable.sourceSyncedAt} < ${cursor.startedAt}::timestamptz`,
-          ),
-        );
-    });
-  }
+  if (cursor.phase === "skus" && page.complete && cursor.full)
+    await deactivateUnseenSkus(clientId, leaseId, cursor.startedAt);
   return {
     processed,
     cursor: {
