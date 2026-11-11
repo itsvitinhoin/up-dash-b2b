@@ -672,6 +672,10 @@ export async function persistOrder(
 // que é refeita inteira (tudo é idempotente).
 // ---------------------------------------------------------------------------
 const BULK_BATCH_BUDGET_MS = 25_000;
+/** O ambiente pode reduzir o orçamento (usado nos testes para provocar a interrupção no meio da página). */
+function bulkBatchBudgetMs() {
+  return Number(process.env.BRAAVO_BULK_BATCH_BUDGET_MS) || BULK_BATCH_BUDGET_MS;
+}
 const UPSERT_CHUNK = 500;
 
 function chunks<T>(list: T[], size = UPSERT_CHUNK): T[][] {
@@ -1610,17 +1614,49 @@ async function runPage(
             .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.externalId, part))))
             known.add(c.externalId!.slice(7));
         const keepAddress = new Set<string>();
+        const needDetail: BraavoRecord[] = [];
         for (const row of currentPage.rows) {
           const id = braavoId(row.id);
           if (!known.has(id)) continue; // novo: os endereços do período já estão na cópia
           if ((addresses.get(id)?.length ?? 0) === 0) keepAddress.add(id); // sem endereço novo
-          else {
-            // Endereço mudou: a escolha do endereço ativo precisa do conjunto inteiro.
-            const detail = await api.one("/clientes/buscar/id", row.id);
-            addresses.set(id, (Array.isArray(detail.enderecos) ? detail.enderecos : []).map(braavoRecord));
-          }
+          else needDetail.push(row);
         }
-        await persistCustomersBulk(clientId, leaseId, currentPage.rows, addresses, counter, { keepAddress });
+        // Endereço mudou num cliente que já existia: a escolha do endereço ativo precisa do
+        // conjunto inteiro, que só o detalhe traz (1 chamada por cliente). Esses clientes
+        // são gravados em pequenos grupos com marca no cursor: se o lote acabar no meio
+        // da página, o próximo continua de onde parou (nunca refaz a página do zero).
+        const doneIds = new Set(current.processedIds ?? []);
+        const pending = needDetail.filter((row) => !doneIds.has(braavoId(row.id)));
+        for (let start = 0; start < pending.length; start += 10) {
+          // O primeiro grupo de cada lote sempre roda: garante progresso mesmo com o orçamento já gasto.
+          if (start > 0 && Date.now() - batchStarted > bulkBatchBudgetMs()) {
+            return {
+              processed: done,
+              cursor: { ...current, processedIds: [...doneIds], skipped: counter.skipped },
+            };
+          }
+          const group = pending.slice(start, start + 10);
+          const groupAddresses = new Map<string, BraavoRecord[]>();
+          for (const row of group) {
+            const detail = await api.one("/clientes/buscar/id", row.id);
+            groupAddresses.set(
+              braavoId(row.id),
+              (Array.isArray(detail.enderecos) ? detail.enderecos : []).map(braavoRecord),
+            );
+          }
+          await persistCustomersBulk(clientId, leaseId, group, groupAddresses, counter);
+          for (const row of group) doneIds.add(braavoId(row.id));
+          await db.transaction(async (tx) => {
+            await assertLease(tx, clientId, leaseId);
+            await tx
+              .update(states)
+              .set({ cursor: { ...current, processedIds: [...doneIds], skipped: counter.skipped } })
+              .where(eq(states.clientId, clientId));
+          });
+        }
+        // O resto da página (novos e sem endereço novo) vai em lote.
+        const rest = currentPage.rows.filter((row) => !doneIds.has(braavoId(row.id)));
+        await persistCustomersBulk(clientId, leaseId, rest, addresses, counter, { keepAddress });
       } else if (bulkSkus) {
         await preloadProducts(clientId, currentPage.rows, cache);
         await persistSkusBulk(clientId, leaseId, currentPage.rows, cache, counter);
@@ -1661,7 +1697,7 @@ async function runPage(
         await clearItemStaging(clientId, ["order_items", "order_items_day"]);
       if (bulkCustomersInc && current.phase !== phase)
         await clearItemStaging(clientId, ["customer_addresses", "customer_addresses_day"]);
-      if (current.phase !== phase || Date.now() - batchStarted > BULK_BATCH_BUDGET_MS) break;
+      if (current.phase !== phase || Date.now() - batchStarted > bulkBatchBudgetMs()) break;
       currentPage = await api.page(
         `/${paths[phase]}/buscar/todos`,
         current.page,

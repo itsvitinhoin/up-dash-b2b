@@ -51,6 +51,7 @@ let sync: typeof import("../src/services/braavo-sync");
 let app: express.Express;
 let order: Record<string, unknown>;
 let customers: Record<string, unknown>[];
+let detailDelayMs = 0;
 let businessError = false;
 let productIds = [100];
 let failedProductId: number | null = null;
@@ -98,6 +99,7 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     calls.length = 0;
     businessError = false;
     productIds = [100];
+    detailDelayMs = 0;
     failedProductId = null;
     fillerItems = 0;
     untouchedSku = false;
@@ -164,6 +166,7 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
           ativo: "1",
           fotos: [{ foto_1: "https://images.example.invalid/100.webp" }],
         };
+        if (path === "/api/clientes/buscar/id" && detailDelayMs) await new Promise((r) => setTimeout(r, detailDelayMs));
         if (path === "/api/clientes/buscar/id")
           return Response.json({
             ok: customers
@@ -214,8 +217,8 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
           clientes: customers,
           // Endereços em lote (mesmos campos que o detalhe do cliente traz em `enderecos`).
           enderecos: customers.flatMap((c) =>
-            [{ id: Number(c.id) * 10, usuario_id: c.id, ativo: "0", cidade: "Campinas", estado: "SP", data_alterado: c.data_criado },
-             { id: Number(c.id) * 10 + 1, usuario_id: c.id, ativo: "1", cidade: "São Paulo", estado: "SP", data_alterado: c.data_criado }]),
+            [{ id: Number(c.id) * 10, usuario_id: c.id, ativo: "0", cidade: "Campinas", estado: "SP", data_alterado: c.addr_alterado ?? c.data_criado },
+             { id: Number(c.id) * 10 + 1, usuario_id: c.id, ativo: "1", cidade: "São Paulo", estado: "SP", data_alterado: c.addr_alterado ?? c.data_criado }]),
           pedidos: [order],
           // Itens em lote: os mesmos itens que o detalhe do pedido traz, sem os calculado_*.
           pedidos_produtos: (
@@ -381,6 +384,70 @@ describe.skipIf(!connection)("Braavo with isolated PostgreSQL", () => {
     const cats = await schema.db.execute(sql`SELECT kind, count(*)::int AS n FROM braavo_catalog WHERE kind IN ('categories','variations') GROUP BY kind ORDER BY kind`);
     expect(cats.rows).toEqual([{ kind: "categories", n: 1 }, { kind: "variations", n: 4 }]);
   }, 60000);
+
+  it("incremental customers whose address changed are fetched in checkpointed groups and resume where the batch stopped", async () => {
+    const old = (id: number) => ({
+      id, nome: "Cliente " + id, email: `c${id}@example.invalid`, pessoa: "1", cpf: "11122233344",
+      data_criado: "2026-01-01 10:00:00", data_alterado: "2026-01-02 10:00:00", addr_alterado: "2026-01-02 10:00:00",
+    });
+    const ids = Array.from({ length: 25 }, (_, i) => 100 + i);
+    customers = ids.map(old);
+    await cycle(); // carga completa: os 25 já existem
+    // Hoje todos mudaram de endereço (e de nome): a listagem de endereços do dia os traz.
+    customers = ids.map((id) => ({ ...old(id), nome: "Novo " + id, data_alterado: `${today()} 10:00:00`, addr_alterado: `${today()} 10:00:00` }));
+    calls.length = 0;
+    await cycle(); // incremental
+    const detail = calls.filter((c) => c.path === "/api/clientes/buscar/id");
+    expect(detail).toHaveLength(25); // uma vez cada, nada refeito
+    expect(new Set(detail.map((c) => c.body.id)).size).toBe(25);
+    const snap = await snapshot();
+    expect(snap.customers.filter((c) => String(c.name).startsWith("Novo "))).toHaveLength(25);
+    expect(snap.customers.filter((c) => Number(String(c.externalId).slice(7)) >= 100).every((c) => c.city === "São Paulo")).toBe(true);
+
+    // Lote interrompido no meio da página: o cursor guarda quem já foi gravado e o próximo
+    // lote só busca o resto.
+    customers = ids.map((id) => ({ ...old(id), nome: "Terceiro " + id, data_alterado: `${today()} 12:00:00`, addr_alterado: `${today()} 12:00:00` }));
+    const doneIds = ids.slice(0, 10).map(String);
+    await schema.db.execute(sql`UPDATE braavo_sync_states SET cursor = ${JSON.stringify({
+      phase: "customers", page: 1, day: today(), fromDay: today(), untilDay: today(), full: false,
+      startedAt: new Date().toISOString(), bulk: true, processedIds: doneIds,
+    })}::jsonb`);
+    calls.length = 0;
+    await cycle();
+    const resumed = calls.filter((c) => c.path === "/api/clientes/buscar/id").map((c) => String(c.body.id));
+    expect(resumed.sort()).toEqual(ids.slice(10).map(String).sort()); // só os 15 que faltavam
+    const after = await snapshot();
+    // Os 10 já gravados antes da interrupção não foram tocados de novo; os outros 15 foram.
+    expect(after.customers.filter((c) => String(c.name).startsWith("Terceiro "))).toHaveLength(15);
+    expect(after.customers.filter((c) => Number(String(c.externalId).slice(7)) >= 100).every((c) => c.city === "São Paulo")).toBe(true);
+
+    // Orçamento do lote curto de verdade: a página é interrompida no meio, o cursor guarda quem
+    // já foi gravado e, no fim, cada cliente foi buscado exatamente uma vez.
+    customers = ids.map((id) => ({ ...old(id), nome: "Quarto " + id, data_alterado: `${today()} 14:00:00`, addr_alterado: `${today()} 14:00:00` }));
+    detailDelayMs = 40;
+    process.env.BRAAVO_BULK_BATCH_BUDGET_MS = "100";
+    calls.length = 0;
+    await schema.db.execute(sql`UPDATE braavo_sync_states SET cursor = ${JSON.stringify({
+      phase: "customers", page: 1, day: today(), fromDay: today(), untilDay: today(), full: false,
+      startedAt: new Date().toISOString(), bulk: true,
+    })}::jsonb`);
+    let sawPartial = false;
+    try {
+      for (let i = 0; i < 40; i++) {
+        const result = await sync.runBraavoBatch("shop-a", "manual");
+        const state = (await schema.db.execute(sql`SELECT cursor FROM braavo_sync_states`)).rows[0] as { cursor: { phase: string; processedIds?: string[] } };
+        if (state.cursor.phase === "customers" && (state.cursor.processedIds?.length ?? 0) > 0) sawPartial = true;
+        if (result.complete) break;
+      }
+    } finally {
+      delete process.env.BRAAVO_BULK_BATCH_BUDGET_MS;
+    }
+    expect(sawPartial).toBe(true);
+    const budgeted = calls.filter((c) => c.path === "/api/clientes/buscar/id").map((c) => String(c.body.id));
+    expect(budgeted.sort()).toEqual(ids.map(String).sort());
+    const last = await snapshot();
+    expect(last.customers.filter((c) => String(c.name).startsWith("Quarto "))).toHaveLength(25);
+  }, 90000);
 
   it("incremental cycle reads changed orders in bulk, never asks each order's detail, and clears the copy", async () => {
     await cycle(); // carga completa
