@@ -124,3 +124,10 @@ Logs do job, buscando `[ga4-freshness] PROBLEMA` (erros) e `[ga4-freshness] avis
 - **Google Ads e Meta.** Mesma ideia, mas as regras de cada fonte são outras; o Google Ads está bloqueado pelo token até ~12/11.
 - **O dado estar certo**, só que está chegando. A comparação de valores é manual (ver `docs/ga4-canario.md`).
 - **Se o próprio agendador do Cloud Scheduler ou o Cloud Run inteiro caírem**, a segunda condição da política (3h sem execução) é o que avisa.
+
+## Cliente pausado pelo disjuntor (13/11/2026)
+
+O sync pausa por algumas horas o cliente que o Google não responde (2 ou mais falhas seguidas por 502/503/504, cota ou rede; ver
+`docs/ga4-guardado.md`). A pausa **não esconde o problema**: o cliente continua sem dado novo, então `parou_de_atualizar` (mais de 6 h) segue valendo,
+e o log da rodada horária registra `cliente pausado pelo disjuntor` com `failures` e `retryAt`. Quando o Google volta, o cliente recupera na primeira
+tentativa depois da pausa (no máximo ~5 h).

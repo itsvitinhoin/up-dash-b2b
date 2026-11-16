@@ -22,6 +22,10 @@ import { syncUpZeroClient, type SyncResult } from "./upzero-sync";
 import { refreshDailyClientMetrics } from "./daily-client-metrics";
 import {
   earlierDate,
+  evaluateGa4Breaker,
+  ga4BackfillMaxClients,
+  ga4BackfillStaleMinutes,
+  isGa4BackfillSeparate,
   isWideGa4Window,
   resolveGa4ProductFunnelFrom,
   resolveGa4SyncWindow,
@@ -29,13 +33,17 @@ import {
   shouldRefundBackfillSlot,
   shouldStartGa4Client,
   shouldStoreGa4ProductViewsInPostgres,
+  shouldWaitBeforeBackfillRetry,
+  type Ga4RecentJob,
 } from "./ga4-daily-rules";
 import {
   clientIdsWithGa4History,
   clientIdsWithGa4ProductHistory,
+  clientIdsWithLiveGa4Job,
   lastGa4ProductFunnelToByClient,
   lastGa4TrafficToByClient,
   lastStoredGa4DayByClient,
+  recentGa4JobsByClient,
   syncGa4DailyForClient,
 } from "./ga4-daily-sync";
 import { isGa4BigQueryEnabled } from "./ga4-bigquery-rules";
@@ -978,9 +986,13 @@ export async function runNuvemshopTransactionalExtraction(
 // job puxa as metricas diarias de cada cliente com ga4PropertyId e grava em
 // ga4_daily_metrics; a tela so le. Falha por cliente fica em sync_jobs.error
 // (antes a recusa do Google era engolida na lista, sem ninguem ver).
+//
+// mode "all" (padrao) = rodada horaria: todos os clientes; backfill largo so com tempo/vaga, ou nem isso quando GA4_BACKFILL_SEPARATE=1.
+// mode "backfill" = TASK=ga4_backfill: SO os clientes de janela larga, um por vez, sem limite de tempo da rodada horaria (13/11/2026).
+// Nas duas, a rotina (cron, todos os clientes) pausa cliente que o Google nao responde ha varias tentativas (disjuntor).
 export async function runGa4DailyExtraction(
   trigger: ExtractionTrigger,
-  options: { clientId?: string; lookbackDays?: number } = {},
+  options: { clientId?: string; lookbackDays?: number; mode?: "all" | "backfill" } = {},
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
   const allClients = (await clientsWith(isNotNull(clientsTable.ga4PropertyId))).filter(
@@ -1077,16 +1089,57 @@ export async function runGa4DailyExtraction(
     .sort((a, b) => Number(a.wide) - Number(b.wide));
 
   const gated = trigger === "cron" && !options.clientId;
+  const backfillOnly = options.mode === "backfill";
+  // Com GA4_BACKFILL_SEPARATE=1 a rodada horaria deixa os clientes "largos" para o job TASK=ga4_backfill (ver isGa4BackfillSeparate).
+  const handOverWide = gated && !backfillOnly && isGa4BackfillSeparate();
   const minutes = Number.parseFloat(process.env.GA4_RUN_BUDGET_MINUTES ?? "");
-  const budgetMs = (Number.isFinite(minutes) && minutes > 0 ? minutes : 8) * 60_000;
+  // O job de backfill tem tempo proprio: sem orcamento de minutos, so o limite de clientes por execucao.
+  const budgetMs = backfillOnly ? Number.POSITIVE_INFINITY : (Number.isFinite(minutes) && minutes > 0 ? minutes : 8) * 60_000;
   const maxWideEnv = Number.parseInt(process.env.GA4_MAX_BACKFILLS_PER_RUN ?? "", 10);
-  const maxWide = Number.isFinite(maxWideEnv) && maxWideEnv > 0 ? maxWideEnv : 3;
+  const maxWide = backfillOnly ? ga4BackfillMaxClients() : Number.isFinite(maxWideEnv) && maxWideEnv > 0 ? maxWideEnv : 3;
+  // Disjuntor e "ja tem outra execucao nele" so valem para a rotina; rodada manual de um cliente (ou manual de todos) ignora.
+  const now = new Date();
+  const recentJobs = gated ? await recentGa4JobsByClient(clientIds, { now }) : new Map<string, Ga4RecentJob[]>();
+  const liveJobs = gated
+    ? await clientIdsWithLiveGa4Job(
+        plans.filter((plan) => plan.wide).map((plan) => plan.client.id),
+        { now, staleMinutes: ga4BackfillStaleMinutes() },
+      )
+    : new Set<string>();
   const runStartedMs = Date.now();
   let wideStarted = 0;
   let deferred = 0;
+  let paused = 0;
+  let handedOver = 0;
+  let busy = 0;
 
   for (const { client, propertyId, window, productFrom, trafficFrom, productFunnelFrom, wide } of plans) {
+    if (backfillOnly && !wide) continue;
     if (gated) {
+      const recent = recentJobs.get(client.id) ?? [];
+      const breaker = evaluateGa4Breaker({ recent, now });
+      if (breaker.pause) {
+        paused += 1;
+        console.warn("[ga4-daily] cliente pausado pelo disjuntor: o Google nao respondeu nas ultimas tentativas", {
+          clientName: client.name,
+          failures: breaker.failures,
+          retryAt: breaker.retryAt?.toISOString(),
+        });
+        continue;
+      }
+      if (wide && handOverWide) {
+        handedOver += 1;
+        continue;
+      }
+      if (wide && liveJobs.has(client.id)) {
+        // Outra execucao (o backfill de uma rodada anterior ainda rodando) ja esta nele.
+        busy += 1;
+        continue;
+      }
+      if (backfillOnly && shouldWaitBeforeBackfillRetry(recent, now)) {
+        busy += 1;
+        continue;
+      }
       const gate = shouldStartGa4Client({ wide, elapsedMs: Date.now() - runStartedMs, budgetMs, wideStarted, maxWide });
       if (!gate.start) {
         deferred += 1;
@@ -1140,7 +1193,7 @@ export async function runGa4DailyExtraction(
     clientResults,
     done,
     failed,
-    skipped: deferred,
+    skipped: deferred + paused + handedOver + busy,
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
   };

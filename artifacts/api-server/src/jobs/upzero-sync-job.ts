@@ -27,6 +27,10 @@
  *   TASK=daily_metrics         -> recalcula métricas diárias agregadas
  *   TASK=ga4_daily             -> sessões/eventos diários do GA4 -> ga4_daily_metrics
  *     (LOOKBACK_DAYS=N força a janela; sem histórico faz backfill de GA4_BACKFILL_DAYS)
+ *   TASK=ga4_backfill          -> o backfill do GA4 em job PROPRIO: so os clientes de janela larga (cliente novo, tabela nova, job
+ *     parado ha mais de um mes), sem o limite de tempo da rodada horaria, buscando e gravando em pedacos (GA4_CHUNK_DAYS, padrao 60).
+ *     GA4_BACKFILL_MAX_CLIENTS (padrao 3) = quantos por execucao. Cria-se com timeout longo e --max-retries=0. A rodada horaria so deixa os
+ *     clientes largos para este job quando GA4_BACKFILL_SEPARATE=1 esta no job horario. Ver docs/ga4-guardado.md.
  *   TASK=hourly_bundle         -> roda upzero_analytics + meta_ads + ga4_daily juntos
  *   TASK=whatsapp_fix_phone_waba -> corrige o waba_id de UM número em
  *     whatsapp_phone_numbers (ver CLIENT_ID/PHONE_NUMBER_ID/WABA_ID abaixo)
@@ -200,6 +204,10 @@ async function main() {
     case "ga4_daily":
       result = await runGa4DailyExtraction(trigger, { clientId, lookbackDays: envInt("LOOKBACK_DAYS") });
       break;
+    case "ga4_backfill":
+      // So os clientes de janela larga (cliente novo, tabela nova, job parado ha mais de um mes), com tempo proprio e leitura em pedacos.
+      result = await runGa4DailyExtraction(trigger, { clientId, lookbackDays: envInt("LOOKBACK_DAYS"), mode: "backfill" });
+      break;
     case "hourly_bundle":
       result = await runHourlyExtractionBundle(trigger);
       // Renova a lista de contas de anúncio para a coleta do backend-dash (nunca derruba o bundle).
@@ -240,7 +248,7 @@ async function main() {
       result = await runGa4FreshnessCheck();
       break;
     default:
-      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, braavo_transactional, daily_metrics, ga4_daily, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients, sync_ads_accounts, check_data_freshness, ga4_discover.`);
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, braavo_transactional, daily_metrics, ga4_daily, ga4_backfill, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients, sync_ads_accounts, check_data_freshness, ga4_discover.`);
       process.exit(1);
   }
 

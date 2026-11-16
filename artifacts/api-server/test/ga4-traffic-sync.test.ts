@@ -41,7 +41,11 @@ import { lastGa4TrafficToByClient, syncGa4DailyForClient } from "../src/services
 
 const pg = new PGlite();
 
+// Estes testes cobrem o caminho de UMA busca/gravacao (janela inteira); o backfill em pedacos tem o proprio arquivo (ga4-chunked-sync.test.ts).
+const originalChunkDays = process.env.GA4_CHUNK_DAYS;
+
 beforeAll(async () => {
+  process.env.GA4_CHUNK_DAYS = "100000";
   await pg.exec(`
     CREATE TABLE ga4_daily_metrics (
       client_id text NOT NULL, metric_date date NOT NULL,
@@ -64,6 +68,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (originalChunkDays === undefined) delete process.env.GA4_CHUNK_DAYS;
+  else process.env.GA4_CHUNK_DAYS = originalChunkDays;
   await pg.close();
 });
 

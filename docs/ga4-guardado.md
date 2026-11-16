@@ -324,3 +324,82 @@ Como funciona e o que lembrar:
   `gcloud run jobs execute upzero-sync-job --project=up-vesti-report --region=us-central1 --update-env-vars=TASK=ga4_daily,TRIGGER=manual --wait`
   (sem marcador, o funil faz o backfill de 400 dias; o resto fica na janela curta). Foi o que se fez em 10/11. Enquanto a execução manual
   não termina, a rodada horária adia os clientes que ainda não tiveram o funil (só uma rodada de atraso para eles).
+
+## Backfill em job próprio, leitura em pedaços e disjuntor (13/11/2026)
+
+Três mudanças que saíram do incidente de 13/11 (o Google devolveu 502 por ~11 h para 9 propriedades; cada tentativa gastava ~1 min, a rodada horária
+foi de 6 para 15–22 min, o backfill da Vivadress ficou sem tempo e, quando rodou à mão, o job caiu por falta de memória).
+
+### 1. Leitura em pedaços (memória)
+
+Janela larga (backfill) deixou de ser buscada inteira antes de gravar. `syncGa4DailyForClient` divide a **união das janelas** das tabelas em pedaços
+de até `GA4_CHUNK_DAYS` dias (padrão **60**), do mais antigo ao mais novo, e a cada pedaço **busca, grava e solta** produtos, origem do tráfego e funil
+(`planGa4Chunks`, `splitGa4Window`, `clipGa4Start`). Cada tabela só é buscada no trecho da própria janela (o diário costuma ser de 3 dias enquanto o funil
+precisa de 400). A ordem de gravação continua sendo a de antes, no período todo:
+
+- **produtos** (por pedaço): falha em qualquer pedaço **derruba o job**; nada de diário é gravado;
+- **origem do tráfego e funil** (por pedaço, isolados): a primeira falha para aquela tabela, o marcador (`trafficTo`/`productFunnelTo`) **não anda** e a
+  rodada seguinte refaz a janela;
+- **diário por último, uma vez só**: continua sendo o marcador de cobertura (só existe se o pesado terminou).
+
+Janela de até 60 dias (inclusive a rodada horária, de 3) **não muda**: uma busca e uma gravação, como antes. O resultado do job tem o mesmo formato.
+Efeito do pedaço que falha no meio: as linhas dos pedaços anteriores ficam gravadas, mas o marcador não anda, então a próxima execução refaz tudo (é
+idempotente: cada gravação troca a janela do pedaço).
+
+### 2. Disjuntor por cliente
+
+Na rotina (cron, todos os clientes), o cliente cujos **últimos jobs `ga4_daily` da rotina** falharam **2 vezes seguidas por erro do Google** (502/503/504,
+cota 429, rede; ver `isTransientGa4Error`) é **pulado** por tantas horas quanto as falhas seguidas (2, 3, 4, até 5; já descontados 20 min de folga) e
+depois tentado de novo; falhando, a pausa cresce. `evaluateGa4Breaker` olha `sync_jobs` (`recentGa4JobsByClient`), sem tabela nova.
+
+- **Falta de acesso nunca pausa** (falha na hora e volta sozinha quando alguém libera o Leitor), nem erro nosso de gravação.
+- **Rodada manual de um cliente ignora o disjuntor**; falha de rodada manual não conta.
+- **Não esconde o problema:** o cliente pausado continua parado no check de frescor (`parou_de_atualizar` > 6 h = problema). O log da rodada traz
+  `cliente pausado pelo disjuntor` com `failures` e `retryAt`.
+- Efeito medido no incidente: 9 clientes × ~1,2 min = ~11 min de rodada perdidos por hora; com o disjuntor sobra uma tentativa a cada 2–5 h por cliente.
+
+### 3. Backfill em job próprio (`TASK=ga4_backfill`)
+
+O backfill largo (cliente novo, tabela nova, job parado por mais de um mês: janela > 31 dias) dividia o relógio de 8 min da rodada horária e era o
+último da fila, então qualquer lentidão o deixava sem vez. Agora há um job só para ele:
+
+- `TASK=ga4_backfill` roda **só os clientes largos**, um por vez, **sem o orçamento de minutos** (só `GA4_BACKFILL_MAX_CLIENTS` por execução, padrão 3).
+- **Não duplica trabalho:** pula o cliente que tem um job `ga4_daily` `running` com menos de `GA4_BACKFILL_STALE_MINUTES` (padrão 120) — outra execução está nele.
+  Job `running` mais velho que isso é tratado como processo que caiu (falta de memória), não bloqueia.
+- **Falha de acesso espera 55 min** antes de ser tentada de novo (Aiyu, Hot Pink e Sonmur são sempre "largos" e não geram uma falha por execução).
+- O disjuntor vale aqui também.
+- A rodada horária só **deixa os clientes largos para ele** quando o job horário tem `GA4_BACKFILL_SEPARATE=1`. Sem a variável, o comportamento antigo
+  (limite de tempo e de vagas dentro da rodada horária) continua valendo. É o que permite publicar o código **antes** de ligar o job novo.
+
+Ordem para publicar (cada passo pode parar e voltar atrás sem perda):
+
+1. **Build** da imagem (sem o passo do Braavo, como nas últimas vezes). O job horário e o de frescor usam `:latest`: passam a ter leitura em pedaços e
+   disjuntor na próxima hora; o backfill continua dentro da rodada horária (sem `GA4_BACKFILL_SEPARATE`).
+2. **Criar o job novo**, fixado na tag do build (como `upzero-sync-job`; com `:latest` um build sem este código desligaria o backfill em silêncio):
+
+   ```bash
+   gcloud run jobs create upzero-sync-job-ga4-backfill --project=up-vesti-report --region=us-central1 \
+     --image=gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:<SHA> \
+     --service-account=928204832932-compute@developer.gserviceaccount.com \
+     --cpu=1 --memory=1Gi --task-timeout=21600 --max-retries=0 --execution-environment=gen2 \
+     --set-cloudsql-instances=up-vesti-report:us-central1:vesti-database \
+     --set-env-vars=TASK=ga4_backfill,TRIGGER=cron,CLOUD_SQL_CONNECTION_NAME=up-vesti-report:us-central1:vesti-database \
+     --set-secrets=DB_USER=updashb2b-db-user:latest,DB_PASSWORD=updashb2b-db-password:latest,DB_NAME=updashb2b-db-name:latest,META_ADS_API_KEY=updashb2b-meta-ads-api-key:latest,GA4_OAUTH_REFRESH_TOKEN=GA4_AGENCY_REFRESH_TOKEN:latest,GA4_OAUTH_CLIENT_ID=GOOGLE_ADS_CLIENT_ID:latest,GA4_OAUTH_CLIENT_SECRET=GOOGLE_ADS_CLIENT_SECRET:latest
+   ```
+
+   (`--max-retries=0`: uma falha por cliente (ex.: 502) sai com código 1 e o Cloud Run não deve repetir a execução inteira.)
+3. **Agendar** a cada 30 minutos (cliente novo entra em até 30 min; sem nada largo a execução termina em segundos):
+
+   ```bash
+   gcloud scheduler jobs create http upzero-sync-job-ga4-backfill-schedule --project=up-vesti-report --location=us-central1 \
+     --schedule="*/30 * * * *" --time-zone="Etc/UTC" --http-method=POST \
+     --uri="https://us-central1-run.googleapis.com/v2/projects/up-vesti-report/locations/us-central1/jobs/upzero-sync-job-ga4-backfill:run" \
+     --oauth-service-account-email=928204832932-compute@developer.gserviceaccount.com \
+     --oauth-token-scope=https://www.googleapis.com/auth/cloud-platform --attempt-deadline=180s
+   ```
+4. **Conferir** uma execução à mão (`gcloud run jobs execute upzero-sync-job-ga4-backfill --wait`) e ver no log `finished` com `done`/`skipped`.
+5. **Só então ligar a separação** no job horário: `gcloud run jobs update upzero-sync-job-hourly --project=up-vesti-report --region=us-central1 --update-env-vars=GA4_BACKFILL_SEPARATE=1`.
+
+Rollback: tirar a variável (`--remove-env-vars=GA4_BACKFILL_SEPARATE`) devolve o backfill à rodada horária; o job novo pode ser pausado
+(`gcloud scheduler jobs pause upzero-sync-job-ga4-backfill-schedule`) sem efeito colateral. Execução manual de um cliente (`TASK=ga4_daily` ou
+`TASK=ga4_backfill` com `CLIENT_ID=...`) ignora o disjuntor e os limites, como antes.

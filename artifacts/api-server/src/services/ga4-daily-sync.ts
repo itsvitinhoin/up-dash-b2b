@@ -1,6 +1,18 @@
-import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, ga4DailyMetricsTable, ga4ProductViewsDailyTable, syncJobsTable } from "@workspace/db";
-import { aggregateGa4Rows, fillGa4Days, isGa4StoreUsable, toStoredProductViews } from "./ga4-daily-rules";
+import {
+  aggregateGa4Rows,
+  clipGa4Start,
+  earlierDate,
+  fillGa4Days,
+  ga4ChunkDays,
+  isGa4StoreUsable,
+  splitGa4Window,
+  toStoredProductViews,
+  type Ga4RecentJob,
+  type Ga4Window,
+  type StoredProductViewKey,
+} from "./ga4-daily-rules";
 import type { BigQueryLike } from "./excluded-clients-bq";
 import { writeGa4ToBigQuery, type Ga4BigQueryWrite } from "./ga4-bigquery";
 import {
@@ -110,7 +122,7 @@ export async function lastGa4ProductFunnelToByClient(clientIds: string[]): Promi
   return result;
 }
 
-export async function syncGa4DailyForClient(params: {
+export type Ga4SyncParams = {
   clientId: string;
   clientName?: string;
   propertyId: string;
@@ -128,7 +140,9 @@ export async function syncGa4DailyForClient(params: {
   trafficFrom?: string | null;
   // Inicio da janela do FUNIL POR PRODUTO (so BigQuery; ver resolveGa4ProductFunnelFrom). Ausente/null = nao busca nem grava.
   productFunnelFrom?: string | null;
-}): Promise<{
+};
+
+export type Ga4SyncResult = {
   from: string;
   to: string;
   productFrom: string;
@@ -152,7 +166,16 @@ export async function syncGa4DailyForClient(params: {
   /** Falha so do funil por produto (busca no GA4 ou gravacao no BigQuery); o resto seguiu normalmente. */
   productFunnelError: string | null;
   bigQuery: Ga4BigQueryWrite | null;
-}> {
+};
+
+const NO_CREDENTIAL_MESSAGE =
+  "GA4 sem credencial: rode no Cloud Run (usa a conta de servico do job) ou defina GA4_SERVICE_ACCOUNT_JSON.";
+
+export async function syncGa4DailyForClient(params: Ga4SyncParams): Promise<Ga4SyncResult> {
+  // Janela larga (backfill) e buscada e gravada em pedacos para nao guardar o periodo inteiro na memoria; janela curta segue o caminho de sempre.
+  const chunks = planGa4Chunks(params);
+  if (chunks.length > 1) return syncGa4DailyInChunks(params, chunks);
+
   const fetched = await fetchGa4DailyMetrics({
     propertyId: params.propertyId,
     dateFrom: params.from,
@@ -160,11 +183,7 @@ export async function syncGa4DailyForClient(params: {
   });
   // null = sem propriedade ou sem credencial. Falhar aqui deixa o motivo em
   // sync_jobs.error, em vez de gravar "0 sessoes" como se fosse dado real.
-  if (fetched === null) {
-    throw new Error(
-      "GA4 sem credencial: rode no Cloud Run (usa a conta de servico do job) ou defina GA4_SERVICE_ACCOUNT_JSON.",
-    );
-  }
+  if (fetched === null) throw new Error(NO_CREDENTIAL_MESSAGE);
 
   // Busca as duas coisas ANTES de gravar qualquer uma: se uma falhar, nada muda e
   // as tabelas nao ficam uma atualizada e a outra velha.
@@ -217,61 +236,12 @@ export async function syncGa4DailyForClient(params: {
   }
 
   const filled = fillGa4Days(params.from, params.to, fetched);
-  const rows = filled.map((row) => ({
-    clientId: params.clientId,
-    metricDate: row.date,
-    sessions: row.sessions,
-    pageViews: row.pageViews,
-    productViews: row.productViews,
-    addToCarts: row.addToCarts,
-    checkouts: row.checkouts,
-    purchases: row.purchases,
-    syncedAt: new Date(),
-  }));
+  const rows = toDailyRows(params.clientId, filled);
 
   const writePostgres = async (): Promise<void> => {
-    // Lotes pequenos: um backfill de 400 dias passa de 60k parametros se for de uma vez.
-    const BATCH = 200;
-    for (let i = 0; i < rows.length; i += BATCH) {
-      await db
-        .insert(ga4DailyMetricsTable)
-        .values(rows.slice(i, i + BATCH))
-        .onConflictDoUpdate({
-          target: [ga4DailyMetricsTable.clientId, ga4DailyMetricsTable.metricDate],
-          set: {
-            sessions: sql`excluded.sessions`,
-            pageViews: sql`excluded.page_views`,
-            productViews: sql`excluded.product_views`,
-            addToCarts: sql`excluded.add_to_carts`,
-            checkouts: sql`excluded.checkouts`,
-            purchases: sql`excluded.purchases`,
-            syncedAt: sql`excluded.synced_at`,
-          },
-        });
-    }
-
+    await upsertGa4DailyPostgres(rows);
     if (!storeProducts) return;
-
-    // Troca a janela inteira (apaga e regrava): o GA4 revisa contagens recentes e
-    // um item que sumiu da revisao nao pode ficar com o numero velho.
-    const PRODUCT_BATCH = 1000;
-    await db.transaction(async (tx) => {
-      await tx
-        .delete(ga4ProductViewsDailyTable)
-        .where(
-          and(
-            eq(ga4ProductViewsDailyTable.clientId, params.clientId),
-            gte(ga4ProductViewsDailyTable.metricDate, productFrom),
-            lte(ga4ProductViewsDailyTable.metricDate, params.to),
-          ),
-        );
-      const syncedAt = new Date();
-      for (let i = 0; i < productViews.length; i += PRODUCT_BATCH) {
-        await tx.insert(ga4ProductViewsDailyTable).values(
-          productViews.slice(i, i + PRODUCT_BATCH).map((row) => ({ clientId: params.clientId, ...row, syncedAt })),
-        );
-      }
-    });
+    await replaceProductViewsPostgres(params.clientId, productViews, productFrom, params.to);
   };
 
   const writeBigQuery = async (): Promise<Ga4BigQueryWrite | null> => {
@@ -302,24 +272,8 @@ export async function syncGa4DailyForClient(params: {
 
   // Produtos de cliente B2B ficam so no BigQuery: apaga a copia antiga do banco do painel, mas SO depois de o BigQuery ter gravado
   // (sem ele nao ha segunda copia). Falha aqui nao derruba o job: o dado do GA4 ja foi guardado.
-  let prunedProductRows = 0;
-  if (!storeProducts && bigQuery.status === "fulfilled" && bigQuery.value) {
-    try {
-      const [{ n }] = await db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(ga4ProductViewsDailyTable)
-        .where(eq(ga4ProductViewsDailyTable.clientId, params.clientId));
-      if (n > 0) {
-        await db.delete(ga4ProductViewsDailyTable).where(eq(ga4ProductViewsDailyTable.clientId, params.clientId));
-        prunedProductRows = n;
-      }
-    } catch (err) {
-      console.warn("[ga4-daily] nao consegui apagar a copia antiga de produtos do Postgres", {
-        clientId: params.clientId,
-        error: errorMessage(err),
-      });
-    }
-  }
+  const prunedProductRows =
+    !storeProducts && bigQuery.status === "fulfilled" && bigQuery.value ? await pruneProductViewsPostgres(params.clientId) : 0;
 
   const bigQueryWrite = bigQuery.status === "fulfilled" ? bigQuery.value : null;
   const trafficError = trafficFetchError ?? (bigQueryWrite?.trafficError ? `gravacao no BigQuery: ${bigQueryWrite.trafficError}` : null);
@@ -345,7 +299,7 @@ export async function syncGa4DailyForClient(params: {
     to: params.to,
     productFrom,
     days: rows.length,
-    sessions: rows.reduce((sum, row) => sum + row.sessions, 0),
+    sessions: filled.reduce((sum, row) => sum + row.sessions, 0),
     productViewRows: productViews.length,
     prunedProductRows,
     trafficRows: bigQueryWrite?.trafficRows ?? 0,
@@ -362,6 +316,332 @@ export async function syncGa4DailyForClient(params: {
 
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
+}
+
+type DailyRow = typeof ga4DailyMetricsTable.$inferInsert;
+
+function toDailyRows(clientId: string, filled: Ga4DailyMetrics[]): DailyRow[] {
+  return filled.map((row) => ({
+    clientId,
+    metricDate: row.date,
+    sessions: row.sessions,
+    pageViews: row.pageViews,
+    productViews: row.productViews,
+    addToCarts: row.addToCarts,
+    checkouts: row.checkouts,
+    purchases: row.purchases,
+    syncedAt: new Date(),
+  }));
+}
+
+async function upsertGa4DailyPostgres(rows: DailyRow[]): Promise<void> {
+  // Lotes pequenos: um backfill de 400 dias passa de 60k parametros se for de uma vez.
+  const BATCH = 200;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    await db
+      .insert(ga4DailyMetricsTable)
+      .values(rows.slice(i, i + BATCH))
+      .onConflictDoUpdate({
+        target: [ga4DailyMetricsTable.clientId, ga4DailyMetricsTable.metricDate],
+        set: {
+          sessions: sql`excluded.sessions`,
+          pageViews: sql`excluded.page_views`,
+          productViews: sql`excluded.product_views`,
+          addToCarts: sql`excluded.add_to_carts`,
+          checkouts: sql`excluded.checkouts`,
+          purchases: sql`excluded.purchases`,
+          syncedAt: sql`excluded.synced_at`,
+        },
+      });
+  }
+}
+
+// Troca a janela inteira (apaga e regrava): o GA4 revisa contagens recentes e um item que sumiu da revisao nao pode ficar com o numero velho.
+async function replaceProductViewsPostgres(
+  clientId: string,
+  productViews: StoredProductViewKey[],
+  from: string,
+  to: string,
+): Promise<void> {
+  const PRODUCT_BATCH = 1000;
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(ga4ProductViewsDailyTable)
+      .where(
+        and(
+          eq(ga4ProductViewsDailyTable.clientId, clientId),
+          gte(ga4ProductViewsDailyTable.metricDate, from),
+          lte(ga4ProductViewsDailyTable.metricDate, to),
+        ),
+      );
+    const syncedAt = new Date();
+    for (let i = 0; i < productViews.length; i += PRODUCT_BATCH) {
+      await tx.insert(ga4ProductViewsDailyTable).values(
+        productViews.slice(i, i + PRODUCT_BATCH).map((row) => ({ clientId, ...row, syncedAt })),
+      );
+    }
+  });
+}
+
+// Produtos de cliente B2B ficam so no BigQuery: apaga a copia antiga do banco do painel (chame so DEPOIS de o BigQuery ter gravado: sem
+// ele nao ha segunda copia). Falha aqui nao derruba o job: o dado do GA4 ja foi guardado. Devolve quantas linhas apagou.
+async function pruneProductViewsPostgres(clientId: string): Promise<number> {
+  try {
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(ga4ProductViewsDailyTable)
+      .where(eq(ga4ProductViewsDailyTable.clientId, clientId));
+    if (n > 0) {
+      await db.delete(ga4ProductViewsDailyTable).where(eq(ga4ProductViewsDailyTable.clientId, clientId));
+      return n;
+    }
+  } catch (err) {
+    console.warn("[ga4-daily] nao consegui apagar a copia antiga de produtos do Postgres", { clientId, error: errorMessage(err) });
+  }
+  return 0;
+}
+
+// Pedacos do backfill: a uniao das janelas de todas as tabelas (cada uma tem a sua; o funil pode precisar de 400 dias enquanto o diario so de 3).
+// Um pedaco so (ou nenhum) = caminho normal, sem pedacos.
+export function planGa4Chunks(
+  params: Pick<Ga4SyncParams, "from" | "productFrom" | "trafficFrom" | "productFunnelFrom" | "to" | "bigQuery">,
+  maxDays: number = ga4ChunkDays(),
+): Ga4Window[] {
+  let earliest = earlierDate(params.from, params.productFrom ?? params.from);
+  if (params.bigQuery) {
+    if (params.trafficFrom) earliest = earlierDate(earliest, params.trafficFrom);
+    if (params.productFunnelFrom) earliest = earlierDate(earliest, params.productFunnelFrom);
+  }
+  return splitGa4Window(earliest, params.to, maxDays);
+}
+
+// Backfill em pedacos (do mais antigo ao mais novo). Cada pedaco busca, grava e SOLTA o que buscou antes do proximo: a memoria fica limitada
+// ao tamanho de um pedaco, nao ao de 400 dias. A ordem de gravacao e a mesma do caminho normal, so que no periodo todo: produtos (cada pedaco,
+// falha derruba o job), origem do trafego e funil (cada pedaco, isoladas: a primeira falha para a tabela e o marcador nao anda) e o DIARIO
+// por ultimo, uma vez so, porque ele e o marcador de cobertura (se algo pesado falhar o diario nao e gravado e a proxima rodada refaz).
+async function syncGa4DailyInChunks(params: Ga4SyncParams, chunks: Ga4Window[]): Promise<Ga4SyncResult> {
+  const productFrom = params.productFrom ?? params.from;
+  const trafficFrom = params.bigQuery ? (params.trafficFrom ?? null) : null;
+  const productFunnelFrom = params.bigQuery ? (params.productFunnelFrom ?? null) : null;
+  const storeProducts = params.storeProductViewsInPostgres !== false || !params.bigQuery;
+  const client = {
+    clientId: params.clientId,
+    clientName: params.clientName ?? params.clientId,
+    propertyId: params.propertyId,
+  };
+
+  const fetchedDaily = await fetchGa4DailyMetrics({
+    propertyId: params.propertyId,
+    dateFrom: params.from,
+    dateTo: params.to,
+  });
+  if (fetchedDaily === null) throw new Error(NO_CREDENTIAL_MESSAGE);
+  const filled = fillGa4Days(params.from, params.to, fetchedDaily);
+  const rows = toDailyRows(params.clientId, filled);
+
+  let productViewRows = 0;
+  const written = { productRows: 0, trafficRows: 0, productFunnelRows: 0 };
+  let trafficError: string | null = null;
+  let productFunnelError: string | null = null;
+
+  for (const chunk of chunks) {
+    const productStart = clipGa4Start(productFrom, chunk);
+    let productViews: StoredProductViewKey[] | undefined;
+    if (productStart) {
+      const fetchedProducts = await fetchGa4ProductViewsDaily({
+        propertyId: params.propertyId,
+        dateFrom: productStart,
+        dateTo: chunk.to,
+      });
+      if (fetchedProducts === null) throw new Error("GA4 sem credencial ao buscar visualizacoes de produto.");
+      productViews = toStoredProductViews(fetchedProducts);
+      productViewRows += productViews.length;
+    }
+
+    const trafficStart = trafficError ? null : clipGa4Start(trafficFrom, chunk);
+    let traffic: Ga4TrafficDay[] | undefined;
+    if (trafficStart) {
+      try {
+        const fetchedTraffic = await fetchGa4TrafficDaily({
+          propertyId: params.propertyId,
+          dateFrom: trafficStart,
+          dateTo: chunk.to,
+        });
+        if (fetchedTraffic === null) throw new Error("GA4 sem credencial ao buscar a origem do trafego.");
+        traffic = fetchedTraffic;
+      } catch (err) {
+        trafficError = `busca no GA4: ${errorMessage(err)}`;
+      }
+    }
+
+    const funnelStart = productFunnelError ? null : clipGa4Start(productFunnelFrom, chunk);
+    let productFunnel: Ga4ProductFunnelDay[] | undefined;
+    if (funnelStart) {
+      try {
+        const fetchedFunnel = await fetchGa4ProductFunnelDaily({
+          propertyId: params.propertyId,
+          dateFrom: funnelStart,
+          dateTo: chunk.to,
+        });
+        if (fetchedFunnel === null) throw new Error("GA4 sem credencial ao buscar o funil por produto.");
+        productFunnel = fetchedFunnel;
+      } catch (err) {
+        productFunnelError = `busca no GA4: ${errorMessage(err)}`;
+      }
+    }
+
+    if (storeProducts && productViews && productStart) {
+      try {
+        await replaceProductViewsPostgres(params.clientId, productViews, productStart, chunk.to);
+      } catch (err) {
+        throw new Error(`Postgres: ${errorMessage(err)}`);
+      }
+    }
+
+    if (params.bigQuery && (productViews || traffic || productFunnel)) {
+      let result: Ga4BigQueryWrite;
+      try {
+        result = await writeGa4ToBigQuery(params.bigQuery, {
+          client,
+          to: chunk.to,
+          ...(productViews && productStart ? { productViews, productFrom: productStart } : {}),
+          ...(traffic && trafficStart ? { traffic, trafficFrom: trafficStart } : {}),
+          ...(productFunnel && funnelStart ? { productFunnel, productFunnelFrom: funnelStart } : {}),
+        });
+      } catch (err) {
+        throw new Error(`BigQuery: ${errorMessage(err)}`);
+      }
+      written.productRows += result.productRows;
+      written.trafficRows += result.trafficRows;
+      written.productFunnelRows += result.productFunnelRows;
+      if (result.trafficError && !trafficError) trafficError = `gravacao no BigQuery: ${result.trafficError}`;
+      if (result.productFunnelError && !productFunnelError) productFunnelError = `gravacao no BigQuery: ${result.productFunnelError}`;
+    }
+  }
+
+  // Diario por ultimo, uma vez so (marcador de cobertura).
+  const [postgresDaily, bigQueryDaily] = await Promise.allSettled([
+    upsertGa4DailyPostgres(rows),
+    params.bigQuery
+      ? writeGa4ToBigQuery(params.bigQuery, { client, to: params.to, daily: filled, from: params.from })
+      : Promise.resolve(null),
+  ]);
+  const failures: string[] = [];
+  if (postgresDaily.status === "rejected") failures.push(`Postgres: ${errorMessage(postgresDaily.reason)}`);
+  if (bigQueryDaily.status === "rejected") failures.push(`BigQuery: ${errorMessage(bigQueryDaily.reason)}`);
+  if (failures.length > 0) throw new Error(failures.join(" | "));
+
+  const prunedProductRows =
+    !storeProducts && bigQueryDaily.status === "fulfilled" && bigQueryDaily.value ? await pruneProductViewsPostgres(params.clientId) : 0;
+
+  if (trafficError) {
+    console.warn("[ga4-daily] origem do trafego nao gravada; o resto seguiu e a proxima rodada refaz a janela", {
+      clientId: params.clientId,
+      error: trafficError,
+    });
+  }
+  if (productFunnelError) {
+    console.warn("[ga4-daily] funil por produto nao gravado; o resto seguiu e a proxima rodada refaz a janela", {
+      clientId: params.clientId,
+      error: productFunnelError,
+    });
+  }
+
+  const trafficWritten = Boolean(trafficFrom && !trafficError);
+  const productFunnelWritten = Boolean(productFunnelFrom && !productFunnelError);
+  const dailyWrite = bigQueryDaily.status === "fulfilled" ? bigQueryDaily.value : null;
+  return {
+    from: params.from,
+    to: params.to,
+    productFrom,
+    days: rows.length,
+    sessions: filled.reduce((sum, row) => sum + row.sessions, 0),
+    productViewRows,
+    prunedProductRows,
+    trafficRows: written.trafficRows,
+    trafficFrom: trafficWritten ? trafficFrom : null,
+    trafficTo: trafficWritten ? params.to : null,
+    trafficError,
+    productFunnelRows: written.productFunnelRows,
+    productFunnelFrom: productFunnelWritten ? productFunnelFrom : null,
+    productFunnelTo: productFunnelWritten ? params.to : null,
+    productFunnelError,
+    bigQuery: dailyWrite
+      ? {
+          dailyRows: dailyWrite.dailyRows,
+          productRows: written.productRows,
+          trafficRows: written.trafficRows,
+          ...(trafficError ? { trafficError } : {}),
+          productFunnelRows: written.productFunnelRows,
+          ...(productFunnelError ? { productFunnelError } : {}),
+        }
+      : null,
+  };
+}
+
+// ── Disjuntor e backfill em job proprio ─────────────────────────────────────
+
+// Ultimos jobs ga4_daily (so da rotina: manual nao conta) que terminaram, por cliente, do mais novo para o mais antigo. Alimenta o
+// disjuntor (ver evaluateGa4Breaker): so interessam as ultimas horas.
+export async function recentGa4JobsByClient(
+  clientIds: string[],
+  options: { now?: Date; sinceHours?: number; perClient?: number } = {},
+): Promise<Map<string, Ga4RecentJob[]>> {
+  const result = new Map<string, Ga4RecentJob[]>();
+  if (clientIds.length === 0) return result;
+  const now = options.now ?? new Date();
+  const since = new Date(now.getTime() - (options.sinceHours ?? 48) * 3_600_000);
+  const perClient = options.perClient ?? 8;
+  const rows = await db
+    .select({
+      clientId: syncJobsTable.clientId,
+      status: syncJobsTable.status,
+      error: syncJobsTable.error,
+      createdAt: syncJobsTable.createdAt,
+      finishedAt: syncJobsTable.finishedAt,
+    })
+    .from(syncJobsTable)
+    .where(
+      and(
+        inArray(syncJobsTable.clientId, clientIds),
+        eq(syncJobsTable.jobType, "ga4_daily"),
+        eq(syncJobsTable.trigger, "cron"),
+        inArray(syncJobsTable.status, ["done", "failed"]),
+        gte(syncJobsTable.createdAt, since),
+      ),
+    )
+    .orderBy(desc(syncJobsTable.createdAt));
+  for (const row of rows) {
+    const list = result.get(row.clientId) ?? [];
+    if (list.length >= perClient) continue;
+    list.push({ status: row.status, error: row.error, at: row.finishedAt ?? row.createdAt });
+    result.set(row.clientId, list);
+  }
+  return result;
+}
+
+// Clientes que tem um job ga4_daily "running" RECENTE: outra execucao esta cuidando deles agora (o backfill em job proprio pode se
+// sobrepor a execucao seguinte do agendador). Job "running" mais velho que `staleMinutes` e processo que caiu (falta de memoria, por exemplo)
+// e NAO bloqueia: senao uma queda deixaria o cliente sem backfill por horas.
+export async function clientIdsWithLiveGa4Job(
+  clientIds: string[],
+  options: { now?: Date; staleMinutes?: number } = {},
+): Promise<Set<string>> {
+  if (clientIds.length === 0) return new Set();
+  const now = options.now ?? new Date();
+  const since = new Date(now.getTime() - (options.staleMinutes ?? 120) * 60_000);
+  const rows = await db
+    .selectDistinct({ clientId: syncJobsTable.clientId })
+    .from(syncJobsTable)
+    .where(
+      and(
+        inArray(syncJobsTable.clientId, clientIds),
+        eq(syncJobsTable.jobType, "ga4_daily"),
+        eq(syncJobsTable.status, "running"),
+        gte(syncJobsTable.createdAt, since),
+      ),
+    );
+  return new Set(rows.map((row) => row.clientId));
 }
 
 // Usado pela lista de clientes: soma de sessoes por cliente no periodo, so de

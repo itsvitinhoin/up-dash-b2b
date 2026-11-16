@@ -718,10 +718,12 @@ export async function writeGa4ToBigQuery(
   bq: BigQueryLike,
   params: {
     client: Ga4BqClient;
-    daily: Ga4DailyMetrics[];
-    from: string;
-    productViews: StoredProductViewKey[];
-    productFrom: string;
+    /** Ausente (junto com `from`) = nao grava o diario. O backfill em pedacos grava as tabelas pesadas pedaco a pedaco e o diario so no fim. */
+    daily?: Ga4DailyMetrics[];
+    from?: string;
+    /** Ausente (junto com `productFrom`) = nao grava os produtos. */
+    productViews?: StoredProductViewKey[];
+    productFrom?: string;
     to: string;
     /** Ausente = nao envia a origem do trafego. */
     traffic?: Ga4TrafficDay[];
@@ -733,14 +735,10 @@ export async function writeGa4ToBigQuery(
   },
 ): Promise<Ga4BigQueryWrite> {
   await ensureGa4Tables(bq);
-  const productRows = await replaceGa4ProductViews(
-    bq,
-    params.client,
-    params.productViews,
-    params.productFrom,
-    params.to,
-    params.newId,
-  );
+  const productRows =
+    params.productViews && params.productFrom
+      ? await replaceGa4ProductViews(bq, params.client, params.productViews, params.productFrom, params.to, params.newId)
+      : 0;
   let trafficRows = 0;
   let trafficError: string | undefined;
   if (params.traffic && params.trafficFrom) {
@@ -766,7 +764,7 @@ export async function writeGa4ToBigQuery(
       productFunnelError = err instanceof Error ? err.message : String(err);
     }
   }
-  const dailyRows = await mergeGa4Daily(bq, params.client, params.daily, params.from, params.to);
+  const dailyRows = params.daily && params.from ? await mergeGa4Daily(bq, params.client, params.daily, params.from, params.to) : 0;
   return {
     dailyRows,
     productRows,
