@@ -1931,6 +1931,17 @@ components:
         upZeroApiKey:
           type: ["string", "null"]
           description: UP Zero API key for syncing live orders and customers.
+        erpProvider:
+          type: ["string", "null"]
+          enum: [MIREDATA, MANSE]
+          description: |
+            ERP this client syncs from (independent of commercePlatform). `null` = no
+            ERP configured. Credentials are never returned here.
+        erpDataset:
+          type: ["string", "null"]
+          description: |
+            BigQuery dataset (project up-vesti-report) with this client's *_erp
+            tables, synced by script-vesti-nuvem.
         currency:
           type: string
           description: ISO 4217 currency code, e.g. BRL, USD

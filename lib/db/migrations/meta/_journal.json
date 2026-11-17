@@ -330,6 +330,13 @@
       "when": 1793926800000,
       "tag": "0046_ga4_product_views_daily",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794924132066,
+      "tag": "0047_erp_provider",
+      "breakpoints": true
     }
   ]
 }

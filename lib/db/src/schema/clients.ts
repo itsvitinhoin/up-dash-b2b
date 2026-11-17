@@ -52,6 +52,14 @@ export const clientsTable = pgTable(
     // de `bigqueryDataset`/commercePlatform — um client UpZero (ex: Obzee)
     // pode ter ERP sem ser Vesti.
     erpDataset: text("erp_dataset"),
+    // Qual ERP esse client usa (nenhum = null). A credencial correspondente fica em
+    // `erpCredentialsEncrypted` — nunca em texto puro (ver lib/erp-crypto.ts).
+    erpProvider: text("erp_provider", { enum: ["MIREDATA", "MANSE"] }),
+    // Blob cifrado (AES-256-GCM, formato "iv:authTag:ciphertext") com um JSON cujos
+    // campos variam por `erpProvider`: {apikey} pro Miredata; {token, filial?,
+    // priceField?} pro Manse. Decifrar só na hora de disparar o backfill
+    // (ver routes/clients.ts, POST /clients/:id/erp/backfill).
+    erpCredentialsEncrypted: text("erp_credentials_encrypted"),
     // Abas do menu lateral escondidas manualmente pra esse client (valores
     // = `href` do item, ex: "/erp", "/performance" — ver NAV_ITEM_HREFS em
     // app-layout.tsx). `null`/vazio = mostra tudo (comportamento de antes,

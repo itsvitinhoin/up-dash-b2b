@@ -113,6 +113,17 @@ export const ClientCommercePlatform = {
   BRAAVO: "BRAAVO",
 } as const;
 
+/**
+ * ERP this client syncs from (independent of commercePlatform). `null` = no ERP configured. Credentials are never returned here.
+ */
+export type ClientErpProvider =
+  (typeof ClientErpProvider)[keyof typeof ClientErpProvider];
+
+export const ClientErpProvider = {
+  MIREDATA: "MIREDATA",
+  MANSE: "MANSE",
+} as const;
+
 export interface Client {
   id: string;
   name: string;
@@ -199,6 +210,16 @@ export interface Client {
    * @nullable
    */
   upZeroApiKey?: string | null;
+  /**
+   * ERP this client syncs from (independent of commercePlatform). `null` = no ERP configured. Credentials are never returned here.
+   * @nullable
+   */
+  erpProvider?: ClientErpProvider | null;
+  /**
+   * BigQuery dataset (project up-vesti-report) with this client's *_erp tables, synced by script-vesti-nuvem.
+   * @nullable
+   */
+  erpDataset?: string | null;
   /** ISO 4217 currency code, e.g. BRL, USD */
   currency: string;
   /** BCP 47 locale, e.g. pt-BR, en-US */
