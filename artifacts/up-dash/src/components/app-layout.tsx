@@ -823,7 +823,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const meta = (architecture && inheritedMeta
     ? {
         ...inheritedMeta,
-        title: architecture.title,
+        title: selectedDashboardMode === "B2C" && architecture.title === "Cadastros" ? "Clientes" : architecture.title,
         ...(architecture.page === "monthly-history"
           ? { hasDateRange: false, subtitle: "Métricas consolidadas por mês" }
           : {}),
@@ -894,7 +894,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     "/utm": "nav.utm",
   };
   const titleText =
-    (architecture ? tx(architecture.title) : undefined) ??
+    (architecture ? tx(selectedDashboardMode === "B2C" && architecture.title === "Cadastros" ? "Clientes" : architecture.title) : undefined) ??
     (pageTranslationKey
       ? t(`page.${pageTranslationKey}.title`, tx(meta.title))
       : navTitleKeys[location]
@@ -1029,7 +1029,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           icon: UserRoundCheck,
         },
         { name: "Recompra", href: "/performance/recompra", icon: RefreshCw },
-        { name: "Cadastros", href: "/performance/cadastros", icon: Users },
+        { name: selectedDashboardMode === "B2C" ? "Clientes" : "Cadastros", href: "/performance/cadastros", icon: Users },
         { name: "Anúncios", href: "/performance/anuncios", icon: Megaphone },
         {
           name: "Jornada & Atribuição",
@@ -1045,7 +1045,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       children: [
         { name: "Visão Geral", href: "/ecommerce", icon: LayoutDashboard },
         { name: "Pedidos", href: "/ecommerce/pedidos", icon: ReceiptText },
-        { name: "Cadastros", href: "/ecommerce/cadastros", icon: Users },
+        { name: selectedDashboardMode === "B2C" ? "Clientes" : "Cadastros", href: "/ecommerce/cadastros", icon: Users },
         { name: "Produtos", href: "/ecommerce/produtos", icon: Package },
         { name: "Estoque", href: "/ecommerce/estoque", icon: PackageSearch },
         { name: "Vendedores", href: "/ecommerce/vendedores", icon: Users },

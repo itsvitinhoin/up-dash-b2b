@@ -60,6 +60,7 @@ interface MetaInsightRow {
   status?: string;
   spend?: string;
   impressions?: string;
+  region?: string;
   reach?: string;
   frequency?: string;
   clicks?: string;
@@ -205,6 +206,7 @@ export interface MetaMarketingData {
   ads: MetaAdMetric[];
   campaigns: MetaAdMetric[];
   topCreatives: MetaTopCreatives;
+  stateBreakdown?: Array<{ state: string; leads: number; attributedRevenue: number; roas: number }>;
   summary: {
     spend: number;
     impressions: number;
@@ -702,4 +704,31 @@ export async function upsertMetaCreatives(clientId: string, ads: MetaAdMetric[])
       .set({ status: "INACTIVE", updatedAt: new Date() })
       .where(and(eq(creativesTable.clientId, clientId), eq(creativesTable.platform, "META")));
   }
+}
+
+/** Period-only non-additive metrics and region reporting, cached independently of creative media. */
+const periodBreakdowns = new Map<string, { expiresAt: number; promise: Promise<{ reach: number | null; frequency: number | null; states: NonNullable<MetaMarketingData["stateBreakdown"]> }> }>();
+export async function fetchMetaPeriodBreakdowns(params: { accessToken: string; adAccountId: string; since: string; until: string }) {
+  const key = JSON.stringify([normalizeMetaAdAccountId(params.adAccountId), createHash("sha256").update(params.accessToken).digest("hex"), params.since, params.until]);
+  const cached = periodBreakdowns.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  const promise = (async () => {
+    const common = { level: "account", time_range: JSON.stringify({ since: params.since, until: params.until }), limit: "500" };
+    const [totals, regions] = await Promise.all([
+      fetchInsights(params.accessToken, params.adAccountId, { ...common, fields: "reach,frequency" }),
+      fetchInsights(params.accessToken, params.adAccountId, { ...common, fields: "spend,actions,action_values", breakdowns: "region" }),
+    ]);
+    return {
+      reach: totals[0]?.reach == null ? null : numberValue(totals[0].reach),
+      frequency: totals[0]?.frequency == null ? null : numberValue(totals[0].frequency),
+      states: regions.filter(row => row.region).map(row => {
+        const revenue = actionValue(row.action_values, "purchase");
+        const spend = numberValue(row.spend);
+        return { state: row.region!, leads: actionValue(row.actions, "purchase"), attributedRevenue: revenue, roas: spend > 0 ? revenue / spend : 0 };
+      }).sort((a, b) => b.roas - a.roas),
+    };
+  })();
+  if (periodBreakdowns.size >= 250) periodBreakdowns.delete(periodBreakdowns.keys().next().value!);
+  periodBreakdowns.set(key, { expiresAt: Date.now() + 300_000, promise });
+  try { return await promise; } catch (err) { periodBreakdowns.delete(key); throw err; }
 }

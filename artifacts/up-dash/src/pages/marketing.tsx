@@ -240,8 +240,8 @@ function PlatformRow({ platform, spend, roas, leads, clicks, maxSpend, isB2C = f
 }
 
 // ── State row ─────────────────────────────────────────────────────────────────
-function StateRow({ state, leads, attributedRevenue, roas, maxLeads }: {
-  state: string; leads: number; attributedRevenue: number; roas: number; maxLeads: number;
+function StateRow({ state, leads, attributedRevenue, roas, maxLeads, isB2C = false }: {
+  isB2C?: boolean; state: string; leads: number; attributedRevenue: number; roas: number; maxLeads: number;
 }) {
   const pct = maxLeads > 0 ? (leads / maxLeads) * 100 : 0;
   return (
@@ -252,7 +252,7 @@ function StateRow({ state, leads, attributedRevenue, roas, maxLeads }: {
           <span className="font-medium">{state}</span>
         </div>
         <div className="up-channel-summary text-muted-foreground text-xs tabular-nums">
-          <span>{formatNumber(leads)} leads</span>
+          <span>{formatNumber(leads)} {isB2C ? "compras" : "leads"}</span>
           <span>{formatCurrency(attributedRevenue)}</span>
           <span>ROAS {roas.toFixed(2)}×</span>
         </div>
@@ -657,8 +657,8 @@ export default function MarketingPage() {
   const maxPlatformSpend = platformRows[0]?.spend ?? 0;
 
   // ── State breakdown ───────────────────────────────────────────────────────
-  const stateRows = data?.stateBreakdown ?? [];
-  const maxStateLeads = stateRows[0]?.leads ?? 0;
+  const stateRows = [...(data?.stateBreakdown ?? [])].sort((a, b) => b.roas - a.roas);
+  const maxStateLeads = Math.max(0, ...stateRows.map(row => row.leads));
 
   // ── Sorted campaigns ──────────────────────────────────────────────────────
   const sortedCreatives = useMemo(() => {
@@ -1089,7 +1089,7 @@ export default function MarketingPage() {
             ) : (
               <div className="space-y-5">
                 {stateRows.map((row) => (
-                  <StateRow key={row.state} state={row.state} leads={row.leads} attributedRevenue={row.attributedRevenue} roas={row.roas} maxLeads={maxStateLeads} />
+                  <StateRow key={row.state} state={row.state} leads={row.leads} attributedRevenue={row.attributedRevenue} roas={row.roas} maxLeads={maxStateLeads} isB2C={isB2C} />
                 ))}
               </div>
             )}

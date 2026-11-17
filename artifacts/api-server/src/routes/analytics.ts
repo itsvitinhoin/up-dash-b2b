@@ -1,3 +1,4 @@
+import { normalizedVariantAttrs } from "../services/variant-attributes";
 import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
 import { braavoProductGroup } from "../services/braavo-normalize";
 import { Router, type IRouter } from "express";
@@ -622,33 +623,6 @@ async function enrichRowsWithProductImages(
       : null);
     return matchedProduct || productImageUrl ? { ...row, product, product_image_url: productImageUrl } : row;
   });
-}
-
-const SIZE_VALUE_RE = /^(PP|P|M|G|GG|XG|XGG|EXG|EG|XP|XS|S|L|XL|XXL|XXXL|U|UNICO|ONE SIZE|[0-9]{1,3})$/i;
-
-function normalizeVariantValue(value: string | null | undefined): string {
-  return (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toUpperCase();
-}
-
-function looksLikeSizeValue(value: string | null | undefined): boolean {
-  const normalized = normalizeVariantValue(value);
-  return normalized.length > 0 && SIZE_VALUE_RE.test(normalized);
-}
-
-function normalizedVariantAttrs(row: { color: string | null; size: string | null }): { color: string | null; size: string | null } {
-  const color = row.color?.trim() || null;
-  const size = row.size?.trim() || null;
-  const colorIsSize = looksLikeSizeValue(color);
-  const sizeIsSize = looksLikeSizeValue(size);
-
-  return {
-    color: colorIsSize && size && !sizeIsSize ? size : color,
-    size: size && !sizeIsSize && color && colorIsSize ? color : size,
-  };
 }
 
 type DashboardKpis = {
@@ -11421,7 +11395,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     Promise.resolve(
       metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend })),
     ),
-    metaRevenue ? Promise.resolve([]) : buildStateBreakdown(clientId, from, to, totalProratedSpend),
+    isB2CClient ? Promise.resolve(metaCurrent.stateBreakdown ?? []) : metaRevenue ? Promise.resolve([]) : buildStateBreakdown(clientId, from, to, totalProratedSpend),
   ]);
 
   const topCreatives = metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] };

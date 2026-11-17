@@ -359,7 +359,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                       delay={0.19}
                       reduced={reduced}
                     />
-                    <MiniStat
+                    {selectedDashboardMode !== "B2C" && (                    <MiniStat
                       icon={Zap}
                       label={tx("Média de eventos antes da compra")}
                       value={data.avgEventsBeforePurchase ?? 0}
@@ -367,7 +367,7 @@ export default function FunnelPage({ organization }: { organization?: "acquisiti
                       color="hsl(var(--chart-4))"
                       delay={0.26}
                       reduced={reduced}
-                    />
+                    />)}
                   </div>
 </MetricDataProvider>
               </CardContent>

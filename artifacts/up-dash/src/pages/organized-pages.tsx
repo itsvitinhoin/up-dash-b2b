@@ -1,3 +1,4 @@
+import { useAuth } from "@/lib/auth";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { BarChart3 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
@@ -31,15 +32,36 @@ import { ErpGeographyView } from "@/pages/erp";
 import type { ArchitecturePage } from "@/lib/dashboard-architecture";
 
 // Cada página pede só as fontes que usa (ver useOrganizationData).
-const ACQUISITION_SOURCES = ["dashboard", "marketing", "performance", "customers", "funnel", "recompra"] as const;
+const ACQUISITION_SOURCES = [
+  "dashboard",
+  "marketing",
+  "performance",
+  "customers",
+  "funnel",
+  "recompra",
+] as const;
 const ACQUISITION_PREVIOUS = ["performance", "funnel", "recompra"] as const;
-const FUNNEL_SOURCES = ["dashboard", "marketing", "customers", "funnel", "performance"] as const;
-const FUNNEL_PREVIOUS = ["dashboard", "marketing", "funnel", "performance"] as const;
+const FUNNEL_SOURCES = [
+  "dashboard",
+  "marketing",
+  "customers",
+  "funnel",
+  "performance",
+] as const;
+const FUNNEL_PREVIOUS = [
+  "dashboard",
+  "marketing",
+  "funnel",
+  "performance",
+] as const;
 const ADS_SOURCES = ["marketing", "performance"] as const;
 
 function AcquisitionPage() {
   const { tx } = useI18n();
-  const { pick } = useOrganizationData(ACQUISITION_SOURCES, ACQUISITION_PREVIOUS);
+  const { pick } = useOrganizationData(
+    ACQUISITION_SOURCES,
+    ACQUISITION_PREVIOUS,
+  );
   return (
     <div className="space-y-6" data-testid="acquisition-page">
       <MetricSection title={tx("AQUISIÇÃO")} columns={4}>
@@ -82,7 +104,9 @@ function AcquisitionPage() {
               <EmptyState
                 icon={BarChart3}
                 title={tx("Análise indisponível")}
-                description={tx("Os dados desta análise ainda não estão disponíveis nesta fonte.")}
+                description={tx(
+                  "Os dados desta análise ainda não estão disponíveis nesta fonte.",
+                )}
               />
             </CardContent>
           </Card>
@@ -98,57 +122,115 @@ function AcquisitionPage() {
   );
 }
 /** Etapas do funil cujo número vem do banco: zero ali é real. Nas demais, zero pessoas = sem rastreamento ("—"). */
-const DATABASE_FUNNEL_STEPS = new Set(["REGISTRATION", "APPROVED_REGISTRATION", "PURCHASE"]);
+const DATABASE_FUNNEL_STEPS = new Set([
+  "REGISTRATION",
+  "APPROVED_REGISTRATION",
+  "PURCHASE",
+]);
 
 function PerformanceFunnelPage() {
+  const { selectedDashboardMode } = useAuth();
+  const isB2C = selectedDashboardMode === "B2C";
   const { tx, language } = useI18n();
-  const { pick, measures, funnel, previousFunnel, dashboard, previousDashboard } = useOrganizationData(FUNNEL_SOURCES, FUNNEL_PREVIOUS);
+  const {
+    pick,
+    measures,
+    funnel,
+    previousFunnel,
+    dashboard,
+    previousDashboard,
+  } = useOrganizationData(FUNNEL_SOURCES, FUNNEL_PREVIOUS);
   const insights = usePurchaseInsights();
-  const numberLocale = language === "ko" ? "ko-KR" : language === "en" ? "en-US" : "pt-BR";
-  const pct = (value: number, digits: number) => value.toLocaleString(numberLocale, { maximumFractionDigits: digits });
+  const numberLocale =
+    language === "ko" ? "ko-KR" : language === "en" ? "en-US" : "pt-BR";
+  const pct = (value: number, digits: number) =>
+    value.toLocaleString(numberLocale, { maximumFractionDigits: digits });
   const acquisitionLeads = measures.registrations.value;
   const acquisitionApproved = measures.approved.value;
   const steps = funnel.data?.steps ?? [];
-  const trackedOnly = Boolean((funnel.data as { dataSource?: string } | undefined)?.dataSource);
+  const trackedOnly = Boolean(
+    (funnel.data as { dataSource?: string } | undefined)?.dataSource,
+  );
   const noData = (step: { step: string; count: number } | undefined) =>
-    Boolean(step && trackedOnly && step.count === 0 && !DATABASE_FUNNEL_STEPS.has(step.step));
+    Boolean(
+      step &&
+      trackedOnly &&
+      step.count === 0 &&
+      !DATABASE_FUNNEL_STEPS.has(step.step),
+    );
   const count = (...keys: string[]) => {
     const step = steps.find((item) => keys.includes(item.step));
     return noData(step) ? undefined : step?.count;
   };
   const previousCount = (...keys: string[]) => {
-    const step = previousFunnel.data?.steps.find((item) => keys.includes(item.step));
+    const step = previousFunnel.data?.steps.find((item) =>
+      keys.includes(item.step),
+    );
     return noData(step) ? undefined : step?.count;
   };
   // Sessões do Dashboard só valem quando existe fonte de tráfego (GA4/eventos); com fonte "none" o 0 é falta de dado.
-  const trafficSessions = dashboard.data?.traffic && dashboard.data.traffic.source !== "none" ? dashboard.data.traffic.sessions : null;
+  const trafficSessions =
+    dashboard.data?.traffic && dashboard.data.traffic.source !== "none"
+      ? dashboard.data.traffic.sessions
+      : null;
+  const conversionConnector = (from: number | null | undefined, to: number | null | undefined) =>
+    from != null && from > 0 && to != null
+      ? `${pct(to / from * 100, 2)}% ${tx("avançaram")}`
+      : tx("Sem taxa disponível");
   const stages = [
-    { label: tx("Impressões"), value: measures.impressions.value, previous: measures.impressions.previousValue },
-    { label: tx("Alcance"), value: measures.reach.value, previous: measures.reach.previousValue },
+    {
+      label: tx("Impressões"),
+      value: measures.impressions.value,
+      previous: measures.impressions.previousValue,
+    },
+    {
+      label: tx("Alcance"),
+      value: measures.reach.value,
+      previous: measures.reach.previousValue,
+    },
     { label: tx("Cliques no Link"), value: null, previous: undefined },
     {
       label: tx("Visitas / Sessões"),
       value: trafficSessions ?? count("VISIT", "SESSIONS"),
-      previous: trafficSessions != null ? previousDashboard.data?.traffic?.sessions : previousCount("VISIT", "SESSIONS"),
+      previous:
+        trafficSessions != null
+          ? previousDashboard.data?.traffic?.sessions
+          : previousCount("VISIT", "SESSIONS"),
     },
-    { label: tx("Cadastros"), previous: previousCount("REGISTRATION"), value: count("REGISTRATION") },
+    {
+      label: tx("Cadastros"),
+      previous: previousCount("REGISTRATION"),
+      value: count("REGISTRATION"),
+    },
     {
       label: tx("Cadastros Aprovados"),
-      previous: previousCount("APPROVED_REGISTRATION", "APPROVAL"), value: count("APPROVED_REGISTRATION", "APPROVAL"),
+      previous: previousCount("APPROVED_REGISTRATION", "APPROVAL"),
+      value: count("APPROVED_REGISTRATION", "APPROVAL"),
     },
-    { label: tx("Adições ao Carrinho"), previous: previousCount("ADD_TO_CART"), value: count("ADD_TO_CART") },
+    {
+      label: tx("Adições ao Carrinho"),
+      previous: previousCount("ADD_TO_CART"),
+      value: count("ADD_TO_CART"),
+    },
     {
       label: tx("Checkout"),
-      previous: previousCount("CHECKOUT_STARTED", "CHECKOUT", "ORDER_SUBMITTED"), value: count("CHECKOUT_STARTED", "CHECKOUT", "ORDER_SUBMITTED"),
+      previous: previousCount(
+        "CHECKOUT_STARTED",
+        "CHECKOUT",
+        "ORDER_SUBMITTED",
+      ),
+      value: count("CHECKOUT_STARTED", "CHECKOUT", "ORDER_SUBMITTED"),
     },
     {
       label: tx("Faturamento Solicitado"),
-      value: measures.requestedRevenue.value, previous: measures.requestedRevenue.previousValue,
+      value: measures.requestedRevenue.value,
+      previous: measures.requestedRevenue.previousValue,
       currency: true,
     },
     {
       label: tx("Faturamento Pago"),
-      value: measures.paidRevenue.value, previous: measures.paidRevenue.previousValue,
+      value: measures.paidRevenue.value,
+      previous: measures.paidRevenue.previousValue,
       currency: true,
     },
   ];
@@ -167,40 +249,163 @@ function PerformanceFunnelPage() {
     <div className="space-y-6" data-testid="performance-funnel-page">
       <MetricSection title={tx("RESULTADO DO FUNIL")} columns={4}>
         <Metrics
-          metrics={pick(
-            "spend",
-            "requestedRoas",
-            "paidRoas",
-            "approvedConversion",
-          )}
+          metrics={
+            isB2C
+              ? pick("spend", "requestedRevenue", "paidRevenue", "merPaid")
+              : pick("spend", "requestedRoas", "paidRoas", "approvedConversion")
+          }
         />
       </MetricSection>
-      <AcquisitionFunnel description={tx("Visão geral do período, em todas as origens. Recorrentes contam apenas os clientes novos do período; as taxas comparam os totais de cada etapa.")} stages={[
-        { label: tx("Investimento"), value: measures.spend.value, currency: true, connector: acquisitionLeads && measures.spend.value != null ? tx("{v} por lead").replace("{v}", formatCurrency(measures.spend.value / acquisitionLeads)) : tx("Sem custo por lead disponível") },
-        { label: tx("Leads"), value: acquisitionLeads, connector: acquisitionLeads && acquisitionApproved != null ? tx("{v}% aprovados").replace("{v}", pct(acquisitionApproved / acquisitionLeads * 100, 1)) : tx("Sem taxa de aprovação disponível") },
-        { label: tx("Leads aprovados"), value: acquisitionApproved, connector: acquisitionApproved && insights.data?.baseEvolution ? tx("{v}% novos / aprovados").replace("{v}", pct(insights.data.baseEvolution[0].customers / acquisitionApproved * 100, 2)) : tx("Sem taxa de primeiro pedido disponível") },
-        { label: tx("Clientes novos"), value: insights.data?.baseEvolution?.[0]?.customers, connector: insights.data?.baseEvolution?.[1]?.continuationPct == null ? tx("Sem taxa de recompra disponível") : tx("{v}% voltaram a comprar").replace("{v}", pct(insights.data.baseEvolution[1].continuationPct, 1)) },
-        { label: tx("Clientes recorrentes"), value: insights.data?.baseEvolution?.[1]?.customers },
-      ]} />
-      <Card><CardHeader><CardTitle>{tx("Etapas operacionais")}</CardTitle></CardHeader><CardContent>
+      <AcquisitionFunnel
+        description={isB2C ? tx("Aquisição no e-commerce: investimento, sessões, carrinho, checkout e compras no período.") : tx("Visão geral do período, em todas as origens. Recorrentes contam apenas os clientes novos do período; as taxas comparam os totais de cada etapa.")}
+        stages={
+          isB2C
+            ? [
+                {
+                  label: tx("Investimento"),
+                  value: measures.spend.value,
+                  currency: true,
+                  connector: measures.spend.value != null && trafficSessions != null && trafficSessions > 0
+                    ? `${formatCurrency(measures.spend.value / trafficSessions)} ${tx("por sessão")}`
+                    : tx("Sem custo por sessão disponível"),
+                },
+                {
+                  label: tx("Sessões"),
+                  value: trafficSessions ?? count("VISIT", "SESSIONS"),
+                  connector: conversionConnector(trafficSessions ?? count("VISIT", "SESSIONS"), count("ADD_TO_CART")),
+                },
+                {
+                  label: tx("Adições ao Carrinho"),
+                  value: count("ADD_TO_CART"),
+                  connector: conversionConnector(count("ADD_TO_CART"), count("CHECKOUT_STARTED", "CHECKOUT", "ORDER_SUBMITTED")),
+                },
+                {
+                  label: tx("Checkouts iniciados"),
+                  value: count(
+                    "CHECKOUT_STARTED",
+                    "CHECKOUT",
+                    "ORDER_SUBMITTED",
+                  ),
+                  connector: conversionConnector(count("CHECKOUT_STARTED", "CHECKOUT", "ORDER_SUBMITTED"), count("PURCHASE")),
+                },
+                { label: tx("Compras"), value: count("PURCHASE") },
+              ]
+            : [
+                {
+                  label: tx("Investimento"),
+                  value: measures.spend.value,
+                  currency: true,
+                  connector:
+                    acquisitionLeads && measures.spend.value != null
+                      ? tx("{v} por lead").replace(
+                          "{v}",
+                          formatCurrency(
+                            measures.spend.value / acquisitionLeads,
+                          ),
+                        )
+                      : tx("Sem custo por lead disponível"),
+                },
+                {
+                  label: tx("Leads"),
+                  value: acquisitionLeads,
+                  connector:
+                    acquisitionLeads && acquisitionApproved != null
+                      ? tx("{v}% aprovados").replace(
+                          "{v}",
+                          pct(
+                            (acquisitionApproved / acquisitionLeads) * 100,
+                            1,
+                          ),
+                        )
+                      : tx("Sem taxa de aprovação disponível"),
+                },
+                {
+                  label: tx("Leads aprovados"),
+                  value: acquisitionApproved,
+                  connector:
+                    acquisitionApproved && insights.data?.baseEvolution
+                      ? tx("{v}% novos / aprovados").replace(
+                          "{v}",
+                          pct(
+                            (insights.data.baseEvolution[0].customers /
+                              acquisitionApproved) *
+                              100,
+                            2,
+                          ),
+                        )
+                      : tx("Sem taxa de primeiro pedido disponível"),
+                },
+                {
+                  label: tx("Clientes novos"),
+                  value: insights.data?.baseEvolution?.[0]?.customers,
+                  connector:
+                    insights.data?.baseEvolution?.[1]?.continuationPct == null
+                      ? tx("Sem taxa de recompra disponível")
+                      : tx("{v}% voltaram a comprar").replace(
+                          "{v}",
+                          pct(
+                            insights.data.baseEvolution[1].continuationPct,
+                            1,
+                          ),
+                        ),
+                },
+                {
+                  label: tx("Clientes recorrentes"),
+                  value: insights.data?.baseEvolution?.[1]?.customers,
+                },
+              ]
+        }
+      />
+      <Card>
+        <CardHeader>
+          <CardTitle>{tx("Etapas operacionais")}</CardTitle>
+        </CardHeader>
+        <CardContent>
           <div className="up-funnel-stages">
             {stages.map((stage, index) => {
+              if (isB2C && [1, 4, 5].includes(index)) return null;
               const indicator = measures[indicators[index]];
-              return <GlassMetricCard key={stage.label} label={stage.label}
-                value={stage.value == null ? "—" : stage.currency ? formatCurrency(stage.value) : formatNumber(stage.value)}
-                comparisonValue={stage.value ?? null}
-                previousValue={stage.previous}
-                format={stage.currency ? formatCurrency : formatNumber} source={index < 3 ? "Meta Ads" : tx("Ecommerce · funil")}
-                testId={`performance-stage-${index}`}
-                footer={indicator ? <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span className="text-muted-foreground">{indicator.label}</span>
-                  <span className="font-medium tabular-nums">{indicator.value == null ? "—" : indicator.format === "currency" ? formatCurrency(indicator.value) : `${indicator.value.toFixed(1)}%`}</span>
-                </div> : undefined} />;
+              return (
+                <GlassMetricCard
+                  key={stage.label}
+                  label={isB2C && index === 8 ? tx("Faturamento") : stage.label}
+                  value={
+                    stage.value == null
+                      ? "—"
+                      : stage.currency
+                        ? formatCurrency(stage.value)
+                        : formatNumber(stage.value)
+                  }
+                  comparisonValue={stage.value ?? null}
+                  previousValue={stage.previous}
+                  format={stage.currency ? formatCurrency : formatNumber}
+                  source={index < 3 ? "Meta Ads" : tx("Ecommerce · funil")}
+                  testId={`performance-stage-${index}`}
+                  footer={
+                    indicator ? (
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="text-muted-foreground">
+                          {indicator.label}
+                        </span>
+                        <span className="font-medium tabular-nums">
+                          {indicator.value == null
+                            ? "—"
+                            : indicator.format === "currency"
+                              ? formatCurrency(indicator.value)
+                              : `${indicator.value.toFixed(1)}%`}
+                        </span>
+                      </div>
+                    ) : undefined
+                  }
+                />
+              );
             })}
           </div>
         </CardContent>
       </Card>
-      <OrganizationHeading>{tx("Funil e diagnósticos existentes")}</OrganizationHeading>
+      <OrganizationHeading>
+        {tx("Funil e diagnósticos existentes")}
+      </OrganizationHeading>
       <LazySection>
         <FunnelPage />
       </LazySection>
@@ -245,7 +450,9 @@ function AttributionPage() {
   const { tx } = useI18n();
   return (
     <div className="space-y-6" data-testid="attribution-page">
-      <OrganizationHeading>{tx("JORNADA · Eventos e Touchpoints")}</OrganizationHeading>
+      <OrganizationHeading>
+        {tx("JORNADA · Eventos e Touchpoints")}
+      </OrganizationHeading>
       <JourneyPage />
       <OrganizationHeading>
         {tx("UTMs · Campanhas · Ad Sets · Ads")}

@@ -27,6 +27,7 @@ export type StoredMarketingParams = {
   until: string;
   /** Lista de anúncios (para gravar na tabela `creatives`) e os melhores criativos com miniatura. Só quem usa pede. */
   includeAds?: boolean;
+  isB2C?: boolean;
 };
 
 function dailyPoint(day: { date: string; spend: number; impressions: number; clicks: number; leads: number; purchases: number; purchaseValue: number }): MetaDailyPoint {
@@ -67,7 +68,7 @@ export async function fetchStoredMarketingData(params: StoredMarketingParams): P
   const account = storedAccountId(params.adAccountId);
   if (!account) return emptyMetaMarketingData();
   const { since, until } = params;
-  const key = `stored-marketing:${account}:${since}:${until}:${params.includeAds ? "ads" : "base"}`;
+  const key = `stored-marketing:${account}:${since}:${until}:${params.includeAds ? "ads" : "base"}:${params.isB2C ? "purchases" : "leads"}`;
   try {
     return await cached(key, STORED_CACHE_TTL_MS, async () => {
       const [days, campaigns, ads] = await Promise.all([
@@ -81,7 +82,7 @@ export async function fetchStoredMarketingData(params: StoredMarketingParams): P
         daily,
         ads: adMetrics,
         campaigns: campaigns.map((campaign) => toMetaAdMetric(campaign, since, until)),
-        topCreatives: params.includeAds ? topCreativesFromStored(ads) : { ctr: [], cpl: [], leads: [] },
+        topCreatives: params.includeAds ? topCreativesFromStored(ads, params.isB2C) : { ctr: [], cpl: [], leads: [] },
         summary: summarize(daily),
       };
     });

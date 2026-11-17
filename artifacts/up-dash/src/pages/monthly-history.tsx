@@ -40,9 +40,48 @@ import { queryOpts } from "@/lib/query-opts";
 
 // Abreviacoes por idioma (nao usam tx: chaves como "Mar" ou "Set" colidiriam com outros textos).
 const MONTHS_BY_LANGUAGE = {
-  pt: ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"],
-  en: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
-  ko: ["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"],
+  pt: [
+    "Jan",
+    "Fev",
+    "Mar",
+    "Abr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Ago",
+    "Set",
+    "Out",
+    "Nov",
+    "Dez",
+  ],
+  en: [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ],
+  ko: [
+    "1월",
+    "2월",
+    "3월",
+    "4월",
+    "5월",
+    "6월",
+    "7월",
+    "8월",
+    "9월",
+    "10월",
+    "11월",
+    "12월",
+  ],
 } as const;
 type Row = {
   label: string;
@@ -52,7 +91,33 @@ type Row = {
 export default function MonthlyHistoryPage() {
   const { tx, language } = useI18n();
   const months = MONTHS_BY_LANGUAGE[language] ?? MONTHS_BY_LANGUAGE.pt;
-  const { user, selectedClientId } = useAuth();
+  const { user, selectedClientId, selectedDashboardMode } = useAuth();
+  const isB2C = selectedDashboardMode === "B2C";
+  const [hiddenMetrics, setHiddenMetrics] = useState<string[]>(() => {
+    try {
+      const value: unknown = JSON.parse(
+        localStorage.getItem("monthly-history-hidden-metrics") ?? "[]",
+      );
+      return Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  const toggleMetric = (label: string) =>
+    setHiddenMetrics((previous) => {
+      const next = previous.includes(label)
+        ? previous.filter((item) => item !== label)
+        : [...previous, label];
+      try {
+        localStorage.setItem(
+          "monthly-history-hidden-metrics",
+          JSON.stringify(next),
+        );
+      } catch {}
+      return next;
+    });
   const { dateRange, filters } = useDashboardFilters();
   const [year, setYear] = useState(() => dateRange.to.getFullYear());
   const clientId =
@@ -99,7 +164,7 @@ export default function MonthlyHistoryPage() {
     queries: periods.map((period, index) => {
       const params = period;
       return {
-        ...queryOpts({ enabled: canRead(index) }),
+        ...queryOpts({ enabled: canRead(index) && !isB2C }),
         queryKey: getGetCustomerSummaryQueryKey(params),
         queryFn: ({ signal }: { signal: AbortSignal }) =>
           getCustomerSummary(params, { signal }),
@@ -113,10 +178,12 @@ export default function MonthlyHistoryPage() {
         {
           label: "Faturamento Pago",
           format: "currency",
-          values: sales.map((q) => q.data?.kpis.revenue),
+          values: sales.map(
+            (q) => q.data?.kpis.paidRevenue ?? q.data?.kpis.revenue,
+          ),
         },
         {
-          label: "Faturamento Solicitado",
+          label: isB2C ? "Faturamento" : "Faturamento Solicitado",
           format: "currency",
           values: sales.map((q) => q.data?.kpis.requestedRevenue),
         },
@@ -153,8 +220,25 @@ export default function MonthlyHistoryPage() {
         {
           label: "ROAS",
           format: "ratio",
-          values: media.map((q) => q.data?.kpis.roas),
+          values: media.map((q) =>
+            isB2C ? q.data?.metaSummary?.roas : q.data?.kpis.roas,
+          ),
         },
+        ...(isB2C
+          ? [
+              {
+                label: "MER pago",
+                format: "ratio" as const,
+                values: sales.map((q, index) => {
+                  const paid = q.data?.kpis.paidRevenue ?? q.data?.kpis.revenue;
+                  const spend = media[index].data?.kpis.totalSpend;
+                  return paid != null && spend != null && spend > 0
+                    ? paid / spend
+                    : null;
+                }),
+              },
+            ]
+          : []),
       ],
     },
     {
@@ -196,6 +280,15 @@ export default function MonthlyHistoryPage() {
       ],
     },
   ];
+  const availableGroups = groups.filter(
+    (group) => !isB2C || group.title !== "Cadastros",
+  );
+  const visibleGroups = availableGroups
+    .map((group) => ({
+      ...group,
+      rows: group.rows.filter((row) => !hiddenMetrics.includes(row.label)),
+    }))
+    .filter((group) => group.rows.length > 0);
   const allQueries = [...sales, ...media, ...registrations];
   const cell = (row: Row, index: number) => {
     const value = row.values[index];
@@ -212,7 +305,7 @@ export default function MonthlyHistoryPage() {
   const exportTable = () =>
     exportRowsAsCsv(
       `historico-mensal-${year}.csv`,
-      groups.flatMap((group) =>
+      visibleGroups.flatMap((group) =>
         group.rows.map((row) => ({ group: tx(group.title), row })),
       ),
       [
@@ -236,7 +329,10 @@ export default function MonthlyHistoryPage() {
             value={String(year)}
             onValueChange={(value) => setYear(Number(value))}
           >
-            <SelectTrigger className="w-[100px]" aria-label={tx("Ano do histórico")}>
+            <SelectTrigger
+              className="w-[100px]"
+              aria-label={tx("Ano do histórico")}
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -273,6 +369,34 @@ export default function MonthlyHistoryPage() {
         </div>
       </CardHeader>
       <CardContent className="overflow-x-auto">
+        <details className="mb-4 rounded-md border p-3">
+          <summary className="cursor-pointer font-medium">
+            {tx("Selecionar métricas")}
+          </summary>
+          <div className="mt-3 flex flex-wrap gap-3">
+            {availableGroups
+              .flatMap((group) => group.rows)
+              .map((row) => (
+                <label
+                  key={row.label}
+                  className="flex items-center gap-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={!hiddenMetrics.includes(row.label)}
+                    onChange={() => toggleMetric(row.label)}
+                  />
+                  {tx(row.label)}
+                </label>
+              ))}
+          </div>
+        </details>
+        {visibleGroups.length === 0 && (
+          <p className="py-4 text-muted-foreground">
+            {tx("Selecione ao menos uma métrica para visualizar o histórico.")}
+          </p>
+        )}
+
         <Table>
           <TableHeader>
             <TableRow>
@@ -285,7 +409,7 @@ export default function MonthlyHistoryPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {groups.map((group) => (
+            {visibleGroups.map((group) => (
               <Fragment key={group.title}>
                 <TableRow className="bg-muted/30">
                   <TableCell colSpan={13} className="font-semibold">

@@ -1,3 +1,4 @@
+import { normalizedVariantAttrs } from "./variant-attributes";
 export interface ProductSaleRow {
   category: string | null;
   color: string | null;
@@ -33,8 +34,9 @@ export function buildProductSalesBreakdowns(rows: readonly ProductSaleRow[]) {
     units += row.units;
     revenue += row.revenue;
     add(categories, row.category, row);
-    add(colors, row.color, row);
-    add(sizes, row.size, row);
+    const attrs = normalizedVariantAttrs(row);
+    add(colors, attrs.color, row);
+    add(sizes, attrs.size, row);
   }
 
   const buckets = (map: Map<string, ProductSalesBucket>) => [...map.values()]

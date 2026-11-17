@@ -1,3 +1,4 @@
+import { looksLikeSize } from "./variant-attributes";
 import { and, eq, sql } from "drizzle-orm";
 import {
   customersTable,
@@ -377,15 +378,6 @@ function variantLabel(variant: NuvemshopVariant): string {
     .map((value) => localized(value.name ?? value).trim())
     .filter(Boolean)
     .join(" / ");
-}
-
-function looksLikeSize(value: string | null | undefined): boolean {
-  const normalized = (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toUpperCase();
-  return /^(PP|P|M|G|GG|XG|XGG|EXG|EG|XP|XS|S|L|XL|XXL|XXXL|U|UNICO|ONE SIZE|\d{1,3})$/.test(normalized);
 }
 
 function variantAttributes(label: string): { color: string | null; size: string | null } {

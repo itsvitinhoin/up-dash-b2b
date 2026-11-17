@@ -1,4 +1,4 @@
-import { emptyMetaMarketingData, fetchMetaMarketingData, isMetaConnected, type MetaMarketingData } from "./meta-ads";
+import { emptyMetaMarketingData, fetchMetaMarketingData, fetchMetaPeriodBreakdowns, isMetaConnected, type MetaMarketingData } from "./meta-ads";
 import { fetchStoredMarketingData } from "./stored-marketing";
 
 /**
@@ -25,10 +25,20 @@ export async function fetchMetaMarketingDataIfConnected(params: {
     return fetchMetaMarketingData({ ...params, accessToken: params.accessToken!, adAccountId: params.adAccountId! });
   }
   if (!params.adAccountId?.trim()) return emptyMetaMarketingData();
-  return fetchStoredMarketingData({
+  const stored = await fetchStoredMarketingData({
     adAccountId: params.adAccountId,
     since: params.since,
     until: params.until,
     includeAds: params.includeMedia === true,
+    isB2C: params.isB2C,
   });
+  if (params.includeReach && params.isB2C && isMetaConnected(params)) {
+    try {
+      const period = await fetchMetaPeriodBreakdowns({ ...params, accessToken: params.accessToken!, adAccountId: params.adAccountId! });
+      return { ...stored, stateBreakdown: period.states, summary: { ...stored.summary, reach: period.reach, frequency: period.frequency } };
+    } catch (err) {
+      console.warn("[marketing] period reach/regions unavailable:", err instanceof Error ? err.message : err);
+    }
+  }
+  return stored;
 }
