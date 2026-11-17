@@ -1086,7 +1086,7 @@ export default function MarketingPage() {
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
             ) : stateRows.length === 0 ? (
-              <EmptyState icon={MapPin} title={tx("Sem dados geográficos")} description={isB2C ? "Sem detalhamento geográfico de compras disponível nesta fonte." : "Sem leads de canais pagos com estado informado neste período."} />
+              <EmptyState icon={MapPin} title={tx("Sem dados geográficos")} description={isB2C ? "Compras por UF dependem da integração do e-commerce. O Meta fornece o investimento regional, mas não as compras da loja por estado." : "Sem leads de canais pagos com estado informado neste período."} />
             ) : (
               <div className="space-y-5">
                 {stateRows.map((row) => (

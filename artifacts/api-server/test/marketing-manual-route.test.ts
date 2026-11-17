@@ -125,6 +125,7 @@ describe("Manual marketing source and response contract", () => {
     expect(response.status).toBe(200);
     const body = GetMarketingResponse.parse(response.body);
     expect(body.revenueSource).toBe("META");
+    expect(body.stateBreakdown).toEqual([]);
     expect(body.kpis.purchases).toBe(15);
     expect(body.kpis.attributedRevenue).toBe(3410.43);
     expect(body.kpis.roas).toBeCloseTo(3410.43 / 986.94);

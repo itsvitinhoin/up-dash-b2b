@@ -11397,7 +11397,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     Promise.resolve(
       metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend })),
     ),
-    isB2CClient ? db.select({
+    isB2CClient && clientConfig?.commercePlatform !== "MANUAL" ? db.select({
       state: ordersTable.state,
       purchases: sql<number>`COUNT(*)::int`,
       paidRevenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(true)}), 0)::float`,

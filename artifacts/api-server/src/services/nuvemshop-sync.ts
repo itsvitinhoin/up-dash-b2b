@@ -1,4 +1,4 @@
-import { looksLikeSize } from "./variant-attributes";
+import { looksLikeSize, variantAttributesFromValues } from "./variant-attributes";
 import { and, eq, sql } from "drizzle-orm";
 import {
   customersTable,
@@ -395,7 +395,7 @@ function variantAttributes(label: string): { color: string | null; size: string 
 
 function variantAttributesFromName(name: string): { color: string | null; size: string | null } {
   const tuple = name.trim().match(/^(.*?)\s*\(([^(),]+),\s*([^()]+)\)\s*$/);
-  if (tuple) return variantAttributes(`${tuple[2].trim()} / ${tuple[3].trim()}`);
+  if (tuple) return variantAttributesFromValues([tuple[2],tuple[3]]);
   const separatorIndex = name.lastIndexOf(" - ");
   if (separatorIndex >= 0) return variantAttributes(name.slice(separatorIndex + 3));
   return { color: null, size: null };
@@ -838,7 +838,7 @@ export async function syncNuvemshopClient(params: {
         productDetailsCache.set(productId, detailPromise);
         const productDetails = await detailPromise;
         const variantDetails = productDetails?.variants?.find((variant) => String(variant.id ?? "") === String(variantId ?? ""));
-        const variantAttrs = variantDetails ? variantAttributes(variantLabel(variantDetails)) : variantAttributesFromName(localized(item.name));
+        const variantAttrs = variantDetails ? variantAttributesFromValues((variantDetails.values ?? []).map(value => localized(value.name ?? value))) : variantAttributesFromName(localized(item.name));
         const productName = localized(item.name) || localized(item.product?.name) || localized(productDetails?.name) || sku;
         const category = categoryName(item.categories) ?? categoryName(item.product?.categories) ?? categoryName(productDetails?.categories);
         const productPrice = asNumber(item.promotional_price) || asNumber(item.price) || asNumber(item.compare_at_price);

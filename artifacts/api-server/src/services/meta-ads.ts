@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { aggregateMetaInsights, metaReportingWindow, spendCents } from "./meta-reporting";
 import { and, eq, sql } from "drizzle-orm";
 import { db, creativesTable } from "@workspace/db";
-import { fetchMetaGraph } from "./meta-graph";
+import { fetchMetaGraph, MetaGraphError } from "./meta-graph";
 
 const DEFAULT_GRAPH_VERSION = "v24.0";
 const GRAPH_BASE = "https://graph.facebook.com";
@@ -594,7 +594,10 @@ export async function fetchMetaMarketingData(params: MetaParams): Promise<MetaMa
   const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? "", params.includeMedia === true, params.isB2C === true, params.includeReach === true, params.summaryOnly === true]);
   const cached = mediaReads.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
-  const promise = fetchMetaMarketingDataUncached(params, accountKey).catch(() => { throw new MediaReadError(); });
+  const promise = fetchMetaMarketingDataUncached(params, accountKey).catch((error: unknown) => {
+    console.warn("[meta-read-failed]", JSON.stringify({account:normalizeMetaAdAccountId(params.adAccountId),status:error instanceof MetaGraphError ? error.status : undefined,code:error instanceof MetaGraphError ? error.code : undefined,reason:error instanceof MetaGraphError ? error.message : "Invalid or incomplete Meta metrics"}));
+    throw new MediaReadError();
+  });
   if (mediaReads.size >= 250) mediaReads.delete(mediaReads.keys().next().value!);
   const entry = { expiresAt: Date.now() + 60_000, promise };
   mediaReads.set(key, entry);
@@ -621,6 +624,20 @@ async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: st
     });
     const daily = rows.map(dailyPoint);
     return { daily, ads: [], campaigns: [], topCreatives: { ctr: [], cpl: [], leads: [] }, summary: summarize(daily) };
+  }
+  if (params.isB2C && !params.includeMedia && !params.campaignName) {
+    const time_range = JSON.stringify({since:params.since,until:params.until});
+    // A period-level ad report avoids account-size × days explosion and Meta
+    // "reduce the amount of data" errors; account days still feed the charts.
+    const [accountDays, periodAds, statuses] = await Promise.all([
+      fetchInsights(params.accessToken,params.adAccountId,{level:"account",fields:"spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",time_range,time_increment:"1",limit:"100"}),
+      fetchInsights(params.accessToken,params.adAccountId,{level:"ad",fields:"ad_id,ad_name,campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",time_range,limit:"100"}),
+      fetchCampaignStatuses(params.accessToken,params.adAccountId).catch(()=>new Map<string,string>()),
+    ]);
+    const grouped=aggregateMetaInsights(periodAds,params.since,params.until,"America/Sao_Paulo");
+    const daily=accountDays.map(dailyPoint);
+    const metric=(row:MetaInsightRow)=>adMetric({...row,date_stop:params.until},params.since,params.until);
+    return {daily,ads:grouped.ads.map(metric),campaigns:grouped.campaigns.map(row=>({...metric(row),status:row.campaign_id ? statuses.get(row.campaign_id) ?? "UNKNOWN" : "UNKNOWN"})),topCreatives:{ctr:[],cpl:[],leads:[]},summary:summarize(daily)};
   }
   const accountTimeZone = await fetchAccountTimeZone(params, accountKey);
   // Hourly breakdowns omit off-Meta conversions. B2C uses the calendar dates
