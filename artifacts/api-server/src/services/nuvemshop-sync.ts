@@ -260,6 +260,94 @@ function skuFor(item: NuvemshopProduct): string {
   return `nuvemshop-${item.product_id ?? item.id ?? "item"}`;
 }
 
+// Lojas Nuvemshop repetem SKU entre variantes (ou anuncios) diferentes, mas a tabela de produtos tem DUAS chaves unicas: (cliente, external_id) e
+// (cliente, sku). Quando o SKU do item ja e de OUTRO produto, o produto novo ganha um SKU proprio derivado do external_id (unico por cliente),
+// igual ao Braavo (`ref#braavo-<id>`). Antes o upsert falhava, o item era descartado e o apagamento previo dos itens do pedido o removia de vez
+// (Lila Rosa: 47% dos pedidos dos ultimos 7 dias sem nenhum item; 17/11/2026).
+export function collisionSku(sku: string, externalId: string): string {
+  return `${sku}#nuvemshop-${externalId.replace(/:/g, "-")}`;
+}
+
+type KnownProduct = { id: string; sku: string };
+type ProductIndex = {
+  byExternalId: Map<string, KnownProduct>;
+  // SKU -> external_id do produto que o usa (null = produto antigo sem external_id, que tambem conta como "de outro").
+  externalIdBySku: Map<string, string | null>;
+};
+
+// Uma leitura por cliente e rodada (centenas a poucos milhares de linhas) no lugar de uma tentativa que falha por item.
+async function loadProductIndex(clientId: string): Promise<ProductIndex> {
+  const rows = await db
+    .select({ id: productsTable.id, externalId: productsTable.externalId, sku: productsTable.sku })
+    .from(productsTable)
+    .where(eq(productsTable.clientId, clientId));
+  const index: ProductIndex = { byExternalId: new Map(), externalIdBySku: new Map() };
+  for (const row of rows) {
+    if (row.externalId) index.byExternalId.set(row.externalId, { id: row.id, sku: row.sku });
+    index.externalIdBySku.set(row.sku, row.externalId);
+  }
+  return index;
+}
+
+function isSkuConflict(error: unknown, depth = 0): boolean {
+  if (!error || typeof error !== "object" || depth > 3) return false;
+  const e = error as { code?: unknown; constraint?: unknown; message?: unknown; cause?: unknown };
+  if (e.code === "23505" && (e.constraint === "products_client_sku_uq" || String(e.message ?? "").includes("products_client_sku_uq"))) return true;
+  return isSkuConflict(e.cause, depth + 1);
+}
+
+async function upsertItemProduct(
+  clientId: string,
+  index: ProductIndex,
+  input: { externalId: string; sku: string; name: string; category: string | null; price: number; imageUrl: string | null },
+): Promise<{ id: string; wasInserted: boolean } | undefined> {
+  const own = index.byExternalId.get(input.externalId);
+  const owner = index.externalIdBySku.get(input.sku);
+  const takenByOther = owner !== undefined && owner !== input.externalId;
+  // SKU livre (ou do proprio produto): grava como sempre. SKU de outro: o produto que ja existe mantem o SKU dele; o novo ganha um derivado.
+  const safeSku = own ? own.sku : collisionSku(input.sku, input.externalId);
+  const wanted = takenByOther ? safeSku : input.sku;
+
+  const write = async (sku: string) => {
+    const [row] = await db
+      .insert(productsTable)
+      .values({
+        clientId,
+        externalId: input.externalId,
+        sku,
+        name: input.name,
+        category: input.category,
+        price: input.price,
+        imageUrl: input.imageUrl,
+      })
+      .onConflictDoUpdate({
+        // externalId (product_id:variant_id da Nuvemshop) e o identificador estavel; o sku pode ser reatribuido pelo lojista (ver
+        // investigacao 2026-09-17).
+        target: [productsTable.clientId, productsTable.externalId],
+        set: { sku, name: input.name, category: input.category, price: input.price, imageUrl: input.imageUrl },
+      })
+      .returning({ id: productsTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
+    return row;
+  };
+
+  let used = wanted;
+  let row: { id: string; wasInserted: boolean } | undefined;
+  try {
+    row = await write(wanted);
+  } catch (error) {
+    // Leitura desatualizada: outro processo criou esse SKU depois que carreguei os produtos. Tenta uma vez com o SKU seguro.
+    if (!isSkuConflict(error) || safeSku === wanted) throw error;
+    used = safeSku;
+    row = await write(safeSku);
+  }
+  if (row) {
+    if (own && own.sku !== used && index.externalIdBySku.get(own.sku) === input.externalId) index.externalIdBySku.delete(own.sku);
+    index.externalIdBySku.set(used, input.externalId);
+    index.byExternalId.set(input.externalId, { id: row.id, sku: used });
+  }
+  return row;
+}
+
 function skuForVariant(product: NuvemshopProductDetails, variant: NuvemshopVariant): string {
   const sku = (variant.sku ?? "").trim();
   if (sku) return sku;
@@ -623,6 +711,7 @@ export async function syncNuvemshopClient(params: {
     return result;
   }
   const productDetailsCache = new Map<string, Promise<NuvemshopProductDetails | null>>();
+  let productIndex: ProductIndex | undefined;
 
   for (const order of orders) {
     try {
@@ -767,34 +856,17 @@ export async function syncNuvemshopClient(params: {
         const netUnitPrice = Math.max(0, (itemGross - itemDiscount) / quantity);
 
         try {
-          const [product] = await db
-            .insert(productsTable)
-            .values({
-              clientId: params.clientId,
-              externalId: productExternalId,
-              sku,
-              name: productName,
-              category,
-              price: productPrice,
-              imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
-            })
-            .onConflictDoUpdate({
-              // mesmo motivo do upsert em syncProductCatalog: externalId e o
-              // identificador estavel, sku pode mudar. Mesmo assim, alguns
-              // catalogos (ex: Hot Pink) tem sku duplicado entre produtos
-              // diferentes de verdade -- por isso o try/catch em volta: um
-              // item com dado de catalogo inconsistente nao pode abortar o
-              // resto dos itens desse pedido (ver investigacao 2026-09-17).
-              target: [productsTable.clientId, productsTable.externalId],
-              set: {
-                sku,
-                name: productName,
-                category,
-                price: productPrice,
-                imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
-              },
-            })
-            .returning({ id: productsTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
+          // Alguns catalogos (ex: Hot Pink, Lila Rosa, Jini) tem sku repetido entre variantes/produtos diferentes: upsertItemProduct da SKU
+          // proprio a quem chega depois. O try/catch continua: um item com dado inconsistente nao pode abortar o resto do pedido.
+          productIndex ??= await loadProductIndex(params.clientId);
+          const product = await upsertItemProduct(params.clientId, productIndex, {
+            externalId: productExternalId,
+            sku,
+            name: productName,
+            category,
+            price: productPrice,
+            imageUrl: item.image?.src ?? item.product?.images?.[0]?.src ?? productDetails?.images?.[0]?.src ?? null,
+          });
           if (!product) continue;
           if (product.wasInserted) result.productsCreated++;
           else result.productsUpdated++;
