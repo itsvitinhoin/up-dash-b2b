@@ -62,8 +62,10 @@ import {
   isSyncServiceConfigured,
   listVestiSyncStores,
   setVestiSyncStoreActive,
+  syncServiceConfig,
 } from "../services/vesti-sync-service";
 import { BraavoError, normalizeBraavoDomain } from "../services/braavo-api";
+import { encryptErpCredentials, decryptErpCredentials } from "../lib/erp-crypto";
 
 const router: IRouter = Router();
 
@@ -1621,6 +1623,194 @@ router.post("/clients/:clientId/sync/nuvemshop", requireAdmin, async (req, res):
       jobId,
     });
   }
+});
+
+const MiredataCredentialsBody = z.object({ apikey: z.string().min(1) });
+const ManseCredentialsBody = z.object({
+  token: z.string().min(1),
+  filial: z.number().int().optional(),
+  priceField: z.string().optional(),
+});
+
+const SetClientErpBody = z.discriminatedUnion("erpProvider", [
+  z.object({ erpProvider: z.literal("MIREDATA"), erpDataset: z.string().min(1), credentials: MiredataCredentialsBody }),
+  z.object({ erpProvider: z.literal("MANSE"), erpDataset: z.string().min(1), credentials: ManseCredentialsBody }),
+  z.object({ erpProvider: z.null() }),
+]);
+
+/**
+ * PUT /clients/:clientId/erp
+ * Liga (ou desliga, com erpProvider: null) a integração de ERP (Miredata/Manse) desse
+ * client. A credencial é cifrada (AES-256-GCM, ver lib/erp-crypto.ts) antes de gravar —
+ * nunca fica em texto puro no banco.
+ */
+router.put("/clients/:clientId/erp", requireAdmin, async (req, res): Promise<void> => {
+  const params = GetClientParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: params.error.message, status: 400 });
+    return;
+  }
+  const body = SetClientErpBody.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: body.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = params.data;
+
+  const [existing] = await db.select({ id: clientsTable.id }).from(clientsTable).where(eq(clientsTable.id, clientId));
+  if (!existing) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+
+  if (body.data.erpProvider === null) {
+    await db
+      .update(clientsTable)
+      .set({ erpProvider: null, erpCredentialsEncrypted: null })
+      .where(eq(clientsTable.id, clientId));
+    res.json({ ok: true, erpProvider: null });
+    return;
+  }
+
+  const { erpProvider, erpDataset, credentials } = body.data;
+  let encrypted: string;
+  try {
+    encrypted = encryptErpCredentials(credentials);
+  } catch (err) {
+    res.status(500).json({ error: true, code: "ENCRYPTION_FAILED", message: String(err), status: 500 });
+    return;
+  }
+
+  await db
+    .update(clientsTable)
+    .set({ erpProvider, erpDataset, erpCredentialsEncrypted: encrypted })
+    .where(eq(clientsTable.id, clientId));
+
+  res.json({ ok: true, erpProvider, erpDataset });
+});
+
+const ErpBackfillBody = z.object({
+  dataInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dataFim: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+/** Quebra [inicio, fim] em janelas de no máximo `maxDias` dias (inclusive), em ordem. */
+function splitDateRangeIntoChunks(inicio: string, fim: string, maxDias = 90): Array<{ dataInicio: string; dataFim: string }> {
+  const chunks: Array<{ dataInicio: string; dataFim: string }> = [];
+  let cursor = new Date(`${inicio}T00:00:00Z`);
+  const end = new Date(`${fim}T00:00:00Z`);
+  while (cursor <= end) {
+    const chunkEnd = new Date(cursor);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + maxDias - 1);
+    if (chunkEnd > end) chunkEnd.setTime(end.getTime());
+    chunks.push({
+      dataInicio: cursor.toISOString().slice(0, 10),
+      dataFim: chunkEnd.toISOString().slice(0, 10),
+    });
+    cursor = new Date(chunkEnd);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return chunks;
+}
+
+/**
+ * POST /clients/:clientId/erp/backfill
+ * Decifra a credencial de ERP desse client e dispara um backfill histórico no
+ * intervalo [dataInicio, dataFim], quebrado em pedaços de até 90 dias — cada pedaço
+ * vira uma chamada separada pro Flask do script-vesti-nuvem (POST /api/erp-jobs), que
+ * dispara uma execução independente do Cloud Run Job. Disparo é "fire and forget":
+ * não espera nenhum pedaço terminar antes de disparar o próximo (o MERGE no BigQuery
+ * já é idempotente, então não tem problema em rodar tudo em paralelo).
+ */
+router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): Promise<void> => {
+  const params = GetClientParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: params.error.message, status: 400 });
+    return;
+  }
+  const body = ErpBackfillBody.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: body.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = params.data;
+  const { dataInicio, dataFim } = body.data;
+  if (dataInicio > dataFim) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "dataInicio não pode ser maior que dataFim", status: 400 });
+    return;
+  }
+
+  const [client] = await db
+    .select({
+      name: clientsTable.name,
+      erpProvider: clientsTable.erpProvider,
+      erpDataset: clientsTable.erpDataset,
+      erpCredentialsEncrypted: clientsTable.erpCredentialsEncrypted,
+    })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (!client.erpProvider || !client.erpDataset || !client.erpCredentialsEncrypted) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "Este client não tem ERP configurado", status: 400 });
+    return;
+  }
+
+  const syncConfig = syncServiceConfig();
+  if (!syncConfig) {
+    res.status(500).json({ error: true, code: "CONFIG_MISSING", message: "SYNC_SERVICE_URL/SYNC_SERVICE_TOKEN não configurados", status: 500 });
+    return;
+  }
+
+  let credentials: ReturnType<typeof decryptErpCredentials>;
+  try {
+    credentials = decryptErpCredentials(client.erpCredentialsEncrypted);
+  } catch (err) {
+    res.status(500).json({ error: true, code: "DECRYPTION_FAILED", message: String(err), status: 500 });
+    return;
+  }
+
+  const chunks = splitDateRangeIntoChunks(dataInicio, dataFim);
+  const task = client.erpProvider === "MIREDATA" ? "miredata" : "manse";
+
+  const dispatches = await Promise.allSettled(
+    chunks.map((chunk) =>
+      fetch(`${syncConfig.url}/api/erp-jobs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${syncConfig.token}` },
+        body: JSON.stringify({
+          task,
+          nomeMarca: client.name,
+          dataset: client.erpDataset,
+          dataInicio: chunk.dataInicio,
+          dataFim: chunk.dataFim,
+          credentials,
+        }),
+      }).then(async (r) => {
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        return r.json();
+      }),
+    ),
+  );
+
+  const results = chunks.map((chunk, i) => {
+    const outcome = dispatches[i];
+    return {
+      ...chunk,
+      ok: outcome.status === "fulfilled",
+      error: outcome.status === "rejected" ? String(outcome.reason) : undefined,
+    };
+  });
+
+  const failedCount = results.filter((r) => !r.ok).length;
+  res.status(failedCount === results.length ? 502 : 202).json({
+    ok: failedCount === 0,
+    totalChunks: results.length,
+    failedChunks: failedCount,
+    chunks: results,
+  });
 });
 
 /**

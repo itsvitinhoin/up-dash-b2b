@@ -124,6 +124,14 @@ const COMMERCE_PLATFORM_OPTIONS: Array<{
   { value: "BRAAVO", label: "Braavo (B2C)" },
 ];
 
+const ERP_PROVIDER_OPTIONS: Array<{
+  value: "MIREDATA" | "MANSE";
+  label: string;
+}> = [
+  { value: "MIREDATA", label: "Miredata" },
+  { value: "MANSE", label: "Manse" },
+];
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CSV_CURRENCY_RE = /^[A-Z]{3}$/;
 const CSV_LOCALE_RE = /^[a-zA-Z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
@@ -977,6 +985,258 @@ function PlatformDialog({
             )}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type SetClientErpResponse = { ok: true; erpProvider: "MIREDATA" | "MANSE" | null; erpDataset?: string };
+type ErpBackfillChunkResult = { dataInicio: string; dataFim: string; ok: boolean; error?: string };
+type ErpBackfillResponse = {
+  ok: boolean;
+  totalChunks: number;
+  failedChunks: number;
+  chunks: ErpBackfillChunkResult[];
+};
+
+function ErpDialog({
+  clientId,
+  clientName,
+  currentErpProvider,
+  currentErpDataset,
+}: {
+  clientId: string;
+  clientName: string;
+  currentErpProvider: "MIREDATA" | "MANSE" | null | undefined;
+  currentErpDataset: string | null | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const [erpProvider, setErpProvider] = useState<"NONE" | "MIREDATA" | "MANSE">("NONE");
+  const [erpDataset, setErpDataset] = useState("");
+  const [apikey, setApikey] = useState("");
+  const [token, setToken] = useState("");
+  const [filial, setFilial] = useState("");
+  const [priceField, setPriceField] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [dataInicio, setDataInicio] = useState("");
+  const [dataFim, setDataFim] = useState("");
+  const [isBackfilling, setIsBackfilling] = useState(false);
+  const queryClient = useQueryClient();
+
+  function handleOpen(o: boolean) {
+    if (o) {
+      setErpProvider(currentErpProvider ?? "NONE");
+      setErpDataset(currentErpDataset ?? "");
+      setApikey("");
+      setToken("");
+      setFilial("");
+      setPriceField("");
+      setDataInicio("");
+      setDataFim("");
+    }
+    setOpen(o);
+  }
+
+  async function handleSave() {
+    setIsSaving(true);
+    try {
+      const body =
+        erpProvider === "NONE"
+          ? { erpProvider: null }
+          : erpProvider === "MIREDATA"
+            ? { erpProvider: "MIREDATA", erpDataset: erpDataset.trim(), credentials: { apikey: apikey.trim() } }
+            : {
+                erpProvider: "MANSE",
+                erpDataset: erpDataset.trim(),
+                credentials: {
+                  token: token.trim(),
+                  ...(filial.trim() ? { filial: Number(filial.trim()) } : {}),
+                  ...(priceField.trim() ? { priceField: priceField.trim() } : {}),
+                },
+              };
+      await customFetch<SetClientErpResponse>(`/api/clients/${clientId}/erp`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+      queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+      toast.success("ERP atualizado");
+      setOpen(false);
+    } catch (err) {
+      toast.error("Falha ao atualizar ERP", {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleBackfill() {
+    setIsBackfilling(true);
+    const toastId = `erp-backfill-${clientId}`;
+    toast.loading(`Disparando backfill de ${clientName}...`, { id: toastId });
+    try {
+      const data = await customFetch<ErpBackfillResponse>(`/api/clients/${clientId}/erp/backfill`, {
+        method: "POST",
+        body: JSON.stringify({ dataInicio, dataFim }),
+      });
+      if (data.failedChunks > 0) {
+        toast.warning(`Backfill disparado com falhas`, {
+          id: toastId,
+          description: `${data.totalChunks - data.failedChunks}/${data.totalChunks} pedaços disparados`,
+        });
+      } else {
+        toast.success(`Backfill disparado`, {
+          id: toastId,
+          description: `${data.totalChunks} pedaço(s) de até 90 dias`,
+        });
+      }
+    } catch (err) {
+      toast.error(`Falha ao disparar backfill`, {
+        id: toastId,
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setIsBackfilling(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" title="ERP">
+          <Tag className="h-3 w-3" />
+          {currentErpProvider ?? "ERP"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Tag className="h-4 w-4" /> ERP
+          </DialogTitle>
+          <DialogDescription>
+            Integração de ERP de <strong>{clientName}</strong> (Miredata/Manse) — independente da plataforma de e-commerce.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="erp-provider-select">ERP</Label>
+            <Select value={erpProvider} onValueChange={(v) => setErpProvider(v as typeof erpProvider)}>
+              <SelectTrigger id="erp-provider-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="NONE">Nenhum</SelectItem>
+                {ERP_PROVIDER_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {erpProvider !== "NONE" && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="erp-dataset">Dataset BigQuery (*_erp)</Label>
+                <Input
+                  id="erp-dataset"
+                  value={erpDataset}
+                  onChange={(e) => setErpDataset(e.target.value)}
+                  placeholder="nome_da_marca"
+                  className="font-mono text-xs"
+                />
+              </div>
+              {erpProvider === "MIREDATA" && (
+                <div className="space-y-2">
+                  <Label htmlFor="erp-apikey">Apikey Miredata</Label>
+                  <Input
+                    id="erp-apikey"
+                    type="password"
+                    value={apikey}
+                    onChange={(e) => setApikey(e.target.value)}
+                    placeholder={currentErpProvider === "MIREDATA" ? "preencher pra trocar a credencial" : ""}
+                    className="font-mono text-xs"
+                  />
+                </div>
+              )}
+              {erpProvider === "MANSE" && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="erp-token">Token Manse</Label>
+                    <Input
+                      id="erp-token"
+                      type="password"
+                      value={token}
+                      onChange={(e) => setToken(e.target.value)}
+                      placeholder={currentErpProvider === "MANSE" ? "preencher pra trocar a credencial" : ""}
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="erp-filial">Filial (opcional)</Label>
+                      <Input id="erp-filial" value={filial} onChange={(e) => setFilial(e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="erp-price-field">Campo de preço (opcional)</Label>
+                      <Input
+                        id="erp-price-field"
+                        value={priceField}
+                        onChange={(e) => setPriceField(e.target.value)}
+                        placeholder="PRECO_ATACADO"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+              <p className="text-xs text-muted-foreground">
+                A credencial é cifrada antes de gravar e nunca é mostrada de volta — pra trocar, preencha de novo.
+              </p>
+            </>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={isSaving}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</>
+            ) : (
+              "Salvar"
+            )}
+          </Button>
+        </DialogFooter>
+
+        {currentErpProvider && (
+          <>
+            <div className="border-t pt-3 space-y-2">
+              <Label>Backfill histórico</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
+                <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Dispara uma execução por pedaço de até 90 dias (necessário pela API do ERP). Usa a credencial já salva.
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={isBackfilling || !dataInicio || !dataFim}
+                onClick={handleBackfill}
+              >
+                {isBackfilling ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Disparando…</>
+                ) : (
+                  "Fazer backfill histórico"
+                )}
+              </Button>
+            </div>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -2559,6 +2819,12 @@ export default function ClientsPage() {
                             dashboardType={client.dashboardType}
                             currentDataset={client.bigqueryDataset}
                             currentAttributionStartDate={client.attributionStartDate}
+                          />
+                          <ErpDialog
+                            clientId={client.id}
+                            clientName={client.name}
+                            currentErpProvider={client.erpProvider}
+                            currentErpDataset={client.erpDataset}
                           />
                           <VisibleTabsDialog
                             clientId={client.id}

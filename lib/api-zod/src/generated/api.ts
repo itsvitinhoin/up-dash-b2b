@@ -259,6 +259,18 @@ export const ListClientsResponse = zod.object({
         .describe(
           "Sidebar nav item keys hidden for this client (per-client tab\nvisibility control). `null`\/omitted means nothing is hidden.\n",
         ),
+      erpProvider: zod
+        .enum(["MIREDATA", "MANSE"])
+        .nullish()
+        .describe(
+          "ERP this client syncs from (independent of commercePlatform). `null` = no ERP configured. Credentials are never returned here.",
+        ),
+      erpDataset: zod
+        .string()
+        .nullish()
+        .describe(
+          "BigQuery dataset (project up-vesti-report) with this client's *_erp tables, synced by script-vesti-nuvem.",
+        ),
     }),
   ),
   total: zod.number(),
@@ -518,6 +530,18 @@ export const GetClientResponse = zod.object({
     .string()
     .nullish()
     .describe("UP Zero API key for syncing live orders and customers."),
+  erpProvider: zod
+    .enum(["MIREDATA", "MANSE"])
+    .nullish()
+    .describe(
+      "ERP this client syncs from (independent of commercePlatform). `null` = no ERP configured. Credentials are never returned here.",
+    ),
+  erpDataset: zod
+    .string()
+    .nullish()
+    .describe(
+      "BigQuery dataset (project up-vesti-report) with this client's *_erp tables, synced by script-vesti-nuvem.",
+    ),
   currency: zod.string().describe("ISO 4217 currency code, e.g. BRL, USD"),
   locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
   createdAt: zod.coerce.date(),
@@ -749,6 +773,18 @@ export const UpdateClientResponse = zod.object({
     .string()
     .nullish()
     .describe("UP Zero API key for syncing live orders and customers."),
+  erpProvider: zod
+    .enum(["MIREDATA", "MANSE"])
+    .nullish()
+    .describe(
+      "ERP this client syncs from (independent of commercePlatform). `null` = no ERP configured. Credentials are never returned here.",
+    ),
+  erpDataset: zod
+    .string()
+    .nullish()
+    .describe(
+      "BigQuery dataset (project up-vesti-report) with this client's *_erp tables, synced by script-vesti-nuvem.",
+    ),
   currency: zod.string().describe("ISO 4217 currency code, e.g. BRL, USD"),
   locale: zod.string().describe("BCP 47 locale, e.g. pt-BR, en-US"),
   createdAt: zod.coerce.date(),
