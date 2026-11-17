@@ -3184,6 +3184,10 @@ export const GetMarketingResponse = zod.object({
   ),
   stateBreakdown: zod.array(
     zod.object({
+      purchases: zod.number().optional(),
+      paidRevenue: zod.number().optional(),
+      spend: zod.number().nullable().optional(),
+      mer: zod.number().nullable().optional(),
       state: zod.string(),
       leads: zod.number(),
       attributedRevenue: zod.number(),

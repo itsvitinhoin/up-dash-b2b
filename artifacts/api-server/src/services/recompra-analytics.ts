@@ -536,10 +536,10 @@ async function findRecompraCandidates(params: {
   // esses ids, é busca desperdiçada.
   const missingExternalId = [...candidates.values()].filter((c) => !c.externalId && !vestiCustomerIds.has(c.upzeroCustomerId)).map((c) => c.upzeroCustomerId);
   if (missingExternalId.length > 0) {
-    const rows = await db.select({ id: customersTable.id, externalId: customersTable.externalId }).from(customersTable).where(inArray(customersTable.id, missingExternalId));
+    const rows = await db.select({ id: customersTable.id, name: customersTable.name, externalId: customersTable.externalId }).from(customersTable).where(inArray(customersTable.id, missingExternalId));
     for (const r of rows) {
       const identity = candidates.get(r.id);
-      if (identity) identity.externalId = r.externalId;
+      if (identity) { identity.externalId = r.externalId; identity.name ??= r.name; }
     }
   }
 

@@ -1,3 +1,4 @@
+import { regionalCommerceMarketing } from "../services/regional-marketing";
 import { normalizedVariantAttrs } from "../services/variant-attributes";
 import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
 import { braavoProductGroup } from "../services/braavo-normalize";
@@ -10249,7 +10250,7 @@ async function computeMarketingKpis(
   isB2CClient = false,
   metaRevenue = false,
 ) {
-  if (metaRevenue) return manualMarketingKpis(meta);
+  if (metaRevenue || isB2CClient) return manualMarketingKpis(meta);
   const totalSpend = meta.summary.spend;
 
   // Same paid-order creation cohort as Dashboard, Clientes and Diário.
@@ -11343,7 +11344,7 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
   const isB2CClient = clientConfig?.dashboardType === "B2C";
-  const metaRevenue = usesMetaRevenue(clientConfig?.commercePlatform);
+  const metaRevenue = isB2CClient || usesMetaRevenue(clientConfig?.commercePlatform);
 
   const metaAccessToken = getGlobalMetaAccessToken(clientConfig?.metaAdsApiKey);
   if (metaRevenue && (!metaAccessToken?.trim() || !clientConfig?.metaAdAccountId?.trim())) throw new MediaReadError();
@@ -11395,7 +11396,12 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     Promise.resolve(
       metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend })),
     ),
-    isB2CClient ? Promise.resolve(metaCurrent.stateBreakdown ?? []) : metaRevenue ? Promise.resolve([]) : buildStateBreakdown(clientId, from, to, totalProratedSpend),
+    isB2CClient ? db.select({
+      state: ordersTable.state,
+      purchases: sql<number>`COUNT(*)::int`,
+      paidRevenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(true)}), 0)::float`,
+    }).from(ordersTable).where(and(eq(ordersTable.clientId, clientId), paidOrderStatus(), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to))).groupBy(ordersTable.state)
+      .then(rows => regionalCommerceMarketing(rows.map(row => ({ ...row, purchases: Number(row.purchases), paidRevenue: Number(row.paidRevenue) })), metaCurrent.regionalSpend)) : metaRevenue ? Promise.resolve([]) : buildStateBreakdown(clientId, from, to, totalProratedSpend),
   ]);
 
   const topCreatives = metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] };

@@ -144,4 +144,13 @@ describe("authoritative Meta reads", () => {
     expect(result.summary.spend).toBe(123.45);
     expect(result.daily[0].date).toBe("2026-10-20");
   });
+  it("B2C keeps native calendar dates without hourly breakdowns that suppress purchases", async () => {
+    const fetchMock = metaFetch({ timezone: "America/Noronha" });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await fetchMetaMarketingData({ accessToken: "native-test", adAccountId: "b2c-native", since: "2026-10-20", until: "2026-10-20", isB2C: true });
+    const [url] = fetchMock.mock.calls.find(([u]) => new URL(String(u)).pathname.endsWith("/insights"))!;
+    expect(new URL(String(url)).searchParams.has("breakdowns")).toBe(false);
+    expect(result.summary.spend).toBe(123.45);
+  });
+
 });

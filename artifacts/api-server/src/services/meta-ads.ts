@@ -206,7 +206,7 @@ export interface MetaMarketingData {
   ads: MetaAdMetric[];
   campaigns: MetaAdMetric[];
   topCreatives: MetaTopCreatives;
-  stateBreakdown?: Array<{ state: string; leads: number; attributedRevenue: number; roas: number }>;
+  regionalSpend?: Array<{ state: string; spend: number }>;
   summary: {
     spend: number;
     impressions: number;
@@ -615,7 +615,10 @@ export function emptyMetaMarketingData(): MetaMarketingData {
 
 async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: string): Promise<MetaMarketingData> {
   const accountTimeZone = await fetchAccountTimeZone(params, accountKey);
-  const window = metaReportingWindow(params.since, params.until, accountTimeZone);
+  // Hourly breakdowns omit off-Meta conversions. B2C uses the calendar dates
+  // requested in Ads Manager, in the ad account timezone, without hourly slicing.
+  const reportingTimeZone = params.isB2C ? "America/Sao_Paulo" : accountTimeZone;
+  const window = metaReportingWindow(params.since, params.until, reportingTimeZone);
   const [rows, campaignStatuses, periodRows] = await Promise.all([
     fetchInsights(params.accessToken, params.adAccountId, {
       level: "ad",
@@ -635,7 +638,7 @@ async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: st
         })
       : Promise.resolve([]),
   ]);
-  const grouped = aggregateMetaInsights(params.campaignName ? rows.filter((row) => row.campaign_name?.toLowerCase().includes(params.campaignName!.toLowerCase())) : rows, params.since, params.until, accountTimeZone);
+  const grouped = aggregateMetaInsights(params.campaignName ? rows.filter((row) => row.campaign_name?.toLowerCase().includes(params.campaignName!.toLowerCase())) : rows, params.since, params.until, reportingTimeZone);
   const daily = grouped.daily.map(dailyPoint);
   const ads = grouped.ads.map((row) => adMetric(row, params.since, params.until));
   const campaigns = grouped.campaigns.map((row) => ({
@@ -706,26 +709,24 @@ export async function upsertMetaCreatives(clientId: string, ads: MetaAdMetric[])
   }
 }
 
-/** Period-only non-additive metrics and region reporting, cached independently of creative media. */
-const periodBreakdowns = new Map<string, { expiresAt: number; promise: Promise<{ reach: number | null; frequency: number | null; states: NonNullable<MetaMarketingData["stateBreakdown"]> }> }>();
+/** Meta excludes off-site purchases with region breakdowns; only delivery/spend is requested here. */
+const periodBreakdowns = new Map<string, { expiresAt: number; promise: Promise<{ reach: number | null; frequency: number | null; regions?: Array<{state:string;spend:number}> }> }>();
 export async function fetchMetaPeriodBreakdowns(params: { accessToken: string; adAccountId: string; since: string; until: string }) {
   const key = JSON.stringify([normalizeMetaAdAccountId(params.adAccountId), createHash("sha256").update(params.accessToken).digest("hex"), params.since, params.until]);
   const cached = periodBreakdowns.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
   const promise = (async () => {
     const common = { level: "account", time_range: JSON.stringify({ since: params.since, until: params.until }), limit: "500" };
-    const [totals, regions] = await Promise.all([
+    const [totalResult, regionResult] = await Promise.allSettled([
       fetchInsights(params.accessToken, params.adAccountId, { ...common, fields: "reach,frequency" }),
-      fetchInsights(params.accessToken, params.adAccountId, { ...common, fields: "spend,actions,action_values", breakdowns: "region" }),
+      fetchInsights(params.accessToken, params.adAccountId, { ...common, fields: "spend", breakdowns: "region" }),
     ]);
+    const total = totalResult.status === "fulfilled" ? totalResult.value[0] : undefined;
+    if (totalResult.status === "rejected" || regionResult.status === "rejected") console.warn("[marketing] Meta period breakdown partially unavailable");
     return {
-      reach: totals[0]?.reach == null ? null : numberValue(totals[0].reach),
-      frequency: totals[0]?.frequency == null ? null : numberValue(totals[0].frequency),
-      states: regions.filter(row => row.region).map(row => {
-        const revenue = actionValue(row.action_values, "purchase");
-        const spend = numberValue(row.spend);
-        return { state: row.region!, leads: actionValue(row.actions, "purchase"), attributedRevenue: revenue, roas: spend > 0 ? revenue / spend : 0 };
-      }).sort((a, b) => b.roas - a.roas),
+      reach: total?.reach == null ? null : numberValue(total.reach),
+      frequency: total?.frequency == null ? null : numberValue(total.frequency),
+      regions: regionResult.status === "fulfilled" ? regionResult.value.filter(row => row.region && row.spend != null).map(row => ({ state: row.region!, spend: numberValue(row.spend) })) : undefined,
     };
   })();
   if (periodBreakdowns.size >= 250) periodBreakdowns.delete(periodBreakdowns.keys().next().value!);
