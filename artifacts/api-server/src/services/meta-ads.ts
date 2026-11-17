@@ -570,7 +570,7 @@ export class MediaReadError extends Error {
 }
 
 /** `includeMedia`: só a tela de Marketing (período atual) mostra miniaturas; métricas, comparativos e rotinas não precisam e não gastam chamadas de mídia. */
-type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string; includeMedia?: boolean; isB2C?: boolean; includeReach?: boolean };
+type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string; includeMedia?: boolean; isB2C?: boolean; includeReach?: boolean; summaryOnly?: boolean };
 const mediaReads = new Map<string, { expiresAt: number; promise: Promise<MetaMarketingData> }>();
 const accountZones = new Map<string, { expiresAt: number; promise: Promise<string> }>();
 
@@ -591,7 +591,7 @@ async function fetchAccountTimeZone(params: MetaParams, key: string): Promise<st
 export async function fetchMetaMarketingData(params: MetaParams): Promise<MetaMarketingData> {
   if (!params.accessToken.trim() || !params.adAccountId.trim()) throw new MediaReadError();
   const accountKey = `${normalizeMetaAdAccountId(params.adAccountId)}:${createHash("sha256").update(params.accessToken).digest("hex")}`;
-  const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? "", params.includeMedia === true, params.isB2C === true, params.includeReach === true]);
+  const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? "", params.includeMedia === true, params.isB2C === true, params.includeReach === true, params.summaryOnly === true]);
   const cached = mediaReads.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
   const promise = fetchMetaMarketingDataUncached(params, accountKey).catch(() => { throw new MediaReadError(); });
@@ -614,6 +614,14 @@ export function emptyMetaMarketingData(): MetaMarketingData {
 }
 
 async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: string): Promise<MetaMarketingData> {
+  if (params.isB2C && params.summaryOnly) {
+    const rows = await fetchInsights(params.accessToken, params.adAccountId, {
+      level: "account", fields: "spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",
+      time_range: JSON.stringify({ since: params.since, until: params.until }), time_increment: "1", limit: "500",
+    });
+    const daily = rows.map(dailyPoint);
+    return { daily, ads: [], campaigns: [], topCreatives: { ctr: [], cpl: [], leads: [] }, summary: summarize(daily) };
+  }
   const accountTimeZone = await fetchAccountTimeZone(params, accountKey);
   // Hourly breakdowns omit off-Meta conversions. B2C uses the calendar dates
   // requested in Ads Manager, in the ad account timezone, without hourly slicing.

@@ -3,6 +3,7 @@ import { useI18n } from "@/lib/i18n";
 import { useQueries } from "@tanstack/react-query";
 import { endOfMonth, format } from "date-fns";
 import {
+  customFetch,
   getDashboard,
   getMarketing,
   getCustomerSummary,
@@ -155,9 +156,9 @@ export default function MonthlyHistoryPage() {
   const media = useQueries({
     queries: periods.map((params, index) => ({
       ...queryOpts({ enabled: canRead(index) }),
-      queryKey: getGetMarketingQueryKey(params),
+      queryKey: ["monthly-marketing-summary", params],
       queryFn: ({ signal }: { signal: AbortSignal }) =>
-        getMarketing(params, { signal }),
+        customFetch<Awaited<ReturnType<typeof getMarketing>>>(`/api/analytics/marketing?${new URLSearchParams(Object.entries({ ...params, metricsOnly: "true" }).filter(([, value]) => value != null).map(([key, value]) => [key, String(value)]))}`, { signal }),
     })),
   });
   const registrations = useQueries({

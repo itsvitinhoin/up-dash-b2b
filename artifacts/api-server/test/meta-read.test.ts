@@ -153,4 +153,14 @@ describe("authoritative Meta reads", () => {
     expect(result.summary.spend).toBe(123.45);
   });
 
+  it("B2C historical summaries query account days without fetching ad rankings or media", async () => {
+    const fetchMock = metaFetch();
+    vi.stubGlobal("fetch",fetchMock);
+    const result=await fetchMetaMarketingData({accessToken:"summary-native-test",adAccountId:"b2c-summary-native",since:"2026-10-20",until:"2026-10-20",isB2C:true,summaryOnly:true});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(new URL(String(fetchMock.mock.calls[0][0])).searchParams.get("level")).toBe("account");
+    expect(result.campaigns).toEqual([]);
+    expect(result.daily[0].spend).toBe(123.45);
+  });
+
 });

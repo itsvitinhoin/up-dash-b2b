@@ -24,7 +24,7 @@ export async function fetchMetaMarketingDataIfConnected(params: {
   // Stored ad purchases have duplicated conversion aliases in the old collector.
   // B2C financial/creative metrics must use one consistent native Meta dataset.
   if (params.isB2C && isMetaConnected(params)) {
-    const credentials = { ...params, accessToken: params.accessToken!, adAccountId: params.adAccountId!, includeMedia: false, includeReach: false };
+    const credentials = { ...params, accessToken: params.accessToken!, adAccountId: params.adAccountId!, includeMedia: false, includeReach: false, summaryOnly: !params.includeMedia };
     const [live, stored, period] = await Promise.all([
       fetchMetaMarketingData(credentials),
       params.includeMedia ? fetchStoredMarketingData({ adAccountId: params.adAccountId, since: params.since, until: params.until, includeAds: true, isB2C: true }).catch(() => null) : Promise.resolve(null),

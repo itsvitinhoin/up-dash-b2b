@@ -11351,9 +11351,10 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
   // Filtro de fonte que não é Meta: nada do Meta entra no recorte (vazio), não é falha de leitura.
   const metaExcludedByFilter = !!utmSrc && !metaSourceMatchesFilter(utmSrc);
   // Só o período atual mostra miniaturas de criativo; o anterior é só comparativo e não gasta chamadas de mídia.
+  const metricsOnly = req.query.metricsOnly === "true";
   const readMeta = (range: { since: string; until: string }, includeMedia = false) => metaExcludedByFilter
     ? Promise.resolve(emptyMetaMarketingData())
-    : fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig?.metaAdAccountId, commercePlatform: clientConfig?.commercePlatform, ...range, campaignName: creativeFilt, includeMedia, isB2C: isB2CClient, includeReach: true });
+    : fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig?.metaAdAccountId, commercePlatform: clientConfig?.commercePlatform, ...range, campaignName: creativeFilt, includeMedia: includeMedia && !metricsOnly, isB2C: isB2CClient, includeReach: !metricsOnly });
   const [metaCurrent, metaPrev] = await Promise.all([
     readMeta({ since, until }, true),
     readMeta({ since: prevSince, until: prevUntil }).catch(() => null),
