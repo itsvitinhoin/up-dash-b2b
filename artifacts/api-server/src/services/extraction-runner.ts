@@ -24,6 +24,7 @@ import {
   earlierDate,
   evaluateGa4Breaker,
   ga4BackfillMaxClients,
+  ga4EveryHours,
   ga4BackfillStaleMinutes,
   isGa4BackfillSeparate,
   isWideGa4Window,
@@ -31,6 +32,7 @@ import {
   resolveGa4SyncWindow,
   resolveGa4TrafficFrom,
   shouldRefundBackfillSlot,
+  shouldRunGa4InHourlyBundle,
   shouldStartGa4Client,
   shouldStoreGa4ProductViewsInPostgres,
   shouldWaitBeforeBackfillRetry,
@@ -1286,15 +1288,22 @@ export async function runHourlyExtractionBundle(
   finishedAt: string;
 }> {
   const startedAt = new Date();
+  // O GA4 e 95% do tempo da rodada e ninguem precisa dele de hora em hora: com GA4_EVERY_HOURS=N so entra nas horas multiplas de N
+  // (ver ga4EveryHours). `ga4: null` no resultado = o GA4 nao era desta hora.
+  const everyHours = ga4EveryHours();
+  const runGa4 = shouldRunGa4InHourlyBundle({ now: startedAt, everyHours, trigger });
+  if (!runGa4) console.log("[hourly-bundle] ga4_daily fora desta hora", { everyHours, utcHour: startedAt.getUTCHours() });
   const [analytics, meta, ga4] = await Promise.all([
     runUpzeroAnalyticsExtraction(trigger),
     runMetaAdsExtraction(trigger),
     // GA4 nao pode derrubar o pacote horario: falha por cliente ja vai pro
     // sync_jobs; aqui so protege contra erro geral (ex.: banco indisponivel).
-    runGa4DailyExtraction(trigger).catch((err) => {
-      console.error("[hourly-bundle] ga4_daily falhou", err);
-      return null;
-    }),
+    runGa4
+      ? runGa4DailyExtraction(trigger).catch((err) => {
+          console.error("[hourly-bundle] ga4_daily falhou", err);
+          return null;
+        })
+      : Promise.resolve(null),
   ]);
 
   return {

@@ -131,3 +131,9 @@ O sync pausa por algumas horas o cliente que o Google não responde (2 ou mais f
 `docs/ga4-guardado.md`). A pausa **não esconde o problema**: o cliente continua sem dado novo, então `parou_de_atualizar` (mais de 6 h) segue valendo,
 e o log da rodada horária registra `cliente pausado pelo disjuntor` com `failures` e `retryAt`. Quando o Google volta, o cliente recupera na primeira
 tentativa depois da pausa (no máximo ~5 h).
+
+## Limite de horas com o GA4 a cada 4 horas (17/11/2026)
+
+Com `GA4_EVERY_HOURS=4` no job horário (ver `docs/ga4-guardado.md`), o limite do check de frescor deve ser **9 horas** (`GA4_FRESHNESS_MAX_AGE_HOURS=9` em
+`upzero-sync-job-freshness`; o padrão é 6). Ele vale para o `job_parado`, o `parou_de_atualizar` e a origem do tráfego/funil parados. Em dia normal o dado fica até
+~4,5 h sem renovar; 9 h tolera uma rodada perdida e alerta na segunda.

@@ -126,6 +126,43 @@ function isNotFound(err: unknown): boolean {
   return e?.code === 404 || /not found/i.test(e?.message ?? "");
 }
 
+// ── Gravacoes simultaneas ───────────────────────────────────────────────────
+// A rodada horaria e o backfill escrevem nas MESMAS tabelas ao mesmo tempo. O BigQuery aborta a transacao da troca de janela quando outra
+// gravacao muda a mesma tabela no meio ("Transaction is aborted due to concurrent update against table ..."): foi o que derrubou o
+// backfill da Vivadress em 17/11/2026, que rodava junto com a rodada das 14h. Todas as gravacoes daqui sao idempotentes (trocam a janela do
+// cliente por inteiro; uma transacao abortada nao grava nada), entao repetir depois de uma espera curta e seguro.
+export const GA4_BQ_DML_ATTEMPTS = 8;
+
+export function isBigQueryConcurrentUpdateError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String((err as { message?: unknown } | null)?.message ?? err);
+  return /aborted due to concurrent update|could not serialize access to table|concurrent update/i.test(message);
+}
+
+// Muda so nos testes (para nao esperar de verdade).
+export const dmlRetryConfig = {
+  sleep: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)),
+  random: (): number => Math.random(),
+};
+
+export async function retryOnConcurrentUpdate<T>(run: () => Promise<T>, attempts: number = GA4_BQ_DML_ATTEMPTS): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (err) {
+      if (attempt >= attempts || !isBigQueryConcurrentUpdateError(err)) throw err;
+      // 3 s, 6 s, 12 s, 24 s e depois 30 s, com um sorteio de ate 50% a mais para dois processos nao baterem de novo no mesmo instante.
+      const base = Math.min(30_000, 3_000 * 2 ** (attempt - 1));
+      const waitMs = base + Math.floor(dmlRetryConfig.random() * base * 0.5);
+      console.warn("[ga4-bigquery] gravacao abortada por escrita simultanea na mesma tabela; tentando de novo", { attempt, waitMs });
+      await dmlRetryConfig.sleep(waitMs);
+    }
+  }
+}
+
+function runDml(bq: BigQueryLike, options: Parameters<typeof runQuery>[1]) {
+  return retryOnConcurrentUpdate(() => runQuery(bq, options));
+}
+
 export type Ga4BigQueryCoverage = { firstDay: string; lastDay: string };
 
 /**
@@ -198,7 +235,7 @@ export async function mergeGa4Daily(
   to: string,
 ): Promise<number> {
   if (rows.length === 0) return 0;
-  await runQuery(bq, buildMergeGa4DailyQuery(client, rows, from, to));
+  await runDml(bq, buildMergeGa4DailyQuery(client, rows, from, to));
   return rows.length;
 }
 
@@ -326,11 +363,11 @@ export async function replaceGa4ProductViews(
   const bqRows = buildGa4ProductBqRows(client, rows);
   if (bqRows.length === 0) {
     // Loja sem nenhum view_item na janela: so limpa o que estava la.
-    await runQuery(bq, buildDeleteProductsWindowQuery(client.clientId, from, to));
+    await runDml(bq, buildDeleteProductsWindowQuery(client.clientId, from, to));
     return 0;
   }
   if (bqRows.length <= GA4_BQ_PRODUCT_BATCH) {
-    await runQuery(bq, buildMergeProductsWindowQuery(bqRows, client.clientId, from, to));
+    await runDml(bq, buildMergeProductsWindowQuery(bqRows, client.clientId, from, to));
     return bqRows.length;
   }
   const stagingId = `ga4_product_views_stg_${newId()}`;
@@ -339,7 +376,7 @@ export async function replaceGa4ProductViews(
     for (const batch of chunk(bqRows, GA4_BQ_PRODUCT_BATCH)) {
       await runQuery(bq, buildInsertStagingQuery(stagingId, batch));
     }
-    await runQuery(bq, buildSwapProductsQuery(stagingId, client.clientId, from, to));
+    await runDml(bq, buildSwapProductsQuery(stagingId, client.clientId, from, to));
   } finally {
     // Limpeza de cortesia; se falhar, a expiracao de 1 hora recolhe a tabela.
     await runQuery(bq, { query: `DROP TABLE IF EXISTS ${stagingSql(stagingId)}` }).catch(() => undefined);
@@ -478,11 +515,11 @@ export async function replaceGa4Traffic(
   const bqRows = buildGa4TrafficBqRows(client, rows);
   if (bqRows.length === 0) {
     // Sem nenhuma sessao na janela: so limpa o que estava la.
-    await runQuery(bq, buildDeleteTrafficWindowQuery(client.clientId, from, to));
+    await runDml(bq, buildDeleteTrafficWindowQuery(client.clientId, from, to));
     return 0;
   }
   if (bqRows.length <= GA4_BQ_TRAFFIC_BATCH) {
-    await runQuery(bq, buildMergeTrafficWindowQuery(bqRows, client.clientId, from, to));
+    await runDml(bq, buildMergeTrafficWindowQuery(bqRows, client.clientId, from, to));
     return bqRows.length;
   }
   const stagingId = `ga4_traffic_stg_${newId()}`;
@@ -491,7 +528,7 @@ export async function replaceGa4Traffic(
     for (const batch of chunk(bqRows, GA4_BQ_TRAFFIC_BATCH)) {
       await runQuery(bq, buildInsertTrafficStagingQuery(stagingId, batch));
     }
-    await runQuery(bq, buildSwapTrafficQuery(stagingId, client.clientId, from, to));
+    await runDml(bq, buildSwapTrafficQuery(stagingId, client.clientId, from, to));
   } finally {
     // Limpeza de cortesia; se falhar, a expiracao de 1 hora recolhe a tabela.
     await runQuery(bq, { query: `DROP TABLE IF EXISTS ${trafficStagingSql(stagingId)}` }).catch(() => undefined);
@@ -647,11 +684,11 @@ export async function replaceGa4ProductFunnel(
   const bqRows = buildGa4ProductFunnelBqRows(client, rows);
   if (bqRows.length === 0) {
     // Nenhum item com movimento na janela: so limpa o que estava la.
-    await runQuery(bq, buildDeleteProductFunnelWindowQuery(client.clientId, from, to));
+    await runDml(bq, buildDeleteProductFunnelWindowQuery(client.clientId, from, to));
     return 0;
   }
   if (bqRows.length <= GA4_BQ_PRODUCT_FUNNEL_BATCH) {
-    await runQuery(bq, buildMergeProductFunnelWindowQuery(bqRows, client.clientId, from, to));
+    await runDml(bq, buildMergeProductFunnelWindowQuery(bqRows, client.clientId, from, to));
     return bqRows.length;
   }
   const stagingId = `ga4_product_funnel_stg_${newId()}`;
@@ -660,7 +697,7 @@ export async function replaceGa4ProductFunnel(
     for (const batch of chunk(bqRows, GA4_BQ_PRODUCT_FUNNEL_BATCH)) {
       await runQuery(bq, buildInsertProductFunnelStagingQuery(stagingId, batch));
     }
-    await runQuery(bq, buildSwapProductFunnelQuery(stagingId, client.clientId, from, to));
+    await runDml(bq, buildSwapProductFunnelQuery(stagingId, client.clientId, from, to));
   } finally {
     // Limpeza de cortesia; se falhar, a expiracao de 1 hora recolhe a tabela.
     await runQuery(bq, { query: `DROP TABLE IF EXISTS ${productFunnelStagingSql(stagingId)}` }).catch(() => undefined);

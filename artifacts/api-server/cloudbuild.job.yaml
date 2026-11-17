@@ -109,6 +109,19 @@ steps:
       - "--region=us-central1"
       - "--image=gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:$SHORT_SHA"
 
+  # Backfill do GA4 em job proprio (17/11/2026) -- mesma imagem, TASK=ga4_backfill fixo desde a criacao (ver docs/ga4-guardado.md, secao
+  # "Backfill em job proprio"). Fica fixado na tag do build (como o upzero-sync-job): sem este passo ele ficaria numa imagem velha.
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "jobs"
+      - "update"
+      - "upzero-sync-job-ga4-backfill"
+      - "--project=up-vesti-report"
+      - "--region=us-central1"
+      - "--image=gcr.io/up-vesti-report/up-dash-b2b-upzero-sync-job:$SHORT_SHA"
+
   # Terceiro recurso (06/11/2026) -- Braavo (La Cleo). Mesma imagem, TASK=braavo_transactional
   # fixo desde a criação (gcloud run jobs create upzero-sync-job-braavo, ver
   # docs/integracao-braavo.md, seção "Operação do job"). Só atualiza a imagem.

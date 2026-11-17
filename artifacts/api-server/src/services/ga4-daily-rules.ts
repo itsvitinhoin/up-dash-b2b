@@ -251,6 +251,23 @@ export function ga4BackfillStaleMinutes(): number {
   return positiveOr(Number.parseFloat(process.env.GA4_BACKFILL_STALE_MINUTES ?? ""), GA4_DEFAULT_BACKFILL_STALE_MINUTES);
 }
 
+// ── Frequencia do GA4 na rodada horaria ─────────────────────────────────────
+// A rodada horaria roda UpZero analytics (~9 s), Meta (~23 s) e GA4 (~7 min, 95% do tempo) no mesmo processo. O GA4 relê os ultimos 3 dias de
+// todos os clientes e regrava 4 tabelas do BigQuery, mas o Google ainda revisa esses numeros por 1-2 dias e as telas aceitam dado de ate 48 h:
+// de hora em hora e mais do que alguem precisa (16/11/2026: "a cada 4 horas ta bom"). Com GA4_EVERY_HOURS=N a rodada horaria so inclui o GA4 nas
+// horas (UTC) multiplas de N: 4 = 0h, 4h, 8h, 12h, 16h e 20h. Aceita so divisores de 24 (1, 2, 3, 4, 6, 8, 12, 24), para o intervalo ser sempre o
+// mesmo; qualquer outro valor (ou ausente) vale 1 = toda hora, como antes. UpZero e Meta continuam toda hora.
+export function ga4EveryHours(env: Record<string, string | undefined> = process.env): number {
+  const value = Number.parseInt(env.GA4_EVERY_HOURS ?? "", 10);
+  return Number.isInteger(value) && value >= 1 && 24 % value === 0 ? value : 1;
+}
+
+// Rodada manual sempre inclui o GA4 (e a forma de forcar uma atualizacao fora de hora).
+export function shouldRunGa4InHourlyBundle(params: { now: Date; everyHours: number; trigger: "cron" | "manual" }): boolean {
+  if (params.trigger !== "cron" || params.everyHours <= 1) return true;
+  return params.now.getUTCHours() % params.everyHours === 0;
+}
+
 // ── Produtos: onde guardar ──────────────────────────────────────────────────
 // A tabela de visualizacoes de produto do Postgres (ga4_product_views_daily) so e lida pela tela de Produtos do B2C. Cliente B2B nao tem
 // tela que a use, e o BigQuery (up_global.ga4_product_views_daily) ja guarda tudo: em 09/11/2026 eram 395 mil linhas de 14 clientes B2B

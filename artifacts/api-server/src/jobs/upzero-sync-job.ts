@@ -31,7 +31,8 @@
  *     parado ha mais de um mes), sem o limite de tempo da rodada horaria, buscando e gravando em pedacos (GA4_CHUNK_DAYS, padrao 60).
  *     GA4_BACKFILL_MAX_CLIENTS (padrao 3) = quantos por execucao. Cria-se com timeout longo e --max-retries=0. A rodada horaria so deixa os
  *     clientes largos para este job quando GA4_BACKFILL_SEPARATE=1 esta no job horario. Ver docs/ga4-guardado.md.
- *   TASK=hourly_bundle         -> roda upzero_analytics + meta_ads + ga4_daily juntos
+ *   TASK=hourly_bundle         -> roda upzero_analytics + meta_ads + ga4_daily juntos (GA4_EVERY_HOURS=N: o GA4, que e 95% do tempo da
+ *     rodada, so entra nas horas UTC multiplas de N, N divisor de 24; padrao 1 = toda hora; UpZero e Meta seguem toda hora)
  *   TASK=whatsapp_fix_phone_waba -> corrige o waba_id de UM número em
  *     whatsapp_phone_numbers (ver CLIENT_ID/PHONE_NUMBER_ID/WABA_ID abaixo)
  *   TASK=run_migrations       -> aplica as migrations pendentes de lib/db/migrations

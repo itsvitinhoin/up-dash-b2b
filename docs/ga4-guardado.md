@@ -403,3 +403,36 @@ Ordem para publicar (cada passo pode parar e voltar atrás sem perda):
 Rollback: tirar a variável (`--remove-env-vars=GA4_BACKFILL_SEPARATE`) devolve o backfill à rodada horária; o job novo pode ser pausado
 (`gcloud scheduler jobs pause upzero-sync-job-ga4-backfill-schedule`) sem efeito colateral. Execução manual de um cliente (`TASK=ga4_daily` ou
 `TASK=ga4_backfill` com `CLIENT_ID=...`) ignora o disjuntor e os limites, como antes.
+
+### 4. Gravações simultâneas no BigQuery (17/11/2026)
+
+A prova de memória (reexecutar o backfill de 400 dias da Vivadress, sem a memória extra do Node) **não** falhou por memória: foi abortada pelo BigQuery com
+`Transaction is aborted due to concurrent update against table ...ga4_product_views_daily` (job bloqueante: o `MERGE` da rodada horária das 14h, que gravava
+na mesma tabela). A troca de janela do backfill é uma transação (`BEGIN TRANSACTION; DELETE ...; INSERT ...; COMMIT`) e o BigQuery a aborta quando outra gravação
+muda a mesma tabela no meio. Antes isso só não aparecia porque a troca era uma só, no fim de uma execução de 35 minutos; em pedaços são vários trocas, e com o
+backfill em job próprio (que roda junto com a rodada horária) a colisão passou a ser esperada.
+
+Correção: toda gravação de janela (`MERGE`, `DELETE` da janela e a troca por tabela temporária, nas 3 tabelas, mais o `MERGE` do diário) passa por
+`retryOnConcurrentUpdate`: em erro de escrita simultânea espera 3 s, 6 s, 12 s, 24 s e 30 s (com um sorteio de até +50%) e tenta de novo, **até 8 tentativas**.
+É seguro porque as gravações são idempotentes (trocam a janela do cliente por inteiro) e uma transação abortada não grava nada; a tabela temporária só é
+apagada no fim. Outro erro do BigQuery sobe na hora, sem repetir. O log traz `gravacao abortada por escrita simultanea na mesma tabela; tentando de novo`.
+Efeito colateral bom: a rodada horária, que também podia ser abortada por uma transação do backfill (e falhar o cliente inteiro, porque os produtos não são isolados),
+passa a repetir em vez de falhar.
+
+### 5. GA4 a cada 4 horas na rodada horária (17/11/2026)
+
+A rodada horária roda UpZero analytics (~9 s), Meta (~23 s) e GA4 (~7 min: **95% do tempo**) no mesmo processo, e o GA4 chegava a 24 vezes por dia (~96
+gravações por rodada, ~2.300 por dia nas 4 tabelas). O Google ainda revisa os últimos 1–2 dias e as telas aceitam dado de até 48 h, então de hora em hora era
+mais do que se usava; ficou **a cada 4 horas** (decisão do Marcelo em 17/11).
+
+- `GA4_EVERY_HOURS=4` no job `upzero-sync-job-hourly`: a rodada só inclui o GA4 nas horas **UTC** múltiplas de 4 (0h, 4h, 8h, 12h, 16h e 20h = 21h, 1h, 5h,
+  9h, 13h e 17h em São Paulo). Nas outras horas o resultado traz `ga4: null` e o log `ga4_daily fora desta hora`. UpZero e Meta seguem **toda hora**.
+  Só aceita divisores de 24 (1, 2, 3, 4, 6, 8, 12, 24); ausente ou inválido vale 1 = toda hora, como antes. Rodada manual do pacote sempre inclui o GA4.
+- **O limite do alerta de dado parado sobe junto:** `GA4_FRESHNESS_MAX_AGE_HOURS=9` no job `upzero-sync-job-freshness` (padrão 6). Com 4 h entre rodadas o
+  dado fica até ~4,5 h sem renovar em dia normal; 9 h tolera **uma** rodada perdida (8,5 h) e alerta na segunda. Com 6 h o alerta dispararia à toa depois de
+  uma única falha. **Suba o limite ANTES de ligar `GA4_EVERY_HOURS`.**
+- O disjuntor quase não age na rodada horária com esse intervalo (a pausa é de 1h40 a 5h e a próxima rodada vem 4 h depois); segue valendo para o job de backfill, que roda a cada 30 min.
+- Rodar o GA4 fora de hora: `gcloud run jobs execute upzero-sync-job-hourly --update-env-vars=TRIGGER=manual --wait` (inclui o GA4) ou
+  `TASK=ga4_daily` no `upzero-sync-job`.
+- Voltar a toda hora: `gcloud run jobs update upzero-sync-job-hourly --remove-env-vars=GA4_EVERY_HOURS` e voltar o limite do alerta para 6
+  (`--remove-env-vars=GA4_FRESHNESS_MAX_AGE_HOURS` no job de frescor).

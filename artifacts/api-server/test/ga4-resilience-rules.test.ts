@@ -5,8 +5,10 @@ import {
   ga4BackfillMaxClients,
   ga4BackfillStaleMinutes,
   ga4ChunkDays,
+  ga4EveryHours,
   isGa4BackfillSeparate,
   isTransientGa4Error,
+  shouldRunGa4InHourlyBundle,
   shouldWaitBeforeBackfillRetry,
   splitGa4Window,
   type Ga4RecentJob,
@@ -184,6 +186,38 @@ describe("shouldWaitBeforeBackfillRetry (backfill não repete falha de acesso a 
     expect(shouldWaitBeforeBackfillRetry([{ status: "failed", error: "GA4 runReport failed: 502", at: ago(5) }], now)).toBe(false);
     expect(shouldWaitBeforeBackfillRetry([{ status: "done", error: null, at: ago(5) }], now)).toBe(false);
     expect(shouldWaitBeforeBackfillRetry([], now)).toBe(false);
+  });
+});
+
+describe("GA4_EVERY_HOURS (frequência do GA4 na rodada horária)", () => {
+  it("só aceita divisores de 24; ausente ou inválido vale 1 (toda hora, como antes)", () => {
+    expect(ga4EveryHours({})).toBe(1);
+    expect(ga4EveryHours({ GA4_EVERY_HOURS: "" })).toBe(1);
+    expect(ga4EveryHours({ GA4_EVERY_HOURS: "abc" })).toBe(1);
+    expect(ga4EveryHours({ GA4_EVERY_HOURS: "0" })).toBe(1);
+    expect(ga4EveryHours({ GA4_EVERY_HOURS: "-4" })).toBe(1);
+    expect(ga4EveryHours({ GA4_EVERY_HOURS: "5" })).toBe(1); // 24 não é múltiplo de 5: intervalo irregular
+    expect(ga4EveryHours({ GA4_EVERY_HOURS: "7" })).toBe(1);
+    for (const valid of [1, 2, 3, 4, 6, 8, 12, 24]) expect(ga4EveryHours({ GA4_EVERY_HOURS: String(valid) })).toBe(valid);
+  });
+
+  it("a cada 4 horas: 0h, 4h, 8h, 12h, 16h e 20h UTC", () => {
+    const hours = Array.from({ length: 24 }, (_, hour) =>
+      shouldRunGa4InHourlyBundle({ now: new Date(Date.UTC(2026, 10, 17, hour, 0, 5)), everyHours: 4, trigger: "cron" }),
+    );
+    expect(hours.flatMap((run, hour) => (run ? [hour] : []))).toEqual([0, 4, 8, 12, 16, 20]);
+  });
+
+  it("toda hora (padrão) roda sempre; os minutos da hora não importam", () => {
+    for (let hour = 0; hour < 24; hour += 1) {
+      expect(shouldRunGa4InHourlyBundle({ now: new Date(Date.UTC(2026, 10, 17, hour, 59, 59)), everyHours: 1, trigger: "cron" })).toBe(true);
+    }
+    expect(shouldRunGa4InHourlyBundle({ now: new Date(Date.UTC(2026, 10, 17, 12, 59, 59)), everyHours: 4, trigger: "cron" })).toBe(true);
+    expect(shouldRunGa4InHourlyBundle({ now: new Date(Date.UTC(2026, 10, 17, 13, 0, 0)), everyHours: 4, trigger: "cron" })).toBe(false);
+  });
+
+  it("rodada manual sempre inclui o GA4 (é o jeito de forçar uma atualização fora de hora)", () => {
+    expect(shouldRunGa4InHourlyBundle({ now: new Date(Date.UTC(2026, 10, 17, 13, 0, 0)), everyHours: 4, trigger: "manual" })).toBe(true);
   });
 });
 

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import * as schema from "@workspace/db/schema";
@@ -53,18 +53,19 @@ vi.mock("../src/services/ga4-daily-sync", async (importOriginal) => ({
   syncGa4DailyForClient: (...args: unknown[]) => sync.fn(...args),
 }));
 
-import { runGa4DailyExtraction } from "../src/services/extraction-runner";
+import { runGa4DailyExtraction, runHourlyExtractionBundle } from "../src/services/extraction-runner";
 import { saoPauloDate, shiftDate } from "../src/services/ga4-daily-rules";
 
 const pg = new PGlite();
-const ENV_KEYS = ["GA4_BIGQUERY", "GA4_BACKFILL_SEPARATE", "GA4_BACKFILL_MAX_CLIENTS", "GA4_BACKFILL_STALE_MINUTES"] as const;
+const ENV_KEYS = ["GA4_BIGQUERY", "GA4_EVERY_HOURS", "GA4_BACKFILL_SEPARATE", "GA4_BACKFILL_MAX_CLIENTS", "GA4_BACKFILL_STALE_MINUTES"] as const;
 const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 beforeAll(async () => {
   await pg.exec(`
     CREATE TABLE clients (
       id text PRIMARY KEY, name text NOT NULL, up_zero_api_key text, meta_ads_api_key text, meta_ad_account_id text,
-      dashboard_type text NOT NULL DEFAULT 'B2B', nuvemshop_store_id text, nuvemshop_access_token text,
+      dashboard_type text NOT NULL DEFAULT 'B2B', commerce_platform text NOT NULL DEFAULT 'UPZERO',
+      nuvemshop_store_id text, nuvemshop_access_token text,
       ga4_property_id text, archived_at timestamptz
     );
     CREATE TABLE ga4_daily_metrics (
@@ -233,6 +234,60 @@ describe("modo backfill (TASK=ga4_backfill)", () => {
     expect(syncedClients()).toEqual(["a-sem-acesso", "novo"]);
     expect(summary.failed).toBe(1);
     expect(summary.done).toBe(1);
+  });
+});
+
+describe("rodada horária completa: GA4 só nas horas de GA4_EVERY_HOURS", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Só o relógio (Date) é falso: o banco em memória precisa dos timers de verdade.
+  async function bundleAt(isoUtc: string, trigger: "cron" | "manual" = "cron") {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(isoUtc));
+    return runHourlyExtractionBundle(trigger);
+  }
+
+  it("a cada 4 horas: às 12h e 16h UTC o GA4 roda; às 13h, 14h e 15h não (ga4 = null), e UpZero e Meta rodam em todas", async () => {
+    process.env.GA4_EVERY_HOURS = "4";
+    await addClient("a");
+
+    const at12 = await bundleAt("2026-11-17T12:00:03.000Z");
+    expect(at12.ga4).not.toBeNull();
+    expect(syncedClients()).toEqual(["a"]);
+
+    sync.fn.mockClear();
+    for (const hour of ["13", "14", "15"]) {
+      const result = await bundleAt(`2026-11-17T${hour}:00:03.000Z`);
+      expect(result.ga4).toBeNull();
+      expect(result.analytics.jobType).toBe("upzero_analytics");
+      expect(result.meta.jobType).toBe("meta_ads");
+    }
+    expect(sync.fn).not.toHaveBeenCalled();
+
+    const at16 = await bundleAt("2026-11-17T16:00:03.000Z");
+    expect(at16.ga4).not.toBeNull();
+    expect(syncedClients()).toEqual(["a"]);
+  });
+
+  it("sem GA4_EVERY_HOURS (padrão) o GA4 roda toda hora, como antes", async () => {
+    await addClient("a");
+
+    for (const hour of ["13", "14"]) {
+      const result = await bundleAt(`2026-11-17T${hour}:00:03.000Z`);
+      expect(result.ga4).not.toBeNull();
+    }
+    expect(sync.fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("rodada manual do pacote inclui o GA4 mesmo fora da hora", async () => {
+    process.env.GA4_EVERY_HOURS = "4";
+    await addClient("a");
+
+    const result = await bundleAt("2026-11-17T13:00:03.000Z", "manual");
+
+    expect(result.ga4).not.toBeNull();
   });
 });
 
