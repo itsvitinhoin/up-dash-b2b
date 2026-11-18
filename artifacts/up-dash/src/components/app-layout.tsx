@@ -234,7 +234,7 @@ const pageMeta: Record<string, PageMeta> = {
   "/overview": {
     title: "Visão geral da plataforma",
     subtitle: "Todas as marcas do grupo em uma visão",
-    hasDateRange: true,
+    hasDateRange: false,
     hasFilterBar: false,
   },
   "/marketing": {

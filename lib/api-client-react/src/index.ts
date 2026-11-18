@@ -15,3 +15,5 @@ export type {
   ErrorType,
   BodyType,
 } from "./custom-fetch";
+
+export type { TvBrand, TvTotals, TvSnapshot, TvSyncStatus } from "./tv-dashboard";

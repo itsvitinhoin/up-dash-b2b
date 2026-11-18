@@ -1,850 +1,542 @@
-import { useI18n } from "@/lib/i18n";
-import { GlassMetricCard } from "@/components/glass-metric-card";
-import { useMemo, useState } from "react";
-import { addDays, differenceInDays, eachDayOfInterval, format, subDays } from "date-fns";
-import { motion } from "framer-motion";
-import { Link, useLocation } from "wouter";
+import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
-  AlertCircle,
-  ArrowDownRight,
-  ArrowUpRight,
-  Award,
-  BadgeCheck,
-  Building2,
-  ChevronRight,
-  CircleDollarSign,
-  Globe2,
-  Megaphone,
-  Minus,
-  Package,
-  TrendingDown,
-  TrendingUp,
-  UserPlus,
-  Users,
-  Zap,
+  Pause,
+  Play,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-
-import { useAuth } from "@/lib/auth";
-import { queryOpts } from "@/lib/query-opts";
-import { useDashboardFilters } from "@/lib/dashboard-filters";
-import { useGetAdminOverview, useListClients } from "@workspace/api-client-react";
+  customFetch,
+  type TvSnapshot,
+  type TvSyncStatus,
+  type TvTotals,
+} from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { CountUp } from "@/components/count-up";
-import { EmptyState } from "@/components/empty-state";
-import { formatCurrency, formatCurrencySmart, formatNumber } from "@/lib/formatters";
+import { Skeleton } from "@/components/ui/skeleton";
+import { GlassMetricCard } from "@/components/glass-metric-card";
 import {
-  cardEntry,
-  fadeInUp,
-  staggerContainer,
-  useReducedMotion,
-  withReducedMotion,
-} from "@/lib/motion";
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  ChartLegend,
+  ChartLegendContent,
+} from "@/components/ui/chart";
+import { Line, LineChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { CountUp } from "@/components/count-up";
+import { formatCurrency } from "@/lib/formatters";
+import { playMoneySound } from "@/lib/money-sound";
+import {
+  revenueIncreased,
+  TV_PAGE_MS,
+  TV_PAGE_SIZE,
+  TV_STATUS_POLL_MS,
+} from "@/lib/tv-dashboard";
 
-type SeriesMetric = "revenue" | "orders" | "leads";
+const money = (value: number, currency: string) =>
+  formatCurrency(value, { currency, locale: "pt-BR" });
+const mer = (value: number) =>
+  `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2, minimumFractionDigits: 2 })}x`;
+const dateLabel = (value: string) => value.split("-").reverse().join("/");
 
-function deltaPct(current: number, previous: number): number | null {
-  if (previous === 0) return current === 0 ? 0 : null;
-  return ((current - previous) / previous) * 100;
-}
-
-function DeltaChip({
-  change,
-  label,
+function Metrics({
+  totals,
+  loading,
+  prefix,
 }: {
-  change: number | null;
-  label: string;
+  totals: TvTotals[];
+  loading: boolean;
+  prefix: string;
 }) {
-  const { tx } = useI18n();
-  if (change === null) {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-muted/40 text-muted-foreground">
-        <Minus className="h-3 w-3" />
-        {tx("sem dados anteriores")}
-        <span className="text-muted-foreground/70 ml-1">{label}</span>
-      </span>
-    );
-  }
-  const isUp = change >= 0;
   return (
-    <div>
-      <span
-        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${
-          isUp ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
-        }`}
-      >
-        {isUp ? (
-          <ArrowUpRight className="h-3 w-3" />
-        ) : (
-          <ArrowDownRight className="h-3 w-3" />
-        )}
-        {isUp ? "+" : ""}
-        {change.toFixed(1)}%
-      </span>
-      <span className="text-xs text-muted-foreground ml-2">{label}</span>
+    <div className="grid gap-4 md:grid-cols-3">
+      {(
+        [
+          {
+            key: "revenue",
+            label:
+              prefix === "total"
+                ? "Total de faturamento"
+                : prefix === "b2b"
+                  ? "Faturamento solicitado B2B"
+                  : "Faturamento pago B2C",
+          },
+          {
+            key: "investment",
+            label:
+              prefix === "total" ? "Total de investimento" : "Investimento",
+          },
+          { key: "mer", label: "MER" },
+        ] as const
+      ).map(({ key, label }) => (
+        <GlassMetricCard
+          key={key}
+          label={label}
+          loading={loading}
+          value={
+            totals.length === 1 ? (
+              (totals[0][key] ?? "—")
+            ) : totals.length ? (
+              <div className="space-y-1">
+                {totals.map((total) => (
+                  <div key={total.currency}>
+                    {total[key] === null
+                      ? "—"
+                      : key === "mer"
+                        ? `${mer(total[key])} · ${total.currency}`
+                        : money(total[key], total.currency)}
+                  </div>
+                ))}
+              </div>
+            ) : key === "mer" ? (
+              "—"
+            ) : (
+              0
+            )
+          }
+          format={
+            key === "mer"
+              ? mer
+              : (value) => money(value, totals[0]?.currency ?? "BRL")
+          }
+          info={
+            key === "mer"
+              ? "Faturamento dividido pelo investimento total. Sem investimento, o MER é indisponível."
+              : key === "investment"
+                ? "Soma do investimento disponível para os 90 dias. Valores ausentes não são tratados como zero."
+                : "B2B solicitado e B2C pago nos últimos 90 dias, em horário de Brasília."
+          }
+          comparisonUnavailable="Este painel não consulta a janela anterior de 90 dias."
+          footer={
+            <div className="flex justify-between gap-2 text-xs">
+              <span className="text-muted-foreground">Período</span>
+              <span>Últimos 90 dias</span>
+            </div>
+          }
+          testId={`${prefix}-${key}`}
+        />
+      ))}
     </div>
   );
 }
 
-interface KpiTileProps {
-  icon: React.ComponentType<{ className?: string }>;
-  iconClass: string;
-  label: string;
-  value: number;
-  format: (value: number) => string;
-  unit?: string;
-  change: number | null;
-  changeLabel: string;
-  isLoading: boolean;
-  testId: string;
-}
-
-function KpiTile({
-  icon: Icon,
-  iconClass,
-  label,
-  value,
-  format: fmt,
-  unit,
-  change,
-  changeLabel,
-  isLoading,
-  testId,
-}: KpiTileProps) {
-  const reduced = useReducedMotion();
-  const variants = withReducedMotion(cardEntry, reduced);
-  return (<GlassMetricCard label={label} value={value} icon={Icon} format={fmt} unit={unit} change={change} changeLabel={changeLabel} loading={isLoading} testId={testId} />);
-}
-
-function GrowthBadge({ value }: { value: number | null }) {
-  if (value === null) {
-    return (
-      <Badge
-        variant="secondary"
-        className="font-mono text-[11px] gap-1 bg-muted/40 text-muted-foreground"
-      >
-        <Minus className="h-3 w-3" /> n/a
-      </Badge>
-    );
-  }
-  const isUp = value >= 0;
+function RevenueChart({ data }: { data: TvSnapshot }) {
+  const currencies = [
+    ...new Set((data.revenueTrend ?? []).map((p) => p.currency)),
+  ];
   return (
-    <Badge
-      variant="secondary"
-      className={`font-mono text-[11px] gap-1 ${
-        isUp ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
-      }`}
-    >
-      {isUp ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-      {isUp ? "+" : ""}
-      {value.toFixed(1)}%
-    </Badge>
-  );
-}
-
-interface LeaderboardCardProps {
-  title: string;
-  subtitle: string;
-  icon: React.ComponentType<{ className?: string }>;
-  iconClass: string;
-  rows: {
-    id: string;
-    name: string;
-    revenue: number;
-    growthPct: number | null;
-    currency: string;
-    locale: string;
-  }[];
-  emptyTitle: string;
-  emptyDescription: string;
-  variant: "performance" | "growth-up" | "growth-down";
-  onSelect: (id: string) => void;
-  testId: string;
-}
-
-function LeaderboardCard({
-  title,
-  subtitle,
-  icon: Icon,
-  iconClass,
-  rows,
-  emptyTitle,
-  emptyDescription,
-  variant,
-  onSelect,
-  testId,
-}: LeaderboardCardProps) {
-  return (
-    <Card data-testid={testId} className="p-5 bg-card border-border flex flex-col">
-      <div className="flex items-center gap-2.5 mb-1">
-        <div className={`flex h-7 w-7 items-center justify-center rounded-lg ${iconClass}`}>
-          <Icon className="h-3.5 w-3.5" />
-        </div>
-        <h3 className="text-sm font-semibold leading-tight">{title}</h3>
-      </div>
-      <p className="text-xs text-muted-foreground mb-4 ml-9">{subtitle}</p>
-      {rows.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center py-6 text-xs text-muted-foreground text-center">
-          <div>
-            <div className="font-medium text-sm text-foreground/80">{emptyTitle}</div>
-            <div className="mt-1">{emptyDescription}</div>
-          </div>
-        </div>
-      ) : (
-        <ul className="space-y-1 -mx-2">
-          {rows.map((row, i) => (
-            <li key={row.id}>
-              <Button variant="ghost" size="sm"
-                type="button"
-                onClick={() => onSelect(row.id)}
-                data-testid={`${testId}-row-${i}`}
-                className="w-full flex items-center gap-3 px-2 py-2 rounded-md text-left hover-elevate transition-colors"
-              >
-                <span
-                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-mono font-semibold ${
-                    i === 0
-                      ? variant === "growth-down"
-                        ? "bg-red-500/15 text-red-400"
-                        : "bg-emerald-500/15 text-emerald-400"
-                      : "bg-muted/50 text-muted-foreground"
-                  }`}
-                >
-                  {i + 1}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium truncate">{row.name}</div>
-                  <div className="text-xs text-muted-foreground tabular-nums">
-                    {formatCurrency(row.revenue, {
-                      currency: row.currency,
-                      locale: row.locale,
-                    })}
-                  </div>
-                </div>
-                {variant === "performance" ? null : (
-                  <GrowthBadge value={row.growthPct} />
-                )}
-                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Card>
+    <div className="grid gap-4">
+      {currencies.map((currency) => (
+        <Card key={currency} className="up-portfolio-chart p-5">
+          <h2 className="text-base font-medium">
+            Evolução do faturamento · {currency}
+          </h2>
+          <p className="mt-1 mb-5 text-xs text-muted-foreground">
+            Valores diários · B2B solicitado e B2C pago · 90 dias
+          </p>
+          <ChartContainer
+            config={{
+              total: { label: "Total", color: "#0458fe" },
+              b2b: { label: "B2B", color: "#afc4ff" },
+              b2c: { label: "B2C", color: "#25d4a2" },
+            }}
+            className="h-[240px] w-full aspect-auto"
+          >
+            <LineChart
+              data={data.revenueTrend?.filter((p) => p.currency === currency)}
+              margin={{ top: 8, right: 12, bottom: 4, left: 8 }}
+              accessibilityLayer
+            >
+              <CartesianGrid vertical={false} strokeDasharray="3 3" />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(value) =>
+                  String(value).slice(5).split("-").reverse().join("/")
+                }
+                minTickGap={40}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                tickFormatter={(value) =>
+                  new Intl.NumberFormat("pt-BR", {
+                    notation: "compact",
+                  }).format(value)
+                }
+                tickLine={false}
+                axisLine={false}
+                width={65}
+              />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    labelFormatter={(value) => dateLabel(String(value))}
+                    formatter={(value, name) => (
+                      <span>
+                        {name === "total"
+                          ? "Total"
+                          : String(name).toUpperCase()}
+                        : {money(Number(value), currency)}
+                      </span>
+                    )}
+                  />
+                }
+              />
+              <ChartLegend content={<ChartLegendContent />} />
+              <Line
+                dataKey="total"
+                type="linear"
+                stroke="var(--color-total)"
+                strokeWidth={2.5}
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Line
+                dataKey="b2b"
+                type="linear"
+                stroke="var(--color-b2b)"
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Line
+                dataKey="b2c"
+                type="linear"
+                stroke="var(--color-b2c)"
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ChartContainer>
+        </Card>
+      ))}
+    </div>
   );
 }
 
 export default function OverviewPage() {
-  const { tx } = useI18n();
-  const { user, setSelectedClientId } = useAuth();
-  const { dateRange } = useDashboardFilters();
-  const reduced = useReducedMotion();
-  const [, navigate] = useLocation();
-  const [seriesMetric, setSeriesMetric] = useState<SeriesMetric>("revenue");
-  const [selectedClientIds, setSelectedClientIds] = useState<string[] | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundError, setSoundError] = useState(false);
+  const [page, setPage] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const audio = useRef<AudioContext | null>(null);
+  const previous = useRef<TvSnapshot | undefined>(undefined);
+  const lastRequestedCycle = useRef<string | undefined>(undefined);
+  const status = useQuery({
+    queryKey: ["portfolio-monitor-status"],
+    queryFn: ({ signal }) =>
+      customFetch<TvSyncStatus>("/api/analytics/admin/tv/status", { signal }),
+    refetchInterval: TV_STATUS_POLL_MS,
+    refetchIntervalInBackground: true,
+  });
+  const snapshot = useQuery({
+    queryKey: ["portfolio-monitor"],
+    queryFn: ({ signal }) =>
+      customFetch<TvSnapshot>("/api/analytics/admin/tv", { signal }),
+    enabled: false,
+    staleTime: Infinity,
+  });
+  const { refetch } = snapshot;
+  useEffect(() => {
+    const sync = status.data;
+    if (!sync || (!sync.ready && snapshot.data)) return;
+    // One publication per completed scheduled cycle; retry incomplete media or failed reads.
+    if (
+      lastRequestedCycle.current === sync.cycle &&
+      snapshot.data?.cycle === sync.cycle &&
+      !snapshot.data.brands.some((b) => b.warning)
+    )
+      return;
+    if (snapshot.isFetching) return;
+    lastRequestedCycle.current = sync.cycle;
+    void refetch();
+  }, [status.dataUpdatedAt, refetch]);
 
-  const enabled = user?.role === "ADMIN";
-  const { data: clientsData, isLoading: isLoadingClients } = useListClients(
-    { page: 1, limit: 1000 },
-    { query: queryOpts({ enabled, placeholderData: (prev) => prev }) },
-  );
-  const clientOptions = useMemo(() => clientsData?.data ?? [], [clientsData]);
-  const allClientIds = useMemo(() => clientOptions.map((client) => client.id), [clientOptions]);
-  const selectedClientParam =
-    selectedClientIds === null ? undefined : selectedClientIds.join(",");
-  const effectiveSelectedClientIds = selectedClientIds ?? allClientIds;
-  const selectedClientSet = useMemo(
-    () => new Set(effectiveSelectedClientIds),
-    [effectiveSelectedClientIds],
-  );
+  useEffect(() => {
+    if (!snapshot.data) return;
+    const next = snapshot.data;
+    if (
+      revenueIncreased(previous.current, next) &&
+      soundEnabled &&
+      audio.current
+    ) {
+      void playMoneySound(audio.current).catch(() => {
+        setSoundEnabled(false);
+        setSoundError(true);
+      });
+    }
+    previous.current = next;
+  }, [snapshot.data, soundEnabled]);
 
-  const { data, isLoading, isError, refetch } = useGetAdminOverview(
-    {
-      dateFrom: format(dateRange.from, "yyyy-MM-dd"),
-      dateTo: format(dateRange.to, "yyyy-MM-dd"),
-      clientIds: selectedClientParam,
+  useEffect(
+    () => () => {
+      const context = audio.current;
+      audio.current = null;
+      if (context && context.state !== "closed")
+        void context.close().catch(() => {});
     },
-    { query: queryOpts({ enabled }) },
+    [],
   );
-  const selectedClientCount =
-    selectedClientIds === null ? (data?.kpis.totalClients ?? allClientIds.length) : selectedClientIds.length;
-
-  const inclusiveDays = Math.max(1, differenceInDays(dateRange.to, dateRange.from) + 1);
-  const prevPeriodTo = useMemo(() => subDays(dateRange.from, 1), [dateRange.from]);
-  const prevPeriodFrom = useMemo(
-    () => addDays(prevPeriodTo, -(inclusiveDays - 1)),
-    [prevPeriodTo, inclusiveDays],
+  const data = snapshot.data;
+  const pages = Math.max(
+    1,
+    Math.ceil((data?.brands.length ?? 0) / TV_PAGE_SIZE),
   );
+  const currentPage = page % pages;
+  useEffect(() => {
+    if (paused || pages <= 1) return;
+    const timer = window.setInterval(
+      () => setPage((p) => (p + 1) % pages),
+      TV_PAGE_MS,
+    );
+    return () => window.clearInterval(timer);
+  }, [pages, paused]);
 
-  // Build the chart axis from the requested current-period date range, then
-  // index both the current and previous series by date string. The backend
-  // only returns days that have activity, so without explicit zero-fill the
-  // arrays for current vs prior windows can have different lengths and a
-  // naive index-pairing would compare the wrong dates. We pair by ordinal
-  // offset in the window: day N of "this period" lines up with day N of
-  // "previous period".
-  const chartData = useMemo(() => {
-    if (!data) return [];
-    const current =
-      seriesMetric === "revenue"
-        ? data.revenueOverTime
-        : seriesMetric === "orders"
-          ? data.ordersOverTime
-          : data.leadsOverTime;
-    const previous =
-      seriesMetric === "revenue"
-        ? data.prevRevenueOverTime
-        : seriesMetric === "orders"
-          ? data.prevOrdersOverTime
-          : data.prevLeadsOverTime;
-    const currentByDate = new Map(current.map((p) => [p.date, p.value]));
-    const previousByDate = new Map(previous.map((p) => [p.date, p.value]));
-    const days = eachDayOfInterval({ start: dateRange.from, end: dateRange.to });
-    return days.map((day, idx) => {
-      const dayKey = format(day, "yyyy-MM-dd");
-      const prevKey = format(addDays(prevPeriodFrom, idx), "yyyy-MM-dd");
-      return {
-        date: dayKey,
-        current: currentByDate.get(dayKey) ?? 0,
-        previous: previousByDate.get(prevKey) ?? 0,
-      };
-    });
-  }, [data, seriesMetric, dateRange.from, dateRange.to, prevPeriodFrom]);
-
-  const containerVariants = withReducedMotion(staggerContainer, reduced);
-  const fadeVariants = withReducedMotion(fadeInUp, reduced);
-
-  // Drill down into a single brand from the overview. We both set the
-  // selected client (so the topbar picker reflects the choice) AND navigate
-  // away from `/overview` — otherwise the picker is forced to the
-  // `__platform__` value while on this page and the user gets no visual
-  // feedback that their click did anything.
-  const handleSelectClient = (id: string) => {
-    setSelectedClientId(id);
-    navigate("/dashboard");
-  };
-
-  const handleToggleClient = (clientId: string, checked: boolean) => {
-    const baseSelection = selectedClientIds ?? allClientIds;
-    if (checked) {
-      setSelectedClientIds(Array.from(new Set([...baseSelection, clientId])));
+  async function toggleSound() {
+    if (soundEnabled) {
+      setSoundEnabled(false);
       return;
     }
-    setSelectedClientIds(baseSelection.filter((id) => id !== clientId));
-  };
-
-  if (user?.role !== "ADMIN") {
-    return (
-      <Alert variant="destructive" data-testid="page-overview">
-        <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Restricted</AlertTitle>
-        <AlertDescription>
-          {tx("A visão geral da plataforma está disponível apenas para administradores.")}
-        </AlertDescription>
-      </Alert>
-    );
+    try {
+      if (!audio.current || audio.current.state === "closed")
+        audio.current = new AudioContext();
+      await playMoneySound(audio.current);
+      setSoundError(false);
+      setSoundEnabled(true);
+    } catch {
+      setSoundError(true);
+    }
   }
 
-  if (isError) {
-    return (
-      <Alert variant="destructive" data-testid="page-overview">
-        <AlertCircle className="h-4 w-4" />
-        <AlertTitle>{tx("Erro")}</AlertTitle>
-        <AlertDescription className="flex items-center justify-between">
-          {tx("Não foi possível carregar a visão geral da plataforma.")}
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            {tx("Tentar novamente")}
-          </Button>
-        </AlertDescription>
-      </Alert>
-    );
-  }
-
-  const kpis = data?.kpis;
-  const prev = data?.prevKpis;
-  const revenueDelta = kpis && prev ? deltaPct(kpis.revenue, prev.revenue) : null;
-  const ordersDelta = kpis && prev ? deltaPct(kpis.orders, prev.orders) : null;
-  const customersDelta = kpis && prev ? deltaPct(kpis.customers, prev.customers) : null;
-  const aovDelta =
-    kpis && prev ? deltaPct(kpis.avgOrderValue, prev.avgOrderValue) : null;
-  const activeDelta =
-    kpis && prev ? deltaPct(kpis.activeClients, prev.activeClients) : null;
-  const adSpendDelta = kpis && prev ? deltaPct(kpis.adSpend, prev.adSpend) : null;
-  const roasDelta = kpis && prev ? deltaPct(kpis.roas, prev.roas) : null;
-  const totalLeadsDelta = kpis && prev ? deltaPct(kpis.totalLeads, prev.totalLeads) : null;
-  const approvedLeadsDelta = kpis && prev ? deltaPct(kpis.approvedLeads, prev.approvedLeads) : null;
-
-  const seriesEmpty =
-    data !== undefined && chartData.every((p) => (p.current ?? 0) === 0);
-
+  const waiting = !status.data?.ready;
+  const loading = !data;
+  const visible =
+    data?.brands.slice(
+      currentPage * TV_PAGE_SIZE,
+      (currentPage + 1) * TV_PAGE_SIZE,
+    ) ?? [];
   return (
-    <div className="space-y-6" data-testid="page-overview">
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={fadeVariants}
-        className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
-      >
-        <div className="flex items-center gap-2">
-          <Globe2 className="h-3.5 w-3.5 text-primary" />
-          <span className="font-mono uppercase tracking-wider">
-            {tx("Plataforma")} · {format(dateRange.from, "MMM d")} →{" "}
-            {format(dateRange.to, "MMM d, yyyy")}
-            <span className="ml-2 text-muted-foreground/70">
-              vs. {format(prevPeriodFrom, "MMM d")} →{" "}
-              {format(prevPeriodTo, "MMM d")}
-            </span>
+    <div className="up-portfolio space-y-6" data-testid="page-overview">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline">Últimos 90 dias</Badge>
+          <span className="text-sm text-muted-foreground">
+            {data
+              ? `${dateLabel(data.dateFrom)} a ${dateLabel(data.dateTo)}`
+              : "Aguardando dados do ciclo"}
           </span>
+          <Badge variant="secondary">Atualização 2× ao dia</Badge>
         </div>
-        {data && (
-          <span className="text-muted-foreground/80">
-            {data.kpis.activeClients} {tx("de")} {selectedClientCount} {tx("marcas selecionadas tiveram faturamento ou campanhas de anúncios neste período.")}
-          </span>
-        )}
-      </motion.div>
-
-      <motion.div initial="hidden" animate="visible" variants={fadeVariants}>
-        <Card className="p-4 bg-card border-border">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <Building2 className="h-4 w-4" />
-                </div>
-                <div>
-                  <h2 className="text-sm font-semibold leading-tight">
-                    {tx("Clientes nos totais da plataforma")}
-                  </h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {selectedClientCount} {tx("de")} {data?.kpis.totalClients ?? allClientIds.length} {tx("selecionadas")}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedClientIds(null)}
-                data-testid="overview-clients-select-all"
-              >
-                {tx("Selecionar todas")}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedClientIds([])}
-                data-testid="overview-clients-clear"
-              >
-                {tx("Limpar")}
-              </Button>
-            </div>
-          </div>
-
-          <div className="mt-4 max-h-44 overflow-y-auto pr-1">
-            {isLoadingClients ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <Skeleton key={i} className="h-9 w-full" />
-                ))}
-              </div>
-            ) : clientOptions.length === 0 ? (
-              <div className="text-xs text-muted-foreground py-2">
-                {tx("Nenhum cliente cadastrado encontrado.")}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
-                {clientOptions.map((client) => (
-                  <label
-                    key={client.id}
-                    htmlFor={`overview-client-filter-${client.id}`}
-                    className="flex min-w-0 items-center gap-2 rounded-md border border-border/70 bg-background/40 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
-                  >
-                    <Checkbox
-                      id={`overview-client-filter-${client.id}`}
-                      checked={selectedClientSet.has(client.id)}
-                      onCheckedChange={(checked) => handleToggleClient(client.id, checked === true)}
-                      data-testid={`overview-client-filter-${client.id}`}
-                    />
-                    <span className="truncate">{client.name}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-        </Card>
-      </motion.div>
-
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={containerVariants}
-        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4"
-      >
-        <KpiTile
-          testId="overview-kpi-revenue"
-          icon={CircleDollarSign}
-          iconClass="bg-blue-500/15 text-blue-400"
-          label={tx("Faturamento da plataforma")}
-          value={kpis?.revenue ?? 0}
-          format={(v) => formatCurrencySmart(v)}
-          change={revenueDelta}
-          changeLabel={tx("vs. período anterior")}
-          isLoading={isLoading}
-        />
-        <KpiTile
-          testId="overview-kpi-orders"
-          icon={Package}
-          iconClass="bg-violet-500/15 text-violet-400"
-          label={tx("Pedidos da plataforma")}
-          value={kpis?.orders ?? 0}
-          format={(v) => formatNumber(v)}
-          change={ordersDelta}
-          changeLabel={tx("vs. período anterior")}
-          isLoading={isLoading}
-        />
-        <KpiTile
-          testId="overview-kpi-customers"
-          icon={Users}
-          iconClass="bg-emerald-500/15 text-emerald-400"
-          label={tx("Clientes ativos")}
-          value={kpis?.customers ?? 0}
-          format={(v) => formatNumber(v)}
-          change={customersDelta}
-          changeLabel={tx("vs. período anterior")}
-          isLoading={isLoading}
-        />
-        <KpiTile
-          testId="overview-kpi-active-brands"
-          icon={Building2}
-          iconClass="bg-sky-500/15 text-sky-400"
-          label={tx("Marcas ativas")}
-          value={kpis?.activeClients ?? 0}
-          format={(v) => formatNumber(v)}
-          unit={kpis ? `of ${selectedClientCount}` : undefined}
-          change={activeDelta}
-          changeLabel={tx("vs. período anterior")}
-          isLoading={isLoading}
-        />
-        <KpiTile
-          testId="overview-kpi-aov"
-          icon={Award}
-          iconClass="bg-amber-500/15 text-amber-400"
-          label={tx("Ticket médio da plataforma")}
-          value={kpis?.avgOrderValue ?? 0}
-          format={(v) => formatCurrencySmart(v)}
-          change={aovDelta}
-          changeLabel={tx("vs. período anterior")}
-          isLoading={isLoading}
-        />
-      </motion.div>
-
-      {/* Marketing KPIs row */}
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={containerVariants}
-        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"
-      >
-        <KpiTile
-          testId="overview-kpi-adspend"
-          icon={Megaphone}
-          iconClass="bg-rose-500/15 text-rose-400"
-          label={tx("Investimento em anúncios")}
-          value={kpis?.adSpend ?? 0}
-          format={(v) => formatCurrencySmart(v)}
-          change={adSpendDelta}
-          changeLabel={tx("vs. período anterior")}
-          isLoading={isLoading}
-        />
-        <KpiTile
-          testId="overview-kpi-roas"
-          icon={Zap}
-          iconClass="bg-yellow-500/15 text-yellow-400"
-          label={tx("ROAS geral")}
-          value={kpis?.roas ?? 0}
-          format={(v) => `${v.toFixed(2)}×`}
-          change={roasDelta}
-          changeLabel={tx("vs. período anterior")}
-          isLoading={isLoading}
-        />
-        <KpiTile
-          testId="overview-kpi-total-leads"
-          icon={UserPlus}
-          iconClass="bg-indigo-500/15 text-indigo-400"
-          label={tx("Total de leads")}
-          value={kpis?.totalLeads ?? 0}
-          format={(v) => formatNumber(v)}
-          change={totalLeadsDelta}
-          changeLabel={tx("vs. período anterior")}
-          isLoading={isLoading}
-        />
-        <KpiTile
-          testId="overview-kpi-approved-leads"
-          icon={BadgeCheck}
-          iconClass="bg-teal-500/15 text-teal-400"
-          label={tx("Leads aprovados")}
-          value={kpis?.approvedLeads ?? 0}
-          format={(v) => formatNumber(v)}
-          change={approvedLeadsDelta}
-          changeLabel={tx("vs. período anterior")}
-          isLoading={isLoading}
-        />
-      </motion.div>
-
-      <Card className="p-5 bg-card border-border">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div>
-            <h2 className="text-base font-semibold leading-tight">
-              {tx("Evolução da plataforma")}
-            </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {tx("Totais diários das marcas selecionadas. A linha tracejada representa o período anterior.")}
-            </p>
-          </div>
-          <div
-            className="inline-flex rounded-md border border-border bg-card overflow-hidden"
-            role="tablist"
-            aria-label="Series metric"
-          >
-            {(["revenue", "orders", "leads"] as SeriesMetric[]).map((m) => (
-              <Button variant="ghost" size="sm"
-                key={m}
-                role="tab"
-                aria-selected={seriesMetric === m}
-                onClick={() => setSeriesMetric(m)}
-                data-testid={`overview-series-${m}`}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  seriesMetric === m
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-accent/40"
-                }`}
-              >
-                {m === "revenue" ? tx("Faturamento") : m === "orders" ? tx("Pedidos") : "Leads"}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        {isLoading ? (
-          <Skeleton className="h-72 w-full" />
-        ) : seriesEmpty ? (
-          <EmptyState
-            icon={Globe2}
-            title={tx("Sem atividade na plataforma")}
-            description={tx("Nenhuma marca teve pedidos com faturamento neste período. Amplie o intervalo de datas.")}
-          />
-        ) : (
-          <div className="h-72 w-full" data-testid="overview-chart">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="overviewCurrent" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.45} />
-                    <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="date"
-                  tickFormatter={(v) => format(new Date(v), "MMM d")}
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  className="text-xs"
-                />
-                <YAxis
-                  tickFormatter={(v: number) =>
-                    seriesMetric === "revenue"
-                      ? new Intl.NumberFormat(undefined, {
-                          notation: "compact",
-                          maximumFractionDigits: 1,
-                        }).format(v)
-                      : formatNumber(v)
-                  }
-                  tickLine={false}
-                  axisLine={false}
-                  width={56}
-                  className="text-xs"
-                />
-                <Tooltip
-                  cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
-                  contentStyle={{
-                    background: "hsl(var(--popover))",
-                    border: "1px solid hsl(var(--border))",
-                    borderRadius: 8,
-                    fontSize: 12,
-                  }}
-                  formatter={(value: number, name) => {
-                    const formatted =
-                      seriesMetric === "revenue"
-                        ? formatCurrency(value)
-                        : formatNumber(value);
-                    return [
-                      formatted,
-                      name === "current" ? "This period" : "Previous period",
-                    ];
-                  }}
-                  labelFormatter={(v) => format(new Date(v), "MMM d, yyyy")}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="previous"
-                  stroke="hsl(var(--muted-foreground))"
-                  strokeOpacity={0.55}
-                  strokeDasharray="4 4"
-                  fill="transparent"
-                  dot={false}
-                  isAnimationActive={!reduced}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="current"
-                  stroke="hsl(var(--primary))"
-                  strokeWidth={2}
-                  fill="url(#overviewCurrent)"
-                  dot={false}
-                  isAnimationActive={!reduced}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <LeaderboardCard
-          testId="overview-top-performers"
-          title={tx("Melhores desempenhos")}
-          subtitle={tx("Maior faturamento no período")}
-          icon={Award}
-          iconClass="bg-amber-500/15 text-amber-400"
-          rows={data?.topPerformers ?? []}
-          emptyTitle="No revenue yet"
-          emptyDescription="No brands generated revenue in this window."
-          variant="performance"
-          onSelect={handleSelectClient}
-        />
-        <LeaderboardCard
-          testId="overview-top-growth"
-          title={tx("Maior crescimento")}
-          subtitle={tx("Maiores crescimentos em relação ao período anterior")}
-          icon={TrendingUp}
-          iconClass="bg-emerald-500/15 text-emerald-400"
-          rows={data?.topGrowth ?? []}
-          emptyTitle="No growth signals"
-          emptyDescription="Need at least one brand with prior-period revenue to compute growth."
-          variant="growth-up"
-          onSelect={handleSelectClient}
-        />
-        <LeaderboardCard
-          testId="overview-bottom-growth"
-          title={tx("Precisa de atenção")}
-          subtitle={tx("Maiores quedas em relação ao período anterior")}
-          icon={TrendingDown}
-          iconClass="bg-red-500/15 text-red-400"
-          rows={data?.bottomGrowth ?? []}
-          emptyTitle="No declines"
-          emptyDescription="Every brand with prior-period data is holding steady or growing."
-          variant="growth-down"
-          onSelect={handleSelectClient}
-        />
+        <Button
+          variant="outline"
+          onClick={() => void toggleSound()}
+          aria-pressed={soundEnabled}
+        >
+          {soundEnabled ? (
+            <Volume2 className="mr-2 h-4 w-4" />
+          ) : (
+            <VolumeX className="mr-2 h-4 w-4" />
+          )}
+          {soundEnabled ? "Som ativado" : "Ativar som"}
+        </Button>
       </div>
-
-      <Card className="p-5 bg-card border-border">
-        <div className="flex items-center justify-between mb-3">
+      {soundError && (
+        <Alert>
+          <AlertDescription>
+            O navegador bloqueou o áudio. Clique em Ativar som para tentar
+            novamente.
+          </AlertDescription>
+        </Alert>
+      )}
+      {(status.isError || snapshot.isError) && (
+        <Alert variant="destructive">
+          <AlertTitle>Não foi possível atualizar o painel</AlertTitle>
+          <AlertDescription>
+            Os últimos números disponíveis foram preservados. Uma nova tentativa
+            será feita automaticamente.
+          </AlertDescription>
+        </Alert>
+      )}
+      {waiting && !status.isError && (
+        <Alert>
+          <AlertTitle>
+            {status.data?.failed
+              ? "Há falhas na extração"
+              : "Aguardando conclusão da atualização"}
+          </AlertTitle>
+          <AlertDescription>
+            {status.data?.failed
+              ? `${status.data.failed} marca(s) com falha. Consulte Extrações para corrigir e executar novamente.`
+              : "Os números serão publicados após o término das extrações do ciclo, às 00h e 12h (Brasília)."}
+            {data
+              ? " Exibindo a última atualização concluída."
+              : " Preparando os indicadores."}
+          </AlertDescription>
+        </Alert>
+      )}
+      {data?.brands.some((b) => b.warning) && (
+        <Alert>
+          <AlertTitle>Investimento incompleto</AlertTitle>
+          <AlertDescription>
+            Há marcas com investimento indisponível para os 90 dias. Os totais
+            de investimento e MER dessas áreas ficam indisponíveis até a
+            recuperação dos dados.
+          </AlertDescription>
+        </Alert>
+      )}
+      <section aria-label="Total consolidado" className="space-y-3">
+        <h2 className="text-lg font-semibold">Total consolidado</h2>
+        <Metrics totals={data?.total ?? []} loading={loading} prefix="total" />
+      </section>
+      <section aria-label="Área B2B" className="space-y-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold">B2B</h2>
+          <span className="text-xs text-muted-foreground">
+            Faturamento solicitado
+          </span>
+        </div>
+        <Metrics totals={data?.b2b ?? []} loading={loading} prefix="b2b" />
+      </section>
+      <section aria-label="Área B2C" className="space-y-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold">B2C</h2>
+          <span className="text-xs text-muted-foreground">
+            Faturamento pago
+          </span>
+        </div>
+        <Metrics totals={data?.b2c ?? []} loading={loading} prefix="b2c" />
+      </section>
+      {data && <RevenueChart data={data} />}
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
           <div>
-            <h2 className="text-base font-semibold leading-tight">{tx("Marcas selecionadas")}</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {tx("Faturamento, pedidos e crescimento por marca no período selecionado. Abra a tabela completa para ver ticket médio e conversão.")}
+            <h2 className="font-semibold">Ranking de marcas</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Marcas ativas · maior faturamento primeiro
+              {(data?.total.length ?? 0) > 1
+                ? " · valores em moedas diferentes não são convertidos"
+                : ""}
             </p>
           </div>
-          <Link href="/clients">
-            <Button variant="outline" size="sm" data-testid="overview-go-clients">
-              {tx("Gerenciar marcas")}
-              <ChevronRight className="ml-1 h-4 w-4" />
-            </Button>
-          </Link>
+          {pages > 1 && (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setPage((currentPage + pages - 1) % pages)}
+                aria-label="Página anterior"
+              >
+                ←
+              </Button>
+              <span className="text-xs tabular-nums">
+                {currentPage + 1} / {pages}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setPaused((p) => !p)}
+                aria-label={paused ? "Retomar rotação" : "Pausar rotação"}
+              >
+                {paused ? (
+                  <Play className="h-4 w-4" />
+                ) : (
+                  <Pause className="h-4 w-4" />
+                )}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setPage((currentPage + 1) % pages)}
+                aria-label="Próxima página"
+              >
+                →
+              </Button>
+            </div>
+          )}
         </div>
-        {isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-9 w-full" />
-            ))}
-          </div>
-        ) : data && data.clientStats.length === 0 ? (
-          <EmptyState
-            icon={Building2}
-            title={selectedClientIds?.length === 0 ? "Nenhuma marca selecionada" : "Nenhuma marca cadastrada"}
-            description={
-              selectedClientIds?.length === 0
-                ? "Selecione pelo menos uma marca para ver os totais da plataforma."
-                : "Cadastre uma marca na página Clientes para visualizar os números da plataforma."
-            }
-          />
-        ) : (
-          <div className="overflow-x-auto" data-testid="overview-clients-table">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground/80 border-b border-border">
-                  <th className="py-2 pr-4 font-medium">{tx("Marca")}</th>
-                  <th className="py-2 px-4 font-medium text-right">{tx("Faturamento")}</th>
-                  <th className="py-2 px-4 font-medium text-right">{tx("Pedidos")}</th>
-                  <th className="py-2 pl-4 font-medium text-right">{tx("vs. anterior")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...(data?.clientStats ?? [])]
-                  .sort((a, b) => b.revenue - a.revenue)
-                  .map((c) => (
-                    <tr
-                      key={c.id}
-                      className="border-b border-border/60 last:border-0 hover-elevate"
-                    >
-                      <td className="py-2 pr-4">
-                        <Button variant="ghost" size="sm"
-                          type="button"
-                          onClick={() => handleSelectClient(c.id)}
-                          data-testid={`overview-client-${c.id}`}
-                          className="font-medium hover:text-primary text-left"
-                        >
-                          {c.name}
-                        </Button>
-                      </td>
-                      <td className="py-2 px-4 text-right tabular-nums">
-                        {formatCurrency(c.revenue, {
-                          currency: c.currency,
-                          locale: c.locale,
-                        })}
-                      </td>
-                      <td className="py-2 px-4 text-right tabular-nums">
-                        {formatNumber(c.orders)}
-                      </td>
-                      <td className="py-2 pl-4 text-right">
-                        <GrowthBadge value={c.growthPct} />
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-14">#</TableHead>
+              <TableHead>Marca</TableHead>
+              <TableHead>Área</TableHead>
+              <TableHead className="text-right">Faturamento</TableHead>
+              <TableHead className="text-right">Investimento</TableHead>
+              <TableHead className="text-right">MER</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={6}>
+                  <Skeleton className="my-3 h-12 w-full" />
+                </TableCell>
+              </TableRow>
+            ) : visible.length ? (
+              visible.map((brand, index) => (
+                <TableRow key={brand.id}>
+                  <TableCell className="text-muted-foreground tabular-nums">
+                    {currentPage * TV_PAGE_SIZE + index + 1}
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    {brand.name}
+                    {brand.warning && (
+                      <p className="mt-1 text-xs font-normal text-amber-500">
+                        {brand.warning}
+                      </p>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{brand.area}</Badge>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    <CountUp
+                      value={brand.revenue}
+                      format={(value) => money(value, brand.currency)}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {brand.investment === null
+                      ? "—"
+                      : money(brand.investment, brand.currency)}
+                  </TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">
+                    {brand.mer === null ? "—" : mer(brand.mer)}
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell
+                  colSpan={6}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  Nenhuma marca ativa cadastrada.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </Card>
+      <p className="text-xs text-muted-foreground" role="status">
+        {data
+          ? `Última atualização: ${new Date(data.updatedAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })} (Brasília)`
+          : "Aguardando primeira atualização"}
+        {snapshot.isFetching ? " · Atualizando indicadores…" : ""} · MER sem
+        investimento é exibido como —.
+      </p>
     </div>
   );
 }

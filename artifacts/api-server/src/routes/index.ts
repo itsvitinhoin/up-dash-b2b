@@ -14,6 +14,8 @@ import apiTokensRouter from "./api-tokens";
 import adsHistoryRouter from "./ads-history";
 import { braavoRouter } from "./braavo";
 
+import { tvDashboardRouter } from "./tv-dashboard";
+
 const router: IRouter = Router();
 
 router.use(healthRouter);
@@ -22,6 +24,7 @@ router.use(adsHistoryRouter);
 router.use(clientsRouter);
 router.use(braavoRouter);
 router.use(portfolioReportRouter);
+router.use(tvDashboardRouter);
 router.use(analyticsRouter);
 router.use(notificationsRouter);
 router.use(savedViewsRouter);
