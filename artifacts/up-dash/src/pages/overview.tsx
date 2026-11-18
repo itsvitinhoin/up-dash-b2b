@@ -1,11 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Pause,
-  Play,
-  Volume2,
-  VolumeX,
-} from "lucide-react";
+import { Building2, Pause, Play, Volume2, VolumeX } from "lucide-react";
 import {
   customFetch,
   type TvSnapshot,
@@ -13,6 +8,14 @@ import {
   type TvTotals,
 } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
+import { useAuth } from "@/lib/auth";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -39,6 +42,8 @@ import { formatCurrency } from "@/lib/formatters";
 import { playMoneySound } from "@/lib/money-sound";
 import {
   revenueIncreased,
+  readBrandSelection,
+  selectPortfolioBrands,
   TV_PAGE_MS,
   TV_PAGE_SIZE,
   TV_STATUS_POLL_MS,
@@ -226,7 +231,122 @@ function RevenueChart({ data }: { data: TvSnapshot }) {
   );
 }
 
+function BrandSelection({
+  userId,
+  onChange,
+  brands,
+}: {
+  userId: string;
+  onChange: (ids: string[] | null) => void;
+  brands: TvSnapshot["brands"];
+}) {
+  const key = `updash.portfolio-brands.v1.${userId}`;
+  const [ids, setIds] = useState<string[] | null>(() => {
+    try {
+      return readBrandSelection(localStorage.getItem(key));
+    } catch {
+      return null;
+    }
+  });
+  const [search, setSearch] = useState("");
+  const [storageError, setStorageError] = useState(false);
+  useEffect(() => onChange(ids), [ids, onChange]);
+  function update(next: string[] | null) {
+    setIds(next);
+    try {
+      if (next === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, JSON.stringify(next));
+      setStorageError(false);
+    } catch {
+      setStorageError(true);
+    }
+  }
+  const selected = new Set(ids ?? brands.map((b) => b.id));
+  const count = brands.filter((b) => selected.has(b.id)).length;
+  const filtered = brands
+    .filter((b) =>
+      b.name
+        .toLocaleLowerCase("pt-BR")
+        .includes(search.toLocaleLowerCase("pt-BR")),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" aria-label="Selecionar marcas">
+          <Building2 className="mr-2 h-4 w-4" />
+          Marcas: {count} de {brands.length}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[min(380px,calc(100vw-32px))] p-4 space-y-3"
+      >
+        <div>
+          <h3 className="font-medium">Marcas no painel</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Selecione as marcas sob sua gestão. Totais, gráficos e ranking
+            seguem esta seleção.
+          </p>
+        </div>
+        <Input
+          aria-label="Buscar marca"
+          placeholder="Buscar marca…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => update(null)}>
+            Selecionar todas
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => update([])}>
+            Limpar seleção
+          </Button>
+        </div>
+        <div className="max-h-64 overflow-y-auto space-y-1">
+          {filtered.length ? (
+            filtered.map((brand) => (
+              <label
+                key={brand.id}
+                className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted/40 cursor-pointer"
+              >
+                <Checkbox
+                  checked={selected.has(brand.id)}
+                  onCheckedChange={(checked) =>
+                    update(
+                      checked
+                        ? [...new Set([...selected, brand.id])]
+                        : [...selected].filter((id) => id !== brand.id),
+                    )
+                  }
+                  aria-label={brand.name}
+                />
+                <span className="min-w-0 flex-1">{brand.name}</span>
+                <Badge variant="outline">{brand.area}</Badge>
+              </label>
+            ))
+          ) : (
+            <p className="py-3 text-sm text-muted-foreground">
+              Nenhuma marca encontrada.
+            </p>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground" role="status">
+          {storageError
+            ? "Seleção aplicada. O navegador não permitiu salvá-la para a próxima abertura."
+            : "A seleção fica salva por usuário neste navegador."}
+        </p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export default function OverviewPage() {
+  const { user } = useAuth();
+  const [selectedBrands, setSelectedBrands] = useState<string[] | null>(null);
+  const selectionVersion =
+    selectedBrands === null ? "all" : [...selectedBrands].sort().join(",");
+  const previousSelection = useRef(selectionVersion);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [soundError, setSoundError] = useState(false);
   const [page, setPage] = useState(0);
@@ -266,7 +386,12 @@ export default function OverviewPage() {
 
   useEffect(() => {
     if (!snapshot.data) return;
-    const next = snapshot.data;
+    const next = selectPortfolioBrands(snapshot.data, selectedBrands);
+    if (previousSelection.current !== selectionVersion) {
+      previousSelection.current = selectionVersion;
+      previous.current = next;
+      return;
+    }
     if (
       revenueIncreased(previous.current, next) &&
       soundEnabled &&
@@ -278,7 +403,7 @@ export default function OverviewPage() {
       });
     }
     previous.current = next;
-  }, [snapshot.data, soundEnabled]);
+  }, [snapshot.data, soundEnabled, selectionVersion]);
 
   useEffect(
     () => () => {
@@ -289,7 +414,14 @@ export default function OverviewPage() {
     },
     [],
   );
-  const data = snapshot.data;
+  const data = useMemo(
+    () =>
+      snapshot.data
+        ? selectPortfolioBrands(snapshot.data, selectedBrands)
+        : undefined,
+    [snapshot.data, selectionVersion],
+  );
+  useEffect(() => setPage(0), [selectionVersion]);
   const pages = Math.max(
     1,
     Math.ceil((data?.brands.length ?? 0) / TV_PAGE_SIZE),
@@ -331,6 +463,14 @@ export default function OverviewPage() {
     <div className="up-portfolio space-y-6" data-testid="page-overview">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
+          {user && (
+            <BrandSelection
+              key={user.id}
+              userId={user.id}
+              brands={snapshot.data?.brands ?? []}
+              onChange={setSelectedBrands}
+            />
+          )}
           <Badge variant="outline">Últimos 90 dias</Badge>
           <span className="text-sm text-muted-foreground">
             {data
@@ -352,6 +492,14 @@ export default function OverviewPage() {
           {soundEnabled ? "Som ativado" : "Ativar som"}
         </Button>
       </div>
+      {data && data.brands.length === 0 && (
+        <Alert>
+          <AlertTitle>Nenhuma marca selecionada</AlertTitle>
+          <AlertDescription>
+            Abra o seletor de marcas para incluir as marcas sob sua gestão.
+          </AlertDescription>
+        </Alert>
+      )}
       {soundError && (
         <Alert>
           <AlertDescription>
@@ -523,7 +671,7 @@ export default function OverviewPage() {
                   colSpan={6}
                   className="h-24 text-center text-muted-foreground"
                 >
-                  Nenhuma marca ativa cadastrada.
+                  Nenhuma marca selecionada para este painel.
                 </TableCell>
               </TableRow>
             )}

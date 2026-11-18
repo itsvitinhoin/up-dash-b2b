@@ -21,7 +21,12 @@ import {
 } from "./tv-dashboard-metrics";
 
 const activeClients = () =>
-  db.select().from(clientsTable).where(and(eq(clientsTable.isActive, true), isNull(clientsTable.archivedAt)));
+  db
+    .select()
+    .from(clientsTable)
+    .where(
+      and(eq(clientsTable.isActive, true), isNull(clientsTable.archivedAt)),
+    );
 
 function transactionalJob(
   client: Awaited<ReturnType<typeof activeClients>>[number],
@@ -131,22 +136,34 @@ async function buildSnapshot(cycle: string, now: Date): Promise<TvSnapshot> {
       ])
     : [[], []];
   const postgresCount = orders.length;
-  const vestiClients = clients.filter(c => c.commercePlatform === "VESTI");
+  const vestiClients = clients.filter((c) => c.commercePlatform === "VESTI");
   for (let offset = 0; offset < vestiClients.length; offset += 6) {
-    const batches = await Promise.all(vestiClients.slice(offset, offset + 6).map(async client => {
-      if (!client.bigqueryDataset) throw new Error("Marca Vesti sem dataset configurado.");
-      const [daily] = await bigquery.query({query: `SELECT FORMAT_DATE('%Y-%m-%d', data_ref) AS date,
+    const batches = await Promise.all(
+      vestiClients.slice(offset, offset + 6).map(async (client) => {
+        if (!client.bigqueryDataset)
+          throw new Error("Marca Vesti sem dataset configurado.");
+        const [daily] = await bigquery.query({
+          query: `SELECT FORMAT_DATE('%Y-%m-%d', data_ref) AS date,
         COALESCE(SUM(valor_solicitado), 0) AS requested,
         COALESCE(SUM(IF(pago, valor_reservado, 0)), 0) AS paid
         FROM ${vestiSalesView(client.bigqueryDataset)}
         WHERE data_ref BETWEEN @dateFrom AND @dateTo GROUP BY date ORDER BY date`,
-        params:{dateFrom:range.dateFrom,dateTo:range.dateTo}});
-      return daily.map(row => ({clientId:client.id,date:String(row.date),requested:Number(row.requested)||0,paid:Number(row.paid)||0}));
-    }));
+          params: { dateFrom: range.dateFrom, dateTo: range.dateTo },
+        });
+        return daily.map((row) => ({
+          clientId: client.id,
+          date: String(row.date),
+          requested: Number(row.requested) || 0,
+          paid: Number(row.paid) || 0,
+        }));
+      }),
+    );
     for (const batch of batches) orders.push(...batch);
   }
-  const vestiIds = new Set(vestiClients.map(c => c.id));
-  const effectiveOrders = orders.filter((order, index) => !vestiIds.has(order.clientId) || index >= postgresCount);
+  const vestiIds = new Set(vestiClients.map((c) => c.id));
+  const effectiveOrders = orders.filter(
+    (order, index) => !vestiIds.has(order.clientId) || index >= postgresCount,
+  );
   const orderMap = new Map<string, { requested: number; paid: number }>();
   for (const order of effectiveOrders) {
     const total = orderMap.get(order.clientId) ?? { requested: 0, paid: 0 };
@@ -170,16 +187,23 @@ async function buildSnapshot(cycle: string, now: Date): Promise<TvSnapshot> {
           let warning: string | null = null;
           if (client.metaAdAccountId) {
             try {
-              const dailyAds = await fetchStoredAdsDaily(client.metaAdAccountId, range.dateFrom, range.dateTo);
-              if (!dailyAds.length) throw new Error("No stored investment for this period");
+              const dailyAds = await fetchStoredAdsDaily(
+                client.metaAdAccountId,
+                range.dateFrom,
+                range.dateTo,
+              );
+              if (!dailyAds.length)
+                throw new Error("No stored investment for this period");
               investment = totalSpend(dailyAds);
             } catch {
               investment = null;
-              warning = "Investimento de 90 dias indisponível na coleta. Consulte o histórico de anúncios.";
+              warning =
+                "Investimento de 90 dias indisponível na coleta. Consulte o histórico de anúncios.";
             }
-          } else if (local.some(c => c.platform === "META" && c.spend > 0)) {
+          } else if (local.some((c) => c.platform === "META" && c.spend > 0)) {
             investment = null;
-            warning = "Conta Meta não configurada para consultar o investimento completo.";
+            warning =
+              "Conta Meta não configurada para consultar o investimento completo.";
           }
           // Other registered channels are included only when their exact period is known.
           for (const creative of local.filter(
@@ -222,6 +246,17 @@ async function buildSnapshot(cycle: string, now: Date): Promise<TvSnapshot> {
     dateTo: range.dateTo,
     updatedAt: new Date().toISOString(),
     brands,
+    brandRevenueTrend: effectiveOrders.map((order) => {
+      const client = clients.find((c) => c.id === order.clientId)!;
+      return {
+        clientId: order.clientId,
+        date: order.date,
+        revenue:
+          Number(
+            client.dashboardType === "B2C" ? order.paid : order.requested,
+          ) || 0,
+      };
+    }),
     revenueTrend: buildTvRevenueTrend(
       effectiveOrders,
       clients,
@@ -239,7 +274,9 @@ export async function getTvSnapshot(
 ): Promise<TvSnapshot | null> {
   const status = await getTvSyncStatus(now);
   if (!status.ready && cached) return cached;
-  const snapshotCycle = status.ready ? status.cycle : tvCycle(new Date(now.getTime() - 12 * 60 * 60 * 1000));
+  const snapshotCycle = status.ready
+    ? status.cycle
+    : tvCycle(new Date(now.getTime() - 12 * 60 * 60 * 1000));
   if (
     cached?.cycle === status.cycle &&
     (!cached.brands.some((b) => b.warning) ||

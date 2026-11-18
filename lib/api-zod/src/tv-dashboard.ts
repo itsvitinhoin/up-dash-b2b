@@ -22,6 +22,11 @@ export interface TvRevenuePoint {
   b2c: number;
 }
 export interface TvSnapshot {
+  brandRevenueTrend?: Array<{
+    clientId: string;
+    date: string;
+    revenue: number;
+  }>;
   revenueTrend?: TvRevenuePoint[];
   cycle: string;
   dateFrom: string;
