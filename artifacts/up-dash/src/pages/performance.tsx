@@ -21,6 +21,8 @@ import {
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   XAxis,
   YAxis,
@@ -294,6 +296,37 @@ function aggregateDaily(daily: DailyPoint[], granularity: "diaria" | "semanal" |
     buckets.set(key, bucket);
   }
   return Array.from(buckets.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+const cohortChartConfig = {
+  novo: { label: "Novo", color: "#3b82f6" },
+  recorrente: { label: "Recorrente", color: "#22c55e" },
+  reativado: { label: "Reativado", color: "#f59e0b" },
+} satisfies ChartConfig;
+
+/** Barras mes a mes de Novo/Recorrente/Reativado (pedido do time, 18/11/2026) --
+ * calculado no front a partir do allOrders que a tela ja busca, sem request novo. */
+function monthlyCohortTotals(orders: ErpOrderRow[]): Array<{ month: string; novo: number; recorrente: number; reativado: number; novoPct: number; recorrentePct: number; reativadoPct: number }> {
+  const buckets = new Map<string, { novo: number; recorrente: number; reativado: number }>();
+  for (const order of orders) {
+    if (!order.attributed || !order.cohort) continue;
+    const month = order.dataCriado.slice(0, 7);
+    const bucket = buckets.get(month) ?? { novo: 0, recorrente: 0, reativado: 0 };
+    bucket[order.cohort] += order.valor;
+    buckets.set(month, bucket);
+  }
+  return Array.from(buckets.entries())
+    .map(([month, totals]) => {
+      const total = totals.novo + totals.recorrente + totals.reativado;
+      return {
+        month,
+        ...totals,
+        novoPct: total > 0 ? (totals.novo / total) * 100 : 0,
+        recorrentePct: total > 0 ? (totals.recorrente / total) * 100 : 0,
+        reativadoPct: total > 0 ? (totals.reativado / total) * 100 : 0,
+      };
+    })
+    .sort((a, b) => a.month.localeCompare(b.month));
 }
 
 function SourceStatus({
@@ -883,6 +916,45 @@ export default function PerformancePage() {
                   </TableBody>
                 </Table>
               </div>
+              {(() => {
+                const monthly = monthlyCohortTotals(attributionQuery.data?.allOrders ?? []);
+                if (monthly.length === 0) return null;
+                return (
+                  <div className="mt-6">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Faturamento gerado por coorte, mês a mês
+                    </p>
+                    <ChartContainer config={cohortChartConfig} className="mt-3 h-[260px] w-full aspect-auto">
+                      <BarChart accessibilityLayer data={monthly}>
+                        <CartesianGrid vertical={false} />
+                        <XAxis dataKey="month" tickLine={false} axisLine={false} tickMargin={10} />
+                        <YAxis
+                          tickLine={false}
+                          axisLine={false}
+                          width={62}
+                          tickFormatter={(value) => `R$ ${Math.round(Number(value) / 1000)}k`}
+                        />
+                        <ChartTooltip
+                          cursor={false}
+                          content={
+                            <ChartTooltipContent
+                              formatter={(value, name, item) => {
+                                const pctKey = `${String(name)}Pct` as "novoPct" | "recorrentePct" | "reativadoPct";
+                                const pct = (item.payload as { novoPct: number; recorrentePct: number; reativadoPct: number })[pctKey];
+                                return `${formatCurrency(Number(value))} (${pct.toFixed(1)}%)`;
+                              }}
+                            />
+                          }
+                        />
+                        <Bar dataKey="novo" fill="var(--color-novo)" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="recorrente" fill="var(--color-recorrente)" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="reativado" fill="var(--color-reativado)" radius={[4, 4, 0, 0]} />
+                        <ChartLegend content={<ChartLegendContent />} />
+                      </BarChart>
+                    </ChartContainer>
+                  </div>
+                );
+              })()}
             </>
           )}
         </CardContent>
