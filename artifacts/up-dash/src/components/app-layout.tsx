@@ -1651,7 +1651,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               {tx("Prévia visual · dados de demonstração")}
             </p>
           )}
-          {(meta.hasDateRange || meta.hasFilterBar) && (
+          {((meta.hasDateRange && !isOverviewRoute) || meta.hasFilterBar) && (
             <div className={`up-control-panel up-glass-panel no-print${isOverviewRoute ? " up-control-panel--single" : ""}`}>
               <div className="up-operation-row" hidden={isOverviewRoute}>
                 {meta.hasDateRange && !isOverviewRoute && (

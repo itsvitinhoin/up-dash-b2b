@@ -645,31 +645,29 @@ export default function PerformancePage() {
         <SourceStatus data={data.sources} generatedAt={data.generatedAt} />
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="up-filter-bar up-glass-panel p-3 flex flex-wrap items-center gap-2">
-          <Select value={tipoFilter} onValueChange={(v) => setTipoFilter(v as typeof tipoFilter)}>
-            <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="performance-filter-tipo">
-              <SelectValue placeholder="Tipo" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Tipo: Todos</SelectItem>
-              <SelectItem value="erp">Tipo: ERP</SelectItem>
-              <SelectItem value="ecommerce">Tipo: Ecommerce</SelectItem>
-              <SelectItem value="anuncios">Tipo: Anúncios</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
-            <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="performance-filter-status">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="pago">Status: Pago</SelectItem>
-              <SelectItem value="cancelado">Status: Cancelado</SelectItem>
-              <SelectItem value="outro">Status: Outro</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <FilterBar variant="overview" />
+      <div className="up-filter-bar up-glass-panel p-3 flex flex-wrap items-center gap-2">
+        <Select value={tipoFilter} onValueChange={(v) => setTipoFilter(v as typeof tipoFilter)}>
+          <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="performance-filter-tipo">
+            <SelectValue placeholder="Tipo" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Tipo: Todos</SelectItem>
+            <SelectItem value="erp">Tipo: ERP</SelectItem>
+            <SelectItem value="ecommerce">Tipo: Ecommerce</SelectItem>
+            <SelectItem value="anuncios">Tipo: Anúncios</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
+          <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="performance-filter-status">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="pago">Status: Pago</SelectItem>
+            <SelectItem value="cancelado">Status: Cancelado</SelectItem>
+            <SelectItem value="outro">Status: Outro</SelectItem>
+          </SelectContent>
+        </Select>
+        <FilterBar variant="overview" bare />
       </div>
 
       {k?.roiStatus !== "available" && !isLoading && (

@@ -188,7 +188,10 @@ const OVERVIEW_HIDDEN_FILTERS = [
   "category", "channel", "segment", "utmSource", "utmMedium", "utmCampaign", "city", "product", "size", "color", "creative",
 ] as const satisfies ReadonlyArray<keyof DashboardFilters>;
 
-export function FilterBar({ variant = "default" }: { variant?: "default" | "overview" } = {}) {
+export function FilterBar({
+  variant = "default",
+  bare = false,
+}: { variant?: "default" | "overview"; bare?: boolean } = {}) {
   const overview = variant === "overview";
   const { language, tx } = useI18n();
   const label = (english: string, portuguese: string) =>
@@ -459,13 +462,8 @@ export function FilterBar({ variant = "default" }: { variant?: "default" | "over
     creative: filters.creative,
   };
 
-  return (
-    <div
-      className="up-filter-bar up-glass-panel p-3 flex flex-wrap items-center gap-2"
-      role="region"
-      aria-label="Filtros do dashboard"
-      data-testid="filter-bar"
-    >
+  const content = (
+    <>
       {!overview && (
         <>
           <FilterSelect
@@ -884,6 +882,17 @@ export function FilterBar({ variant = "default" }: { variant?: "default" | "over
           </PopoverContent>
         </Popover>
       </div>
+    </>
+  );
+  if (bare) return content;
+  return (
+    <div
+      className="up-filter-bar up-glass-panel p-3 flex flex-wrap items-center gap-2"
+      role="region"
+      aria-label="Filtros do dashboard"
+      data-testid="filter-bar"
+    >
+      {content}
     </div>
   );
 }
