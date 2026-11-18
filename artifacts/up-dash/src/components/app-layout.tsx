@@ -902,7 +902,9 @@ export function AppLayout({ children }: AppLayoutProps) {
         : tx(meta.title));
   // Visão geral: a linha de filtros tem só Vendedora e Estado (FilterBar variant="overview"); o período fica no seletor do topo, igual às outras
   // páginas. Os botões 7/30/90 dias não aparecem aqui (o seletor do topo já tem essas opções e mais).
-  const isOverviewRoute = location === "/" || location === "/dashboard";
+  // /performance entra no mesmo grupo: tem seu próprio seletor de datas no topo, então os chips 7/30/90 também não fazem sentido ali
+  // (meta.hasFilterBar é false pra essa rota, então isso não afeta o FilterBar da linha 1696 — só esconde os chips).
+  const isOverviewRoute = location === "/" || location === "/dashboard" || location === "/performance";
   const paidOnlyText = language === "pt" ? "só pedidos pagos" : language === "ko" ? "결제 완료 주문만" : "paid orders only";
   const subtitleText =
     location === "/" || location === "/dashboard"
