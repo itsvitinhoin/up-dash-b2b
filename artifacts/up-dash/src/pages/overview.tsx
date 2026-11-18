@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, Pause, Play, Volume2, VolumeX } from "lucide-react";
+import {
+  Building2,
+  Pause,
+  Play,
+  Volume2,
+  VolumeX,
+  Maximize,
+  Minimize,
+} from "lucide-react";
 import {
   customFetch,
   type TvSnapshot,
@@ -8,6 +16,8 @@ import {
   type TvTotals,
 } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
+import { useTvMode } from "@/lib/use-tv-mode";
+import "@/styles/portfolio-tv.css";
 import { useAuth } from "@/lib/auth";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -174,7 +184,7 @@ function RevenueChart({ data }: { data: TvSnapshot }) {
     ...new Set((data.revenueTrend ?? []).map((p) => p.currency)),
   ];
   return (
-    <div className="grid gap-4">
+    <div className="portfolio-trends grid gap-4">
       {currencies.map((currency) => (
         <Card key={currency} className="up-portfolio-chart p-5">
           <h2 className="text-base font-medium">
@@ -376,6 +386,7 @@ function BrandSelection({
 
 export default function OverviewPage() {
   const { user } = useAuth();
+  const tvMode = useTvMode();
   const [selectedBrands, setSelectedBrands] = useState<string[] | null>(null);
   const selectionVersion =
     selectedBrands === null ? "all" : [...selectedBrands].sort().join(",");
@@ -494,7 +505,7 @@ export default function OverviewPage() {
     ) ?? [];
   return (
     <div className="up-portfolio space-y-6" data-testid="page-overview">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="portfolio-controls flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           {user && (
             <BrandSelection
@@ -512,19 +523,44 @@ export default function OverviewPage() {
           </span>
           <Badge variant="secondary">Atualização 2× ao dia</Badge>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => void toggleSound()}
-          aria-pressed={soundEnabled}
-        >
-          {soundEnabled ? (
-            <Volume2 className="mr-2 h-4 w-4" />
-          ) : (
-            <VolumeX className="mr-2 h-4 w-4" />
-          )}
-          {soundEnabled ? "Som ativado" : "Ativar som"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => void tvMode.toggle()}
+            disabled={tvMode.busy}
+            aria-pressed={tvMode.enabled}
+            title={
+              tvMode.enabled
+                ? "Sair do modo TV (Esc)"
+                : "Ocultar menus e abrir em tela cheia"
+            }
+          >
+            {tvMode.enabled ? (
+              <Minimize className="mr-2 h-4 w-4" />
+            ) : (
+              <Maximize className="mr-2 h-4 w-4" />
+            )}
+            {tvMode.enabled ? "Sair do modo TV" : "Modo TV"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void toggleSound()}
+            aria-pressed={soundEnabled}
+          >
+            {soundEnabled ? (
+              <Volume2 className="mr-2 h-4 w-4" />
+            ) : (
+              <VolumeX className="mr-2 h-4 w-4" />
+            )}
+            {soundEnabled ? "Som ativado" : "Ativar som"}
+          </Button>
+        </div>
       </div>
+      {tvMode.notice && (
+        <Alert>
+          <AlertDescription>{tvMode.notice}</AlertDescription>
+        </Alert>
+      )}
       {data && data.brands.length === 0 && (
         <Alert>
           <AlertTitle>Nenhuma marca selecionada</AlertTitle>
@@ -577,7 +613,11 @@ export default function OverviewPage() {
           </AlertDescription>
         </Alert>
       )}
-      <section aria-label="Total consolidado" className="space-y-3">
+      <section
+        data-tv-area="total"
+        aria-label="Total consolidado"
+        className="space-y-3"
+      >
         <h2 className="text-lg font-semibold">Total consolidado</h2>
         <Metrics
           totals={data?.total ?? []}
@@ -586,7 +626,7 @@ export default function OverviewPage() {
           brands={data?.brands ?? []}
         />
       </section>
-      <section aria-label="Área B2B" className="space-y-3">
+      <section data-tv-area="b2b" aria-label="Área B2B" className="space-y-3">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold">B2B</h2>
           <span className="text-xs text-muted-foreground">
@@ -600,7 +640,7 @@ export default function OverviewPage() {
           brands={data?.brands ?? []}
         />
       </section>
-      <section aria-label="Área B2C" className="space-y-3">
+      <section data-tv-area="b2c" aria-label="Área B2C" className="space-y-3">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold">B2C</h2>
           <span className="text-xs text-muted-foreground">
@@ -615,7 +655,7 @@ export default function OverviewPage() {
         />
       </section>
       {data && <RevenueChart data={data} />}
-      <Card>
+      <Card className="portfolio-ranking">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
           <div>
             <h2 className="font-semibold">Ranking de marcas</h2>
