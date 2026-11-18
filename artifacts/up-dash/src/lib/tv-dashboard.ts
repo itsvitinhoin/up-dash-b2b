@@ -113,3 +113,14 @@ export function portfolioInvestment(brands: TvBrand[], currency: string) {
     missing: rows.length - covered.length,
   };
 }
+
+export function portfolioMer(brands: TvBrand[], currency: string) {
+  const { available, missing } = portfolioInvestment(brands, currency);
+  const revenue = brands
+    .filter((brand) => brand.currency === currency)
+    .reduce((sum, brand) => sum + brand.revenue, 0);
+  return {
+    value: available !== null && available > 0 ? revenue / available : null,
+    partial: missing > 0,
+  };
+}

@@ -55,6 +55,7 @@ import {
   readBrandSelection,
   selectPortfolioBrands,
   portfolioInvestment,
+  portfolioMer,
   TV_PAGE_MS,
   TV_PAGE_SIZE,
   TV_STATUS_POLL_MS,
@@ -83,9 +84,11 @@ function Metrics({
       : brands.filter((brand) => brand.area.toLowerCase() === prefix);
   const missing = scoped.filter((brand) => brand.investment === null).length;
   const valueFor = (total: TvTotals, key: "revenue" | "investment" | "mer") =>
-    key === "investment" && total.investment === null
-      ? portfolioInvestment(scoped, total.currency).available
-      : total[key];
+    key === "mer"
+      ? portfolioMer(scoped, total.currency).value
+      : key === "investment" && total.investment === null
+        ? portfolioInvestment(scoped, total.currency).available
+        : total[key];
   return (
     <div className="grid gap-4 md:grid-cols-3">
       {(
@@ -139,7 +142,7 @@ function Metrics({
           }
           info={
             key === "mer"
-              ? "Faturamento dividido pelo investimento total. Sem investimento, o MER é indisponível."
+              ? "Faturamento das marcas selecionadas dividido pelo investimento disponível. O cálculo é parcial quando falta investimento de alguma marca. Sem investimento positivo disponível, o MER é indisponível."
               : key === "investment"
                 ? "Soma do investimento disponível para os 90 dias. Valores ausentes não são tratados como zero."
                 : "B2B solicitado e B2C pago nos últimos 90 dias, em horário de Brasília."
@@ -147,7 +150,7 @@ function Metrics({
           comparisonUnavailable="Este painel não consulta a janela anterior de 90 dias."
           footer={
             <div className="space-y-2 text-xs">
-              {missing > 0 && key === "investment" && (
+              {missing > 0 && (key === "investment" || key === "mer") && (
                 <>
                   <Badge
                     variant="outline"
@@ -156,15 +159,12 @@ function Metrics({
                     Parcial
                   </Badge>
                   <p className="text-muted-foreground">
-                    Soma disponível · {missing} marca(s) sem investimento
-                    informado.
+                    {key === "mer"
+                      ? "Faturamento ÷ investimento disponível"
+                      : "Soma disponível"}{" "}
+                    · {missing} marca(s) sem investimento informado.
                   </p>
                 </>
-              )}
-              {missing > 0 && key === "mer" && (
-                <p className="text-muted-foreground">
-                  Aguardando investimento completo das marcas selecionadas.
-                </p>
               )}
               <div className="flex justify-between gap-2">
                 <span className="text-muted-foreground">Período</span>
@@ -608,8 +608,9 @@ export default function OverviewPage() {
           <AlertTitle>Investimento incompleto</AlertTitle>
           <AlertDescription>
             Há marcas com investimento indisponível para os 90 dias. O
-            investimento mostra a soma disponível, identificada como parcial. O
-            MER dessas áreas aguarda o investimento completo.
+            investimento mostra a soma disponível. O MER divide o faturamento
+            das marcas selecionadas por esse investimento disponível. Ambos são
+            identificados como parciais quando faltam dados.
           </AlertDescription>
         </Alert>
       )}
@@ -771,7 +772,7 @@ export default function OverviewPage() {
           ? `Última atualização: ${new Date(data.updatedAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })} (Brasília)`
           : "Aguardando primeira atualização"}
         {snapshot.isFetching ? " · Atualizando indicadores…" : ""} · MER sem
-        investimento é exibido como —.
+        investimento positivo disponível é exibido como —.
       </p>
     </div>
   );

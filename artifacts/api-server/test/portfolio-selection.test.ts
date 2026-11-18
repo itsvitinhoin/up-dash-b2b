@@ -4,6 +4,7 @@ import {
   selectPortfolioBrands,
   revenueIncreased,
   portfolioInvestment,
+  portfolioMer,
 } from "../../up-dash/src/lib/tv-dashboard";
 import type { TvSnapshot } from "@workspace/api-zod";
 const data: TvSnapshot = {
@@ -125,5 +126,30 @@ describe("available investment", () => {
       available: 50,
       missing: 0,
     });
+  });
+});
+
+describe("MER from available investment", () => {
+  it("uses all selected revenue over known investment and marks incomplete coverage", () => {
+    expect(portfolioMer(data.brands, "BRL")).toEqual({
+      value: 100,
+      partial: true,
+    });
+    expect(
+      portfolioMer(selectPortfolioBrands(data, ["ours"]).brands, "BRL"),
+    ).toEqual({ value: 10, partial: false });
+    expect(
+      portfolioMer(selectPortfolioBrands(data, ["external"]).brands, "BRL"),
+    ).toEqual({ value: null, partial: true });
+  });
+
+  it("does not divide by zero or mix currencies", () => {
+    const rows = [
+      { ...data.brands[0], investment: 0 },
+      { ...data.brands[0], id: "usd", currency: "USD", investment: 50 },
+    ];
+    expect(portfolioMer(rows, "BRL")).toEqual({ value: null, partial: false });
+    expect(portfolioMer(rows, "USD")).toEqual({ value: 20, partial: false });
+    expect(portfolioMer([], "BRL")).toEqual({ value: null, partial: false });
   });
 });
