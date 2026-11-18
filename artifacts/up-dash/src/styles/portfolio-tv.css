@@ -1,100 +1,219 @@
+.portfolio-viewport,
+.portfolio-canvas {
+  display: contents;
+}
+.portfolio-notices:empty {
+  display: none;
+}
+.portfolio-tv-coverage {
+  display: none;
+}
+
 html[data-up-tv-mode] .up-sidebar,
 html[data-up-tv-mode] .up-topbar,
 html[data-up-tv-mode] .up-page-head,
 html[data-up-tv-mode] .up-skip-link,
+html[data-up-tv-mode] .up-preview-notice,
 html[data-up-tv-mode] .fixed:has(> .floating-ai-button) {
   display: none !important;
 }
 html[data-up-tv-mode] .up-main {
-  padding: 20px 28px;
+  min-height: 0;
+  padding: 12px 16px;
+  overflow: hidden;
+}
+html[data-up-tv-mode] .up-page-content,
+html[data-up-tv-mode] .portfolio-viewport {
+  height: 100%;
+  min-height: 0;
+}
+html[data-up-tv-mode] .portfolio-viewport {
+  display: block;
+  position: relative;
+  overflow: hidden;
+}
+html[data-up-tv-mode] .portfolio-canvas {
+  display: block;
+  position: absolute;
+  top: 0;
+  min-height: 100%;
+  max-width: none;
+  transform-origin: top left;
+}
+html[data-up-tv-mode] .up-portfolio {
+  display: grid;
+  min-height: var(--tv-height, 0px);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas:
+    "controls controls"
+    "notices notices"
+    "total total"
+    "b2b b2c"
+    "trends ranking"
+    "status status";
+  grid-template-rows: auto auto auto auto minmax(300px, 1fr) auto;
+  gap: 10px 16px;
+  align-items: stretch;
+}
+html[data-up-tv-mode] .up-portfolio > * {
+  margin: 0 !important;
+  min-width: 0;
 }
 html[data-up-tv-mode] .portfolio-controls {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  padding: 8px 0;
-  background: hsl(var(--background) / 0.94);
-  backdrop-filter: blur(12px);
+  grid-area: controls;
+  gap: 8px;
 }
-@media (min-width: 1200px) and (min-height: 800px) {
-  html[data-up-tv-mode] .up-portfolio {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 14px 20px;
-    align-items: start;
-  }
-  html[data-up-tv-mode] .up-portfolio > * {
-    grid-column: 1 / -1;
-    margin: 0 !important;
-    min-width: 0;
-  }
-  html[data-up-tv-mode] [data-tv-area="b2b"] {
-    grid-column: 1;
-  }
-  html[data-up-tv-mode] [data-tv-area="b2c"] {
-    grid-column: 2;
-  }
-  html[data-up-tv-mode] .up-portfolio > .portfolio-trends {
-    grid-column: 1;
-  }
-  html[data-up-tv-mode] .up-portfolio > .portfolio-ranking {
-    grid-column: 2;
-  }
-  html[data-up-tv-mode] .up-portfolio [data-tv-area] > .grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  html[data-up-tv-mode] .up-metric {
-    min-height: 128px;
-    padding: 12px;
-  }
-  html[data-up-tv-mode] .up-metric-comparison {
-    display: none;
-  }
-  html[data-up-tv-mode] .up-metric-footer > div > div:last-child {
-    display: none;
-  }
-  html[data-up-tv-mode] .up-metric-footer {
-    padding-top: 8px;
-  }
-  html[data-up-tv-mode] .up-metric .up-metric-value {
-    font-size: clamp(18px, 7cqi, 30px);
-  }
-  html[data-up-tv-mode] .up-metric-label {
-    font-size: 12px;
-  }
-  html[data-up-tv-mode] [data-tv-area] > h2,
-  html[data-up-tv-mode] [data-tv-area] > div > h2 {
-    font-size: 16px;
-  }
-  html[data-up-tv-mode] .portfolio-trends [data-chart] {
-    height: 250px;
-  }
-  html[data-up-tv-mode] .portfolio-ranking th,
-  html[data-up-tv-mode] .portfolio-ranking td {
-    padding-top: 8px;
-    padding-bottom: 8px;
-  }
+html[data-up-tv-mode] .portfolio-controls button {
+  height: 34px;
 }
-
-@media (min-width: 1200px) and (min-height: 800px) {
-  html[data-up-tv-mode] .up-portfolio > [role="alert"] {
-    padding: 8px 12px;
-    font-size: 12px;
-  }
-  html[data-up-tv-mode] .up-portfolio > [role="alert"] h5 {
-    font-size: 13px;
-    line-height: 1.3;
-  }
-  html[data-up-tv-mode] .up-portfolio > [role="alert"] > div {
-    font-size: 12px;
-    line-height: 1.4;
-  }
-  html[data-up-tv-mode] .up-metric > div:first-child,
-  html[data-up-tv-mode] .up-metric > div:nth-child(2) {
-    margin-bottom: 6px;
-  }
-  html[data-up-tv-mode] .up-metric-icon {
-    width: 24px;
-    height: 24px;
-  }
+html[data-up-tv-mode] .portfolio-notices {
+  display: grid;
+  grid-area: notices;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 8px;
+}
+html[data-up-tv-mode] .portfolio-notices > * {
+  margin: 0 !important;
+}
+html[data-up-tv-mode] .portfolio-notices [role="alert"] {
+  padding: 8px 12px;
+}
+html[data-up-tv-mode] .portfolio-notices h5 {
+  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+html[data-up-tv-mode] .portfolio-notices [role="alert"] > div {
+  font-size: 12px;
+  line-height: 1.35;
+}
+html[data-up-tv-mode] [data-tv-area="total"] {
+  grid-area: total;
+}
+html[data-up-tv-mode] [data-tv-area="b2b"] {
+  grid-area: b2b;
+}
+html[data-up-tv-mode] [data-tv-area="b2c"] {
+  grid-area: b2c;
+}
+html[data-up-tv-mode] [data-tv-area] > h2,
+html[data-up-tv-mode] [data-tv-area] > div > h2 {
+  font-size: 16px;
+  line-height: 1.3;
+}
+html[data-up-tv-mode] [data-tv-area] > .grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+html[data-up-tv-mode] .up-metric {
+  min-height: 108px;
+  padding: 10px 12px;
+}
+html[data-up-tv-mode] .up-metric > div:first-child,
+html[data-up-tv-mode] .up-metric > div:nth-child(2) {
+  margin-bottom: 6px;
+}
+html[data-up-tv-mode] .up-metric-icon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+html[data-up-tv-mode] .up-metric-label {
+  font-size: 12px;
+}
+html[data-up-tv-mode] .up-metric-info {
+  min-height: 24px;
+  height: 24px;
+  width: 24px;
+  padding: 0;
+}
+html[data-up-tv-mode] .up-metric .up-metric-value {
+  font-size: clamp(18px, 8cqi, 36px);
+}
+html[data-up-tv-mode] .up-metric-comparison,
+html[data-up-tv-mode] .portfolio-metric-period,
+html[data-up-tv-mode] .portfolio-coverage {
+  display: none;
+}
+html[data-up-tv-mode] .portfolio-tv-coverage {
+  display: inline;
+  white-space: pre;
+}
+html[data-up-tv-mode] .up-metric-footer {
+  padding-top: 5px;
+}
+html[data-up-tv-mode]
+  .up-metric-footer:has(.portfolio-metric-details > :only-child) {
+  display: none;
+}
+html[data-up-tv-mode] .portfolio-metric-details {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+html[data-up-tv-mode] .portfolio-metric-details > * {
+  margin: 0 !important;
+}
+html[data-up-tv-mode] .portfolio-metric-details > div:first-child,
+html[data-up-tv-mode] .portfolio-metric-details > div:first-child span {
+  font-size: 11px;
+  line-height: 16px;
+}
+html[data-up-tv-mode] .portfolio-metric-details > div:first-child {
+  padding: 0 6px;
+}
+html[data-up-tv-mode] .up-portfolio > .portfolio-trends {
+  grid-area: trends;
+}
+html[data-up-tv-mode] .up-portfolio-chart {
+  display: flex;
+  flex-direction: column;
+  min-height: 300px;
+  padding: 12px !important;
+}
+html[data-up-tv-mode] .up-portfolio-chart > p {
+  margin-bottom: 8px;
+}
+html[data-up-tv-mode] .portfolio-trends [data-chart] {
+  flex: 1 1 0;
+  min-height: 220px;
+  height: 0;
+}
+html[data-up-tv-mode] .up-portfolio > .portfolio-ranking {
+  grid-area: ranking;
+}
+html[data-up-tv-mode] .portfolio-ranking > div:first-child {
+  padding: 10px 12px;
+  gap: 8px;
+}
+html[data-up-tv-mode] .portfolio-ranking table {
+  table-layout: fixed;
+  font-size: 12px;
+}
+html[data-up-tv-mode] .portfolio-ranking th,
+html[data-up-tv-mode] .portfolio-ranking td {
+  padding: 6px;
+  overflow-wrap: anywhere;
+}
+html[data-up-tv-mode] .portfolio-ranking th:first-child {
+  width: 30px;
+}
+html[data-up-tv-mode] .portfolio-ranking th:nth-child(2) {
+  width: 24%;
+}
+html[data-up-tv-mode] .portfolio-ranking th:nth-child(3) {
+  width: 52px;
+}
+html[data-up-tv-mode] .portfolio-ranking th:last-child {
+  width: 62px;
+}
+html[data-up-tv-mode] .portfolio-brand-warning {
+  font-size: 11px;
+  line-height: 1.2;
+}
+html[data-up-tv-mode] .portfolio-status {
+  grid-area: status;
+  line-height: 1.3;
 }

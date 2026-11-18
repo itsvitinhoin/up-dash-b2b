@@ -17,6 +17,7 @@ import {
 } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
 import { useTvMode } from "@/lib/use-tv-mode";
+import { TvViewport } from "@/components/tv-viewport";
 import "@/styles/portfolio-tv.css";
 import { useAuth } from "@/lib/auth";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -72,11 +73,13 @@ function Metrics({
   loading,
   prefix,
   brands,
+  tv = false,
 }: {
   brands: TvSnapshot["brands"];
   totals: TvTotals[];
   loading: boolean;
   prefix: string;
+  tv?: boolean;
 }) {
   const scoped =
     prefix === "total"
@@ -98,9 +101,11 @@ function Metrics({
             label:
               prefix === "total"
                 ? "Total de faturamento"
-                : prefix === "b2b"
-                  ? "Faturamento solicitado B2B"
-                  : "Faturamento pago B2C",
+                : tv
+                  ? "Faturamento"
+                  : prefix === "b2b"
+                    ? "Faturamento solicitado B2B"
+                    : "Faturamento pago B2C",
           },
           {
             key: "investment",
@@ -149,7 +154,7 @@ function Metrics({
           }
           comparisonUnavailable="Este painel não consulta a janela anterior de 90 dias."
           footer={
-            <div className="space-y-2 text-xs">
+            <div className="portfolio-metric-details space-y-2 text-xs">
               {missing > 0 && (key === "investment" || key === "mer") && (
                 <>
                   <Badge
@@ -157,16 +162,23 @@ function Metrics({
                     className="border-amber-500/30 text-amber-500"
                   >
                     Parcial
+                    <span className="portfolio-tv-coverage">
+                      {" "}
+                      · {missing} sem investimento
+                    </span>
                   </Badge>
-                  <p className="text-muted-foreground">
-                    {key === "mer"
-                      ? "Faturamento ÷ investimento disponível"
-                      : "Soma disponível"}{" "}
-                    · {missing} marca(s) sem investimento informado.
+                  <p className="portfolio-coverage text-muted-foreground">
+                    <span className="portfolio-coverage-rule">
+                      {key === "mer"
+                        ? "Faturamento ÷ investimento disponível"
+                        : "Soma disponível"}{" "}
+                      ·{" "}
+                    </span>
+                    {missing} marca(s) sem investimento informado.
                   </p>
                 </>
               )}
-              <div className="flex justify-between gap-2">
+              <div className="portfolio-metric-period flex justify-between gap-2">
                 <span className="text-muted-foreground">Período</span>
                 <span>Últimos 90 dias</span>
               </div>
@@ -504,276 +516,292 @@ export default function OverviewPage() {
       (currentPage + 1) * TV_PAGE_SIZE,
     ) ?? [];
   return (
-    <div className="up-portfolio space-y-6" data-testid="page-overview">
-      <div className="portfolio-controls flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          {user && (
-            <BrandSelection
-              key={user.id}
-              userId={user.id}
-              brands={snapshot.data?.brands ?? []}
-              onChange={setSelectedBrands}
-            />
-          )}
-          <Badge variant="outline">Últimos 90 dias</Badge>
-          <span className="text-sm text-muted-foreground">
-            {data
-              ? `${dateLabel(data.dateFrom)} a ${dateLabel(data.dateTo)}`
-              : "Aguardando dados do ciclo"}
-          </span>
-          <Badge variant="secondary">Atualização 2× ao dia</Badge>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => void tvMode.toggle()}
-            disabled={tvMode.busy}
-            aria-pressed={tvMode.enabled}
-            title={
-              tvMode.enabled
-                ? "Sair do modo TV (Esc)"
-                : "Ocultar menus e abrir em tela cheia"
-            }
-          >
-            {tvMode.enabled ? (
-              <Minimize className="mr-2 h-4 w-4" />
-            ) : (
-              <Maximize className="mr-2 h-4 w-4" />
+    <TvViewport enabled={tvMode.enabled}>
+      <div className="up-portfolio space-y-6" data-testid="page-overview">
+        <div className="portfolio-controls flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {user && (
+              <BrandSelection
+                key={user.id}
+                userId={user.id}
+                brands={snapshot.data?.brands ?? []}
+                onChange={setSelectedBrands}
+              />
             )}
-            {tvMode.enabled ? "Sair do modo TV" : "Modo TV"}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => void toggleSound()}
-            aria-pressed={soundEnabled}
-          >
-            {soundEnabled ? (
-              <Volume2 className="mr-2 h-4 w-4" />
-            ) : (
-              <VolumeX className="mr-2 h-4 w-4" />
-            )}
-            {soundEnabled ? "Som ativado" : "Ativar som"}
-          </Button>
-        </div>
-      </div>
-      {tvMode.enabled && tvMode.notice && (
-        <Alert>
-          <AlertDescription>{tvMode.notice}</AlertDescription>
-        </Alert>
-      )}
-      {data && data.brands.length === 0 && (
-        <Alert>
-          <AlertTitle>Nenhuma marca selecionada</AlertTitle>
-          <AlertDescription>
-            Abra o seletor de marcas para incluir as marcas sob sua gestão.
-          </AlertDescription>
-        </Alert>
-      )}
-      {soundError && (
-        <Alert>
-          <AlertDescription>
-            O navegador bloqueou o áudio. Clique em Ativar som para tentar
-            novamente.
-          </AlertDescription>
-        </Alert>
-      )}
-      {(status.isError || snapshot.isError) && (
-        <Alert variant="destructive">
-          <AlertTitle>Não foi possível atualizar o painel</AlertTitle>
-          <AlertDescription>
-            Os últimos números disponíveis foram preservados. Uma nova tentativa
-            será feita automaticamente.
-          </AlertDescription>
-        </Alert>
-      )}
-      {waiting && !status.isError && (
-        <Alert>
-          <AlertTitle>
-            {status.data?.failed
-              ? "Há falhas na extração"
-              : "Aguardando conclusão da atualização"}
-          </AlertTitle>
-          <AlertDescription>
-            {status.data?.failed
-              ? `${status.data.failed} marca(s) com falha. Consulte Extrações para corrigir e executar novamente.`
-              : "Os números serão publicados após o término das extrações do ciclo, às 00h e 12h (Brasília)."}
-            {data
-              ? " Exibindo a última atualização concluída."
-              : " Preparando os indicadores."}
-          </AlertDescription>
-        </Alert>
-      )}
-      {data?.brands.some((b) => b.warning) && (
-        <Alert>
-          <AlertTitle>Investimento incompleto</AlertTitle>
-          <AlertDescription>
-            Há marcas com investimento indisponível para os 90 dias. O
-            investimento mostra a soma disponível. O MER divide o faturamento
-            das marcas selecionadas por esse investimento disponível. Ambos são
-            identificados como parciais quando faltam dados.
-          </AlertDescription>
-        </Alert>
-      )}
-      <section
-        data-tv-area="total"
-        aria-label="Total consolidado"
-        className="space-y-3"
-      >
-        <h2 className="text-lg font-semibold">Total consolidado</h2>
-        <Metrics
-          totals={data?.total ?? []}
-          loading={loading}
-          prefix="total"
-          brands={data?.brands ?? []}
-        />
-      </section>
-      <section data-tv-area="b2b" aria-label="Área B2B" className="space-y-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold">B2B</h2>
-          <span className="text-xs text-muted-foreground">
-            Faturamento solicitado
-          </span>
-        </div>
-        <Metrics
-          totals={data?.b2b ?? []}
-          loading={loading}
-          prefix="b2b"
-          brands={data?.brands ?? []}
-        />
-      </section>
-      <section data-tv-area="b2c" aria-label="Área B2C" className="space-y-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold">B2C</h2>
-          <span className="text-xs text-muted-foreground">
-            Faturamento pago
-          </span>
-        </div>
-        <Metrics
-          totals={data?.b2c ?? []}
-          loading={loading}
-          prefix="b2c"
-          brands={data?.brands ?? []}
-        />
-      </section>
-      {data && <RevenueChart data={data} />}
-      <Card className="portfolio-ranking">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
-          <div>
-            <h2 className="font-semibold">Ranking de marcas</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Marcas ativas · maior faturamento primeiro
-              {(data?.total.length ?? 0) > 1
-                ? " · valores em moedas diferentes não são convertidos"
-                : ""}
-            </p>
+            <Badge variant="outline">Últimos 90 dias</Badge>
+            <span className="text-sm text-muted-foreground">
+              {data
+                ? `${dateLabel(data.dateFrom)} a ${dateLabel(data.dateTo)}`
+                : "Aguardando dados do ciclo"}
+            </span>
+            <Badge variant="secondary">Atualização 2× ao dia</Badge>
           </div>
-          {pages > 1 && (
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setPage((currentPage + pages - 1) % pages)}
-                aria-label="Página anterior"
-              >
-                ←
-              </Button>
-              <span className="text-xs tabular-nums">
-                {currentPage + 1} / {pages}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setPaused((p) => !p)}
-                aria-label={paused ? "Retomar rotação" : "Pausar rotação"}
-              >
-                {paused ? (
-                  <Play className="h-4 w-4" />
-                ) : (
-                  <Pause className="h-4 w-4" />
-                )}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setPage((currentPage + 1) % pages)}
-                aria-label="Próxima página"
-              >
-                →
-              </Button>
-            </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => void tvMode.toggle()}
+              disabled={tvMode.busy}
+              aria-pressed={tvMode.enabled}
+              title={
+                tvMode.enabled
+                  ? "Sair do modo TV (Esc)"
+                  : "Ocultar menus e abrir em tela cheia"
+              }
+            >
+              {tvMode.enabled ? (
+                <Minimize className="mr-2 h-4 w-4" />
+              ) : (
+                <Maximize className="mr-2 h-4 w-4" />
+              )}
+              {tvMode.enabled ? "Sair do modo TV" : "Modo TV"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void toggleSound()}
+              aria-pressed={soundEnabled}
+            >
+              {soundEnabled ? (
+                <Volume2 className="mr-2 h-4 w-4" />
+              ) : (
+                <VolumeX className="mr-2 h-4 w-4" />
+              )}
+              {soundEnabled ? "Som ativado" : "Ativar som"}
+            </Button>
+          </div>
+        </div>
+        <div className="portfolio-notices space-y-3">
+          {tvMode.enabled && tvMode.notice && (
+            <Alert>
+              <AlertDescription>{tvMode.notice}</AlertDescription>
+            </Alert>
+          )}
+          {data && data.brands.length === 0 && (
+            <Alert>
+              <AlertTitle>Nenhuma marca selecionada</AlertTitle>
+              <AlertDescription>
+                Abra o seletor de marcas para incluir as marcas sob sua gestão.
+              </AlertDescription>
+            </Alert>
+          )}
+          {soundError && (
+            <Alert>
+              <AlertDescription>
+                O navegador bloqueou o áudio. Clique em Ativar som para tentar
+                novamente.
+              </AlertDescription>
+            </Alert>
+          )}
+          {(status.isError || snapshot.isError) && (
+            <Alert variant="destructive">
+              <AlertTitle>Não foi possível atualizar o painel</AlertTitle>
+              <AlertDescription>
+                Os últimos números disponíveis foram preservados. Uma nova
+                tentativa será feita automaticamente.
+              </AlertDescription>
+            </Alert>
+          )}
+          {waiting && !status.isError && (
+            <Alert>
+              <AlertTitle>
+                {status.data?.failed
+                  ? "Há falhas na extração"
+                  : "Aguardando conclusão da atualização"}
+              </AlertTitle>
+              <AlertDescription>
+                {status.data?.failed
+                  ? `${status.data.failed} marca(s) com falha. Consulte Extrações para corrigir e executar novamente.`
+                  : tvMode.enabled
+                    ? "Extrações em andamento · atualização às 00h e 12h (Brasília)."
+                    : "Os números serão publicados após o término das extrações do ciclo, às 00h e 12h (Brasília)."}
+                {data
+                  ? " Exibindo a última atualização concluída."
+                  : " Preparando os indicadores."}
+              </AlertDescription>
+            </Alert>
+          )}
+          {data?.brands.some((b) => b.warning) && (
+            <Alert>
+              <AlertTitle>Investimento incompleto</AlertTitle>
+              <AlertDescription>
+                {tvMode.enabled
+                  ? "Investimento e MER parciais: calculados com o investimento disponível das marcas selecionadas."
+                  : "Há marcas com investimento indisponível para os 90 dias. O investimento mostra a soma disponível. O MER divide o faturamento das marcas selecionadas por esse investimento disponível. Ambos são identificados como parciais quando faltam dados."}
+              </AlertDescription>
+            </Alert>
           )}
         </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-14">#</TableHead>
-              <TableHead>Marca</TableHead>
-              <TableHead>Área</TableHead>
-              <TableHead className="text-right">Faturamento</TableHead>
-              <TableHead className="text-right">Investimento</TableHead>
-              <TableHead className="text-right">MER</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
+        <section
+          data-tv-area="total"
+          aria-label="Total consolidado"
+          className="space-y-3"
+        >
+          <h2 className="text-lg font-semibold">Total consolidado</h2>
+          <Metrics
+            totals={data?.total ?? []}
+            loading={loading}
+            prefix="total"
+            brands={data?.brands ?? []}
+            tv={tvMode.enabled}
+          />
+        </section>
+        <section data-tv-area="b2b" aria-label="Área B2B" className="space-y-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">B2B</h2>
+            <span className="text-xs text-muted-foreground">
+              Faturamento solicitado
+            </span>
+          </div>
+          <Metrics
+            totals={data?.b2b ?? []}
+            loading={loading}
+            prefix="b2b"
+            brands={data?.brands ?? []}
+            tv={tvMode.enabled}
+          />
+        </section>
+        <section data-tv-area="b2c" aria-label="Área B2C" className="space-y-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">B2C</h2>
+            <span className="text-xs text-muted-foreground">
+              Faturamento pago
+            </span>
+          </div>
+          <Metrics
+            totals={data?.b2c ?? []}
+            loading={loading}
+            prefix="b2c"
+            brands={data?.brands ?? []}
+            tv={tvMode.enabled}
+          />
+        </section>
+        {data && <RevenueChart data={data} />}
+        <Card className="portfolio-ranking">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+            <div>
+              <h2 className="font-semibold">Ranking de marcas</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Marcas ativas · maior faturamento primeiro
+                {(data?.total.length ?? 0) > 1
+                  ? " · valores em moedas diferentes não são convertidos"
+                  : ""}
+              </p>
+            </div>
+            {pages > 1 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPage((currentPage + pages - 1) % pages)}
+                  aria-label="Página anterior"
+                >
+                  ←
+                </Button>
+                <span className="text-xs tabular-nums">
+                  {currentPage + 1} / {pages}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setPaused((p) => !p)}
+                  aria-label={paused ? "Retomar rotação" : "Pausar rotação"}
+                >
+                  {paused ? (
+                    <Play className="h-4 w-4" />
+                  ) : (
+                    <Pause className="h-4 w-4" />
+                  )}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPage((currentPage + 1) % pages)}
+                  aria-label="Próxima página"
+                >
+                  →
+                </Button>
+              </div>
+            )}
+          </div>
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={6}>
-                  <Skeleton className="my-3 h-12 w-full" />
-                </TableCell>
+                <TableHead className="w-14">#</TableHead>
+                <TableHead>Marca</TableHead>
+                <TableHead>Área</TableHead>
+                <TableHead className="text-right">Faturamento</TableHead>
+                <TableHead className="text-right">Investimento</TableHead>
+                <TableHead className="text-right">MER</TableHead>
               </TableRow>
-            ) : visible.length ? (
-              visible.map((brand, index) => (
-                <TableRow key={brand.id}>
-                  <TableCell className="text-muted-foreground tabular-nums">
-                    {currentPage * TV_PAGE_SIZE + index + 1}
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    {brand.name}
-                    {brand.warning && (
-                      <p className="mt-1 text-xs font-normal text-amber-500">
-                        {brand.warning}
-                      </p>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{brand.area}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    <CountUp
-                      value={brand.revenue}
-                      format={(value) => money(value, brand.currency)}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {brand.investment === null
-                      ? "—"
-                      : money(brand.investment, brand.currency)}
-                  </TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">
-                    {brand.mer === null ? "—" : mer(brand.mer)}
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={6}>
+                    <Skeleton className="my-3 h-12 w-full" />
                   </TableCell>
                 </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  Nenhuma marca selecionada para este painel.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Card>
-      <p className="text-xs text-muted-foreground" role="status">
-        {data
-          ? `Última atualização: ${new Date(data.updatedAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })} (Brasília)`
-          : "Aguardando primeira atualização"}
-        {snapshot.isFetching ? " · Atualizando indicadores…" : ""} · MER sem
-        investimento positivo disponível é exibido como —.
-      </p>
-    </div>
+              ) : visible.length ? (
+                visible.map((brand, index) => (
+                  <TableRow key={brand.id}>
+                    <TableCell className="text-muted-foreground tabular-nums">
+                      {currentPage * TV_PAGE_SIZE + index + 1}
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {brand.name}
+                      {brand.warning && (
+                        <p
+                          className="portfolio-brand-warning mt-1 text-xs font-normal text-amber-500"
+                          title={brand.warning}
+                        >
+                          {tvMode.enabled
+                            ? "Investimento indisponível"
+                            : brand.warning}
+                        </p>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{brand.area}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <CountUp
+                        value={brand.revenue}
+                        format={(value) => money(value, brand.currency)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {brand.investment === null
+                        ? "—"
+                        : money(brand.investment, brand.currency)}
+                    </TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">
+                      {brand.mer === null ? "—" : mer(brand.mer)}
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="h-24 text-center text-muted-foreground"
+                  >
+                    Nenhuma marca selecionada para este painel.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Card>
+        <p
+          className="portfolio-status text-xs text-muted-foreground"
+          role="status"
+        >
+          {data
+            ? `Última atualização: ${new Date(data.updatedAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })} (Brasília)`
+            : "Aguardando primeira atualização"}
+          {snapshot.isFetching ? " · Atualizando indicadores…" : ""} · MER sem
+          investimento positivo disponível é exibido como —.
+        </p>
+      </div>
+    </TvViewport>
   );
 }
