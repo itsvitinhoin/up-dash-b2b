@@ -197,6 +197,23 @@ export async function fetchPerformanceDashboard(
   const cancelledList = (options.paidOnly ? [...CANCELLED_STATUSES, ...UNPAID_STATUSES] : CANCELLED_STATUSES)
     .map((status) => `'${status}'`)
     .join(", ");
+  // Filtros novos (pedido do time, 18/11/2026), mesmo tratamento do fetchErpDashboard
+  // (erpAnalytics.ts) -- ver memoria do projeto. Sem eles, comportamento igual a antes.
+  const unpaidList = UNPAID_STATUSES.map((status) => `'${status}'`).join(", ");
+  const paidExcludedList = [...CANCELLED_STATUSES, ...UNPAID_STATUSES].map((status) => `'${status}'`).join(", ");
+  const activeStatusCondition =
+    options.statusBucket === "cancelado"
+      ? `o.status IN (${CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ")})`
+      : options.statusBucket === "outro"
+        ? `o.status IN (${unpaidList})`
+        : options.statusBucket === "pago"
+          ? `o.status NOT IN (${paidExcludedList})`
+          : `o.status NOT IN (${cancelledList})`;
+  const sellerCondition = options.sellerId ? `AND o.seller = @sellerId` : "";
+  const stateCondition = options.state ? `AND d.state = @state` : "";
+  const dayQueryParams: Record<string, string> = { dateFrom, dateTo };
+  if (options.sellerId) dayQueryParams.sellerId = options.sellerId;
+  if (options.state) dayQueryParams.state = options.state;
 
   const customerDayQuery = `
     WITH all_orders AS (
@@ -204,6 +221,7 @@ export async function fetchPerformanceDashboard(
         pedido_id,
         ANY_VALUE(customer_id) AS customer_id,
         ANY_VALUE(status) AS status,
+        ANY_VALUE(seller) AS seller,
         ANY_VALUE(valor_liquido) AS net_amount,
         SUM(COALESCE(item_quantidade, 0)) AS quantity,
         ANY_VALUE(DATE(data_criado)) AS date
@@ -252,7 +270,9 @@ export async function fetchPerformanceDashboard(
     LEFT JOIN customer_history h
       ON h.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
     WHERE o.date BETWEEN @dateFrom AND @dateTo
-      AND o.status NOT IN (${cancelledList})
+      AND ${activeStatusCondition}
+      ${sellerCondition}
+      ${stateCondition}
     GROUP BY o.date, o.customer_id, d.customer_name, d.company, d.document, d.state
     ORDER BY o.date
   `;
@@ -352,7 +372,7 @@ export async function fetchPerformanceDashboard(
     clientRows,
   ] = await Promise.all([
     fetchErpDashboard(clientId, dataset, dateFrom, dateTo, options),
-    bigquery.query({ query: customerDayQuery, params: { dateFrom, dateTo } }),
+    bigquery.query({ query: customerDayQuery, params: dayQueryParams }),
     bigquery.query({ query: itemSummaryQuery, params: { dateFrom, dateTo } }),
     bigquery.query({ query: breakdownQuery, params: { dateFrom, dateTo } }),
     eventSummaryPromise,
