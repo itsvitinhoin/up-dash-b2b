@@ -625,7 +625,10 @@ function formatMaybePercentage(value: number | null): string {
 
 export default function PerformanceRecompraPage() {
   const { tx } = useI18n();
-  const [tipo, setTipo] = useState("anuncios-todos");
+  const { selectedDashboardMode } = useAuth();
+  const isB2C = selectedDashboardMode === "B2C";
+  const [selectedTipo, setTipo] = useState("anuncios-todos");
+  const tipo = isB2C ? "site" : selectedTipo;
   const [status, setStatus] = useState("pago");
   const [origem, setOrigem] = useState("todos");
   const [estado, setEstado] = useState("todos");
@@ -744,14 +747,14 @@ export default function PerformanceRecompraPage() {
       <Card>
         <CardContent className="flex flex-wrap items-center gap-2 p-3">
           <div className="flex flex-wrap items-center gap-2">
-          <TipoFilter value={tipo} onChange={setTipo} />
+          {isB2C ? <span className="px-2 text-sm font-medium">E-commerce</span> : <TipoFilter value={tipo} onChange={setTipo} />}
 
           <Select value={status} onValueChange={setStatus}>
             <SelectTrigger className="h-9 w-[150px]">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="solicitado">Solicitado</SelectItem>
+              <SelectItem value="solicitado">{isB2C ? "Faturado" : "Solicitado"}</SelectItem>
               <SelectItem value="pago">Pago</SelectItem>
               <SelectItem value="espera">Em espera</SelectItem>
               <SelectItem value="cancelado">Cancelado</SelectItem>
@@ -1115,6 +1118,7 @@ export default function PerformanceRecompraPage() {
 
       {/* Desempenho por vendedora — dado real (Fase 2). PDF seção 17: reage
           a Status/Estado/Vendedora, não recebe P2. */}
+      {!isB2C && (
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-sm">Desempenho por vendedora</CardTitle>
@@ -1161,6 +1165,7 @@ export default function PerformanceRecompraPage() {
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* Detalhamento + exportação */}
       <Card>

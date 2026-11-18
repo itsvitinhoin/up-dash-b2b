@@ -3852,6 +3852,16 @@ components:
           type: number
         roas:
           type: number
+        purchases:
+          type: integer
+        paidRevenue:
+          type: number
+        spend:
+          type: number
+          nullable: true
+        mer:
+          type: number
+          nullable: true
       required: [state, leads, attributedRevenue, roas]
 
     MarketingAgeGroupRow:

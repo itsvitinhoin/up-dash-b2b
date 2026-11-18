@@ -349,7 +349,10 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  // React Query and the API already cache analytics. Browser stale-while-revalidate
+  // must not keep showing pre-deployment metric payloads after a page reload.
+  const cache = init.cache ?? (method === "GET" && requestInfo.url.includes("/api/analytics/") ? "no-store" : undefined);
+  const response = await fetch(input, { ...init, cache, method, headers });
 
   if (
     response.status === 401 &&

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { aggregateMetaInsights, metaReportingWindow, spendCents } from "./meta-reporting";
 import { and, eq, sql } from "drizzle-orm";
 import { db, creativesTable } from "@workspace/db";
-import { fetchMetaGraph } from "./meta-graph";
+import { fetchMetaGraph, MetaGraphError } from "./meta-graph";
 
 const DEFAULT_GRAPH_VERSION = "v24.0";
 const GRAPH_BASE = "https://graph.facebook.com";
@@ -60,6 +60,7 @@ interface MetaInsightRow {
   status?: string;
   spend?: string;
   impressions?: string;
+  region?: string;
   reach?: string;
   frequency?: string;
   clicks?: string;
@@ -205,6 +206,7 @@ export interface MetaMarketingData {
   ads: MetaAdMetric[];
   campaigns: MetaAdMetric[];
   topCreatives: MetaTopCreatives;
+  regionalSpend?: Array<{ state: string; spend: number }>;
   summary: {
     spend: number;
     impressions: number;
@@ -568,7 +570,7 @@ export class MediaReadError extends Error {
 }
 
 /** `includeMedia`: só a tela de Marketing (período atual) mostra miniaturas; métricas, comparativos e rotinas não precisam e não gastam chamadas de mídia. */
-type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string; includeMedia?: boolean; isB2C?: boolean; includeReach?: boolean };
+type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string; includeMedia?: boolean; isB2C?: boolean; includeReach?: boolean; summaryOnly?: boolean };
 const mediaReads = new Map<string, { expiresAt: number; promise: Promise<MetaMarketingData> }>();
 const accountZones = new Map<string, { expiresAt: number; promise: Promise<string> }>();
 
@@ -589,10 +591,13 @@ async function fetchAccountTimeZone(params: MetaParams, key: string): Promise<st
 export async function fetchMetaMarketingData(params: MetaParams): Promise<MetaMarketingData> {
   if (!params.accessToken.trim() || !params.adAccountId.trim()) throw new MediaReadError();
   const accountKey = `${normalizeMetaAdAccountId(params.adAccountId)}:${createHash("sha256").update(params.accessToken).digest("hex")}`;
-  const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? "", params.includeMedia === true, params.isB2C === true, params.includeReach === true]);
+  const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? "", params.includeMedia === true, params.isB2C === true, params.includeReach === true, params.summaryOnly === true]);
   const cached = mediaReads.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
-  const promise = fetchMetaMarketingDataUncached(params, accountKey).catch(() => { throw new MediaReadError(); });
+  const promise = fetchMetaMarketingDataUncached(params, accountKey).catch((error: unknown) => {
+    console.warn("[meta-read-failed]", JSON.stringify({account:normalizeMetaAdAccountId(params.adAccountId),status:error instanceof MetaGraphError ? error.status : undefined,code:error instanceof MetaGraphError ? error.code : undefined,reason:error instanceof MetaGraphError ? error.message : "Invalid or incomplete Meta metrics"}));
+    throw new MediaReadError();
+  });
   if (mediaReads.size >= 250) mediaReads.delete(mediaReads.keys().next().value!);
   const entry = { expiresAt: Date.now() + 60_000, promise };
   mediaReads.set(key, entry);
@@ -612,8 +617,33 @@ export function emptyMetaMarketingData(): MetaMarketingData {
 }
 
 async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: string): Promise<MetaMarketingData> {
+  if (params.isB2C && params.summaryOnly) {
+    const rows = await fetchInsights(params.accessToken, params.adAccountId, {
+      level: "account", fields: "spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",
+      time_range: JSON.stringify({ since: params.since, until: params.until }), time_increment: "1", limit: "500",
+    });
+    const daily = rows.map(dailyPoint);
+    return { daily, ads: [], campaigns: [], topCreatives: { ctr: [], cpl: [], leads: [] }, summary: summarize(daily) };
+  }
+  if (params.isB2C && !params.includeMedia && !params.campaignName) {
+    const time_range = JSON.stringify({since:params.since,until:params.until});
+    // A period-level ad report avoids account-size × days explosion and Meta
+    // "reduce the amount of data" errors; account days still feed the charts.
+    const [accountDays, periodAds, statuses] = await Promise.all([
+      fetchInsights(params.accessToken,params.adAccountId,{level:"account",fields:"spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",time_range,time_increment:"1",limit:"100"}),
+      fetchInsights(params.accessToken,params.adAccountId,{level:"ad",fields:"ad_id,ad_name,campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",time_range,limit:"100"}),
+      fetchCampaignStatuses(params.accessToken,params.adAccountId).catch(()=>new Map<string,string>()),
+    ]);
+    const grouped=aggregateMetaInsights(periodAds,params.since,params.until,"America/Sao_Paulo");
+    const daily=accountDays.map(dailyPoint);
+    const metric=(row:MetaInsightRow)=>adMetric({...row,date_stop:params.until},params.since,params.until);
+    return {daily,ads:grouped.ads.map(metric),campaigns:grouped.campaigns.map(row=>({...metric(row),status:row.campaign_id ? statuses.get(row.campaign_id) ?? "UNKNOWN" : "UNKNOWN"})),topCreatives:{ctr:[],cpl:[],leads:[]},summary:summarize(daily)};
+  }
   const accountTimeZone = await fetchAccountTimeZone(params, accountKey);
-  const window = metaReportingWindow(params.since, params.until, accountTimeZone);
+  // Hourly breakdowns omit off-Meta conversions. B2C uses the calendar dates
+  // requested in Ads Manager, in the ad account timezone, without hourly slicing.
+  const reportingTimeZone = params.isB2C ? "America/Sao_Paulo" : accountTimeZone;
+  const window = metaReportingWindow(params.since, params.until, reportingTimeZone);
   const [rows, campaignStatuses, periodRows] = await Promise.all([
     fetchInsights(params.accessToken, params.adAccountId, {
       level: "ad",
@@ -633,7 +663,7 @@ async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: st
         })
       : Promise.resolve([]),
   ]);
-  const grouped = aggregateMetaInsights(params.campaignName ? rows.filter((row) => row.campaign_name?.toLowerCase().includes(params.campaignName!.toLowerCase())) : rows, params.since, params.until, accountTimeZone);
+  const grouped = aggregateMetaInsights(params.campaignName ? rows.filter((row) => row.campaign_name?.toLowerCase().includes(params.campaignName!.toLowerCase())) : rows, params.since, params.until, reportingTimeZone);
   const daily = grouped.daily.map(dailyPoint);
   const ads = grouped.ads.map((row) => adMetric(row, params.since, params.until));
   const campaigns = grouped.campaigns.map((row) => ({
@@ -702,4 +732,29 @@ export async function upsertMetaCreatives(clientId: string, ads: MetaAdMetric[])
       .set({ status: "INACTIVE", updatedAt: new Date() })
       .where(and(eq(creativesTable.clientId, clientId), eq(creativesTable.platform, "META")));
   }
+}
+
+/** Meta excludes off-site purchases with region breakdowns; only delivery/spend is requested here. */
+const periodBreakdowns = new Map<string, { expiresAt: number; promise: Promise<{ reach: number | null; frequency: number | null; regions?: Array<{state:string;spend:number}> }> }>();
+export async function fetchMetaPeriodBreakdowns(params: { accessToken: string; adAccountId: string; since: string; until: string }) {
+  const key = JSON.stringify([normalizeMetaAdAccountId(params.adAccountId), createHash("sha256").update(params.accessToken).digest("hex"), params.since, params.until]);
+  const cached = periodBreakdowns.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  const promise = (async () => {
+    const common = { level: "account", time_range: JSON.stringify({ since: params.since, until: params.until }), limit: "500" };
+    const [totalResult, regionResult] = await Promise.allSettled([
+      fetchInsights(params.accessToken, params.adAccountId, { ...common, fields: "reach,frequency" }),
+      fetchInsights(params.accessToken, params.adAccountId, { ...common, fields: "spend", breakdowns: "region" }),
+    ]);
+    const total = totalResult.status === "fulfilled" ? totalResult.value[0] : undefined;
+    if (totalResult.status === "rejected" || regionResult.status === "rejected") console.warn("[marketing] Meta period breakdown partially unavailable");
+    return {
+      reach: total?.reach == null ? null : numberValue(total.reach),
+      frequency: total?.frequency == null ? null : numberValue(total.frequency),
+      regions: regionResult.status === "fulfilled" ? regionResult.value.filter(row => row.region && row.spend != null).map(row => ({ state: row.region!, spend: numberValue(row.spend) })) : undefined,
+    };
+  })();
+  if (periodBreakdowns.size >= 250) periodBreakdowns.delete(periodBreakdowns.keys().next().value!);
+  periodBreakdowns.set(key, { expiresAt: Date.now() + 300_000, promise });
+  try { return await promise; } catch (err) { periodBreakdowns.delete(key); throw err; }
 }

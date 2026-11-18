@@ -1526,6 +1526,10 @@ export interface MarketingStateRow {
   leads: number;
   attributedRevenue: number;
   roas: number;
+  purchases?: number;
+  paidRevenue?: number;
+  spend?: number | null;
+  mer?: number | null;
 }
 
 export interface MarketingAgeGroupRow {

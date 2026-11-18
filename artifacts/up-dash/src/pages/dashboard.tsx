@@ -2039,7 +2039,7 @@ export default function DashboardPage({ organization = "executive" }: { organiza
             sparkColor="#87adff"
             sub={[
               { label: t("dashboard.kpi.repeatCustomers"), value: data ? formatNumber(data.kpis.repeatCustomers) : "—" },
-              { label: isB2C ? t("dashboard.kpi.paidRate") : t("dashboard.kpi.approvalRate"), value: data ? formatPercentage(data.kpis.approvalRate) : "—" },
+              { label: isB2C ? t("dashboard.kpi.paidRate") : t("dashboard.kpi.approvalRate"), value: data ? isB2C ? data.kpis.requestedRevenue > 0 ? formatPercentage(data.kpis.revenue / data.kpis.requestedRevenue * 100) : "—" : formatPercentage(data.kpis.approvalRate) : "—" },
             ]}
             isLoading={isLoading}
           />

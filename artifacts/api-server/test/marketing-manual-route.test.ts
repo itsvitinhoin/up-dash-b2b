@@ -5,6 +5,7 @@ const state = vi.hoisted(() => ({
   rows: [] as unknown[][],
   fetchMeta: vi.fn(),
   fetchStored: vi.fn(),
+  period: vi.fn(),
   upsert: vi.fn(),
 }));
 vi.mock("@workspace/db", async () => {
@@ -44,6 +45,7 @@ vi.mock("../src/services/meta-ads", async () => ({
     "../src/services/meta-ads",
   )),
   fetchMetaMarketingData: state.fetchMeta,
+  fetchMetaPeriodBreakdowns: state.period,
   upsertMetaCreatives: state.upsert,
 }));
 vi.mock("../src/services/stored-marketing", () => ({
@@ -108,7 +110,8 @@ const url = () =>
 beforeEach(() => {
   state.rows = [];
   state.fetchMeta.mockReset();
-  state.fetchStored.mockReset();
+  state.fetchStored.mockReset().mockResolvedValue(meta);
+  state.period.mockReset().mockResolvedValue({ reach: 30000, frequency: 1.6183, regions: [{state:"São Paulo (state)", spend:200}] });
   state.upsert.mockReset().mockResolvedValue(undefined);
 });
 
@@ -122,6 +125,7 @@ describe("Manual marketing source and response contract", () => {
     expect(response.status).toBe(200);
     const body = GetMarketingResponse.parse(response.body);
     expect(body.revenueSource).toBe("META");
+    expect(body.stateBreakdown).toEqual([]);
     expect(body.kpis.purchases).toBe(15);
     expect(body.kpis.attributedRevenue).toBe(3410.43);
     expect(body.kpis.roas).toBeCloseTo(3410.43 / 986.94);
@@ -153,35 +157,19 @@ describe("Manual marketing source and response contract", () => {
     expect(response.body.prevMetaSummary).toBeNull();
     expect(GetMarketingResponse.safeParse(response.body).success).toBe(true);
   });
-  it.each([
-    { revenue: 800, orders: 4 },
-    { revenue: 0, orders: 0 },
-  ])(
-    "keeps integrated B2C ecommerce metrics, including zero orders: %j",
+  it.each([{ revenue: 800, orders: 4 }, { revenue: 0, orders: 0 }])(
+    "uses native Meta metrics for B2C ads, even if the store has different totals: %j",
     async ({ revenue, orders }) => {
-      state.rows = [
-        [{ commercePlatform: "NUVEMSHOP" }],
-        [{ ...config, commercePlatform: "NUVEMSHOP" }],
-        [{ revenue, orders }],
-        [{ revenue: 300, orders: 1 }],
-        [{ totalLeads: 0, approvedLeads: 0 }],
-        [{ totalLeads: 0, approvedLeads: 0 }],
-        [],
-        [],
-      ];
+      state.rows = [[{commercePlatform:"NUVEMSHOP"}], [{...config,commercePlatform:"NUVEMSHOP"}], [{state:"SP",paidRevenue:revenue,purchases:orders}]];
+      state.fetchMeta.mockResolvedValueOnce(meta).mockResolvedValueOnce(previousMeta);
       state.fetchStored.mockResolvedValue(meta);
       const response = await request(app).get(url());
       expect(response.status).toBe(200);
-      expect(state.fetchMeta).not.toHaveBeenCalled();
-      expect(response.body.revenueSource).toBe("ECOMMERCE");
-      expect(response.body.kpis).toMatchObject({
-        attributedRevenue: revenue,
-        purchases: orders,
-      });
-      expect(response.body.kpis.cpa).toBeCloseTo(
-        orders > 0 ? 986.94 / orders : 0,
-      );
-    },
+      expect(response.body.revenueSource).toBe("META");
+      expect(response.body.kpis).toMatchObject({attributedRevenue:3410.43,purchases:15});
+      expect(response.body.kpis.cpa).toBeCloseTo(986.94 / 15);
+      expect(response.body.stateBreakdown[0]).toMatchObject({state:"SP",purchases:orders,paidRevenue:revenue,spend:200,mer:revenue/200});
+    }
   );
   it("returns a source error when Meta fails for MANUAL", async () => {
     state.rows = [[{ commercePlatform: "MANUAL" }], [config]];

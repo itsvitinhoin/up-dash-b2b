@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/auth";
 import { queryOpts } from "@/lib/query-opts";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import {
-  useGetCustomers,
+  useGetGeography, useGetCustomers,
   useGetCustomerSummary,
   useGetInsight,
   useRegenerateInsight,
@@ -120,7 +120,9 @@ type CustomerSortKey = "totalSpent" | "totalOrders" | "createdAt" | "firstPurcha
 export default function CustomersPage({organization}: {organization?: "registrations"} = {}) {
   const displayLabel = useDisplayLabel();
   const { tx } = useI18n();
-  const { selectedClientId, user } = useAuth();
+  const { selectedClientId, user, selectedDashboardMode } = useAuth();
+  const isB2C = selectedDashboardMode === "B2C";
+  const [geoMetric, setGeoMetric] = useState<"customers" | "orders">("customers");
   const { dateRange, filters } = useDashboardFilters();
   const locationSearch = useSearch();
   const [, navigate] = useLocation();
@@ -178,7 +180,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
       registrationStatus: registrationStatusFilter !== "all"
         ? (registrationStatusFilter as "PENDING" | "APPROVED" | "REJECTED")
         : undefined,
-      purchaseStatus: purchaseFilter !== "all" ? (purchaseFilter as "buyers" | "non_buyers") : undefined,
+      purchaseStatus: isB2C ? "buyers" : purchaseFilter !== "all" ? (purchaseFilter as "buyers" | "non_buyers") : undefined,
       sortBy: sortKey,
       sortDir,
       page,
@@ -200,7 +202,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
   };
   const { data: summary, isLoading: summaryLoading } = useGetCustomerSummary(
     summaryParams,
-    { query: queryOpts({ enabled, placeholderData: (prev) => prev }) },
+    { query: queryOpts({ enabled: enabled && !isB2C, placeholderData: (prev) => prev }) },
   );
 
   const { language: insightLanguage } = useI18n();
@@ -213,7 +215,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
   };
   const { data: insight, isLoading: insightLoading } = useGetInsight(
     insightParams,
-    { query: queryOpts({ enabled, placeholderData: (prev) => prev }) },
+    { query: queryOpts({ enabled: enabled && !isB2C, placeholderData: (prev) => prev }) },
   );
   const regenerate = useRegenerateInsight({
     mutation: {
@@ -308,9 +310,10 @@ export default function CustomersPage({organization}: {organization?: "registrat
   const segmentCount = data?.segmentCounts?.length ?? 0;
   const kpis = summary?.kpis;
   const prevKpis = (summary as Record<string, unknown> | undefined)?.prevKpis as typeof kpis | undefined;
+  const geography = useGetGeography({ clientId, dateFrom: selectedDateFrom, dateTo: selectedDateTo, utmSource: filters.utmSource || undefined, utmMedium: filters.utmMedium || undefined }, { query: queryOpts({ enabled: enabled && isB2C }) });
   const registrationStates = useMemo(
     () =>
-      (summary?.registrationsByState ?? [])
+      (isB2C ? (geography.data?.states ?? []).map(row => ({ state: row.state, count: row[geoMetric] })) : summary?.registrationsByState ?? [])
         .filter((row) => row.state && row.state !== "Unknown")
         .map((row) => ({
           state: row.state,
@@ -318,7 +321,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
           customers: row.count,
           revenue: row.count,
         })),
-    [summary?.registrationsByState],
+    [summary?.registrationsByState, isB2C, geography.data?.states, geoMetric],
   );
   const topRegistrationStates = useMemo(
     () => [...registrationStates].sort((a, b) => b.customers - a.customers).slice(0, 8),
@@ -379,6 +382,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
         </Button>
       </div>
 
+      {!isB2C && <>
       {/* KPI strip */}
       {organization === "registrations" ? (<div className="space-y-6"><MetricSection title={tx("CADASTROS")} columns={4}><SummaryKpiCard
             label={tx("Cadastros")}
@@ -649,6 +653,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
         </Card>
       </motion.div>
 
+      </>}
       {/* Registration geography */}
       <motion.div variants={cardVariants}>
         <Card className="overflow-hidden">
@@ -660,20 +665,21 @@ export default function CustomersPage({organization}: {organization?: "registrat
                   Concentração por estado
                 </h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Cadastros agrupados por UF, incluindo estados preenchidos por DDD quando disponíveis.
+                  {isB2C ? "Compradores e pedidos do período agrupados por UF." : "Cadastros agrupados por UF, incluindo estados preenchidos por DDD quando disponíveis."}
                 </p>
               </div>
               <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                {registrationStates.length} estados · {formatNumber(totalRegistrationStates)} registrations
+                {registrationStates.length} estados · {formatNumber(totalRegistrationStates)} {isB2C ? geoMetric === "orders" ? "pedidos" : "compradores" : "cadastros"}
               </span>
             </div>
-            {summaryLoading ? (
+            {isB2C && <div className="flex gap-2 mb-4"><Button variant={geoMetric === "customers" ? "default" : "outline"} onClick={() => setGeoMetric("customers")}>Compradores</Button><Button variant={geoMetric === "orders" ? "default" : "outline"} onClick={() => setGeoMetric("orders")}>Pedidos</Button></div>}
+            {(isB2C ? geography.isLoading : summaryLoading) ? (
               <Skeleton className="h-[420px] w-full rounded-md" />
             ) : registrationStates.length === 0 ? (
               <EmptyState
                 icon={Globe}
                 title={tx("Sem dados de estados")}
-                description={tx("Quando os estados dos clientes estiverem disponíveis, a concentração de cadastros aparecerá aqui.")}
+                description={isB2C ? tx("A concentração aparece quando há compradores com estado informado no período.") : tx("Quando os estados dos clientes estiverem disponíveis, a concentração de cadastros aparecerá aqui.")}
                 className="border-0 bg-transparent"
               />
             ) : (
@@ -684,7 +690,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                   reduced={reduced}
                   ariaLabel="Brazil customer registration heat map"
                   valueFormatter={(value) => formatNumber(value)}
-                  stateExtraFormatter={(stateRow) => `${formatNumber(stateRow.customers)} cadastros`}
+                  stateExtraFormatter={(stateRow) => `${formatNumber(stateRow.customers)} ${isB2C ? geoMetric === "orders" ? "pedidos" : "compradores" : "cadastros"}`}
                   lowLabel="Menos"
                   highLabel="Mais"
                 />
@@ -735,7 +741,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
                                   {pct.toFixed(1)}%
                                 </span>
                               </div>
-                              <div className="text-[11px] text-muted-foreground">cadastros</div>
+                              <div className="text-[11px] text-muted-foreground">{isB2C ? geoMetric === "orders" ? "pedidos" : "compradores" : "cadastros"}</div>
                             </div>
                           </div>
                         </li>
@@ -750,7 +756,7 @@ export default function CustomersPage({organization}: {organization?: "registrat
       </motion.div>
 
       {/* AI Insight card */}
-      {!insightDismissed && (
+      {!isB2C && !insightDismissed && (
         <motion.div variants={cardVariants}>
           <Card className="p-5 bg-gradient-to-br from-primary/[0.04] via-card to-card border-border relative overflow-hidden" data-testid="customers-insight-card">
             <div aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-primary via-chart-3 to-chart-1 opacity-80" />

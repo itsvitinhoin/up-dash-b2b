@@ -1,3 +1,5 @@
+import { regionalCommerceMarketing } from "../services/regional-marketing";
+import { normalizedVariantAttrs } from "../services/variant-attributes";
 import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
 import { braavoProductGroup } from "../services/braavo-normalize";
 import { Router, type IRouter } from "express";
@@ -622,33 +624,6 @@ async function enrichRowsWithProductImages(
       : null);
     return matchedProduct || productImageUrl ? { ...row, product, product_image_url: productImageUrl } : row;
   });
-}
-
-const SIZE_VALUE_RE = /^(PP|P|M|G|GG|XG|XGG|EXG|EG|XP|XS|S|L|XL|XXL|XXXL|U|UNICO|ONE SIZE|[0-9]{1,3})$/i;
-
-function normalizeVariantValue(value: string | null | undefined): string {
-  return (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toUpperCase();
-}
-
-function looksLikeSizeValue(value: string | null | undefined): boolean {
-  const normalized = normalizeVariantValue(value);
-  return normalized.length > 0 && SIZE_VALUE_RE.test(normalized);
-}
-
-function normalizedVariantAttrs(row: { color: string | null; size: string | null }): { color: string | null; size: string | null } {
-  const color = row.color?.trim() || null;
-  const size = row.size?.trim() || null;
-  const colorIsSize = looksLikeSizeValue(color);
-  const sizeIsSize = looksLikeSizeValue(size);
-
-  return {
-    color: colorIsSize && size && !sizeIsSize ? size : color,
-    size: size && !sizeIsSize && color && colorIsSize ? color : size,
-  };
 }
 
 type DashboardKpis = {
@@ -10275,7 +10250,7 @@ async function computeMarketingKpis(
   isB2CClient = false,
   metaRevenue = false,
 ) {
-  if (metaRevenue) return manualMarketingKpis(meta);
+  if (metaRevenue || isB2CClient) return manualMarketingKpis(meta);
   const totalSpend = meta.summary.spend;
 
   // Same paid-order creation cohort as Dashboard, Clientes and Diário.
@@ -11369,16 +11344,20 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
   const isB2CClient = clientConfig?.dashboardType === "B2C";
-  const metaRevenue = usesMetaRevenue(clientConfig?.commercePlatform);
-
   const metaAccessToken = getGlobalMetaAccessToken(clientConfig?.metaAdsApiKey);
-  if (metaRevenue && (!metaAccessToken?.trim() || !clientConfig?.metaAdAccountId?.trim())) throw new MediaReadError();
+  const hasMetaCredentials = !!(metaAccessToken?.trim() && clientConfig?.metaAdAccountId?.trim());
+  const platformUsesMetaRevenue = usesMetaRevenue(clientConfig?.commercePlatform);
+  // Plataforma MANUAL não tem fonte de e-commerce pra cair de volta — sem Meta, não há dado.
+  if (platformUsesMetaRevenue && !hasMetaCredentials) throw new MediaReadError();
+  // B2C usa Meta nativo quando a conta está configurada; sem ela, cai pro e-commerce guardado.
+  const metaRevenue = isB2CClient ? hasMetaCredentials : platformUsesMetaRevenue;
   // Filtro de fonte que não é Meta: nada do Meta entra no recorte (vazio), não é falha de leitura.
   const metaExcludedByFilter = !!utmSrc && !metaSourceMatchesFilter(utmSrc);
   // Só o período atual mostra miniaturas de criativo; o anterior é só comparativo e não gasta chamadas de mídia.
+  const metricsOnly = req.query.metricsOnly === "true";
   const readMeta = (range: { since: string; until: string }, includeMedia = false) => metaExcludedByFilter
     ? Promise.resolve(emptyMetaMarketingData())
-    : fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig?.metaAdAccountId, commercePlatform: clientConfig?.commercePlatform, ...range, campaignName: creativeFilt, includeMedia, isB2C: isB2CClient, includeReach: true });
+    : fetchMetaMarketingDataIfConnected({ accessToken: metaAccessToken, adAccountId: clientConfig?.metaAdAccountId, commercePlatform: clientConfig?.commercePlatform, ...range, campaignName: creativeFilt, includeMedia: includeMedia && !metricsOnly, isB2C: isB2CClient, includeReach: !metricsOnly });
   const [metaCurrent, metaPrev] = await Promise.all([
     readMeta({ since, until }, true),
     readMeta({ since: prevSince, until: prevUntil }).catch(() => null),
@@ -11421,7 +11400,12 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     Promise.resolve(
       metaCurrent.daily.map((point) => ({ date: point.date, value: point.spend })),
     ),
-    metaRevenue ? Promise.resolve([]) : buildStateBreakdown(clientId, from, to, totalProratedSpend),
+    isB2CClient && clientConfig?.commercePlatform !== "MANUAL" ? db.select({
+      state: ordersTable.state,
+      purchases: sql<number>`COUNT(*)::int`,
+      paidRevenue: sql<number>`COALESCE(SUM(${paidRevenueColumn(true)}), 0)::float`,
+    }).from(ordersTable).where(and(eq(ordersTable.clientId, clientId), paidOrderStatus(), gte(ordersTable.createdAt, from), lte(ordersTable.createdAt, to))).groupBy(ordersTable.state)
+      .then(rows => regionalCommerceMarketing(rows.map(row => ({ ...row, purchases: Number(row.purchases), paidRevenue: Number(row.paidRevenue) })), metaCurrent.regionalSpend)) : metaRevenue ? Promise.resolve([]) : buildStateBreakdown(clientId, from, to, totalProratedSpend),
   ]);
 
   const topCreatives = metaCurrent?.topCreatives ?? { ctr: [], cpl: [], leads: [] };

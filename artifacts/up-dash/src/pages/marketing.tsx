@@ -240,8 +240,8 @@ function PlatformRow({ platform, spend, roas, leads, clicks, maxSpend, isB2C = f
 }
 
 // ── State row ─────────────────────────────────────────────────────────────────
-function StateRow({ state, leads, attributedRevenue, roas, maxLeads }: {
-  state: string; leads: number; attributedRevenue: number; roas: number; maxLeads: number;
+function StateRow({ state, leads, attributedRevenue, roas, maxLeads, isB2C = false, spend, mer }: {
+  spend?: number | null; mer?: number | null; isB2C?: boolean; state: string; leads: number; attributedRevenue: number; roas: number; maxLeads: number;
 }) {
   const pct = maxLeads > 0 ? (leads / maxLeads) * 100 : 0;
   return (
@@ -252,9 +252,9 @@ function StateRow({ state, leads, attributedRevenue, roas, maxLeads }: {
           <span className="font-medium">{state}</span>
         </div>
         <div className="up-channel-summary text-muted-foreground text-xs tabular-nums">
-          <span>{formatNumber(leads)} leads</span>
+          <span>{formatNumber(leads)} {isB2C ? "compras" : "leads"}</span>
           <span>{formatCurrency(attributedRevenue)}</span>
-          <span>ROAS {roas.toFixed(2)}×</span>
+          {isB2C ? <><span>Investimento {spend == null ? "—" : formatCurrency(spend)}</span><span>MER {mer == null ? "—" : `${mer.toFixed(2)}×`}</span></> : <span>ROAS {roas.toFixed(2)}×</span>}
         </div>
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
@@ -657,8 +657,8 @@ export default function MarketingPage() {
   const maxPlatformSpend = platformRows[0]?.spend ?? 0;
 
   // ── State breakdown ───────────────────────────────────────────────────────
-  const stateRows = data?.stateBreakdown ?? [];
-  const maxStateLeads = stateRows[0]?.leads ?? 0;
+  const stateRows = [...(data?.stateBreakdown ?? [])].sort((a, b) => isB2C ? (b.mer ?? -1) - (a.mer ?? -1) : b.roas - a.roas);
+  const maxStateLeads = Math.max(0, ...stateRows.map(row => row.leads));
 
   // ── Sorted campaigns ──────────────────────────────────────────────────────
   const sortedCreatives = useMemo(() => {
@@ -1080,16 +1080,17 @@ export default function MarketingPage() {
           <Card className="p-5 bg-card border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-5">
               <MapPin className="h-4 w-4 text-muted-foreground" />
-              {tx("Principais estados por ROAS")}
+              {isB2C ? tx("Compras e MER por estado") : tx("Principais estados por ROAS")}
             </h2>
+            {isB2C && <p className="mb-4 text-xs text-muted-foreground">Pedidos e faturamento pagos da loja por UF. MER = faturamento pago ÷ investimento Meta na UF; não representa compras atribuídas pelo Meta. Traço indica investimento indisponível ou zero.</p>}
             {isLoading ? (
               <div className="space-y-4">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
             ) : stateRows.length === 0 ? (
-              <EmptyState icon={MapPin} title={tx("Sem dados geográficos")} description={isB2C ? "Sem detalhamento geográfico de compras disponível nesta fonte." : "Sem leads de canais pagos com estado informado neste período."} />
+              <EmptyState icon={MapPin} title={tx("Sem dados geográficos")} description={isB2C ? "Compras por UF dependem da integração do e-commerce. O Meta fornece o investimento regional, mas não as compras da loja por estado." : "Sem leads de canais pagos com estado informado neste período."} />
             ) : (
               <div className="space-y-5">
                 {stateRows.map((row) => (
-                  <StateRow key={row.state} state={row.state} leads={row.leads} attributedRevenue={row.attributedRevenue} roas={row.roas} maxLeads={maxStateLeads} />
+                  <StateRow key={row.state} state={row.state} leads={row.leads} attributedRevenue={row.attributedRevenue} roas={row.roas} maxLeads={maxStateLeads} isB2C={isB2C} spend={row.spend} mer={row.mer} />
                 ))}
               </div>
             )}

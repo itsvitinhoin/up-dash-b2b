@@ -1,3 +1,4 @@
+import { useAuth } from "@/lib/auth";
 import { Fragment, type ReactNode } from "react";
 import { MetricSection, Metrics } from "@/components/metric-section";
 import { OVERVIEW_SECTIONS } from "@/lib/overview-layout";
@@ -8,11 +9,21 @@ import { formatCurrency } from "@/lib/formatters";
 import { differenceInCalendarDays } from "date-fns";
 
 // Cada seção pede só as fontes que usa (ver useOrganizationData): o resto nem é buscado.
-const EXECUTIVE_SOURCES = ["dashboard", "marketing", "recompra", "performance"] as const;
+const EXECUTIVE_SOURCES = [
+  "dashboard",
+  "marketing",
+  "recompra",
+  "performance",
+] as const;
 const EXECUTIVE_PREVIOUS = ["recompra", "performance"] as const;
 const ECOMMERCE_SOURCES = ["customers", "orders"] as const;
 const ECOMMERCE_PREVIOUS = ["orders"] as const;
-const PERFORMANCE_SOURCES = ["recompra", "funnel", "performance", "customers"] as const;
+const PERFORMANCE_SOURCES = [
+  "recompra",
+  "funnel",
+  "performance",
+  "customers",
+] as const;
 const PERFORMANCE_PREVIOUS = ["recompra", "funnel", "performance"] as const;
 const MEDIA_SOURCES = ["marketing"] as const;
 
@@ -36,6 +47,8 @@ export function OverviewOrganization({
   attributedRoas?: AttributedRoas;
 }) {
   const { tx } = useI18n();
+  const { selectedDashboardMode } = useAuth();
+  const isB2C = selectedDashboardMode === "B2C";
   const { pick, measures } = useOrganizationData(
     ecommerce ? ECOMMERCE_SOURCES : EXECUTIVE_SOURCES,
     ecommerce ? ECOMMERCE_PREVIOUS : EXECUTIVE_PREVIOUS,
@@ -43,15 +56,27 @@ export function OverviewOrganization({
   const { dateRange, filters } = useDashboardFilters();
   // Vendedora e Estado só chegam ao e-commerce/Vesti e à Recompra do site: ERP e anúncios mostram o total do cliente.
   const filterIgnoredNotice = !!(filters.sellerId || filters.state);
-  const money =(value: number | null | undefined) => (value != null && Number.isFinite(value) ? formatCurrency(value) : "—");
+  const money = (value: number | null | undefined) =>
+    value != null && Number.isFinite(value) ? formatCurrency(value) : "—";
   // Investimento: as duas linhas usam só números que já estão na tela (investimento, dias do período e pedidos pagos).
-  const days = Math.max(1, differenceInCalendarDays(dateRange.to, dateRange.from) + 1);
+  const days = Math.max(
+    1,
+    differenceInCalendarDays(dateRange.to, dateRange.from) + 1,
+  );
   const paidOrders = measures.orders?.value;
   const spendMetrics = pick("spend").map((metric) => ({
     ...metric,
     sub: [
-      { label: tx("Média por dia"), value: money(metric.value != null ? metric.value / days : null) },
-      { label: tx("Custo por pedido pago"), value: money(metric.value != null && paidOrders ? metric.value / paidOrders : null) },
+      {
+        label: tx("Média por dia"),
+        value: money(metric.value != null ? metric.value / days : null),
+      },
+      {
+        label: tx("Custo por pedido pago"),
+        value: money(
+          metric.value != null && paidOrders ? metric.value / paidOrders : null,
+        ),
+      },
     ],
   }));
   if (ecommerce)
@@ -59,14 +84,18 @@ export function OverviewOrganization({
       <div className="space-y-6">
         <MetricSection
           title={tx("RESULTADO DO ECOMMERCE")}
-          columns={8}
+          columns={isB2C ? 6 : 8}
           id="ecommerce-summary"
         >
           {cards.requested}
           {cards.revenue}
           {cards.orders}
           {cards.ticket}
-          <Metrics metrics={pick("pieces", "registrations", "approved")} />
+          <Metrics
+            metrics={pick(
+              ...(isB2C ? ["pieces"] : ["pieces", "registrations", "approved"]),
+            )}
+          />
           {cards.conversion}
         </MetricSection>
         <MetricSection title={tx("CLIENTES E RETENÇÃO")} columns={3}>
@@ -82,41 +111,79 @@ export function OverviewOrganization({
         label: tx("ROAS"),
         value: attributedRoas.value,
         format: "ratio" as const,
-        source: tx("Clientes atribuídos às campanhas · atendido / investimento"),
+        source: tx(
+          "Clientes atribuídos às campanhas · atendido / investimento",
+        ),
         previousValue: attributedRoas.previous,
         loading: attributedRoas.loading,
         sub: [
-          { label: tx("Atendido atribuído"), value: money(attributedRoas.revenue) },
+          {
+            label: tx("Atendido atribuído"),
+            value: money(attributedRoas.revenue),
+          },
           { label: tx("Investimento"), value: money(attributedRoas.spend) },
         ],
       }
     : measures.roas;
   const renderCard = (key: string): ReactNode => {
     if (key === "spendOld") return <Metrics metrics={spendMetrics} />;
-    if (key === "roasOld") return roasMetric ? <Metrics metrics={[roasMetric]} /> : null;
+    if (key === "roasOld")
+      return roasMetric ? <Metrics metrics={[roasMetric]} /> : null;
     if (key in cards) return cards[key];
     return measures[key] ? <Metrics metrics={[measures[key]]} /> : null;
   };
   return (
     <div className="space-y-6">
       {filterIgnoredNotice && (
-        <p className="text-xs text-muted-foreground" data-testid="overview-filter-notice">
-          {tx("Com Vendedora ou Estado ativos, os cards de ERP e de anúncios mostram o total do cliente: esses dados não são divididos por vendedora ou estado.")}
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="overview-filter-notice"
+        >
+          {tx(
+            "Com Vendedora ou Estado ativos, os cards de ERP e de anúncios mostram o total do cliente: esses dados não são divididos por vendedora ou estado.",
+          )}
         </p>
       )}
-      {OVERVIEW_SECTIONS.map((section) => (
-        <MetricSection key={section.id} title={tx(section.title)} columns={4} id={section.testId}>
-          {section.defaults.map((key) => (
-            <Fragment key={key}>{renderCard(key)}</Fragment>
-          ))}
-        </MetricSection>
-      ))}
+      {OVERVIEW_SECTIONS.map((section) => {
+        const keys = isB2C
+          ? {
+              result: [
+                "ecomPaidRevenue",
+                "ecomPaidOrders",
+                "adsSpend",
+                "merPaid",
+              ],
+              ads: ["adsRevenue", "adsRoas", "adsSpend"],
+              newCustomers: [
+                "newCustomersTotal",
+                "newCustomersRevenue",
+                "newCustomersOrders",
+              ],
+              repurchase: section.defaults,
+            }[section.id]
+          : section.defaults;
+        return (
+          <MetricSection
+            key={section.id}
+            title={tx(section.title)}
+            columns={isB2C && keys.length === 3 ? 3 : 4}
+            id={section.testId}
+          >
+            {keys.map((key) => (
+              <Fragment key={key}>{renderCard(key)}</Fragment>
+            ))}
+          </MetricSection>
+        );
+      })}
     </div>
   );
 }
 export function PerformanceSummarySections() {
   const { tx } = useI18n();
-  const { pick } = useOrganizationData(PERFORMANCE_SOURCES, PERFORMANCE_PREVIOUS);
+  const { pick } = useOrganizationData(
+    PERFORMANCE_SOURCES,
+    PERFORMANCE_PREVIOUS,
+  );
   return (
     <div className="space-y-6">
       <MetricSection title={tx("AQUISIÇÃO")} columns={3}>

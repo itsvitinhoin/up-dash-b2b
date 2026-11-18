@@ -1,4 +1,5 @@
-import { emptyMetaMarketingData, fetchMetaMarketingData, isMetaConnected, type MetaMarketingData } from "./meta-ads";
+import { emptyMetaMarketingData, fetchMetaMarketingData, fetchMetaPeriodBreakdowns, isMetaConnected, type MetaMarketingData } from "./meta-ads";
+import { topCreativesFromStored } from "./vesti-ads-stored";
 import { fetchStoredMarketingData } from "./stored-marketing";
 
 /**
@@ -20,15 +21,43 @@ export async function fetchMetaMarketingDataIfConnected(params: {
   isB2C?: boolean;
   includeReach?: boolean;
 }): Promise<MetaMarketingData> {
+  // Stored ad purchases have duplicated conversion aliases in the old collector.
+  // B2C financial/creative metrics must use one consistent native Meta dataset.
+  if (params.isB2C && isMetaConnected(params)) {
+    const credentials = { ...params, accessToken: params.accessToken!, adAccountId: params.adAccountId!, includeMedia: false, includeReach: false, summaryOnly: !params.includeMedia && !params.campaignName };
+    const [live, stored, period] = await Promise.all([
+      fetchMetaMarketingData(credentials),
+      params.includeMedia ? fetchStoredMarketingData({ adAccountId: params.adAccountId, since: params.since, until: params.until, includeAds: true, isB2C: true }).catch(() => null) : Promise.resolve(null),
+      params.includeReach && !params.campaignName ? fetchMetaPeriodBreakdowns(credentials) : Promise.resolve(null),
+    ]);
+    const thumbnails = new Map([...(stored?.topCreatives.ctr ?? []), ...(stored?.topCreatives.cpl ?? []), ...(stored?.topCreatives.leads ?? [])].map(row => [row.id, row.thumbnailUrl ?? row.imageUrl ?? null]));
+    const ads = live.ads.map(row => ({ ...row, status: row.status ?? null, thumbnailUrl: thumbnails.get(row.id) ?? null }));
+    return { ...live, regionalSpend: period?.regions, summary: { ...live.summary, reach: period?.reach ?? live.summary.reach, frequency: period?.frequency ?? live.summary.frequency }, topCreatives: params.includeMedia ? topCreativesFromStored(ads, true) : live.topCreatives };
+  }
   if (params.campaignName || params.commercePlatform === "MANUAL") {
     if (!isMetaConnected(params)) return emptyMetaMarketingData();
-    return fetchMetaMarketingData({ ...params, accessToken: params.accessToken!, adAccountId: params.adAccountId! });
+    const live = await fetchMetaMarketingData({ ...params, accessToken: params.accessToken!, adAccountId: params.adAccountId! });
+    if (params.includeReach && params.isB2C && !params.campaignName) {
+      const period = await fetchMetaPeriodBreakdowns({ ...params, accessToken: params.accessToken!, adAccountId: params.adAccountId! });
+      return { ...live, regionalSpend: period.regions };
+    }
+    return live;
   }
   if (!params.adAccountId?.trim()) return emptyMetaMarketingData();
-  return fetchStoredMarketingData({
+  const stored = await fetchStoredMarketingData({
     adAccountId: params.adAccountId,
     since: params.since,
     until: params.until,
     includeAds: params.includeMedia === true,
+    isB2C: params.isB2C,
   });
+  if (params.includeReach && params.isB2C && isMetaConnected(params)) {
+    try {
+      const period = await fetchMetaPeriodBreakdowns({ ...params, accessToken: params.accessToken!, adAccountId: params.adAccountId! });
+      return { ...stored, regionalSpend: period.regions, summary: { ...stored.summary, reach: period.reach, frequency: period.frequency } };
+    } catch (err) {
+      console.warn("[marketing] period reach/regions unavailable:", err instanceof Error ? err.message : err);
+    }
+  }
+  return stored;
 }

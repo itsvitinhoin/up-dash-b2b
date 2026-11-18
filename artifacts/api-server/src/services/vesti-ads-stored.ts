@@ -302,7 +302,7 @@ function toCreative(ad: StoredAd): MetaCreativeMetric {
 }
 
 /** Top 5 por CTR, menor custo por lead e mais leads (mesmas regras que o ao vivo usava). */
-export function topCreativesFromStored(ads: StoredAd[]): MetaTopCreatives {
+export function topCreativesFromStored(ads: StoredAd[], isB2C = false): MetaTopCreatives {
   const base = ads.map(toCreative);
   return {
     ctr: base
@@ -310,12 +310,12 @@ export function topCreativesFromStored(ads: StoredAd[]): MetaTopCreatives {
       .sort((a, b) => b.ctr - a.ctr)
       .slice(0, 5),
     cpl: base
-      .filter((ad) => ad.leads > 0 && ad.cpl > 0)
-      .sort((a, b) => a.cpl - b.cpl)
+      .filter((ad) => isB2C ? ad.purchases > 0 && ad.cpa > 0 : ad.leads > 0 && ad.cpl > 0)
+      .sort((a, b) => isB2C ? a.cpa - b.cpa : a.cpl - b.cpl)
       .slice(0, 5),
     leads: base
-      .filter((ad) => ad.leads > 0)
-      .sort((a, b) => b.leads - a.leads)
+      .filter((ad) => isB2C ? ad.purchases > 0 : ad.leads > 0)
+      .sort((a, b) => isB2C ? b.purchases - a.purchases : b.leads - a.leads)
       .slice(0, 5),
   };
 }

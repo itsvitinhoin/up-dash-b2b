@@ -1,3 +1,4 @@
+import { variantAttributesFromValues } from "./variant-attributes";
 import { and, eq, sql } from "drizzle-orm";
 import {
   customersTable,
@@ -379,33 +380,14 @@ function variantLabel(variant: NuvemshopVariant): string {
     .join(" / ");
 }
 
-function looksLikeSize(value: string | null | undefined): boolean {
-  const normalized = (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toUpperCase();
-  return /^(PP|P|M|G|GG|XG|XGG|EXG|EG|XP|XS|S|L|XL|XXL|XXXL|U|UNICO|ONE SIZE|\d{1,3})$/.test(normalized);
-}
-
-function variantAttributes(label: string): { color: string | null; size: string | null } {
-  const parts = label.split("/").map((part) => part.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    const first = parts[0];
-    const rest = parts.slice(1).join(" / ");
-    if (looksLikeSize(first) && !looksLikeSize(rest)) return { color: rest, size: first };
-    if (!looksLikeSize(first) && looksLikeSize(rest)) return { color: first, size: rest };
-    return { color: first, size: rest };
-  }
-  if (parts.length === 1) return looksLikeSize(parts[0]) ? { color: null, size: parts[0] } : { color: parts[0], size: null };
-  return { color: null, size: null };
-}
-
 function variantAttributesFromName(name: string): { color: string | null; size: string | null } {
   const tuple = name.trim().match(/^(.*?)\s*\(([^(),]+),\s*([^()]+)\)\s*$/);
-  if (tuple) return variantAttributes(`${tuple[2].trim()} / ${tuple[3].trim()}`);
+  if (tuple) return variantAttributesFromValues([tuple[2],tuple[3]]);
   const separatorIndex = name.lastIndexOf(" - ");
-  if (separatorIndex >= 0) return variantAttributes(name.slice(separatorIndex + 3));
+  if (separatorIndex >= 0) {
+    const values = name.slice(separatorIndex + 3).split("/").map((part) => part.trim()).filter(Boolean);
+    return variantAttributesFromValues(values);
+  }
   return { color: null, size: null };
 }
 
@@ -846,7 +828,7 @@ export async function syncNuvemshopClient(params: {
         productDetailsCache.set(productId, detailPromise);
         const productDetails = await detailPromise;
         const variantDetails = productDetails?.variants?.find((variant) => String(variant.id ?? "") === String(variantId ?? ""));
-        const variantAttrs = variantDetails ? variantAttributes(variantLabel(variantDetails)) : variantAttributesFromName(localized(item.name));
+        const variantAttrs = variantDetails ? variantAttributesFromValues((variantDetails.values ?? []).map(value => localized(value.name ?? value))) : variantAttributesFromName(localized(item.name));
         const productName = localized(item.name) || localized(item.product?.name) || localized(productDetails?.name) || sku;
         const category = categoryName(item.categories) ?? categoryName(item.product?.categories) ?? categoryName(productDetails?.categories);
         const productPrice = asNumber(item.promotional_price) || asNumber(item.price) || asNumber(item.compare_at_price);
