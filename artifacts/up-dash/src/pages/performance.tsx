@@ -6,7 +6,7 @@ import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { format, startOfWeek, startOfMonth } from "date-fns";
 import {
   AlertCircle,
   BadgeDollarSign,
@@ -259,8 +259,8 @@ const COHORT_BADGE_CLASS: Record<CohortLabel, string> = {
 
 const trendConfig = {
   revenue: { label: "Faturamento ERP", color: "#5b8dff" },
-  attributedRevenue: { label: "Receita atribuída", color: "#5b8dff" },
-  spend: { label: "Investimento", color: "#0458fe" },
+  attributedRevenue: { label: "Faturamento de anúncios", color: "#22c55e" },
+  spend: { label: "Investimento total em anúncios", color: "#0458fe" },
 } satisfies ChartConfig;
 
 const PAGE_SIZE = 10;
@@ -274,6 +274,26 @@ function buildUrl(
     if (value !== undefined && value !== "") search.set(key, String(value));
   }
   return `${path}?${search.toString()}`;
+}
+
+type DailyPoint = { date: string; revenue: number; attributedRevenue: number; spend: number; orders: number };
+
+/** Agrupa o diário em semana/mês (pedido do time, 18/11/2026) -- soma cada série, a data do ponto vira o início do balde. */
+function aggregateDaily(daily: DailyPoint[], granularity: "diaria" | "semanal" | "mensal"): DailyPoint[] {
+  if (granularity === "diaria") return daily;
+  const bucketStart = (date: Date) =>
+    granularity === "mensal" ? startOfMonth(date) : startOfWeek(date, { weekStartsOn: 1 });
+  const buckets = new Map<string, DailyPoint>();
+  for (const point of daily) {
+    const key = format(bucketStart(new Date(`${point.date}T00:00:00`)), "yyyy-MM-dd");
+    const bucket = buckets.get(key) ?? { date: key, revenue: 0, attributedRevenue: 0, spend: 0, orders: 0 };
+    bucket.revenue += point.revenue;
+    bucket.attributedRevenue += point.attributedRevenue;
+    bucket.spend += point.spend;
+    bucket.orders += point.orders;
+    buckets.set(key, bucket);
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function SourceStatus({
@@ -367,6 +387,7 @@ export default function PerformancePage() {
   // ja vao pra query do ERP.
   const [tipoFilter, setTipoFilter] = useState<"todos" | "erp" | "ecommerce" | "anuncios">("todos");
   const [statusFilter, setStatusFilter] = useState<"pago" | "cancelado" | "outro">("pago");
+  const [chartGranularity, setChartGranularity] = useState<"diaria" | "semanal" | "mensal">("diaria");
   const clientId =
     user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   const enabled =
@@ -579,6 +600,8 @@ export default function PerformancePage() {
     );
   }
 
+  const chartData = aggregateDaily(data?.daily ?? [], chartGranularity);
+
   return (
     <div
       className="space-y-8"
@@ -653,18 +676,34 @@ export default function PerformancePage() {
 
       <OrganizationHeading>{tx("FATURAMENTO × INVESTIMENTO")}</OrganizationHeading>
 
-      <div className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
+      <div className="grid gap-4">
         <Card>
           <CardContent className="p-5">
             <SectionHeader
               title="Faturamento, atribuição e mídia"
               description="A receita atribuída é um recorte do faturamento oficial do ERP."
+              action={
+                <div className="flex gap-1">
+                  {(["diaria", "semanal", "mensal"] as const).map((g) => (
+                    <Button
+                      key={g}
+                      size="sm"
+                      variant={chartGranularity === g ? "secondary" : "ghost"}
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setChartGranularity(g)}
+                      data-testid={`performance-chart-granularity-${g}`}
+                    >
+                      {g === "diaria" ? "Diária" : g === "semanal" ? "Semanal" : "Mensal"}
+                    </Button>
+                  ))}
+                </div>
+              }
             />
             <ChartContainer
               config={trendConfig}
               className="mt-5 h-[320px] w-full aspect-auto"
             >
-              <AreaChart accessibilityLayer data={data?.daily ?? []}>
+              <AreaChart accessibilityLayer data={chartData}>
                 <CartesianGrid vertical={false} />
                 <XAxis
                   dataKey="date"
@@ -715,45 +754,6 @@ export default function PerformancePage() {
                 <ChartLegend content={<ChartLegendContent />} />
               </AreaChart>
             </ChartContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-5">
-            <SectionHeader
-              title="Performance por canal"
-              description="ROAS aparece quando o canal possui investimento conectado."
-            />
-            <Table className="mt-4">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Canal</TableHead>
-                  <TableHead className="text-right">Invest.</TableHead>
-                  <TableHead className="text-right">Receita</TableHead>
-                  <TableHead className="text-right">ROAS</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(data?.channels ?? []).map((channel) => (
-                  <TableRow key={channel.channel}>
-                    <TableCell className="font-medium">
-                      {channel.channel}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatCurrency(channel.spend)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatCurrency(channel.revenue)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {channel.roas == null
-                        ? "—"
-                        : `${channel.roas.toFixed(2)}x`}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
           </CardContent>
         </Card>
       </div>
