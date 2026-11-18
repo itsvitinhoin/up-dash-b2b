@@ -337,6 +337,13 @@
       "when": 1794924132066,
       "tag": "0047_erp_provider",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1795024800000,
+      "tag": "0048_vesti_sync_store_ids",
+      "breakpoints": true
     }
   ]
 }

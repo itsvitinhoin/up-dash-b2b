@@ -769,6 +769,19 @@ router.post("/clients/vesti", requireAdmin, async (req, res): Promise<void> => {
         store,
       },
     );
+    // Grava o(s) id(s) que a Vesti devolveu no registro dela — pra nunca mais precisar
+    // adivinhar pelo nome depois (ver POST /clients/:clientId/vesti/backfill). Falha aqui
+    // não desfaz o cadastro: dá pra preencher à mão depois.
+    if (result.syncStores.length > 0) {
+      try {
+        await db
+          .update(clientsTable)
+          .set({ vestiSyncStoreIds: result.syncStores.map((s) => s.id) })
+          .where(eq(clientsTable.id, result.created.client.id));
+      } catch (err) {
+        logger.warn({ err: err instanceof Error ? err.message : String(err) }, "cliente Vesti criado, mas não consegui gravar vestiSyncStoreIds");
+      }
+    }
     // Se a loja/conta já tinha lápide na lista de excluídos (cliente apagado antes), o cliente novo ativo a tira da lista.
     // Falha aqui não desfaz o cadastro: o job de atualização da lista corrige na próxima rodada.
     try {
@@ -1819,8 +1832,9 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
  * intervalo [dataInicio, dataFim], quebrado em pedaços de até 90 dias — cada
  * pedaço chama POST /api/jobs no script-vesti-nuvem (mesmo endpoint que o sync
  * noturno normal usa). Sem credencial pra decifrar aqui: o script-vesti-nuvem
- * já tem os dados da loja no próprio Postgres dele — só precisamos do id dela
- * lá, resolvido pelo nome (não existe outra chave em comum entre os dois bancos).
+ * já tem os dados da loja no próprio Postgres dele — usamos o(s) id(s) salvos
+ * em `vestiSyncStoreIds` na hora da criação (pode ser mais de um, se o client
+ * tiver mais de uma filial caindo no mesmo dataset).
  */
 router.post("/clients/:clientId/vesti/backfill", requireAdmin, async (req, res): Promise<void> => {
   const params = GetClientParams.safeParse(req.params);
@@ -1841,7 +1855,7 @@ router.post("/clients/:clientId/vesti/backfill", requireAdmin, async (req, res):
   }
 
   const [client] = await db
-    .select({ name: clientsTable.name, commercePlatform: clientsTable.commercePlatform })
+    .select({ commercePlatform: clientsTable.commercePlatform, vestiSyncStoreIds: clientsTable.vestiSyncStoreIds })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
   if (!client) {
@@ -1852,31 +1866,22 @@ router.post("/clients/:clientId/vesti/backfill", requireAdmin, async (req, res):
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "Este client não é Vesti", status: 400 });
     return;
   }
+  if (!client.vestiSyncStoreIds || client.vestiSyncStoreIds.length === 0) {
+    res.status(400).json({
+      error: true,
+      code: "SYNC_STORE_ID_MISSING",
+      message: "Este client não tem o id do sync salvo (vestiSyncStoreIds) — recadastrar ou preencher à mão",
+      status: 400,
+    });
+    return;
+  }
+  const vestiStoreIds = client.vestiSyncStoreIds;
 
   const syncConfig = syncServiceConfig();
   if (!syncConfig) {
     res.status(500).json({ error: true, code: "CONFIG_MISSING", message: "SYNC_SERVICE_URL/SYNC_SERVICE_TOKEN não configurados", status: 500 });
     return;
   }
-
-  let stores: Awaited<ReturnType<typeof listVestiSyncStores>>;
-  try {
-    stores = await listVestiSyncStores();
-  } catch (err) {
-    res.status(502).json({ error: true, code: "SYNC_SERVICE_UNREACHABLE", message: String(err), status: 502 });
-    return;
-  }
-  const normalizedName = client.name.trim().toLocaleLowerCase("pt-BR");
-  const matches = stores.filter((s) => s.name.trim().toLocaleLowerCase("pt-BR") === normalizedName);
-  if (matches.length === 0) {
-    res.status(404).json({ error: true, code: "SYNC_STORE_NOT_FOUND", message: "Loja Vesti não encontrada no sync (nome não bate)", status: 404 });
-    return;
-  }
-  if (matches.length > 1) {
-    res.status(409).json({ error: true, code: "SYNC_STORE_AMBIGUOUS", message: "Mais de uma loja Vesti no sync com esse nome", status: 409 });
-    return;
-  }
-  const vestiStoreId = matches[0].id;
 
   const chunks = splitDateRangeIntoChunks(dataInicio, dataFim);
 
@@ -1886,7 +1891,7 @@ router.post("/clients/:clientId/vesti/backfill", requireAdmin, async (req, res):
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${syncConfig.token}` },
         body: JSON.stringify({
-          client_ids: [vestiStoreId],
+          client_ids: vestiStoreIds,
           start_date: chunk.dataInicio,
           end_date: chunk.dataFim,
         }),
