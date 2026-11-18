@@ -9605,6 +9605,11 @@ router.get("/analytics/erp/attribution", requireAdmin, async (req, res): Promise
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "dateFrom and dateTo are required (YYYY-MM-DD)", status: 400 });
     return;
   }
+  // Filtros novos (pedido do time, 18/11/2026) -- mesmo padrão de erpController.ts.
+  const sellerId = typeof req.query.sellerId === "string" && req.query.sellerId.trim() ? req.query.sellerId.trim() : undefined;
+  const state = typeof req.query.state === "string" && req.query.state.trim() ? req.query.state.trim() : undefined;
+  const statusBucketRaw = typeof req.query.statusBucket === "string" ? req.query.statusBucket.trim() : undefined;
+  const statusBucket = statusBucketRaw === "pago" || statusBucketRaw === "cancelado" || statusBucketRaw === "outro" ? statusBucketRaw : undefined;
   // Achado 10/09/2026 (pedido do Santiago/time, confirmado no Slack): sem
   // teto de verdade pra buscar touchpoint pago antes do pedido -- touchpoint
   // velho de meses (ou anos) continua contando, igual já era o
@@ -9642,6 +9647,9 @@ router.get("/analytics/erp/attribution", requireAdmin, async (req, res): Promise
       upZeroApiKey: client.upZeroApiKey,
       dateFrom,
       dateTo,
+      sellerId,
+      state,
+      statusBucket,
     });
     res.json(result);
   } catch (err) {

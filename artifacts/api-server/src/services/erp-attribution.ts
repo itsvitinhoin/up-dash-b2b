@@ -19,7 +19,7 @@ import { bigquery, vestiTable } from "../lib/bigquery";
 import { db, customersTable, ordersTable, customerIdentityLinksTable, orderAttributionsTable } from "@workspace/db";
 import { and, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, standardTouchpointWindow, type TouchpointCandidate } from "./paid-touchpoints";
-import { ERP_CANCELLED_STATUSES } from "./erpAnalytics";
+import { ERP_CANCELLED_STATUSES, ERP_UNPAID_STATUSES, resolveErpSellerName } from "./erpAnalytics";
 import { resolveErpCustomerIdentities, type ErpContactInfo, type ResolvedErpCustomer } from "./erp-identity";
 
 // Achado 08/09/2026: o Manse (MX Fashion) só produz status "CONCLUIDO"
@@ -158,7 +158,42 @@ export async function computeErpPaidAttribution(params: {
   upZeroApiKey: string;
   dateFrom: string; // YYYY-MM-DD
   dateTo: string; // YYYY-MM-DD, INCLUSIVO -- mesma convenção do resto do app (erpAnalytics.ts usa BETWEEN)
+  // Filtros novos (pedido do time, 18/11/2026, slide "Aquisição x Retenção": "serão
+  // influenciados pelos filtros do topo de visão geral"). Sem eles, comportamento
+  // igual a antes.
+  sellerId?: string;
+  state?: string;
+  statusBucket?: "pago" | "cancelado" | "outro";
 }): Promise<ErpAttributionResult> {
+  // Vendedora: `sellerId` muda de identidade por plataforma -- resolve pro nome de
+  // verdade do ERP antes de filtrar (ver resolveErpSellerName, erpAnalytics.ts).
+  const resolvedSellerName = params.sellerId ? await resolveErpSellerName(params.clientId, params.sellerId) : undefined;
+  // Status: mesmos 3 baldes já usados em fetchErpDashboard pro lado ERP. SEM
+  // `statusBucket` (comportamento de hoje): so exclui cancelado/excluido, ESPERA conta.
+  const cancelledListSql = ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ");
+  const unpaidListSql = ERP_UNPAID_STATUSES.map((s) => `'${s}'`).join(", ");
+  const paidExcludedListSql = [...ERP_CANCELLED_STATUSES, ...ERP_UNPAID_STATUSES].map((s) => `'${s}'`).join(", ");
+  const erpStatusCondition =
+    params.statusBucket === "cancelado"
+      ? `status IN (${cancelledListSql})`
+      : params.statusBucket === "outro"
+        ? `status IN (${unpaidListSql})`
+        : params.statusBucket === "pago"
+          ? `status NOT IN (${paidExcludedListSql})`
+          : ERP_STATUS_FILTER;
+  const erpSellerCondition = resolvedSellerName ? `AND UPPER(o.seller) = UPPER(@sellerName)` : "";
+  const erpStateCondition = params.state ? `AND c.estado = @state` : "";
+  // Status pro lado do site (Postgres `orders`): mesma logica, 3 baldes (pago =
+  // paidOrderStatus() de metric-rules.ts). SEM `statusBucket`, comportamento de
+  // hoje: so exclui REJECTED (PENDING continua contando).
+  const siteStatusCondition =
+    params.statusBucket === "cancelado"
+      ? eq(ordersTable.status, "REJECTED")
+      : params.statusBucket === "outro"
+        ? eq(ordersTable.status, "PENDING")
+        : params.statusBucket === "pago"
+          ? inArray(ordersTable.status, ["APPROVED", "SHIPPED", "DELIVERED"])
+          : ne(ordersTable.status, "REJECTED");
   // Achado 08/09/2026: a query original comparava `data_criado < @dateTo`
   // com "2026-08-31" cru -- o BigQuery/Postgres tratam isso como meia-noite
   // do dia 31, excluindo o dia inteiro. O resto do app manda dateTo como o
@@ -183,9 +218,9 @@ export async function computeErpPaidAttribution(params: {
     const [rawErpRows] = await bigquery.query({
       query: `
         WITH orders AS (
-          SELECT pedido_id, customer_id, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
+          SELECT pedido_id, customer_id, ANY_VALUE(seller) AS seller, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
           FROM ${pedidosTable}
-          WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${ERP_STATUS_FILTER}
+          WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${erpStatusCondition}
           GROUP BY pedido_id, customer_id
           -- Achado 08/09/2026: pedido totalmente devolvido fica com status
           -- CONCLUIDO mas valor_total zerado (a devolução vira negativo no
@@ -194,12 +229,18 @@ export async function computeErpPaidAttribution(params: {
           -- (inflava contagem e podia até virar a "1ª compra influenciada").
           HAVING valor > 0
         )
-        SELECT o.*, c.nome AS customer_name, c.documento AS document,
+        SELECT o.*, c.nome AS customer_name, c.documento AS document, c.estado AS state,
           c.email AS erp_email, c.ddd AS erp_ddd, c.celular AS erp_celular, c.telefone AS erp_telefone
         FROM orders o
         LEFT JOIN ${clientesTable} c ON c.documento = o.customer_id
+        WHERE TRUE ${erpSellerCondition} ${erpStateCondition}
       `,
-      params: { dateFrom: params.dateFrom, dateToExclusive: dateToExclusiveIso.toISOString() },
+      params: {
+        dateFrom: params.dateFrom,
+        dateToExclusive: dateToExclusiveIso.toISOString(),
+        ...(resolvedSellerName ? { sellerName: resolvedSellerName } : {}),
+        ...(params.state ? { state: params.state } : {}),
+      },
     });
     erpRows = rawErpRows as Array<Record<string, unknown>>;
     totalErpRevenue = erpRows.reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
@@ -245,8 +286,13 @@ export async function computeErpPaidAttribution(params: {
         eq(ordersTable.clientId, params.clientId),
         gte(ordersTable.createdAt, dateFromDate),
         lt(ordersTable.createdAt, dateToExclusiveIso),
-        ne(ordersTable.status, "REJECTED"),
+        siteStatusCondition,
         gt(ordersTable.amount, 0), // mesmo motivo do HAVING valor > 0 do ERP acima
+        // Vendedora/Estado (pedido do time, 18/11/2026): `sellerId` aqui JA e o id de
+        // verdade de `sellersTable` (o dropdown deste lado usa a tabela certa) -- sem
+        // a ambiguidade do lado ERP, compara direto.
+        ...(params.sellerId ? [eq(ordersTable.sellerId, params.sellerId)] : []),
+        ...(params.state ? [eq(ordersTable.state, params.state)] : []),
       ),
     );
   const totalSiteRevenue = siteOrderRows.reduce((sum, r) => sum + r.amount, 0);

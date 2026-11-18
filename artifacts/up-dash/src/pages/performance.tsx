@@ -457,7 +457,7 @@ export default function PerformancePage() {
     });
 
   const attributionQuery = useQuery<ErpAttributionResponse>({
-    queryKey: ["performance-attribution", clientId, dateFrom, dateTo],
+    queryKey: ["performance-attribution", clientId, dateFrom, dateTo, sellerId, state, statusFilter],
     queryFn: () =>
       customFetch<ErpAttributionResponse>(
         buildUrl("/api/analytics/erp/attribution", commonParams),
