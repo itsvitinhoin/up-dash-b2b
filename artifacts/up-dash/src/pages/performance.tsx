@@ -423,18 +423,27 @@ export default function PerformancePage() {
   const previous = usePreviousPeriodQuery<PerformanceResponse>(periodQuery("/api/analytics/performance", { ...commonParams, page: 1, limit: PAGE_SIZE }), enabled);
   const pk = previous.data?.kpis;
   const k = data?.kpis;
+  // Tipo=Anuncios (pedido do time, 18/11/2026): mostra o recorte atribuido a mida paga
+  // (k.attributedRevenue, ja filtrado por Status/Vendedora/Estado igual ao ERP) em vez
+  // do faturamento total do ERP. Tipo=ERP/Todos continuam mostrando k.netRevenue --
+  // Tipo=Ecommerce ainda nao tem fonte propria, fica igual a ERP por enquanto.
+  const faturamentoValue = tipoFilter === "anuncios" ? (k?.attributedRevenue ?? 0) : (k?.netRevenue ?? 0);
+  const faturamentoPrevious = tipoFilter === "anuncios" ? pk?.attributedRevenue : pk?.netRevenue;
   const financialMetrics = [
     {
       label: "Faturamento",
-      value: k?.netRevenue ?? 0,
-      comparisonValue: k?.netRevenue ?? null,
-      previousValue: pk?.netRevenue,
+      value: faturamentoValue,
+      comparisonValue: faturamentoValue,
+      previousValue: faturamentoPrevious,
       source: "ERP · Ecommerce · Meta Ads",
       format: formatCurrency,
       icon: CircleDollarSign,
       iconClass: "bg-blue-500/10 text-blue-400",
       sparkColor: "#5b8dff",
-      sub: [{ label: "Bruto", value: formatCurrency(k?.grossRevenue ?? 0) }],
+      sub:
+        tipoFilter === "anuncios"
+          ? [{ label: "Cobertura", value: formatPercentage(k?.revenueAttributionCoveragePct ?? 0) }]
+          : [{ label: "Bruto", value: formatCurrency(k?.grossRevenue ?? 0) }],
     },
     {
       label: "Receita atribuída",
