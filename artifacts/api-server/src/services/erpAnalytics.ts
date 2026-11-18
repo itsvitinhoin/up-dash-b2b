@@ -371,13 +371,35 @@ export async function fetchErpDashboard(
   dataset: string,
   dateFrom: string,
   dateTo: string,
-  options: { paidOnly?: boolean } = {},
+  options: { paidOnly?: boolean; sellerId?: string; state?: string; statusBucket?: "pago" | "cancelado" | "outro" } = {},
 ): Promise<ErpDashboard> {
   const pedidos = vestiTable(dataset, "pedidos_erp");
   const clientes = vestiTable(dataset, "clientes_erp");
   const cancelledList = ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ");
+  const unpaidList = ERP_UNPAID_STATUSES.map((s) => `'${s}'`).join(", ");
   // Lista que SAI das contas de receita/pedidos/clientes. Os contadores de cancelado continuam usando so `cancelledList`.
   const excludedList = (options.paidOnly ? [...ERP_CANCELLED_STATUSES, ...ERP_UNPAID_STATUSES] : ERP_CANCELLED_STATUSES).map((s) => `'${s}'`).join(", ");
+  // Filtro novo de Status (pedido do time, 18/11/2026): 3 baldes iguais pros dois ERPs
+  // (Manse so produz CONCLUIDO -- nunca cai em Cancelado/Outro, nao e bug). So muda o
+  // comportamento quando `statusBucket` vem explicito; sem ele, segue exatamente como
+  // antes (`excludedList`, ligado a `paidOnly`).
+  const paidExcludedList = [...ERP_CANCELLED_STATUSES, ...ERP_UNPAID_STATUSES].map((s) => `'${s}'`).join(", ");
+  const activeStatusCondition =
+    options.statusBucket === "cancelado"
+      ? `o.status IN (${cancelledList})`
+      : options.statusBucket === "outro"
+        ? `o.status IN (${unpaidList})`
+        : options.statusBucket === "pago"
+          ? `o.status NOT IN (${paidExcludedList})`
+          : `o.status NOT IN (${excludedList})`;
+  // Vendedora e Estado (pedido do time, 18/11/2026): mesma chave ja usada em breakdownRows
+  // (seller e coluna direta de pedidos_erp; estado vem de clientes_erp via customer_id =
+  // documento). So entra no WHERE quando informado -- sem isso, nenhuma linha muda.
+  const sellerCondition = options.sellerId ? `AND o.seller = @sellerId` : "";
+  const stateCondition = options.state ? `AND o.state = @state` : "";
+  const queryParams: Record<string, string> = { dateFrom, dateTo };
+  if (options.sellerId) queryParams.sellerId = options.sellerId;
+  if (options.state) queryParams.state = options.state;
 
   // Achado 26/08/2026 (ClickUp Vogabox item 4.3): "novo"/"recorrente"
   // aqui usava "total de pedidos na vida toda <= 1", contado até HOJE
@@ -395,6 +417,7 @@ export async function fetchErpDashboard(
           pedido_id,
           ANY_VALUE(customer_id) AS customer_id,
           ANY_VALUE(status) AS status,
+          ANY_VALUE(seller) AS seller,
           ANY_VALUE(valor_total) AS gross_amount,
           ANY_VALUE(desconto) AS discount_amount,
           ANY_VALUE(valor_liquido) AS net_amount,
@@ -410,9 +433,22 @@ export async function fetchErpDashboard(
         FROM ${clientes}
         WHERE documento IS NOT NULL
       ),
+      customer_geo AS (
+        SELECT
+          REGEXP_REPLACE(CAST(documento AS STRING), r'[^0-9]', '') AS document,
+          ANY_VALUE(estado) AS state
+        FROM ${clientes}
+        WHERE documento IS NOT NULL
+        GROUP BY document
+      ),
       orders AS (
-        SELECT * FROM all_orders
-        WHERE date BETWEEN @dateFrom AND @dateTo
+        SELECT o.*, g.state
+        FROM all_orders o
+        LEFT JOIN customer_geo g
+          ON g.document = REGEXP_REPLACE(CAST(o.customer_id AS STRING), r'[^0-9]', '')
+        WHERE o.date BETWEEN @dateFrom AND @dateTo
+          ${sellerCondition}
+          ${stateCondition}
       ),
       customer_history AS (
         SELECT o.customer_id, MIN(o.date) AS first_order_date
@@ -424,23 +460,23 @@ export async function fetchErpDashboard(
       )
       SELECT
         o.date,
-        COUNTIF(o.status NOT IN (${excludedList})) AS orders,
-        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, o.gross_amount)), 0) AS gross_revenue,
-        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, o.discount_amount)), 0) AS discount_amount,
-        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, o.net_amount)), 0) AS net_revenue,
-        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, COALESCE(o.return_amount, 0))), 0) AS return_amount,
-        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, o.sold_quantity)), 0) AS quantity,
-        COALESCE(SUM(IF(o.status IN (${excludedList}), 0, o.returned_quantity)), 0) AS returned_quantity,
+        COUNTIF(${activeStatusCondition}) AS orders,
+        COALESCE(SUM(IF(${activeStatusCondition}, o.gross_amount, 0)), 0) AS gross_revenue,
+        COALESCE(SUM(IF(${activeStatusCondition}, o.discount_amount, 0)), 0) AS discount_amount,
+        COALESCE(SUM(IF(${activeStatusCondition}, o.net_amount, 0)), 0) AS net_revenue,
+        COALESCE(SUM(IF(${activeStatusCondition}, COALESCE(o.return_amount, 0), 0)), 0) AS return_amount,
+        COALESCE(SUM(IF(${activeStatusCondition}, o.sold_quantity, 0)), 0) AS quantity,
+        COALESCE(SUM(IF(${activeStatusCondition}, o.returned_quantity, 0)), 0) AS returned_quantity,
         COUNTIF(o.status IN (${cancelledList})) AS cancelled_orders,
         COALESCE(SUM(IF(o.status IN (${cancelledList}), o.net_amount, 0)), 0) AS cancelled_amount,
-        COUNT(DISTINCT IF(o.status NOT IN (${excludedList}) AND ch.first_order_date >= @dateFrom, o.customer_id, NULL)) AS new_customers,
-        COUNT(DISTINCT IF(o.status NOT IN (${excludedList}) AND ch.first_order_date < @dateFrom, o.customer_id, NULL)) AS returning_customers
+        COUNT(DISTINCT IF(${activeStatusCondition} AND ch.first_order_date >= @dateFrom, o.customer_id, NULL)) AS new_customers,
+        COUNT(DISTINCT IF(${activeStatusCondition} AND ch.first_order_date < @dateFrom, o.customer_id, NULL)) AS returning_customers
       FROM orders o
       LEFT JOIN customer_history ch ON ch.customer_id = o.customer_id
       GROUP BY o.date
       ORDER BY o.date
     `,
-    params: { dateFrom, dateTo },
+    params: queryParams,
   });
 
   const raw = dailyRows as Array<Record<string, unknown>>;

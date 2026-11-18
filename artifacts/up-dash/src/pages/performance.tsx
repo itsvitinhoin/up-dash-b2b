@@ -360,10 +360,11 @@ function SectionHeader({
 export default function PerformancePage() {
   const { tx } = useI18n();
   const { selectedClientId, user } = useAuth();
-  const { dateRange } = useDashboardFilters();
+  const { dateRange, filters } = useDashboardFilters();
   const [ordersPage, setOrdersPage] = useState(1);
-  // Filtros novos (pedido do time, 18/11/2026): ainda so de interface -- a query do
-  // ERP (fetchErpDashboard) ainda nao os aplica; ver memoria do projeto antes de ligar.
+  // Tipo (pedido do time, 18/11/2026) ainda e so interface -- liga o motor de
+  // atribuicao por anuncio depois; ver memoria do projeto. Status/Vendedora/Estado
+  // ja vao pra query do ERP.
   const [tipoFilter, setTipoFilter] = useState<"todos" | "erp" | "ecommerce" | "anuncios">("todos");
   const [statusFilter, setStatusFilter] = useState<"pago" | "cancelado" | "outro">("pago");
   const clientId =
@@ -372,9 +373,11 @@ export default function PerformancePage() {
     user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId);
   const dateFrom = format(dateRange.from, "yyyy-MM-dd");
   const dateTo = format(dateRange.to, "yyyy-MM-dd");
+  const sellerId = filters.sellerId || undefined;
+  const state = filters.state || undefined;
   const commonParams = useMemo(
-    () => ({ clientId, dateFrom, dateTo }),
-    [clientId, dateFrom, dateTo],
+    () => ({ clientId, dateFrom, dateTo, sellerId, state, statusBucket: statusFilter }),
+    [clientId, dateFrom, dateTo, sellerId, state, statusFilter],
   );
 
   useEffect(() => {
@@ -383,7 +386,7 @@ export default function PerformancePage() {
 
   const { data, isLoading, isFetching, error, refetch } =
     useQuery<PerformanceResponse>({
-      queryKey: ["performance", clientId, dateFrom, dateTo, ordersPage],
+      queryKey: ["performance", clientId, dateFrom, dateTo, ordersPage, sellerId, state, statusFilter],
       queryFn: () =>
         customFetch<PerformanceResponse>(
           buildUrl("/api/analytics/performance", {

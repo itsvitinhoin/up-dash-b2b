@@ -327,10 +327,17 @@ export async function getPerformance(
   const { page, limit } = queryParsed.data;
   // Cards da Visão geral pedem só venda paga (ERP sem pedido em ESPERA); a página Performance continua como estava.
   const paidOnly = rawQuery.paidOnly === "1" || rawQuery.paidOnly === "true";
+  // Filtros novos (pedido do time, 18/11/2026): Vendedora/Estado/Status na Visão Geral.
+  // Sem nenhum deles, o comportamento fica EXATAMENTE igual ao de antes.
+  const sellerId = typeof rawQuery.sellerId === "string" && rawQuery.sellerId.trim() ? rawQuery.sellerId.trim() : undefined;
+  const state = typeof rawQuery.state === "string" && rawQuery.state.trim() ? rawQuery.state.trim() : undefined;
+  const statusBucketRaw = typeof rawQuery.statusBucket === "string" ? rawQuery.statusBucket.trim() : undefined;
+  const statusBucket = statusBucketRaw === "pago" || statusBucketRaw === "cancelado" || statusBucketRaw === "outro" ? statusBucketRaw : undefined;
+  const filterCacheKey = `${sellerId ?? ""}:${state ?? ""}:${statusBucket ?? ""}`;
 
   const [dashboard, orders] = await Promise.all([
     cached(
-      `performance:dashboard:${ctx.clientId}:${ctx.dataset}:${dateFromOnly}:${dateToOnly}${paidOnly ? ":paid" : ""}`,
+      `performance:dashboard:${ctx.clientId}:${ctx.dataset}:${dateFromOnly}:${dateToOnly}${paidOnly ? ":paid" : ""}:${filterCacheKey}`,
       ERP_CACHE_TTL_MS,
       () =>
         fetchPerformanceDashboard(
@@ -338,7 +345,7 @@ export async function getPerformance(
           ctx.dataset,
           dateFromOnly,
           dateToOnly,
-          { paidOnly },
+          { paidOnly, sellerId, state, statusBucket },
         ),
     ),
     cached(

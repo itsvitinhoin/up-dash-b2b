@@ -190,7 +190,7 @@ export async function fetchPerformanceDashboard(
   dataset: string,
   dateFrom: string,
   dateTo: string,
-  options: { paidOnly?: boolean } = {},
+  options: { paidOnly?: boolean; sellerId?: string; state?: string; statusBucket?: "pago" | "cancelado" | "outro" } = {},
 ): Promise<PerformanceDashboard> {
   const pedidos = vestiTable(dataset, "pedidos_erp");
   const clientes = vestiTable(dataset, "clientes_erp");
