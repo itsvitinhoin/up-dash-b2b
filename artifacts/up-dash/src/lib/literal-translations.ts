@@ -571,7 +571,7 @@ const entries: Array<[string, string, string]> = [
   // ---- pages/clients.tsx
   ["Dólar (USD) — formato americano", "Dollar (USD) — English (US)", "달러(USD) — 미국식"],
   ["Libra (GBP) — formato britânico", "Pound (GBP) — English (UK)", "파운드(GBP) — 영국식"],
-  ["Desempenho", "Performance", "성과"],
+  ["Performance", "Performance", "성과"],
   ["Diário (B2C)", "Daily (B2C)", "일일 (B2C)"],
   ["Copiar", "Copy to clipboard", "복사"],
   ["Informe o número de visitas diárias ao site", "Enter daily site visit counts", "일별 사이트 방문 수를 입력하세요"],

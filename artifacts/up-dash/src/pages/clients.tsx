@@ -97,7 +97,7 @@ const CURRENCY_OPTIONS: Array<{ code: string; locale: string; label: string }> =
 // escondê-lo deixaria o client sem nenhuma página ao logar).
 const NAV_ITEM_OPTIONS: Array<{ href: string; label: string }> = [
   { href: "/erp", label: "ERP" },
-  { href: "/performance", label: "Desempenho" },
+  { href: "/performance", label: "Performance" },
   { href: "/marketing", label: "Anúncios" },
   { href: "/whatsapp", label: "WhatsApp" },
   { href: "/funnel", label: "Funil" },

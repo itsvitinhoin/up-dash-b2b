@@ -1013,7 +1013,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       ],
     },
     {
-      name: "Desempenho",
+      name: "Performance",
       href: "/performance",
       icon: Gauge,
       children: [
@@ -1487,7 +1487,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 (location.startsWith("/erp")
                   ? "ERP"
                   : location.startsWith("/performance")
-                    ? tx("Desempenho")
+                    ? tx("Performance")
                     : location.startsWith("/whatsapp")
                       ? "WhatsApp"
                       : t("nav.analytics", "Painel"))}
