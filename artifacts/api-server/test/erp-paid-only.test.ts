@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// db.select(...).from(sellersTable).where(...) -- usado por resolveErpSellerName pra
+// achar o nome de verdade (cliente UpZero com ERP); lista vazia = "não achei", a função
+// cai no fallback de tratar o sellerId recebido como já sendo o nome (caso Vesti).
+// `sellerLookupResult` é configurável por teste (ver sellerLookupResult.length = 0 no beforeEach).
+let sellerLookupResult: Array<{ name: string }> = [];
 vi.mock("@workspace/db", async () => ({
   ...(await import("@workspace/db/schema")),
-  db: {},
+  db: { select: () => ({ from: () => ({ where: () => Promise.resolve(sellerLookupResult) }) }) },
 }));
 
 const calls: Array<{ query: string; params?: Record<string, unknown> }> = [];
@@ -25,6 +30,7 @@ const dashboardQueries = () => calls.filter((call) => call.query.includes("net_a
 
 beforeEach(() => {
   calls.length = 0;
+  sellerLookupResult = [];
 });
 
 describe("ERP: só venda paga (sem ESPERA) apenas quando pedido", () => {
@@ -62,7 +68,7 @@ describe("ERP: filtros novos de Status/Vendedora/Estado", () => {
   it("sem nenhum filtro novo, a query não ganha seller/state no WHERE", async () => {
     await fetchErpDashboard("c1", "ds", "2026-09-01", "2026-09-30").catch(() => {});
     const main = dashboardQueries().find((q) => q.query.includes("cancelled_orders"))!;
-    expect(main.query).not.toContain("o.seller =");
+    expect(main.query).not.toContain("o.seller");
     expect(main.query).not.toContain("o.state =");
   });
 
@@ -84,12 +90,21 @@ describe("ERP: filtros novos de Status/Vendedora/Estado", () => {
     expect(main.query).toContain("IF(o.status IN ('ESPERA'), o.net_amount, 0)");
   });
 
-  it("sellerId vira condição no WHERE e vai nos params (não é concatenado na string)", async () => {
+  it("sellerId sem match em sellersTable (caso Vesti): usa o valor recebido como nome, comparação sem diferenciar maiúscula", async () => {
     await fetchErpDashboard("c1", "ds", "2026-09-01", "2026-09-30", { sellerId: "ROSA" }).catch(() => {});
     const main = dashboardQueries().find((q) => q.query.includes("cancelled_orders"))!;
-    expect(main.query).toContain("AND o.seller = @sellerId");
+    expect(main.query).toContain("AND UPPER(o.seller) = UPPER(@sellerName)");
     expect(main.query).not.toContain("ROSA");
-    expect(main.params?.sellerId).toBe("ROSA");
+    expect(main.params?.sellerName).toBe("ROSA");
+  });
+
+  it("sellerId COM match em sellersTable (caso UpZero+ERP, ex: MX Fashion/Obzee): usa o nome resolvido, não o id cru", async () => {
+    sellerLookupResult = [{ name: "Clarice" }];
+    await fetchErpDashboard("c1", "ds", "2026-09-01", "2026-09-30", { sellerId: "seller_uuid_abc123" }).catch(() => {});
+    const main = dashboardQueries().find((q) => q.query.includes("cancelled_orders"))!;
+    expect(main.query).toContain("AND UPPER(o.seller) = UPPER(@sellerName)");
+    expect(main.params?.sellerName).toBe("Clarice");
+    expect(main.query).not.toContain("seller_uuid_abc123");
   });
 
   it("state vira condição no WHERE e vai nos params (não é concatenado na string)", async () => {

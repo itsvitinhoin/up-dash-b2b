@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { db, clientsTable, eventsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { fetchStoredMarketingData } from "./stored-marketing";
-import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution, fetchVestiFunnelEventCounts } from "./erpAnalytics";
+import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution, fetchVestiFunnelEventCounts, resolveErpSellerName } from "./erpAnalytics";
 import {
   calculatePerformanceRatios,
   normalizePerformanceChannel,
@@ -209,10 +209,13 @@ export async function fetchPerformanceDashboard(
         : options.statusBucket === "pago"
           ? `o.status NOT IN (${paidExcludedList})`
           : `o.status NOT IN (${cancelledList})`;
-  const sellerCondition = options.sellerId ? `AND o.seller = @sellerId` : "";
+  // Vendedora: `sellerId` muda de identidade por plataforma (ver resolveErpSellerName,
+  // erpAnalytics.ts) -- resolve pro nome de verdade antes de comparar com o ERP.
+  const resolvedSellerName = options.sellerId ? await resolveErpSellerName(clientId, options.sellerId) : undefined;
+  const sellerCondition = resolvedSellerName ? `AND UPPER(o.seller) = UPPER(@sellerName)` : "";
   const stateCondition = options.state ? `AND d.state = @state` : "";
   const dayQueryParams: Record<string, string> = { dateFrom, dateTo };
-  if (options.sellerId) dayQueryParams.sellerId = options.sellerId;
+  if (resolvedSellerName) dayQueryParams.sellerName = resolvedSellerName;
   if (options.state) dayQueryParams.state = options.state;
 
   const customerDayQuery = `

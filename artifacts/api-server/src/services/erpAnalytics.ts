@@ -4,6 +4,7 @@ import {
   campaignAttributionStampsTable,
   clientsTable,
   customersTable,
+  sellersTable,
 } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { hashDocument } from "./upzero/customers";
@@ -366,6 +367,24 @@ export const ERP_CANCELLED_STATUSES = ["CANCELADO", "EXCLUIDO"];
 /** Pedido que ainda nao e venda paga: so sai da conta quando o chamador pede `paidOnly` (cards da Visao geral; decisao do time em 27/10/2026). */
 export const ERP_UNPAID_STATUSES = ["ESPERA"];
 
+// Achado 18/11/2026: o filtro de Vendedora do painel manda um `sellerId` cuja identidade
+// MUDA por plataforma -- cliente VESTI (ex: Vogabox) tem o próprio nome da vendedora como
+// "id" (`fetchVestiSellers`, vestiAnalytics.ts, nunca usa `sellersTable`); cliente
+// UPZERO/NUVEMSHOP com ERP também configurado (ex: MX Fashion, Obzee) usa o id de
+// verdade da `sellersTable` (populada pelo sync da UpZero). `pedidos_erp.seller` é
+// sempre o nome cru do ERP (maiúsculo, ex: "CLARICE"), nos dois casos -- nunca um id.
+// Resolve pra um NOME antes de filtrar o ERP: se o valor bater um id real em
+// `sellersTable`, usa o nome de lá (caso UpZero); senão, assume que já é o nome
+// (caso Vesti). Comparação sempre case-insensitive (ERP maiúsculo vs Postgres
+// título, confirmado com dado real: "CLARICE" x "Clarice").
+export async function resolveErpSellerName(clientId: string, sellerId: string): Promise<string> {
+  const [row] = await db
+    .select({ name: sellersTable.name })
+    .from(sellersTable)
+    .where(and(eq(sellersTable.clientId, clientId), eq(sellersTable.id, sellerId)));
+  return row?.name ?? sellerId;
+}
+
 export async function fetchErpDashboard(
   clientId: string,
   dataset: string,
@@ -392,13 +411,15 @@ export async function fetchErpDashboard(
         : options.statusBucket === "pago"
           ? `o.status NOT IN (${paidExcludedList})`
           : `o.status NOT IN (${excludedList})`;
-  // Vendedora e Estado (pedido do time, 18/11/2026): mesma chave ja usada em breakdownRows
-  // (seller e coluna direta de pedidos_erp; estado vem de clientes_erp via customer_id =
-  // documento). So entra no WHERE quando informado -- sem isso, nenhuma linha muda.
-  const sellerCondition = options.sellerId ? `AND o.seller = @sellerId` : "";
+  // Vendedora e Estado (pedido do time, 18/11/2026): estado vem de clientes_erp via
+  // customer_id = documento. Vendedora precisa resolver o id pro nome antes (ver
+  // resolveErpSellerName acima) e comparar sem diferenciar maiúscula/minúscula
+  // (ERP grava maiúsculo, Postgres não). So entra no WHERE quando informado.
+  const resolvedSellerName = options.sellerId ? await resolveErpSellerName(clientId, options.sellerId) : undefined;
+  const sellerCondition = resolvedSellerName ? `AND UPPER(o.seller) = UPPER(@sellerName)` : "";
   const stateCondition = options.state ? `AND o.state = @state` : "";
   const queryParams: Record<string, string> = { dateFrom, dateTo };
-  if (options.sellerId) queryParams.sellerId = options.sellerId;
+  if (resolvedSellerName) queryParams.sellerName = resolvedSellerName;
   if (options.state) queryParams.state = options.state;
 
   // Achado 26/08/2026 (ClickUp Vogabox item 4.3): "novo"/"recorrente"
