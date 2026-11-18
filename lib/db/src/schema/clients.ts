@@ -46,6 +46,12 @@ export const clientsTable = pgTable(
     // Calculado a partir do nome da loja pelo script-vesti-nuvem — nunca
     // digitado à mão (ver NOTAS-DEV.md sobre o bug histórico disso lá).
     bigqueryDataset: text("bigquery_dataset"),
+    // Id(s) desta loja no registro do script-vesti-nuvem (vesti-database.clients) — um
+    // client pode ter mais de um (filiais que caem no mesmo bigqueryDataset). Gravado na
+    // hora da criação (POST /clients/vesti), nunca mais precisa adivinhar pelo nome
+    // depois (o nome cadastrado aqui pode ter sufixo tipo "(Vesti)" e não bater com o
+    // nome lá — só o dataset calculado a partir do nome é garantido igual nos dois).
+    vestiSyncStoreIds: integer("vesti_sync_store_ids").array(),
     // Dataset do BigQuery (projeto up-vesti-report) com as tabelas `*_erp`
     // (clientes_erp/produtos_erp/pedidos_erp/estoque_erp) desse client,
     // sincronizadas pelo job Miredata em script-vesti-nuvem. Independente

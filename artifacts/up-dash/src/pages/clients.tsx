@@ -54,6 +54,7 @@ import {
   UserRound,
   Store,
   Tag,
+  History,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ExcludeClientDialog, ExcludedClientsTable } from "@/components/client-exclusion";
@@ -1822,6 +1823,102 @@ function NuvemshopSyncButton({
   );
 }
 
+function VestiBackfillDialog({
+  clientId,
+  clientName,
+}: {
+  clientId: string;
+  clientName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [dataInicio, setDataInicio] = useState("");
+  const [dataFim, setDataFim] = useState("");
+  const [isBackfilling, setIsBackfilling] = useState(false);
+
+  function handleOpen(o: boolean) {
+    if (o) {
+      setDataInicio("");
+      setDataFim("");
+    }
+    setOpen(o);
+  }
+
+  async function handleBackfill() {
+    setIsBackfilling(true);
+    const toastId = `vesti-backfill-${clientId}`;
+    toast.loading(`Disparando backfill de ${clientName}...`, { id: toastId });
+    try {
+      const data = await customFetch<ErpBackfillResponse>(`/api/clients/${clientId}/vesti/backfill`, {
+        method: "POST",
+        body: JSON.stringify({ dataInicio, dataFim }),
+      });
+      if (data.failedChunks > 0) {
+        toast.warning(`Backfill disparado com falhas`, {
+          id: toastId,
+          description: `${data.totalChunks - data.failedChunks}/${data.totalChunks} pedaços disparados`,
+        });
+      } else {
+        toast.success(`Backfill disparado`, {
+          id: toastId,
+          description: `${data.totalChunks} pedaço(s) de até 90 dias`,
+        });
+      }
+      setOpen(false);
+    } catch (err) {
+      toast.error(`Falha ao disparar backfill`, {
+        id: toastId,
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setIsBackfilling(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" title="Backfill histórico Vesti">
+          <History className="h-3 w-3" />
+          Backfill
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <History className="h-4 w-4" /> Backfill histórico
+          </DialogTitle>
+          <DialogDescription>
+            Reprocessa pedidos Vesti de <strong>{clientName}</strong> num intervalo específico — usa a credencial já cadastrada no sync.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
+            <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Dispara uma execução por pedaço de até 90 dias.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={isBackfilling}>
+            Cancelar
+          </Button>
+          <Button onClick={handleBackfill} disabled={isBackfilling || !dataInicio || !dataFim}>
+            {isBackfilling ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Disparando…</>
+            ) : (
+              "Fazer backfill histórico"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function ClientsPage() {
   const displayLabel = useDisplayLabel();
   const { tx } = useI18n();
@@ -2826,6 +2923,9 @@ export default function ClientsPage() {
                             currentErpProvider={client.erpProvider}
                             currentErpDataset={client.erpDataset}
                           />
+                          {client.commercePlatform === "VESTI" && (
+                            <VestiBackfillDialog clientId={client.id} clientName={client.name} />
+                          )}
                           <VisibleTabsDialog
                             clientId={client.id}
                             clientName={client.name}

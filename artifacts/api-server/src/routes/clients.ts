@@ -769,6 +769,19 @@ router.post("/clients/vesti", requireAdmin, async (req, res): Promise<void> => {
         store,
       },
     );
+    // Grava o(s) id(s) que a Vesti devolveu no registro dela — pra nunca mais precisar
+    // adivinhar pelo nome depois (ver POST /clients/:clientId/vesti/backfill). Falha aqui
+    // não desfaz o cadastro: dá pra preencher à mão depois.
+    if (result.syncStores.length > 0) {
+      try {
+        await db
+          .update(clientsTable)
+          .set({ vestiSyncStoreIds: result.syncStores.map((s) => s.id) })
+          .where(eq(clientsTable.id, result.created.client.id));
+      } catch (err) {
+        logger.warn({ err: err instanceof Error ? err.message : String(err) }, "cliente Vesti criado, mas não consegui gravar vestiSyncStoreIds");
+      }
+    }
     // Se a loja/conta já tinha lápide na lista de excluídos (cliente apagado antes), o cliente novo ativo a tira da lista.
     // Falha aqui não desfaz o cadastro: o job de atualização da lista corrige na próxima rodada.
     try {
@@ -1810,6 +1823,100 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
     totalChunks: results.length,
     failedChunks: failedCount,
     chunks: results,
+  });
+});
+
+/**
+ * POST /clients/:clientId/vesti/backfill
+ * Dispara um backfill histórico dos pedidos Vesti (não-ERP) desse client no
+ * intervalo [dataInicio, dataFim], quebrado em pedaços de até 90 dias — cada
+ * pedaço chama POST /api/jobs no script-vesti-nuvem (mesmo endpoint que o sync
+ * noturno normal usa). Sem credencial pra decifrar aqui: o script-vesti-nuvem
+ * já tem os dados da loja no próprio Postgres dele — usamos o(s) id(s) salvos
+ * em `vestiSyncStoreIds` na hora da criação (pode ser mais de um, se o client
+ * tiver mais de uma filial caindo no mesmo dataset).
+ */
+router.post("/clients/:clientId/vesti/backfill", requireAdmin, async (req, res): Promise<void> => {
+  const params = GetClientParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: params.error.message, status: 400 });
+    return;
+  }
+  const body = ErpBackfillBody.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: body.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = params.data;
+  const { dataInicio, dataFim } = body.data;
+  if (dataInicio > dataFim) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "dataInicio não pode ser maior que dataFim", status: 400 });
+    return;
+  }
+
+  const [client] = await db
+    .select({ commercePlatform: clientsTable.commercePlatform, vestiSyncStoreIds: clientsTable.vestiSyncStoreIds })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (client.commercePlatform !== "VESTI") {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "Este client não é Vesti", status: 400 });
+    return;
+  }
+  if (!client.vestiSyncStoreIds || client.vestiSyncStoreIds.length === 0) {
+    res.status(400).json({
+      error: true,
+      code: "SYNC_STORE_ID_MISSING",
+      message: "Este client não tem o id do sync salvo (vestiSyncStoreIds) — recadastrar ou preencher à mão",
+      status: 400,
+    });
+    return;
+  }
+  const vestiStoreIds = client.vestiSyncStoreIds;
+
+  const syncConfig = syncServiceConfig();
+  if (!syncConfig) {
+    res.status(500).json({ error: true, code: "CONFIG_MISSING", message: "SYNC_SERVICE_URL/SYNC_SERVICE_TOKEN não configurados", status: 500 });
+    return;
+  }
+
+  const chunks = splitDateRangeIntoChunks(dataInicio, dataFim);
+
+  const dispatches = await Promise.allSettled(
+    chunks.map((chunk) =>
+      fetch(`${syncConfig.url}/api/jobs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${syncConfig.token}` },
+        body: JSON.stringify({
+          client_ids: vestiStoreIds,
+          start_date: chunk.dataInicio,
+          end_date: chunk.dataFim,
+        }),
+      }).then(async (r) => {
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        return r.json();
+      }),
+    ),
+  );
+
+  const vestiResults = chunks.map((chunk, i) => {
+    const outcome = dispatches[i];
+    return {
+      ...chunk,
+      ok: outcome.status === "fulfilled",
+      error: outcome.status === "rejected" ? String(outcome.reason) : undefined,
+    };
+  });
+
+  const vestiFailedCount = vestiResults.filter((r) => !r.ok).length;
+  res.status(vestiFailedCount === vestiResults.length ? 502 : 202).json({
+    ok: vestiFailedCount === 0,
+    totalChunks: vestiResults.length,
+    failedChunks: vestiFailedCount,
+    chunks: vestiResults,
   });
 });
 
