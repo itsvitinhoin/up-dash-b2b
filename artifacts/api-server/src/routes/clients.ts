@@ -1814,6 +1814,108 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
 });
 
 /**
+ * POST /clients/:clientId/vesti/backfill
+ * Dispara um backfill histórico dos pedidos Vesti (não-ERP) desse client no
+ * intervalo [dataInicio, dataFim], quebrado em pedaços de até 90 dias — cada
+ * pedaço chama POST /api/jobs no script-vesti-nuvem (mesmo endpoint que o sync
+ * noturno normal usa). Sem credencial pra decifrar aqui: o script-vesti-nuvem
+ * já tem os dados da loja no próprio Postgres dele — só precisamos do id dela
+ * lá, resolvido pelo nome (não existe outra chave em comum entre os dois bancos).
+ */
+router.post("/clients/:clientId/vesti/backfill", requireAdmin, async (req, res): Promise<void> => {
+  const params = GetClientParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: params.error.message, status: 400 });
+    return;
+  }
+  const body = ErpBackfillBody.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: body.error.message, status: 400 });
+    return;
+  }
+  const { clientId } = params.data;
+  const { dataInicio, dataFim } = body.data;
+  if (dataInicio > dataFim) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "dataInicio não pode ser maior que dataFim", status: 400 });
+    return;
+  }
+
+  const [client] = await db
+    .select({ name: clientsTable.name, commercePlatform: clientsTable.commercePlatform })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (client.commercePlatform !== "VESTI") {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "Este client não é Vesti", status: 400 });
+    return;
+  }
+
+  const syncConfig = syncServiceConfig();
+  if (!syncConfig) {
+    res.status(500).json({ error: true, code: "CONFIG_MISSING", message: "SYNC_SERVICE_URL/SYNC_SERVICE_TOKEN não configurados", status: 500 });
+    return;
+  }
+
+  let stores: Awaited<ReturnType<typeof listVestiSyncStores>>;
+  try {
+    stores = await listVestiSyncStores();
+  } catch (err) {
+    res.status(502).json({ error: true, code: "SYNC_SERVICE_UNREACHABLE", message: String(err), status: 502 });
+    return;
+  }
+  const normalizedName = client.name.trim().toLocaleLowerCase("pt-BR");
+  const matches = stores.filter((s) => s.name.trim().toLocaleLowerCase("pt-BR") === normalizedName);
+  if (matches.length === 0) {
+    res.status(404).json({ error: true, code: "SYNC_STORE_NOT_FOUND", message: "Loja Vesti não encontrada no sync (nome não bate)", status: 404 });
+    return;
+  }
+  if (matches.length > 1) {
+    res.status(409).json({ error: true, code: "SYNC_STORE_AMBIGUOUS", message: "Mais de uma loja Vesti no sync com esse nome", status: 409 });
+    return;
+  }
+  const vestiStoreId = matches[0].id;
+
+  const chunks = splitDateRangeIntoChunks(dataInicio, dataFim);
+
+  const dispatches = await Promise.allSettled(
+    chunks.map((chunk) =>
+      fetch(`${syncConfig.url}/api/jobs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${syncConfig.token}` },
+        body: JSON.stringify({
+          client_ids: [vestiStoreId],
+          start_date: chunk.dataInicio,
+          end_date: chunk.dataFim,
+        }),
+      }).then(async (r) => {
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        return r.json();
+      }),
+    ),
+  );
+
+  const vestiResults = chunks.map((chunk, i) => {
+    const outcome = dispatches[i];
+    return {
+      ...chunk,
+      ok: outcome.status === "fulfilled",
+      error: outcome.status === "rejected" ? String(outcome.reason) : undefined,
+    };
+  });
+
+  const vestiFailedCount = vestiResults.filter((r) => !r.ok).length;
+  res.status(vestiFailedCount === vestiResults.length ? 502 : 202).json({
+    ok: vestiFailedCount === 0,
+    totalChunks: vestiResults.length,
+    failedChunks: vestiFailedCount,
+    chunks: vestiResults,
+  });
+});
+
+/**
  * GET /clients/:clientId/sync/upzero/probe
  * Admin-only debug endpoint. Fetches the raw first page from each UP Zero
  * endpoint (orders, customers, products) and returns the response shape so
