@@ -973,7 +973,7 @@ export async function getMarketing(req: Request, res: Response): Promise<void> {
       // com o caminho UpZero (analytics.ts) -- quebrava Marketing pra
       // QUALQUER client Vesti. Mesmo default usado lá quando não tem Meta
       // Ads conectado.
-      topCreatives: topCreativesFromStored(storedAdList),
+      topCreatives: topCreativesFromStored(storedAdList, true),
       stateBreakdown: [],
       ageBreakdown: [],
       creativesTotal: filteredAds.length,

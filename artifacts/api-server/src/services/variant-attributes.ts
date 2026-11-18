@@ -1,15 +1,28 @@
-/** Normalize legacy Nuvemshop items whose variation values arrived in size/color order. */
-export function looksLikeSize(value: string | null | undefined): boolean {
-  const normalized = (value ?? "")
+function normalizeSizeCandidate(value: string | null | undefined): string {
+  return (value ?? "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toUpperCase();
+}
+
+/** Normalize legacy Nuvemshop items whose variation values arrived in size/color order. */
+export function looksLikeSize(value: string | null | undefined): boolean {
+  const normalized = normalizeSizeCandidate(value);
   if (/^(?:PP|P|M|G|GG|XG|XGG|XXG|XS|S|L|XL|XXL|XXXL|G[1-9])\s*[-/–—]\s*\d{1,3}$/.test(normalized)) return true;
   return /^(PP|P|M|G|GG|XG|XGG|XXG|EXG|EG|XP|XS|S|L|XL|XXL|XXXL|U|UNICO|UNICA|ONE SIZE|TAMANHO UNICO|G[1-9]|GG[1-9]|[1-9]G|[1-9]XL|\d{1,3})$/.test(
     normalized,
   );
 }
+
+// "P"/"M"/"G" e códigos numéricos curtos colidem com nome/código de cor real (ex.: cor "G",
+// cor numérica "012"). Só reclassificar cor->tamanho sem nenhuma outra evidência (ver uso
+// abaixo) quando o valor não tem leitura plausível como cor.
+function looksUnambiguouslyLikeSize(value: string | null | undefined): boolean {
+  const normalized = normalizeSizeCandidate(value);
+  return /^(?:GG|XG|XGG|XXG|EXG|EG|XXL|XXXL|U|UNICO|UNICA|ONE SIZE|TAMANHO UNICO|G[1-9]|GG[1-9]|[1-9]G|[1-9]XL)$/.test(normalized);
+}
+
 export function normalizedVariantAttrs(row: {
   color: string | null;
   size: string | null;
@@ -26,7 +39,7 @@ export function normalizedVariantAttrs(row: {
   if (color && size && /\bVAL[^/]*\d{1,2}\s*$/i.test(color) && /^\d{4}\)$/.test(size)) return {color:`${color}/${size}`,size:null};
   if (looksLikeSize(color) && size && !looksLikeSize(size))
     return { color: size, size: color };
-  if (looksLikeSize(color) && !size) return { color: null, size: color };
+  if (!size && looksUnambiguouslyLikeSize(color)) return { color: null, size: color };
   if (!color && size && !looksLikeSize(size))
     return { color: size, size: null };
   return { color, size };

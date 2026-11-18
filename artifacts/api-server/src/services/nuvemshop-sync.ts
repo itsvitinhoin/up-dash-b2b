@@ -1,4 +1,4 @@
-import { looksLikeSize, variantAttributesFromValues } from "./variant-attributes";
+import { variantAttributesFromValues } from "./variant-attributes";
 import { and, eq, sql } from "drizzle-orm";
 import {
   customersTable,
@@ -380,24 +380,14 @@ function variantLabel(variant: NuvemshopVariant): string {
     .join(" / ");
 }
 
-function variantAttributes(label: string): { color: string | null; size: string | null } {
-  const parts = label.split("/").map((part) => part.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    const first = parts[0];
-    const rest = parts.slice(1).join(" / ");
-    if (looksLikeSize(first) && !looksLikeSize(rest)) return { color: rest, size: first };
-    if (!looksLikeSize(first) && looksLikeSize(rest)) return { color: first, size: rest };
-    return { color: first, size: rest };
-  }
-  if (parts.length === 1) return looksLikeSize(parts[0]) ? { color: null, size: parts[0] } : { color: parts[0], size: null };
-  return { color: null, size: null };
-}
-
 function variantAttributesFromName(name: string): { color: string | null; size: string | null } {
   const tuple = name.trim().match(/^(.*?)\s*\(([^(),]+),\s*([^()]+)\)\s*$/);
   if (tuple) return variantAttributesFromValues([tuple[2],tuple[3]]);
   const separatorIndex = name.lastIndexOf(" - ");
-  if (separatorIndex >= 0) return variantAttributes(name.slice(separatorIndex + 3));
+  if (separatorIndex >= 0) {
+    const values = name.slice(separatorIndex + 3).split("/").map((part) => part.trim()).filter(Boolean);
+    return variantAttributesFromValues(values);
+  }
   return { color: null, size: null };
 }
 

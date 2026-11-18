@@ -11344,10 +11344,13 @@ router.get("/analytics/marketing", async (req, res): Promise<void> => {
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
   const isB2CClient = clientConfig?.dashboardType === "B2C";
-  const metaRevenue = isB2CClient || usesMetaRevenue(clientConfig?.commercePlatform);
-
   const metaAccessToken = getGlobalMetaAccessToken(clientConfig?.metaAdsApiKey);
-  if (metaRevenue && (!metaAccessToken?.trim() || !clientConfig?.metaAdAccountId?.trim())) throw new MediaReadError();
+  const hasMetaCredentials = !!(metaAccessToken?.trim() && clientConfig?.metaAdAccountId?.trim());
+  const platformUsesMetaRevenue = usesMetaRevenue(clientConfig?.commercePlatform);
+  // Plataforma MANUAL não tem fonte de e-commerce pra cair de volta — sem Meta, não há dado.
+  if (platformUsesMetaRevenue && !hasMetaCredentials) throw new MediaReadError();
+  // B2C usa Meta nativo quando a conta está configurada; sem ela, cai pro e-commerce guardado.
+  const metaRevenue = isB2CClient ? hasMetaCredentials : platformUsesMetaRevenue;
   // Filtro de fonte que não é Meta: nada do Meta entra no recorte (vazio), não é falha de leitura.
   const metaExcludedByFilter = !!utmSrc && !metaSourceMatchesFilter(utmSrc);
   // Só o período atual mostra miniaturas de criativo; o anterior é só comparativo e não gasta chamadas de mídia.
