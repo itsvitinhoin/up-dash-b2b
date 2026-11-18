@@ -556,7 +556,7 @@ export default function OverviewPage() {
           </Button>
         </div>
       </div>
-      {tvMode.notice && (
+      {tvMode.enabled && tvMode.notice && (
         <Alert>
           <AlertDescription>{tvMode.notice}</AlertDescription>
         </Alert>

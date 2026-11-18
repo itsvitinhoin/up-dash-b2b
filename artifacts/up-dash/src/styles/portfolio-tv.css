@@ -25,7 +25,7 @@ html[data-up-tv-mode] .portfolio-controls {
   }
   html[data-up-tv-mode] .up-portfolio > * {
     grid-column: 1 / -1;
-    margin-top: 0 !important;
+    margin: 0 !important;
     min-width: 0;
   }
   html[data-up-tv-mode] [data-tv-area="b2b"] {
@@ -40,7 +40,9 @@ html[data-up-tv-mode] .portfolio-controls {
   html[data-up-tv-mode] .up-portfolio > .portfolio-ranking {
     grid-column: 2;
   }
-  html[data-up-tv-mode] .up-portfolio [data-tv-area] > .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html[data-up-tv-mode] .up-portfolio [data-tv-area] > .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   html[data-up-tv-mode] .up-metric {
     min-height: 128px;
     padding: 12px;
@@ -71,5 +73,28 @@ html[data-up-tv-mode] .portfolio-controls {
   html[data-up-tv-mode] .portfolio-ranking td {
     padding-top: 8px;
     padding-bottom: 8px;
+  }
+}
+
+@media (min-width: 1200px) and (min-height: 800px) {
+  html[data-up-tv-mode] .up-portfolio > [role="alert"] {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  html[data-up-tv-mode] .up-portfolio > [role="alert"] h5 {
+    font-size: 13px;
+    line-height: 1.3;
+  }
+  html[data-up-tv-mode] .up-portfolio > [role="alert"] > div {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  html[data-up-tv-mode] .up-metric > div:first-child,
+  html[data-up-tv-mode] .up-metric > div:nth-child(2) {
+    margin-bottom: 6px;
+  }
+  html[data-up-tv-mode] .up-metric-icon {
+    width: 24px;
+    height: 24px;
   }
 }
