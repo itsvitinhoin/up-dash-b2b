@@ -410,7 +410,7 @@ export default function PerformancePage() {
   const k = data?.kpis;
   const financialMetrics = [
     {
-      label: "Faturamento ERP",
+      label: "Faturamento",
       value: k?.netRevenue ?? 0,
       comparisonValue: k?.netRevenue ?? null,
       previousValue: pk?.netRevenue,
@@ -453,7 +453,7 @@ export default function PerformancePage() {
       sub: [{ label: "Fonte", value: "Meta Ads" }],
     },
     {
-      label: "ROAS atribuído",
+      label: "ROAS",
       value: k?.roas ?? 0,
       comparisonValue: k?.roas ?? null,
       previousValue: pk?.roas,
