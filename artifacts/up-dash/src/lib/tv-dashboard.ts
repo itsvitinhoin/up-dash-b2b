@@ -102,3 +102,14 @@ export function selectPortfolioBrands(
     ),
   };
 }
+
+export function portfolioInvestment(brands: TvBrand[], currency: string) {
+  const rows = brands.filter((brand) => brand.currency === currency);
+  const covered = rows.filter((brand) => brand.investment !== null);
+  return {
+    available: covered.length
+      ? covered.reduce((sum, brand) => sum + brand.investment!, 0)
+      : null,
+    missing: rows.length - covered.length,
+  };
+}

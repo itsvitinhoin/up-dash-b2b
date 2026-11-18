@@ -3,6 +3,7 @@ import {
   readBrandSelection,
   selectPortfolioBrands,
   revenueIncreased,
+  portfolioInvestment,
 } from "../../up-dash/src/lib/tv-dashboard";
 import type { TvSnapshot } from "@workspace/api-zod";
 const data: TvSnapshot = {
@@ -89,5 +90,40 @@ describe("managed brand selection", () => {
         selectPortfolioBrands(next, ["ours"]),
       ),
     ).toBe(false);
+  });
+});
+
+describe("available investment", () => {
+  it("shows known spend without treating missing spend as zero", () => {
+    expect(portfolioInvestment(data.brands, "BRL")).toEqual({
+      available: 100,
+      missing: 1,
+    });
+    expect(
+      portfolioInvestment(selectPortfolioBrands(data, ["ours"]).brands, "BRL"),
+    ).toEqual({ available: 100, missing: 0 });
+    expect(
+      portfolioInvestment(
+        selectPortfolioBrands(data, ["external"]).brands,
+        "BRL",
+      ),
+    ).toEqual({ available: null, missing: 1 });
+    expect(
+      selectPortfolioBrands(data, ["ours", "external"]).total[0].mer,
+    ).toBeNull();
+  });
+  it("keeps reported zero and different currencies distinct", () => {
+    const rows = [
+      { ...data.brands[0], investment: 0 },
+      { ...data.brands[0], id: "usd", currency: "USD", investment: 50 },
+    ];
+    expect(portfolioInvestment(rows, "BRL")).toEqual({
+      available: 0,
+      missing: 0,
+    });
+    expect(portfolioInvestment(rows, "USD")).toEqual({
+      available: 50,
+      missing: 0,
+    });
   });
 });

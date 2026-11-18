@@ -44,6 +44,7 @@ import {
   revenueIncreased,
   readBrandSelection,
   selectPortfolioBrands,
+  portfolioInvestment,
   TV_PAGE_MS,
   TV_PAGE_SIZE,
   TV_STATUS_POLL_MS,
@@ -59,11 +60,22 @@ function Metrics({
   totals,
   loading,
   prefix,
+  brands,
 }: {
+  brands: TvSnapshot["brands"];
   totals: TvTotals[];
   loading: boolean;
   prefix: string;
 }) {
+  const scoped =
+    prefix === "total"
+      ? brands
+      : brands.filter((brand) => brand.area.toLowerCase() === prefix);
+  const missing = scoped.filter((brand) => brand.investment === null).length;
+  const valueFor = (total: TvTotals, key: "revenue" | "investment" | "mer") =>
+    key === "investment" && total.investment === null
+      ? portfolioInvestment(scoped, total.currency).available
+      : total[key];
   return (
     <div className="grid gap-4 md:grid-cols-3">
       {(
@@ -91,16 +103,16 @@ function Metrics({
           loading={loading}
           value={
             totals.length === 1 ? (
-              (totals[0][key] ?? "—")
+              (valueFor(totals[0], key) ?? "—")
             ) : totals.length ? (
               <div className="space-y-1">
                 {totals.map((total) => (
                   <div key={total.currency}>
-                    {total[key] === null
+                    {valueFor(total, key) === null
                       ? "—"
                       : key === "mer"
-                        ? `${mer(total[key])} · ${total.currency}`
-                        : money(total[key], total.currency)}
+                        ? `${mer(valueFor(total, key)!)} · ${total.currency}`
+                        : money(valueFor(total, key)!, total.currency)}
                   </div>
                 ))}
               </div>
@@ -124,9 +136,30 @@ function Metrics({
           }
           comparisonUnavailable="Este painel não consulta a janela anterior de 90 dias."
           footer={
-            <div className="flex justify-between gap-2 text-xs">
-              <span className="text-muted-foreground">Período</span>
-              <span>Últimos 90 dias</span>
+            <div className="space-y-2 text-xs">
+              {missing > 0 && key === "investment" && (
+                <>
+                  <Badge
+                    variant="outline"
+                    className="border-amber-500/30 text-amber-500"
+                  >
+                    Parcial
+                  </Badge>
+                  <p className="text-muted-foreground">
+                    Soma disponível · {missing} marca(s) sem investimento
+                    informado.
+                  </p>
+                </>
+              )}
+              {missing > 0 && key === "mer" && (
+                <p className="text-muted-foreground">
+                  Aguardando investimento completo das marcas selecionadas.
+                </p>
+              )}
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Período</span>
+                <span>Últimos 90 dias</span>
+              </div>
             </div>
           }
           testId={`${prefix}-${key}`}
@@ -538,15 +571,20 @@ export default function OverviewPage() {
         <Alert>
           <AlertTitle>Investimento incompleto</AlertTitle>
           <AlertDescription>
-            Há marcas com investimento indisponível para os 90 dias. Os totais
-            de investimento e MER dessas áreas ficam indisponíveis até a
-            recuperação dos dados.
+            Há marcas com investimento indisponível para os 90 dias. O
+            investimento mostra a soma disponível, identificada como parcial. O
+            MER dessas áreas aguarda o investimento completo.
           </AlertDescription>
         </Alert>
       )}
       <section aria-label="Total consolidado" className="space-y-3">
         <h2 className="text-lg font-semibold">Total consolidado</h2>
-        <Metrics totals={data?.total ?? []} loading={loading} prefix="total" />
+        <Metrics
+          totals={data?.total ?? []}
+          loading={loading}
+          prefix="total"
+          brands={data?.brands ?? []}
+        />
       </section>
       <section aria-label="Área B2B" className="space-y-3">
         <div className="flex items-center gap-2">
@@ -555,7 +593,12 @@ export default function OverviewPage() {
             Faturamento solicitado
           </span>
         </div>
-        <Metrics totals={data?.b2b ?? []} loading={loading} prefix="b2b" />
+        <Metrics
+          totals={data?.b2b ?? []}
+          loading={loading}
+          prefix="b2b"
+          brands={data?.brands ?? []}
+        />
       </section>
       <section aria-label="Área B2C" className="space-y-3">
         <div className="flex items-center gap-2">
@@ -564,7 +607,12 @@ export default function OverviewPage() {
             Faturamento pago
           </span>
         </div>
-        <Metrics totals={data?.b2c ?? []} loading={loading} prefix="b2c" />
+        <Metrics
+          totals={data?.b2c ?? []}
+          loading={loading}
+          prefix="b2c"
+          brands={data?.brands ?? []}
+        />
       </section>
       {data && <RevenueChart data={data} />}
       <Card>
