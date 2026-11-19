@@ -106,6 +106,9 @@ export function useOrganizationData(
   only: readonly OrganizationSource[] = ALL_ORGANIZATION_SOURCES,
   // Fontes cujo período anterior precisa de busca própria (Dashboard e Marketing já trazem o anterior na resposta).
   previous: readonly OrganizationSource[] = only,
+  // Pedido do time, 19/11/2026: Aquisição/Retenção (Recompra) seguem o Tipo da página Performance.
+  // undefined = quem chama (ex: Visão Geral "/") não tem esse filtro -- comportamento de sempre, sem mudança.
+  tipoFilter?: "todos" | "erp" | "ecommerce" | "anuncios",
 ) {
   const { tx } = useI18n();
   const { user, selectedClientId, selectedDashboardMode } = useAuth();
@@ -177,13 +180,26 @@ export function useOrganizationData(
   });
   const platform = clientDetail?.commercePlatform;
   const platformReady = !selectedClientId || platform !== undefined;
-  const recompraTipo = platform
-    ? platform === "VESTI"
-      ? "vesti"
-      : "site"
-    : selectedDashboardMode === "B2C"
-      ? "ecommerce"
-      : "erp";
+  // Com tipoFilter (só a página Performance manda isso): Todos/ERP mostram o universo reconciliado
+  // (ERP+site, igual ao card Faturamento); Ecommerce mostra só o nativo (Vesti/site, decisão B do
+  // Marcelo em 19/11/2026 -- muda o padrão de quem usa a Performance, de propósito); Anúncios usa o
+  // mesmo recorte "anuncios-todos" já usado na tela de Recompra dedicada.
+  // Sem tipoFilter (Visão Geral "/"): comportamento de sempre, sem mudança nenhuma.
+  const recompraTipo = tipoFilter
+    ? tipoFilter === "ecommerce"
+      ? platform === "VESTI"
+        ? "vesti"
+        : "site"
+      : tipoFilter === "anuncios"
+        ? "anuncios-todos"
+        : "erp"
+    : platform
+      ? platform === "VESTI"
+        ? "vesti"
+        : "site"
+      : selectedDashboardMode === "B2C"
+        ? "ecommerce"
+        : "erp";
   // Valor em R$: o topo do Dashboard soma o valor do pedido aprovado nos clientes de site; na Vesti soma "valor reservado"
   // (a coluna que a Recompra chama de faturamento). Assim Aquisição + Retenção fecham com o Faturamento total.
   const money = (t?: RecompraTotals | null) =>

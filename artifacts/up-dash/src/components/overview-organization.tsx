@@ -178,11 +178,18 @@ export function OverviewOrganization({
     </div>
   );
 }
-export function PerformanceSummarySections() {
+export function PerformanceSummarySections({
+  tipoFilter,
+}: {
+  /** Pedido do time, 19/11/2026: Aquisição/Retenção seguem o mesmo Tipo da página Performance.
+   * Sem esse prop (ex: Visão Geral "/"), comportamento de sempre (sem mudança). */
+  tipoFilter?: "todos" | "erp" | "ecommerce" | "anuncios";
+} = {}) {
   const { tx } = useI18n();
   const { pick } = useOrganizationData(
     PERFORMANCE_SOURCES,
     PERFORMANCE_PREVIOUS,
+    tipoFilter,
   );
   return (
     <div className="space-y-6">

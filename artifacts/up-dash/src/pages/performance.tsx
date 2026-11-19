@@ -67,6 +67,12 @@ import {
 type AttributionState = "ATRIBUIDO" | "SEM_ORIGEM";
 type BuyerType = "NEW" | "RETURNING" | "UNKNOWN";
 
+// Só os campos usados pelo card Faturamento quando Tipo=Ecommerce (ver dashboardQuery acima).
+type EcommerceDashboardResponse = {
+  kpis: { revenue: number; paidRevenue?: number };
+  prevKpis?: { revenue: number; paidRevenue?: number } | null;
+};
+
 type PerformanceResponse = {
   generatedAt: string;
   sources: {
@@ -456,6 +462,21 @@ export default function PerformancePage() {
       retry: 1,
     });
 
+  // Tipo=Ecommerce (pedido do time, 19/11/2026): Faturamento passa a mostrar o nativo do
+  // e-commerce (Vesti/site), não o ERP -- mesma fonte que Aquisição/Retenção usam pra esse
+  // Tipo. Só busca quando esse Tipo está selecionado (dado pesado, ninguém mais precisa dele).
+  const dashboardQuery = useQuery<EcommerceDashboardResponse>({
+    queryKey: ["performance-dashboard-ecommerce", clientId, dateFrom, dateTo, sellerId, state],
+    queryFn: () =>
+      customFetch<EcommerceDashboardResponse>(
+        buildUrl("/api/analytics/dashboard", { clientId, dateFrom, dateTo, sellerId, state, compare: "true" }),
+      ),
+    enabled: enabled && tipoFilter === "ecommerce",
+    staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+
   const attributionQuery = useQuery<ErpAttributionResponse>({
     queryKey: ["performance-attribution", clientId, dateFrom, dateTo, sellerId, state, statusFilter],
     queryFn: () =>
@@ -477,12 +498,25 @@ export default function PerformancePage() {
   const previous = usePreviousPeriodQuery<PerformanceResponse>(periodQuery("/api/analytics/performance", { ...commonParams, page: 1, limit: PAGE_SIZE }), enabled);
   const pk = previous.data?.kpis;
   const k = data?.kpis;
-  // Tipo=Anuncios (pedido do time, 18/11/2026): mostra o recorte atribuido a mida paga
-  // (k.attributedRevenue, ja filtrado por Status/Vendedora/Estado igual ao ERP) em vez
-  // do faturamento total do ERP. Tipo=ERP/Todos continuam mostrando k.netRevenue --
-  // Tipo=Ecommerce ainda nao tem fonte propria, fica igual a ERP por enquanto.
-  const faturamentoValue = tipoFilter === "anuncios" ? (k?.attributedRevenue ?? 0) : (k?.netRevenue ?? 0);
-  const faturamentoPrevious = tipoFilter === "anuncios" ? pk?.attributedRevenue : pk?.netRevenue;
+  // Tipo=Anuncios (pedido do time, 18/11/2026): mostra o recorte atribuido a midia paga
+  // (k.attributedRevenue, ja filtrado por Status/Vendedora/Estado igual ao ERP) em vez do
+  // faturamento total do ERP. Tipo=Ecommerce (19/11/2026): mostra o nativo do e-commerce
+  // (Vesti/site, via dashboardQuery) -- mesma fonte que Aquisicao/Retencao usam pra esse
+  // Tipo. Tipo=ERP/Todos continuam mostrando k.netRevenue (universo reconciliado).
+  const dk = dashboardQuery.data?.kpis;
+  const dpk = dashboardQuery.data?.prevKpis;
+  const faturamentoValue =
+    tipoFilter === "anuncios"
+      ? (k?.attributedRevenue ?? 0)
+      : tipoFilter === "ecommerce"
+        ? (dk?.paidRevenue ?? dk?.revenue ?? 0)
+        : (k?.netRevenue ?? 0);
+  const faturamentoPrevious =
+    tipoFilter === "anuncios"
+      ? pk?.attributedRevenue
+      : tipoFilter === "ecommerce"
+        ? (dpk?.paidRevenue ?? dpk?.revenue)
+        : pk?.netRevenue;
   const financialMetrics = [
     {
       label: "Faturamento",
@@ -705,7 +739,7 @@ export default function PerformancePage() {
         </div>
       </section>
 
-      <PerformanceSummarySections />
+      <PerformanceSummarySections tipoFilter={tipoFilter} />
 
       <OrganizationHeading>{tx("FATURAMENTO × INVESTIMENTO")}</OrganizationHeading>
 
