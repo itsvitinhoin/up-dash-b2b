@@ -115,6 +115,9 @@ export type PerformanceDashboard = {
      * SEM gêmeo no ERP (ex: sincronização ainda não chegou) -- feito pra Tipo=Todos bater com
      * Aquisição×Retenção (recompra-analytics.ts), que já combina as duas fontes. */
     combinedNetRevenue: number;
+    /** Mesma ideia de combinedNetRevenue, só que pro "Bruto" (antes das devoluções) -- sem isso,
+     * "Bruto" ficava só do ERP e aparecia MENOR que o Faturamento combinado em Tipo=Todos. */
+    combinedGrossRevenue: number;
     uniqueBuyers: number;
     newBuyers: number;
     /** Faturamento líquido e pedidos do ERP dos compradores novos do período (mesma base de `newBuyers`). */
@@ -961,6 +964,7 @@ export async function fetchPerformanceDashboard(
   attributedRevenue += ecommerceOnly.attributedRevenue;
   attributedRevenueEcommerce += ecommerceOnly.attributedRevenue;
   const combinedNetRevenue = erp.kpis.netRevenue + ecommerceOnly.netRevenue;
+  const combinedGrossRevenue = erp.kpis.grossRevenue + ecommerceOnly.netRevenue;
   // Achado 19/11/2026: o gráfico "Faturamento, atribuição e mídia" usava dailyMap.attributedRevenue,
   // que só tinha a parte do ERP -- card Faturamento já somava certo (linha acima), mas o gráfico
   // ficava pra trás (medido na MX Fashion: card R$163.548,16, soma do gráfico só R$81.072,24).
@@ -1223,6 +1227,7 @@ export async function fetchPerformanceDashboard(
       attributedRevenueEcommerce,
       attributedRevenueErp,
       combinedNetRevenue,
+      combinedGrossRevenue,
       unattributedRevenue: Math.max(0, erp.kpis.netRevenue - attributedRevenue),
       mediaSpend: mediaStatus === "connected" ? mediaSpend : null,
       roas: ratios.roas,
@@ -1533,6 +1538,7 @@ export async function fetchPerformanceDashboardNoErp(
       attributedRevenueEcommerce: attributedRevenue,
       attributedRevenueErp: 0,
       combinedNetRevenue: netRevenue,
+      combinedGrossRevenue: netRevenue,
       unattributedRevenue: Math.max(0, netRevenue - attributedRevenue),
       mediaSpend: mediaStatus === "connected" ? mediaSpend : null,
       roas: ratios.roas,

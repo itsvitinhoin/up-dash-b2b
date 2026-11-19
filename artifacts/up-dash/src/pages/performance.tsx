@@ -96,6 +96,7 @@ type PerformanceResponse = {
     attributedRevenueEcommerce: number;
     attributedRevenueErp: number;
     combinedNetRevenue: number;
+    combinedGrossRevenue: number;
     unattributedRevenue: number;
     mediaSpend: number | null;
     roas: number | null;
@@ -550,7 +551,9 @@ export default function PerformancePage() {
       sub:
         tipoFilter === "anuncios"
           ? [{ label: "Cobertura", value: formatPercentage(k?.revenueAttributionCoveragePct ?? 0) }]
-          : [{ label: "Bruto", value: formatCurrency(k?.grossRevenue ?? 0) }],
+          : tipoFilter === "todos"
+            ? [{ label: "Bruto", value: formatCurrency(k?.combinedGrossRevenue ?? 0) }]
+            : [{ label: "Bruto", value: formatCurrency(k?.grossRevenue ?? 0) }],
     },
     {
       label: "Receita atribuída",
