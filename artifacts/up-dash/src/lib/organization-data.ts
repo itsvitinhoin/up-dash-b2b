@@ -33,6 +33,11 @@ type RecompraResponse = {
     // pedidos de clientes na 1ª compra (servidor novo; ausente em servidor antigo)
     aquisicao?: RecompraTotals;
     ciclo: { tempoMedioDias: number | null; medianaDias: number | null };
+    // Achado 19/11/2026: por que Aquisição+Retenção não bate com Faturamento (ver
+    // performance-recompra.tsx, que já mostra os mesmos três avisos).
+    unmatchedErpCount?: number;
+    attributionUnavailable?: boolean;
+    touchpointFailures?: number;
   };
 };
 type Activation = {

@@ -186,11 +186,12 @@ export function PerformanceSummarySections({
   tipoFilter?: "todos" | "erp" | "ecommerce" | "anuncios";
 } = {}) {
   const { tx } = useI18n();
-  const { pick } = useOrganizationData(
+  const { pick, recompra } = useOrganizationData(
     PERFORMANCE_SOURCES,
     PERFORMANCE_PREVIOUS,
     tipoFilter,
   );
+  const blocks = recompra.data?.blocks;
   return (
     <div className="space-y-6">
       <MetricSection title={tx("AQUISIÇÃO")} columns={3}>
@@ -211,6 +212,32 @@ export function PerformanceSummarySections({
           )}
         />
       </MetricSection>
+      {/* Achado 19/11/2026 (Marcelo: "faturamento é muito maior que a retenção e
+       * aquisição"): Faturamento soma TODO pedido do ERP/e-commerce; Aquisição+Retenção
+       * só soma quem tem identidade confiável (nunca adivinha, ver recompra-analytics.ts).
+       * Mesmos avisos que performance-recompra.tsx já mostra, só que aqui -- perto da
+       * comparação que confunde -- e não só na página de detalhe. */}
+      {blocks?.attributionUnavailable && (
+        <p className="text-xs text-amber-500">
+          {tx(
+            "Este cliente não tem chave UpZero configurada — Tipo=Anúncios não pode ser calculado (sem touchpoint pago pra atribuir) e os blocos acima estão vazios.",
+          )}
+        </p>
+      )}
+      {blocks && (blocks.touchpointFailures ?? 0) > 0 && (
+        <p className="text-xs text-amber-500">
+          {tx(
+            "Não foi possível verificar a atribuição de {n} cliente(s) agora; eles ficaram de fora de Anúncios nesta leitura. Recarregue em instantes para tentar de novo.",
+          ).replace("{n}", String(blocks.touchpointFailures))}
+        </p>
+      )}
+      {blocks && (blocks.unmatchedErpCount ?? 0) > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {tx(
+            "{n} pedido(s) do ERP no período não puderam ser conciliados com um cliente identificado (sem CNPJ/e-mail/telefone batendo) e ficaram de fora de Aquisição e Retenção.",
+          ).replace("{n}", String(blocks.unmatchedErpCount))}
+        </p>
+      )}
       <MetricSection title={tx("FUNIL / EFICIÊNCIA")} columns={6}>
         <Metrics
           metrics={pick(
