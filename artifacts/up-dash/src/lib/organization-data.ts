@@ -306,9 +306,17 @@ export function useOrganizationData(
       | (typeof funnel.data & { activation?: Activation })
       | undefined
   )?.activation;
-  const meta = (
-    marketing.isError ? undefined : marketing.data
-  )?.platformBreakdown.find((p) => p.platform === "META");
+  // Vesti: `platformBreakdown` é canal de ORIGEM do pedido (Site/Link/UTM Agência...),
+  // não plataforma de anúncio -- nunca tem linha "META"/"GOOGLE" e o `spend` vem sempre
+  // zerado (ver vestiDashboardController.getMarketing). Como a Vesti só integra Meta (não
+  // tem Google Ads), o investimento Meta é o próprio `totalSpend`, e Google fica indisponível
+  // de verdade (não é "ainda carregando").
+  const meta =
+    platform === "VESTI"
+      ? undefined
+      : (marketing.isError ? undefined : marketing.data)?.platformBreakdown.find(
+          (p) => p.platform === "META",
+        );
   const google = (
     marketing.isError ? undefined : marketing.data
   )?.platformBreakdown.find((p) => p.platform === "GOOGLE");
@@ -561,7 +569,7 @@ export function useOrganizationData(
   put(
     "metaSpend",
     "Investimento Meta",
-    meta?.spend,
+    platform === "VESTI" ? m?.totalSpend : meta?.spend,
     "currency",
     "Meta",
     marketing.isLoading,
@@ -569,11 +577,15 @@ export function useOrganizationData(
   put(
     "googleSpend",
     "Investimento Google",
-    google?.spend,
+    platform === "VESTI" ? null : google?.spend,
     "currency",
     "Google",
     marketing.isLoading,
   );
+  if (platform === "VESTI")
+    measures.googleSpend.info = tx(
+      "A Vesti ainda não integra Google Ads: todo o investimento rastreado aqui é do Meta.",
+    );
   put(
     "roas",
     "ROAS",
@@ -854,9 +866,12 @@ export function useOrganizationData(
     pm = marketing.isError ? undefined : marketing.data?.prevKpis,
     pc = customers.data?.prevKpis;
   const pr = previousRecompra.data?.blocks;
-  const previousMeta = previousMarketing.data?.platformBreakdown.find(
-    (row) => row.platform === "META",
-  );
+  const previousMeta =
+    platform === "VESTI"
+      ? undefined
+      : previousMarketing.data?.platformBreakdown.find(
+          (row) => row.platform === "META",
+        );
   const previousGoogle = previousMarketing.data?.platformBreakdown.find(
     (row) => row.platform === "GOOGLE",
   );
@@ -883,8 +898,8 @@ export function useOrganizationData(
     newCustomers: pd?.newBuyers,
     spend: pm?.totalSpend,
     totalSpend: pm?.totalSpend,
-    metaSpend: previousMeta?.spend,
-    googleSpend: previousGoogle?.spend,
+    metaSpend: platform === "VESTI" ? pm?.totalSpend : previousMeta?.spend,
+    googleSpend: platform === "VESTI" ? null : previousGoogle?.spend,
     roas: pm?.roas,
     requestedRoas: selectedDashboardMode === "B2C" ? null : pm?.roas,
     paidRoas: selectedDashboardMode === "B2C" ? pm?.roas : null,
