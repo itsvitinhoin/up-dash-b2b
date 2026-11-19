@@ -305,6 +305,13 @@ async function fetchEcommerceOnlyRevenue(params: {
   dateFrom: string;
   dateToExclusive: string;
   statusBucket?: "pago" | "cancelado" | "outro";
+  // Achado 19/11/2026: faltava Vendedora/Estado aqui -- o resto da página já filtra por eles,
+  // mas essa adição ainda contava pedido nativo de QUALQUER vendedora/estado. `sellerId` (bruto,
+  // id da UpZero) serve pro Postgres orders; `resolvedSellerName` (já resolvido pro nome de
+  // verdade, igual o lado ERP já faz) serve pra comparar com `vendedora` da Vesti.
+  sellerId?: string;
+  resolvedSellerName?: string;
+  state?: string;
   matches: Map<string, ErpDocumentMatch>;
   vestiMatcher: VestiErpAttributionMatcher | null;
   erpEventsByDocument: Map<string, PositiveEvent[]>;
@@ -345,6 +352,8 @@ async function fetchEcommerceOnlyRevenue(params: {
         lt(ordersTable.createdAt, dateToExclusiveDate),
         siteStatusCondition,
         gt(ordersTable.amount, 0),
+        ...(params.sellerId ? [eq(ordersTable.sellerId, params.sellerId)] : []),
+        ...(params.state ? [eq(ordersTable.state, params.state)] : []),
       ),
     )
     .then(async (rows) => {
@@ -405,10 +414,17 @@ async function fetchEcommerceOnlyRevenue(params: {
             WHERE data_ref >= @dateFrom AND data_ref < @dateToExclusive
               AND ${vestiStatusCondition}
               AND documento_cliente IS NOT NULL
+              ${params.resolvedSellerName ? "AND UPPER(vendedora) = UPPER(@sellerName)" : ""}
+              ${params.state ? "AND estado = @state" : ""}
             GROUP BY pedido_id
             HAVING gross_value > 0
           `,
-          params: { dateFrom: params.dateFrom, dateToExclusive: params.dateToExclusive.slice(0, 10) },
+          params: {
+            dateFrom: params.dateFrom,
+            dateToExclusive: params.dateToExclusive.slice(0, 10),
+            ...(params.resolvedSellerName ? { sellerName: params.resolvedSellerName } : {}),
+            ...(params.state ? { state: params.state } : {}),
+          },
         })
         .then(async ([rows]) => {
           const combined = new Map<string, PositiveEvent[]>();
@@ -720,6 +736,9 @@ export async function fetchPerformanceDashboard(
     dateFrom,
     dateToExclusive: ecommercePerformanceDateToExclusive.toISOString(),
     statusBucket: options.statusBucket,
+    sellerId: options.sellerId,
+    resolvedSellerName,
+    state: options.state,
     matches,
     vestiMatcher,
     erpEventsByDocument,
@@ -1257,6 +1276,8 @@ async function fetchUpzeroNativeCogs(params: {
   dateFrom: string;
   dateToExclusive: string;
   statusBucket?: "pago" | "cancelado" | "outro";
+  sellerId?: string;
+  state?: string;
 }): Promise<{ cogs: number; costedQuantity: number; totalQuantity: number }> {
   const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000Z`);
   const dateToExclusiveDate = new Date(params.dateToExclusive);
@@ -1282,6 +1303,8 @@ async function fetchUpzeroNativeCogs(params: {
         gte(ordersTable.createdAt, dateFromDate),
         lt(ordersTable.createdAt, dateToExclusiveDate),
         statusCondition,
+        ...(params.sellerId ? [eq(ordersTable.sellerId, params.sellerId)] : []),
+        ...(params.state ? [eq(ordersTable.state, params.state)] : []),
       ),
     )
     .catch((err) => {
@@ -1328,6 +1351,9 @@ export async function fetchPerformanceDashboardNoErp(
   // Dataset nativo da Vesti é uma coluna SEPARADA de erpDataset (client pode ter um sem o
   // outro -- ex: Milalai tem bigquery_dataset mas erp_dataset vazio).
   const vestiDataset = client?.commercePlatform === "VESTI" ? client.bigqueryDataset : null;
+  // Vendedora: mesma resolução id->nome que o lado ERP já faz (resolveErpSellerName) -- sem
+  // isso, o filtro de Vendedora da tela não tinha efeito nenhum aqui.
+  const resolvedSellerName = options.sellerId ? await resolveErpSellerName(clientId, options.sellerId) : undefined;
 
   const dateToExclusiveDate = new Date(`${dateTo}T00:00:00.000Z`);
   dateToExclusiveDate.setUTCDate(dateToExclusiveDate.getUTCDate() + 1);
@@ -1338,6 +1364,9 @@ export async function fetchPerformanceDashboardNoErp(
     dateFrom,
     dateToExclusive: dateToExclusiveDate.toISOString(),
     statusBucket: options.statusBucket,
+    sellerId: options.sellerId,
+    resolvedSellerName,
+    state: options.state,
     matches: new Map(),
     vestiMatcher: null,
     erpEventsByDocument: new Map(),
@@ -1418,7 +1447,7 @@ export async function fetchPerformanceDashboardNoErp(
   // costCoveragePct=0 já cobre isso via calculatePerformanceRatios).
   const upzeroCogs = vestiDataset
     ? { cogs: 0, costedQuantity: 0, totalQuantity: 0 }
-    : await fetchUpzeroNativeCogs({ clientId, dateFrom, dateToExclusive: dateToExclusiveDate.toISOString(), statusBucket: options.statusBucket });
+    : await fetchUpzeroNativeCogs({ clientId, dateFrom, dateToExclusive: dateToExclusiveDate.toISOString(), statusBucket: options.statusBucket, sellerId: options.sellerId, state: options.state });
   const costCoveragePct = percentage(upzeroCogs.costedQuantity, upzeroCogs.totalQuantity);
   const ratios = calculatePerformanceRatios({
     netRevenue,

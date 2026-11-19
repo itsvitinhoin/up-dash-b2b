@@ -467,7 +467,11 @@ export async function fetchErpDashboard(
   // (ERP grava maiúsculo, Postgres não). So entra no WHERE quando informado.
   const resolvedSellerName = options.sellerId ? await resolveErpSellerName(clientId, options.sellerId) : undefined;
   const sellerCondition = resolvedSellerName ? `AND UPPER(o.seller) = UPPER(@sellerName)` : "";
-  const stateCondition = options.state ? `AND o.state = @state` : "";
+  // Achado 19/11/2026 (testando o filtro de Estado pela 1a vez com valor de verdade): "o"
+  // (all_orders) nunca teve coluna state -- só nasce no SELECT o.*, g.state da CTE orders,
+  // depois do WHERE. "o.state" dava erro do BigQuery ("Name state not found inside o") sempre
+  // que alguém de fato usava o filtro de Estado; g (customer_geo) já tem a coluna de verdade.
+  const stateCondition = options.state ? `AND g.state = @state` : "";
   const queryParams: Record<string, string> = { dateFrom, dateTo };
   if (resolvedSellerName) queryParams.sellerName = resolvedSellerName;
   if (options.state) queryParams.state = options.state;

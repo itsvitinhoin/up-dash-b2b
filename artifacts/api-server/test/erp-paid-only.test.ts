@@ -110,7 +110,10 @@ describe("ERP: filtros novos de Status/Vendedora/Estado", () => {
   it("state vira condição no WHERE e vai nos params (não é concatenado na string)", async () => {
     await fetchErpDashboard("c1", "ds", "2026-09-01", "2026-09-30", { state: "SP" }).catch(() => {});
     const main = dashboardQueries().find((q) => q.query.includes("cancelled_orders"))!;
-    expect(main.query).toContain("AND o.state = @state");
+    // Achado 19/11/2026: era "o.state" -- "o" (all_orders) nunca teve essa coluna, só nasce
+    // depois do JOIN (SELECT o.*, g.state). BigQuery real dava "Name state not found inside o"
+    // sempre que o filtro de Estado era de fato usado; g (customer_geo) tem a coluna de verdade.
+    expect(main.query).toContain("AND g.state = @state");
     expect(main.query).not.toContain("= 'SP'");
     expect(main.params?.state).toBe("SP");
   });
