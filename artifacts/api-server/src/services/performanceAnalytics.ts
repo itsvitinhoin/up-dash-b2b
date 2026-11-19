@@ -315,9 +315,21 @@ async function fetchEcommerceOnlyRevenue(params: {
   matches: Map<string, ErpDocumentMatch>;
   vestiMatcher: VestiErpAttributionMatcher | null;
   erpEventsByDocument: Map<string, PositiveEvent[]>;
-}): Promise<{ netRevenue: number; attributedRevenue: number; orders: number }> {
+}): Promise<{
+  netRevenue: number;
+  attributedRevenue: number;
+  orders: number;
+  // Achado 19/11/2026: o gráfico "Faturamento, atribuição e mídia" soma essa parte por DIA
+  // (daily.attributedRevenue) -- sem o detalhamento por dia aqui, o gráfico ficava sem essa
+  // fatia e não batia mais com o card Faturamento (que já soma tudo certo).
+  attributedRevenueByDay: Map<string, number>;
+}> {
   let netRevenue = 0;
   let attributedRevenue = 0;
+  const attributedRevenueByDay = new Map<string, number>();
+  const addAttributedDay = (day: string, value: number) => {
+    attributedRevenueByDay.set(day, (attributedRevenueByDay.get(day) ?? 0) + value);
+  };
   let orders = 0;
 
   // ERP também precisa existir no espaço de identidade "customerId da UpZero" (via matches)
@@ -391,6 +403,7 @@ async function fetchEcommerceOnlyRevenue(params: {
           const evidenceAt = attribution?.evidenceAt;
           if (attribution && (!evidenceAt || evidenceAt.toISOString().slice(0, 10) <= e.requestedAt.toISOString().slice(0, 10))) {
             attributedRevenue += e.paidValue;
+            addAttributedDay(e.requestedAt.toISOString().slice(0, 10), e.paidValue);
           }
         }
       }
@@ -465,7 +478,10 @@ async function fetchEcommerceOnlyRevenue(params: {
               netRevenue += e.paidValue;
               orders += 1;
               const match = vestiMatcher.match(document, e.requestedAt.toISOString());
-              if (match?.attribution) attributedRevenue += e.paidValue;
+              if (match?.attribution) {
+                attributedRevenue += e.paidValue;
+                addAttributedDay(e.requestedAt.toISOString().slice(0, 10), e.paidValue);
+              }
             }
           }
         })
@@ -475,7 +491,7 @@ async function fetchEcommerceOnlyRevenue(params: {
     : Promise.resolve();
 
   await Promise.all([upzeroPromise, vestiPromise]);
-  return { netRevenue, attributedRevenue, orders };
+  return { netRevenue, attributedRevenue, orders, attributedRevenueByDay };
 }
 
 export async function fetchPerformanceDashboard(
@@ -945,6 +961,14 @@ export async function fetchPerformanceDashboard(
   attributedRevenue += ecommerceOnly.attributedRevenue;
   attributedRevenueEcommerce += ecommerceOnly.attributedRevenue;
   const combinedNetRevenue = erp.kpis.netRevenue + ecommerceOnly.netRevenue;
+  // Achado 19/11/2026: o gráfico "Faturamento, atribuição e mídia" usava dailyMap.attributedRevenue,
+  // que só tinha a parte do ERP -- card Faturamento já somava certo (linha acima), mas o gráfico
+  // ficava pra trás (medido na MX Fashion: card R$163.548,16, soma do gráfico só R$81.072,24).
+  for (const [day, value] of ecommerceOnly.attributedRevenueByDay) {
+    const daily = dailyMap.get(day) ?? { date: day, revenue: 0, attributedRevenue: 0, spend: 0, orders: 0 };
+    daily.attributedRevenue += value;
+    dailyMap.set(day, daily);
+  }
 
   if (mediaStatus === "connected") {
     const meta = channelMap.get("Meta") ?? {
