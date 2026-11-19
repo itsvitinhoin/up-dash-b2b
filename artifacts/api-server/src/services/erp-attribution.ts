@@ -21,6 +21,8 @@ import { and, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, standardTouchpointWindow, type TouchpointCandidate } from "./paid-touchpoints";
 import { ERP_CANCELLED_STATUSES, ERP_UNPAID_STATUSES, resolveErpSellerName, matchErpDocumentsWithVestiAttribution } from "./erpAnalytics";
 import { resolveErpCustomerIdentities, type ErpContactInfo, type ResolvedErpCustomer } from "./erp-identity";
+import { vestiSalesView } from "./vesti-sales-view";
+import { dedupeSameDaySameValue, dedupeSameDaySumAcrossErpVesti, type PositiveEvent } from "./recompra-analytics";
 
 // Achado 08/09/2026: o Manse (MX Fashion) só produz status "CONCLUIDO"
 // pra tudo, então um filtro `= 'CONCLUIDO'` parecia certo -- mas quebra o
@@ -39,7 +41,9 @@ export const ERP_STATUS_FILTER = `status NOT IN (${ERP_CANCELLED_STATUSES.map((s
 // que o relatório rodar pra aquele pedido, sem precisar de migration.
 export const ATTRIBUTION_RULE_VERSION = "2026-09-10-no-lookback-cap";
 
-type OrderChannel = "erp" | "site";
+// "vesti" acrescentado 19/11/2026: pedido nativo da Vesti sem gêmeo no ERP, equivalente ao
+// "site" (pedido nativo da UpZero) que já existia -- ver Fonte 2 em computeVestiPaidAttribution.
+type OrderChannel = "erp" | "site" | "vesti";
 
 type OrderCandidate = {
   orderId: string;
@@ -218,7 +222,7 @@ export async function computeErpPaidAttribution(params: {
     const [rawErpRows] = await bigquery.query({
       query: `
         WITH orders AS (
-          SELECT pedido_id, customer_id, ANY_VALUE(seller) AS seller, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
+          SELECT pedido_id, customer_id, ANY_VALUE(seller) AS seller, ANY_VALUE(valor_total) AS valor_total, ANY_VALUE(valor_liquido) AS valor, ANY_VALUE(data_criado) AS data_criado
           FROM ${pedidosTable}
           WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${erpStatusCondition}
           GROUP BY pedido_id, customer_id
@@ -227,7 +231,11 @@ export async function computeErpPaidAttribution(params: {
           -- valor_liquido, não no total) -- PDF teste 7 pede excluir pedido
           -- zerado da receita; sem isso ele ainda contava como "pedido"
           -- (inflava contagem e podia até virar a "1ª compra influenciada").
-          HAVING valor > 0
+          -- Achado 19/11/2026: "valor" (o que vira faturamentoGerado/Pago aqui) passa a
+          -- ser valor_liquido (líquido), pra bater com o resto da página
+          -- (performanceAnalytics.ts já soma líquido) -- o corte de pedido zerado acima
+          -- continua em cima do valor_total bruto, sem mudar.
+          HAVING valor_total > 0
         )
         SELECT o.*, c.nome AS customer_name, c.documento AS document, c.estado AS state,
           c.email AS erp_email, c.ddd AS erp_ddd, c.celular AS erp_celular, c.telefone AS erp_telefone
@@ -796,11 +804,14 @@ export async function computeVestiPaidAttribution(params: {
   const [rawErpRows] = await bigquery.query({
     query: `
       WITH orders AS (
-        SELECT pedido_id, customer_id, ANY_VALUE(seller) AS seller, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
+        -- Achado 19/11/2026: "valor" passa a ser valor_liquido (líquido), mesmo ajuste
+        -- de computeErpPaidAttribution acima -- pedido zerado ainda é cortado pelo
+        -- valor_total bruto, sem mudar esse critério.
+        SELECT pedido_id, customer_id, ANY_VALUE(seller) AS seller, ANY_VALUE(valor_total) AS valor_total, ANY_VALUE(valor_liquido) AS valor, ANY_VALUE(data_criado) AS data_criado
         FROM ${pedidosTable}
         WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${erpStatusCondition}
         GROUP BY pedido_id, customer_id
-        HAVING valor > 0
+        HAVING valor_total > 0
       )
       SELECT o.*, c.nome AS customer_name, c.documento AS document, c.estado AS state
       FROM orders o
@@ -870,6 +881,128 @@ export async function computeVestiPaidAttribution(params: {
         touchpointCampaign: null,
         attributionState: attributionState!,
       });
+    }
+  }
+
+  // Fonte 2 (19/11/2026): venda nativa da Vesti (dashboard_vendas_view) SEM gêmeo no ERP --
+  // equivalente Vesti da Fonte 2 "site" que computeErpPaidAttribution já tem pra UpZero. Sem
+  // isso, "Novos, recorrentes e reativados" ficava atrás de Aquisição×Retenção
+  // (recompra-analytics.ts), que já combina as duas fontes -- mesma dedup dia+valor usada lá
+  // (dedupeSameDaySameValue/dedupeSameDaySumAcrossErpVesti, reaproveitadas de lá).
+  const eventsByDocument = new Map<string, PositiveEvent[]>();
+  for (const r of erpRows) {
+    const document = String(r.customer_id ?? "").replace(/\D/g, "");
+    if (!document) continue;
+    const list = eventsByDocument.get(document) ?? [];
+    list.push({
+      channel: "erp",
+      orderId: String(r.pedido_id),
+      requestedAt: new Date(toIsoString(r.data_criado)),
+      grossValue: Number(r.valor_total) || 0,
+      paidValue: Number(r.valor) || 0,
+      seller: null,
+      origem: null,
+      document,
+    });
+    eventsByDocument.set(document, list);
+  }
+
+  const vendasView = vestiSalesView(params.dataset);
+  const vestiStatusCondition =
+    params.statusBucket === "cancelado"
+      ? "status_pedido = 'CANCELADO'"
+      : params.statusBucket === "outro"
+        ? "status_pedido IN ('WAITING', 'ANALYSING')"
+        : params.statusBucket === "pago"
+          ? "pago"
+          : "status_pedido != 'CANCELADO'";
+  const [rawVestiNativeRows] = await bigquery.query({
+    query: `
+      SELECT
+        pedido_id,
+        ANY_VALUE(documento_cliente) AS document,
+        ANY_VALUE(data_ref) AS data_ref,
+        SUM(valor_solicitado) AS gross_value,
+        SUM(valor_reservado) AS net_value
+      FROM ${vendasView} v
+      WHERE v.data_ref >= @dateFrom AND v.data_ref < @vestiDateToExclusive
+        AND ${vestiStatusCondition}
+        ${resolvedSellerName ? "AND UPPER(v.vendedora) = UPPER(@sellerName)" : ""}
+        ${params.state ? "AND v.estado = @state" : ""}
+      GROUP BY pedido_id
+      HAVING gross_value > 0
+    `,
+    params: {
+      dateFrom: params.dateFrom,
+      vestiDateToExclusive: dateToExclusiveIso.toISOString().slice(0, 10),
+      ...(resolvedSellerName ? { sellerName: resolvedSellerName } : {}),
+      ...(params.state ? { state: params.state } : {}),
+    },
+  });
+  for (const r of rawVestiNativeRows as Array<Record<string, unknown>>) {
+    const document = String(r.document ?? "").replace(/\D/g, "");
+    if (!document) continue;
+    const list = eventsByDocument.get(document) ?? [];
+    list.push({
+      channel: "vesti",
+      orderId: String(r.pedido_id),
+      requestedAt: new Date(toIsoString(r.data_ref)),
+      grossValue: Number(r.gross_value) || 0,
+      paidValue: Number(r.net_value) || 0,
+      seller: null,
+      origem: null,
+      document,
+    });
+    eventsByDocument.set(document, list);
+  }
+
+  for (const [document, events] of eventsByDocument) {
+    const deduped = dedupeSameDaySameValue(dedupeSameDaySumAcrossErpVesti(events));
+    for (const e of deduped) {
+      if (e.channel !== "vesti") continue; // "erp" já processado no loop acima.
+      const orderId = e.orderId;
+      const dataCriadoVesti = e.requestedAt.toISOString();
+      const valorVesti = e.paidValue;
+      const matchVesti = vestiMatcher.match(document, dataCriadoVesti);
+      const touchpointAtVesti = matchVesti?.attribution?.evidenceAt?.toISOString() ?? null;
+      const touchpointSourceVesti = matchVesti?.attribution?.utmSource ?? null;
+      const attributionStateVesti: AttributionState | null = matchVesti ? (touchpointAtVesti ? "PAID_ORIGIN" : "PAID_ASSISTED") : null;
+
+      allOrders.push({
+        orderId,
+        channel: "vesti",
+        customerName: null,
+        document: maskDocument(document),
+        upzeroCustomerId: document,
+        valor: valorVesti,
+        valorPago: valorVesti,
+        dataCriado: dataCriadoVesti,
+        attributed: matchVesti !== null,
+        attributionState: attributionStateVesti,
+        cohort: null,
+        touchpointAt: touchpointAtVesti,
+        touchpointSource: touchpointSourceVesti,
+        touchpointMedium: null,
+        touchpointCampaign: null,
+      });
+
+      if (matchVesti) {
+        influencedOrders.push({
+          orderId,
+          channel: "vesti",
+          customerName: null,
+          upzeroCustomerId: document,
+          externalUserId: 0,
+          valor: valorVesti,
+          valorPago: valorVesti,
+          dataCriado: dataCriadoVesti,
+          touchpointAt: touchpointAtVesti ?? dataCriadoVesti,
+          touchpointSource: touchpointSourceVesti,
+          touchpointMedium: null,
+          touchpointCampaign: null,
+          attributionState: attributionStateVesti!,
+        });
+      }
     }
   }
 
@@ -982,6 +1115,35 @@ async function classifyVestiCohorts(params: {
     if (!doc) continue;
     const dates = historyByDocument.get(doc) ?? [];
     dates.push(new Date(toIsoString(r.data_criado)));
+    historyByDocument.set(doc, dates);
+  }
+
+  // Achado 19/11/2026: histórico também precisa olhar venda nativa da Vesti, não só o ERP --
+  // senão uma compra anterior que só existe em dashboard_vendas_view (ainda sem gêmeo no ERP)
+  // fica invisível aqui e o cliente classifica como "novo" por engano. Uma data que já existe
+  // nos dois lados pro mesmo pedido não muda o cálculo (só usa a MAIS RECENTE antes do corte),
+  // por isso sem dedup -- diferente da Fonte 2 acima, aqui duplicar a data é inofensivo.
+  const vendasViewHistory = vestiSalesView(params.dataset);
+  const [rawVestiHistoryRows] = await bigquery.query({
+    query: `
+      SELECT
+        pedido_id,
+        ANY_VALUE(REGEXP_REPLACE(CAST(documento_cliente AS STRING), r'\\D', '')) AS document,
+        ANY_VALUE(data_ref) AS data_ref,
+        SUM(valor_solicitado) AS gross_value
+      FROM ${vendasViewHistory}
+      WHERE REGEXP_REPLACE(CAST(documento_cliente AS STRING), r'\\D', '') IN UNNEST(@documents)
+        AND status_pedido != 'CANCELADO'
+      GROUP BY pedido_id
+      HAVING gross_value > 0
+    `,
+    params: { documents },
+  });
+  for (const r of rawVestiHistoryRows as Array<Record<string, unknown>>) {
+    const doc = String(r.document ?? "");
+    if (!doc) continue;
+    const dates = historyByDocument.get(doc) ?? [];
+    dates.push(new Date(toIsoString(r.data_ref)));
     historyByDocument.set(doc, dates);
   }
 

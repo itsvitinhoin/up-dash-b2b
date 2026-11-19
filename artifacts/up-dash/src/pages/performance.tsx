@@ -76,7 +76,7 @@ type EcommerceDashboardResponse = {
 type PerformanceResponse = {
   generatedAt: string;
   sources: {
-    erp: { status: "connected"; label: string };
+    erp: { status: "connected" | "not_configured"; label: string };
     ecommerce: {
       status: "connected" | "unavailable";
       label: string;
@@ -95,6 +95,7 @@ type PerformanceResponse = {
     attributedRevenue: number;
     attributedRevenueEcommerce: number;
     attributedRevenueErp: number;
+    combinedNetRevenue: number;
     unattributedRevenue: number;
     mediaSpend: number | null;
     roas: number | null;
@@ -232,7 +233,7 @@ type PaidAttributionState = "PAID_ORIGIN" | "PAID_ASSISTED";
 
 type ErpOrderRow = {
   orderId: string;
-  channel: "erp" | "site";
+  channel: "erp" | "site" | "vesti";
   customerName: string | null;
   document: string | null;
   upzeroCustomerId: string | null;
@@ -345,7 +346,7 @@ function SourceStatus({
   generatedAt: string;
 }) {
   const sources = [
-    { label: "ERP", value: data.erp.label, ok: true },
+    { label: "ERP", value: data.erp.label, ok: data.erp.status === "connected" },
     {
       label: "E-commerce",
       value: data.ecommerce.message ?? data.ecommerce.label,
@@ -516,18 +517,25 @@ export default function PerformancePage() {
     if (anunciosSubFilter === "erp") return kpis.attributedRevenueErp;
     return kpis.attributedRevenue;
   };
+  // Tipo=Todos (pedido do time, 19/11/2026): ERP + pedido nativo do e-commerce sem gêmeo no
+  // ERP, combinados -- bate com Aquisição×Retenção, que já combina as duas fontes. Tipo=ERP
+  // continua só ERP (k.netRevenue), sem mudar.
   const faturamentoValue =
     tipoFilter === "anuncios"
       ? (attributedFor(k) ?? 0)
       : tipoFilter === "ecommerce"
         ? (dk?.paidRevenue ?? dk?.revenue ?? 0)
-        : (k?.netRevenue ?? 0);
+        : tipoFilter === "todos"
+          ? (k?.combinedNetRevenue ?? 0)
+          : (k?.netRevenue ?? 0);
   const faturamentoPrevious =
     tipoFilter === "anuncios"
       ? attributedFor(pk)
       : tipoFilter === "ecommerce"
         ? (dpk?.paidRevenue ?? dpk?.revenue)
-        : pk?.netRevenue;
+        : tipoFilter === "todos"
+          ? pk?.combinedNetRevenue
+          : pk?.netRevenue;
   const financialMetrics = [
     {
       label: "Faturamento",
@@ -653,7 +661,7 @@ export default function PerformancePage() {
         <AlertCircle className="h-4 w-4" />
         <AlertTitle>Selecione uma marca</AlertTitle>
         <AlertDescription>
-          Escolha um cliente B2B com ERP configurado para abrir a Performance.
+          Escolha um cliente para abrir a Performance.
         </AlertDescription>
       </Alert>
     );
@@ -730,11 +738,15 @@ export default function PerformancePage() {
       {k?.roiStatus !== "available" && !isLoading && (
         <Alert>
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>ROI aguardando cobertura de custo</AlertTitle>
+          <AlertTitle>
+            {data?.sources.erp.status === "not_configured" ? "ROI indisponível" : "ROI aguardando cobertura de custo"}
+          </AlertTitle>
           <AlertDescription>
-            O ROAS e o MER estão válidos. O ROI final será exibido quando ao
-            menos 95% das peças vendidas tiverem custo no ERP; cobertura atual:{" "}
-            {formatPercentage(k?.costCoveragePct ?? 0)}.
+            {data?.sources.erp.status === "not_configured"
+              ? "O ROAS e o MER estão válidos. O ROI final e o lucro bruto dependem do custo da mercadoria, hoje só disponível pelo ERP, que este cliente não tem configurado."
+              : <>O ROAS e o MER estão válidos. O ROI final será exibido quando ao
+              menos 95% das peças vendidas tiverem custo no ERP; cobertura atual:{" "}
+              {formatPercentage(k?.costCoveragePct ?? 0)}.</>}
           </AlertDescription>
         </Alert>
       )}

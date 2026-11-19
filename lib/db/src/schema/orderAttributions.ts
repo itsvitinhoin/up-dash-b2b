@@ -23,7 +23,10 @@ export const orderAttributionsTable = pgTable(
     clientId: text("client_id")
       .notNull()
       .references(() => clientsTable.id, { onDelete: "cascade" }),
-    channel: text("channel", { enum: ["erp", "site"] }).notNull(),
+    // "vesti" acrescentado 19/11/2026 -- pedido nativo da Vesti sem gêmeo no ERP
+    // (equivalente Vesti da Fonte 2 "site" que a UpZero já tinha). Coluna text sem
+    // CHECK no banco (Drizzle só usa o enum pra tipo TS) -- não precisa de migration.
+    channel: text("channel", { enum: ["erp", "site", "vesti"] }).notNull(),
     orderId: text("order_id").notNull(),
     customerId: text("customer_id").references(() => customersTable.id, { onDelete: "set null" }),
     attributionState: text("attribution_state", {

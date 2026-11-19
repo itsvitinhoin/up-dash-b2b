@@ -174,7 +174,11 @@ function toDate(value: unknown): Date {
   return new Date(String(value));
 }
 
-type PositiveEvent = {
+// Exportado 19/11/2026 pra performanceAnalytics.ts/erp-attribution.ts reaproveitarem
+// (Faturamento/coorte de Anúncios precisavam do mesmo "ERP + nativo do e-commerce,
+// sem duplicar" que esse arquivo já resolve aqui -- ver dedupeSameDaySameValue/
+// dedupeSameDaySumAcrossErpVesti abaixo).
+export type PositiveEvent = {
   channel: "erp" | "site" | "vesti";
   orderId: string;
   requestedAt: Date;
@@ -189,7 +193,7 @@ type PositiveEvent = {
 // mesmo cliente + mesmo dia + mesmo valor bruto = mesma venda, mantém só a
 // primeira ocorrência (ERP entra antes do site na lista, então "primeira"
 // == ERP quando colidem).
-function dedupeSameDaySameValue(events: PositiveEvent[]): PositiveEvent[] {
+export function dedupeSameDaySameValue(events: PositiveEvent[]): PositiveEvent[] {
   const seen = new Set<string>();
   return events.filter((e) => {
     const key = `${e.requestedAt.toISOString().slice(0, 10)}:${e.grossValue.toFixed(2)}`;
@@ -213,7 +217,7 @@ function dedupeSameDaySameValue(events: PositiveEvent[]): PositiveEvent[] {
 // combinado (Vogabox), roda sempre, sem custo real nos outros casos.
 // ERP fica (mais granular, e já é quem "ganha" empate na dedup por
 // pedido acima); Vesti do dia inteiro é descartado quando a soma bate.
-function dedupeSameDaySumAcrossErpVesti(events: PositiveEvent[]): PositiveEvent[] {
+export function dedupeSameDaySumAcrossErpVesti(events: PositiveEvent[]): PositiveEvent[] {
   const byDay = new Map<string, PositiveEvent[]>();
   for (const e of events) {
     const day = e.requestedAt.toISOString().slice(0, 10);

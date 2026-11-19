@@ -14,7 +14,7 @@ import {
   fetchErpCustomersPage,
   fetchErpProductsPage,
 } from "../services/erpAnalytics";
-import { fetchPerformanceDashboard } from "../services/performanceAnalytics";
+import { fetchPerformanceDashboard, fetchPerformanceDashboardNoErp } from "../services/performanceAnalytics";
 
 const ERP_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -294,11 +294,25 @@ function maskDocument(value: string | null): string | null {
   return `***${digits.slice(-4)}`;
 }
 
+// Achado 19/11/2026 (pedido do Marcelo: "sem erp pode usar tbm"): diferente dos outros 4
+// endpoints ERP acima (que SÓ fazem sentido com ERP), a Performance tem uma versão reduzida
+// pra client sem erpDataset (fetchPerformanceDashboardNoErp) -- por isso não usa
+// requireErpDataset (que 404a), só identifica o client e resolve o dataset se existir.
+async function resolveClientForPerformance(
+  req: Request,
+  res: Response,
+): Promise<{ clientId: string; dataset: string | null } | null> {
+  const clientId = requireClient(req, res);
+  if (!clientId) return null;
+  const dataset = await resolveErpDataset(clientId);
+  return { clientId, dataset };
+}
+
 export async function getPerformance(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const ctx = await requireErpDataset(req, res);
+  const ctx = await resolveClientForPerformance(req, res);
   if (!ctx) return;
 
   const rawQuery = req.query as Record<string, unknown>;
@@ -337,30 +351,36 @@ export async function getPerformance(
 
   const [dashboard, orders] = await Promise.all([
     cached(
-      `performance:dashboard:${ctx.clientId}:${ctx.dataset}:${dateFromOnly}:${dateToOnly}${paidOnly ? ":paid" : ""}:${filterCacheKey}`,
+      `performance:dashboard:${ctx.clientId}:${ctx.dataset ?? "no-erp"}:${dateFromOnly}:${dateToOnly}${paidOnly ? ":paid" : ""}:${filterCacheKey}`,
       ERP_CACHE_TTL_MS,
       () =>
-        fetchPerformanceDashboard(
-          ctx.clientId,
-          ctx.dataset,
-          dateFromOnly,
-          dateToOnly,
-          { paidOnly, sellerId, state, statusBucket },
-        ),
+        ctx.dataset
+          ? fetchPerformanceDashboard(
+              ctx.clientId,
+              ctx.dataset,
+              dateFromOnly,
+              dateToOnly,
+              { paidOnly, sellerId, state, statusBucket },
+            )
+          : fetchPerformanceDashboardNoErp(ctx.clientId, dateFromOnly, dateToOnly, { sellerId, state, statusBucket }),
     ),
-    cached(
-      `performance:orders:${ctx.clientId}:${ctx.dataset}:${dateFromOnly}:${dateToOnly}:${page}:${limit}`,
-      ERP_CACHE_TTL_MS,
-      () =>
-        fetchErpOrdersPage(
-          ctx.clientId,
-          ctx.dataset,
-          dateFromOnly,
-          dateToOnly,
-          page,
-          limit,
-        ),
-    ),
+    // Tabela de pedidos vem direto do ERP -- client sem erpDataset não tem essa fonte,
+    // fica com a lista vazia (o resto da tela já mostra o que dá sem ERP).
+    ctx.dataset
+      ? cached(
+          `performance:orders:${ctx.clientId}:${ctx.dataset}:${dateFromOnly}:${dateToOnly}:${page}:${limit}`,
+          ERP_CACHE_TTL_MS,
+          () =>
+            fetchErpOrdersPage(
+              ctx.clientId,
+              ctx.dataset!,
+              dateFromOnly,
+              dateToOnly,
+              page,
+              limit,
+            ),
+        )
+      : Promise.resolve({ rows: [], total: 0 }),
   ]);
 
   const rows = orders.rows.map((order) => {

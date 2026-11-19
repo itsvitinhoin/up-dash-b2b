@@ -1,9 +1,10 @@
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
-import { db, clientsTable, eventsTable, ordersTable } from "@workspace/db";
+import { and, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
+import { db, clientsTable, eventsTable, ordersTable, orderItemsTable, productsTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
 import { vestiSalesView } from "./vesti-sales-view";
 import { fetchStoredMarketingData } from "./stored-marketing";
-import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution, fetchVestiFunnelEventCounts, resolveErpSellerName } from "./erpAnalytics";
+import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution, matchUpzeroCustomersById, fetchVestiFunnelEventCounts, resolveErpSellerName, type ErpDocumentMatch, type VestiErpAttributionMatcher } from "./erpAnalytics";
+import { dedupeSameDaySameValue, dedupeSameDaySumAcrossErpVesti, type PositiveEvent } from "./recompra-analytics";
 import {
   calculatePerformanceRatios,
   normalizePerformanceChannel,
@@ -34,6 +35,7 @@ type CustomerDayRow = {
   state: string | null;
   orders: number | string;
   net_revenue: number | string;
+  gross_revenue: number | string;
   quantity: number | string;
   historical_orders: number | string | null;
   is_identified: boolean | null;
@@ -75,7 +77,7 @@ type PerformanceQualityItem = {
 export type PerformanceDashboard = {
   generatedAt: string;
   sources: {
-    erp: { status: "connected"; label: string };
+    erp: { status: "connected" | "not_configured"; label: string };
     ecommerce: {
       status: "connected" | "unavailable";
       label: string;
@@ -109,6 +111,10 @@ export type PerformanceDashboard = {
     attributedRevenueEcommerce: number;
     /** Resto de attributedRevenue: atribuído a anúncio, mas fechado só no ERP (sem contrapartida no e-commerce). */
     attributedRevenueErp: number;
+    /** Achado 19/11/2026: faturamento líquido ERP + pedido nativo do e-commerce (Vesti/UP Zero)
+     * SEM gêmeo no ERP (ex: sincronização ainda não chegou) -- feito pra Tipo=Todos bater com
+     * Aquisição×Retenção (recompra-analytics.ts), que já combina as duas fontes. */
+    combinedNetRevenue: number;
     uniqueBuyers: number;
     newBuyers: number;
     /** Faturamento líquido e pedidos do ERP dos compradores novos do período (mesma base de `newBuyers`). */
@@ -272,6 +278,182 @@ async function fetchEcommerceOrderDaysByIdentity(params: {
   return daysByIdentity;
 }
 
+// Achado 19/11/2026: investigando por que "Aquisição + Retenção" (recompra-analytics.ts,
+// que já combina ERP + pedido nativo do e-commerce) não batia com "Faturamento" de
+// Tipo=Anúncios aqui (ERP só) -- a diferença é pedido nativo (Vesti/UP Zero) que ainda não
+// tem gêmeo no ERP (ex: sincronização atrasada). Esta função acha esses pedidos "só
+// e-commerce" no recorte e resolve atribuição a anúncio neles com o MESMO critério já usado
+// pro resto desta página (UTM/carimbo de campanha via matches/matchUpzeroCustomersById pra
+// UpZero; matcher por documento da Vesti) -- NUNCA o touchpoint ao vivo que erp-attribution.ts
+// usa (critério diferente, não é essa a conta que esta página faz).
+//
+// Dedup contra o ERP: primeira versão comparava só "o ERP tem ALGUM pedido nesse dia" (binário)
+// -- jogou fora pedido Vesti nativo de verdade sempre que o cliente TINHA qualquer outro pedido
+// ERP no mesmo dia, mesmo sem relação (medido na Vogabox: Faturamento de Anúncios ficava ~33%
+// abaixo da coorte depois do resto dos ajustes desta sessão). Troquei pela MESMA dedup por
+// dia+valor que erp-attribution.ts/recompra-analytics.ts já usam (dedupeSameDaySameValue +
+// dedupeSameDaySumAcrossErpVesti) -- `erpEventsByDocument` chega de fora com um evento
+// "erp" por cliente+dia (já com o bruto/líquido do dia inteiro), comparado contra o pedido
+// nativo real. `vestiMatcher` recebido de fora é reaproveitado quando já carregado; só carrega
+// de novo (dataset inteiro, caro) se o recorte tiver pedido Vesti nativo e ainda não existir
+// um matcher pronto.
+async function fetchEcommerceOnlyRevenue(params: {
+  clientId: string;
+  // Achado 19/11/2026 (página sem ERP): null quando o client não tem dataset nativo da Vesti
+  // configurado nenhum (ex: client UpZero puro) -- a promise da Vesti abaixo só roda com dataset.
+  dataset: string | null;
+  dateFrom: string;
+  dateToExclusive: string;
+  statusBucket?: "pago" | "cancelado" | "outro";
+  matches: Map<string, ErpDocumentMatch>;
+  vestiMatcher: VestiErpAttributionMatcher | null;
+  erpEventsByDocument: Map<string, PositiveEvent[]>;
+}): Promise<{ netRevenue: number; attributedRevenue: number; orders: number }> {
+  let netRevenue = 0;
+  let attributedRevenue = 0;
+  let orders = 0;
+
+  // ERP também precisa existir no espaço de identidade "customerId da UpZero" (via matches)
+  // pra dedup correto contra pedido nativo da UpZero -- a Fonte 2 "site" usa esse espaço.
+  const erpEventsByUpzeroCustomer = new Map<string, PositiveEvent[]>();
+  for (const [document, events] of params.erpEventsByDocument) {
+    const match = params.matches.get(document);
+    if (!match) continue;
+    const list = erpEventsByUpzeroCustomer.get(match.customerId) ?? [];
+    list.push(...events);
+    erpEventsByUpzeroCustomer.set(match.customerId, list);
+  }
+
+  const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000Z`);
+  const dateToExclusiveDate = new Date(params.dateToExclusive);
+  const siteStatusCondition =
+    params.statusBucket === "cancelado"
+      ? eq(ordersTable.status, "REJECTED")
+      : params.statusBucket === "outro"
+        ? eq(ordersTable.status, "PENDING")
+        : params.statusBucket === "pago"
+          ? inArray(ordersTable.status, ["APPROVED", "SHIPPED", "DELIVERED"])
+          : ne(ordersTable.status, "REJECTED");
+
+  const upzeroPromise = db
+    .select({ id: ordersTable.id, customerId: ordersTable.customerId, createdAt: ordersTable.createdAt, amount: ordersTable.amount })
+    .from(ordersTable)
+    .where(
+      and(
+        eq(ordersTable.clientId, params.clientId),
+        gte(ordersTable.createdAt, dateFromDate),
+        lt(ordersTable.createdAt, dateToExclusiveDate),
+        siteStatusCondition,
+        gt(ordersTable.amount, 0),
+      ),
+    )
+    .then(async (rows) => {
+      const combined = new Map<string, PositiveEvent[]>();
+      for (const [customerId, events] of erpEventsByUpzeroCustomer) combined.set(customerId, [...events]);
+      for (const r of rows) {
+        const list = combined.get(r.customerId) ?? [];
+        list.push({
+          channel: "site",
+          orderId: r.id,
+          requestedAt: r.createdAt,
+          grossValue: r.amount,
+          paidValue: r.amount,
+          seller: null,
+          origem: null,
+          document: null,
+        });
+        combined.set(r.customerId, list);
+      }
+      const onlyNativeByCustomer = new Map<string, PositiveEvent[]>();
+      for (const [customerId, events] of combined) {
+        const onlyNative = dedupeSameDaySameValue(dedupeSameDaySumAcrossErpVesti(events)).filter((e) => e.channel === "site");
+        if (onlyNative.length > 0) onlyNativeByCustomer.set(customerId, onlyNative);
+      }
+      if (onlyNativeByCustomer.size === 0) return;
+      const attributionByCustomer = await matchUpzeroCustomersById(params.clientId, [...onlyNativeByCustomer.keys()]);
+      for (const [customerId, events] of onlyNativeByCustomer) {
+        const sum = events.reduce((s, e) => s + e.paidValue, 0);
+        netRevenue += sum;
+        orders += events.length;
+        if (attributionByCustomer.get(customerId)) attributedRevenue += sum;
+      }
+    })
+    .catch((err) => {
+      console.warn("[performance] pedido nativo UpZero (sem ERP) indisponível:", err instanceof Error ? err.message : err);
+    });
+
+  const vestiStatusCondition =
+    params.statusBucket === "cancelado"
+      ? "status_pedido = 'CANCELADO'"
+      : params.statusBucket === "outro"
+        ? "status_pedido IN ('WAITING', 'ANALYSING')"
+        : params.statusBucket === "pago"
+          ? "pago"
+          : "status_pedido != 'CANCELADO'";
+  const vestiDataset = params.dataset;
+  const vestiPromise = vestiDataset
+    ? bigquery
+        .query({
+          query: `
+            SELECT
+              pedido_id,
+              ANY_VALUE(documento_cliente) AS document,
+              ANY_VALUE(data_ref) AS data_ref,
+              SUM(valor_solicitado) AS gross_value,
+              SUM(valor_reservado) AS net_value
+            FROM ${vestiSalesView(vestiDataset)}
+            WHERE data_ref >= @dateFrom AND data_ref < @dateToExclusive
+              AND ${vestiStatusCondition}
+              AND documento_cliente IS NOT NULL
+            GROUP BY pedido_id
+            HAVING gross_value > 0
+          `,
+          params: { dateFrom: params.dateFrom, dateToExclusive: params.dateToExclusive.slice(0, 10) },
+        })
+        .then(async ([rows]) => {
+          const combined = new Map<string, PositiveEvent[]>();
+          for (const [document, events] of params.erpEventsByDocument) combined.set(document, [...events]);
+          for (const r of rows as Array<Record<string, unknown>>) {
+            const document = String(r.document ?? "").replace(/\D/g, "");
+            if (!document) continue;
+            const list = combined.get(document) ?? [];
+            list.push({
+              channel: "vesti",
+              orderId: String(r.pedido_id),
+              requestedAt: new Date(dateOnly(r.data_ref)),
+              grossValue: Number(r.gross_value) || 0,
+              paidValue: Number(r.net_value) || 0,
+              seller: null,
+              origem: null,
+              document,
+            });
+            combined.set(document, list);
+          }
+          const onlyNativeByDocument = new Map<string, PositiveEvent[]>();
+          for (const [document, events] of combined) {
+            const onlyNative = dedupeSameDaySameValue(dedupeSameDaySumAcrossErpVesti(events)).filter((e) => e.channel === "vesti");
+            if (onlyNative.length > 0) onlyNativeByDocument.set(document, onlyNative);
+          }
+          if (onlyNativeByDocument.size === 0) return;
+          const vestiMatcher = params.vestiMatcher ?? (await matchErpDocumentsWithVestiAttribution(vestiDataset));
+          for (const [document, events] of onlyNativeByDocument) {
+            for (const e of events) {
+              netRevenue += e.paidValue;
+              orders += 1;
+              const match = vestiMatcher.match(document, e.requestedAt.toISOString());
+              if (match?.attribution) attributedRevenue += e.paidValue;
+            }
+          }
+        })
+        .catch((err) => {
+          console.warn("[performance] pedido nativo Vesti (sem ERP) indisponível:", err instanceof Error ? err.message : err);
+        })
+    : Promise.resolve();
+
+  await Promise.all([upzeroPromise, vestiPromise]);
+  return { netRevenue, attributedRevenue, orders };
+}
+
 export async function fetchPerformanceDashboard(
   clientId: string,
   dataset: string,
@@ -313,6 +495,7 @@ export async function fetchPerformanceDashboard(
         ANY_VALUE(status) AS status,
         ANY_VALUE(seller) AS seller,
         ANY_VALUE(valor_liquido) AS net_amount,
+        ANY_VALUE(valor_total) AS gross_amount,
         SUM(COALESCE(item_quantidade, 0)) AS quantity,
         ANY_VALUE(DATE(data_criado)) AS date
       FROM ${pedidos}
@@ -351,6 +534,7 @@ export async function fetchPerformanceDashboard(
       d.state,
       COUNT(*) AS orders,
       SUM(o.net_amount) AS net_revenue,
+      SUM(o.gross_amount) AS gross_revenue,
       SUM(o.quantity) AS quantity,
       ANY_VALUE(h.historical_orders) AS historical_orders,
       LOGICAL_OR(d.document IS NOT NULL) AS is_identified
@@ -505,6 +689,40 @@ export async function fetchPerformanceDashboard(
     dateToExclusive: ecommercePerformanceDateToExclusive.toISOString(),
     upzeroCustomerIds: [...new Set([...matches.values()].map((m) => m.customerId))],
     vestiDocuments: vestiMatcher ? [...new Set(documents.filter((d): d is string => Boolean(d)).map((d) => String(d).replace(/\D/g, "")).filter(Boolean))] : [],
+  });
+
+  // Achado 19/11/2026: pedido nativo do e-commerce (Vesti/UP Zero) SEM gêmeo no ERP --
+  // some do universo acima (que só olha pedidos_erp). Fecha a lacuna que fazia Faturamento/
+  // atribuição de Tipo=Anúncios/Todos ficar atrás de Aquisição×Retenção (que já combina as
+  // duas fontes). Um evento "erp" por cliente+dia (dia já vem agregado em customerDays) --
+  // suficiente pra dedupeSameDaySumAcrossErpVesti, que soma por dia de qualquer forma. Ver
+  // fetchEcommerceOnlyRevenue.
+  const erpEventsByDocument = new Map<string, PositiveEvent[]>();
+  for (const row of customerDays) {
+    const document = row.document ?? row.customer_id;
+    if (!document) continue;
+    const list = erpEventsByDocument.get(document) ?? [];
+    list.push({
+      channel: "erp",
+      orderId: `erp-day:${document}:${dateOnly(row.date)}`,
+      requestedAt: new Date(dateOnly(row.date)),
+      grossValue: Number(row.gross_revenue) || 0,
+      paidValue: Number(row.net_revenue) || 0,
+      seller: null,
+      origem: null,
+      document,
+    });
+    erpEventsByDocument.set(document, list);
+  }
+  const ecommerceOnly = await fetchEcommerceOnlyRevenue({
+    clientId,
+    dataset,
+    dateFrom,
+    dateToExclusive: ecommercePerformanceDateToExclusive.toISOString(),
+    statusBucket: options.statusBucket,
+    matches,
+    vestiMatcher,
+    erpEventsByDocument,
   });
 
   let mediaStatus: PerformanceDashboard["sources"]["media"]["status"] =
@@ -680,6 +898,12 @@ export async function fetchPerformanceDashboard(
       campaignRevenueMap.set(campaignKey, campaign);
     }
   }
+
+  // Pedido nativo (Vesti/UP Zero) sem gêmeo no ERP: por definição tem contrapartida real no
+  // e-commerce (ele mesmo), então entra sempre no balde "Ecommerce" do sub-filtro de Anúncios.
+  attributedRevenue += ecommerceOnly.attributedRevenue;
+  attributedRevenueEcommerce += ecommerceOnly.attributedRevenue;
+  const combinedNetRevenue = erp.kpis.netRevenue + ecommerceOnly.netRevenue;
 
   if (mediaStatus === "connected") {
     const meta = channelMap.get("Meta") ?? {
@@ -933,6 +1157,7 @@ export async function fetchPerformanceDashboard(
       attributedRevenue,
       attributedRevenueEcommerce,
       attributedRevenueErp,
+      combinedNetRevenue,
       unattributedRevenue: Math.max(0, erp.kpis.netRevenue - attributedRevenue),
       mediaSpend: mediaStatus === "connected" ? mediaSpend : null,
       roas: ratios.roas,
@@ -1018,5 +1243,270 @@ export async function fetchPerformanceDashboard(
     quality,
     campaigns,
     buyerTypeByDocument,
+  };
+}
+
+// Achado 19/11/2026: custo de produto (pra COGS/ROI) É possível sem ERP pro lado UpZero --
+// existe products.cost no Postgres -- mas NUNCA pra Vesti (schema confirmado sem nenhum campo
+// de custo). Na prática está preenchido só pra uma minoria dos clientes reais (medido:
+// Obzee 53/74, UP Adama 56/248, Aurora Atelier 24/24 -- vs. zero em vários outros); por isso
+// usa a MESMA régua de cobertura (costCoveragePct) que o lado ERP já usa, nunca mostra ROI
+// fingindo 100% quando a cobertura é baixa.
+async function fetchUpzeroNativeCogs(params: {
+  clientId: string;
+  dateFrom: string;
+  dateToExclusive: string;
+  statusBucket?: "pago" | "cancelado" | "outro";
+}): Promise<{ cogs: number; costedQuantity: number; totalQuantity: number }> {
+  const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000Z`);
+  const dateToExclusiveDate = new Date(params.dateToExclusive);
+  // Mesmo mapeamento de status já usado pro pedido nativo em fetchEcommerceOnlyRevenue --
+  // sem isso, COGS somava pedido fora do Status filtrado e dava lucro bruto sem sentido
+  // (ex: custo > 0 com faturamento 0 quando "Pago" não tinha pedido, mas "não rejeitado" tinha).
+  const statusCondition =
+    params.statusBucket === "cancelado"
+      ? eq(ordersTable.status, "REJECTED")
+      : params.statusBucket === "outro"
+        ? eq(ordersTable.status, "PENDING")
+        : params.statusBucket === "pago"
+          ? inArray(ordersTable.status, ["APPROVED", "SHIPPED", "DELIVERED"])
+          : ne(ordersTable.status, "REJECTED");
+  const rows = await db
+    .select({ quantity: orderItemsTable.quantity, cost: productsTable.cost })
+    .from(orderItemsTable)
+    .innerJoin(ordersTable, eq(ordersTable.id, orderItemsTable.orderId))
+    .innerJoin(productsTable, eq(productsTable.id, orderItemsTable.productId))
+    .where(
+      and(
+        eq(ordersTable.clientId, params.clientId),
+        gte(ordersTable.createdAt, dateFromDate),
+        lt(ordersTable.createdAt, dateToExclusiveDate),
+        statusCondition,
+      ),
+    )
+    .catch((err) => {
+      console.warn("[performance] (sem ERP) custo de produto UpZero indisponível:", err instanceof Error ? err.message : err);
+      return [] as Array<{ quantity: number; cost: number | null }>;
+    });
+
+  let cogs = 0;
+  let costedQuantity = 0;
+  let totalQuantity = 0;
+  for (const r of rows) {
+    totalQuantity += r.quantity;
+    if (r.cost && r.cost > 0) {
+      cogs += r.cost * r.quantity;
+      costedQuantity += r.quantity;
+    }
+  }
+  return { cogs, costedQuantity, totalQuantity };
+}
+
+// Achado 19/11/2026 (pedido do Marcelo: "sem erp pode usar tbm"): client sem erpDataset
+// batia 404 direto nesta página (requireErpDataset, erpController.ts). Esta função é uma
+// versão REDUZIDA do dashboard acima pra esse caso -- só o que dá pra saber sem ERP:
+// faturamento/atribuição do pedido nativo do e-commerce (reaproveita fetchEcommerceOnlyRevenue
+// de cima, sem base ERP pra comparar -- todo pedido nativo conta, sem dedup) + mídia paga +
+// COGS/ROI via products.cost pra client UpZero (fetchUpzeroNativeCogs acima; nunca pra Vesti).
+// Breakdown por cor/tamanho/estado e a tabela de pedidos do ERP não têm de onde vir pra esse
+// client -- ficam explicitamente "indisponível", não um valor inventado.
+export async function fetchPerformanceDashboardNoErp(
+  clientId: string,
+  dateFrom: string,
+  dateTo: string,
+  options: { sellerId?: string; state?: string; statusBucket?: "pago" | "cancelado" | "outro" } = {},
+): Promise<PerformanceDashboard> {
+  const [client] = await db
+    .select({
+      commercePlatform: clientsTable.commercePlatform,
+      bigqueryDataset: clientsTable.bigqueryDataset,
+      metaAdAccountId: clientsTable.metaAdAccountId,
+    })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, clientId));
+
+  // Dataset nativo da Vesti é uma coluna SEPARADA de erpDataset (client pode ter um sem o
+  // outro -- ex: Milalai tem bigquery_dataset mas erp_dataset vazio).
+  const vestiDataset = client?.commercePlatform === "VESTI" ? client.bigqueryDataset : null;
+
+  const dateToExclusiveDate = new Date(`${dateTo}T00:00:00.000Z`);
+  dateToExclusiveDate.setUTCDate(dateToExclusiveDate.getUTCDate() + 1);
+
+  const ecommerceOnly = await fetchEcommerceOnlyRevenue({
+    clientId,
+    dataset: vestiDataset,
+    dateFrom,
+    dateToExclusive: dateToExclusiveDate.toISOString(),
+    statusBucket: options.statusBucket,
+    matches: new Map(),
+    vestiMatcher: null,
+    erpEventsByDocument: new Map(),
+  });
+
+  let eventCounts = {
+    visits: 0,
+    registrations: 0,
+    approvals: 0,
+    productViews: 0,
+    addToCart: 0,
+    checkouts: 0,
+    purchases: 0,
+  };
+  if (vestiDataset) {
+    const vestiFunnel = await fetchVestiFunnelEventCounts(vestiDataset, dateFrom, dateTo);
+    eventCounts = { ...eventCounts, ...vestiFunnel };
+  } else {
+    const eventSummaryResult = await db
+      .execute<EventSummaryRow>(
+        sql`
+        SELECT
+          COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'VISIT')::int AS visits,
+          COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'REGISTRATION')::int AS registrations,
+          COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'APPROVED_REGISTRATION')::int AS approvals,
+          COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'PRODUCT_VIEW')::int AS product_views,
+          COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'ADD_TO_CART')::int AS add_to_cart,
+          COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'CHECKOUT_STARTED')::int AS checkouts,
+          COUNT(*) FILTER (WHERE ${eventsTable.eventType} = 'PURCHASE')::int AS purchases
+        FROM ${eventsTable}
+        WHERE ${eventsTable.clientId} = ${clientId}
+          AND DATE(timezone('America/Sao_Paulo', ${eventsTable.createdAt}))
+            BETWEEN ${dateFrom}::date AND ${dateTo}::date
+      `,
+      )
+      .catch((error) => {
+        console.warn("[performance] (sem ERP) eventos UP Zero indisponíveis:", error);
+        return { rows: [] as EventSummaryRow[] };
+      });
+    const row = eventSummaryResult.rows[0];
+    if (row) {
+      eventCounts = {
+        visits: Number(row.visits) || 0,
+        registrations: Number(row.registrations) || 0,
+        approvals: Number(row.approvals) || 0,
+        productViews: Number(row.product_views) || 0,
+        addToCart: Number(row.add_to_cart) || 0,
+        checkouts: Number(row.checkouts) || 0,
+        purchases: Number(row.purchases) || 0,
+      };
+    }
+  }
+
+  let mediaStatus: PerformanceDashboard["sources"]["media"]["status"] = "not_configured";
+  let mediaMessage: string | null = "Conta de anúncios Meta não configurada para este cliente.";
+  let mediaSpend = 0;
+  let mediaSummary = { impressions: 0, clicks: 0, leads: 0, purchases: 0, cpl: null as number | null };
+  if (client?.metaAdAccountId) {
+    try {
+      const meta = await fetchStoredMarketingData({ adAccountId: client.metaAdAccountId, since: dateFrom, until: dateTo });
+      mediaSpend = meta.summary.spend;
+      mediaSummary = meta.summary;
+      mediaStatus = "connected";
+      mediaMessage = null;
+    } catch (error) {
+      mediaStatus = "unavailable";
+      mediaMessage = "A Meta Ads não respondeu nesta conciliação. Tente atualizar novamente.";
+      console.warn("[performance] (sem ERP) Meta insights unavailable:", error);
+    }
+  }
+
+  const netRevenue = ecommerceOnly.netRevenue;
+  const attributedRevenue = ecommerceOnly.attributedRevenue;
+  const effectiveMediaSpend = mediaStatus === "connected" ? mediaSpend : 0;
+
+  // COGS/ROI: só tenta pro lado UpZero (products.cost existe, cobertura variável por cliente);
+  // Vesti nunca tem custo de produto em lugar nenhum, fica sempre "unavailable" (cogs=0,
+  // costCoveragePct=0 já cobre isso via calculatePerformanceRatios).
+  const upzeroCogs = vestiDataset
+    ? { cogs: 0, costedQuantity: 0, totalQuantity: 0 }
+    : await fetchUpzeroNativeCogs({ clientId, dateFrom, dateToExclusive: dateToExclusiveDate.toISOString(), statusBucket: options.statusBucket });
+  const costCoveragePct = percentage(upzeroCogs.costedQuantity, upzeroCogs.totalQuantity);
+  const ratios = calculatePerformanceRatios({
+    netRevenue,
+    attributedRevenue,
+    mediaSpend: effectiveMediaSpend,
+    cogs: upzeroCogs.cogs,
+    returnAmount: 0,
+    costCoveragePct,
+  });
+
+  const funnelValues: Array<{ key: string; label: string; value: number; source: PerformanceStage["source"] }> = [
+    { key: "clicks", label: "Cliques pagos", value: mediaSummary.clicks, source: "Meta Ads" },
+    { key: "registrations", label: "Cadastros", value: eventCounts.registrations, source: "UP Zero" },
+    { key: "approvals", label: "Cadastros aprovados", value: eventCounts.approvals, source: "UP Zero" },
+    { key: "add_to_cart", label: "Adições ao carrinho", value: eventCounts.addToCart, source: "UP Zero" },
+    { key: "checkout", label: "Checkouts iniciados", value: eventCounts.checkouts, source: "UP Zero" },
+    { key: "ecommerce_orders", label: "Pedidos no e-commerce", value: ecommerceOnly.orders, source: "UP Zero" },
+  ];
+  const funnel: PerformanceStage[] = funnelValues.map((stage, index) => ({
+    ...stage,
+    previousRate: index === 0 ? null : percentage(stage.value, funnelValues[index - 1]?.value ?? 0),
+    overallRate: index === 0 ? null : percentage(stage.value, funnelValues[0]?.value ?? 0),
+  }));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    sources: {
+      erp: { status: "not_configured", label: "ERP não configurado para este cliente" },
+      ecommerce: { status: "connected", label: "Vesti/UP Zero · pedido nativo", message: null },
+      media: { status: mediaStatus, label: "Meta Ads", message: mediaMessage },
+    },
+    kpis: {
+      grossRevenue: netRevenue,
+      netRevenue,
+      returnAmount: 0,
+      attributedRevenue,
+      attributedRevenueEcommerce: attributedRevenue,
+      attributedRevenueErp: 0,
+      combinedNetRevenue: netRevenue,
+      unattributedRevenue: Math.max(0, netRevenue - attributedRevenue),
+      mediaSpend: mediaStatus === "connected" ? mediaSpend : null,
+      roas: ratios.roas,
+      mer: ratios.mer,
+      cogs: upzeroCogs.cogs,
+      grossProfit: ratios.grossProfit,
+      roi: ratios.roi,
+      roiStatus: ratios.roiStatus,
+      costCoveragePct,
+      orders: ecommerceOnly.orders,
+      attributedOrders: 0,
+      attributionCoveragePct: 0,
+      uniqueBuyers: 0,
+      newBuyers: 0,
+      newBuyersRevenue: 0,
+      newBuyersOrders: 0,
+      returningBuyersRevenue: 0,
+      returningBuyersOrders: 0,
+      returningBuyers: 0,
+      retentionPct: 0,
+      totalQuantity: upzeroCogs.totalQuantity,
+      returnedQuantity: 0,
+      discountAmount: 0,
+      cancelledOrders: 0,
+      cancelledAmount: 0,
+      averageTicket: ecommerceOnly.orders > 0 ? netRevenue / ecommerceOnly.orders : 0,
+      avgItemsPerOrder: 0,
+      returnRatePct: 0,
+      discountRatePct: 0,
+      grossMarginPct: percentage(ratios.grossProfit, Math.max(0, netRevenue)),
+      attributedBuyers: 0,
+      newAttributedBuyers: 0,
+      revenueAttributionCoveragePct: percentage(attributedRevenue, netRevenue),
+      impressions: mediaSummary.impressions,
+      clicks: mediaSummary.clicks,
+      leads: mediaSummary.leads,
+      metaPurchases: mediaSummary.purchases,
+      ctr: percentage(mediaSummary.clicks, mediaSummary.impressions),
+      cpc: mediaSummary.clicks > 0 ? mediaSpend / mediaSummary.clicks : null,
+      cpl: mediaSummary.cpl,
+      cac: null,
+    },
+    reconciliation: [],
+    daily: [],
+    channels: [],
+    breakdowns: { colors: [], sizes: [], states: [] },
+    funnel,
+    quality: [],
+    campaigns: [],
+    buyerTypeByDocument: {},
   };
 }

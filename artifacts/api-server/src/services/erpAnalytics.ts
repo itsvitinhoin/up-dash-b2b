@@ -142,6 +142,56 @@ export async function matchErpDocumentsWithUpzero(
   return byDocument;
 }
 
+// Criado 19/11/2026 -- mesma atribuição de matchErpDocumentsWithUpzero (UTM do
+// cadastro ou carimbo de campanha), mas buscada direto pelo customerId da UpZero em
+// vez de por documento/hash. Precisa pra pedido NATIVO (Postgres `orders`) sem
+// nenhum espelho no ERP: ali já se tem o customerId de verdade, sem documento pra
+// cruzar -- usado por performanceAnalytics.ts pra completar o Faturamento/ROAS de
+// Tipo=Anúncios com venda só-e-commerce (sem duplicar o que o ERP já conta).
+export async function matchUpzeroCustomersById(
+  clientId: string,
+  customerIds: string[],
+): Promise<Map<string, ErpAttribution | null>> {
+  const result = new Map<string, ErpAttribution | null>();
+  const ids = [...new Set(customerIds)];
+  if (ids.length === 0) return result;
+
+  const rows = await db
+    .select({
+      customerId: customersTable.id,
+      utmSource: customersTable.utmSource,
+      utmMedium: customersTable.utmMedium,
+      utmCampaign: customersTable.utmCampaign,
+      stampId: campaignAttributionStampsTable.id,
+      stampSource: campaignAttributionStampsTable.source,
+      stampMedium: campaignAttributionStampsTable.medium,
+      stampCampaign: campaignAttributionStampsTable.campaign,
+      stampEvidenceType: campaignAttributionStampsTable.evidenceType,
+      stampEvidenceAt: campaignAttributionStampsTable.evidenceAt,
+    })
+    .from(customersTable)
+    .leftJoin(
+      campaignAttributionStampsTable,
+      and(
+        eq(campaignAttributionStampsTable.clientId, clientId),
+        eq(campaignAttributionStampsTable.customerId, customersTable.id),
+      ),
+    )
+    .where(and(eq(customersTable.clientId, clientId), inArray(customersTable.id, ids)));
+
+  for (const r of rows) {
+    const attribution: ErpAttribution = {
+      utmSource: r.stampSource ?? r.utmSource,
+      utmMedium: r.stampMedium ?? r.utmMedium,
+      utmCampaign: r.stampCampaign ?? r.utmCampaign,
+      evidenceType: r.stampEvidenceType ?? "customer_utm",
+      evidenceAt: r.stampEvidenceAt ?? null,
+    };
+    result.set(r.customerId, r.stampId || hasPaidErpCampaignSignal(attribution) ? attribution : null);
+  }
+  return result;
+}
+
 export type VestiErpAttributionMatcher = {
   match(document: string | null | undefined, orderDate: Date | string): ErpDocumentMatch | null;
 };
