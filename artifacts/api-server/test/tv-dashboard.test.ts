@@ -28,7 +28,7 @@ const brand = (
 const snapshot = (cycle: string, brands: TvBrand[]): TvSnapshot => ({
   cycle,
   brands,
-  dateFrom: "2026-08-21",
+  dateFrom: "2026-08-01",
   dateTo: "2026-11-18",
   updatedAt: cycle,
   total: summarizeTv(brands),
@@ -36,16 +36,24 @@ const snapshot = (cycle: string, brands: TvBrand[]): TvSnapshot => ({
   b2c: [],
 });
 
-describe("90-day portfolio monitor", () => {
-  it("uses exactly 90 inclusive dates in Brasília around midnight and leap years", () => {
+describe("cumulative portfolio monitor", () => {
+  it("keeps August 1 fixed while the end date advances at midnight in Brasília", () => {
     const before = tvWindow(new Date("2026-11-19T02:59:59Z"));
     expect(before.dateTo).toBe("2026-11-18");
-    expect(before.dateFrom).toBe("2026-08-21");
-    expect(before.from.toISOString()).toBe("2026-08-21T03:00:00.000Z");
+    expect(before.dateFrom).toBe("2026-08-01");
+    expect(before.from.toISOString()).toBe("2026-08-01T03:00:00.000Z");
     expect(before.to.toISOString()).toBe("2026-11-19T02:59:59.999Z");
-    expect(tvWindow(new Date("2024-03-01T12:00:00Z")).dateFrom).toBe(
-      "2023-12-03",
-    );
+    const after = tvWindow(new Date("2026-11-19T03:00:00Z"));
+    expect(after.dateFrom).toBe(before.dateFrom);
+    expect(after.dateTo).toBe("2026-11-19");
+    expect(after.to.toISOString()).toBe("2026-11-20T02:59:59.999Z");
+  });
+  it("does not reset the cumulative start in a later year or August", () => {
+    for (const dateTo of ["2027-01-01", "2027-08-01", "2028-02-29"]) {
+      const range = tvWindow(new Date(`${dateTo}T12:00:00Z`));
+      expect(range.dateFrom).toBe("2026-08-01");
+      expect(range.dateTo).toBe(dateTo);
+    }
   });
   it("rolls the cycle only at the two existing scheduled extraction times", () => {
     expect(tvCycle(new Date("2026-11-18T02:59:59Z"))).toBe(

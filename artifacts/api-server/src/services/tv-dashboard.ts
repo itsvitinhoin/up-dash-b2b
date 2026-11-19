@@ -198,7 +198,7 @@ async function buildSnapshot(cycle: string, now: Date): Promise<TvSnapshot> {
             } catch {
               investment = null;
               warning =
-                "Investimento de 90 dias indisponível na coleta. Consulte o histórico de anúncios.";
+                "Investimento do período acumulado indisponível na coleta. Consulte o histórico de anúncios.";
             }
           } else if (local.some((c) => c.platform === "META" && c.spend > 0)) {
             investment = null;
@@ -222,7 +222,7 @@ async function buildSnapshot(cycle: string, now: Date): Promise<TvSnapshot> {
             ) {
               investment = null;
               warning =
-                "Há mídia sem investimento exato disponível para os 90 dias.";
+                "Há mídia sem investimento exato disponível para o período acumulado.";
             } else if (investment !== null) investment += creative.spend;
           }
           return {

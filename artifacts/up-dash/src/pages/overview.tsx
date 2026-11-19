@@ -149,10 +149,10 @@ function Metrics({
             key === "mer"
               ? "Faturamento das marcas selecionadas dividido pelo investimento disponível. O cálculo é parcial quando falta investimento de alguma marca. Sem investimento positivo disponível, o MER é indisponível."
               : key === "investment"
-                ? "Soma do investimento disponível para os 90 dias. Valores ausentes não são tratados como zero."
-                : "B2B solicitado e B2C pago nos últimos 90 dias, em horário de Brasília."
+                ? "Soma do investimento disponível desde 01/08/2026 até a data final do painel. Valores ausentes não são tratados como zero."
+                : "B2B solicitado e B2C pago desde 01/08/2026 até a data final do painel, em horário de Brasília."
           }
-          comparisonUnavailable="Este painel não consulta a janela anterior de 90 dias."
+          comparisonUnavailable="Este painel mostra o acumulado desde 01/08/2026 e não consulta um período anterior."
           footer={
             <div className="portfolio-metric-details space-y-2 text-xs">
               {missing > 0 && (key === "investment" || key === "mer") && (
@@ -180,7 +180,7 @@ function Metrics({
               )}
               <div className="portfolio-metric-period flex justify-between gap-2">
                 <span className="text-muted-foreground">Período</span>
-                <span>Últimos 90 dias</span>
+                <span>Desde 01/08/2026</span>
               </div>
             </div>
           }
@@ -203,7 +203,7 @@ function RevenueChart({ data }: { data: TvSnapshot }) {
             Evolução do faturamento · {currency}
           </h2>
           <p className="mt-1 mb-5 text-xs text-muted-foreground">
-            Valores diários · B2B solicitado e B2C pago · 90 dias
+            Valores diários · B2B solicitado e B2C pago · Desde 01/08/2026
           </p>
           <ChartContainer
             config={{
@@ -528,7 +528,7 @@ export default function OverviewPage() {
                 onChange={setSelectedBrands}
               />
             )}
-            <Badge variant="outline">Últimos 90 dias</Badge>
+            <Badge variant="outline">Acumulado desde 01/08/2026</Badge>
             <span className="text-sm text-muted-foreground">
               {data
                 ? `${dateLabel(data.dateFrom)} a ${dateLabel(data.dateTo)}`
@@ -625,7 +625,7 @@ export default function OverviewPage() {
               <AlertDescription>
                 {tvMode.enabled
                   ? "Investimento e MER parciais: calculados com o investimento disponível das marcas selecionadas."
-                  : "Há marcas com investimento indisponível para os 90 dias. O investimento mostra a soma disponível. O MER divide o faturamento das marcas selecionadas por esse investimento disponível. Ambos são identificados como parciais quando faltam dados."}
+                  : "Há marcas com investimento indisponível para o período acumulado. O investimento mostra a soma disponível. O MER divide o faturamento das marcas selecionadas por esse investimento disponível. Ambos são identificados como parciais quando faltam dados."}
               </AlertDescription>
             </Alert>
           )}

@@ -1,5 +1,7 @@
 import type { TvBrand, TvTotals } from "@workspace/api-zod";
 
+const TV_START_DATE = "2026-08-01";
+
 export function tvWindow(now: Date) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Sao_Paulo",
@@ -9,9 +11,7 @@ export function tvWindow(now: Date) {
   }).formatToParts(now);
   const get = (key: string) => parts.find((p) => p.type === key)!.value;
   const dateTo = `${get("year")}-${get("month")}-${get("day")}`;
-  const start = new Date(`${dateTo}T12:00:00Z`);
-  start.setUTCDate(start.getUTCDate() - 89);
-  const dateFrom = start.toISOString().slice(0, 10);
+  const dateFrom = TV_START_DATE;
   return {
     dateFrom,
     dateTo,
