@@ -381,10 +381,18 @@ async function fetchEcommerceOnlyRevenue(params: {
       if (onlyNativeByCustomer.size === 0) return;
       const attributionByCustomer = await matchUpzeroCustomersById(params.clientId, [...onlyNativeByCustomer.keys()]);
       for (const [customerId, events] of onlyNativeByCustomer) {
-        const sum = events.reduce((s, e) => s + e.paidValue, 0);
-        netRevenue += sum;
-        orders += events.length;
-        if (attributionByCustomer.get(customerId)) attributedRevenue += sum;
+        const attribution = attributionByCustomer.get(customerId);
+        for (const e of events) {
+          netRevenue += e.paidValue;
+          orders += 1;
+          // Mesma checagem de data da etapa 3 (ver loop principal de fetchPerformanceDashboard):
+          // evidenceAt=null (UTM do próprio cadastro, etapas 1/2) sempre conta; com data, só
+          // conta se o pedido foi no dia do toque pago ou depois.
+          const evidenceAt = attribution?.evidenceAt;
+          if (attribution && (!evidenceAt || evidenceAt.toISOString().slice(0, 10) <= e.requestedAt.toISOString().slice(0, 10))) {
+            attributedRevenue += e.paidValue;
+          }
+        }
       }
     })
     .catch((err) => {
@@ -872,13 +880,27 @@ export async function fetchPerformanceDashboard(
       ecommerceMatchedOrders += orders;
     }
     if (!match?.attribution) continue;
-
-    attributedOrders += orders;
-    attributedRevenue += revenue;
-    // Sub-filtro Tipo=Anúncios: a mesma identidade teve pedido no e-commerce nesse dia?
+    // Sub-filtro Tipo=Anúncios: a mesma identidade teve pedido no e-commerce nesse dia? Movido
+    // pra ANTES da decisão de atribuir (abaixo) -- a etapa 3 depende disso pra decidir se conta.
     // UpZero checa pelo customerId resolvido; Vesti (sem customerId), pelo documento.
     const ecommerceIdentity = upzeroMatch ? upzeroMatch.customerId : document ? String(document).replace(/\D/g, "") : "";
     const hasEcommerceOrderSameDay = ecommerceIdentity ? (ecommerceOrderDaysByIdentity.get(ecommerceIdentity)?.has(day) ?? false) : false;
+    // Achado 19/11/2026: matches (UpZero) é um veredito por cliente, sem olhar pedido a pedido.
+    // Etapa 1/2 do PDF (sinal no próprio cadastro, ou toque ANTES/no cadastro = PAID_ORIGIN):
+    // vale pra qualquer canal, inclusive pedido só-no-ERP. Etapa 3 (toque DEPOIS do cadastro,
+    // cliente orgânico = PAID_ASSISTED): o PDF só libera pedido COM contrapartida no
+    // e-commerce -- nunca pedido só-no-ERP (não dá pra ligar uma compra de loja física a um
+    // clique de anúncio sem o rastro do e-commerce). Só o lado UpZero precisa disso -- o
+    // matcher da Vesti já recebe `day` acima e decide a data por conta própria.
+    if (upzeroMatch?.attribution) {
+      const evidenceAt = upzeroMatch.attribution.evidenceAt;
+      if (evidenceAt && evidenceAt.toISOString().slice(0, 10) > day) continue; // toque depois desse pedido, nunca conta
+      const isPaidAssisted = !!evidenceAt && !!upzeroMatch.registeredAt && evidenceAt.getTime() > upzeroMatch.registeredAt.getTime();
+      if (isPaidAssisted && !hasEcommerceOrderSameDay) continue; // etapa 3 exige contrapartida no e-commerce
+    }
+
+    attributedOrders += orders;
+    attributedRevenue += revenue;
     if (hasEcommerceOrderSameDay) attributedRevenueEcommerce += revenue;
     else attributedRevenueErp += revenue;
     if (document) attributedBuyerDocuments.add(document);

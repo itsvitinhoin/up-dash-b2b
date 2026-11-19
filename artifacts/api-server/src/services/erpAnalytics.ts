@@ -62,6 +62,11 @@ export type ErpAttribution = {
 export type ErpDocumentMatch = {
   customerId: string;
   attribution: ErpAttribution | null;
+  // Achado 19/11/2026 (etapa 3 do PDF): só preenchido por matchErpDocumentsWithUpzero --
+  // precisa pra distinguir PAID_ORIGIN (toque no cadastro ou antes, etapas 1/2 -- vale pra
+  // qualquer canal) de PAID_ASSISTED (toque depois do cadastro, etapa 3 -- só com contrapartida
+  // no e-commerce, ver fetchPerformanceDashboard). O matcher da Vesti não usa esse campo.
+  registeredAt?: Date;
 };
 
 export async function matchErpDocumentsWithUpzero(
@@ -80,6 +85,7 @@ export async function matchErpDocumentsWithUpzero(
     .select({
       customerId: customersTable.id,
       documentHash: customersTable.documentHash,
+      registeredAt: customersTable.createdAt,
       utmSource: customersTable.utmSource,
       utmMedium: customersTable.utmMedium,
       utmCampaign: customersTable.utmCampaign,
@@ -130,6 +136,7 @@ export async function matchErpDocumentsWithUpzero(
       byHash.set(r.documentHash, {
         customerId: r.customerId,
         attribution: paidAttribution,
+        registeredAt: r.registeredAt,
       });
     }
   }
