@@ -647,7 +647,7 @@ export default function PerformancePage() {
 
       <div className="up-filter-bar up-glass-panel p-3 flex flex-wrap items-center gap-2">
         <Select value={tipoFilter} onValueChange={(v) => setTipoFilter(v as typeof tipoFilter)}>
-          <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="performance-filter-tipo">
+          <SelectTrigger className="h-8 w-[160px] text-xs focus:ring-0 focus:ring-offset-0" style={{ outline: "none" }} data-testid="performance-filter-tipo">
             <SelectValue placeholder="Tipo" />
           </SelectTrigger>
           <SelectContent>
@@ -658,7 +658,7 @@ export default function PerformancePage() {
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
-          <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="performance-filter-status">
+          <SelectTrigger className="h-8 w-[160px] text-xs focus:ring-0 focus:ring-offset-0" style={{ outline: "none" }} data-testid="performance-filter-status">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
