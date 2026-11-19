@@ -1,6 +1,7 @@
-import { eq, sql } from "drizzle-orm";
-import { db, clientsTable, eventsTable } from "@workspace/db";
+import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { db, clientsTable, eventsTable, ordersTable } from "@workspace/db";
 import { bigquery, vestiTable } from "../lib/bigquery";
+import { vestiSalesView } from "./vesti-sales-view";
 import { fetchStoredMarketingData } from "./stored-marketing";
 import { fetchErpDashboard, matchErpDocumentsWithUpzero, matchErpDocumentsWithVestiAttribution, fetchVestiFunnelEventCounts, resolveErpSellerName } from "./erpAnalytics";
 import {
@@ -103,6 +104,11 @@ export type PerformanceDashboard = {
     orders: number;
     attributedOrders: number;
     attributionCoveragePct: number;
+    /** Sub-filtro Tipo=Anúncios (slides, 19/11/2026): parte de attributedRevenue cujo pedido também tem
+     * contrapartida real no e-commerce (Vesti/UP Zero) no mesmo dia do comprador. */
+    attributedRevenueEcommerce: number;
+    /** Resto de attributedRevenue: atribuído a anúncio, mas fechado só no ERP (sem contrapartida no e-commerce). */
+    attributedRevenueErp: number;
     uniqueBuyers: number;
     newBuyers: number;
     /** Faturamento líquido e pedidos do ERP dos compradores novos do período (mesma base de `newBuyers`). */
@@ -183,6 +189,87 @@ function qualityStatus(
   if (value >= good) return "good";
   if (value >= attention) return "attention";
   return "critical";
+}
+
+// Sub-filtro Tipo=Anúncios (slides, 19/11/2026, etapas 1/2): "E-commerce" = pedido atribuído que
+// também existe de verdade na plataforma de e-commerce (Vesti ou UP Zero); "ERP" = atribuído, mas
+// fechado só no ERP, sem contrapartida. Checa por identidade+dia (não por pedido/valor exato) --
+// mesma folga que o resto do app já usa pra cruzar ERP x e-commerce (ver dedup em erp-attribution.ts).
+// Devolve os dias com pedido no e-commerce por identidade: customerId da UpZero (upzeroCustomerIds)
+// e/ou documento da Vesti (vestiDocuments) -- um cliente pode precisar das duas buscas (ex: Vogabox).
+async function fetchEcommerceOrderDaysByIdentity(params: {
+  clientId: string;
+  dataset: string;
+  dateFrom: string;
+  dateToExclusive: string;
+  upzeroCustomerIds: string[];
+  vestiDocuments: string[];
+}): Promise<Map<string, Set<string>>> {
+  const daysByIdentity = new Map<string, Set<string>>();
+  const addDay = (identity: string, day: string) => {
+    const set = daysByIdentity.get(identity) ?? new Set<string>();
+    set.add(day);
+    daysByIdentity.set(identity, set);
+  };
+
+  const dateFromDate = new Date(`${params.dateFrom}T00:00:00.000Z`);
+  const dateToExclusiveDate = new Date(params.dateToExclusive);
+  const fetches: Promise<void>[] = [];
+
+  if (params.upzeroCustomerIds.length > 0) {
+    fetches.push(
+      db
+        .select({ customerId: ordersTable.customerId, createdAt: ordersTable.createdAt })
+        .from(ordersTable)
+        .where(
+          and(
+            eq(ordersTable.clientId, params.clientId),
+            inArray(ordersTable.customerId, params.upzeroCustomerIds),
+            gte(ordersTable.createdAt, dateFromDate),
+            lt(ordersTable.createdAt, dateToExclusiveDate),
+          ),
+        )
+        .then((rows) => {
+          for (const r of rows) addDay(r.customerId, r.createdAt.toISOString().slice(0, 10));
+        })
+        .catch((err) => {
+          console.warn("[performance] e-commerce (UpZero) indisponível pro sub-filtro Anúncios:", err instanceof Error ? err.message : err);
+        }),
+    );
+  }
+
+  if (params.vestiDocuments.length > 0) {
+    const view = vestiSalesView(params.dataset);
+    fetches.push(
+      bigquery
+        .query({
+          query: `
+            SELECT REGEXP_REPLACE(CAST(documento_cliente AS STRING), r'\\D', '') AS document, data_ref
+            FROM ${view}
+            WHERE data_ref >= @dateFrom AND data_ref < @dateToExclusive
+              AND REGEXP_REPLACE(CAST(documento_cliente AS STRING), r'\\D', '') IN UNNEST(@documents)
+            GROUP BY document, data_ref
+          `,
+          params: { dateFrom: params.dateFrom, dateToExclusive: params.dateToExclusive.slice(0, 10), documents: params.vestiDocuments },
+        })
+        .then(([rows]) => {
+          for (const r of rows as Array<Record<string, unknown>>) {
+            const doc = String(r.document ?? "");
+            if (!doc) continue;
+            const day = r.data_ref && typeof r.data_ref === "object" && "value" in (r.data_ref as object)
+              ? String((r.data_ref as { value: unknown }).value)
+              : String(r.data_ref);
+            addDay(doc, day.slice(0, 10));
+          }
+        })
+        .catch((err) => {
+          console.warn("[performance] e-commerce (Vesti) indisponível pro sub-filtro Anúncios:", err instanceof Error ? err.message : err);
+        }),
+    );
+  }
+
+  await Promise.all(fetches);
+  return daysByIdentity;
 }
 
 export async function fetchPerformanceDashboard(
@@ -405,6 +492,21 @@ export async function fetchPerformanceDashboard(
   const vestiMatcher = hasUnmatchedDocuments ? await matchErpDocumentsWithVestiAttribution(dataset) : null;
   const client = clientRows[0];
 
+  // Sub-filtro Tipo=Anúncios (slides, 19/11/2026): pra separar "atribuído com pedido no
+  // e-commerce" de "atribuído só no ERP", busca em que dias cada identidade teve pedido de
+  // verdade na plataforma de e-commerce (UpZero via customerId resolvido em `matches`; Vesti
+  // via documento, pra qualquer documento do recorte -- `vestiMatcher` só sabe no dia a dia).
+  const ecommercePerformanceDateToExclusive = new Date(`${dateTo}T00:00:00.000Z`);
+  ecommercePerformanceDateToExclusive.setUTCDate(ecommercePerformanceDateToExclusive.getUTCDate() + 1);
+  const ecommerceOrderDaysByIdentity = await fetchEcommerceOrderDaysByIdentity({
+    clientId,
+    dataset,
+    dateFrom,
+    dateToExclusive: ecommercePerformanceDateToExclusive.toISOString(),
+    upzeroCustomerIds: [...new Set([...matches.values()].map((m) => m.customerId))],
+    vestiDocuments: vestiMatcher ? [...new Set(documents.filter((d): d is string => Boolean(d)).map((d) => String(d).replace(/\D/g, "")).filter(Boolean))] : [],
+  });
+
   let mediaStatus: PerformanceDashboard["sources"]["media"]["status"] =
     "not_configured";
   let mediaMessage: string | null =
@@ -510,6 +612,8 @@ export async function fetchPerformanceDashboard(
   const buyerTypeByDocument: Record<string, "NEW" | "RETURNING"> = {};
   let attributedOrders = 0;
   let attributedRevenue = 0;
+  let attributedRevenueEcommerce = 0;
+  let attributedRevenueErp = 0;
   let ecommerceMatchedOrders = 0;
 
   for (const row of customerDays) {
@@ -517,7 +621,8 @@ export async function fetchPerformanceDashboard(
     const orders = Number(row.orders) || 0;
     const revenue = Number(row.net_revenue) || 0;
     const day = dateOnly(row.date);
-    const match = document ? (matches.get(document) ?? vestiMatcher?.match(document, day) ?? undefined) : undefined;
+    const upzeroMatch = document ? matches.get(document) : undefined;
+    const match = upzeroMatch ?? (document ? vestiMatcher?.match(document, day) : undefined) ?? undefined;
     const historicalOrders = Number(row.historical_orders) || 0;
 
     if (row.is_identified && document) {
@@ -533,6 +638,12 @@ export async function fetchPerformanceDashboard(
 
     attributedOrders += orders;
     attributedRevenue += revenue;
+    // Sub-filtro Tipo=Anúncios: a mesma identidade teve pedido no e-commerce nesse dia?
+    // UpZero checa pelo customerId resolvido; Vesti (sem customerId), pelo documento.
+    const ecommerceIdentity = upzeroMatch ? upzeroMatch.customerId : document ? String(document).replace(/\D/g, "") : "";
+    const hasEcommerceOrderSameDay = ecommerceIdentity ? (ecommerceOrderDaysByIdentity.get(ecommerceIdentity)?.has(day) ?? false) : false;
+    if (hasEcommerceOrderSameDay) attributedRevenueEcommerce += revenue;
+    else attributedRevenueErp += revenue;
     if (document) attributedBuyerDocuments.add(document);
     const daily = dailyMap.get(day) ?? {
       date: day,
@@ -820,6 +931,8 @@ export async function fetchPerformanceDashboard(
       netRevenue: erp.kpis.netRevenue,
       returnAmount: erp.kpis.returnAmount,
       attributedRevenue,
+      attributedRevenueEcommerce,
+      attributedRevenueErp,
       unattributedRevenue: Math.max(0, erp.kpis.netRevenue - attributedRevenue),
       mediaSpend: mediaStatus === "connected" ? mediaSpend : null,
       roas: ratios.roas,

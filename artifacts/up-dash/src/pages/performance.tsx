@@ -93,6 +93,8 @@ type PerformanceResponse = {
     netRevenue: number;
     returnAmount: number;
     attributedRevenue: number;
+    attributedRevenueEcommerce: number;
+    attributedRevenueErp: number;
     unattributedRevenue: number;
     mediaSpend: number | null;
     roas: number | null;
@@ -421,10 +423,11 @@ export default function PerformancePage() {
   const { selectedClientId, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const [ordersPage, setOrdersPage] = useState(1);
-  // Tipo (pedido do time, 18/11/2026) ainda e so interface -- liga o motor de
-  // atribuicao por anuncio depois; ver memoria do projeto. Status/Vendedora/Estado
-  // ja vao pra query do ERP.
   const [tipoFilter, setTipoFilter] = useState<"todos" | "erp" | "ecommerce" | "anuncios">("todos");
+  // Sub-filtro dentro de Tipo=Anúncios (slides, 19/11/2026): Todos = gerado+pago por anúncio
+  // (e-commerce + ERP direto, sem duplicar); E-commerce = só a parte com pedido real na Vesti/UP
+  // Zero; ERP = só a parte fechada direto no ERP, sem contrapartida no e-commerce.
+  const [anunciosSubFilter, setAnunciosSubFilter] = useState<"todos" | "ecommerce" | "erp">("todos");
   const [statusFilter, setStatusFilter] = useState<"pago" | "cancelado" | "outro">("pago");
   const [chartGranularity, setChartGranularity] = useState<"diaria" | "semanal" | "mensal">("diaria");
   const clientId =
@@ -505,15 +508,23 @@ export default function PerformancePage() {
   // Tipo. Tipo=ERP/Todos continuam mostrando k.netRevenue (universo reconciliado).
   const dk = dashboardQuery.data?.kpis;
   const dpk = dashboardQuery.data?.prevKpis;
+  // Sub-filtro dentro de Anúncios (slides): Todos = attributedRevenue (e-commerce + ERP direto,
+  // sem duplicar); E-commerce/ERP leem a metade correspondente já separada no backend.
+  const attributedFor = (kpis?: { attributedRevenue: number; attributedRevenueEcommerce: number; attributedRevenueErp: number }) => {
+    if (!kpis) return undefined;
+    if (anunciosSubFilter === "ecommerce") return kpis.attributedRevenueEcommerce;
+    if (anunciosSubFilter === "erp") return kpis.attributedRevenueErp;
+    return kpis.attributedRevenue;
+  };
   const faturamentoValue =
     tipoFilter === "anuncios"
-      ? (k?.attributedRevenue ?? 0)
+      ? (attributedFor(k) ?? 0)
       : tipoFilter === "ecommerce"
         ? (dk?.paidRevenue ?? dk?.revenue ?? 0)
         : (k?.netRevenue ?? 0);
   const faturamentoPrevious =
     tipoFilter === "anuncios"
-      ? pk?.attributedRevenue
+      ? attributedFor(pk)
       : tipoFilter === "ecommerce"
         ? (dpk?.paidRevenue ?? dpk?.revenue)
         : pk?.netRevenue;
@@ -691,6 +702,18 @@ export default function PerformancePage() {
             <SelectItem value="anuncios">Tipo: Anúncios</SelectItem>
           </SelectContent>
         </Select>
+        {tipoFilter === "anuncios" && (
+          <Select value={anunciosSubFilter} onValueChange={(v) => setAnunciosSubFilter(v as typeof anunciosSubFilter)}>
+            <SelectTrigger className="h-8 w-[160px] text-xs focus:ring-0 focus:ring-offset-0" style={{ outline: "none" }} data-testid="performance-filter-anuncios-sub">
+              <SelectValue placeholder="Anúncios" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Anúncios: Todos</SelectItem>
+              <SelectItem value="ecommerce">Anúncios: E-commerce</SelectItem>
+              <SelectItem value="erp">Anúncios: ERP</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
         <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
           <SelectTrigger className="h-8 w-[160px] text-xs focus:ring-0 focus:ring-offset-0" style={{ outline: "none" }} data-testid="performance-filter-status">
             <SelectValue placeholder="Status" />
