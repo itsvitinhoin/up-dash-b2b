@@ -1,6 +1,6 @@
 import type { TvBrand, TvTotals } from "@workspace/api-zod";
 
-const TV_START_DATE = "2026-08-01";
+const TV_START_DATE = "2026-01-01";
 
 export function tvWindow(now: Date) {
   const parts = new Intl.DateTimeFormat("en-US", {

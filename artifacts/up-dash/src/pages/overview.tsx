@@ -8,6 +8,8 @@ import {
   VolumeX,
   Maximize,
   Minimize,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import {
   customFetch,
@@ -67,6 +69,7 @@ const money = (value: number, currency: string) =>
 const mer = (value: number) =>
   `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2, minimumFractionDigits: 2 })}x`;
 const dateLabel = (value: string) => value.split("-").reverse().join("/");
+const HIDDEN_NAMES_KEY = "updash.portfolio-hidden-names.v1";
 
 function Metrics({
   totals,
@@ -149,10 +152,10 @@ function Metrics({
             key === "mer"
               ? "Faturamento das marcas selecionadas dividido pelo investimento disponível. O cálculo é parcial quando falta investimento de alguma marca. Sem investimento positivo disponível, o MER é indisponível."
               : key === "investment"
-                ? "Soma do investimento disponível desde 01/08/2026 até a data final do painel. Valores ausentes não são tratados como zero."
-                : "B2B solicitado e B2C pago desde 01/08/2026 até a data final do painel, em horário de Brasília."
+                ? "Soma do investimento disponível desde 01/01/2026 até a data final do painel. Valores ausentes não são tratados como zero."
+                : "B2B solicitado e B2C pago desde 01/01/2026 até a data final do painel, em horário de Brasília."
           }
-          comparisonUnavailable="Este painel mostra o acumulado desde 01/08/2026 e não consulta um período anterior."
+          comparisonUnavailable="Este painel mostra o acumulado desde 01/01/2026 e não consulta um período anterior."
           footer={
             <div className="portfolio-metric-details space-y-2 text-xs">
               {missing > 0 && (key === "investment" || key === "mer") && (
@@ -180,7 +183,7 @@ function Metrics({
               )}
               <div className="portfolio-metric-period flex justify-between gap-2">
                 <span className="text-muted-foreground">Período</span>
-                <span>Desde 01/08/2026</span>
+                <span>Desde 01/01/2026</span>
               </div>
             </div>
           }
@@ -203,7 +206,7 @@ function RevenueChart({ data }: { data: TvSnapshot }) {
             Evolução do faturamento · {currency}
           </h2>
           <p className="mt-1 mb-5 text-xs text-muted-foreground">
-            Valores diários · B2B solicitado e B2C pago · Desde 01/08/2026
+            Valores diários · B2B solicitado e B2C pago · Desde 01/01/2026
           </p>
           <ChartContainer
             config={{
@@ -407,6 +410,22 @@ export default function OverviewPage() {
   const [soundError, setSoundError] = useState(false);
   const [page, setPage] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [namesHidden, setNamesHidden] = useState(() => {
+    try {
+      return localStorage.getItem(HIDDEN_NAMES_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  function toggleNames() {
+    const next = !namesHidden;
+    setNamesHidden(next);
+    try {
+      localStorage.setItem(HIDDEN_NAMES_KEY, next ? "1" : "0");
+    } catch {
+      /* The toggle still works when browser storage is unavailable. */
+    }
+  }
   const audio = useRef<AudioContext | null>(null);
   const previous = useRef<TvSnapshot | undefined>(undefined);
   const lastRequestedCycle = useRef<string | undefined>(undefined);
@@ -528,7 +547,7 @@ export default function OverviewPage() {
                 onChange={setSelectedBrands}
               />
             )}
-            <Badge variant="outline">Acumulado desde 01/08/2026</Badge>
+            <Badge variant="outline">Acumulado desde 01/01/2026</Badge>
             <span className="text-sm text-muted-foreground">
               {data
                 ? `${dateLabel(data.dateFrom)} a ${dateLabel(data.dateTo)}`
@@ -686,41 +705,65 @@ export default function OverviewPage() {
                   : ""}
               </p>
             </div>
-            {pages > 1 && (
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setPage((currentPage + pages - 1) % pages)}
-                  aria-label="Página anterior"
-                >
-                  ←
-                </Button>
-                <span className="text-xs tabular-nums">
-                  {currentPage + 1} / {pages}
-                </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setPaused((p) => !p)}
-                  aria-label={paused ? "Retomar rotação" : "Pausar rotação"}
-                >
-                  {paused ? (
-                    <Play className="h-4 w-4" />
-                  ) : (
-                    <Pause className="h-4 w-4" />
-                  )}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setPage((currentPage + 1) % pages)}
-                  aria-label="Próxima página"
-                >
-                  →
-                </Button>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <Button
+                size="icon"
+                variant="outline"
+                onClick={toggleNames}
+                aria-pressed={namesHidden}
+                aria-label={
+                  namesHidden
+                    ? "Mostrar nomes dos clientes"
+                    : "Ocultar nomes dos clientes"
+                }
+                title={
+                  namesHidden
+                    ? "Mostrar nomes dos clientes"
+                    : "Ocultar nomes dos clientes"
+                }
+              >
+                {namesHidden ? (
+                  <Eye className="h-4 w-4" />
+                ) : (
+                  <EyeOff className="h-4 w-4" />
+                )}
+              </Button>
+              {pages > 1 && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPage((currentPage + pages - 1) % pages)}
+                    aria-label="Página anterior"
+                  >
+                    ←
+                  </Button>
+                  <span className="text-xs tabular-nums">
+                    {currentPage + 1} / {pages}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setPaused((p) => !p)}
+                    aria-label={paused ? "Retomar rotação" : "Pausar rotação"}
+                  >
+                    {paused ? (
+                      <Play className="h-4 w-4" />
+                    ) : (
+                      <Pause className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPage((currentPage + 1) % pages)}
+                    aria-label="Próxima página"
+                  >
+                    →
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
           <Table>
             <TableHeader>
@@ -747,7 +790,9 @@ export default function OverviewPage() {
                       {currentPage * TV_PAGE_SIZE + index + 1}
                     </TableCell>
                     <TableCell className="font-medium">
-                      {brand.name}
+                      {namesHidden
+                        ? `Cliente ${String(currentPage * TV_PAGE_SIZE + index + 1).padStart(2, "0")}`
+                        : brand.name}
                       {brand.warning && (
                         <p
                           className="portfolio-brand-warning mt-1 text-xs font-normal text-amber-500"

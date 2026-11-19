@@ -82,17 +82,17 @@ describe("TV production data sources", () => {
     );
     expect(mocks.bq.mock.calls[0][0].query).toContain("dashboard_vendas_view");
     expect(mocks.bq.mock.calls[0][0].query).toContain("valor_solicitado");
-    expect(data?.dateFrom).toBe("2026-08-01");
+    expect(data?.dateFrom).toBe("2026-01-01");
     expect(data?.dateTo).toBe("2026-11-18");
-    expect(data?.revenueTrend).toHaveLength(110);
-    expect(data?.revenueTrend?.[0].date).toBe("2026-08-01");
+    expect(data?.revenueTrend).toHaveLength(322);
+    expect(data?.revenueTrend?.[0].date).toBe("2026-01-01");
     expect(mocks.bq.mock.calls[0][0].params).toEqual({
-      dateFrom: "2026-08-01",
+      dateFrom: "2026-01-01",
       dateTo: "2026-11-18",
     });
     expect(mocks.ads.mock.calls).toEqual([
-      ["act_1", "2026-08-01", "2026-11-18"],
-      ["act_2", "2026-08-01", "2026-11-18"],
+      ["act_1", "2026-01-01", "2026-11-18"],
+      ["act_2", "2026-01-01", "2026-11-18"],
     ]);
   });
 });
