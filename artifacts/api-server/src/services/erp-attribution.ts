@@ -19,7 +19,7 @@ import { bigquery, vestiTable } from "../lib/bigquery";
 import { db, customersTable, ordersTable, customerIdentityLinksTable, orderAttributionsTable } from "@workspace/db";
 import { and, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { getTouchpointsForCustomerCached, latestTouchpointBefore, standardTouchpointWindow, type TouchpointCandidate } from "./paid-touchpoints";
-import { ERP_CANCELLED_STATUSES, ERP_UNPAID_STATUSES, resolveErpSellerName } from "./erpAnalytics";
+import { ERP_CANCELLED_STATUSES, ERP_UNPAID_STATUSES, resolveErpSellerName, matchErpDocumentsWithVestiAttribution } from "./erpAnalytics";
 import { resolveErpCustomerIdentities, type ErpContactInfo, type ResolvedErpCustomer } from "./erp-identity";
 
 // Achado 08/09/2026: o Manse (MX Fashion) só produz status "CONCLUIDO"
@@ -711,6 +711,14 @@ async function classifyCohorts(params: {
     });
   }
 
+  return { customerCohorts, cohortSummary: buildCohortSummary(customerCohorts, influencedOrders) };
+}
+
+// Agrega pedido influenciado -> totais por coorte (novo/recorrente/reativado). Pura em
+// cima de `customerCohorts`/`influencedOrders` -- não importa se a identidade por trás é
+// `upzeroCustomerId` (touchpoint) ou documento (atribuição Vesti, ver classifyVestiCohorts
+// abaixo): as duas formas de calcular coorte terminam aqui com o mesmo agregado.
+function buildCohortSummary(customerCohorts: CustomerCohort[], influencedOrders: ErpAttributedOrder[]): CohortSummary[] {
   const cohortByCustomer = new Map(customerCohorts.map((c) => [c.upzeroCustomerId, c.cohort]));
   const summaryMap = new Map<
     CohortLabel,
@@ -727,7 +735,7 @@ async function classifyCohorts(params: {
     entry.faturamentoPago += o.valorPago;
     summaryMap.set(cohort, entry);
   }
-  const cohortSummary: CohortSummary[] = (["novo", "recorrente", "reativado"] as const)
+  return (["novo", "recorrente", "reativado"] as const)
     .filter((c) => summaryMap.has(c))
     .map((cohort) => {
       const entry = summaryMap.get(cohort)!;
@@ -741,8 +749,261 @@ async function classifyCohorts(params: {
         ticketMedio: entry.pedidos > 0 ? entry.faturamentoGerado / entry.pedidos : 0,
       };
     });
+}
 
-  return { customerCohorts, cohortSummary };
+// ── Vesti nativo: sem touchpoint de clique (nunca teve rastreamento da UpZero no
+// site) -- usa a MESMA atribuição por identidade (documento) que já alimenta os
+// cards de Faturamento/ROAS quando Tipo=Anúncios (matchErpDocumentsWithVestiAttribution,
+// erpAnalytics.ts). Pedido do time, 18/11/2026: a seção "Novos, recorrentes e
+// reativados" ficava sempre "Não disponível" pra TODO cliente Vesti nativo (nunca tem
+// upZeroApiKey, então computeErpPaidAttribution nunca roda) -- aqui ela calcula a mesma
+// coorte (novo/recorrente/reativado), só trocando "evidência de clique" por "evidência
+// de identidade" como critério de influência. Documento (CNPJ/CPF só dígitos) faz o
+// papel de identidade do cliente: não precisa resolver hash nem customer da UpZero
+// (ver resolveErpCustomerIdentities em computeErpPaidAttribution), o documento já É a
+// chave -- por isso não tem "Fonte 2" (site/Postgres): cliente Vesti nativo não tem
+// pedido lá.
+export async function computeVestiPaidAttribution(params: {
+  clientId: string;
+  dataset: string;
+  dateFrom: string;
+  dateTo: string;
+  sellerId?: string;
+  state?: string;
+  statusBucket?: "pago" | "cancelado" | "outro";
+}): Promise<ErpAttributionResult> {
+  const resolvedSellerName = params.sellerId ? await resolveErpSellerName(params.clientId, params.sellerId) : undefined;
+  const cancelledListSql = ERP_CANCELLED_STATUSES.map((s) => `'${s}'`).join(", ");
+  const unpaidListSql = ERP_UNPAID_STATUSES.map((s) => `'${s}'`).join(", ");
+  const paidExcludedListSql = [...ERP_CANCELLED_STATUSES, ...ERP_UNPAID_STATUSES].map((s) => `'${s}'`).join(", ");
+  const erpStatusCondition =
+    params.statusBucket === "cancelado"
+      ? `status IN (${cancelledListSql})`
+      : params.statusBucket === "outro"
+        ? `status IN (${unpaidListSql})`
+        : params.statusBucket === "pago"
+          ? `status NOT IN (${paidExcludedListSql})`
+          : ERP_STATUS_FILTER;
+  const erpSellerCondition = resolvedSellerName ? `AND UPPER(o.seller) = UPPER(@sellerName)` : "";
+  const erpStateCondition = params.state ? `AND c.estado = @state` : "";
+
+  // Mesma convenção dateTo-inclusivo do resto do app (ver computeErpPaidAttribution acima).
+  const dateToExclusiveIso = new Date(`${params.dateTo}T00:00:00.000Z`);
+  dateToExclusiveIso.setUTCDate(dateToExclusiveIso.getUTCDate() + 1);
+
+  const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
+  const clientesTable = vestiTable(params.dataset, "clientes_erp");
+  const [rawErpRows] = await bigquery.query({
+    query: `
+      WITH orders AS (
+        SELECT pedido_id, customer_id, ANY_VALUE(seller) AS seller, ANY_VALUE(valor_total) AS valor, ANY_VALUE(data_criado) AS data_criado
+        FROM ${pedidosTable}
+        WHERE data_criado >= @dateFrom AND data_criado < @dateToExclusive AND ${erpStatusCondition}
+        GROUP BY pedido_id, customer_id
+        HAVING valor > 0
+      )
+      SELECT o.*, c.nome AS customer_name, c.documento AS document, c.estado AS state
+      FROM orders o
+      LEFT JOIN ${clientesTable} c ON c.documento = o.customer_id
+      WHERE TRUE ${erpSellerCondition} ${erpStateCondition}
+    `,
+    params: {
+      dateFrom: params.dateFrom,
+      dateToExclusive: dateToExclusiveIso.toISOString(),
+      ...(resolvedSellerName ? { sellerName: resolvedSellerName } : {}),
+      ...(params.state ? { state: params.state } : {}),
+    },
+  });
+  const erpRows = rawErpRows as Array<Record<string, unknown>>;
+  const totalErpRevenue = erpRows.reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
+
+  const vestiMatcher = await matchErpDocumentsWithVestiAttribution(params.dataset);
+
+  const allOrders: ErpOrderRow[] = [];
+  const influencedOrders: ErpAttributedOrder[] = [];
+
+  for (const r of erpRows) {
+    const rawDocument = String(r.customer_id ?? "");
+    const document = rawDocument.replace(/\D/g, "");
+    const dataCriado = toIsoString(r.data_criado);
+    const valor = Number(r.valor) || 0;
+    const orderId = String(r.pedido_id);
+    const match = document ? vestiMatcher.match(document, dataCriado) : null;
+    const touchpointAt = match?.attribution?.evidenceAt?.toISOString() ?? null;
+    const touchpointSource = match?.attribution?.utmSource ?? null;
+    // Sem data de evidência real (caso up_agency: só o link da agência, sem toque
+    // registrado) não dá pra dizer se a mídia trouxe o cadastro ou só assistiu uma
+    // compra -- mesmo limite documentado em matchErpDocumentsWithVestiAttribution.
+    const attributionState: AttributionState | null = match ? (touchpointAt ? "PAID_ORIGIN" : "PAID_ASSISTED") : null;
+
+    allOrders.push({
+      orderId,
+      channel: "erp",
+      customerName: (r.customer_name as string) || null,
+      document: maskDocument((r.document as string) || rawDocument),
+      upzeroCustomerId: document || null,
+      valor,
+      valorPago: valor,
+      dataCriado,
+      attributed: match !== null,
+      attributionState,
+      cohort: null, // preenchido abaixo, depois de classificar a coorte
+      touchpointAt,
+      touchpointSource,
+      touchpointMedium: null,
+      touchpointCampaign: null,
+    });
+
+    if (match && document) {
+      influencedOrders.push({
+        orderId,
+        channel: "erp",
+        customerName: (r.customer_name as string) || null,
+        upzeroCustomerId: document,
+        externalUserId: 0, // conceito da UpZero, sem equivalente pra identidade por documento
+        valor,
+        valorPago: valor,
+        dataCriado,
+        touchpointAt: touchpointAt ?? dataCriado,
+        touchpointSource,
+        touchpointMedium: null,
+        touchpointCampaign: null,
+        attributionState: attributionState!,
+      });
+    }
+  }
+
+  const influencedTotal = influencedOrders.reduce((sum, o) => sum + o.valor, 0);
+  const influencedCustomerIds = new Set(influencedOrders.map((o) => o.upzeroCustomerId));
+
+  const { customerCohorts, cohortSummary } = await classifyVestiCohorts({
+    dataset: params.dataset,
+    influencedOrders,
+  });
+
+  const cohortByDocument = new Map(customerCohorts.map((c) => [c.upzeroCustomerId, c.cohort]));
+  for (const row of allOrders) {
+    if (row.upzeroCustomerId) row.cohort = cohortByDocument.get(row.upzeroCustomerId) ?? null;
+  }
+
+  // Snapshot de auditoria -- mesmo padrão best-effort de computeErpPaidAttribution.
+  if (allOrders.length > 0) {
+    await db
+      .insert(orderAttributionsTable)
+      .values(
+        allOrders.map((row) => ({
+          clientId: params.clientId,
+          channel: row.channel,
+          orderId: row.orderId,
+          customerId: row.upzeroCustomerId,
+          attributionState: row.attributionState,
+          touchpointAt: row.touchpointAt ? new Date(row.touchpointAt) : null,
+          touchpointSource: row.touchpointSource,
+          touchpointMedium: row.touchpointMedium,
+          touchpointCampaign: row.touchpointCampaign,
+          cohort: row.cohort,
+          ruleVersion: ATTRIBUTION_RULE_VERSION,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [orderAttributionsTable.clientId, orderAttributionsTable.channel, orderAttributionsTable.orderId],
+        set: {
+          customerId: sql`excluded.customer_id`,
+          attributionState: sql`excluded.attribution_state`,
+          touchpointAt: sql`excluded.touchpoint_at`,
+          touchpointSource: sql`excluded.touchpoint_source`,
+          touchpointMedium: sql`excluded.touchpoint_medium`,
+          touchpointCampaign: sql`excluded.touchpoint_campaign`,
+          cohort: sql`excluded.cohort`,
+          ruleVersion: sql`excluded.rule_version`,
+          computedAt: sql`now()`,
+        },
+      })
+      .catch((err) => {
+        console.error("[erp-attribution] falha gravando order_attributions (Vesti)", {
+          clientId: params.clientId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
+  const distinctErpCustomers = new Set(erpRows.map((r) => String(r.customer_id ?? "")).filter(Boolean)).size;
+
+  return {
+    totalErpRevenue,
+    totalErpOrders: erpRows.length,
+    totalSiteRevenue: 0,
+    totalSiteOrders: 0,
+    distinctErpCustomers,
+    // Documento já É a identidade (sem indireção de hash/customer da UpZero) -- sempre "resolvido".
+    matchedUpzeroCustomers: distinctErpCustomers,
+    allOrders,
+    influencedOrders,
+    influencedTotal,
+    influencedCustomers: influencedCustomerIds.size,
+    unmatchedCustomerCount: 0,
+    customerCohorts,
+    cohortSummary,
+    fetchErrors: [],
+  };
+}
+
+// Mesma regra de coorte de classifyCohorts (90 dias), mas por documento em vez de
+// upzeroCustomerId/CNPJ-hash -- sem "Fonte site", sem lookback por cliente da UpZero.
+async function classifyVestiCohorts(params: {
+  dataset: string;
+  influencedOrders: ErpAttributedOrder[];
+}): Promise<{ customerCohorts: CustomerCohort[]; cohortSummary: CohortSummary[] }> {
+  const { influencedOrders } = params;
+  if (influencedOrders.length === 0) return { customerCohorts: [], cohortSummary: [] };
+
+  const firstInfluencedAt = new Map<string, Date>();
+  for (const o of influencedOrders) {
+    const at = new Date(o.dataCriado);
+    const current = firstInfluencedAt.get(o.upzeroCustomerId);
+    if (!current || at.getTime() < current.getTime()) firstInfluencedAt.set(o.upzeroCustomerId, at);
+  }
+  const documents = [...firstInfluencedAt.keys()];
+
+  const pedidosTable = vestiTable(params.dataset, "pedidos_erp");
+  const [rawHistoryRows] = await bigquery.query({
+    query: `
+      SELECT REGEXP_REPLACE(CAST(customer_id AS STRING), r'[^0-9]', '') AS document, data_criado, ANY_VALUE(valor_total) AS valor
+      FROM ${pedidosTable}
+      WHERE REGEXP_REPLACE(CAST(customer_id AS STRING), r'[^0-9]', '') IN UNNEST(@documents) AND ${ERP_STATUS_FILTER}
+      GROUP BY pedido_id, document, data_criado
+      HAVING valor > 0
+    `,
+    params: { documents },
+  });
+  const historyByDocument = new Map<string, Date[]>();
+  for (const r of rawHistoryRows as Array<Record<string, unknown>>) {
+    const doc = String(r.document ?? "");
+    if (!doc) continue;
+    const dates = historyByDocument.get(doc) ?? [];
+    dates.push(new Date(toIsoString(r.data_criado)));
+    historyByDocument.set(doc, dates);
+  }
+
+  const customerCohorts: CustomerCohort[] = [];
+  for (const document of documents) {
+    const cutoff = firstInfluencedAt.get(document)!;
+    const priorDates = (historyByDocument.get(document) ?? []).filter((d) => d.getTime() < cutoff.getTime());
+    const lastOrderBefore = priorDates.length ? new Date(Math.max(...priorDates.map((d) => d.getTime()))) : null;
+    const daysSinceLastOrder = lastOrderBefore ? Math.round((cutoff.getTime() - lastOrderBefore.getTime()) / 86_400_000) : null;
+    const cohort: CohortLabel = daysSinceLastOrder === null ? "novo" : daysSinceLastOrder <= 90 ? "recorrente" : "reativado";
+    const anyOrder = influencedOrders.find((o) => o.upzeroCustomerId === document)!;
+    customerCohorts.push({
+      upzeroCustomerId: document,
+      customerName: anyOrder.customerName,
+      cohort,
+      firstInfluencedOrderAt: cutoff.toISOString(),
+      lastOrderBeforeAt: lastOrderBefore ? lastOrderBefore.toISOString() : null,
+      daysSinceLastOrder,
+    });
+  }
+
+  return { customerCohorts, cohortSummary: buildCohortSummary(customerCohorts, influencedOrders) };
 }
 
 function toIsoString(value: unknown): string {

@@ -106,7 +106,7 @@ import { ensureUpzeroCustomersByIds } from "../services/upzero/customers";
 import { calculateDashboardConversionRate } from "../services/dashboard-metrics";
 import { normalizeCampaignText, isPaidCampaignSignal, latestCampaignEvidenceBefore } from "../services/campaign-attribution";
 import { syncPaidTouchpointsForCustomer } from "../services/paid-touchpoints";
-import { computeErpPaidAttribution } from "../services/erp-attribution";
+import { computeErpPaidAttribution, computeVestiPaidAttribution } from "../services/erp-attribution";
 import { resolveVestiDataset, fetchVestiJourney, fetchVestiRfm, fetchVestiUtmData, fetchVestiProductsSummary, fetchVestiAvailableStockSalesValue, fetchVestiProductsPage, computeVestiProductLevel, fetchVestiStock } from "../services/vestiAnalytics";
 
 import { buildProductSalesBreakdowns } from "../services/product-sales-breakdowns";
@@ -9627,9 +9627,40 @@ router.get("/analytics/erp/attribution", requireAdmin, async (req, res): Promise
   // junto -- não faz mais sentido variar por chamada.
 
   const [client] = await db
-    .select({ bigqueryDataset: clientsTable.bigqueryDataset, upZeroApiKey: clientsTable.upZeroApiKey })
+    .select({
+      bigqueryDataset: clientsTable.bigqueryDataset,
+      upZeroApiKey: clientsTable.upZeroApiKey,
+      commercePlatform: clientsTable.commercePlatform,
+      erpDataset: clientsTable.erpDataset,
+    })
     .from(clientsTable)
     .where(eq(clientsTable.id, clientId));
+
+  // Cliente Vesti nativo (pedido do time, 18/11/2026): nunca tem upZeroApiKey (não tem
+  // rastreamento de clique), então NO_API_KEY abaixo é permanente pra ele -- usa a
+  // atribuição por identidade (documento) em vez de touchpoint. Ver computeVestiPaidAttribution.
+  // Só quando tem ERP de verdade (`erpDataset`, mesmo gate de requireErpClient em
+  // erpController.ts) -- Vesti nativo SEM ERP (ex: Milalai) não tem `pedidos_erp`/
+  // `clientes_erp` nenhum (confirmado: BigQuery "table not found"), então cai no
+  // NO_API_KEY abaixo igual a antes, que já mostra a mensagem certa pro cliente.
+  if (client?.commercePlatform === "VESTI" && client.erpDataset) {
+    try {
+      const result = await computeVestiPaidAttribution({
+        clientId,
+        dataset: client.erpDataset,
+        dateFrom,
+        dateTo,
+        sellerId,
+        state,
+        statusBucket,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(502).json({ error: true, code: "ATTRIBUTION_FAILED", message: err instanceof Error ? err.message : String(err), status: 502 });
+    }
+    return;
+  }
+
   if (!client?.upZeroApiKey) {
     res.status(400).json({ error: true, code: "NO_API_KEY", message: "Client has no UpZero API key", status: 400 });
     return;
