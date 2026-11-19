@@ -221,5 +221,7 @@ export function PerformanceSummarySections() {
 }
 export function MediaInvestmentCards() {
   const { pick } = useOrganizationData(MEDIA_SOURCES);
-  return <Metrics metrics={pick("totalSpend", "metaSpend", "googleSpend")} />;
+  // Google Ads escondido por enquanto: não tem integração de custo ainda (só GA4, que é
+  // tráfego, não investimento) -- volta quando essa integração existir de verdade.
+  return <Metrics metrics={pick("totalSpend", "metaSpend")} />;
 }
