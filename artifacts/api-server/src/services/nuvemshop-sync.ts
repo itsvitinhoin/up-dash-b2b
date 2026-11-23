@@ -522,6 +522,17 @@ async function fetchOrderRefundedAmount(
   }
 }
 
+// Achado 23/11/2026 (backfill da Jini, ~17 mil pedidos/ano): a Nuvemshop
+// pagina por NUMERO DE PAGINA, nao por cursor. Pedir "desde X" sem teto
+// superior faz o servidor deles paginar por TODO o historico mais recente
+// ate achar X -- numa loja com muito pedido, isso cai em "Internal Server
+// Error" a partir de uma certa profundidade (testado: 45/70 dias OK, 95/150
+// dias quebra). updated_at_max existe e funciona (confirmado ao vivo), entao
+// fatiar em pedacos de tempo menores evita que qualquer busca precise descer
+// fundo o bastante pra travar -- sem isso, nunca mais tentar um backfill
+// largo numa loja grande sem cair no mesmo problema.
+const NUVEMSHOP_ORDERS_CHUNK_DAYS = 30;
+
 async function fetchOrders(
   storeId: string,
   accessToken: string,
@@ -534,19 +545,33 @@ async function fetchOrders(
 }> {
   const orders: NuvemshopOrder[] = [];
   let pagesFetched = 0;
-  let complete = false;
-  for (let page = 1; !maxPages || page <= maxPages; page++) {
-    const rows = await fetchNuvemshopPage<NuvemshopOrder>(storeId, accessToken, "/orders", {
-      page,
-      per_page: 200,
-      ...(since ? { updated_at_min: since.toISOString() } : {}),
-    });
-    pagesFetched++;
-    orders.push(...rows);
-    if (rows.length < 200) {
-      complete = true;
-      break;
+  let complete = true;
+  const stopAt = since ?? new Date(0);
+  let chunkEnd = new Date();
+
+  while (chunkEnd > stopAt) {
+    const chunkStart = new Date(Math.max(
+      chunkEnd.getTime() - NUVEMSHOP_ORDERS_CHUNK_DAYS * 24 * 60 * 60 * 1000,
+      stopAt.getTime(),
+    ));
+    let chunkRows = 0;
+    for (let page = 1; !maxPages || page <= maxPages; page++) {
+      const rows = await fetchNuvemshopPage<NuvemshopOrder>(storeId, accessToken, "/orders", {
+        page,
+        per_page: 200,
+        updated_at_min: chunkStart.toISOString(),
+        updated_at_max: chunkEnd.toISOString(),
+      });
+      pagesFetched++;
+      orders.push(...rows);
+      chunkRows += rows.length;
+      if (rows.length < 200) break;
+      if (maxPages && page >= maxPages) complete = false;
     }
+    // Sem `since` (historico completo): pedaco sem nenhum pedido = ja passou
+    // do inicio real da loja, nao precisa continuar descendo.
+    if (!since && chunkRows === 0) break;
+    chunkEnd = chunkStart;
   }
   return { rows: orders, pagesFetched, complete };
 }

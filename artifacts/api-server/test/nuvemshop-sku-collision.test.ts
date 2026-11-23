@@ -92,11 +92,28 @@ const order = (id: number, products: ReturnType<typeof item>[], over: Record<str
   customer: { id: 1, email: "cliente@loja.com", name: "Cliente" }, products, ...over,
 });
 
+// fetchOrders agora fatia a busca por pedaco de tempo (ver achado 23/11/2026 em
+// nuvemshop-sync.ts) -- o mock precisa respeitar updated_at_min/updated_at_max
+// de verdade (como a API real), senao toda rodada de pedaco "antigo" tambem
+// devolve o mesmo pedido e o loop nunca para de descer no tempo.
+function filterOrdersByDate(orders: unknown[], url: URL): unknown[] {
+  const min = url.searchParams.get("updated_at_min");
+  const max = url.searchParams.get("updated_at_max");
+  if (!min && !max) return orders;
+  return orders.filter((o) => {
+    const createdAt = new Date((o as { created_at: string }).created_at).getTime();
+    if (min && createdAt < new Date(min).getTime()) return false;
+    if (max && createdAt > new Date(max).getTime()) return false;
+    return true;
+  });
+}
+
 // Simula a API da Nuvemshop: /orders (uma pagina), /orders/{id}/transactions e /products/{id}.
 const stubNuvemshop = (orders: unknown[]) => {
   vi.stubGlobal("fetch", async (input: URL | string) => {
-    const path = new URL(String(input)).pathname;
-    const body = /\/orders$/.test(path) ? orders : /\/transactions$/.test(path) ? [] : { id: 1, name: "Produto", variants: [], images: [] };
+    const url = new URL(String(input));
+    const path = url.pathname;
+    const body = /\/orders$/.test(path) ? filterOrdersByDate(orders, url) : /\/transactions$/.test(path) ? [] : { id: 1, name: "Produto", variants: [], images: [] };
     return { ok: true, status: 200, statusText: "OK", json: async () => body };
   });
 };
@@ -165,12 +182,13 @@ describe("outro processo cria o SKU no meio da rodada (leitura desatualizada)", 
   it("o banco recusa o SKU, o codigo tenta de novo com SKU proprio e o item entra", async () => {
     const orders = [order(1, [item(100, 1, "AAA")]), order(2, [item(200, 5, "BBB")], { customer: { id: 2, email: "outro@loja.com" } })];
     vi.stubGlobal("fetch", async (input: URL | string) => {
-      const path = new URL(String(input)).pathname;
+      const url = new URL(String(input));
+      const path = url.pathname;
       // Ao buscar os detalhes do produto 200 (depois que o indice de produtos ja foi lido), "outro processo" cria o SKU BBB.
       if (/\/products\/200$/.test(path)) {
         await pg.exec(`INSERT INTO products (id, client_id, external_id, sku, name, price) VALUES ('x1', '${CLIENT}', '999:9', 'BBB', 'Criado por outro', 5)`);
       }
-      const body = /\/orders$/.test(path) ? orders : /\/transactions$/.test(path) ? [] : { id: 1, name: "Produto", variants: [], images: [] };
+      const body = /\/orders$/.test(path) ? filterOrdersByDate(orders, url) : /\/transactions$/.test(path) ? [] : { id: 1, name: "Produto", variants: [], images: [] };
       return { ok: true, status: 200, statusText: "OK", json: async () => body };
     });
     const result = await sync();
