@@ -542,10 +542,12 @@ async function fetchOrders(
   rows: NuvemshopOrder[];
   pagesFetched: number;
   complete: boolean;
+  chunkErrors: string[];
 }> {
   const orders: NuvemshopOrder[] = [];
   let pagesFetched = 0;
   let complete = true;
+  const chunkErrors: string[] = [];
   const stopAt = since ?? new Date(0);
   let chunkEnd = new Date();
 
@@ -555,25 +557,39 @@ async function fetchOrders(
       stopAt.getTime(),
     ));
     let chunkRows = 0;
-    for (let page = 1; !maxPages || page <= maxPages; page++) {
-      const rows = await fetchNuvemshopPage<NuvemshopOrder>(storeId, accessToken, "/orders", {
-        page,
-        per_page: 200,
-        updated_at_min: chunkStart.toISOString(),
-        updated_at_max: chunkEnd.toISOString(),
-      });
-      pagesFetched++;
-      orders.push(...rows);
-      chunkRows += rows.length;
-      if (rows.length < 200) break;
-      if (maxPages && page >= maxPages) complete = false;
+    try {
+      for (let page = 1; !maxPages || page <= maxPages; page++) {
+        const rows = await fetchNuvemshopPage<NuvemshopOrder>(storeId, accessToken, "/orders", {
+          page,
+          per_page: 200,
+          updated_at_min: chunkStart.toISOString(),
+          updated_at_max: chunkEnd.toISOString(),
+        });
+        pagesFetched++;
+        orders.push(...rows);
+        chunkRows += rows.length;
+        if (rows.length < 200) break;
+        if (maxPages && page >= maxPages) complete = false;
+      }
+    } catch (error) {
+      // Achado 23/11/2026: um pedaco de tempo pode falhar sozinho (ex: erro
+      // pontual da Nuvemshop numa janela especifica, mesmo com o pedaco ja
+      // pequeno) -- registra e segue pro pedaco mais antigo, em vez de jogar
+      // fora os pedidos que os OUTROS pedacos ja buscaram com sucesso (antes,
+      // uma falha em qualquer pedaco descartava a busca inteira).
+      chunkErrors.push(
+        `${chunkStart.toISOString().slice(0, 10)} a ${chunkEnd.toISOString().slice(0, 10)}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      complete = false;
+      chunkEnd = chunkStart;
+      continue;
     }
     // Sem `since` (historico completo): pedaco sem nenhum pedido = ja passou
     // do inicio real da loja, nao precisa continuar descendo.
     if (!since && chunkRows === 0) break;
     chunkEnd = chunkStart;
   }
-  return { rows: orders, pagesFetched, complete };
+  return { rows: orders, pagesFetched, complete, chunkErrors };
 }
 
 async function fetchProducts(
@@ -768,7 +784,11 @@ export async function syncNuvemshopClient(params: {
     result.ordersFetched = orders.length;
     result.orderPagesFetched = orderPage.pagesFetched;
     result.orderPaginationComplete = orderPage.complete;
-    if (!orderPage.complete) {
+    if (orderPage.chunkErrors.length > 0) {
+      for (const chunkError of orderPage.chunkErrors) {
+        result.errors.push(`Orders (pedaco ${chunkError}) -- pedidos de outros pedacos foram processados normalmente.`);
+      }
+    } else if (!orderPage.complete) {
       result.errors.push(
         `Orders pagination stopped after ${orderPage.pagesFetched} page(s) before reaching the end. Increase NUVEMSHOP_CRON_MAX_PAGES or remove the cap.`,
       );
