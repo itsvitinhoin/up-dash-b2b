@@ -78,3 +78,11 @@ As credenciais próprias de cada marca são cifradas em `clients.erp_credentials
 O envio do formulário não autoriza automaticamente a conta Bling. Depois da autorização explícita no Bling, executar teste e primeira importação.
 
 Validação do formulário integrado em 23/11/2026: 23 testes passaram, incluindo PUT no endpoint de ERP existente, primeiro salvamento sem tabelas prévias, credenciais próprias por marca, manutenção de segredo omitido, troca de aplicativo e teste de conexão sem importação. Builds de API/frontend e typecheck do workspace concluídos.
+
+## Publicação do formulário
+
+Publicado em 23/11/2026 no domínio `https://www.grupoup-dash.com.br`, a partir do commit `3e561e217026e7acc3dca78c0a7b4cc520467026` da branch `codex/bling-client-erp`. Deployment Vercel `dpl_C1GKfRQAa6iPxSekocJ3sYaBT91a`, projeto `prj_6lGvyKbSHVZWVZ6QFoqaAbe2IK6p`. A versão foi preparada com `--prod --skip-domain`, passou nas verificações de saúde (API e banco 200) e rejeição de callback inválido (400), e então promovida.
+
+Verificação no domínio real: **Clientes cadastrados → Jini Cosméticos → ERP → Bling** apresentou Client ID, Client Secret protegido, URL de retorno, salvar, autorizar e testar. O formulário ficou aberto com os campos editáveis para o usuário. Não foi salvo nenhum vínculo da Jini nem concedida autorização OAuth nesta verificação. A primeira criação das tabelas ocorre no salvamento explícito. O usuário pode usar o aplicativo já configurado ou preencher um aplicativo próprio.
+
+A branch foi enviada ao GitHub. A main não foi alterada; o workflow horário só será ativado após a incorporação na main. Até lá, a sincronização manual está disponível após autorização. Um deploy futuro da main sem esta alteração pode substituí-la; incorporar esta branch antes do próximo release normal. Evidência visual local: `output/bling-verification/bling-formulario-publicado.jpg`.
