@@ -338,6 +338,50 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
       .set(admin)
       .expect(400);
   });
+  it("commits successful order details before a quota pause and resumes the failed detail", async () => {
+    await connect();
+    await schema.db
+      .update(schema.blingConnectionsTable)
+      .set({
+        cursor: {
+          ...sync.initialBlingCursor(30, null),
+          phase: "orders",
+          pending: ["301", "302", "303"],
+          lastPage: true,
+        },
+      })
+      .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    limitedPath = "/pedidos/vendas/302";
+    await request(app).post("/clients/jini/bling/sync").set(admin).expect(429);
+    const [paused] = await schema.db
+      .select()
+      .from(schema.blingConnectionsTable)
+      .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    expect(paused.cursor?.pending).toEqual(["302", "303"]);
+    expect(paused.nextRequestAt!.getTime()).toBeGreaterThan(Date.now());
+    expect(paused.leaseId).toBeNull();
+    const saved = await schema.db
+      .select()
+      .from(schema.blingRecordsTable)
+      .where(eq(schema.blingRecordsTable.kind, "orders"));
+    expect(saved.map((row) => row.externalId)).toEqual(["301"]);
+    limitedPath = null;
+    await schema.db
+      .update(schema.blingConnectionsTable)
+      .set({ nextRequestAt: new Date(0) })
+      .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    calls.length = 0;
+    expect((await sync.runBlingBatch("jini")).complete).toBe(true);
+    expect(calls.some((path) => path.startsWith("/pedidos/vendas/301?"))).toBe(
+      false,
+    );
+    const status = await request(app)
+      .get("/clients/jini/bling")
+      .set(admin)
+      .expect(200);
+    expect(status.body.recordCounts.orders).toBe(3);
+    expect(status.body.cursor).toBeNull();
+  });
   it("binds OAuth state to the initiating browser and consumes it once", async () => {
     const start = await request(app)
       .post("/clients/jini/bling/authorize")

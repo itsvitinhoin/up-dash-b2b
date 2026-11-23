@@ -83,7 +83,7 @@ export async function releaseBlingLease(clientId: string, leaseId: string) {
 }
 export async function reserveBlingSlot(clientId: string) {
   const result = await db.execute(
-    sql`UPDATE bling_connections SET next_request_at = GREATEST(clock_timestamp(), COALESCE(next_request_at, clock_timestamp())) + interval '2000 milliseconds' WHERE client_id = ${clientId} RETURNING extract(epoch FROM next_request_at - interval '2000 milliseconds') * 1000 AS slot`,
+    sql`UPDATE bling_connections SET next_request_at = GREATEST(clock_timestamp(), COALESCE(next_request_at, clock_timestamp())) + interval '1000 milliseconds' WHERE client_id = ${clientId} RETURNING extract(epoch FROM next_request_at - interval '1000 milliseconds') * 1000 AS slot`,
   );
   return Number(result.rows[0].slot);
 }
@@ -334,19 +334,36 @@ export async function runBlingBatch(clientId: string) {
         externalId: string;
         data: BlingRecord;
       }> = [];
+      let deferredError: unknown;
       if (current.phase === "orders" && current.pending.length) {
-        const id = current.pending[0];
-        const data = normalizeBling(
-          "orders",
-          record(await api.get(`/pedidos/vendas/${id}`)),
-        );
-        if (data.id !== id)
-          throw new BlingError(
-            "Pedido retornado pelo Bling não corresponde à consulta.",
-          );
-        writes.push({ kind: "orders", externalId: id, data });
-        cursor = { ...current, pending: current.pending.slice(1) };
-        if (!cursor.pending.length) cursor = nextBlingPage(cursor);
+        // Persist a small group together instead of opening a transaction per
+        // detail. A provider failure still commits every preceding success and
+        // its exact cursor before propagating the failure/cooldown.
+        while (
+          cursor?.phase === "orders" &&
+          cursor.pending.length &&
+          writes.length < 8 &&
+          (writes.length === 0 || Date.now() < deadline)
+        ) {
+          const id = cursor.pending[0];
+          try {
+            const data = normalizeBling(
+              "orders",
+              record(await api.get(`/pedidos/vendas/${id}`)),
+            );
+            if (data.id !== id)
+              throw new BlingError(
+                "Pedido retornado pelo Bling não corresponde à consulta.",
+              );
+            writes.push({ kind: "orders", externalId: id, data });
+            cursor = { ...cursor, pending: cursor.pending.slice(1) };
+            if (!cursor.pending.length) cursor = nextBlingPage(cursor);
+          } catch (error) {
+            if (!writes.length) throw error;
+            deferredError = error;
+            break;
+          }
+        }
       } else {
         const params = new URLSearchParams({
           pagina: String(current.page),
@@ -497,6 +514,7 @@ export async function runBlingBatch(clientId: string) {
           .where(eq(connections.clientId, clientId));
       });
       imported += writes.length;
+      if (deferredError) throw deferredError;
     }
     return {
       complete: !cursor,
