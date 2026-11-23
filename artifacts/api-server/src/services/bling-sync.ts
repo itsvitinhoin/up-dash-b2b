@@ -83,7 +83,7 @@ export async function releaseBlingLease(clientId: string, leaseId: string) {
 }
 export async function reserveBlingSlot(clientId: string) {
   const result = await db.execute(
-    sql`UPDATE bling_connections SET next_request_at = GREATEST(clock_timestamp(), COALESCE(next_request_at, clock_timestamp())) + interval '500 milliseconds' WHERE client_id = ${clientId} RETURNING extract(epoch FROM next_request_at - interval '500 milliseconds') * 1000 AS slot`,
+    sql`UPDATE bling_connections SET next_request_at = GREATEST(clock_timestamp(), COALESCE(next_request_at, clock_timestamp())) + interval '1000 milliseconds' WHERE client_id = ${clientId} RETURNING extract(epoch FROM next_request_at - interval '1000 milliseconds') * 1000 AS slot`,
   );
   return Number(result.rows[0].slot);
 }
@@ -346,7 +346,7 @@ export async function runBlingBatch(clientId: string) {
           (writes.length === 0 || Date.now() < deadline)
         ) {
           // At most two in flight; the shared database reservation still spaces
-          // every request by 500ms (below the provider's three/second ceiling).
+          // every request by 1s, leaving room for the account's other apps.
           const ids = cursor.pending.slice(0, 2);
           const details = await Promise.allSettled(
             ids.map(async (id) => {

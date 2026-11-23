@@ -399,7 +399,7 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
       )
     ).sort((a, b) => a - b);
     for (let i = 1; i < slots.length; i++)
-      expect(slots[i] - slots[i - 1]).toBeGreaterThanOrEqual(499.9);
+        expect(slots[i] - slots[i - 1]).toBeGreaterThanOrEqual(999.9);
   });
   it("binds OAuth state to the initiating browser and consumes it once", async () => {
     const start = await request(app)
