@@ -297,6 +297,35 @@ function isSkuConflict(error: unknown, depth = 0): boolean {
   return isSkuConflict(e.cause, depth + 1);
 }
 
+// Achado 23/11/2026: mesma familia de bug do SKU, so que do lado do cliente --
+// o upsert de pedido resolve conflito por EMAIL mas tambem escreve external_id
+// (id do cliente na Nuvemshop). Pedido de convidado (sem customer.id, ganha um
+// external_id sintetico) que depois vira conta de verdade com o MESMO e-mail
+// de outro pedido (ou o contrario) faz dois e-mails deferentes quererem o
+// mesmo external_id -- ai bate em customers_client_external_id_uq. external_id
+// e o link de verdade pra Nuvemshop (ao contrario do SKU, que e so exibicao),
+// entao aqui a saida segura e NAO sobrescrever o external_id de quem ja
+// tinha um -- so atualiza quando o e-mail e novo ou ja era dono desse id.
+type CustomerIdentity = { id: string; externalId: string | null };
+type CustomerIndex = {
+  byEmail: Map<string, CustomerIdentity>;
+  // external_id -> e-mail de quem o usa (null = linha antiga sem external_id, nunca colide).
+  byExternalId: Map<string, string>;
+};
+
+async function loadCustomerIndex(clientId: string): Promise<CustomerIndex> {
+  const rows = await db
+    .select({ id: customersTable.id, email: customersTable.email, externalId: customersTable.externalId })
+    .from(customersTable)
+    .where(eq(customersTable.clientId, clientId));
+  const index: CustomerIndex = { byEmail: new Map(), byExternalId: new Map() };
+  for (const row of rows) {
+    index.byEmail.set(row.email, { id: row.id, externalId: row.externalId });
+    if (row.externalId) index.byExternalId.set(row.externalId, row.email);
+  }
+  return index;
+}
+
 async function upsertItemProduct(
   clientId: string,
   index: ProductIndex,
@@ -725,6 +754,7 @@ export async function syncNuvemshopClient(params: {
   }
   const productDetailsCache = new Map<string, Promise<NuvemshopProductDetails | null>>();
   let productIndex: ProductIndex | undefined;
+  const customerIndex = await loadCustomerIndex(params.clientId);
 
   for (const order of orders) {
     try {
@@ -764,11 +794,24 @@ export async function syncNuvemshopClient(params: {
       const city = order.shipping_address?.city ?? order.billing_city ?? null;
       const state = normalizeState(order.shipping_address?.province ?? order.billing_province);
 
+      // Achado 23/11/2026: ver comentario de CustomerIndex acima -- so escreve
+      // um external_id que nenhum OUTRO e-mail ja tem (checa antes de escrever;
+      // loop sequencial, sem concorrencia dentro da mesma rodada, entao nao
+      // precisa do retry reativo que upsertItemProduct usa pro SKU).
+      const desiredExternalId = customer.id ? String(customer.id) : null;
+      const own = customerIndex.byEmail.get(email);
+      const ownerEmail = desiredExternalId ? customerIndex.byExternalId.get(desiredExternalId) : undefined;
+      const takenByOther = ownerEmail !== undefined && ownerEmail !== email;
+      const externalIdForInsert = desiredExternalId
+        ? (takenByOther ? null : desiredExternalId)
+        : `order-customer-${externalOrderId}`;
+      const externalIdForUpdate = desiredExternalId && !takenByOther ? desiredExternalId : undefined;
+
       const [upsertedCustomer] = await db
         .insert(customersTable)
         .values({
           clientId: params.clientId,
-          externalId: customer.id ? String(customer.id) : `order-customer-${externalOrderId}`,
+          externalId: externalIdForInsert,
           email,
           name,
           phone,
@@ -781,7 +824,7 @@ export async function syncNuvemshopClient(params: {
         .onConflictDoUpdate({
           target: [customersTable.clientId, customersTable.email],
           set: {
-            externalId: customer.id ? String(customer.id) : undefined,
+            externalId: externalIdForUpdate,
             name,
             phone,
             city,
@@ -794,6 +837,15 @@ export async function syncNuvemshopClient(params: {
       if (!upsertedCustomer) continue;
       if (upsertedCustomer.wasInserted) result.customersCreated++;
       else result.customersUpdated++;
+
+      const finalExternalId = upsertedCustomer.wasInserted
+        ? externalIdForInsert
+        : (externalIdForUpdate ?? own?.externalId ?? null);
+      if (own?.externalId && own.externalId !== finalExternalId && customerIndex.byExternalId.get(own.externalId) === email) {
+        customerIndex.byExternalId.delete(own.externalId);
+      }
+      customerIndex.byEmail.set(email, { id: upsertedCustomer.id, externalId: finalExternalId });
+      if (finalExternalId) customerIndex.byExternalId.set(finalExternalId, email);
 
       const [upsertedOrder] = await db
         .insert(ordersTable)
