@@ -16,6 +16,12 @@ export type BlingStatus = {
   busy: boolean;
   retryAt: string | null;
   channels: BlingChannel[];
+  recordCounts: {
+    channels: number;
+    products: number;
+    customers: number;
+    orders: number;
+  };
 };
 export type BlingOrder = {
   id: string;

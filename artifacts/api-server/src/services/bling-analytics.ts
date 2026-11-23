@@ -51,8 +51,18 @@ export async function getBlingStatus(clientId: string) {
           and(eq(records.clientId, clientId), eq(records.kind, "channels")),
         )
     : [];
+  const groupedCounts = ready
+    ? await db
+        .select({ kind: records.kind, count: sql<number>`count(*)::int` })
+        .from(records)
+        .where(eq(records.clientId, clientId))
+        .groupBy(records.kind)
+    : [];
+  const recordCounts = { channels: 0, products: 0, customers: 0, orders: 0 };
+  for (const group of groupedCounts) recordCounts[group.kind] = group.count;
   return {
     channels: channels.map((r) => r.data),
+    recordCounts,
     appConfigured,
     appClientId,
     credentialsSource,

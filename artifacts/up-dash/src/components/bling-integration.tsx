@@ -513,6 +513,18 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
                 ? `Última carga concluída: ${new Date(data.completedAt).toLocaleString("pt-BR")}`
                 : "Nenhuma carga concluída ainda."}
       </p>
+      {data.recordCounts && (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="bling-record-counts"
+        >
+          Registros importados:{" "}
+          {data.recordCounts.products.toLocaleString("pt-BR")} produtos ·{" "}
+          {data.recordCounts.customers.toLocaleString("pt-BR")} contatos ·{" "}
+          {data.recordCounts.orders.toLocaleString("pt-BR")} pedidos ·{" "}
+          {data.recordCounts.channels.toLocaleString("pt-BR")} canais.
+        </p>
+      )}
       <BlingSettings
         key={`${data.historyDays}:${data.nuvemshopChannelId}`}
         clientId={clientId}
