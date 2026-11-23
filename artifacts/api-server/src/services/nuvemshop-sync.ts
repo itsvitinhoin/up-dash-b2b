@@ -567,6 +567,14 @@ async function syncProductCatalog(params: {
     );
   }
 
+  // Achado 23/11/2026 (reativando o catalogo apos SKIP_CATALOG=1 ficar meses ligado):
+  // mesmo SKU repetido entre produtos diferentes (Hot Pink/Lila Rosa/Jini, ver
+  // investigacao 2026-09-17 abaixo) que upsertItemProduct ja sabe contornar --
+  // esse loop so tinha o try/catch simples, sem a logica de SKU seguro, entao a
+  // variante que perdia a corrida ficava presa com dado velho pra sempre. Mesmo
+  // indice/funcoes que upsertItemProduct usa (ProductIndex/collisionSku/isSkuConflict).
+  const productIndex = await loadProductIndex(params.clientId);
+
   for (const product of products) {
     try {
       const productId = product.id ? String(product.id) : null;
@@ -603,13 +611,27 @@ async function syncProductCatalog(params: {
       }
 
       for (const [sku, row] of variantsBySku.entries()) {
-        try {
-          const [upserted] = await db
+        // externalId (product_id:variant_id da Nuvemshop) e o identificador
+        // estavel -- o sku pode ser reatribuido pelo lojista ao longo do
+        // tempo. Resolver conflito por sku deixava o upsert tentar um INSERT
+        // puro quando o sku mudava, colidindo na constraint de externalId em
+        // vez de atualizar a linha certa. Mesmo assim, alguns catalogos tem
+        // sku duplicado entre produtos diferentes de verdade (ver
+        // investigacao 2026-09-17) -- por isso o SKU seguro/retry abaixo,
+        // igual upsertItemProduct ja faz pro lado do pedido.
+        const own = productIndex.byExternalId.get(row.externalId);
+        const owner = productIndex.externalIdBySku.get(sku);
+        const takenByOther = owner !== undefined && owner !== row.externalId;
+        const safeSku = own ? own.sku : collisionSku(sku, row.externalId);
+        const wanted = takenByOther ? safeSku : sku;
+
+        const write = async (skuToUse: string) => {
+          const [row_] = await db
             .insert(productsTable)
             .values({
               clientId: params.clientId,
               externalId: row.externalId,
-              sku,
+              sku: skuToUse,
               name: row.name,
               category,
               price: row.price,
@@ -618,18 +640,9 @@ async function syncProductCatalog(params: {
               status: "ACTIVE",
             })
             .onConflictDoUpdate({
-              // externalId (product_id:variant_id da Nuvemshop) e o identificador
-              // estavel -- o sku pode ser reatribuido pelo lojista ao longo do
-              // tempo. Resolver conflito por sku deixava o upsert tentar um INSERT
-              // puro quando o sku mudava, colidindo na constraint de externalId
-              // em vez de atualizar a linha certa. Mesmo assim, alguns catalogos
-              // tem sku duplicado entre produtos diferentes de verdade -- por
-              // isso o try/catch: uma variante com dado inconsistente nao pode
-              // abortar as outras variantes do mesmo produto (ver investigacao
-              // 2026-09-17).
               target: [productsTable.clientId, productsTable.externalId],
               set: {
-                sku,
+                sku: skuToUse,
                 name: row.name,
                 category,
                 price: row.price,
@@ -638,9 +651,27 @@ async function syncProductCatalog(params: {
                 status: "ACTIVE",
               },
             })
-            .returning({ wasInserted: sql<boolean>`(xmax = 0)` });
+            .returning({ id: productsTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
+          return row_;
+        };
+
+        let used = wanted;
+        try {
+          let upserted;
+          try {
+            upserted = await write(wanted);
+          } catch (variantError) {
+            if (!isSkuConflict(variantError) || safeSku === wanted) throw variantError;
+            used = safeSku;
+            upserted = await write(safeSku);
+          }
           if (upserted?.wasInserted) params.result.productsCreated++;
           else params.result.productsUpdated++;
+          if (upserted) {
+            if (own && own.sku !== used && productIndex.externalIdBySku.get(own.sku) === row.externalId) productIndex.externalIdBySku.delete(own.sku);
+            productIndex.externalIdBySku.set(used, row.externalId);
+            productIndex.byExternalId.set(row.externalId, { id: upserted.id, sku: used });
+          }
         } catch (variantError) {
           params.result.errors.push(
             `Product ${product.id ?? "unknown"} variant ${sku}: ${variantError instanceof Error ? variantError.message : String(variantError)}`,
