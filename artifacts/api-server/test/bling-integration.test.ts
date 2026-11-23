@@ -524,6 +524,44 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
     );
     expect(storefront.rows[0].n).toBe(1);
     expect(calls.some((p) => p.includes("dataAlteracaoInicial"))).toBe(true);
+    await schema.db.execute(
+      sql`INSERT INTO orders VALUES ('ns-duplicate', 'jini', 'another-id', '{"nuvemshop":{"orderNumber":"1001"}}'::jsonb)`,
+    );
+    const ambiguous = await request(app)
+      .get(
+        "/analytics/erp/bling?clientId=jini&from=2026-11-01&to=2026-11-18&view=orders",
+      )
+      .set(admin)
+      .expect(200);
+    expect(ambiguous.body.summary).toMatchObject({
+      orders: 3,
+      orderValue: 600,
+      matched: 0,
+      unmatched: 0,
+      ambiguous: 1,
+    });
+    expect(
+      ambiguous.body.rows.find((row: { id: string }) => row.id === "302")
+        .reconciliation,
+    ).toBe("other_channel");
+    // The other brand still has this number. Missing local numbers must not
+    // match it, and duplicate storefront rows must never multiply ERP totals.
+    await schema.db.execute(
+      sql`UPDATE orders SET source_metadata = '{"nuvemshop":{"orderNumber":""}}'::jsonb WHERE client_id = 'jini'`,
+    );
+    const missing = await request(app)
+      .get(
+        "/analytics/erp/bling?clientId=jini&from=2026-11-01&to=2026-11-18&view=orders",
+      )
+      .set(admin)
+      .expect(200);
+    expect(missing.body.summary).toMatchObject({
+      orders: 3,
+      orderValue: 600,
+      matched: 0,
+      unmatched: 1,
+      ambiguous: 0,
+    });
   }, 40000);
   it("persists a shared cooldown and resumes product page 17 without losing imported records", async () => {
     await connect();

@@ -130,15 +130,19 @@ export async function getBlingAnalytics(query: BlingQuery) {
   const offset = (query.page - 1) * 25;
   // Match only inside the explicitly selected storefront channel. A store
   // number from another marketplace is never evidence of the same order.
-  const cte = sql`WITH base AS (
+  const cte = sql`WITH storefront_orders AS (
+    SELECT o.source_metadata->'nuvemshop'->>'orderNumber' AS number, count(*)::int AS matches
+    FROM orders o JOIN clients cl ON cl.id = o.client_id
+    WHERE ${status.nuvemshopChannelId}::text IS NOT NULL
+      AND o.client_id = ${query.clientId} AND cl.commerce_platform = 'NUVEMSHOP'
+      AND NULLIF(o.source_metadata->'nuvemshop'->>'orderNumber', '') IS NOT NULL
+    GROUP BY o.source_metadata->'nuvemshop'->>'orderNumber'
+  ), base AS (
     SELECT b.data, COALESCE(c.data->>'name', CASE WHEN b.data->>'channelId' = 'unassigned' THEN 'Sem canal identificado' ELSE 'Canal ' || (b.data->>'channelId') END) AS channel_name,
-      CASE WHEN b.data->>'channelId' = ${status.nuvemshopChannelId} THEN (
-        SELECT count(*)::int FROM orders o JOIN clients cl ON cl.id = o.client_id
-        WHERE o.client_id = ${query.clientId} AND cl.commerce_platform = 'NUVEMSHOP'
-          AND NULLIF(b.data->>'storeNumber', '') IS NOT NULL
-          AND o.source_metadata->'nuvemshop'->>'orderNumber' = b.data->>'storeNumber'
-      ) ELSE NULL END AS matches
+      CASE WHEN b.data->>'channelId' = ${status.nuvemshopChannelId} THEN COALESCE(n.matches, 0) ELSE NULL END AS matches
     FROM bling_records b LEFT JOIN bling_records c ON c.client_id = b.client_id AND c.kind = 'channels' AND c.external_id = b.data->>'channelId'
+    LEFT JOIN storefront_orders n ON b.data->>'channelId' = ${status.nuvemshopChannelId}
+      AND NULLIF(b.data->>'storeNumber', '') = n.number
     WHERE b.client_id = ${query.clientId} AND b.kind = 'orders'
       AND b.data->>'day' >= ${query.from} AND b.data->>'day' <= ${query.to} ${channel} ${search}
   )`;
