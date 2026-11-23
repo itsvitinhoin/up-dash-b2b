@@ -82,6 +82,7 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
         "Requires isolated local bling_integration_test database.",
       );
     vi.stubEnv("DATABASE_URL", connection!);
+    vi.stubEnv("DATABASE_POOL_MAX", "1");
     vi.stubEnv("CLOUD_SQL_CONNECTION_NAME", "");
     vi.stubEnv(
       "ERP_CREDENTIALS_ENCRYPTION_KEY",
@@ -399,7 +400,22 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
       )
     ).sort((a, b) => a - b);
     for (let i = 1; i < slots.length; i++)
-        expect(slots[i] - slots[i - 1]).toBeGreaterThanOrEqual(999.9);
+      expect(slots[i] - slots[i - 1]).toBeGreaterThanOrEqual(999.9);
+  });
+  it("recovers after a temporary pool acquisition timeout without losing the waiting query", async () => {
+    const held = await schema.pool.connect();
+    let released = false;
+    const timer = setTimeout(() => {
+      released = true;
+      held.release();
+    }, 10_300);
+    try {
+      const result = await schema.db.execute(sql`SELECT 1 AS recovered`);
+      expect(result.rows[0].recovered).toBe(1);
+    } finally {
+      clearTimeout(timer);
+      if (!released) held.release();
+    }
   });
   it("binds OAuth state to the initiating browser and consumes it once", async () => {
     const start = await request(app)
