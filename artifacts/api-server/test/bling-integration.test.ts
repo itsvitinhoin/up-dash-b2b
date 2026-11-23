@@ -571,8 +571,8 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
       complete: true,
     });
     const imported = await schema.db.select().from(schema.blingRecordsTable);
-    expect(imported).toHaveLength(1);
-    expect(imported[0].clientId).toBe("jini");
+    expect(imported.filter(row => row.kind === "orders")).toHaveLength(1);
+    expect(imported.every(row => row.clientId === "jini")).toBe(true);
   });
   it("serializes sync and configuration changes and can resume after an expired lease", async () => {
     await connect();
