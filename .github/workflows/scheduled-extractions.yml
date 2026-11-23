@@ -175,8 +175,10 @@ jobs:
               }});
               body = await response.json();
             } catch {
+              if (response && [400, 401, 403, 404].includes(response.status)) throw new Error('Import authorization or target is invalid.');
               failures++;
               if (failures > 12) throw new Error('Import stopped after repeated transport failures.');
+              console.log('Temporary import request failure; retrying.', { httpStatus: response?.status ?? null });
               await wait(Math.min(300_000, 30_000 * failures));
               continue;
             }
@@ -212,7 +214,10 @@ jobs:
               ? Math.max(2000, Number.isFinite(retryAt) ? retryAt - Date.now() : 10_000, Math.min(30_000, failures * 2000))
               : Math.max(30_000, Math.min(300_000, failures * 30_000));
             if (delay > 15 * 60_000) throw new Error('Import paused: the provider requires a longer cooldown.');
-            if (Date.now() - lastNotice > 300_000) { console.log('Provider cooldown; progress is preserved and the import will resume.'); lastNotice = Date.now(); }
+            if (Date.now() - lastNotice > 300_000) {
+              console.log(quota ? 'Provider cooldown; progress is preserved and the import will resume.' : result.code === 'BLING_BUSY' ? 'Brand import is in use; waiting to resume its checkpoint.' : 'Backend batch failed; retrying the saved checkpoint.');
+              lastNotice = Date.now();
+            }
             await wait(delay + Math.floor(Math.random() * 2000));
           }
           throw new Error('Import time window ended before completion; the checkpoint is preserved.');
