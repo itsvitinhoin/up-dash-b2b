@@ -14,6 +14,45 @@ export class BlingError extends Error {
     super(message);
   }
 }
+export class BlingRateLimitError extends BlingError {
+  constructor(
+    readonly retryAt: Date,
+    readonly period: "second" | "day" | "unknown" = "unknown",
+  ) {
+    super(
+      period === "day"
+        ? "Limite diário do Bling atingido. A importação foi pausada; tente novamente amanhã."
+        : "O Bling limitou temporariamente as consultas. A importação está pausada e o progresso foi preservado.",
+      "BLING_RATE_LIMIT",
+      429,
+    );
+  }
+}
+
+export async function blingRateLimitError(
+  response: Response,
+  now = Date.now(),
+) {
+  // Read only documented quota metadata. Never forward provider messages or payloads.
+  let period: "second" | "day" | "unknown" = "unknown";
+  try {
+    const quota = object(object(await response.json()).error);
+    if (quota.period === "second" || quota.period === "day")
+      period = quota.period;
+  } catch {
+    /* Non-JSON throttling responses still require a cooldown. */
+  }
+  const header = response.headers.get("retry-after")?.trim();
+  let delay = NaN;
+  if (header)
+    delay = /^\d+(?:\.\d+)?$/.test(header)
+      ? Number(header) * 1000
+      : Date.parse(header) - now;
+  if (!Number.isFinite(delay) || delay <= 0 || delay > 365 * 86400000)
+    delay = period === "day" ? 86400000 : period === "second" ? 5000 : 60000;
+  return new BlingRateLimitError(new Date(now + Math.max(2000, delay)), period);
+}
+
 export type BlingRecord = Record<string, unknown>;
 export const record = (value: unknown): BlingRecord => {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -205,12 +244,7 @@ export class BlingApi {
         400,
       );
     const wait = Math.max(0, (await this.reserveSlot()) - Date.now());
-    if (wait > 2500)
-      throw new BlingError(
-        "Aguarde para retomar a sincronização Bling.",
-        "BLING_RATE_LIMIT",
-        429,
-      );
+    if (wait > 2500) throw new BlingRateLimitError(new Date(Date.now() + wait));
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
     const response = await this.fetcher(
       `https://api.bling.com.br/Api/v3${path}?${params}`,
@@ -238,12 +272,7 @@ export class BlingApi {
           "BLING_SCOPE_REQUIRED",
           403,
         );
-      if (response.status === 429)
-        throw new BlingError(
-          "Limite da conta Bling atingido. Retome a sincronização mais tarde.",
-          "BLING_RATE_LIMIT",
-          429,
-        );
+      if (response.status === 429) throw await blingRateLimitError(response);
       throw new BlingError(
         "O Bling não respondeu à consulta. A sincronização pode ser retomada.",
       );

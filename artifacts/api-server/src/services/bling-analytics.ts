@@ -23,6 +23,7 @@ export async function getBlingStatus(clientId: string) {
           cursor: connections.cursor,
           error: connections.error,
           leaseUntil: connections.leaseUntil,
+          nextRequestAt: connections.nextRequestAt,
         })
         .from(connections)
         .where(eq(connections.clientId, clientId))
@@ -67,6 +68,12 @@ export async function getBlingStatus(clientId: string) {
       ? { phase: row.cursor.phase, page: row.cursor.page }
       : null,
     error: row?.error ?? null,
+    retryAt:
+      row?.error &&
+      row.nextRequestAt &&
+      row.nextRequestAt.getTime() > Date.now()
+        ? row.nextRequestAt.toISOString()
+        : null,
     busy: !!row?.leaseUntil && row.leaseUntil.getTime() > Date.now(),
   };
 }

@@ -1,7 +1,9 @@
+import { blingRetryDelay } from "../../../lib/api-client-react/src/bling";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BlingApi,
   BlingError,
+  blingRateLimitError,
   blingConfig,
   exchangeBlingToken,
   openTokens,
@@ -97,6 +99,66 @@ describe("Bling credentials and transport", () => {
       await expect(api.get("/produtos")).rejects.not.toThrow("private");
     },
   );
+  it("distinguishes second and daily quotas without exposing provider details", async () => {
+    const now = Date.parse("2026-11-23T13:00:00Z");
+    const seconds = await blingRateLimitError(
+      Response.json(
+        { error: { period: "second", description: "private secret" } },
+        { status: 429, headers: { "retry-after": "12" } },
+      ),
+      now,
+    );
+    expect(seconds).toMatchObject({
+      code: "BLING_RATE_LIMIT",
+      status: 429,
+      period: "second",
+    });
+    expect(seconds.retryAt.getTime()).toBe(now + 12000);
+    expect(seconds.message).not.toContain("private");
+    const daily = await blingRateLimitError(
+      Response.json({ error: { period: "day" } }, { status: 429 }),
+      now,
+    );
+    expect(daily.period).toBe("day");
+    expect(daily.message).toContain("diário");
+    expect(daily.retryAt.getTime()).toBe(now + 86400000);
+    const unknown = await blingRateLimitError(
+      new Response("private proxy response", { status: 429 }),
+      now,
+    );
+    expect(unknown.period).toBe("unknown");
+    expect(unknown.retryAt.getTime()).toBe(now + 60000);
+    const dated = await blingRateLimitError(
+      new Response("", {
+        status: 429,
+        headers: { "retry-after": "Mon, 23 Nov 2026 13:02:00 GMT" },
+      }),
+      now,
+    );
+    expect(dated.retryAt.getTime()).toBe(now + 120000);
+  });
+  it("automatically resumes short explicit cooldowns but never daily limits or unrelated errors", () => {
+    const now = Date.now();
+    const data = {
+      code: "BLING_RATE_LIMIT",
+      rateLimitPeriod: "second",
+      retryAt: new Date(now + 5000).toISOString(),
+    };
+    expect(blingRetryDelay(data, now)).toBe(5000);
+    expect(
+      blingRetryDelay({ ...data, rateLimitPeriod: "day" }, now),
+    ).toBeNull();
+    expect(
+      blingRetryDelay(
+        { ...data, retryAt: new Date(now + 120000).toISOString() },
+        now,
+      ),
+    ).toBeNull();
+    expect(blingRetryDelay({ ...data, retryAt: "invalid" }, now)).toBeNull();
+    expect(
+      blingRetryDelay({ ...data, code: "BLING_AUTH_FAILED" }, now),
+    ).toBeNull();
+  });
   it("does not accept malformed successful responses as empty catalogues", async () => {
     const api = new BlingApi(
       "secret",

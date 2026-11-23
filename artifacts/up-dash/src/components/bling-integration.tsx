@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   customFetch,
+  ApiError,
+  blingRetryDelay,
   getListClientsQueryKey,
+  getGetClientQueryKey,
 } from "@workspace/api-client-react";
 import type { BlingStatus } from "@workspace/api-client-react";
 import { Link2, Loader2, RefreshCw, Square } from "lucide-react";
@@ -264,6 +267,7 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
   const stop = useRef(false);
   const [progress, setProgress] = useState("");
   const [credentialsDirty, setCredentialsDirty] = useState(false);
+  const [now, setNow] = useState(Date.now);
   useEffect(() => {
     stop.current = false;
     return () => {
@@ -276,6 +280,12 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
     queryFn: () => customFetch<BlingStatus>(base),
     retry: false,
   });
+  useEffect(() => {
+    if (!status.data?.retryAt) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [status.data?.retryAt]);
   const authorize = useMutation({
     mutationFn: () =>
       customFetch<{ url: string }>(`${base}/authorize`, { method: "POST" }),
@@ -301,12 +311,35 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
     mutationFn: async () => {
       stop.current = false;
       let complete = false;
+      let consecutivePauses = 0;
       while (!complete && !stop.current) {
-        const batch = await customFetch<{
-          complete: boolean;
-          phase: string;
-          page: number;
-        }>(`${base}/sync`, { method: "POST" });
+        let batch: { complete: boolean; phase: string; page: number };
+        try {
+          batch = await customFetch<typeof batch>(`${base}/sync`, {
+            method: "POST",
+          });
+          consecutivePauses = 0;
+        } catch (error) {
+          const delay =
+            error instanceof ApiError ? blingRetryDelay(error.data) : null;
+          if (delay === null || consecutivePauses >= 3 || stop.current)
+            throw error;
+          consecutivePauses++;
+          void cache.invalidateQueries({ queryKey: ["bling", clientId] });
+          const resumeAt = Date.now() + delay;
+          while (!stop.current && Date.now() < resumeAt) {
+            setProgress(
+              `Bling limitou as consultas · retomando em ${Math.ceil((resumeAt - Date.now()) / 1000)}s`,
+            );
+            await new Promise((resolve) =>
+              setTimeout(
+                resolve,
+                Math.min(1000, Math.max(1, resumeAt - Date.now())),
+              ),
+            );
+          }
+          continue;
+        }
         complete = batch.complete;
         if (!stop.current)
           setProgress(
@@ -345,6 +378,13 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
         </AlertDescription>
       </Alert>
     );
+  const cooldown = Math.max(
+    0,
+    Math.ceil(
+      ((status.data?.retryAt ? Date.parse(status.data.retryAt) : 0) - now) /
+        1000,
+    ),
+  );
   const data = status.data,
     busy = sync.isPending || authorize.isPending || test.isPending;
   return (
@@ -388,7 +428,13 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
           <Button
             variant="outline"
             size="sm"
-            disabled={!data.connected || credentialsDirty || busy || data.busy}
+            disabled={
+              !data.connected ||
+              credentialsDirty ||
+              busy ||
+              data.busy ||
+              cooldown > 0
+            }
             onClick={() => test.mutate()}
           >
             {test.isPending ? "Testando…" : "Testar conexão"}
@@ -396,7 +442,7 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
           {data.connected && (
             <Button
               size="sm"
-              disabled={credentialsDirty || busy || data.busy}
+              disabled={credentialsDirty || busy || data.busy || cooldown > 0}
               onClick={() => sync.mutate()}
             >
               {sync.isPending ? (
@@ -404,7 +450,11 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
               ) : (
                 <RefreshCw className="mr-2 h-4 w-4" />
               )}
-              {data.cursor ? "Retomar importação" : "Sincronizar"}
+              {cooldown > 0
+                ? `Aguardar ${cooldown}s`
+                : data.cursor
+                  ? "Retomar importação"
+                  : "Sincronizar"}
             </Button>
           )}
           {sync.isPending && (
@@ -459,7 +509,7 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
         key={`${data.historyDays}:${data.nuvemshopChannelId}`}
         clientId={clientId}
         status={data}
-        disabled={busy || data.busy}
+        disabled={busy || data.busy || !data.selected || cooldown > 0}
       />
     </div>
   );

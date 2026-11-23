@@ -11,6 +11,7 @@ import {
 import {
   BlingApi,
   BlingError,
+  BlingRateLimitError,
   blingId,
   exchangeBlingToken,
   openTokens,
@@ -82,7 +83,7 @@ export async function releaseBlingLease(clientId: string, leaseId: string) {
 }
 export async function reserveBlingSlot(clientId: string) {
   const result = await db.execute(
-    sql`UPDATE bling_connections SET next_request_at = GREATEST(clock_timestamp(), COALESCE(next_request_at, clock_timestamp())) + interval '400 milliseconds' WHERE client_id = ${clientId} RETURNING extract(epoch FROM next_request_at - interval '400 milliseconds') * 1000 AS slot`,
+    sql`UPDATE bling_connections SET next_request_at = GREATEST(clock_timestamp(), COALESCE(next_request_at, clock_timestamp())) + interval '1000 milliseconds' WHERE client_id = ${clientId} RETURNING extract(epoch FROM next_request_at - interval '1000 milliseconds') * 1000 AS slot`,
   );
   return Number(result.rows[0].slot);
 }
@@ -133,6 +134,15 @@ export async function blingApiForLease(
   connection: typeof connections.$inferSelect,
   leaseId: string,
 ) {
+  if (
+    connection.error &&
+    connection.nextRequestAt &&
+    connection.nextRequestAt.getTime() > Date.now() + 1500
+  ) {
+    const paused = new BlingRateLimitError(connection.nextRequestAt);
+    paused.message = connection.error;
+    throw paused;
+  }
   const app = await getBlingApp(clientId);
   if (!app.selected)
     throw new BlingError(
@@ -284,6 +294,19 @@ export async function testBlingConnection(clientId: string) {
       companyName: connection.companyName,
       message: "Conexão Bling validada.",
     };
+  } catch (error) {
+    if (error instanceof BlingRateLimitError) {
+      await db
+        .update(connections)
+        .set({ error: error.message, nextRequestAt: error.retryAt })
+        .where(
+          and(
+            eq(connections.clientId, clientId),
+            eq(connections.leaseId, leaseId),
+          ),
+        );
+    }
+    throw error;
   } finally {
     await releaseBlingLease(clientId, leaseId);
   }
@@ -460,13 +483,23 @@ export async function runBlingBatch(clientId: string) {
       page: cursor?.page ?? 0,
     };
   } catch (error) {
+    if (error instanceof BlingRateLimitError)
+      console.warn("[bling] Import paused by quota", {
+        period: error.period,
+        retryAt: error.retryAt.toISOString(),
+      });
     const message =
       error instanceof BlingError
         ? error.message
         : "A sincronização Bling falhou. Retome a operação para tentar novamente.";
     await db
       .update(connections)
-      .set({ error: message })
+      .set({
+        error: message,
+        ...(error instanceof BlingRateLimitError
+          ? { nextRequestAt: error.retryAt }
+          : {}),
+      })
       .where(
         and(
           eq(connections.clientId, clientId),

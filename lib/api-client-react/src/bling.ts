@@ -14,6 +14,7 @@ export type BlingStatus = {
   cursor: { phase: string; page: number } | null;
   error: string | null;
   busy: boolean;
+  retryAt: string | null;
   channels: BlingChannel[];
 };
 export type BlingOrder = {
@@ -78,3 +79,22 @@ export type BlingDashboard = {
   page: number;
   channels: BlingChannel[];
 };
+
+/** Retry only an explicitly resumable short cooldown. Daily quotas never loop. */
+export function blingRetryDelay(
+  data: unknown,
+  now = Date.now(),
+): number | null {
+  if (!data || typeof data !== "object") return null;
+  const value = data as Record<string, unknown>;
+  if (
+    value.code !== "BLING_RATE_LIMIT" ||
+    value.rateLimitPeriod === "day" ||
+    typeof value.retryAt !== "string"
+  )
+    return null;
+  const delay = Date.parse(value.retryAt) - now;
+  return Number.isFinite(delay) && delay >= -1000 && delay <= 60000
+    ? Math.max(1000, delay)
+    : null;
+}

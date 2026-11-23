@@ -17,6 +17,7 @@ import {
 import {
   BlingApi,
   BlingError,
+  BlingRateLimitError,
   exchangeBlingToken,
   hashState,
   record,
@@ -52,7 +53,17 @@ function sendError(res: Response, error: unknown) {
     );
   }
   const status = error instanceof BlingError ? error.status : 500;
+  if (error instanceof BlingRateLimitError)
+    res.set(
+      "Retry-After",
+      String(
+        Math.max(1, Math.ceil((error.retryAt.getTime() - Date.now()) / 1000)),
+      ),
+    );
   res.status(status).json({
+    ...(error instanceof BlingRateLimitError
+      ? { retryAt: error.retryAt.toISOString(), rateLimitPeriod: error.period }
+      : {}),
     error: true,
     code: error instanceof BlingError ? error.code : "BLING_ERROR",
     message:

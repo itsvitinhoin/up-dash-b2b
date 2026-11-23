@@ -19,3 +19,5 @@ export type {
 export type { TvBrand, TvTotals, TvSnapshot, TvSyncStatus } from "./tv-dashboard";
 
 export type { BlingChannel, BlingStatus, BlingDashboard, BlingOrder, BlingCustomer, BlingProduct } from "./bling";
+
+export { blingRetryDelay } from "./bling";

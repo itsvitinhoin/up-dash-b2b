@@ -29,6 +29,9 @@ let app: express.Express;
 let failingOrder = false,
   refreshed = 0;
 let deniedPath: string | null = null;
+let limitedPath: string | null = null;
+let quotaPeriod = "second";
+vi.setConfig({ testTimeout: 25000 });
 const calls: string[] = [];
 const fixtures = {
   "/canais-venda": [
@@ -114,6 +117,8 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
     failingOrder = false;
     refreshed = 0;
     deniedPath = null;
+    limitedPath = null;
+    quotaPeriod = "second";
     await schema.db.execute(sql`TRUNCATE clients CASCADE`);
     await schema.db.execute(
       sql`INSERT INTO clients (id, dashboard_type, commerce_platform) VALUES ('jini','B2C','NUVEMSHOP'), ('other','B2C','NUVEMSHOP'), ('wholesale','B2B','UPZERO')`,
@@ -124,6 +129,21 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
         const url = new URL(String(input)),
           path = url.pathname.replace("/Api/v3", "");
         calls.push(`${path}?${url.searchParams}`);
+        if (path === limitedPath)
+          return Response.json(
+            {
+              error: {
+                period: quotaPeriod,
+                description: "private provider info",
+              },
+            },
+            {
+              status: 429,
+              ...(quotaPeriod === "second"
+                ? { headers: { "retry-after": "5" } }
+                : {}),
+            },
+          );
         if (path === deniedPath)
           return new Response("Forbidden", { status: 403 });
         if (path === "/oauth/token") {
@@ -408,6 +428,86 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
     expect(storefront.rows[0].n).toBe(1);
     expect(calls.some((p) => p.includes("dataAlteracaoInicial"))).toBe(true);
   }, 40000);
+  it("persists a shared cooldown and resumes product page 17 without losing imported records", async () => {
+    await connect();
+    const cursor = {
+      ...sync.initialBlingCursor(30, null),
+      phase: "products" as const,
+      page: 17,
+    };
+    await schema.db
+      .update(schema.blingConnectionsTable)
+      .set({ cursor })
+      .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    await schema.db
+      .insert(schema.blingRecordsTable)
+      .values({
+        clientId: "jini",
+        kind: "products",
+        externalId: "99",
+        data: { id: "99", name: "Already imported" },
+      });
+    limitedPath = "/estoques/saldos";
+    const paused = await request(app)
+      .post("/clients/jini/bling/sync")
+      .set(admin)
+      .expect(429);
+    expect(paused.body.rateLimitPeriod).toBe("second");
+    expect(Number(paused.headers["retry-after"])).toBeGreaterThan(0);
+    expect(JSON.stringify(paused.body)).not.toContain("private provider");
+    const count = calls.length;
+    await request(app).post("/clients/jini/bling/sync").set(admin).expect(429);
+    expect(calls).toHaveLength(count);
+    const state = await request(app)
+      .get("/clients/jini/bling")
+      .set(admin)
+      .expect(200);
+    expect(state.body.cursor).toEqual({ phase: "products", page: 17 });
+    expect(Date.parse(state.body.retryAt)).toBeGreaterThan(Date.now());
+    limitedPath = null;
+    await schema.db
+      .update(schema.blingConnectionsTable)
+      .set({ nextRequestAt: new Date(0) })
+      .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    expect((await sync.runBlingBatch("jini")).complete).toBe(true);
+    const [saved] = await schema.db
+      .select()
+      .from(schema.blingConnectionsTable)
+      .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    expect(saved.error).toBeNull();
+    expect(saved.cursor).toBeNull();
+    const products = await schema.db
+      .select()
+      .from(schema.blingRecordsTable)
+      .where(eq(schema.blingRecordsTable.kind, "products"));
+    expect(products.map((product) => product.externalId).sort()).toEqual([
+      "101",
+      "99",
+    ]);
+  });
+  it("pauses daily quotas without refreshing credentials or sending more provider calls", async () => {
+    await connect();
+    limitedPath = "/produtos";
+    quotaPeriod = "day";
+    const paused = await request(app)
+      .post("/clients/jini/bling/sync")
+      .set(admin)
+      .expect(429);
+    expect(paused.body.rateLimitPeriod).toBe("day");
+    expect(Date.parse(paused.body.retryAt) - Date.now()).toBeGreaterThan(
+      23 * 3600000,
+    );
+    const count = calls.length;
+    await request(app).post("/clients/jini/bling/test").set(admin).expect(429);
+    expect(calls).toHaveLength(count);
+    expect(refreshed).toBe(0);
+    const status = await request(app)
+      .get("/clients/jini/bling")
+      .set(admin)
+      .expect(200);
+    expect(status.body.error).toContain("diário");
+    expect(status.body.connected).toBe(true);
+  });
   it("serializes sync and configuration changes and can resume after an expired lease", async () => {
     await connect();
     const lease = await sync.claimBlingLease("jini");
