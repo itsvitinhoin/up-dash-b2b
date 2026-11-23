@@ -1,4 +1,7 @@
-import { blingRetryDelay } from "../../../lib/api-client-react/src/bling";
+import {
+  blingRetryDelay,
+  BlingRetryBudget,
+} from "../../../lib/api-client-react/src/bling";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BlingApi,
@@ -158,6 +161,26 @@ describe("Bling credentials and transport", () => {
     expect(
       blingRetryDelay({ ...data, code: "BLING_AUTH_FAILED" }, now),
     ).toBeNull();
+  });
+  it("keeps a long import running when quota pauses still make progress and stops repeated failures without progress", () => {
+    const cursor = { phase: "products", page: 17, pendingItems: 0 };
+    const budget = new BlingRetryBudget(cursor);
+    for (const page of [19, 21, 22, 24, 25])
+      expect(budget.canResume({ ...cursor, page })).toBe(true);
+    for (let attempt = 0; attempt < 3; attempt++)
+      expect(budget.canResume({ ...cursor, page: 25 })).toBe(true);
+    expect(budget.canResume({ ...cursor, page: 25 })).toBe(false);
+    budget.batchSucceeded();
+    expect(budget.canResume({ ...cursor, page: 25 })).toBe(true);
+    const orders = new BlingRetryBudget({
+      phase: "orders",
+      page: 1,
+      pendingItems: 50,
+    });
+    for (const pendingItems of [49, 48, 47, 46, 45])
+      expect(orders.canResume({ phase: "orders", page: 1, pendingItems })).toBe(
+        true,
+      );
   });
   it("does not accept malformed successful responses as empty catalogues", async () => {
     const api = new BlingApi(

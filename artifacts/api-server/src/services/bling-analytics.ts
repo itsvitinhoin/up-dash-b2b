@@ -65,7 +65,11 @@ export async function getBlingStatus(clientId: string) {
     nuvemshopChannelId: row?.nuvemshopChannelId ?? null,
     completedAt: row?.completedAt ?? null,
     cursor: row?.cursor
-      ? { phase: row.cursor.phase, page: row.cursor.page }
+      ? {
+          phase: row.cursor.phase,
+          page: row.cursor.page,
+          pendingItems: row.cursor.pending.length,
+        }
       : null,
     error: row?.error ?? null,
     retryAt:

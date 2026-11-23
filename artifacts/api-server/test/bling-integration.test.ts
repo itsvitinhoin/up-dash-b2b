@@ -439,14 +439,12 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
       .update(schema.blingConnectionsTable)
       .set({ cursor })
       .where(eq(schema.blingConnectionsTable.clientId, "jini"));
-    await schema.db
-      .insert(schema.blingRecordsTable)
-      .values({
-        clientId: "jini",
-        kind: "products",
-        externalId: "99",
-        data: { id: "99", name: "Already imported" },
-      });
+    await schema.db.insert(schema.blingRecordsTable).values({
+      clientId: "jini",
+      kind: "products",
+      externalId: "99",
+      data: { id: "99", name: "Already imported" },
+    });
     limitedPath = "/estoques/saldos";
     const paused = await request(app)
       .post("/clients/jini/bling/sync")
@@ -462,7 +460,11 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
       .get("/clients/jini/bling")
       .set(admin)
       .expect(200);
-    expect(state.body.cursor).toEqual({ phase: "products", page: 17 });
+    expect(state.body.cursor).toMatchObject({
+      phase: "products",
+      page: 17,
+      pendingItems: 0,
+    });
     expect(Date.parse(state.body.retryAt)).toBeGreaterThan(Date.now());
     limitedPath = null;
     await schema.db

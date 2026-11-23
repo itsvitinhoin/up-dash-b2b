@@ -9,7 +9,7 @@ Escopo confirmado em 18/11/2026: Jini utiliza Nuvemshop; importar **todos os can
 - Conexão OAuth por marca; estado de uso único vinculado ao navegador; tokens JWT renovados no servidor e criptografados com AES-256-GCM. A renovação salva imediatamente o novo refresh token.
 - Importação paginada com cursor persistido, exclusividade por marca, tratamento de falhas e retomada. Primeira carga de 30 dias de pedidos; catálogo e contatos completos. Histórico inicial configurável entre 1 e 365 dias.
 - Atualizações de pedidos por data de alteração, com sobreposição de um dia. Catálogo, canais e contatos são consultados novamente a cada ciclo.
-- Limite local de 1 chamada/s por conta conectada, abaixo do limite oficial de 3/s. Chamadas de outras integrações da mesma conta também consomem o limite do Bling; HTTP 429 interrompe o lote, preservando o cursor.
+- Limite local de 0,5 chamada/s por conta conectada, abaixo do limite oficial de 3/s. Chamadas de outras integrações da mesma conta também consomem o limite do Bling; HTTP 429 interrompe o lote, preservando o cursor.
 - Workflow horário em `.github/workflows/bling-extractions.yml`: até 100 lotes por execução, com continuação no próximo horário. O agendamento só começa após publicação do código/workflow e configuração do ambiente.
 
 ## Ativação
@@ -91,6 +91,8 @@ A branch foi enviada ao GitHub. A main não foi alterada; o workflow horário s�
 
 Após a primeira autorização real, a importação da Jini foi pausada em produtos/estoque, página 17, com HTTP 429. O retorno antigo não distinguia limite por segundo e limite diário. O conector agora lê somente o metadado documentado `error.period` e o cabeçalho `Retry-After`, mantém o tempo de pausa em `next_request_at` (sem migração adicional), devolve o horário de retomada e bloqueia novas chamadas à conta durante a pausa. Sem cabeçalho, usa 5s para limite por segundo, 60s para resposta desconhecida e 24h para limite diário. Uma cota diária nunca dispara repetição automática. Nenhum texto bruto da resposta Bling é exposto ou registrado.
 
-A interface tenta retomar automaticamente pausas de até 60s, até três pausas consecutivas sem progresso, e mostra a espera. O usuário pode parar o processo. O ritmo foi reduzido para uma chamada por segundo, pois outras integrações compartilham a mesma cota. Progresso e tokens são preservados; não reconectar ou reiniciar o histórico para tratar HTTP 429.
+A interface tenta retomar automaticamente pausas de até 60s, até três pausas consecutivas sem progresso, e mostra a espera. O usuário pode parar o processo. O ritmo foi reduzido para uma chamada a cada dois segundos, pois outras integrações compartilham a mesma cota. Progresso e tokens são preservados; não reconectar ou reiniciar o histórico para tratar HTTP 429.
 
 27 testes passaram, incluindo retomada exata da página 17, preservação de registros anteriores, bloqueio de chamadas durante a pausa, diferenciação de cota diária e tratamento de Retry-After em segundos/data. Referência: https://developer.bling.com.br/limites .
+
+A verificação real confirmou limite temporário recorrente com avanço até a página 22. O ritmo foi então reduzido para 0,5 chamada/s; a retomada aguarda pelo menos 15s e considera o avanço do cursor (incluindo itens pendentes de pedidos). O limite de três retomadas só conta tentativas sem avanço. Importações extensas continuam automaticamente enquanto há progresso; a interface precisa permanecer aberta. O agendamento no GitHub continua pendente da incorporação da PR na main.

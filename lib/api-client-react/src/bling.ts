@@ -11,7 +11,7 @@ export type BlingStatus = {
   historyDays: number;
   nuvemshopChannelId: string | null;
   completedAt: string | null;
-  cursor: { phase: string; page: number } | null;
+  cursor: { phase: string; page: number; pendingItems?: number } | null;
   error: string | null;
   busy: boolean;
   retryAt: string | null;
@@ -97,4 +97,22 @@ export function blingRetryDelay(
   return Number.isFinite(delay) && delay >= -1000 && delay <= 60000
     ? Math.max(1000, delay)
     : null;
+}
+
+/** Limit repeated failures, while allowing a large import to keep making progress. */
+export class BlingRetryBudget {
+  private checkpoint: string;
+  private pauses = 0;
+  constructor(cursor: BlingStatus["cursor"]) {
+    this.checkpoint = JSON.stringify(cursor);
+  }
+  batchSucceeded() {
+    this.pauses = 0;
+  }
+  canResume(cursor: BlingStatus["cursor"]) {
+    const checkpoint = JSON.stringify(cursor);
+    this.pauses = checkpoint === this.checkpoint ? this.pauses + 1 : 0;
+    this.checkpoint = checkpoint;
+    return this.pauses <= 3;
+  }
 }

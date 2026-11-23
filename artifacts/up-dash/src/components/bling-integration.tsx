@@ -4,6 +4,7 @@ import {
   customFetch,
   ApiError,
   blingRetryDelay,
+  BlingRetryBudget,
   getListClientsQueryKey,
   getGetClientQueryKey,
 } from "@workspace/api-client-react";
@@ -311,25 +312,32 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
     mutationFn: async () => {
       stop.current = false;
       let complete = false;
-      let consecutivePauses = 0;
+      const retryBudget = new BlingRetryBudget(status.data?.cursor ?? null);
       while (!complete && !stop.current) {
         let batch: { complete: boolean; phase: string; page: number };
         try {
           batch = await customFetch<typeof batch>(`${base}/sync`, {
             method: "POST",
           });
-          consecutivePauses = 0;
+          retryBudget.batchSucceeded();
         } catch (error) {
           const delay =
             error instanceof ApiError ? blingRetryDelay(error.data) : null;
-          if (delay === null || consecutivePauses >= 3 || stop.current)
-            throw error;
-          consecutivePauses++;
-          void cache.invalidateQueries({ queryKey: ["bling", clientId] });
-          const resumeAt = Date.now() + delay;
+          if (delay === null || stop.current) throw error;
+          const checkpoint = await customFetch<BlingStatus>(base);
+          cache.setQueryData(["bling", clientId, "status"], checkpoint);
+          if (!retryBudget.canResume(checkpoint.cursor)) throw error;
+          const checkpointLabel = checkpoint.cursor
+            ? `${PHASES[checkpoint.cursor.phase] ?? checkpoint.cursor.phase} · página ${checkpoint.cursor.page}`
+            : "Importação Bling";
+          // Other applications share the account: allow extra headroom beyond Retry-After.
+          const resumeAt =
+            Date.now() +
+            Math.max(delay, 15000) +
+            Math.floor(Math.random() * 1000);
           while (!stop.current && Date.now() < resumeAt) {
             setProgress(
-              `Bling limitou as consultas · retomando em ${Math.ceil((resumeAt - Date.now()) / 1000)}s`,
+              `${checkpointLabel} · retomando em ${Math.ceil((resumeAt - Date.now()) / 1000)}s`,
             );
             await new Promise((resolve) =>
               setTimeout(
@@ -490,7 +498,7 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
         </Alert>
       )}
       {data.error && (
-        <Alert variant="destructive">
+        <Alert variant={sync.isPending ? "default" : "destructive"}>
           <AlertDescription>{data.error}</AlertDescription>
         </Alert>
       )}

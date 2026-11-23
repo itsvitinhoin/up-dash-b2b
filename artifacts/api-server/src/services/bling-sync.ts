@@ -83,7 +83,7 @@ export async function releaseBlingLease(clientId: string, leaseId: string) {
 }
 export async function reserveBlingSlot(clientId: string) {
   const result = await db.execute(
-    sql`UPDATE bling_connections SET next_request_at = GREATEST(clock_timestamp(), COALESCE(next_request_at, clock_timestamp())) + interval '1000 milliseconds' WHERE client_id = ${clientId} RETURNING extract(epoch FROM next_request_at - interval '1000 milliseconds') * 1000 AS slot`,
+    sql`UPDATE bling_connections SET next_request_at = GREATEST(clock_timestamp(), COALESCE(next_request_at, clock_timestamp())) + interval '2000 milliseconds' WHERE client_id = ${clientId} RETURNING extract(epoch FROM next_request_at - interval '2000 milliseconds') * 1000 AS slot`,
   );
   return Number(result.rows[0].slot);
 }
@@ -137,7 +137,7 @@ export async function blingApiForLease(
   if (
     connection.error &&
     connection.nextRequestAt &&
-    connection.nextRequestAt.getTime() > Date.now() + 1500
+    connection.nextRequestAt.getTime() > Date.now() + 2500
   ) {
     const paused = new BlingRateLimitError(connection.nextRequestAt);
     paused.message = connection.error;
