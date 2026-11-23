@@ -2,7 +2,7 @@ import { hasBlingSchema } from "../services/bling-schema";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { db, clientsTable, blingConnectionsTable } from "@workspace/db";
 import { runBlingBatch } from "../services/bling-sync";
-import { BlingError } from "../services/bling-api";
+import { BlingError, BlingRateLimitError } from "../services/bling-api";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
@@ -126,20 +126,25 @@ router.get("/cron/extractions/braavo", async (req, res): Promise<void> => {
 
 router.get("/cron/extractions/bling", async (req, res): Promise<void> => {
   if (!(await verifyCronRequest(req, res))) return;
-  const parsed = z.object({ offset: z.coerce.number().int().min(0).default(0) }).safeParse(req.query);
-  if (!parsed.success) { res.status(400).json({ message: "Offset inválido." }); return; }
-  const offset = parsed.data.offset;
+  const parsed = z.object({ offset: z.coerce.number().int().min(0).default(0), clientId: z.string().min(1).max(200).optional() }).safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ message: "Parâmetros inválidos." }); return; }
+  const { offset, clientId } = parsed.data;
   if (!(await hasBlingSchema())) { sendCronResult(res, { clients: 0, failed: 0, nextOffset: offset }); return; }
   const [client] = await db.select({ id: blingConnectionsTable.clientId }).from(blingConnectionsTable)
     .innerJoin(clientsTable, eq(clientsTable.id, blingConnectionsTable.clientId))
-    .where(and(isNotNull(blingConnectionsTable.tokens), eq(clientsTable.isActive, true), eq(clientsTable.dashboardType, "B2C"), eq(clientsTable.erpProvider, "BLING")))
+    .where(and(isNotNull(blingConnectionsTable.tokens), eq(clientsTable.isActive, true), eq(clientsTable.dashboardType, "B2C"), eq(clientsTable.erpProvider, "BLING"), clientId ? eq(clientsTable.id, clientId) : undefined))
     .orderBy(asc(blingConnectionsTable.clientId)).limit(1).offset(offset);
   if (!client) { sendCronResult(res, { clients: 0, failed: 0, nextOffset: offset }); return; }
   try {
     const result = await runBlingBatch(client.id);
     sendCronResult(res, { clients: 1, failed: 0, nextOffset: result.complete ? offset + 1 : offset, ...result });
   } catch (error) {
-    sendCronResult(res, { clients: 1, failed: 1, nextOffset: offset + 1, message: error instanceof BlingError ? error.message : "Falha na extração Bling." });
+    const [state] = await db.select({ cursor: blingConnectionsTable.cursor }).from(blingConnectionsTable).where(eq(blingConnectionsTable.clientId, client.id));
+    sendCronResult(res, { clients: 1, failed: 1, nextOffset: clientId ? offset : offset + 1,
+      code: error instanceof BlingError ? error.code : "BLING_ERROR",
+      ...(error instanceof BlingRateLimitError ? { retryAt: error.retryAt.toISOString(), rateLimitPeriod: error.period } : {}),
+      checkpoint: state?.cursor ? { phase: state.cursor.phase, page: state.cursor.page, pendingItems: state.cursor.pending.length } : null,
+      message: error instanceof BlingError ? error.message : "Falha na extração Bling." });
   }
 });
 

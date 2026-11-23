@@ -21,6 +21,15 @@ vi.mock("../src/lib/auth", () => ({
     throw new Error("Invalid token");
   },
 }));
+vi.mock("../src/services/extraction-runner", () => ({
+  listExtractionJobs: vi.fn(),
+  runBraavoTransactionalExtraction: vi.fn(),
+  runDailyMetricsBackfill: vi.fn(),
+  runHourlyExtractionBundle: vi.fn(),
+  runNuvemshopTransactionalExtraction: vi.fn(),
+  runUpzeroAnalyticsExtraction: vi.fn(),
+  runUpzeroTransactionalExtraction: vi.fn(),
+}));
 const connection = process.env.BLING_TEST_DATABASE_URL;
 let schema: typeof import("@workspace/db"),
   sync: typeof import("../src/services/bling-sync"),
@@ -82,6 +91,7 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
     vi.stubEnv("BLING_CLIENT_ID", "test-app");
     vi.stubEnv("BLING_CLIENT_SECRET", "test-secret");
     vi.stubEnv("BLING_REDIRECT_URI", "https://dash.example/api/bling/callback");
+    vi.stubEnv("CRON_SECRET", "synthetic-cron-secret");
     schema = await import("@workspace/db");
     sync = await import("../src/services/bling-sync");
     api = await import("../src/services/bling-api");
@@ -107,10 +117,12 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
       );
     const router = await import("../src/routes/bling");
     const clients = await import("../src/routes/clients");
+    const extractions = await import("../src/routes/extractions");
     app = express()
       .use(express.json())
       .use(router.blingRouter)
-      .use(clients.default);
+      .use(clients.default)
+      .use(extractions.default);
   });
   beforeEach(async () => {
     calls.length = 0;
@@ -509,6 +521,58 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
       .expect(200);
     expect(status.body.error).toContain("diário");
     expect(status.body.connected).toBe(true);
+  });
+  it("runs only the selected cron brand and preserves the target and cooldown on failure", async () => {
+    const cron = { Authorization: "Bearer synthetic-cron-secret" };
+    await request(app).get("/cron/extractions/bling?clientId=jini").expect(401);
+    await connect();
+    const other = await request(app)
+      .get("/cron/extractions/bling?clientId=other")
+      .set(cron)
+      .expect(200);
+    expect(other.body.result.clients).toBe(0);
+    expect(calls).toHaveLength(0);
+    const cursor = {
+      ...sync.initialBlingCursor(30, null),
+      phase: "orders" as const,
+      pending: ["301"],
+      lastPage: true,
+    };
+    await schema.db
+      .update(schema.blingConnectionsTable)
+      .set({ cursor })
+      .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    limitedPath = "/pedidos/vendas/301";
+    const paused = await request(app)
+      .get("/cron/extractions/bling?clientId=jini")
+      .set(cron)
+      .expect(500);
+    expect(paused.body.result).toMatchObject({
+      clients: 1,
+      failed: 1,
+      nextOffset: 0,
+      code: "BLING_RATE_LIMIT",
+      rateLimitPeriod: "second",
+      checkpoint: { phase: "orders", page: 1, pendingItems: 1 },
+    });
+    expect(Date.parse(paused.body.result.retryAt)).toBeGreaterThan(Date.now());
+    limitedPath = null;
+    await schema.db
+      .update(schema.blingConnectionsTable)
+      .set({ nextRequestAt: new Date(0) })
+      .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    const finished = await request(app)
+      .get("/cron/extractions/bling?clientId=jini")
+      .set(cron)
+      .expect(200);
+    expect(finished.body.result).toMatchObject({
+      clients: 1,
+      failed: 0,
+      complete: true,
+    });
+    const imported = await schema.db.select().from(schema.blingRecordsTable);
+    expect(imported).toHaveLength(1);
+    expect(imported[0].clientId).toBe("jini");
   });
   it("serializes sync and configuration changes and can resume after an expired lease", async () => {
     await connect();

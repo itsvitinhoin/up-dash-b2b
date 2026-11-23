@@ -8,11 +8,21 @@ name: Scheduled data extractions
 # workflow_dispatch continua disponivel pra rodar manualmente se precisar.
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Extração a executar
+        type: choice
+        default: all
+        options: [all, bling]
+      bling_client_id:
+        description: ID da marca Bling (obrigatório no modo bling)
+        type: string
+        required: false
 
 jobs:
   braavo-transactional:
     name: Braavo B2C transactional extraction
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 * * * *'
+    if: inputs.mode != 'bling' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 * * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     concurrency:
@@ -54,7 +64,7 @@ jobs:
 
   hourly:
     name: Hourly analytics and Meta extraction
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 * * * *'
+    if: inputs.mode != 'bling' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 * * * *')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -71,7 +81,7 @@ jobs:
 
   upzero-transactional:
     name: Twice daily UP Zero transactional extraction
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3,15 * * *'
+    if: inputs.mode != 'bling' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3,15 * * *')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -88,7 +98,7 @@ jobs:
 
   nuvemshop-transactional:
     name: Twice daily Nuvemshop transactional extraction
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3,15 * * *'
+    if: inputs.mode != 'bling' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3,15 * * *')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -127,3 +137,71 @@ jobs:
             echo "Nuvemshop extraction completed with ${total_failed} failed client(s)."
             exit 1
           fi
+
+  bling-import:
+    name: Complete one authorized Bling import
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'bling'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    concurrency:
+      group: bling-import-${{ inputs.bling_client_id }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Resume the selected brand until complete
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_RUN_ID: ${{ github.run_id }}
+          DASH_CLIENT_ID: ${{ inputs.bling_client_id }}
+        run: |
+          node --input-type=module <<'JS'
+          import { setTimeout as wait } from 'node:timers/promises';
+          const clientId = process.env.DASH_CLIENT_ID;
+          if (!clientId || !/^[a-zA-Z0-9_-]{1,200}$/.test(clientId)) throw new Error('A brand ID is required.');
+          const url = new URL('https://www.grupoup-dash.com.br/api/cron/extractions/bling');
+          url.searchParams.set('clientId', clientId);
+          const deadline = Date.now() + 175 * 60_000;
+          let previousCheckpoint = '', failures = 0, lastNotice = 0;
+          console.log('Starting the authorized ERP import.');
+          while (Date.now() < deadline) {
+            let response, body;
+            try {
+              response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(70_000), headers: {
+                Authorization: `Bearer ${process.env.GH_TOKEN}`,
+                'X-GitHub-Repository': process.env.GH_REPOSITORY,
+                'X-GitHub-Run-Id': process.env.GH_RUN_ID,
+              }});
+              body = await response.json();
+            } catch {
+              failures++;
+              if (failures > 12) throw new Error('Import stopped after repeated transport failures.');
+              await wait(Math.min(300_000, 30_000 * failures));
+              continue;
+            }
+            if ([401, 403, 400].includes(response.status)) throw new Error('Import authorization or target is invalid.');
+            const result = body?.result;
+            if (!result || !Number.isInteger(result.clients)) throw new Error('Unexpected import response.');
+            if (result.clients !== 1) throw new Error('The selected brand has no active authorized Bling connection.');
+            if (response.ok && result.complete === true) { console.log('Import completed successfully.'); process.exit(0); }
+            if (response.ok && result.failed === 0) {
+              failures = 0;
+              previousCheckpoint = '';
+              await wait(1000);
+              continue;
+            }
+            if (['BLING_AUTH_FAILED', 'BLING_SCOPE_REQUIRED', 'BLING_NOT_CONNECTED', 'BLING_COMPANY_MISMATCH', 'BLING_NOT_SELECTED', 'BLING_HISTORY_REQUIRED'].includes(result.code)) throw new Error('Import stopped: account authorization or configuration needs attention.');
+            if (result.rateLimitPeriod === 'day') throw new Error('Import paused: the provider daily quota is exhausted.');
+            const checkpoint = JSON.stringify(result.checkpoint);
+            failures = checkpoint !== previousCheckpoint ? 0 : failures + 1;
+            previousCheckpoint = checkpoint;
+            if (failures > 12) throw new Error('Import stopped after repeated failures without progress.');
+            const retryAt = Date.parse(result.retryAt ?? '');
+            const delay = Math.max(30_000, Number.isFinite(retryAt) ? retryAt - Date.now() : 0, Math.min(300_000, failures * 30_000));
+            if (delay > 15 * 60_000) throw new Error('Import paused: the provider requires a longer cooldown.');
+            if (Date.now() - lastNotice > 300_000) { console.log('Provider cooldown; progress is preserved and the import will resume.'); lastNotice = Date.now(); }
+            await wait(delay + Math.floor(Math.random() * 2000));
+          }
+          throw new Error('Import time window ended before completion; the checkpoint is preserved.');
+          JS
