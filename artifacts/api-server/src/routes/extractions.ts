@@ -1,3 +1,8 @@
+import { hasBlingSchema } from "../services/bling-schema";
+import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { db, clientsTable, blingConnectionsTable } from "@workspace/db";
+import { runBlingBatch } from "../services/bling-sync";
+import { BlingError } from "../services/bling-api";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { authenticate, requireAdmin } from "../middlewares/auth";
@@ -117,6 +122,25 @@ router.get("/cron/extractions/braavo", async (req, res): Promise<void> => {
   const parsed = z.object({ offset: z.coerce.number().int().min(0).default(0) }).safeParse(req.query);
   if (!parsed.success) { res.status(400).json({ message: "Offset inválido." }); return; }
   sendCronResult(res, await runBraavoTransactionalExtraction("cron", parsed.data));
+});
+
+router.get("/cron/extractions/bling", async (req, res): Promise<void> => {
+  if (!(await verifyCronRequest(req, res))) return;
+  const parsed = z.object({ offset: z.coerce.number().int().min(0).default(0) }).safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ message: "Offset inválido." }); return; }
+  const offset = parsed.data.offset;
+  if (!(await hasBlingSchema())) { sendCronResult(res, { clients: 0, failed: 0, nextOffset: offset }); return; }
+  const [client] = await db.select({ id: blingConnectionsTable.clientId }).from(blingConnectionsTable)
+    .innerJoin(clientsTable, eq(clientsTable.id, blingConnectionsTable.clientId))
+    .where(and(isNotNull(blingConnectionsTable.tokens), eq(clientsTable.isActive, true), eq(clientsTable.dashboardType, "B2C"), eq(clientsTable.erpProvider, "BLING")))
+    .orderBy(asc(blingConnectionsTable.clientId)).limit(1).offset(offset);
+  if (!client) { sendCronResult(res, { clients: 0, failed: 0, nextOffset: offset }); return; }
+  try {
+    const result = await runBlingBatch(client.id);
+    sendCronResult(res, { clients: 1, failed: 0, nextOffset: result.complete ? offset + 1 : offset, ...result });
+  } catch (error) {
+    sendCronResult(res, { clients: 1, failed: 1, nextOffset: offset + 1, message: error instanceof BlingError ? error.message : "Falha na extração Bling." });
+  }
 });
 
 const CronNuvemshopQuery = z.object({

@@ -1,3 +1,4 @@
+import BlingErpPage from "@/pages/bling-erp";
 import { useI18n } from "@/lib/i18n";
 import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
 import { useDisplayLabel } from "@/lib/display-label";
@@ -43,6 +44,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { queryOpts } from "@/lib/query-opts";
+import { useGetClient } from "@workspace/api-client-react";
 import { customFetch } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
@@ -2313,7 +2316,7 @@ function ErpSellersView() {
   );
 }
 
-export default function ErpPage() {
+function ExistingErpPage() {
   const [location] = useLocation();
   const view = location.endsWith("/pedidos")
     ? "orders"
@@ -2354,4 +2357,13 @@ export function ErpGeographyView() {
       </TableRow>)}{!states.length && <EmptyRow colSpan={3} loading={isLoading} />}</TableBody></Table></div>
     </CardContent></Card>
   </div>;
+}
+
+export default function ErpPage() {
+  const { user, selectedClientId } = useAuth();
+  const clientId = user?.role === "CLIENT" ? user.clientId : selectedClientId;
+  const client = useGetClient(clientId ?? "", { query: queryOpts({ enabled: !!clientId }) });
+  if (clientId && client.isPending) return <p role="status">Carregando ERP…</p>;
+  if (clientId && client.isError) return <p role="alert">Não foi possível identificar a marca.</p>;
+  return (client.data?.erpProvider === "BLING") ? <BlingErpPage /> : <ExistingErpPage />;
 }

@@ -1933,7 +1933,7 @@ components:
           description: UP Zero API key for syncing live orders and customers.
         erpProvider:
           type: ["string", "null"]
-          enum: [MIREDATA, MANSE]
+          enum: [MIREDATA, MANSE, BLING]
           description: |
             ERP this client syncs from (independent of commercePlatform). `null` = no
             ERP configured. Credentials are never returned here.

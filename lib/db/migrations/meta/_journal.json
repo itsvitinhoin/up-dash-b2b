@@ -344,6 +344,13 @@
       "when": 1795024800000,
       "tag": "0048_vesti_sync_store_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1795438807778,
+      "tag": "0050_bling",
+      "breakpoints": true
     }
   ]
 }

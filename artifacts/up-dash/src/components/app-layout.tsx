@@ -945,6 +945,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const isVestiClient = activeClient?.commercePlatform === "VESTI";
   const isB2BOnlyRoute = useCallback(
     (href: string) => {
+      if (href === "/erp" || href.startsWith("/erp/")) return false;
       const entry = architectureForPath(href);
       return (
         Boolean(entry && "b2bOnly" in entry && entry.b2bOnly) ||
@@ -1010,7 +1011,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         { name: "Estoque", href: "/erp/estoque", icon: PackageSearch },
         { name: "Vendedoras e Lojas", href: "/erp/vendedores", icon: Users },
         { name: "Geografia", href: "/erp/geografia", icon: MapPin },
-      ],
+      ].filter(item => effectiveDashboardMode !== "B2C" || !["/erp/vendedores", "/erp/geografia"].includes(item.href)),
     },
     {
       name: "Desempenho",

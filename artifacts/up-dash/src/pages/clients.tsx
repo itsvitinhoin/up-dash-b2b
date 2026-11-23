@@ -1,3 +1,4 @@
+import { BlingIntegration } from "@/components/bling-integration";
 import { useI18n } from "@/lib/i18n";
 import { useDisplayLabel } from "@/lib/display-label";
 import { useState, useEffect, useRef } from "react";
@@ -126,11 +127,12 @@ const COMMERCE_PLATFORM_OPTIONS: Array<{
 ];
 
 const ERP_PROVIDER_OPTIONS: Array<{
-  value: "MIREDATA" | "MANSE";
+  value: "MIREDATA" | "MANSE" | "BLING";
   label: string;
 }> = [
   { value: "MIREDATA", label: "Miredata" },
   { value: "MANSE", label: "Manse" },
+  { value: "BLING", label: "Bling" },
 ];
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -991,7 +993,7 @@ function PlatformDialog({
   );
 }
 
-type SetClientErpResponse = { ok: true; erpProvider: "MIREDATA" | "MANSE" | null; erpDataset?: string };
+type SetClientErpResponse = { ok: true; erpProvider: "MIREDATA" | "MANSE" | "BLING" | null; erpDataset?: string };
 type ErpBackfillChunkResult = { dataInicio: string; dataFim: string; ok: boolean; error?: string };
 type ErpBackfillResponse = {
   ok: boolean;
@@ -1008,11 +1010,11 @@ function ErpDialog({
 }: {
   clientId: string;
   clientName: string;
-  currentErpProvider: "MIREDATA" | "MANSE" | null | undefined;
+  currentErpProvider: "MIREDATA" | "MANSE" | "BLING" | null | undefined;
   currentErpDataset: string | null | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const [erpProvider, setErpProvider] = useState<"NONE" | "MIREDATA" | "MANSE">("NONE");
+  const [erpProvider, setErpProvider] = useState<"NONE" | "MIREDATA" | "MANSE" | "BLING">("NONE");
   const [erpDataset, setErpDataset] = useState("");
   const [apikey, setApikey] = useState("");
   const [token, setToken] = useState("");
@@ -1106,16 +1108,16 @@ function ErpDialog({
       <DialogTrigger asChild>
         <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" title="ERP">
           <Tag className="h-3 w-3" />
-          {currentErpProvider ?? "ERP"}
+          {currentErpProvider === "BLING" ? "Bling" : currentErpProvider ?? "ERP"}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[460px]">
+      <DialogContent className={erpProvider === "BLING" ? "sm:max-w-[720px] max-h-[85vh] overflow-y-auto" : "sm:max-w-[460px]"}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Tag className="h-4 w-4" /> ERP
           </DialogTitle>
           <DialogDescription>
-            Integração de ERP de <strong>{clientName}</strong> (Miredata/Manse) — independente da plataforma de e-commerce.
+            Integração de ERP de <strong>{clientName}</strong> (Miredata, Manse ou Bling) — independente da plataforma de e-commerce.
           </DialogDescription>
         </DialogHeader>
 
@@ -1137,7 +1139,7 @@ function ErpDialog({
             </Select>
           </div>
 
-          {erpProvider !== "NONE" && (
+          {erpProvider !== "NONE" && erpProvider !== "BLING" && (
             <>
               <div className="space-y-2">
                 <Label htmlFor="erp-dataset">Dataset BigQuery (*_erp)</Label>
@@ -1199,20 +1201,22 @@ function ErpDialog({
           )}
         </div>
 
+        {erpProvider === "BLING" && <BlingIntegration key={clientId} clientId={clientId} />}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={isSaving}>
             Cancelar
           </Button>
-          <Button onClick={handleSave} disabled={isSaving}>
+          {erpProvider !== "BLING" && <Button onClick={handleSave} disabled={isSaving}>
             {isSaving ? (
               <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</>
             ) : (
               "Salvar"
             )}
-          </Button>
+          </Button>}
         </DialogFooter>
 
-        {currentErpProvider && (
+        {currentErpProvider && currentErpProvider !== "BLING" && erpProvider !== "BLING" && (
           <>
             <div className="border-t pt-3 space-y-2">
               <Label>Backfill histórico</Label>
