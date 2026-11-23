@@ -506,7 +506,7 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
         {sync.isPending
           ? progress || "Iniciando importação…"
           : data.busy
-            ? "Há uma operação Bling em andamento."
+            ? `Operação Bling em andamento${data.cursor ? ` · ${PHASES[data.cursor.phase] ?? data.cursor.phase}, página ${data.cursor.page}` : ""}.`
             : data.cursor
               ? `Importação parcial · ${PHASES[data.cursor.phase] ?? data.cursor.phase}, página ${data.cursor.page}`
               : data.completedAt

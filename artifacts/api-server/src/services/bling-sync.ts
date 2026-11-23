@@ -434,35 +434,57 @@ export async function runBlingBatch(clientId: string) {
             "BLING_BUSY",
             409,
           );
-        for (const row of writes) {
+        // One upsert per page avoids a database round trip for every contact.
+        // Deduplicate first to preserve the former last-write-wins behavior.
+        const uniqueWrites = [
+          ...new Map(
+            writes.map((row) => [
+              `${row.kind}:${row.externalId}`,
+              { clientId, ...row },
+            ]),
+          ).values(),
+        ];
+        if (uniqueWrites.length)
           await tx
             .insert(records)
-            .values({ clientId, ...row })
+            .values(uniqueWrites)
             .onConflictDoUpdate({
               target: [records.clientId, records.kind, records.externalId],
-              set: { data: row.data, syncedAt: new Date() },
+              set: { data: sql`excluded.data`, syncedAt: new Date() },
             });
+        const discoveredChannels = new Map<
+          string,
+          {
+            clientId: string;
+            kind: "channels";
+            externalId: string;
+            data: BlingRecord;
+          }
+        >();
+        for (const row of uniqueWrites) {
           if (
             row.kind === "orders" &&
             typeof row.data.channelId === "string" &&
             row.data.channelId !== "unassigned"
           ) {
             const id = blingId(row.data.channelId);
-            await tx
-              .insert(records)
-              .values({
-                clientId,
-                kind: "channels",
-                externalId: id,
-                data: {
-                  id,
-                  name: `Canal ${id}`,
-                  type: "Identificado pelo pedido",
-                },
-              })
-              .onConflictDoNothing();
+            discoveredChannels.set(id, {
+              clientId,
+              kind: "channels",
+              externalId: id,
+              data: {
+                id,
+                name: `Canal ${id}`,
+                type: "Identificado pelo pedido",
+              },
+            });
           }
         }
+        if (discoveredChannels.size)
+          await tx
+            .insert(records)
+            .values([...discoveredChannels.values()])
+            .onConflictDoNothing();
         await tx
           .update(connections)
           .set({
