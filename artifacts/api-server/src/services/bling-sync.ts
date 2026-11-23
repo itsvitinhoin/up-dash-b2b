@@ -83,7 +83,7 @@ export async function releaseBlingLease(clientId: string, leaseId: string) {
 }
 export async function reserveBlingSlot(clientId: string) {
   const result = await db.execute(
-    sql`UPDATE bling_connections SET next_request_at = GREATEST(clock_timestamp(), COALESCE(next_request_at, clock_timestamp())) + interval '1000 milliseconds' WHERE client_id = ${clientId} RETURNING extract(epoch FROM next_request_at - interval '1000 milliseconds') * 1000 AS slot`,
+    sql`UPDATE bling_connections SET next_request_at = GREATEST(clock_timestamp(), COALESCE(next_request_at, clock_timestamp())) + interval '500 milliseconds' WHERE client_id = ${clientId} RETURNING extract(epoch FROM next_request_at - interval '500 milliseconds') * 1000 AS slot`,
   );
   return Number(result.rows[0].slot);
 }
@@ -345,22 +345,46 @@ export async function runBlingBatch(clientId: string) {
           writes.length < 8 &&
           (writes.length === 0 || Date.now() < deadline)
         ) {
-          const id = cursor.pending[0];
-          try {
-            const data = normalizeBling(
-              "orders",
-              record(await api.get(`/pedidos/vendas/${id}`)),
-            );
-            if (data.id !== id)
-              throw new BlingError(
-                "Pedido retornado pelo Bling não corresponde à consulta.",
+          // At most two in flight; the shared database reservation still spaces
+          // every request by 500ms (below the provider's three/second ceiling).
+          const ids = cursor.pending.slice(0, 2);
+          const details = await Promise.allSettled(
+            ids.map(async (id) => {
+              const data = normalizeBling(
+                "orders",
+                record(await api.get(`/pedidos/vendas/${id}`)),
               );
-            writes.push({ kind: "orders", externalId: id, data });
-            cursor = { ...cursor, pending: cursor.pending.slice(1) };
-            if (!cursor.pending.length) cursor = nextBlingPage(cursor);
-          } catch (error) {
-            if (!writes.length) throw error;
-            deferredError = error;
+              if (data.id !== id)
+                throw new BlingError(
+                  "Pedido retornado pelo Bling não corresponde à consulta.",
+                );
+              return { kind: "orders" as const, externalId: id, data };
+            }),
+          );
+          const succeeded = new Set<string>();
+          const failures: unknown[] = [];
+          for (const detail of details) {
+            if (detail.status === "fulfilled") {
+              writes.push(detail.value);
+              succeeded.add(detail.value.externalId);
+            } else failures.push(detail.reason);
+          }
+          cursor = {
+            ...cursor,
+            pending: cursor.pending.filter((id) => !succeeded.has(id)),
+          };
+          if (!cursor.pending.length) cursor = nextBlingPage(cursor);
+          if (failures.length) {
+            // Retain the longest provider cooldown when parallel reads fail.
+            // All requests have settled before committing/releasing the lease.
+            const quota = failures
+              .filter(
+                (error): error is BlingRateLimitError =>
+                  error instanceof BlingRateLimitError,
+              )
+              .sort((a, b) => b.retryAt.getTime() - a.retryAt.getTime())[0];
+            deferredError = quota ?? failures[0];
+            if (!writes.length) throw deferredError;
             break;
           }
         }
