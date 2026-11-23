@@ -142,7 +142,7 @@ jobs:
     name: Complete one authorized Bling import
     if: github.event_name == 'workflow_dispatch' && inputs.mode == 'bling'
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
     concurrency:
       group: bling-import-${{ inputs.bling_client_id }}
       cancel-in-progress: false
@@ -162,7 +162,7 @@ jobs:
           if (!clientId || !/^[a-zA-Z0-9_-]{1,200}$/.test(clientId)) throw new Error('A brand ID is required.');
           const url = new URL('https://www.grupoup-dash.com.br/api/cron/extractions/bling');
           url.searchParams.set('clientId', clientId);
-          const deadline = Date.now() + 175 * 60_000;
+          const deadline = Date.now() + 350 * 60_000;
           let previousCheckpoint = '', failures = 0, lastNotice = 0;
           console.log('Starting the authorized ERP import.');
           while (Date.now() < deadline) {
@@ -196,9 +196,12 @@ jobs:
             const checkpoint = JSON.stringify(result.checkpoint);
             failures = checkpoint !== previousCheckpoint ? 0 : failures + 1;
             previousCheckpoint = checkpoint;
-            if (failures > 12) throw new Error('Import stopped after repeated failures without progress.');
+            if (failures > (result.code === 'BLING_RATE_LIMIT' ? 60 : 12)) throw new Error('Import stopped after repeated failures without progress.');
             const retryAt = Date.parse(result.retryAt ?? '');
-            const delay = Math.max(30_000, Number.isFinite(retryAt) ? retryAt - Date.now() : 0, Math.min(300_000, failures * 30_000));
+            const quota = result.code === 'BLING_RATE_LIMIT';
+            const delay = quota
+              ? Math.max(2000, Number.isFinite(retryAt) ? retryAt - Date.now() : 10_000, Math.min(30_000, failures * 2000))
+              : Math.max(30_000, Math.min(300_000, failures * 30_000));
             if (delay > 15 * 60_000) throw new Error('Import paused: the provider requires a longer cooldown.');
             if (Date.now() - lastNotice > 300_000) { console.log('Provider cooldown; progress is preserved and the import will resume.'); lastNotice = Date.now(); }
             await wait(delay + Math.floor(Math.random() * 2000));
