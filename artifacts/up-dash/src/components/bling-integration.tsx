@@ -279,7 +279,18 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
   const status = useQuery({
     queryKey: ["bling", clientId, "status"],
     queryFn: () => customFetch<BlingStatus>(base),
-    retry: false,
+    retry: (failureCount, error) =>
+      failureCount < 2 && (!(error instanceof ApiError) || error.status >= 500),
+    retryDelay: 2000,
+    refetchInterval: (query) =>
+      query.state.data?.cursor ||
+      query.state.data?.busy ||
+      (query.state.error &&
+        (!(query.state.error instanceof ApiError) ||
+          query.state.error.status >= 500))
+        ? 30_000
+        : false,
+    refetchIntervalInBackground: true,
   });
   useEffect(() => {
     if (!status.data?.retryAt) return;
@@ -371,7 +382,7 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
         Verificando conexão Bling…
       </p>
     );
-  if (status.isError)
+  if (status.isError && !status.data)
     return (
       <Alert variant="destructive">
         <AlertDescription>
@@ -397,6 +408,14 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
     busy = sync.isPending || authorize.isPending || test.isPending;
   return (
     <div className="space-y-4" data-testid="bling-integration">
+      {status.isError && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            Não foi possível atualizar o status. Os dados abaixo são da última
+            consulta recebida.
+          </AlertDescription>
+        </Alert>
+      )}
       <BlingAppFields
         key={`${data.appClientId}:${data.credentialsSource}`}
         clientId={clientId}

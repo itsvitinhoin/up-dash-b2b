@@ -540,12 +540,16 @@ export async function runBlingBatch(clientId: string) {
       imported += writes.length;
       if (deferredError) throw deferredError;
     }
-    return {
+    const result = {
       complete: !cursor,
       imported,
       phase: cursor?.phase ?? "done",
       page: cursor?.page ?? 0,
     };
+    // Private runtime logs aid background-job monitoring; never log payloads,
+    // credentials, buyer details or financial values here or in CI.
+    console.info("[bling] Import checkpoint", { clientId, ...result });
+    return result;
   } catch (error) {
     if (error instanceof BlingRateLimitError)
       console.warn("[bling] Import paused by quota", {
