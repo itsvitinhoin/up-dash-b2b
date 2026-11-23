@@ -182,7 +182,16 @@ jobs:
             }
             if ([401, 403, 400].includes(response.status)) throw new Error('Import authorization or target is invalid.');
             const result = body?.result;
-            if (!result || !Number.isInteger(result.clients)) throw new Error('Unexpected import response.');
+            if (!result || !Number.isInteger(result.clients)) {
+              if (response.status >= 500) {
+                failures++;
+                if (failures > 12) throw new Error('Import stopped after repeated backend unavailability; the checkpoint is preserved.');
+                if (Date.now() - lastNotice > 300_000) { console.log('Backend temporarily unavailable; the import will retry from its saved checkpoint.'); lastNotice = Date.now(); }
+                await wait(Math.min(300_000, 30_000 * failures));
+                continue;
+              }
+              throw new Error('Unexpected import response.');
+            }
             if (result.clients !== 1) throw new Error('The selected brand has no active authorized Bling connection.');
             if (response.ok && result.complete === true) { console.log('Import completed successfully.'); process.exit(0); }
             if (response.ok && result.failed === 0) {
