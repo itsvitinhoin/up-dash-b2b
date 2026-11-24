@@ -296,6 +296,37 @@ blingRouter.post(`${clientPath}/sync`, async (req, res) => {
   }
 });
 
+blingRouter.post(`${clientPath}/orders/refresh`, async (req, res) => {
+  const parsed = z
+    .object({
+      orderNumber: z
+        .string()
+        .regex(/^[1-9]\d*$/)
+        .max(16)
+        .refine((value) => Number.isSafeInteger(Number(value))),
+    })
+    .safeParse(req.body);
+  if (!parsed.success) {
+    res
+      .status(400)
+      .json({
+        error: true,
+        message: "Informe um número de pedido válido.",
+        status: 400,
+      });
+    return;
+  }
+  try {
+    const result = await runBlingBatch(String(req.params.clientId), {
+      ordersOnly: true,
+      orderNumber: parsed.data.orderNumber,
+    });
+    res.status(200).json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 blingRouter.post(`${clientPath}/test`, async (req, res) => {
   try {
     res.json(await testBlingConnection(String(req.params.clientId)));

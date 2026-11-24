@@ -314,7 +314,7 @@ export async function testBlingConnection(clientId: string) {
 
 export async function runBlingBatch(
   clientId: string,
-  options: { ordersOnly?: boolean } = {},
+  options: { ordersOnly?: boolean; orderNumber?: string } = {},
 ) {
   const { connection, leaseId } = await claimBlingLease(clientId);
   try {
@@ -324,6 +324,13 @@ export async function runBlingBatch(
         "BLING_NOT_CONNECTED",
         409,
       );
+    if (options.orderNumber && (!options.ordersOnly || connection.cursor))
+      throw new BlingError(
+        "Conclua a importação em andamento antes de conferir um pedido.",
+        "BLING_BUSY",
+        409,
+      );
+    if (options.orderNumber) blingId(options.orderNumber);
     const closingPass = options.ordersOnly && !connection.cursor;
     if (closingPass && (!connection.completedAt || !connection.watermark))
       throw new BlingError(
@@ -343,6 +350,36 @@ export async function runBlingBatch(
         orderDateFrom: window.from.slice(0, 10),
         orderDateTo: window.until.slice(0, 10),
       };
+      if (options.orderNumber) {
+        const matches = await api.list(
+          "/pedidos/vendas",
+          new URLSearchParams({
+            numero: options.orderNumber,
+            pagina: "1",
+            limite: "2",
+          }),
+        );
+        if (!matches.length)
+          throw new BlingError(
+            "Pedido não encontrado no período configurado.",
+            "BLING_ORDER_NOT_FOUND",
+            404,
+          );
+        if (
+          matches.length !== 1 ||
+          String(matches[0].numero) !== options.orderNumber
+        )
+          throw new BlingError(
+            "O Bling não retornou um pedido único com esse número.",
+            "BLING_ORDER_AMBIGUOUS",
+            409,
+          );
+        cursor = {
+          ...cursor,
+          pending: [blingId(matches[0].id)],
+          lastPage: true,
+        };
+      }
     }
     const deadline = Date.now() + 18_000;
     let imported = 0;
@@ -376,6 +413,18 @@ export async function runBlingBatch(
               if (data.id !== id)
                 throw new BlingError(
                   "Pedido retornado pelo Bling não corresponde à consulta.",
+                );
+              if (
+                options.orderNumber &&
+                (data.number !== options.orderNumber ||
+                  typeof data.day !== "string" ||
+                  data.day < current.orderDateFrom! ||
+                  data.day > current.orderDateTo!)
+              )
+                throw new BlingError(
+                  "O pedido retornado não corresponde ao número e período solicitados.",
+                  "BLING_ORDER_OUTSIDE_WINDOW",
+                  409,
                 );
               return { kind: "orders" as const, externalId: id, data };
             }),
@@ -483,10 +532,17 @@ export async function runBlingBatch(
         }
       }
       const scopedWrites = writes.filter((row) => {
-        if (row.kind !== "orders" || !current.orderDateFrom || !current.orderDateTo)
+        if (
+          row.kind !== "orders" ||
+          !current.orderDateFrom ||
+          !current.orderDateTo
+        )
           return true;
-        return typeof row.data.day === "string" &&
-          row.data.day >= current.orderDateFrom && row.data.day <= current.orderDateTo;
+        return (
+          typeof row.data.day === "string" &&
+          row.data.day >= current.orderDateFrom &&
+          row.data.day <= current.orderDateTo
+        );
       });
       await db.transaction(async (tx) => {
         const [lease] = await tx
@@ -562,7 +618,7 @@ export async function runBlingBatch(
           .set({
             cursor,
             error: null,
-            ...(!cursor
+            ...(!cursor && !options.orderNumber
               ? { completedAt: new Date(), watermark: current.until }
               : {}),
           })
@@ -587,6 +643,10 @@ export async function runBlingBatch(
         period: error.period,
         retryAt: error.retryAt.toISOString(),
       });
+    // An unsuccessful individual lookup does not invalidate a completed load.
+    // Account-wide provider cooldowns must still be persisted.
+    if (options.orderNumber && !(error instanceof BlingRateLimitError))
+      throw error;
     const message =
       error instanceof BlingError
         ? error.message

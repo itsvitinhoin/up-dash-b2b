@@ -268,6 +268,7 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
   const stop = useRef(false);
   const [progress, setProgress] = useState("");
   const [credentialsDirty, setCredentialsDirty] = useState(false);
+  const [orderNumber, setOrderNumber] = useState("");
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     stop.current = false;
@@ -376,6 +377,21 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
       void cache.invalidateQueries({ queryKey: ["bling", clientId] });
     },
   });
+  const refreshOrder = useMutation({
+    mutationFn: () =>
+      customFetch(`${base}/orders/refresh`, {
+        method: "POST",
+        body: JSON.stringify({ orderNumber: orderNumber.trim() }),
+      }),
+    onSuccess: () => {
+      toast.success("Pedido conferido no Bling.");
+      setOrderNumber("");
+    },
+    onError: (error) => toast.error(message(error)),
+    onSettled: () => {
+      void cache.invalidateQueries({ queryKey: ["bling", clientId] });
+    },
+  });
   if (status.isPending)
     return (
       <p className="text-sm text-muted-foreground" role="status">
@@ -405,7 +421,11 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
     ),
   );
   const data = status.data,
-    busy = sync.isPending || authorize.isPending || test.isPending;
+    busy =
+      sync.isPending ||
+      authorize.isPending ||
+      test.isPending ||
+      refreshOrder.isPending;
   return (
     <div className="space-y-4" data-testid="bling-integration">
       {status.isError && (
@@ -550,6 +570,42 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
         status={data}
         disabled={busy || data.busy || !data.selected || cooldown > 0}
       />
+      {data.connected && data.completedAt && (
+        <div className="space-y-2 border-t pt-4">
+          <Label htmlFor={`bling-order-${clientId}`}>
+            Número do pedido no Bling
+          </Label>
+          <div className="flex flex-wrap gap-2">
+            <Input
+              id={`bling-order-${clientId}`}
+              className="max-w-xs"
+              inputMode="numeric"
+              maxLength={16}
+              placeholder="Número do pedido"
+              value={orderNumber}
+              onChange={(event) => setOrderNumber(event.target.value)}
+              disabled={busy || data.busy || credentialsDirty || cooldown > 0}
+            />
+            <Button
+              variant="outline"
+              disabled={
+                busy ||
+                data.busy ||
+                credentialsDirty ||
+                cooldown > 0 ||
+                !/^[1-9]\d*$/.test(orderNumber.trim())
+              }
+              onClick={() => refreshOrder.mutate()}
+            >
+              {refreshOrder.isPending ? "Conferindo…" : "Conferir pedido"}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Busca ou atualiza um pedido dentro dos {data.historyDays} dias
+            configurados, sem repetir a carga inteira.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
