@@ -1262,47 +1262,49 @@ function ErpDialog({
 
         {currentErpProvider && (
           <>
-            <div className="border-t pt-3 space-y-2">
+            <div className="border-t pt-3 space-y-3">
               <Label>Backfill histórico</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
-                <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Dispara uma execução por pedaço de até 90 dias (necessário pela API do ERP). Usa a credencial já salva.
-              </p>
+
               {backfillStatus?.hasRun && (
-                <div className="flex items-center gap-2 text-xs">
+                <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-2">
                   {backfillStatus.status === "running" && (
                     <Badge variant="secondary" className="gap-1">
                       <Loader2 className="h-3 w-3 animate-spin" /> Rodando ({backfillStatus.chunks.filter((c) => c.done).length}/{backfillStatus.chunks.length} pedaços)
                     </Badge>
                   )}
-                  {backfillStatus.status === "done" && (
-                    <Badge variant="default">Concluído</Badge>
-                  )}
+                  {backfillStatus.status === "done" && <Badge variant="default">Concluído</Badge>}
                   {backfillStatus.status === "failed" && (
                     <Badge variant="destructive" title={backfillStatus.chunks.find((c) => !c.succeeded)?.message ?? undefined}>
                       Falhou
                     </Badge>
                   )}
-                  <span className="text-muted-foreground">
-                    disparado {format(new Date(backfillStatus.dispatchedAt), "d MMM, HH:mm")}
+                  <span className="text-xs text-muted-foreground">
+                    último disparo: {format(new Date(backfillStatus.dispatchedAt), "d MMM, HH:mm")}
                   </span>
                 </div>
               )}
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={isBackfilling || isBackfillRunning || !dataInicio || !dataFim}
-                onClick={handleBackfill}
-              >
-                {isBackfilling ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Disparando…</>
-                ) : (
-                  "Fazer backfill histórico"
-                )}
-              </Button>
+
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
+                  <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Dispara uma execução por pedaço de até 90 dias (necessário pela API do ERP). Usa a credencial já salva.
+                </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={isBackfilling || isBackfillRunning || !dataInicio || !dataFim}
+                  onClick={handleBackfill}
+                >
+                  {isBackfilling ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Disparando…</>
+                  ) : (
+                    "Fazer backfill histórico"
+                  )}
+                </Button>
+              </div>
             </div>
           </>
         )}
