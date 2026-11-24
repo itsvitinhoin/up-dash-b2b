@@ -1,5 +1,5 @@
 import { Fragment, useDeferredValue, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { format } from "date-fns";
 import {
@@ -434,6 +434,7 @@ function CustomerOrders({
     queryKey: ["bling-customer-orders", params.toString()],
     queryFn: () =>
       customFetch<BlingDashboard>(`/api/analytics/erp/bling?${params}`),
+    placeholderData: keepPreviousData,
     staleTime: 120000,
     retry: 1,
     refetchOnWindowFocus: false,
@@ -459,7 +460,8 @@ function CustomerOrders({
         <OrderRows rows={query.data.rows as BlingOrder[]} />
       </div>
       <Pagination
-        page={page}
+        page={query.data.page}
+        disabled={query.isFetching}
         total={query.data.total}
         size={25}
         onChange={setPage}
@@ -599,12 +601,10 @@ function Overview({ data }: { data: BlingDashboard }) {
           icon={ReceiptText}
           valueKey="orders"
           currency={false}
-          data={s.statuses
-            .slice(0, 8)
-            .map((v) => ({
-              label: v.id ? `Situação ${v.id}` : "Não informada",
-              orders: v.orders,
-            }))}
+          data={s.statuses.slice(0, 8).map((v) => ({
+            label: v.id ? `Situação ${v.id}` : "Não informada",
+            orders: v.orders,
+          }))}
         />
         <BreakdownCard
           title="Conferência Nuvemshop"
@@ -942,6 +942,7 @@ function BlingData({ clientId, view }: { clientId: string; view: View }) {
     queryFn: () =>
       customFetch<BlingDashboard>(`/api/analytics/erp/bling?${params}`),
     retry: 1,
+    placeholderData: keepPreviousData,
     staleTime: 120000,
     refetchOnWindowFocus: false,
   });
@@ -1154,6 +1155,11 @@ function BlingData({ clientId, view }: { clientId: string; view: View }) {
               )}
             </CardContent>
           </Card>
+          {query.isPlaceholderData && (
+            <p role="status" className="text-xs text-muted-foreground">
+              Atualizando filtros… Os resultados anteriores permanecem visíveis.
+            </p>
+          )}
           <Kpis metrics={metricsFor(data, view)} />
           <div className="space-y-1 text-xs text-muted-foreground">
             <p>
@@ -1285,7 +1291,8 @@ function BlingData({ clientId, view }: { clientId: string; view: View }) {
                   )}
                 </div>
                 <Pagination
-                  page={page}
+                  page={data.page}
+                  disabled={query.isFetching}
                   total={data.total}
                   size={25}
                   onChange={setPage}

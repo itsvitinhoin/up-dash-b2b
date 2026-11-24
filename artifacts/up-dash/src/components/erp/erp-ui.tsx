@@ -77,11 +77,13 @@ export function Pagination({
   total,
   size,
   onChange,
+  disabled = false,
 }: {
   page: number;
   total: number;
   size: number;
   onChange: (page: number) => void;
+  disabled?: boolean;
 }) {
   if (!total) return null;
   const pages = Math.max(1, Math.ceil(total / size));
@@ -94,7 +96,7 @@ export function Pagination({
         <Button
           variant="outline"
           size="sm"
-          disabled={page <= 1}
+          disabled={disabled || page <= 1}
           onClick={() => onChange(page - 1)}
         >
           Anterior
@@ -102,7 +104,7 @@ export function Pagination({
         <Button
           variant="outline"
           size="sm"
-          disabled={page >= pages}
+          disabled={disabled || page >= pages}
           onClick={() => onChange(page + 1)}
         >
           Próxima
