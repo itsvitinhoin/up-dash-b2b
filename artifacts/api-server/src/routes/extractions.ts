@@ -126,9 +126,10 @@ router.get("/cron/extractions/braavo", async (req, res): Promise<void> => {
 
 router.get("/cron/extractions/bling", async (req, res): Promise<void> => {
   if (!(await verifyCronRequest(req, res))) return;
-  const parsed = z.object({ offset: z.coerce.number().int().min(0).default(0), clientId: z.string().min(1).max(200).optional() }).safeParse(req.query);
+  const parsed = z.object({ offset: z.coerce.number().int().min(0).default(0), clientId: z.string().min(1).max(200).optional(), ordersOnly: z.enum(["true", "false"]).optional() }).safeParse(req.query);
   if (!parsed.success) { res.status(400).json({ message: "Parâmetros inválidos." }); return; }
-  const { offset, clientId } = parsed.data;
+  const { offset, clientId, ordersOnly } = parsed.data;
+  if (ordersOnly === "true" && !clientId) { res.status(400).json({ message: "Selecione uma marca para atualizar somente pedidos." }); return; }
   if (!(await hasBlingSchema())) { sendCronResult(res, { clients: 0, failed: 0, nextOffset: offset }); return; }
   const [client] = await db.select({ id: blingConnectionsTable.clientId }).from(blingConnectionsTable)
     .innerJoin(clientsTable, eq(clientsTable.id, blingConnectionsTable.clientId))
@@ -136,7 +137,7 @@ router.get("/cron/extractions/bling", async (req, res): Promise<void> => {
     .orderBy(asc(blingConnectionsTable.clientId)).limit(1).offset(offset);
   if (!client) { sendCronResult(res, { clients: 0, failed: 0, nextOffset: offset }); return; }
   try {
-    const result = await runBlingBatch(client.id);
+    const result = await runBlingBatch(client.id, { ordersOnly: ordersOnly === "true" });
     sendCronResult(res, { clients: 1, failed: 0, nextOffset: result.complete ? offset + 1 : offset, ...result });
   } catch (error) {
     const [state] = await db.select({ cursor: blingConnectionsTable.cursor }).from(blingConnectionsTable).where(eq(blingConnectionsTable.clientId, client.id));

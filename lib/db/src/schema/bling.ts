@@ -18,6 +18,8 @@ export type BlingCursor = {
   from: string;
   until: string;
   incremental: boolean;
+  orderDateFrom?: string;
+  orderDateTo?: string;
 };
 
 export const blingConnectionsTable = pgTable(

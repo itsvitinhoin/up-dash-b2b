@@ -18,6 +18,10 @@ on:
         description: ID da marca Bling (obrigatório no modo bling)
         type: string
         required: false
+      bling_orders_only:
+        description: Atualizar somente pedidos alterados do período já importado
+        type: boolean
+        default: false
 
 jobs:
   braavo-transactional:
@@ -155,6 +159,7 @@ jobs:
           GH_REPOSITORY: ${{ github.repository }}
           GH_RUN_ID: ${{ github.run_id }}
           DASH_CLIENT_ID: ${{ inputs.bling_client_id }}
+          BLING_ORDERS_ONLY: ${{ inputs.bling_orders_only }}
         run: |
           node --input-type=module <<'JS'
           import { setTimeout as wait } from 'node:timers/promises';
@@ -162,6 +167,7 @@ jobs:
           if (!clientId || !/^[a-zA-Z0-9_-]{1,200}$/.test(clientId)) throw new Error('A brand ID is required.');
           const url = new URL('https://www.grupoup-dash.com.br/api/cron/extractions/bling');
           url.searchParams.set('clientId', clientId);
+          if (process.env.BLING_ORDERS_ONLY === 'true') url.searchParams.set('ordersOnly', 'true');
           const deadline = Date.now() + 350 * 60_000;
           let previousCheckpoint = '', failures = 0, lastNotice = 0;
           console.log('Starting the authorized ERP import.');

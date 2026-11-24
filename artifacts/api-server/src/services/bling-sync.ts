@@ -312,7 +312,10 @@ export async function testBlingConnection(clientId: string) {
   }
 }
 
-export async function runBlingBatch(clientId: string) {
+export async function runBlingBatch(
+  clientId: string,
+  options: { ordersOnly?: boolean } = {},
+) {
   const { connection, leaseId } = await claimBlingLease(clientId);
   try {
     if (!connection.tokens)
@@ -321,10 +324,26 @@ export async function runBlingBatch(clientId: string) {
         "BLING_NOT_CONNECTED",
         409,
       );
+    const closingPass = options.ordersOnly && !connection.cursor;
+    if (closingPass && (!connection.completedAt || !connection.watermark))
+      throw new BlingError(
+        "Conclua a primeira carga antes de atualizar somente os pedidos.",
+        "BLING_HISTORY_REQUIRED",
+        409,
+      );
     const api = await blingApiForLease(clientId, connection, leaseId);
     let cursor: BlingCursor | null =
       connection.cursor ??
       initialBlingCursor(connection.historyDays, connection.watermark);
+    if (closingPass) {
+      const window = initialBlingCursor(connection.historyDays, null);
+      cursor = {
+        ...cursor,
+        phase: "orders",
+        orderDateFrom: window.from.slice(0, 10),
+        orderDateTo: window.until.slice(0, 10),
+      };
+    }
     const deadline = Date.now() + 18_000;
     let imported = 0;
     while (cursor && Date.now() < deadline) {
@@ -413,6 +432,12 @@ export async function runBlingBatch(clientId: string) {
             current.incremental ? "dataAlteracaoFinal" : "dataFinal",
             current.incremental ? current.until : current.until.slice(0, 10),
           );
+          // A closing pass catches changes during the initial pagination while
+          // remaining inside its configured order-date window.
+          if (current.orderDateFrom && current.orderDateTo) {
+            params.set("dataInicial", current.orderDateFrom);
+            params.set("dataFinal", current.orderDateTo);
+          }
         }
         let rows: BlingRecord[];
         try {
@@ -457,6 +482,12 @@ export async function runBlingBatch(clientId: string) {
           cursor = nextBlingPage(cursor);
         }
       }
+      const scopedWrites = writes.filter((row) => {
+        if (row.kind !== "orders" || !current.orderDateFrom || !current.orderDateTo)
+          return true;
+        return typeof row.data.day === "string" &&
+          row.data.day >= current.orderDateFrom && row.data.day <= current.orderDateTo;
+      });
       await db.transaction(async (tx) => {
         const [lease] = await tx
           .select({ id: connections.leaseId })
@@ -479,7 +510,7 @@ export async function runBlingBatch(clientId: string) {
         // Deduplicate first to preserve the former last-write-wins behavior.
         const uniqueWrites = [
           ...new Map(
-            writes.map((row) => [
+            scopedWrites.map((row) => [
               `${row.kind}:${row.externalId}`,
               { clientId, ...row },
             ]),
@@ -537,7 +568,7 @@ export async function runBlingBatch(clientId: string) {
           })
           .where(eq(connections.clientId, clientId));
       });
-      imported += writes.length;
+      imported += scopedWrites.length;
       if (deferredError) throw deferredError;
     }
     const result = {

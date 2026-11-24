@@ -645,6 +645,58 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
     expect(status.body.error).toContain("diário");
     expect(status.body.connected).toBe(true);
   });
+  it("requires a completed load and explicit brand for an orders-only closing pass, without skipping an active cursor", async () => {
+    const cron = { Authorization: "Bearer synthetic-cron-secret" };
+    await connect();
+    await request(app).get("/cron/extractions/bling?ordersOnly=true").set(cron).expect(400);
+    await request(app).get("/cron/extractions/bling?clientId=jini&ordersOnly=yes").set(cron).expect(400);
+    await expect(sync.runBlingBatch("jini", { ordersOnly: true })).rejects.toMatchObject({ code: "BLING_HISTORY_REQUIRED" });
+    expect(calls).toEqual([]);
+    await schema.db.update(schema.blingConnectionsTable).set({
+      cursor: { ...sync.initialBlingCursor(30, null), phase: "customers", page: 88 },
+    }).where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    expect((await sync.runBlingBatch("jini", { ordersOnly: true })).complete).toBe(true);
+    expect(calls[0]).toContain("/contatos?pagina=88");
+    expect(calls.some((path) => path.startsWith("/produtos?"))).toBe(false);
+  });
+
+  it("updates changed orders only inside the imported date window and preserves catalog and contacts", async () => {
+    await connect();
+    expect((await sync.runBlingBatch("jini")).complete).toBe(true);
+    const before = await schema.db.select().from(schema.blingRecordsTable);
+    calls.length = 0;
+    const fixtureFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await fixtureFetch(input, init);
+      if (!new URL(String(input)).pathname.endsWith("/pedidos/vendas/304")) return response;
+      const body = await response.json();
+      body.data.data = "2025-12-31";
+      return Response.json(body);
+    }));
+    fixtures["/pedidos/vendas"].push({ id: 304 }, { id: 305 });
+    try {
+      const closing = await request(app)
+        .get("/cron/extractions/bling?clientId=jini&ordersOnly=true")
+        .set({ Authorization: "Bearer synthetic-cron-secret" }).expect(200);
+      expect(closing.body.result.complete).toBe(true);
+      expect(calls.every((path) => path.startsWith("/pedidos/vendas"))).toBe(true);
+      const listing = new URL(`https://provider.example${calls.find((path) => path.startsWith("/pedidos/vendas?"))}`);
+      const window = sync.initialBlingCursor(30, null);
+      expect(listing.searchParams.get("dataInicial")).toBe(window.from.slice(0, 10));
+      expect(listing.searchParams.get("dataFinal")).toBe(window.until.slice(0, 10));
+      expect(listing.searchParams.has("dataAlteracaoInicial")).toBe(true);
+      expect(listing.searchParams.has("dataAlteracaoFinal")).toBe(true);
+      const after = await schema.db.select().from(schema.blingRecordsTable);
+      expect(after.filter((row) => row.kind === "orders")).toHaveLength(4);
+      expect(after.some((row) => row.kind === "orders" && row.externalId === "304")).toBe(false);
+      expect(after.some((row) => row.kind === "orders" && row.externalId === "305")).toBe(true);
+      for (const row of before.filter((row) => row.kind === "products" || row.kind === "customers"))
+        expect(after.find((saved) => saved.kind === row.kind && saved.externalId === row.externalId)).toEqual(row);
+    } finally {
+      fixtures["/pedidos/vendas"].splice(-2);
+    }
+  });
+
   it("runs only the selected cron brand and preserves the target and cooldown on failure", async () => {
     const cron = { Authorization: "Bearer synthetic-cron-secret" };
     await request(app).get("/cron/extractions/bling?clientId=jini").expect(401);
