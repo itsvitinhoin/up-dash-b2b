@@ -1167,6 +1167,13 @@ function BlingData({ clientId, view }: { clientId: string; view: View }) {
                 ? "Catálogo e estoque da última importação. As unidades e os valores em pedidos respeitam o período e o canal selecionados."
                 : "Valores de pedidos em todas as situações selecionadas; não representam receita paga ou líquida. Recorrência considera apenas os pedidos deste período."}
             </p>
+            {!isCatalog && (
+              <p>
+                Compradores representam cadastros do Bling. Um cadastro
+                genérico, como Consumidor Final, pode reunir pedidos de pessoas
+                diferentes.
+              </p>
+            )}
             <p>
               Pedidos importados: {date(data.summary.coverage.from)} a{" "}
               {date(data.summary.coverage.to)}.
