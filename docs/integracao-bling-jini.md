@@ -1,100 +1,85 @@
 # Bling no B2C — piloto Jini
 
-Escopo confirmado em 18/11/2026: Jini utiliza Nuvemshop; importar **todos os canais do Bling**, identificados separadamente. Implementação integrada à versão de produção de 23/11/2026, em checkout isolado na branch `codex/bling-client-erp`. Nenhuma conta real foi autorizada nos testes.
+Jini utiliza Nuvemshop. O piloto importa **todos os canais do Bling, identificados separadamente**, com cinco escopos de leitura. A configuração fica em **Clientes cadastrados → Jini → ERP → Bling**. O usuário confirmou concluir os 30 dias antes de ampliar o histórico, que deverá ficar limitado a 2026. A conta real foi autorizada pelo usuário em 23/11/2026; a empresa conectada é conferida no Dash e não pode ser vinculada a duas marcas.
 
-## Primeira entrega implementada
+## Comportamento entregue
 
-- ERP disponível no B2C: visão geral por canal, pedidos com itens e conciliação, compradores do período, catálogo/SKUs e saldos físicos/disponíveis por depósito.
-- Bling adicional à Nuvemshop, sem mudar `commercePlatform` e sem inserir cópias dos pedidos do ERP na tabela de vendas da loja.
-- Conexão OAuth por marca; estado de uso único vinculado ao navegador; tokens JWT renovados no servidor e criptografados com AES-256-GCM. A renovação salva imediatamente o novo refresh token.
-- Importação paginada com cursor persistido, exclusividade por marca, tratamento de falhas e retomada. Primeira carga de 30 dias de pedidos; catálogo e contatos completos. Histórico inicial configurável entre 1 e 365 dias.
+- Bling adicional à Nuvemshop: não muda `commercePlatform` e não insere cópias dos pedidos ERP na tabela de vendas da loja.
+- ERP no B2C com visão por canal, pedidos com itens, compradores do período, catálogo/SKUs e saldos físicos/disponíveis por depósito.
+- Primeira carga de 30 dias de pedidos; catálogo e contatos completos. Histórico inicial configurável de 1 a 365 dias. Alterar o histórico inicia outra carga, preservando os registros existentes.
 - Atualizações de pedidos por data de alteração, com sobreposição de um dia. Catálogo, canais e contatos são consultados novamente a cada ciclo.
-- Limite local de 0,5 chamada/s por conta conectada, abaixo do limite oficial de 3/s. Chamadas de outras integrações da mesma conta também consomem o limite do Bling; HTTP 429 interrompe o lote, preservando o cursor.
-- Workflow horário em `.github/workflows/bling-extractions.yml`: até 100 lotes por execução, com continuação no próximo horário. O agendamento só começa após publicação do código/workflow e configuração do ambiente.
+- Cursor persistido e exclusividade por marca. Páginas de até 50 registros e grupos de até oito detalhes são gravados junto ao checkpoint, com deduplicação antes do upsert. Uma falha parcial preserva todos os detalhes bem-sucedidos, inclusive quando chegam fora de ordem.
+- Até duas consultas de detalhes em andamento, com reserva compartilhada de uma chamada por segundo por conta. Outras integrações da mesma conta também consomem a cota Bling.
+- Contadores de produtos, contatos, pedidos e canais para conferir a carga. O status é atualizado a cada 30 segundos durante a importação; falhas transitórias têm duas novas tentativas. Quando a consulta falha, a interface identifica explicitamente que os dados exibidos são da última consulta recebida.
 
-## Ativação
+## Configuração e segurança
 
-1. A migração aditiva é `0050_bling.sql`, alinhada à main `b429194`. O primeiro **Salvar configuração Bling** de um administrador cria somente as três tabelas Bling e seus índices, de forma idempotente, transacional e com exclusividade. A leitura inicial funciona antes de provisionar essas tabelas. Não executar diários antigos de migrações da raiz do workspace. O fluxo `migrate:bootstrap` existente reconhece os objetos já presentes quando o diário for conciliado no processo normal de migração.
-2. Criar o aplicativo na **Central de Extensões → Área do Integrador** do Bling. Configurar somente estes cinco escopos de leitura: Clientes e Fornecedores, Controle de Estoque, Pedidos de Venda, Produtos e Visualizar os dados básicos da empresa. O escopo mais amplo Integrações e Lojas Virtuais não é necessário: se a consulta dos nomes dos canais retornar 403, o conector descobre os canais pelo `loja.id` dos pedidos, mantendo todos separados por ID. O conector consulta a API; não envia alterações à operação Bling.
-3. Configurar no servidor:
+O aplicativo privado **UP Dash — Jini** usa somente Clientes e Fornecedores, Controle de Estoque, Pedidos de Venda, Produtos e Visualizar os dados básicos da empresa, todos de leitura. **Integrações e Lojas Virtuais permanece desativado**. Se `/canais-venda` retorna 403, o conector identifica canais por `loja.id` nos pedidos e os apresenta pelo ID; não amplia permissões para obter nomes.
 
-   | Variável                     | Conteúdo                                                                     |
-   | ---------------------------- | ---------------------------------------------------------------------------- |
-   | `BLING_CLIENT_ID`            | Client ID do aplicativo                                                      |
-   | `BLING_CLIENT_SECRET`        | Client Secret do aplicativo                                                  |
-   | `BLING_REDIRECT_URI`         | `https://www.grupoup-dash.com.br/api/bling/callback` no ambiente de produção |
-   | `BLING_TOKEN_ENCRYPTION_KEY` | Chave aleatória de 32 bytes em hexadecimal (64 caracteres)                   |
+O usuário autorizou a permissão Cadastro de aplicativos, preencheu o contato do desenvolvedor e autorizou o aplicativo. Client Secret e tokens não devem ser copiados para chat, documentação ou logs. Credenciais próprias por marca são cifradas em `clients.erp_credentials_encrypted`; segredo omitido mantém o valor salvo somente quando o Client ID permanece igual. Trocar aplicativo exige nova autorização e preserva o vínculo com a empresa anterior.
 
-   A URL de retorno cadastrada no Bling deve ser idêntica à variável. Credenciais ficam no servidor; não devem ser enviadas pelo chat. Preserve a chave de criptografia entre deploys; trocar a chave exige um procedimento de recriptografia ou reconexão das contas.
+OAuth usa estado de uso único vinculado ao navegador. Tokens são renovados no servidor e cifrados com AES-256-GCM; cada novo refresh token é persistido imediatamente. O conector só consulta os recursos permitidos, sem enviar alterações à operação Bling.
 
-4. Publicar a aplicação. Em **Clientes cadastrados → Jini → ERP → Bling**, preencher Client ID e Client Secret (ou selecionar o aplicativo já configurado no servidor), salvar e usar **Autorizar no Bling** e autorizar a empresa correta. A empresa conectada fica visível na tela; o mesmo ID de empresa não pode ser associado a duas marcas.
-5. Manter 30 dias inicialmente e iniciar **Sincronizar**. O processo pode ser interrompido ao fim de um lote e retomado.
-6. Selecionar explicitamente o canal correspondente à Nuvemshop na configuração Bling. Todos os demais canais continuam sendo importados.
-7. Executar novamente a sincronização da Nuvemshop para registrar os números dos pedidos já existentes. O importador agora guarda `sourceMetadata.nuvemshop.orderNumber`, além do ID externo que já existia. O fluxo atual da Nuvemshop pode ter uma janela de importação menor que 30 dias: use a sincronização com o período completo do piloto, ou amplie o lookback conforme os parâmetros do importador.
-8. Conferir o mesmo período nas telas Bling e Dash. Validar quantidade e valor dos pedidos por canal, itens, status, saldos por depósito e pendências de conciliação antes de usar os dados na operação.
+Variáveis do servidor:
 
-## Regras de conciliação
+| Variável | Conteúdo |
+| --- | --- |
+| `BLING_CLIENT_ID` | Client ID do aplicativo padrão |
+| `BLING_CLIENT_SECRET` | Segredo do aplicativo padrão |
+| `BLING_REDIRECT_URI` | `https://www.grupoup-dash.com.br/api/bling/callback` |
+| `BLING_TOKEN_ENCRYPTION_KEY` | Chave aleatória de 32 bytes em hexadecimal |
 
-- O canal Nuvemshop precisa ser selecionado por um administrador; não é inferido pelo nome do canal.
-- `numeroLoja` do pedido Bling deve corresponder exatamente ao número do pedido Nuvemshop, dentro da mesma marca e do canal selecionado.
-- Uma correspondência: encontrado. Nenhuma: pendente. Mais de uma: ambíguo. Pedidos de outros canais não são associados à Nuvemshop, mesmo quando seus números coincidem.
-- “Encontrado” confirma o vínculo pelo número; não afirma igualdade de valores, pagamento, itens ou status. Conferências financeiras e por item serão uma etapa adicional.
-- CPF, e-mail ou semelhança de valor/data não são usados para deduzir vínculos. CPF e dados de contato não são persistidos no cache do ERP; o cadastro importado guarda identificador, nome e situação.
-- A tela ERP mostra os pedidos Bling uma vez cada; não soma suas vendas novamente às vendas Nuvemshop. Os indicadores atuais do e-commerce continuam sendo calculados por sua fonte atual.
+As variáveis estão configuradas como sensíveis no ambiente production. A URL cadastrada no aplicativo deve ser idêntica à do servidor. Preserve a chave entre deploys; sua troca exige recriptografia ou reconexão das contas. A chave ERP existente protege as credenciais próprias por marca.
 
-## Limites e próximas entregas
+A migração aditiva é `0050_bling.sql`, alinhada à main `b429194`. O primeiro salvamento cria somente as três tabelas Bling e seus índices, de modo transacional, idempotente e exclusivo. A leitura inicial funciona antes desse provisionamento. Não executar diários antigos de migrações da raiz do workspace.
 
-Esta primeira entrega apresenta **valor registrado em pedidos, incluindo todas as situações**, não receita paga, faturamento fiscal ou receita líquida. Os IDs e códigos de situação são exibidos como recebidos, sem adivinhar o significado de situações personalizadas.
+## Execução e retomada
 
-Para completar o projeto: mapear situações reais da Jini; integrar notas fiscais, recebimentos, cancelamentos/devoluções e custos; adicionar conferência de valores/itens entre as fontes; definir métricas financeiras; expandir o histórico em janelas de até um ano; implementar webhooks assinados com fila durável e reconciliação periódica. Não há receptor de webhooks nesta entrega.
+A primeira carga é acompanhada pelo workflow manual já registrado `.github/workflows/scheduled-extractions.yml`, executado com `mode=bling` e `bling_client_id`. Esse modo ignora todos os demais jobs e restringe a importação à marca ativa e autorizada selecionada. As credenciais Bling ficam exclusivamente no backend; o executor usa a autenticação GitHub já aceita pelo cron.
 
-O catálogo mostra o último saldo importado. Registros removidos definitivamente da origem ainda não são expurgados automaticamente do cache; uma futura rotina de reconciliação de exclusões ou webhooks deve cobrir esse caso. Não tratar o saldo como inventário em tempo real. Compradores na tela Clientes são os que possuem pedidos nos filtros selecionados; a carga de contatos não transforma fornecedores em compradores.
+O job tem prazo interno de 350 minutos e limite de 360 minutos. Só encerra com sucesso após `complete: true`. Respeita `Retry-After` e aplica espera limitada para cotas por segundo. Cota diária, espera superior a 15 minutos, falhas permanentes de autenticação/escopo/empresa ou falhas persistentes interrompem o job, preservando o checkpoint. Falhas de transporte e HTTP 5xx, inclusive respostas não JSON, têm tentativas limitadas. HTTP 400/401/403/404 não é repetido como falha transitória. Logs públicos não contêm corpos de resposta, nomes de compradores, valores nem contagens comerciais.
 
-## Verificação
+O endpoint fixo `api/cron/extractions/bling.js` mantém a rota e a autenticação existentes, mas isola a execução em uma função Vercel com duração máxima de 290 segundos, distinta da função compartilhada de 300 segundos. A leitura ERP também tem entrada fixa em `api/analytics/erp/bling.js`, duração de 288 segundos e cabeçalho `X-Bling-Analytics: isolated`, mantendo a autenticação e a autorização por marca. Importação e leitura deixam de disputar a fila da função compartilhada. A resposta contém `X-Bling-Worker: isolated`, inclusive na rejeição de uma chamada sem autorização válida. Timeout de aquisição do pool tem recuperação limitada; não altera o tamanho do banco, permissões ou o parâmetro `max_connections` do PostgreSQL.
 
-Os testes usam somente respostas Bling sintéticas e uma base PostgreSQL local descartável. Cobrem OAuth/navegador/uso único, permissões, isolamento entre marcas, criptografia, renovação, retomada, concorrência, identificação de canais, estoque e importação idempotente. Validação com dados reais da Jini permanece pendente da autorização da conta.
+HTTP 429 é classificado somente por `error.period` e `Retry-After`. Sem cabeçalho, as pausas são de 5 segundos para cota por segundo, 60 segundos para período desconhecido e 24 horas para cota diária. `next_request_at` impede consultas antecipadas. Não reconectar a conta nem mudar o histórico para contornar cotas.
+
+Depois de uma carga completa, o modo manual `bling_orders_only=true` permite uma atualização complementar dos pedidos alterados, sem repetir catálogo ou contatos. Exige marca explícita e carga anterior concluída; um cursor já ativo é retomado sem pular etapas. A consulta combina a janela de alteração com os dias configurados para os pedidos e verifica novamente o período antes de persistir os detalhes. A janela fica no cursor JSON existente, sem migração adicional.
+
+A ação administrativa **Conferir pedido** consulta um número específico no Bling e recupera ou atualiza somente esse pedido. Exige carga anterior completa, recusa cursor ativo, confere número e período no detalhe e não move o watermark nem a data da carga em lote. Pedido ausente, ambíguo ou fora da janela não invalida a carga concluída; cotas da conta continuam sendo persistidas e respeitadas.
+
+O workflow horário `.github/workflows/bling-extractions.yml` limita cada execução a 100 lotes e continua no próximo horário. **O agendamento só será ativado após incorporar a branch na main.** A execução manual atual funciona a partir da branch revisada sem essa incorporação.
+
+## Conciliação com a Nuvemshop
+
+O administrador seleciona o ID do canal Nuvemshop após conferi-lo na origem. Todos os canais continuam importados. O vínculo usa `numeroLoja` do pedido Bling e o número do pedido Nuvemshop, somente dentro da mesma marca e do canal selecionado.
+
+Uma correspondência indica encontrado; nenhuma, pendente; mais de uma, ambíguo. A consulta agrupa os números da Nuvemshop uma vez por marca e usa junção sem multiplicar pedidos ou totais do ERP. Números vazios são excluídos. Canais e marcas diferentes não são associados mesmo quando os números coincidem.
+
+**Encontrado confirma apenas o vínculo pelo número**, sem afirmar igualdade de valores, pagamento, itens ou status. CPF, e-mail ou semelhança de valor/data não deduzem vínculos. CPF e dados de contato não são persistidos no cache ERP; o cadastro guarda identificador, nome e situação.
+
+Pedidos Nuvemshop antigos precisam ser atualizados pelo importador para preencher `sourceMetadata.nuvemshop.orderNumber`. O lookback da Nuvemshop pode ser menor que o período inicial do ERP; validar sua cobertura antes de concluir a conciliação. Os indicadores atuais do e-commerce continuam usando sua fonte atual, sem somar novamente as vendas do ERP.
+
+## Validação e limites
+
+A entrega mostra **valor registrado em pedidos, incluindo todas as situações**. Não representa receita paga, faturamento fiscal ou receita líquida. Situações são apresentadas com os códigos recebidos, sem inferir o significado de personalizações. Compradores são os que têm pedidos nos filtros; importar contatos não transforma fornecedores em compradores.
+
+O catálogo mostra o último saldo importado, sem promessa de estoque em tempo real. Exclusões definitivas na origem ainda não são expurgadas automaticamente. Notas fiscais, recebimentos, cancelamentos/devoluções, custos, conferência financeira e por item e webhooks assinados com fila durável são próximas entregas.
+
+**38 testes Bling passaram** com respostas sintéticas e PostgreSQL local descartável, além de typechecks e builds da API/frontend. Cobertura: OAuth e estado de uso único, permissões e isolamento, criptografia, renovação, empresa, cotas e cooldown, retomada exata, sucesso parcial concorrente, reservas compartilhadas, importação idempotente, contagens e conciliação ambígua sem multiplicar totais. A atualização complementar foi testada com marca explícita, pré-requisito de carga completa, preservação do cursor ativo e rejeição de detalhes fora da janela, inclusive de outro ano. A conferência individual cobre permissões, recuperação idempotente, preservação da carga anterior, resultado ausente/ambíguo, cursor ativo e cooldown da conta. Um teste retém a única conexão local além do timeout de aquisição e verifica a recuperação limitada.
+
+Uma comparação com tabelas temporárias sintéticas confirmou resultados iguais da conciliação e reduziu as varreduras de pedidos Nuvemshop de 1.500 para uma. Esse resultado não é uma medição de desempenho em produção. O executor também foi validado com falhas simuladas de transporte, HTTP 5xx, respostas malformadas e rejeições permanentes.
 
 ```sh
 BLING_TEST_DATABASE_URL=postgres://usuario@127.0.0.1:55438/bling_integration_test \
   pnpm --filter @workspace/api-server exec vitest run test/bling-api.test.ts test/bling-integration.test.ts
 ```
 
-O teste de integração só aceita uma base local chamada `bling_integration_test`, cria as tabelas mínimas se necessário e trunca **apenas essa base**. Sem a variável, esses testes são pulados.
+O teste aceita somente uma base local chamada `bling_integration_test` e trunca apenas essa base. Sem a variável, os testes de integração são pulados. A conferência real usa a conta autorizada, o mesmo período e todos os canais; totais comerciais e evidências ficam no registro privado local do piloto.
 
-Fontes oficiais consultadas em 18/11/2026: [Aplicativos e OAuth](https://developer.bling.com.br/aplicativos), [JWT](https://developer.bling.com.br/migracao-jwt), [referência da API](https://developer.bling.com.br/referencia), [limites](https://developer.bling.com.br/limites), [webhooks](https://developer.bling.com.br/webhooks). O contrato OpenAPI oficial foi consultado na versão publicada no dia da implementação.
+## Publicação do piloto
 
-## Configuração assistida em 23/11/2026
+Código em `codex/bling-client-erp`, [PR #8](https://github.com/itsvitinhoin/up-dash-b2b/pull/8). Versão de produção em 23/11/2026: commit `8ad18df`, deployment `dpl_7LBp5JBwn2CJr7a6FtpjBtXNv6Qz`, projeto `prj_6lGvyKbSHVZWVZ6QFoqaAbe2IK6p`. A versão foi preparada sem alterar o domínio, passou nas verificações de saúde da API/banco e de rejeição de acesso sem autenticação e então foi promovida a `www.grupoup-dash.com.br`.
 
-A permissão Cadastro de aplicativos do usuário Jini Escritório foi habilitada com autorização do usuário. A Área do Integrador passou a aparecer. O usuário preencheu o celular de contato e autorizou a criação com cinco escopos de leitura. O aplicativo privado UP Dash — Jini foi criado no Bling, ID `414729`, categoria Dashboards e BI, com callback de produção. Link administrativo: https://www.bling.com.br/cadastro.aplicativos.php#/form/414729 . O escopo Integrações e Lojas Virtuais ficou desativado; o conector foi ajustado para descobrir os IDs dos canais nos pedidos quando não houver permissão para consultar seus nomes.
+Execução manual acompanhada: [run 45250966787](https://github.com/itsvitinhoin/up-dash-b2b/actions/runs/45250966787). A carga inicial e a [atualização complementar](https://github.com/itsvitinhoin/up-dash-b2b/actions/runs/45300289578) terminaram com sucesso. A conferência real comparou contagens por período/dia e identificadores, recuperou registros faltantes pela ação individual e confirmou igualdade com a origem no período encerrado. O Dash ficou no período de 30 dias, com o canal Nuvemshop salvo e sem erro de carga. Totais e evidências permanecem no registro privado local; a conciliação com a Nuvemshop ainda tem pendências. A main permanece inalterada. Incorporar esta branch antes do próximo release normal, que poderia substituir a versão do piloto.
 
-Na versão publicada do Dash conferida nesta data, o cadastro de ERP da Jini oferece apenas Miredata e Manse. A configuração por cliente foi incorporada ao modal ERP existente, preservando os fluxos Miredata e Manse. As quatro variáveis `BLING_CLIENT_ID`, `BLING_CLIENT_SECRET`, `BLING_REDIRECT_URI` e `BLING_TOKEN_ENCRYPTION_KEY` foram configuradas como sensíveis, somente no ambiente production do projeto Vercel `data-intelligence-system`, ID `prj_6lGvyKbSHVZWVZ6QFoqaAbe2IK6p`. O segredo foi copiado pelo controle da própria tela, mantendo-o oculto, transferido por arquivo temporário com acesso restrito, e esse arquivo foi removido após a gravação no servidor. Nenhum valor secreto foi registrado nesta documentação. A autorização OAuth da conta e a primeira importação aguardam a publicação do conector: o aplicativo ainda estava com zero usuários autorizados na verificação desta etapa. Não usar o link de convite antes de a rota de callback estar publicada.
-
-Verificação de 23/11/2026: 20 testes passaram usando respostas simuladas e PostgreSQL local descartável, incluindo a descoberta dos canais nos pedidos quando `/canais-venda` retorna 403; typechecks de API e frontend passaram. A opção Integrações e Lojas Virtuais ficou fora do aplicativo.
-
-## Formulário por marca
-
-As credenciais próprias de cada marca são cifradas em `clients.erp_credentials_encrypted` com a chave ERP existente; o segredo nunca retorna em respostas da API. Ao reabrir, deixar o segredo vazio mantém o valor salvo somente quando o Client ID continua igual. Trocar aplicativo exige nova autorização e preserva o vínculo com a empresa anterior para impedir mistura de dados. **Testar conexão** consulta os dados básicos da empresa autorizada sem importar pedidos.
-
-O envio do formulário não autoriza automaticamente a conta Bling. Depois da autorização explícita no Bling, executar teste e primeira importação.
-
-Validação do formulário integrado em 23/11/2026: 23 testes passaram, incluindo PUT no endpoint de ERP existente, primeiro salvamento sem tabelas prévias, credenciais próprias por marca, manutenção de segredo omitido, troca de aplicativo e teste de conexão sem importação. Builds de API/frontend e typecheck do workspace concluídos.
-
-## Publicação do formulário
-
-Publicado em 23/11/2026 no domínio `https://www.grupoup-dash.com.br`, a partir do commit `3e561e217026e7acc3dca78c0a7b4cc520467026` da branch `codex/bling-client-erp`. Deployment Vercel `dpl_C1GKfRQAa6iPxSekocJ3sYaBT91a`, projeto `prj_6lGvyKbSHVZWVZ6QFoqaAbe2IK6p`. A versão foi preparada com `--prod --skip-domain`, passou nas verificações de saúde (API e banco 200) e rejeição de callback inválido (400), e então promovida.
-
-Verificação no domínio real: **Clientes cadastrados → Jini Cosméticos → ERP → Bling** apresentou Client ID, Client Secret protegido, URL de retorno, salvar, autorizar e testar. O formulário ficou aberto com os campos editáveis para o usuário. Não foi salvo nenhum vínculo da Jini nem concedida autorização OAuth nesta verificação. A primeira criação das tabelas ocorre no salvamento explícito. O usuário pode usar o aplicativo já configurado ou preencher um aplicativo próprio.
-
-A branch foi enviada ao GitHub. A main não foi alterada; o workflow horário só será ativado após a incorporação na main. Até lá, a sincronização manual está disponível após autorização. Um deploy futuro da main sem esta alteração pode substituí-la; incorporar esta branch antes do próximo release normal. Evidência visual local: `output/bling-verification/bling-formulario-publicado.jpg`.
-
-## Limites e retomada — ajuste de 23/11/2026
-
-Após a primeira autorização real, a importação da Jini foi pausada em produtos/estoque, página 17, com HTTP 429. O retorno antigo não distinguia limite por segundo e limite diário. O conector agora lê somente o metadado documentado `error.period` e o cabeçalho `Retry-After`, mantém o tempo de pausa em `next_request_at` (sem migração adicional), devolve o horário de retomada e bloqueia novas chamadas à conta durante a pausa. Sem cabeçalho, usa 5s para limite por segundo, 60s para resposta desconhecida e 24h para limite diário. Uma cota diária nunca dispara repetição automática. Nenhum texto bruto da resposta Bling é exposto ou registrado.
-
-A interface tenta retomar automaticamente pausas de até 60s, até três pausas consecutivas sem progresso, e mostra a espera. O usuário pode parar o processo. O ritmo foi reduzido para uma chamada a cada dois segundos, pois outras integrações compartilham a mesma cota. Progresso e tokens são preservados; não reconectar ou reiniciar o histórico para tratar HTTP 429.
-
-27 testes passaram, incluindo retomada exata da página 17, preservação de registros anteriores, bloqueio de chamadas durante a pausa, diferenciação de cota diária e tratamento de Retry-After em segundos/data. Referência: https://developer.bling.com.br/limites .
-
-A verificação real confirmou limite temporário recorrente com avanço até a página 22. O ritmo foi então reduzido para 0,5 chamada/s; a retomada aguarda pelo menos 15s e considera o avanço do cursor (incluindo itens pendentes de pedidos). O limite de três retomadas só conta tentativas sem avanço. Importações extensas continuam automaticamente enquanto há progresso; a interface precisa permanecer aberta. O agendamento no GitHub continua pendente da incorporação da PR na main.
-
-Versão final publicada em 23/11/2026: commit `1699b833c43bfeb39538c404ea62fad8f28931f9`, deployment `dpl_5TQr5SsxXErky8zud7Dc9WXmHgKb`, mesmo projeto e domínio de produção. 28 testes passaram; builds e typecheck concluídos; API e banco verificados saudáveis antes da promoção. Os registros reais confirmaram `period: second`. Após retomar da página 22 com a versão final, a tela mostrou página 23 com contagem de retomada automática e controle Parar ativo. A primeira carga completa continua em andamento na aba do usuário; não foi reiniciado o histórico nem alterada a empresa conectada. Evidência: `output/bling-verification/bling-retomada-limite-corrigido.jpg`.
+Fontes oficiais consultadas: [Aplicativos e OAuth](https://developer.bling.com.br/aplicativos), [JWT](https://developer.bling.com.br/migracao-jwt), [referência da API](https://developer.bling.com.br/referencia), [limites](https://developer.bling.com.br/limites), [webhooks](https://developer.bling.com.br/webhooks).
