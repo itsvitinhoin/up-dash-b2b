@@ -1047,7 +1047,7 @@ function ErpDialog({
     queryKey: erpBackfillStatusQueryKey(clientId),
     queryFn: () => customFetch<ErpBackfillStatusResponse>(`/api/clients/${clientId}/erp/backfill/status`),
     enabled: open && Boolean(currentErpProvider),
-    refetchInterval: (query) => (query.state.data?.hasRun && query.state.data.status === "running" ? 3000 : false),
+    refetchInterval: (query) => (query.state.data?.hasRun && query.state.data.status === "running" ? 8000 : false),
   });
   const backfillStatus = statusQuery.data;
   const isBackfillRunning = backfillStatus?.hasRun === true && backfillStatus.status === "running";
@@ -1297,8 +1297,8 @@ function ErpDialog({
                 disabled={isBackfilling || isBackfillRunning || !dataInicio || !dataFim}
                 onClick={handleBackfill}
               >
-                {isBackfilling || isBackfillRunning ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isBackfilling ? "Disparando…" : "Já tem um rodando…"}</>
+                {isBackfilling ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Disparando…</>
                 ) : (
                   "Fazer backfill histórico"
                 )}

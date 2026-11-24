@@ -1870,19 +1870,44 @@ router.get("/clients/:clientId/erp/backfill/status", requireAdmin, async (req, r
     return;
   }
 
+  let storedChanged = false;
+  const storedChunks = client.erpBackfillStatus.chunks;
   const chunks = await Promise.all(
-    client.erpBackfillStatus.chunks.map(async (chunk) => {
+    storedChunks.map(async (chunk, i) => {
+      if (chunk.resolved) {
+        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, done: true, ...chunk.resolved };
+      }
       if (!chunk.operationName) {
-        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, done: true, succeeded: false, message: chunk.dispatchError ?? "Falha ao disparar" };
+        storedChunks[i] = { ...chunk, resolved: { succeeded: false, message: chunk.dispatchError ?? "Falha ao disparar", completedAt: null } };
+        storedChanged = true;
+        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, done: true, ...storedChunks[i].resolved! };
       }
       try {
         const status = await getOperationStatus(chunk.operationName);
+        if (status.done) {
+          storedChunks[i] = {
+            ...chunk,
+            resolved: { succeeded: status.succeeded ?? false, message: status.message, completedAt: status.completedAt },
+          };
+          storedChanged = true;
+        }
         return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, ...status };
       } catch (err) {
+        // Falha so na CONSULTA (ex: instabilidade pontual na API do Cloud Run) --
+        // nao grava nada: o pedaco continua "ainda nao resolvido" e tenta de novo
+        // no proximo poll, em vez de fingir que terminou ou voltar a aparecer como
+        // rodando depois de ja ter concluido (ver comentario no schema).
         return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, done: false, succeeded: null, message: err instanceof Error ? err.message : String(err) };
       }
     }),
   );
+
+  if (storedChanged) {
+    await db
+      .update(clientsTable)
+      .set({ erpBackfillStatus: { ...client.erpBackfillStatus, chunks: storedChunks } })
+      .where(eq(clientsTable.id, params.data.clientId));
+  }
 
   const overallStatus: "running" | "done" | "failed" = chunks.some((c) => !c.done)
     ? "running"

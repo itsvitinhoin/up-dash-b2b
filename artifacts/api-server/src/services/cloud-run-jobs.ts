@@ -26,6 +26,22 @@ export class CloudRunJobError extends Error {
   }
 }
 
+// Uma unica instancia reaproveitada entre chamadas -- `getClient()` ja cuida
+// de cachear/renovar o token sozinho; recriar o `GoogleAuth` a cada chamada
+// (como era antes) re-le a credencial toda vez, o que deixava o status do
+// backfill de ERP lento quando consulta 5 pedacos em paralelo a cada poll.
+let sharedAuth: GoogleAuth | null = null;
+function getSharedAuth(): GoogleAuth {
+  if (!sharedAuth) {
+    const credentials = serviceAccountFromEnv();
+    sharedAuth = new GoogleAuth({
+      ...(credentials ? { credentials } : {}),
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+    });
+  }
+  return sharedAuth;
+}
+
 function serviceAccountFromEnv(): { client_email: string; private_key: string } | null {
   const raw =
     process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ??
@@ -68,14 +84,9 @@ export function braavoBackfillRequest(clientId: string) {
 
 /** Inicia a execução e devolve o nome dela (sem esperar o fim: a carga leva horas). */
 export async function runBraavoBackfillJob(clientId: string): Promise<{ execution: string }> {
-  const credentials = serviceAccountFromEnv();
-  const auth = new GoogleAuth({
-    ...(credentials ? { credentials } : {}),
-    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-  });
   const { url, body } = braavoBackfillRequest(clientId);
   try {
-    const client = await auth.getClient();
+    const client = await getSharedAuth().getClient();
     const response = await client.request<{ metadata?: { name?: string }; name?: string }>({
       url,
       method: "POST",
@@ -127,12 +138,7 @@ type RawOperation = {
  * navegador.
  */
 export async function getOperationStatus(operationName: string): Promise<OperationStatus> {
-  const credentials = serviceAccountFromEnv();
-  const auth = new GoogleAuth({
-    ...(credentials ? { credentials } : {}),
-    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-  });
-  const client = await auth.getClient();
+  const client = await getSharedAuth().getClient();
   const response = await client.request<RawOperation>({
     url: `https://run.googleapis.com/v2/${operationName}`,
     method: "GET",

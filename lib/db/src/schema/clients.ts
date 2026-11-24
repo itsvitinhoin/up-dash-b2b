@@ -74,7 +74,19 @@ export const clientsTable = pgTable(
     // Victor 24/11/2026 depois de clicar varias vezes sem saber se ia).
     erpBackfillStatus: jsonb("erp_backfill_status").$type<{
       dispatchedAt: string;
-      chunks: Array<{ dataInicio: string; dataFim: string; operationName: string | null; dispatchError?: string }>;
+      chunks: Array<{
+        dataInicio: string;
+        dataFim: string;
+        operationName: string | null;
+        dispatchError?: string;
+        // Preenchido na PRIMEIRA vez que a consulta ao Cloud Run devolve done=true
+        // (sucesso ou falha) -- depois disso nunca mais consulta de novo esse pedaco.
+        // Sem isso, uma falha passageira na consulta (ver getOperationStatus) fazia
+        // um pedaco JA CONCLUIDO parecer "rodando" nas pollagens seguintes, e o status
+        // geral ficava piscando concluido/rodando (achado 24/11/2026, Marcelo: "parece
+        // que ta dando reload").
+        resolved?: { succeeded: boolean; message: string | null; completedAt: string | null };
+      }>;
     }>(),
     // Abas do menu lateral escondidas manualmente pra esse client (valores
     // = `href` do item, ex: "/erp", "/performance" — ver NAV_ITEM_HREFS em
