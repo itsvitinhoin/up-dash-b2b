@@ -30,6 +30,7 @@ export type BlingOrder = {
   day: string;
   channelId: string;
   channelName: string;
+  customerId: string | null;
   customerName: string;
   statusId: string;
   statusValue: string;
@@ -38,6 +39,7 @@ export type BlingOrder = {
   reconciliation: "matched" | "unmatched" | "ambiguous" | "other_channel";
   items: Array<{
     id: string;
+    productId: string | null;
     name: string;
     sku: string;
     quantity: number;
@@ -49,7 +51,9 @@ export type BlingCustomer = {
   name: string;
   orders: number;
   value: number;
+  first_day: string;
   last_day: string;
+  channels: number;
 };
 export type BlingProduct = {
   id: string;
@@ -58,6 +62,8 @@ export type BlingProduct = {
   price: number;
   status: string;
   parentId: string | null;
+  units: number;
+  value: number;
   stock: {
     physical: number;
     available: number;
@@ -73,6 +79,36 @@ export type BlingDashboard = {
     matched: number;
     unmatched: number;
     ambiguous: number;
+    units: number;
+    repeatCustomers: number;
+    daily: Array<{
+      day: string;
+      orders: number;
+      value: number;
+      customers: number;
+    }>;
+    statuses: Array<{ id: string; orders: number; value: number }>;
+    topProducts: Array<{
+      productId: string | null;
+      sku: string;
+      name: string;
+      units: number;
+      value: number;
+    }>;
+    catalog: {
+      products: number;
+      active: number;
+      knownStock: number;
+      physical: number;
+      available: number;
+      positive: number;
+      zero: number;
+      negative: number;
+      unknown: number;
+      units: number;
+      value: number;
+    };
+    coverage: { from: string | null; to: string | null };
     channels: Array<{
       id: string;
       name: string;

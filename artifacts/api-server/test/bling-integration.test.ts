@@ -482,6 +482,227 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
     const [row] = await schema.db.select().from(schema.blingConnectionsTable);
     expect(api.openTokens(row.tokens!).refreshToken).toBe("refresh-1");
   });
+  it("builds charts and catalog sales from scoped cached orders without inventing missing stock", async () => {
+    await connect();
+    const product = (id: string, sku: string, stock: unknown) => ({
+      id,
+      name: `Produto ${id}`,
+      sku,
+      status: "A",
+      price: 20,
+      parentId: null,
+      stock,
+    });
+    const order = (
+      id: string,
+      day: string,
+      customerId: string,
+      customerName: string,
+      total: number,
+      items: unknown[],
+      channelId = "10",
+    ) => ({
+      id,
+      number: id,
+      day,
+      customerId,
+      customerName,
+      total,
+      channelId,
+      statusId: id === "2" ? "2" : "1",
+      items,
+    });
+    const item = (
+      productId: string,
+      sku: string,
+      quantity: number,
+      unitPrice: number,
+    ) => ({ id: sku, productId, sku, quantity, unitPrice, name: sku });
+    await schema.db
+      .insert(schema.blingRecordsTable)
+      .values([
+        ...[
+          order("1", "2026-11-01", "a", "Ana", 100, [item("p1", "ONE", 2, 10)]),
+          order(
+            "2",
+            "2026-11-02",
+            "a",
+            "Ana Silva",
+            200,
+            [item("p1", "ONE", 1, 15)],
+            "20",
+          ),
+          order("3", "2026-11-02", "b", "Bob", 300, [item("", "DUP", 2, 5)]),
+          order("4", "2025-01-01", "b", "Bob", 900, []),
+        ].map((data) => ({
+          clientId: "jini",
+          kind: "orders" as const,
+          externalId: data.id,
+          data,
+        })),
+        {
+          clientId: "other",
+          kind: "orders",
+          externalId: "foreign",
+          data: order("foreign", "2026-11-02", "a", "Ana", 9999, [
+            item("p1", "ONE", 99, 99),
+          ]),
+        },
+        ...[
+          product("p1", "ONE", { physical: 12, available: 10, warehouses: [] }),
+          product("p2", "DUP", { physical: 0, available: 0, warehouses: [] }),
+          product("p3", "DUP", { physical: -1, available: -2, warehouses: [] }),
+          product("p4", "MISSING", null),
+          { id: "p5", name: "Produto p5", sku: "UNSET", status: "I", price: 0 },
+        ].map((data) => ({
+          clientId: "jini",
+          kind: "products" as const,
+          externalId: data.id,
+          data,
+        })),
+      ]);
+    const read = async (extra = "") =>
+      (
+        await request(app)
+          .get(
+            `/analytics/erp/bling?clientId=jini&from=2026-11-01&to=2026-11-03${extra}`,
+          )
+          .set(admin)
+          .expect(200)
+      ).body;
+    const result = await read();
+    expect(result.summary).toMatchObject({
+      orders: 3,
+      orderValue: 600,
+      customers: 2,
+      repeatCustomers: 1,
+      units: 5,
+      daily: [
+        { day: "2026-11-01", orders: 1, value: 100, customers: 1 },
+        { day: "2026-11-02", orders: 2, value: 500, customers: 2 },
+      ],
+      catalog: {
+        products: 5,
+        active: 4,
+        knownStock: 3,
+        physical: 11,
+        available: 8,
+        positive: 1,
+        zero: 1,
+        negative: 1,
+        unknown: 2,
+        units: 3,
+        value: 35,
+      },
+      coverage: { from: "2025-01-01", to: "2026-11-02" },
+    });
+    expect(
+      result.summary.topProducts.reduce(
+        (n: number, r: { value: number }) => n + r.value,
+        0,
+      ),
+    ).toBe(45);
+    const buyers = await read("&view=customers&search=Ana&buyerType=repeat");
+    expect(buyers.total).toBe(1);
+    expect(buyers.rows[0]).toMatchObject({
+      id: "a",
+      orders: 2,
+      value: 300,
+      first_day: "2026-11-01",
+      last_day: "2026-11-02",
+      channels: 2,
+    });
+    expect(buyers.summary.orders).toBe(2);
+    const buyerOrders = await read("&view=orders&customerId=a");
+    expect(buyerOrders.total).toBe(2);
+    expect((await read("&view=orders&statusId=2")).summary).toMatchObject({
+      orders: 1,
+      orderValue: 200,
+    });
+    expect((await read("&channel=10")).summary.orderValue).toBe(400);
+    const stock = await read("&view=stock&stock=unknown");
+    expect(stock.total).toBe(2);
+    expect(stock.summary.catalog).toMatchObject({
+      knownStock: 0,
+      unknown: 2,
+      zero: 0,
+    });
+    const products = await read("&view=products&sort=units");
+    expect(products.rows[0]).toMatchObject({ id: "p1", units: 3, value: 35 });
+    // An ambiguous SKU cannot allocate the same order items to two products.
+    expect(
+      products.rows
+        .filter((p: { sku: string }) => p.sku === "DUP")
+        .every((p: { units: number }) => p.units === 0),
+    ).toBe(true);
+    expect(
+      (await read("&view=stock&stock=zero")).rows.map(
+        (p: { id: string }) => p.id,
+      ),
+    ).toEqual(["p2"]);
+    expect(
+      (await read("&view=products&search=ONE")).summary.catalog.products,
+    ).toBe(1);
+    expect(calls).toHaveLength(0);
+  });
+  it("paginates and exports all filtered rows while keeping client access isolated", async () => {
+    await schema.db.insert(schema.blingRecordsTable).values(
+      Array.from({ length: 28 }, (_, i) => ({
+        clientId: "jini",
+        kind: "orders" as const,
+        externalId: String(i),
+        data: {
+          id: String(i),
+          number: String(i),
+          day: "2026-11-02",
+          customerId: "buyer",
+          customerName: "Buyer",
+          channelId: "10",
+          total: 10,
+          items: [],
+        },
+      })),
+    );
+    await schema.db
+      .insert(schema.blingRecordsTable)
+      .values({
+        clientId: "other",
+        kind: "orders",
+        externalId: "private",
+        data: { id: "private", day: "2026-11-02", total: 99999, items: [] },
+      });
+    const url =
+      "/analytics/erp/bling?clientId=other&view=orders&from=2026-11-01&to=2026-11-03";
+    const read = async (extra = "") =>
+      (
+        await request(app)
+          .get(url + extra)
+          .set("Authorization", "Bearer client")
+          .expect(200)
+      ).body;
+    const first = await read(),
+      second = await read("&page=2"),
+      exported = await read("&export=1");
+    expect(first.rows).toHaveLength(25);
+    expect(second.rows).toHaveLength(3);
+    expect(
+      new Set([...first.rows, ...second.rows].map((r: { id: string }) => r.id))
+        .size,
+    ).toBe(28);
+    expect(exported.rows).toHaveLength(28);
+    expect(exported.summary.orderValue).toBe(280);
+    expect(exported.rows.every((r: { id: string }) => r.id !== "private")).toBe(
+      true,
+    );
+    await request(app)
+      .get(url + "&stock=invalid")
+      .set(admin)
+      .expect(400);
+    await request(app)
+      .get(url + "&export=true")
+      .set(admin)
+      .expect(400);
+  });
   it("persists failed-batch progress, rotates refresh tokens, and reconciles only the selected channel", async () => {
     await connect();
     await schema.db

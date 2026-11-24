@@ -354,11 +354,17 @@ blingRouter.get("/analytics/erp/bling", authenticate, async (req, res) => {
         from: dateOnly,
         to: dateOnly,
         view: z
-          .enum(["overview", "orders", "customers", "products"])
+          .enum(["overview", "orders", "customers", "products", "stock"])
           .default("overview"),
         channel: z.string().max(100).optional(),
         search: z.string().max(100).default(""),
         page: z.coerce.number().int().min(1).max(100000).default(1),
+        statusId: z.string().max(100).optional(),
+        customerId: z.string().max(100).optional(),
+        buyerType: z.enum(["all", "single", "repeat"]).default("all"),
+        stock: z.enum(["all", "positive", "zero", "negative", "unknown"]).default("all"),
+        sort: z.enum(["name", "units", "value", "stock"]).default("name"),
+        export: z.enum(["1"]).optional().transform(v => v === "1"),
       })
       .safeParse(req.query);
     if (!parsed.success || parsed.data.from > parsed.data.to)
