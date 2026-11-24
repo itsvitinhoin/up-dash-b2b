@@ -999,6 +999,24 @@ type ErpBackfillResponse = {
   failedChunks: number;
   chunks: ErpBackfillChunkResult[];
 };
+type ErpBackfillStatusChunk = { dataInicio: string; dataFim: string; done: boolean; succeeded: boolean | null; message: string | null };
+type ErpBackfillStatusResponse =
+  | { hasRun: false }
+  | { hasRun: true; dispatchedAt: string; status: "running" | "done" | "failed"; chunks: ErpBackfillStatusChunk[] };
+
+function erpBackfillStatusQueryKey(clientId: string) {
+  return ["erp-backfill-status", clientId] as const;
+}
+
+function oneYearAgoIsoDate(): string {
+  const d = new Date();
+  d.setUTCFullYear(d.getUTCFullYear() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 function ErpDialog({
   clientId,
@@ -1023,6 +1041,34 @@ function ErpDialog({
   const [dataFim, setDataFim] = useState("");
   const [isBackfilling, setIsBackfilling] = useState(false);
   const queryClient = useQueryClient();
+  const wasRunningRef = useRef(false);
+
+  const statusQuery = useQuery({
+    queryKey: erpBackfillStatusQueryKey(clientId),
+    queryFn: () => customFetch<ErpBackfillStatusResponse>(`/api/clients/${clientId}/erp/backfill/status`),
+    enabled: open && Boolean(currentErpProvider),
+    refetchInterval: (query) => (query.state.data?.hasRun && query.state.data.status === "running" ? 3000 : false),
+  });
+  const backfillStatus = statusQuery.data;
+  const isBackfillRunning = backfillStatus?.hasRun === true && backfillStatus.status === "running";
+
+  useEffect(() => {
+    if (isBackfillRunning) {
+      wasRunningRef.current = true;
+      return;
+    }
+    if (!wasRunningRef.current || backfillStatus?.hasRun !== true) return;
+    wasRunningRef.current = false;
+    const toastId = `erp-backfill-${clientId}`;
+    if (backfillStatus.status === "done") {
+      toast.success(`Backfill de ${clientName} concluído`, { id: toastId });
+    } else if (backfillStatus.status === "failed") {
+      toast.error(`Backfill de ${clientName} terminou com falha`, {
+        id: toastId,
+        description: backfillStatus.chunks.find((c) => !c.succeeded)?.message ?? undefined,
+      });
+    }
+  }, [isBackfillRunning, backfillStatus, clientId, clientName]);
 
   function handleOpen(o: boolean) {
     if (o) {
@@ -1032,8 +1078,8 @@ function ErpDialog({
       setToken("");
       setFilial("");
       setPriceField("");
-      setDataInicio("");
-      setDataFim("");
+      setDataInicio(oneYearAgoIsoDate());
+      setDataFim(todayIsoDate());
     }
     setOpen(o);
   }
@@ -1091,6 +1137,8 @@ function ErpDialog({
           description: `${data.totalChunks} pedaço(s) de até 90 dias`,
         });
       }
+      wasRunningRef.current = true;
+      statusQuery.refetch();
     } catch (err) {
       toast.error(`Falha ao disparar backfill`, {
         id: toastId,
@@ -1223,14 +1271,34 @@ function ErpDialog({
               <p className="text-xs text-muted-foreground">
                 Dispara uma execução por pedaço de até 90 dias (necessário pela API do ERP). Usa a credencial já salva.
               </p>
+              {backfillStatus?.hasRun && (
+                <div className="flex items-center gap-2 text-xs">
+                  {backfillStatus.status === "running" && (
+                    <Badge variant="secondary" className="gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Rodando ({backfillStatus.chunks.filter((c) => c.done).length}/{backfillStatus.chunks.length} pedaços)
+                    </Badge>
+                  )}
+                  {backfillStatus.status === "done" && (
+                    <Badge variant="default">Concluído</Badge>
+                  )}
+                  {backfillStatus.status === "failed" && (
+                    <Badge variant="destructive" title={backfillStatus.chunks.find((c) => !c.succeeded)?.message ?? undefined}>
+                      Falhou
+                    </Badge>
+                  )}
+                  <span className="text-muted-foreground">
+                    disparado {format(new Date(backfillStatus.dispatchedAt), "d MMM, HH:mm")}
+                  </span>
+                </div>
+              )}
               <Button
                 variant="secondary"
                 size="sm"
-                disabled={isBackfilling || !dataInicio || !dataFim}
+                disabled={isBackfilling || isBackfillRunning || !dataInicio || !dataFim}
                 onClick={handleBackfill}
               >
-                {isBackfilling ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Disparando…</>
+                {isBackfilling || isBackfillRunning ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isBackfilling ? "Disparando…" : "Já tem um rodando…"}</>
                 ) : (
                   "Fazer backfill histórico"
                 )}

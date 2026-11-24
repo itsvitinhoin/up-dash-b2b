@@ -8,6 +8,7 @@ import {
   index,
   uniqueIndex,
   date,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 import { usersTable } from "./users";
@@ -66,6 +67,15 @@ export const clientsTable = pgTable(
     // priceField?} pro Manse. Decifrar só na hora de disparar o backfill
     // (ver routes/clients.ts, POST /clients/:id/erp/backfill).
     erpCredentialsEncrypted: text("erp_credentials_encrypted"),
+    // Estado do ultimo backfill historico de ERP disparado pelo painel (ver
+    // POST/GET /clients/:id/erp/backfill em routes/clients.ts) -- guarda o nome
+    // da operacao do Cloud Run de cada pedaco pra dar pra consultar status
+    // depois (botao nao mostrava nada rodando, so o toast que some: pedido do
+    // Victor 24/11/2026 depois de clicar varias vezes sem saber se ia).
+    erpBackfillStatus: jsonb("erp_backfill_status").$type<{
+      dispatchedAt: string;
+      chunks: Array<{ dataInicio: string; dataFim: string; operationName: string | null; dispatchError?: string }>;
+    }>(),
     // Abas do menu lateral escondidas manualmente pra esse client (valores
     // = `href` do item, ex: "/erp", "/performance" — ver NAV_ITEM_HREFS em
     // app-layout.tsx). `null`/vazio = mostra tudo (comportamento de antes,

@@ -97,3 +97,53 @@ export async function runBraavoBackfillJob(clientId: string): Promise<{ executio
     );
   }
 }
+
+export type OperationStatus = {
+  done: boolean;
+  succeeded: boolean | null;
+  message: string | null;
+  completedAt: string | null;
+};
+
+type RawOperation = {
+  done?: boolean;
+  error?: { message?: string };
+  metadata?: {
+    completionTime?: string;
+    conditions?: Array<{ type?: string; state?: string; message?: string }>;
+  };
+};
+
+/**
+ * Consulta o status de uma operacao do Cloud Run (o "name" devolvido por um
+ * `jobs.run`, formato `projects/*\/locations/*\/operations/*`) -- usado pelo
+ * backfill de ERP pra dar pra mostrar "rodando"/"concluido" no painel em vez
+ * de nada (pedido do Victor 24/11/2026).
+ *
+ * So devolve done/succeeded/message/completedAt: a resposta crua da Google
+ * inclui `metadata.template.containers[].env` com a credencial do ERP em
+ * texto puro (mesma exposicao documentada em script-vesti-nuvem/main.py,
+ * _dispatch_erp_job) -- nunca repassar `metadata`/`response` inteiros pro
+ * navegador.
+ */
+export async function getOperationStatus(operationName: string): Promise<OperationStatus> {
+  const credentials = serviceAccountFromEnv();
+  const auth = new GoogleAuth({
+    ...(credentials ? { credentials } : {}),
+    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+  });
+  const client = await auth.getClient();
+  const response = await client.request<RawOperation>({
+    url: `https://run.googleapis.com/v2/${operationName}`,
+    method: "GET",
+    timeout: 30_000,
+  });
+  const op = response.data;
+  const completedCondition = op.metadata?.conditions?.find((c) => c.type === "Completed");
+  return {
+    done: Boolean(op.done),
+    succeeded: op.done ? (op.error ? false : completedCondition ? completedCondition.state === "CONDITION_SUCCEEDED" : true) : null,
+    message: op.error?.message ?? completedCondition?.message ?? null,
+    completedAt: op.metadata?.completionTime ?? null,
+  };
+}

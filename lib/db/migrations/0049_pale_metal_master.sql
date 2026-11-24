@@ -1,0 +1,1 @@
+ALTER TABLE "clients" ADD COLUMN "erp_backfill_status" jsonb;
