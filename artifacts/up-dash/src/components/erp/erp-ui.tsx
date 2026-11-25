@@ -120,6 +120,7 @@ export function BreakdownCard({
   data,
   valueKey = "revenue",
   currency = true,
+  emptyMessage,
 }: {
   title: string;
   description: string;
@@ -127,61 +128,68 @@ export function BreakdownCard({
   data: Array<Record<string, unknown>>;
   valueKey?: string;
   currency?: boolean;
+  emptyMessage?: string;
 }) {
   return (
     <Card>
       <CardContent className="p-5">
         <SectionTitle title={title} description={description} icon={icon} />
-        <ChartContainer
-          config={chartConfig}
-          className="mt-4 h-[270px] w-full aspect-auto"
-        >
-          <BarChart
-            data={data}
-            layout="vertical"
-            margin={{ left: 8, right: currency ? 82 : 56 }}
+        {emptyMessage && !data.length ? (
+          <div className="mt-4 flex h-[270px] items-center justify-center text-center text-sm text-muted-foreground">
+            {emptyMessage}
+          </div>
+        ) : (
+          <ChartContainer
+            config={chartConfig}
+            className="mt-4 h-[270px] w-full aspect-auto"
           >
-            <CartesianGrid horizontal={false} strokeDasharray="3 3" />
-            <XAxis type="number" hide />
-            <YAxis
-              type="category"
-              dataKey="label"
-              width={108}
-              tickLine={false}
-              axisLine={false}
-              tick={{ fontSize: 11 }}
-              interval={0}
-            />
-            <ChartTooltip
-              content={
-                <ChartTooltipContent
-                  formatter={(value) =>
+            <BarChart
+              data={data}
+              layout="vertical"
+              margin={{ left: 8, right: currency ? 82 : 56 }}
+            >
+              <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+              <XAxis type="number" hide />
+              <YAxis
+                type="category"
+                dataKey="label"
+                width={108}
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 11 }}
+                interval={0}
+              />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    formatter={(value) =>
+                      currency
+                        ? formatCurrency(Number(value))
+                        : formatNumber(Number(value))
+                    }
+                  />
+                }
+              />
+              <Bar
+                dataKey={valueKey}
+                fill="var(--color-primary)"
+                radius={[0, 4, 4, 0]}
+              >
+                <LabelList
+                  dataKey={valueKey}
+                  position="right"
+                  className="fill-foreground"
+                  fontSize={11}
+                  formatter={(value: number) =>
                     currency
-                      ? formatCurrency(Number(value))
+                      ? formatCurrencySmart(Number(value))
                       : formatNumber(Number(value))
                   }
                 />
-              }
-            />
-            <Bar
-              dataKey={valueKey}
-              fill="var(--color-primary)"
-              radius={[0, 4, 4, 0]}
-            >
-              <LabelList
-                dataKey={valueKey}
-                position="right"
-                className="fill-foreground"
-                fontSize={11}
-                formatter={(value: number) =>
-                  currency
-                    ? formatCurrencySmart(Number(value))
-                    : formatNumber(Number(value))
-                }
-              />
-            </Bar>
-          </BarChart>
-        </ChartContainer>
+              </Bar>
+            </BarChart>
+          </ChartContainer>
+        )}
       </CardContent>
     </Card>
   );

@@ -518,49 +518,47 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
       quantity: number,
       unitPrice: number,
     ) => ({ id: sku, productId, sku, quantity, unitPrice, name: sku });
-    await schema.db
-      .insert(schema.blingRecordsTable)
-      .values([
-        ...[
-          order("1", "2026-11-01", "a", "Ana", 100, [item("p1", "ONE", 2, 10)]),
-          order(
-            "2",
-            "2026-11-02",
-            "a",
-            "Ana Silva",
-            200,
-            [item("p1", "ONE", 1, 15)],
-            "20",
-          ),
-          order("3", "2026-11-02", "b", "Bob", 300, [item("", "DUP", 2, 5)]),
-          order("4", "2025-01-01", "b", "Bob", 900, []),
-        ].map((data) => ({
-          clientId: "jini",
-          kind: "orders" as const,
-          externalId: data.id,
-          data,
-        })),
-        {
-          clientId: "other",
-          kind: "orders",
-          externalId: "foreign",
-          data: order("foreign", "2026-11-02", "a", "Ana", 9999, [
-            item("p1", "ONE", 99, 99),
-          ]),
-        },
-        ...[
-          product("p1", "ONE", { physical: 12, available: 10, warehouses: [] }),
-          product("p2", "DUP", { physical: 0, available: 0, warehouses: [] }),
-          product("p3", "DUP", { physical: -1, available: -2, warehouses: [] }),
-          product("p4", "MISSING", null),
-          { id: "p5", name: "Produto p5", sku: "UNSET", status: "I", price: 0 },
-        ].map((data) => ({
-          clientId: "jini",
-          kind: "products" as const,
-          externalId: data.id,
-          data,
-        })),
-      ]);
+    await schema.db.insert(schema.blingRecordsTable).values([
+      ...[
+        order("1", "2026-11-01", "a", "Ana", 100, [item("p1", "ONE", 2, 10)]),
+        order(
+          "2",
+          "2026-11-02",
+          "a",
+          "Ana Silva",
+          200,
+          [item("p1", "ONE", 1, 15)],
+          "20",
+        ),
+        order("3", "2026-11-02", "b", "Bob", 300, [item("", "DUP", 2, 5)]),
+        order("4", "2025-01-01", "b", "Bob", 900, []),
+      ].map((data) => ({
+        clientId: "jini",
+        kind: "orders" as const,
+        externalId: data.id,
+        data,
+      })),
+      {
+        clientId: "other",
+        kind: "orders",
+        externalId: "foreign",
+        data: order("foreign", "2026-11-02", "a", "Ana", 9999, [
+          item("p1", "ONE", 99, 99),
+        ]),
+      },
+      ...[
+        product("p1", "ONE", { physical: 12, available: 10, warehouses: [] }),
+        product("p2", "DUP", { physical: 0, available: 0, warehouses: [] }),
+        product("p3", "DUP", { physical: -1, available: -2, warehouses: [] }),
+        product("p4", "MISSING", null),
+        { id: "p5", name: "Produto p5", sku: "UNSET", status: "I", price: 0 },
+      ].map((data) => ({
+        clientId: "jini",
+        kind: "products" as const,
+        externalId: data.id,
+        data,
+      })),
+    ]);
     const read = async (extra = "") =>
       (
         await request(app)
@@ -645,6 +643,94 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
     ).toBe(1);
     expect(calls).toHaveLength(0);
   });
+  it("serves the shared B2B contract through the isolated Bling reader with bounded pages and brand isolation", async () => {
+    await schema.db
+      .insert(schema.blingRecordsTable)
+      .values(
+        Array.from({ length: 23 }, (_, i) => ({
+          clientId: "jini",
+          kind: "orders" as const,
+          externalId: String(i),
+          data: {
+            id: String(i),
+            number: String(i),
+            day: "2026-11-02",
+            customerId: "buyer",
+            customerName: "Contato",
+            statusId: "99",
+            channelId: "10",
+            total: 10,
+            items: [{ id: "item", quantity: 2, unitPrice: 5 }],
+          },
+        })),
+      );
+    await schema.db
+      .insert(schema.blingRecordsTable)
+      .values({
+        clientId: "other",
+        kind: "orders",
+        externalId: "foreign",
+        data: {
+          id: "foreign",
+          number: "foreign",
+          day: "2026-11-02",
+          total: 99999,
+          items: [],
+        },
+      });
+    const base =
+      "/analytics/erp/bling?clientId=other&from=2026-11-01&to=2026-11-03";
+    const read = async (extra: string) =>
+      (
+        await request(app)
+          .get(base + extra)
+          .set("Authorization", "Bearer client")
+          .expect(200)
+      ).body;
+    const first = await read("&layout=orders&limit=20"),
+      second = await read("&layout=orders&limit=20&page=2");
+    expect(first.rows).toHaveLength(20);
+    expect(second.rows).toHaveLength(3);
+    expect(first.total).toBe(23);
+    expect(
+      first.rows.every(
+        (r: { externalId: string }) => r.externalId !== "foreign",
+      ),
+    ).toBe(true);
+    expect(first.rows[0]).toMatchObject({
+      createdAt: "2026-11-02",
+      grossAmount: null,
+      netAmount: null,
+      status: "ID 99",
+    });
+    const dashboard = await read("&layout=dashboard");
+    expect(dashboard.kpis).toMatchObject({
+      orders: 23,
+      totalQuantity: 46,
+      uniqueCustomers: 1,
+      netRevenue: null,
+      retentionPct: null,
+    });
+    const buyers = await read("&layout=customers");
+    expect(buyers.rows[0]).toMatchObject({
+      id: "buyer",
+      orders: 23,
+      totalSpent: 230,
+      lifetimeValue: null,
+      buyerType: null,
+    });
+    expect((await read("&layout=orders&customerId=other-buyer")).total).toBe(0);
+    expect((await read("&layout=orders&statusId=missing")).total).toBe(0);
+    await request(app)
+      .get(base + "&layout=orders&limit=10001")
+      .set(admin)
+      .expect(400);
+    await request(app)
+      .get(base + "&layout=invalid")
+      .set(admin)
+      .expect(400);
+    expect(calls).toHaveLength(0);
+  });
   it("paginates and exports all filtered rows while keeping client access isolated", async () => {
     await schema.db.insert(schema.blingRecordsTable).values(
       Array.from({ length: 28 }, (_, i) => ({
@@ -663,14 +749,12 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
         },
       })),
     );
-    await schema.db
-      .insert(schema.blingRecordsTable)
-      .values({
-        clientId: "other",
-        kind: "orders",
-        externalId: "private",
-        data: { id: "private", day: "2026-11-02", total: 99999, items: [] },
-      });
+    await schema.db.insert(schema.blingRecordsTable).values({
+      clientId: "other",
+      kind: "orders",
+      externalId: "private",
+      data: { id: "private", day: "2026-11-02", total: 99999, items: [] },
+    });
     const url =
       "/analytics/erp/bling?clientId=other&view=orders&from=2026-11-01&to=2026-11-03";
     const read = async (extra = "") =>

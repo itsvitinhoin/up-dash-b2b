@@ -32,6 +32,7 @@ import {
   runBlingBatch,
   testBlingConnection,
 } from "../services/bling-sync";
+import { getBlingErpLayout } from "../services/bling-erp-layout";
 import { getBlingAnalytics, getBlingStatus } from "../services/bling-analytics";
 
 export const blingRouter: IRouter = Router();
@@ -307,13 +308,11 @@ blingRouter.post(`${clientPath}/orders/refresh`, async (req, res) => {
     })
     .safeParse(req.body);
   if (!parsed.success) {
-    res
-      .status(400)
-      .json({
-        error: true,
-        message: "Informe um número de pedido válido.",
-        status: 400,
-      });
+    res.status(400).json({
+      error: true,
+      message: "Informe um número de pedido válido.",
+      status: 400,
+    });
     return;
   }
   try {
@@ -349,6 +348,46 @@ blingRouter.get("/analytics/erp/bling", authenticate, async (req, res) => {
     const clientId = resolveClientId(req);
     if (!clientId)
       throw new BlingError("Selecione uma marca.", "CLIENT_REQUIRED", 400);
+    if (req.query.layout !== undefined) {
+      const parsed = z
+        .object({
+          from: dateOnly,
+          to: dateOnly,
+          layout: z.enum(["dashboard", "orders", "customers", "products"]),
+          search: z.string().max(100).default(""),
+          page: z.coerce.number().int().min(1).max(100000).default(1),
+          limit: z.coerce.number().int().min(1).max(10000).default(20),
+          statusId: z.string().max(100).optional(),
+          customerId: z.string().max(100).optional(),
+          category: z.string().max(100).optional(),
+          stockStatus: z
+            .enum(["in_stock", "out_of_stock", "negative"])
+            .optional(),
+          layoutSort: z
+            .enum([
+              "revenue",
+              "units",
+              "stock",
+              "turnover",
+              "sales_power",
+              "margin",
+              "coverage",
+            ])
+            .optional(),
+          layoutBuyerType: z.enum(["NEW", "RETURNING"]).optional(),
+        })
+        .safeParse(req.query);
+      if (!parsed.success || parsed.data.from > parsed.data.to)
+        throw new BlingError(
+          "Filtros de ERP inválidos.",
+          "VALIDATION_ERROR",
+          400,
+        );
+      res.json(
+        await getBlingErpLayout({ clientId, view: "overview", ...parsed.data }),
+      );
+      return;
+    }
     const parsed = z
       .object({
         from: dateOnly,
@@ -362,9 +401,14 @@ blingRouter.get("/analytics/erp/bling", authenticate, async (req, res) => {
         statusId: z.string().max(100).optional(),
         customerId: z.string().max(100).optional(),
         buyerType: z.enum(["all", "single", "repeat"]).default("all"),
-        stock: z.enum(["all", "positive", "zero", "negative", "unknown"]).default("all"),
+        stock: z
+          .enum(["all", "positive", "zero", "negative", "unknown"])
+          .default("all"),
         sort: z.enum(["name", "units", "value", "stock"]).default("name"),
-        export: z.enum(["1"]).optional().transform(v => v === "1"),
+        export: z
+          .enum(["1"])
+          .optional()
+          .transform((v) => v === "1"),
       })
       .safeParse(req.query);
     if (!parsed.success || parsed.data.from > parsed.data.to)

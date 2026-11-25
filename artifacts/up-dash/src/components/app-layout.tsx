@@ -913,6 +913,8 @@ export function AppLayout({ children }: AppLayoutProps) {
     "/erp/clientes": "Compradores e frequência nos pedidos importados",
     "/erp/produtos": "Catálogo, unidades em pedidos e disponibilidade",
     "/erp/estoque": "Saldos físicos e disponíveis por produto e depósito",
+    "/erp/vendedores": "Vendedores e lojas da fonte ERP Bling",
+    "/erp/geografia": "Distribuição geográfica da fonte ERP Bling",
   };
   const subtitleText = activeClient?.erpProvider === "BLING" && blingSubtitles[location]
     ? tx(blingSubtitles[location])
@@ -1022,7 +1024,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         { name: "Estoque", href: "/erp/estoque", icon: PackageSearch },
         { name: "Vendedoras e Lojas", href: "/erp/vendedores", icon: Users },
         { name: "Geografia", href: "/erp/geografia", icon: MapPin },
-      ].filter(item => effectiveDashboardMode !== "B2C" || !["/erp/vendedores", "/erp/geografia"].includes(item.href)),
+      ],
     },
     {
       name: "Desempenho",

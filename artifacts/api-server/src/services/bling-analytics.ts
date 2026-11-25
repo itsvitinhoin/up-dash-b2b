@@ -100,6 +100,7 @@ export type BlingQuery = {
   search: string;
   view: "overview" | "orders" | "customers" | "products" | "stock";
   page: number;
+  limit?: number;
   statusId?: string;
   customerId?: string;
   buyerType?: "all" | "single" | "repeat";
@@ -148,7 +149,7 @@ export async function getBlingAnalytics(query: BlingQuery) {
       channels: [],
     };
   const isCatalog = query.view === "products" || query.view === "stock";
-  const pageSize = query.export ? 10000 : 25;
+  const pageSize = query.export ? 10000 : (query.limit ?? 25);
   const offset = query.export ? 0 : (query.page - 1) * pageSize;
   const pattern = `%${query.search}%`;
   const channel = query.channel
