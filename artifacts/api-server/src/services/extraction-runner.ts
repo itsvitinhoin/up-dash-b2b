@@ -1497,6 +1497,20 @@ export async function runPaidTouchpointsSync(
     : [];
   const syncedToByKey = new Map(syncStateRows.map((row) => [`${row.clientId}:${row.customerId}`, row.syncedTo]));
 
+  // Achado 25/11/2026: com a janela de execução limitada a 3h-5h BRT (30min
+  // por rodada), nem sempre dá tempo de passar pela fila inteira -- sem
+  // isso, a MESMA ordem (sempre os primeiros clientes da lista) venceria a
+  // corrida toda rodada, e quem viesse depois nunca pegaria vez enquanto
+  // o atraso acumulado (hoje: 47 dias, desde que a UpZero mudou as regras
+  // em 09/10) não tivesse sido zerado pra todo mundo. Ordena do mais
+  // atrasado (nunca sincronizado primeiro) pro mais em dia, pra quem tá
+  // pior sempre ter prioridade enquanto o atraso ainda existir.
+  queue.sort((a, b) => {
+    const syncedToA = syncedToByKey.get(`${a.client.id}:${a.customer.id}`)?.getTime() ?? 0;
+    const syncedToB = syncedToByKey.get(`${b.client.id}:${b.customer.id}`)?.getTime() ?? 0;
+    return syncedToA - syncedToB;
+  });
+
   const statsByClient = new Map<string, { synced: number; failed: number }>();
   let nextIndex = 0;
   const worker = async () => {
