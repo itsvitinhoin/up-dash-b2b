@@ -19,7 +19,8 @@ function getKey(): Buffer {
 
 export type MiredataCredentials = { apikey: string };
 export type ManseCredentials = { token: string; filial?: number; priceField?: string };
-export type ErpCredentials = MiredataCredentials | ManseCredentials;
+export type BlingCredentials = { clientId: string; clientSecret: string } | { useServerApp: true };
+export type ErpCredentials = MiredataCredentials | ManseCredentials | BlingCredentials;
 
 /** Cifra (AES-256-GCM) um objeto de credenciais ERP para gravar em `erp_credentials_encrypted`. */
 export function encryptErpCredentials(credentials: ErpCredentials): string {

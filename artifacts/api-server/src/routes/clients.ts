@@ -1,3 +1,4 @@
+import { saveBlingConfiguration } from "../services/bling-sync";
 import { saoPauloDateOnly, coerceDateQuery as coerceClientsQuery } from "../lib/reporting-period";
 import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
 import { Router, type IRouter } from "express";
@@ -85,7 +86,7 @@ function getGlobalMetaAccessToken(fallback?: string | null): string | null {
 }
 
 function clientPublicFields<T extends typeof clientsTable.$inferSelect>(client: T) {
-  const { braavoApiToken: _braavoToken, braavoApiKey: _braavoKey, ...publicClient } = client;
+  const { braavoApiToken: _braavoToken, braavoApiKey: _braavoKey, erpCredentialsEncrypted: _erpCredentials, ...publicClient } = client;
   return {
     ...publicClient,
     hasBraavoIntegration: Boolean(client.commercePlatform === "BRAAVO" && client.braavoDomain && client.braavoApiToken && client.braavoApiKey),
@@ -98,7 +99,7 @@ function clientPublicFields<T extends typeof clientsTable.$inferSelect>(client: 
         client.ga4ApiSecret?.trim(),
     ),
     // As páginas ERP e "Desempenho > Visão Geral" respondem 404 NO_ERP_INTEGRATION sem dataset de ERP; a tela usa isto para esconder o menu.
-    hasErpIntegration: Boolean(client.erpDataset?.trim()),
+    hasErpIntegration: client.erpProvider === "BLING" || Boolean(client.erpDataset?.trim()),
   };
 }
 
@@ -1649,6 +1650,7 @@ const ManseCredentialsBody = z.object({
 const SetClientErpBody = z.discriminatedUnion("erpProvider", [
   z.object({ erpProvider: z.literal("MIREDATA"), erpDataset: z.string().min(1), credentials: MiredataCredentialsBody }),
   z.object({ erpProvider: z.literal("MANSE"), erpDataset: z.string().min(1), credentials: ManseCredentialsBody }),
+  z.object({ erpProvider: z.literal("BLING"), credentials: z.object({ useServerApp: z.boolean().optional(), clientId: z.string().trim().max(200).optional(), clientSecret: z.string().trim().max(1000).optional() }).strict() }),
   z.object({ erpProvider: z.null() }),
 ]);
 
@@ -1674,6 +1676,16 @@ router.put("/clients/:clientId/erp", requireAdmin, async (req, res): Promise<voi
   const [existing] = await db.select({ id: clientsTable.id }).from(clientsTable).where(eq(clientsTable.id, clientId));
   if (!existing) {
     res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+
+  if (body.data.erpProvider === "BLING") {
+    try { res.json(await saveBlingConfiguration(clientId, body.data.credentials)); }
+    catch (error) {
+      const status = error && typeof error === "object" && "status" in error && typeof error.status === "number" ? error.status : 500;
+      const message = error instanceof Error && status < 500 ? error.message : "Não foi possível salvar a configuração Bling.";
+      res.status(status).json({ error: true, code: "BLING_CONFIGURATION_ERROR", message, status });
+    }
     return;
   }
 
@@ -1765,6 +1777,10 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
     .where(eq(clientsTable.id, clientId));
   if (!client) {
     res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (client.erpProvider === "BLING") {
+    res.status(400).json({ error: true, code: "INVALID_ERP_OPERATION", message: "Use a sincronização Bling no cadastro de ERP da marca.", status: 400 });
     return;
   }
   if (!client.erpProvider || !client.erpDataset || !client.erpCredentialsEncrypted) {

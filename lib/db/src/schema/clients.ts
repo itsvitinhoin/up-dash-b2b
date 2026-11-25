@@ -61,7 +61,7 @@ export const clientsTable = pgTable(
     erpDataset: text("erp_dataset"),
     // Qual ERP esse client usa (nenhum = null). A credencial correspondente fica em
     // `erpCredentialsEncrypted` — nunca em texto puro (ver lib/erp-crypto.ts).
-    erpProvider: text("erp_provider", { enum: ["MIREDATA", "MANSE"] }),
+    erpProvider: text("erp_provider", { enum: ["MIREDATA", "MANSE", "BLING"] }),
     // Blob cifrado (AES-256-GCM, formato "iv:authTag:ciphertext") com um JSON cujos
     // campos variam por `erpProvider`: {apikey} pro Miredata; {token, filial?,
     // priceField?} pro Manse. Decifrar só na hora de disparar o backfill

@@ -1,5 +1,19 @@
+import {
+  SectionTitle,
+  EmptyRow,
+  Pagination,
+  BreakdownCard as SharedBreakdownCard,
+} from "@/components/erp/erp-ui";
+import {
+  ErpSourceContext,
+  useErpSource,
+  useErpFetch,
+} from "@/components/erp/erp-source";
 import { useI18n } from "@/lib/i18n";
-import { usePreviousPeriodQuery, periodQuery } from "@/lib/previous-period-query";
+import {
+  usePreviousPeriodQuery,
+  periodQuery,
+} from "@/lib/previous-period-query";
 import { useDisplayLabel } from "@/lib/display-label";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { Fragment, useDeferredValue, useMemo, useState } from "react";
@@ -43,7 +57,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { customFetch } from "@workspace/api-client-react";
+import { queryOpts } from "@/lib/query-opts";
+import { useGetClient } from "@workspace/api-client-react";
+
 import { useAuth } from "@/lib/auth";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
 import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
@@ -82,14 +98,44 @@ import {
 import { exportRowsAsCsv } from "@/lib/csv-export";
 import { exportRowsAsXlsx } from "@/lib/xlsx-export";
 import {
-  formatCurrency,
-  formatCurrencySmart,
-  formatErpDate,
-  formatNumber,
-  formatPercentage,
+  formatCurrency as currencyFormat,
+  formatCurrencySmart as smartCurrencyFormat,
+  formatErpDate as erpDateFormat,
+  formatNumber as numberFormat,
+  formatPercentage as percentageFormat,
 } from "@/lib/formatters";
 
-type SeriesPoint = { date: string; value: number };
+const formatCurrency = (value: number | null | undefined) =>
+  value == null ? "—" : currencyFormat(value);
+const formatCurrencySmart = (value: number | null | undefined) =>
+  value == null ? "—" : smartCurrencyFormat(value);
+const formatNumber = (value: number | null | undefined) =>
+  value == null ? "—" : numberFormat(value);
+const formatPercentage = (value: number | null | undefined) =>
+  value == null ? "—" : percentageFormat(value);
+
+const formatErpDate = (
+  value: string | null | undefined,
+  includeTime = false,
+) =>
+  value && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? value.split("-").reverse().join("/")
+    : erpDateFormat(value, includeTime);
+function BreakdownCard(
+  props: React.ComponentProps<typeof SharedBreakdownCard>,
+) {
+  const { isBling } = useErpSource();
+  return (
+    <SharedBreakdownCard
+      {...props}
+      emptyMessage={
+        isBling ? "Dados não disponíveis na carga Bling atual." : undefined
+      }
+    />
+  );
+}
+
+type SeriesPoint = { date: string; value: number | null };
 type Breakdown = {
   label: string;
   orders: number;
@@ -97,24 +143,28 @@ type Breakdown = {
   customers?: number;
 };
 type ErpDashboardResponse = {
+  source?: {
+    provider: "BLING";
+    statusOptions: Array<{ value: string; label: string }>;
+  };
   kpis: {
-    grossRevenue: number;
-    netRevenue: number;
-    discountAmount: number;
+    grossRevenue: number | null;
+    netRevenue: number | null;
+    discountAmount: number | null;
     orders: number;
     totalQuantity: number;
-    returnedQuantity: number;
+    returnedQuantity: number | null;
     uniqueCustomers: number;
-    newCustomers: number;
-    returningCustomers: number;
-    retentionPct: number;
-    cancelledOrders: number;
-    cancelledAmount: number;
+    newCustomers: number | null;
+    returningCustomers: number | null;
+    retentionPct: number | null;
+    cancelledOrders: number | null;
+    cancelledAmount: number | null;
     avgTicket: number;
-    returnAmount: number;
+    returnAmount: number | null;
     avgItemsPerOrder: number;
-    returnRatePct: number;
-    discountRatePct: number;
+    returnRatePct: number | null;
+    discountRatePct: number | null;
   };
   revenueOverTime: SeriesPoint[];
   ordersOverTime: SeriesPoint[];
@@ -144,13 +194,14 @@ type ErpOrderItem = {
   size: string | null;
   quantity: number;
   unitPrice: number;
-  costPrice: number;
-  discountAmount: number;
-  grossAmount: number;
-  netAmount: number;
+  costPrice: number | null;
+  discountAmount: number | null;
+  grossAmount: number | null;
+  netAmount: number | null;
 };
 type ErpOrderRow = {
   id: string;
+  orderValue?: number;
   createdAt: string;
   customerId: string | null;
   customerName: string | null;
@@ -159,16 +210,16 @@ type ErpOrderRow = {
   seller: string | null;
   store: string | null;
   paymentMethod: string | null;
-  freightAmount: number;
+  freightAmount: number | null;
   channel: string;
   status: string | null;
   requestedQuantity: number;
-  fulfilledQuantity: number;
-  returnedQuantity: number;
-  grossAmount: number;
-  discountAmount: number;
-  netAmount: number;
-  returnAmount: number;
+  fulfilledQuantity: number | null;
+  returnedQuantity: number | null;
+  grossAmount: number | null;
+  discountAmount: number | null;
+  netAmount: number | null;
+  returnAmount: number | null;
   state: string | null;
   city: string | null;
   utmSource: string | null;
@@ -191,11 +242,11 @@ type ErpCustomerRow = {
   orders: number;
   totalSpent: number;
   averageTicket: number;
-  historicalOrders: number;
-  lifetimeValue: number;
-  buyerType: "NEW" | "RETURNING";
+  historicalOrders: number | null;
+  lifetimeValue: number | null;
+  buyerType: "NEW" | "RETURNING" | null;
   daysSinceLastOrder: number | null;
-  segment: "CHAMPION" | "LOYAL" | "POTENTIAL" | "AT_RISK";
+  segment: "CHAMPION" | "LOYAL" | "POTENTIAL" | "AT_RISK" | null;
   firstOrderAt: string | null;
   lastOrderAt: string | null;
   utmSource: string | null;
@@ -213,12 +264,12 @@ type ErpProductVariant = {
   revenue: number;
   averagePrice: number;
   catalogPrice: number;
-  stock: number;
-  turnoverPct: number;
-  salesPower: number;
-  costAmount: number;
-  grossProfit: number;
-  grossMarginPct: number;
+  stock: number | null;
+  turnoverPct: number | null;
+  salesPower: number | null;
+  costAmount: number | null;
+  grossProfit: number | null;
+  grossMarginPct: number | null;
   coverageDays: number | null;
 };
 type ErpProductRow = {
@@ -228,12 +279,12 @@ type ErpProductRow = {
   units: number;
   revenue: number;
   averagePrice: number;
-  stock: number;
-  turnoverPct: number;
-  salesPower: number;
-  costAmount: number;
-  grossProfit: number;
-  grossMarginPct: number;
+  stock: number | null;
+  turnoverPct: number | null;
+  salesPower: number | null;
+  costAmount: number | null;
+  grossProfit: number | null;
+  grossMarginPct: number | null;
   coverageDays: number | null;
   variantCount: number;
   outOfStockCount: number;
@@ -253,13 +304,13 @@ type ErpProductsResponse = {
   filteredTotal: number;
   totalRevenue: number;
   totalUnits: number;
-  totalStock: number;
+  totalStock: number | null;
   outOfStockCount: number;
-  turnoverPct: number;
-  salesPower: number;
-  totalCost: number;
-  grossProfit: number;
-  grossMarginPct: number;
+  turnoverPct: number | null;
+  salesPower: number | null;
+  totalCost: number | null;
+  grossProfit: number | null;
+  grossMarginPct: number | null;
   negativeStockCount: number;
   coverageDays: number | null;
   breakdowns: {
@@ -272,7 +323,7 @@ type Metric = {
   previousValue?: number | null;
   comparisonValue?: number | null;
   label: string;
-  value: number;
+  value: number | null;
   format: (value: number) => string;
   icon: typeof Users;
   iconClass: string;
@@ -291,11 +342,13 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 function useErpClientId() {
+  const { isBling } = useErpSource();
   const { selectedClientId, user } = useAuth();
   const clientId =
     user?.role === "ADMIN" ? selectedClientId || undefined : undefined;
   return {
     clientId,
+    source: isBling ? "BLING" : "B2B",
     enabled:
       user?.role === "CLIENT" || (user?.role === "ADMIN" && !!selectedClientId),
   };
@@ -319,11 +372,16 @@ function usePeriod() {
   };
 }
 function useErpDashboard() {
+  const customFetch = useErpFetch();
+  const { isBling } = useErpSource();
   const { dateFrom, dateTo } = usePeriod();
-  const { clientId, enabled } = useErpClientId();
-  const previous = usePreviousPeriodQuery<ErpDashboardResponse>(periodQuery("/api/analytics/erp/dashboard", { clientId, dateFrom, dateTo }), enabled);
+  const { clientId, enabled, source } = useErpClientId();
+  const previous = usePreviousPeriodQuery<ErpDashboardResponse>(
+    periodQuery("/api/analytics/erp/dashboard", { clientId, dateFrom, dateTo }),
+    enabled && !isBling,
+  );
   const query = useQuery<ErpDashboardResponse>({
-    queryKey: ["erp-dashboard", clientId, dateFrom, dateTo],
+    queryKey: ["erp-dashboard", source, clientId, dateFrom, dateTo],
     queryFn: () =>
       customFetch(
         buildUrl("/api/analytics/erp/dashboard", {
@@ -340,32 +398,6 @@ function useErpDashboard() {
   });
   return { ...query, previousData: previous.data };
 }
-function SectionTitle({
-  icon: Icon,
-  title,
-  description,
-  action,
-}: {
-  icon: typeof Users;
-  title: string;
-  description: string;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div className="flex items-start gap-3">
-        <div className="rounded-md bg-primary/10 p-2 text-primary">
-          <Icon className="h-4 w-4" />
-        </div>
-        <div>
-          <h2 className="text-base font-semibold">{title}</h2>
-          <p className="text-sm text-muted-foreground">{description}</p>
-        </div>
-      </div>
-      {action}
-    </div>
-  );
-}
 function KpiGrid({
   metrics,
   loading,
@@ -374,6 +406,11 @@ function KpiGrid({
   loading: boolean;
 }) {
   const { tx } = useI18n();
+  const { isBling } = useErpSource();
+  const [location] = useLocation();
+  const hasPreviousRow = ["/erp", "/erp/pedidos", "/erp/clientes"].includes(
+    location,
+  );
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {metrics.map((metric) => (
@@ -382,11 +419,30 @@ function KpiGrid({
           icon={metric.icon}
           iconClass={metric.iconClass}
           label={metric.label}
-          value={metric.value}
+          value={metric.value ?? 0}
+          displayValue={metric.value == null && !loading ? "—" : undefined}
+          deltaContent={
+            isBling && hasPreviousRow && metric.previousValue == null ? (
+              <span className="text-muted-foreground">
+                Anterior:{" "}
+                <span className="text-foreground tabular-nums">—</span>
+              </span>
+            ) : undefined
+          }
+          info={
+            isBling
+              ? "Fonte: carga Bling. Pedidos e peças incluem todas as situações; ticket usa o valor registrado em pedidos. Valores de itens são quantidade × preço unitário. Campos sem informação, histórico completo ou período anterior aparecem como —. Compradores são cadastros, inclusive contatos genéricos."
+              : undefined
+          }
+          comparisonUnavailable={
+            isBling
+              ? "O período anterior não está coberto pela carga Bling disponível."
+              : undefined
+          }
           format={metric.format}
           comparisonValue={metric.comparisonValue}
           previousValue={metric.previousValue}
-          source={tx("ERP · vendas e clientes")}
+          source={isBling ? "ERP · Bling" : tx("ERP · vendas e clientes")}
           change={null}
           changeLabel=""
           sub={[{ label: metric.subLabel, value: metric.subValue }]}
@@ -397,63 +453,6 @@ function KpiGrid({
           ringValue={metric.ringValue}
         />
       ))}
-    </div>
-  );
-}
-function EmptyRow({
-  colSpan,
-  loading,
-}: {
-  colSpan: number;
-  loading?: boolean;
-}) {
-  return (
-    <TableRow>
-      <TableCell
-        colSpan={colSpan}
-        className="h-24 text-center text-sm text-muted-foreground"
-      >
-        {loading ? "Carregando dados do ERP..." : "Nenhum registro encontrado."}
-      </TableCell>
-    </TableRow>
-  );
-}
-function Pagination({
-  page,
-  total,
-  size,
-  onChange,
-}: {
-  page: number;
-  total: number;
-  size: number;
-  onChange: (page: number) => void;
-}) {
-  if (!total) return null;
-  const pages = Math.max(1, Math.ceil(total / size));
-  return (
-    <div className="flex items-center justify-between border-t pt-4">
-      <p className="text-sm text-muted-foreground">
-        Página {page} de {pages} · {formatNumber(total)} registros
-      </p>
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={page <= 1}
-          onClick={() => onChange(page - 1)}
-        >
-          Anterior
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={page >= pages}
-          onClick={() => onChange(page + 1)}
-        >
-          Próxima
-        </Button>
-      </div>
     </div>
   );
 }
@@ -477,9 +476,11 @@ function StatusBadge({ status }: { status: string | null }) {
     <Badge
       variant="outline"
       className={
-        danger
-          ? "border-red-500/30 bg-red-500/10 text-red-500"
-          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-500"
+        status?.startsWith("ID ")
+          ? "text-muted-foreground"
+          : danger
+            ? "border-red-500/30 bg-red-500/10 text-red-500"
+            : "border-emerald-500/30 bg-emerald-500/10 text-emerald-500"
       }
     >
       {status ?? "Não identificado"}
@@ -493,10 +494,11 @@ function CoverageDaysBadge({
   value: number | null;
   emptyLabel?: string;
 }) {
+  const { isBling } = useErpSource();
   if (value === null) {
     return (
       <Badge variant="outline" className="text-muted-foreground">
-        {emptyLabel}
+        {isBling ? "Indisponível" : emptyLabel}
       </Badge>
     );
   }
@@ -524,6 +526,7 @@ function AttributionBadge({
     utmMedium: string | null;
   };
 }) {
+  const { isBling } = useErpSource();
   return row.attributed ? (
     <Badge
       variant="outline"
@@ -534,91 +537,19 @@ function AttributionBadge({
     </Badge>
   ) : (
     <span className="text-xs text-muted-foreground">
-      Direto / não identificado
+      {isBling ? "Não informado pelo ERP" : "Direto / não identificado"}
     </span>
   );
 }
-function BreakdownCard({
-  title,
-  description,
-  icon,
-  data,
-  valueKey = "revenue",
-  currency = true,
-}: {
-  title: string;
-  description: string;
-  icon: typeof Users;
-  data: Array<Record<string, unknown>>;
-  valueKey?: string;
-  currency?: boolean;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-5">
-        <SectionTitle title={title} description={description} icon={icon} />
-        <ChartContainer
-          config={chartConfig}
-          className="mt-4 h-[270px] w-full aspect-auto"
-        >
-          <BarChart
-            data={data}
-            layout="vertical"
-            margin={{ left: 8, right: currency ? 82 : 56 }}
-          >
-            <CartesianGrid horizontal={false} strokeDasharray="3 3" />
-            <XAxis type="number" hide />
-            <YAxis
-              type="category"
-              dataKey="label"
-              width={108}
-              tickLine={false}
-              axisLine={false}
-              tick={{ fontSize: 11 }}
-              interval={0}
-            />
-            <ChartTooltip
-              content={
-                <ChartTooltipContent
-                  formatter={(value) =>
-                    currency
-                      ? formatCurrency(Number(value))
-                      : formatNumber(Number(value))
-                  }
-                />
-              }
-            />
-            <Bar
-              dataKey={valueKey}
-              fill="var(--color-primary)"
-              radius={[0, 4, 4, 0]}
-            >
-              <LabelList
-                dataKey={valueKey}
-                position="right"
-                className="fill-foreground"
-                fontSize={11}
-                formatter={(value: number) =>
-                  currency
-                    ? formatCurrencySmart(Number(value))
-                    : formatNumber(Number(value))
-                }
-              />
-            </Bar>
-          </BarChart>
-        </ChartContainer>
-      </CardContent>
-    </Card>
-  );
-}
-
 function ErpOverview() {
+  const customFetch = useErpFetch();
+  const { isBling } = useErpSource();
   const { tx } = useI18n();
   const { data, isLoading, previousData } = useErpDashboard();
   const { dateFrom, dateTo } = usePeriod();
-  const { clientId, enabled } = useErpClientId();
+  const { clientId, enabled, source } = useErpClientId();
   const { data: products } = useQuery<ErpProductsResponse>({
-    queryKey: ["erp-products-overview", clientId, dateFrom, dateTo],
+    queryKey: ["erp-products-overview", source, clientId, dateFrom, dateTo],
     queryFn: () =>
       customFetch(
         buildUrl("/api/analytics/erp/products", {
@@ -638,7 +569,7 @@ function ErpOverview() {
   const metrics: Metric[] = [
     {
       label: "Faturamento líquido",
-      value: k?.netRevenue ?? 0,
+      value: k?.netRevenue ?? null,
       comparisonValue: k?.netRevenue ?? null,
       previousValue: pk?.netRevenue,
       format: formatCurrencySmart,
@@ -646,11 +577,11 @@ function ErpOverview() {
       iconClass: "bg-blue-500/10 text-blue-500",
       sparkColor: "#5b8dff",
       subLabel: "Bruto",
-      subValue: formatCurrency(k?.grossRevenue ?? 0),
+      subValue: formatCurrency(k?.grossRevenue),
     },
     {
       label: tx("Pedidos"),
-      value: k?.orders ?? 0,
+      value: k?.orders ?? null,
       comparisonValue: k?.orders ?? null,
       previousValue: pk?.orders,
       format: formatNumber,
@@ -658,11 +589,11 @@ function ErpOverview() {
       iconClass: "bg-violet-500/10 text-violet-500",
       sparkColor: "#5b8dff",
       subLabel: "Ticket médio",
-      subValue: formatCurrency(k?.avgTicket ?? 0),
+      subValue: formatCurrency(k?.avgTicket),
     },
     {
       label: "Compradores",
-      value: k?.uniqueCustomers ?? 0,
+      value: k?.uniqueCustomers ?? null,
       comparisonValue: k?.uniqueCustomers ?? null,
       previousValue: pk?.uniqueCustomers,
       format: formatNumber,
@@ -670,11 +601,11 @@ function ErpOverview() {
       iconClass: "bg-emerald-500/10 text-emerald-500",
       sparkColor: "#87adff",
       subLabel: "Recorrentes",
-      subValue: formatNumber(k?.returningCustomers ?? 0),
+      subValue: formatNumber(k?.returningCustomers),
     },
     {
       label: "Retenção",
-      value: k?.retentionPct ?? 0,
+      value: k?.retentionPct ?? null,
       comparisonValue: k?.retentionPct ?? null,
       previousValue: pk?.retentionPct,
       format: formatPercentage,
@@ -682,12 +613,12 @@ function ErpOverview() {
       iconClass: "bg-pink-500/10 text-pink-500",
       sparkColor: "#b3caff",
       subLabel: "Novos",
-      subValue: formatNumber(k?.newCustomers ?? 0),
+      subValue: formatNumber(k?.newCustomers),
       ringValue: k?.retentionPct ?? 0,
     },
     {
       label: "Peças vendidas",
-      value: k?.totalQuantity ?? 0,
+      value: k?.totalQuantity ?? null,
       comparisonValue: k?.totalQuantity ?? null,
       previousValue: pk?.totalQuantity,
       format: formatNumber,
@@ -699,7 +630,7 @@ function ErpOverview() {
     },
     {
       label: "Descontos",
-      value: k?.discountAmount ?? 0,
+      value: k?.discountAmount ?? null,
       comparisonValue: k?.discountAmount ?? null,
       previousValue: pk?.discountAmount,
       format: formatCurrencySmart,
@@ -707,11 +638,11 @@ function ErpOverview() {
       iconClass: "bg-cyan-500/10 text-cyan-500",
       sparkColor: "#afc4ff",
       subLabel: "% do bruto",
-      subValue: formatPercentage(k?.discountRatePct ?? 0),
+      subValue: formatPercentage(k?.discountRatePct),
     },
     {
       label: "Devoluções",
-      value: k?.returnAmount ?? 0,
+      value: k?.returnAmount ?? null,
       comparisonValue: k?.returnAmount ?? null,
       previousValue: pk?.returnAmount,
       format: formatCurrencySmart,
@@ -719,11 +650,11 @@ function ErpOverview() {
       iconClass: "bg-orange-500/10 text-orange-500",
       sparkColor: "#0458fe",
       subLabel: "% do bruto",
-      subValue: formatPercentage(k?.returnRatePct ?? 0),
+      subValue: formatPercentage(k?.returnRatePct),
     },
     {
       label: "Cancelamentos",
-      value: k?.cancelledOrders ?? 0,
+      value: k?.cancelledOrders ?? null,
       comparisonValue: k?.cancelledOrders ?? null,
       previousValue: pk?.cancelledOrders,
       format: formatNumber,
@@ -731,7 +662,7 @@ function ErpOverview() {
       iconClass: "bg-red-500/10 text-red-500",
       sparkColor: "#b3caff",
       subLabel: "Valor",
-      subValue: formatCurrency(k?.cancelledAmount ?? 0),
+      subValue: formatCurrency(k?.cancelledAmount),
     },
   ];
   const trend = (data?.revenueOverTime ?? []).map((point, index) => ({
@@ -748,7 +679,11 @@ function ErpOverview() {
             <SectionTitle
               icon={TrendingUp}
               title="Faturamento e pedidos"
-              description="Evolução diária no período selecionado."
+              description={
+                isBling
+                  ? "Valor registrado em pedidos por dia, incluindo todas as situações."
+                  : "Evolução diária no período selecionado."
+              }
             />
             <ChartContainer
               config={chartConfig}
@@ -782,7 +717,8 @@ function ErpOverview() {
                   stroke="var(--color-revenue)"
                   fill="url(#erp-fill)"
                   strokeWidth={2}
-                 name={tx("Faturamento")} />
+                  name={tx("Faturamento")}
+                />
               </AreaChart>
             </ChartContainer>
           </CardContent>
@@ -792,7 +728,11 @@ function ErpOverview() {
             <SectionTitle
               icon={Users}
               title="Novos vs. recorrentes"
-              description="Classificação pelo histórico completo de compras."
+              description={
+                isBling
+                  ? "Classificação indisponível sem histórico completo de compras."
+                  : "Classificação pelo histórico completo de compras."
+              }
             />
             <ChartContainer
               config={chartConfig}
@@ -879,7 +819,9 @@ function ErpOverview() {
                   <TableHead>Categoria</TableHead>
                   <TableHead className="text-right">Variantes</TableHead>
                   <TableHead className="text-right">Peças</TableHead>
-                  <TableHead className="text-right">{tx("Faturamento")}</TableHead>
+                  <TableHead className="text-right">
+                    {tx("Faturamento")}
+                  </TableHead>
                   <TableHead className="text-right">Margem</TableHead>
                   <TableHead className="text-right">Giro</TableHead>
                   <TableHead className="text-right">Poder de venda</TableHead>
@@ -926,6 +868,8 @@ function ErpOverview() {
 }
 
 function ErpOrdersView() {
+  const customFetch = useErpFetch();
+  const { isBling } = useErpSource();
   const { tx } = useI18n();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
@@ -934,7 +878,7 @@ function ErpOrdersView() {
   const [exporting, setExporting] = useState(false);
   const deferred = useDeferredValue(search.trim());
   const { dateFrom, dateTo } = usePeriod();
-  const { clientId, enabled } = useErpClientId();
+  const { clientId, enabled, source } = useErpClientId();
   const { data: dashboard, previousData } = useErpDashboard();
   const params = {
     clientId,
@@ -944,7 +888,7 @@ function ErpOrdersView() {
     status: status === "all" ? undefined : status,
   };
   const { data, isLoading } = useQuery<ErpOrdersResponse>({
-    queryKey: ["erp-orders", params, page],
+    queryKey: ["erp-orders", source, params, page],
     queryFn: () =>
       customFetch(
         buildUrl("/api/analytics/erp/orders", {
@@ -969,24 +913,43 @@ function ErpOrdersView() {
           limit: 5000,
         }),
       );
-      exportRowsAsXlsx(`pedidos-erp-${dateFrom}-${dateTo}.xlsx`, tx("Pedidos"), result.rows, [
-        { header: "Pedido", accessor: (r) => r.id },
-        { header: "Data", accessor: (r) => (r.createdAt ? r.createdAt.slice(0, 10) : r.createdAt) },
-        { header: "Cliente", accessor: (r) => r.customerName },
-        { header: "Documento", accessor: (r) => r.document },
-        { header: "Loja", accessor: (r) => r.store },
-        { header: "Vendedor", accessor: (r) => r.seller },
-        { header: "Status", accessor: (r) => r.status },
-        { header: "Pagamento", accessor: (r) => r.paymentMethod },
-        { header: "Canal", accessor: (r) => r.channel },
-        { header: "Quantidade", accessor: (r) => r.requestedQuantity },
-        { header: "Bruto", accessor: (r) => r.grossAmount },
-        { header: "Desconto", accessor: (r) => r.discountAmount },
-        { header: "Devolução", accessor: (r) => r.returnAmount },
-        { header: "Líquido", accessor: (r) => r.netAmount },
-        { header: "Origem", accessor: (r) => r.utmSource },
-        { header: "Campanha", accessor: (r) => r.utmCampaign },
-      ]);
+      exportRowsAsXlsx(
+        `pedidos-erp-${dateFrom}-${dateTo}.xlsx`,
+        tx("Pedidos"),
+        result.rows,
+        [
+          { header: "Pedido", accessor: (r) => r.id },
+          {
+            header: "Data",
+            accessor: (r) =>
+              r.createdAt ? r.createdAt.slice(0, 10) : r.createdAt,
+          },
+          { header: "Cliente", accessor: (r) => r.customerName },
+          { header: "Documento", accessor: (r) => r.document },
+          { header: "Loja", accessor: (r) => r.store },
+          { header: "Vendedor", accessor: (r) => r.seller },
+          { header: "Status", accessor: (r) => r.status },
+          { header: "Pagamento", accessor: (r) => r.paymentMethod },
+          { header: "Canal", accessor: (r) => r.channel },
+          { header: "Quantidade", accessor: (r) => r.requestedQuantity },
+          { header: "Bruto", accessor: (r) => r.grossAmount },
+          { header: "Desconto", accessor: (r) => r.discountAmount },
+          { header: "Devolução", accessor: (r) => r.returnAmount },
+          { header: "Líquido", accessor: (r) => r.netAmount },
+          ...(isBling
+            ? [
+                {
+                  header: "Valor registrado no Bling",
+                  accessor: (r: ErpOrderRow) => r.orderValue,
+                },
+              ]
+            : []),
+          { header: "Origem", accessor: (r) => r.utmSource },
+          { header: "Campanha", accessor: (r) => r.utmCampaign },
+        ],
+      );
+    } catch (error) {
+      if (!isBling) throw error; // Bling transport already presents the failure.
     } finally {
       setExporting(false);
     }
@@ -994,7 +957,7 @@ function ErpOrdersView() {
   const metrics: Metric[] = [
     {
       label: "Faturamento bruto",
-      value: k?.grossRevenue ?? 0,
+      value: k?.grossRevenue ?? null,
       comparisonValue: k?.grossRevenue ?? null,
       previousValue: pk?.grossRevenue,
       format: formatCurrencySmart,
@@ -1002,11 +965,11 @@ function ErpOrdersView() {
       iconClass: "bg-blue-500/10 text-blue-500",
       sparkColor: "#5b8dff",
       subLabel: "Líquido",
-      subValue: formatCurrency(k?.netRevenue ?? 0),
+      subValue: formatCurrency(k?.netRevenue),
     },
     {
       label: "Pedidos únicos",
-      value: k?.orders ?? 0,
+      value: k?.orders ?? null,
       comparisonValue: k?.orders ?? null,
       previousValue: pk?.orders,
       format: formatNumber,
@@ -1014,11 +977,11 @@ function ErpOrdersView() {
       iconClass: "bg-violet-500/10 text-violet-500",
       sparkColor: "#5b8dff",
       subLabel: "Ticket médio",
-      subValue: formatCurrency(k?.avgTicket ?? 0),
+      subValue: formatCurrency(k?.avgTicket),
     },
     {
       label: "Peças vendidas",
-      value: k?.totalQuantity ?? 0,
+      value: k?.totalQuantity ?? null,
       comparisonValue: k?.totalQuantity ?? null,
       previousValue: pk?.totalQuantity,
       format: formatNumber,
@@ -1030,7 +993,7 @@ function ErpOrdersView() {
     },
     {
       label: "Cancelamentos",
-      value: k?.cancelledOrders ?? 0,
+      value: k?.cancelledOrders ?? null,
       comparisonValue: k?.cancelledOrders ?? null,
       previousValue: pk?.cancelledOrders,
       format: formatNumber,
@@ -1038,7 +1001,7 @@ function ErpOrdersView() {
       iconClass: "bg-red-500/10 text-red-500",
       sparkColor: "#b3caff",
       subLabel: "Valor",
-      subValue: formatCurrency(k?.cancelledAmount ?? 0),
+      subValue: formatCurrency(k?.cancelledAmount),
     },
   ];
   return (
@@ -1077,13 +1040,15 @@ function ErpOrdersView() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos os status</SelectItem>
-                {[
-                  "FATURADO",
-                  "FINALIZADO",
-                  "ESPERA",
-                  "CANCELADO",
-                  "EXCLUIDO",
-                ].map((v) => (
+                {(
+                  dashboard?.source?.statusOptions?.map((s) => s.label) ?? [
+                    "FATURADO",
+                    "FINALIZADO",
+                    "ESPERA",
+                    "CANCELADO",
+                    "EXCLUIDO",
+                  ]
+                ).map((v) => (
                   <SelectItem key={v} value={v}>
                     {v}
                   </SelectItem>
@@ -1168,7 +1133,14 @@ function ErpOrdersView() {
                       <TableCell className="text-right">
                         {formatCurrency(order.grossAmount)}
                       </TableCell>
-                      <TableCell className="text-right font-medium">
+                      <TableCell
+                        className="text-right font-medium"
+                        title={
+                          isBling
+                            ? `Valor registrado no Bling: ${formatCurrency(order.orderValue)}. Receita líquida não disponível.`
+                            : undefined
+                        }
+                      >
                         {formatCurrency(order.netAmount)}
                       </TableCell>
                     </TableRow>
@@ -1263,16 +1235,28 @@ function BuyerOrderHistoryDialog({
   onPageChange: (page: number) => void;
   onOpenChange: (open: boolean) => void;
 }) {
+  const customFetch = useErpFetch();
+  const { isBling } = useErpSource();
+  const { dateFrom, dateTo } = usePeriod();
   const { tx } = useI18n();
-  const { clientId, enabled } = useErpClientId();
+  const { clientId, enabled, source } = useErpClientId();
   const document = customer?.document ?? customer?.id;
   const { data, isLoading } = useQuery<ErpOrdersResponse>({
-    queryKey: ["erp-customer-order-history", clientId, document, page],
+    queryKey: [
+      "erp-customer-order-history",
+      source,
+      clientId,
+      document,
+      page,
+      isBling ? dateFrom : undefined,
+      isBling ? dateTo : undefined,
+    ],
     queryFn: () =>
       customFetch(
         buildUrl("/api/analytics/erp/orders", {
           clientId,
           customerDocument: document,
+          ...(isBling ? { dateFrom, dateTo } : {}),
           allTime: "true",
           page,
           limit: PAGE_SIZE,
@@ -1291,18 +1275,38 @@ function BuyerOrderHistoryDialog({
           <DialogDescription>
             {customer?.name ?? "Comprador"} ·{" "}
             {customer?.document ?? "Sem documento"}
+            {isBling
+              ? " · Pedidos apenas do período importado selecionado; LTV e histórico completo indisponíveis."
+              : ""}
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3 border-y py-4 sm:grid-cols-3">
-          <GlassMetricCard  label={tx("Pedidos históricos")} value={<>{formatNumber(customer?.historicalOrders ?? 0)}</>} hideComparison />
-          <GlassMetricCard  label={tx("Valor total comprado")} value={<>{formatCurrency(customer?.lifetimeValue ?? 0)}</>} hideComparison />
-          <GlassMetricCard  label={tx("Ticket médio histórico")} value={<>{formatCurrency(
-                (customer?.historicalOrders ?? 0) > 0
-                  ? (customer?.lifetimeValue ?? 0) /
-                      (customer?.historicalOrders ?? 1)
-                  : 0,
-              )}</>}  />
+          <GlassMetricCard
+            label={tx("Pedidos históricos")}
+            value={<>{formatNumber(customer?.historicalOrders)}</>}
+            hideComparison
+          />
+          <GlassMetricCard
+            label={tx("Valor total comprado")}
+            value={<>{formatCurrency(customer?.lifetimeValue)}</>}
+            hideComparison
+          />
+          <GlassMetricCard
+            label={tx("Ticket médio histórico")}
+            value={
+              <>
+                {isBling
+                  ? "—"
+                  : formatCurrency(
+                      (customer?.historicalOrders ?? 0) > 0
+                        ? (customer?.lifetimeValue ?? 0) /
+                            (customer?.historicalOrders ?? 1)
+                        : 0,
+                    )}
+              </>
+            }
+          />
         </div>
 
         <div className="overflow-x-auto">
@@ -1328,9 +1332,7 @@ function BuyerOrderHistoryDialog({
                       {order.paymentMethod ?? "Pagamento não identificado"}
                     </p>
                   </TableCell>
-                  <TableCell>
-                    {formatErpDate(order.createdAt)}
-                  </TableCell>
+                  <TableCell>{formatErpDate(order.createdAt)}</TableCell>
                   <TableCell>
                     <StatusBadge status={order.status} />
                   </TableCell>
@@ -1364,6 +1366,8 @@ function BuyerOrderHistoryDialog({
 }
 
 function ErpCustomersView() {
+  const customFetch = useErpFetch();
+  const { isBling } = useErpSource();
   const displayLabel = useDisplayLabel();
   const { tx } = useI18n();
   const [search, setSearch] = useState("");
@@ -1375,7 +1379,7 @@ function ErpCustomersView() {
   const [exporting, setExporting] = useState(false);
   const deferred = useDeferredValue(search.trim());
   const { dateFrom, dateTo } = usePeriod();
-  const { clientId, enabled } = useErpClientId();
+  const { clientId, enabled, source } = useErpClientId();
   const { data: dashboard, previousData } = useErpDashboard();
   const params = {
     clientId,
@@ -1385,7 +1389,7 @@ function ErpCustomersView() {
     buyerType: buyerType === "all" ? undefined : buyerType,
   };
   const { data, isLoading } = useQuery<ErpCustomersResponse>({
-    queryKey: ["erp-customers", params, page],
+    queryKey: ["erp-customers", source, params, page],
     queryFn: () =>
       customFetch(
         buildUrl("/api/analytics/erp/customers", {
@@ -1408,22 +1412,36 @@ function ErpCustomersView() {
           limit: 5000,
         }),
       );
-      exportRowsAsXlsx(`clientes-erp-${dateFrom}-${dateTo}.xlsx`, "Clientes", result.rows, [
-        { header: "Cliente", accessor: (r) => r.name },
-        { header: "Documento", accessor: (r) => r.document },
-        { header: "E-mail", accessor: (r) => r.email },
-        { header: "Telefone", accessor: (r) => r.phone },
-        { header: "Cidade", accessor: (r) => r.city },
-        { header: "UF", accessor: (r) => r.state },
-        { header: "Vendedor", accessor: (r) => r.seller },
-        { header: "Tipo", accessor: (r) => r.buyerType },
-        { header: "Segmento", accessor: (r) => r.segment },
-        { header: "Pedidos no período", accessor: (r) => r.orders },
-        { header: "Comprado no período", accessor: (r) => r.totalSpent },
-        { header: tx("Pedidos históricos"), accessor: (r) => r.historicalOrders },
-        { header: "LTV", accessor: (r) => r.lifetimeValue },
-        { header: "Último pedido", accessor: (r) => (r.lastOrderAt ? r.lastOrderAt.slice(0, 10) : r.lastOrderAt) },
-      ]);
+      exportRowsAsXlsx(
+        `clientes-erp-${dateFrom}-${dateTo}.xlsx`,
+        "Clientes",
+        result.rows,
+        [
+          { header: "Cliente", accessor: (r) => r.name },
+          { header: "Documento", accessor: (r) => r.document },
+          { header: "E-mail", accessor: (r) => r.email },
+          { header: "Telefone", accessor: (r) => r.phone },
+          { header: "Cidade", accessor: (r) => r.city },
+          { header: "UF", accessor: (r) => r.state },
+          { header: "Vendedor", accessor: (r) => r.seller },
+          { header: "Tipo", accessor: (r) => r.buyerType },
+          { header: "Segmento", accessor: (r) => r.segment },
+          { header: "Pedidos no período", accessor: (r) => r.orders },
+          { header: "Comprado no período", accessor: (r) => r.totalSpent },
+          {
+            header: tx("Pedidos históricos"),
+            accessor: (r) => r.historicalOrders,
+          },
+          { header: "LTV", accessor: (r) => r.lifetimeValue },
+          {
+            header: "Último pedido",
+            accessor: (r) =>
+              r.lastOrderAt ? r.lastOrderAt.slice(0, 10) : r.lastOrderAt,
+          },
+        ],
+      );
+    } catch (error) {
+      if (!isBling) throw error; // Bling transport already presents the failure.
     } finally {
       setExporting(false);
     }
@@ -1433,7 +1451,7 @@ function ErpCustomersView() {
   const metrics: Metric[] = [
     {
       label: "Compradores",
-      value: k?.uniqueCustomers ?? 0,
+      value: k?.uniqueCustomers ?? null,
       comparisonValue: k?.uniqueCustomers ?? null,
       previousValue: pk?.uniqueCustomers,
       format: formatNumber,
@@ -1445,7 +1463,7 @@ function ErpCustomersView() {
     },
     {
       label: "Novos compradores",
-      value: k?.newCustomers ?? 0,
+      value: k?.newCustomers ?? null,
       comparisonValue: k?.newCustomers ?? null,
       previousValue: pk?.newCustomers,
       format: formatNumber,
@@ -1457,7 +1475,7 @@ function ErpCustomersView() {
     },
     {
       label: "Recorrentes",
-      value: k?.returningCustomers ?? 0,
+      value: k?.returningCustomers ?? null,
       comparisonValue: k?.returningCustomers ?? null,
       previousValue: pk?.returningCustomers,
       format: formatNumber,
@@ -1469,7 +1487,7 @@ function ErpCustomersView() {
     },
     {
       label: "Retenção",
-      value: k?.retentionPct ?? 0,
+      value: k?.retentionPct ?? null,
       comparisonValue: k?.retentionPct ?? null,
       previousValue: pk?.retentionPct,
       format: formatPercentage,
@@ -1517,8 +1535,12 @@ function ErpCustomersView() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos os compradores</SelectItem>
-                <SelectItem value="NEW">Novos</SelectItem>
-                <SelectItem value="RETURNING">Recorrentes</SelectItem>
+                <SelectItem value="NEW" disabled={isBling}>
+                  Novos
+                </SelectItem>
+                <SelectItem value="RETURNING" disabled={isBling}>
+                  Recorrentes
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1578,10 +1600,14 @@ function ErpCustomersView() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">
-                        {c.buyerType === "NEW" ? "Novo" : "Recorrente"}
+                        {c.buyerType == null
+                          ? "—"
+                          : c.buyerType === "NEW"
+                            ? "Novo"
+                            : "Recorrente"}
                       </Badge>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {displayLabel(c.segment)}
+                        {c.segment ? displayLabel(c.segment) : "—"}
                       </p>
                     </TableCell>
                     <TableCell>{c.seller ?? "—"}</TableCell>
@@ -1590,15 +1616,13 @@ function ErpCustomersView() {
                       {formatCurrency(c.totalSpent)}
                     </TableCell>
                     <TableCell className="text-right">
-                      {c.historicalOrders}
+                      {c.historicalOrders ?? "—"}
                     </TableCell>
                     <TableCell className="text-right font-medium">
                       {formatCurrency(c.lifetimeValue)}
                     </TableCell>
                     <TableCell>
-                      <p>
-                        {formatErpDate(c.lastOrderAt)}
-                      </p>
+                      <p>{formatErpDate(c.lastOrderAt)}</p>
                       <p className="text-xs text-muted-foreground">
                         {c.daysSinceLastOrder === null
                           ? "Sem histórico"
@@ -1640,8 +1664,10 @@ function useProducts(filters: {
   sort: string;
   page: number;
 }) {
+  const customFetch = useErpFetch();
+  const { isBling } = useErpSource();
   const { dateFrom, dateTo } = usePeriod();
-  const { clientId, enabled } = useErpClientId();
+  const { clientId, enabled, source } = useErpClientId();
   const deferred = useDeferredValue(filters.search.trim());
   const params = {
     clientId,
@@ -1661,7 +1687,7 @@ function useProducts(filters: {
     clientId,
     params,
     query: useQuery<ErpProductsResponse>({
-      queryKey: ["erp-products", params],
+      queryKey: ["erp-products", source, params],
       queryFn: () =>
         customFetch(buildUrl("/api/analytics/erp/products", params)),
       enabled,
@@ -1765,9 +1791,11 @@ function ProductTable({
                   <Badge
                     variant="outline"
                     className={
-                      p.stock <= 0
-                        ? "border-red-500/30 text-red-500"
-                        : "border-emerald-500/30 text-emerald-500"
+                      p.stock == null
+                        ? "text-muted-foreground"
+                        : p.stock <= 0
+                          ? "border-red-500/30 text-red-500"
+                          : "border-emerald-500/30 text-emerald-500"
                     }
                   >
                     {formatNumber(p.stock)}
@@ -1854,6 +1882,8 @@ function ProductTable({
   );
 }
 function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
+  const customFetch = useErpFetch();
+  const { isBling } = useErpSource();
   const { tx } = useI18n();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
@@ -1931,6 +1961,8 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           { header: "Poder de venda", accessor: (r) => r.v.salesPower },
         ],
       );
+    } catch (error) {
+      if (!isBling) throw error; // Bling transport already presents the failure.
     } finally {
       setExporting(false);
     }
@@ -1939,17 +1971,17 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
     ? [
         {
           label: "Estoque atual",
-          value: data?.totalStock ?? 0,
+          value: data?.totalStock ?? null,
           format: formatNumber,
           icon: Boxes,
           iconClass: "bg-blue-500/10 text-blue-500",
           sparkColor: "#5b8dff",
           subLabel: "SKUs",
-          subValue: formatNumber(data?.totalSkus ?? 0),
+          subValue: formatNumber(data?.totalSkus),
         },
         {
           label: "Poder de venda",
-          value: data?.salesPower ?? 0,
+          value: data?.salesPower ?? null,
           format: formatCurrencySmart,
           icon: CircleDollarSign,
           iconClass: "bg-emerald-500/10 text-emerald-500",
@@ -1959,7 +1991,7 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
         },
         {
           label: "Cobertura",
-          value: data?.coverageDays ?? 0,
+          value: data?.coverageDays ?? null,
           format: (v) => `${Math.round(v)} dias`,
           icon: Clock3,
           iconClass: "bg-violet-500/10 text-violet-500",
@@ -1969,39 +2001,39 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
         },
         {
           label: "SKUs sem estoque",
-          value: data?.outOfStockCount ?? 0,
+          value: data?.outOfStockCount ?? null,
           format: formatNumber,
           icon: AlertCircle,
           iconClass: "bg-red-500/10 text-red-500",
           sparkColor: "#b3caff",
           subLabel: "Negativos",
-          subValue: formatNumber(data?.negativeStockCount ?? 0),
+          subValue: formatNumber(data?.negativeStockCount),
         },
       ]
     : [
         {
           label: tx("Faturamento"),
-          value: data?.totalRevenue ?? 0,
+          value: data?.totalRevenue ?? null,
           format: formatCurrencySmart,
           icon: WalletCards,
           iconClass: "bg-blue-500/10 text-blue-500",
           sparkColor: "#5b8dff",
           subLabel: "Peças",
-          subValue: formatNumber(data?.totalUnits ?? 0),
+          subValue: formatNumber(data?.totalUnits),
         },
         {
           label: "Lucro bruto",
-          value: data?.grossProfit ?? 0,
+          value: data?.grossProfit ?? null,
           format: formatCurrencySmart,
           icon: CircleDollarSign,
           iconClass: "bg-emerald-500/10 text-emerald-500",
           sparkColor: "#87adff",
           subLabel: "Margem",
-          subValue: formatPercentage(data?.grossMarginPct ?? 0),
+          subValue: formatPercentage(data?.grossMarginPct),
         },
         {
           label: "% de giro",
-          value: data?.turnoverPct ?? 0,
+          value: data?.turnoverPct ?? null,
           format: formatPercentage,
           icon: TrendingUp,
           iconClass: "bg-cyan-500/10 text-cyan-500",
@@ -2009,19 +2041,21 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
           subLabel: "Cobertura",
           subValue:
             data?.coverageDays == null
-              ? "Sem giro"
+              ? isBling
+                ? "Indisponível"
+                : "Sem giro"
               : `${Math.round(data.coverageDays)} dias`,
           ringValue: data?.turnoverPct ?? 0,
         },
         {
           label: "Poder de venda",
-          value: data?.salesPower ?? 0,
+          value: data?.salesPower ?? null,
           format: formatCurrencySmart,
           icon: PackageCheck,
           iconClass: "bg-violet-500/10 text-violet-500",
           sparkColor: "#5b8dff",
           subLabel: "Estoque",
-          subValue: formatNumber(data?.totalStock ?? 0),
+          subValue: formatNumber(data?.totalStock),
         },
       ];
   return (
@@ -2145,14 +2179,20 @@ function ProductsAndStockView({ stockMode = false }: { stockMode?: boolean }) {
                 <SelectItem value="revenue">Maior faturamento</SelectItem>
                 <SelectItem value="units">Mais vendidos</SelectItem>
                 <SelectItem value="stock">Maior estoque</SelectItem>
-                <SelectItem value="turnover">Maior giro</SelectItem>
+                <SelectItem value="turnover" disabled={isBling}>
+                  Maior giro
+                </SelectItem>
                 <SelectItem value="sales_power">
                   Maior poder de venda
                 </SelectItem>
                 {stockMode ? (
-                  <SelectItem value="margin">Maior margem</SelectItem>
+                  <SelectItem value="margin" disabled={isBling}>
+                    Maior margem
+                  </SelectItem>
                 ) : (
-                  <SelectItem value="coverage">Mais dias restantes</SelectItem>
+                  <SelectItem value="coverage" disabled={isBling}>
+                    Mais dias restantes
+                  </SelectItem>
                 )}
               </SelectContent>
             </Select>
@@ -2183,6 +2223,7 @@ function ErpSellersView() {
   const { tx } = useI18n();
   const { data, isLoading, previousData } = useErpDashboard();
   const [exporting, setExporting] = useState(false);
+  const { isBling } = useErpSource();
   const sellers = data?.breakdowns.sellers ?? [];
   const stores = data?.breakdowns.stores ?? [];
   const exportCsv = () => {
@@ -2204,7 +2245,7 @@ function ErpSellersView() {
   const metrics: Metric[] = [
     {
       label: "Vendedores ativos",
-      value: sellers.length,
+      value: isBling ? null : sellers.length,
       format: formatNumber,
       icon: UserRoundCheck,
       iconClass: "bg-blue-500/10 text-blue-500",
@@ -2214,17 +2255,17 @@ function ErpSellersView() {
     },
     {
       label: tx("Faturamento"),
-      value: totalRevenue,
+      value: isBling ? null : totalRevenue,
       format: formatCurrencySmart,
       icon: WalletCards,
       iconClass: "bg-emerald-500/10 text-emerald-500",
       sparkColor: "#87adff",
       subLabel: tx("Pedidos"),
-      subValue: formatNumber(totalOrders),
+      subValue: isBling ? "—" : formatNumber(totalOrders),
     },
     {
       label: "Ticket médio",
-      value: totalOrders ? totalRevenue / totalOrders : 0,
+      value: isBling ? null : totalOrders ? totalRevenue / totalOrders : 0,
       format: formatCurrencySmart,
       icon: CircleDollarSign,
       iconClass: "bg-violet-500/10 text-violet-500",
@@ -2234,7 +2275,9 @@ function ErpSellersView() {
     },
     {
       label: "Clientes atendidos",
-      value: sellers.reduce((s, r) => s + (r.customers ?? 0), 0),
+      value: isBling
+        ? null
+        : sellers.reduce((s, r) => s + (r.customers ?? 0), 0),
       format: formatNumber,
       icon: Users,
       iconClass: "bg-amber-500/10 text-amber-500",
@@ -2255,7 +2298,11 @@ function ErpSellersView() {
         />
         <BreakdownCard
           title="Desempenho por loja"
-          description="Receita consolidada por filial."
+          description={
+            isBling
+              ? "Valor em pedidos por loja/canal do Bling."
+              : "Receita consolidada por filial."
+          }
           icon={Store}
           data={stores as unknown as Array<Record<string, unknown>>}
         />
@@ -2275,7 +2322,9 @@ function ErpSellersView() {
                   <TableHead>Vendedor</TableHead>
                   <TableHead className="text-right">{tx("Pedidos")}</TableHead>
                   <TableHead className="text-right">Clientes</TableHead>
-                  <TableHead className="text-right">{tx("Faturamento")}</TableHead>
+                  <TableHead className="text-right">
+                    {tx("Faturamento")}
+                  </TableHead>
                   <TableHead className="text-right">Ticket médio</TableHead>
                   <TableHead className="text-right">Participação</TableHead>
                 </TableRow>
@@ -2283,7 +2332,9 @@ function ErpSellersView() {
               <TableBody>
                 {sellers.map((s) => (
                   <TableRow key={s.label}>
-                    <TableCell className="font-medium">{displayLabel(s.label)}</TableCell>
+                    <TableCell className="font-medium">
+                      {displayLabel(s.label)}
+                    </TableCell>
                     <TableCell className="text-right">{s.orders}</TableCell>
                     <TableCell className="text-right">
                       {s.customers ?? 0}
@@ -2313,7 +2364,7 @@ function ErpSellersView() {
   );
 }
 
-export default function ErpPage() {
+function ExistingErpPage() {
   const [location] = useLocation();
   const view = location.endsWith("/pedidos")
     ? "orders"
@@ -2338,20 +2389,91 @@ export default function ErpPage() {
   );
 }
 
-
-export function ErpGeographyView() {
+function ErpGeographyContent() {
   const displayLabel = useDisplayLabel();
   const { tx } = useI18n();
-  const {data, isLoading} = useErpDashboard();
+  const { data, isLoading } = useErpDashboard();
   const states = data?.breakdowns.states ?? [];
-  return <div className="space-y-6" data-testid="erp-geography-page">
-    <BreakdownCard title={tx("Geografia de compradores")} description={tx("Receita por estado do cadastro.")} icon={MapPin} data={states} />
-    <Card><CardContent className="p-5"><SectionTitle icon={MapPin} title={tx("Estados")} description={tx("Pedidos e faturamento da fonte ERP.")} />
-      <div className="mt-5 overflow-x-auto"><Table><TableHeader><TableRow>
-        <TableHead>{tx("Estado")}</TableHead><TableHead className="text-right">{tx("Pedidos")}</TableHead><TableHead className="text-right">{tx("Faturamento")}</TableHead>
-      </TableRow></TableHeader><TableBody>{states.map(state => <TableRow key={state.label}>
-        <TableCell>{displayLabel(state.label)}</TableCell><TableCell className="text-right">{formatNumber(state.orders)}</TableCell><TableCell className="text-right">{formatCurrency(state.revenue)}</TableCell>
-      </TableRow>)}{!states.length && <EmptyRow colSpan={3} loading={isLoading} />}</TableBody></Table></div>
-    </CardContent></Card>
-  </div>;
+  return (
+    <div className="space-y-6" data-testid="erp-geography-page">
+      <BreakdownCard
+        title={tx("Geografia de compradores")}
+        description={tx("Receita por estado do cadastro.")}
+        icon={MapPin}
+        data={states}
+      />
+      <Card>
+        <CardContent className="p-5">
+          <SectionTitle
+            icon={MapPin}
+            title={tx("Estados")}
+            description={tx("Pedidos e faturamento da fonte ERP.")}
+          />
+          <div className="mt-5 overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{tx("Estado")}</TableHead>
+                  <TableHead className="text-right">{tx("Pedidos")}</TableHead>
+                  <TableHead className="text-right">
+                    {tx("Faturamento")}
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {states.map((state) => (
+                  <TableRow key={state.label}>
+                    <TableCell>{displayLabel(state.label)}</TableCell>
+                    <TableCell className="text-right">
+                      {formatNumber(state.orders)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {formatCurrency(state.revenue)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!states.length && <EmptyRow colSpan={3} loading={isLoading} />}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+export default function ErpPage() {
+  const { user, selectedClientId } = useAuth();
+  const clientId = user?.role === "CLIENT" ? user.clientId : selectedClientId;
+  const client = useGetClient(clientId ?? "", {
+    query: queryOpts({ enabled: !!clientId }),
+  });
+  if (clientId && client.isPending) return <p role="status">Carregando ERP…</p>;
+  if (clientId && client.isError)
+    return <p role="alert">Não foi possível identificar a marca.</p>;
+  return (
+    <ErpSourceContext.Provider
+      value={{ isBling: client.data?.erpProvider === "BLING" }}
+    >
+      <ExistingErpPage />
+    </ErpSourceContext.Provider>
+  );
+}
+
+export function ErpGeographyView() {
+  const { user, selectedClientId } = useAuth();
+  const clientId = user?.role === "CLIENT" ? user.clientId : selectedClientId;
+  const client = useGetClient(clientId ?? "", {
+    query: queryOpts({ enabled: !!clientId }),
+  });
+  if (clientId && client.isPending) return <p role="status">Carregando ERP…</p>;
+  if (clientId && client.isError)
+    return <p role="alert">Não foi possível identificar a marca.</p>;
+  return (
+    <ErpSourceContext.Provider
+      value={{ isBling: client.data?.erpProvider === "BLING" }}
+    >
+      <ErpGeographyContent />
+    </ErpSourceContext.Provider>
+  );
 }

@@ -7,6 +7,12 @@
     "api/index.js": {
       "maxDuration": 300
     },
+    "api/cron/extractions/bling.js": {
+      "maxDuration": 290
+    },
+    "api/analytics/erp/bling.js": {
+      "maxDuration": 288
+    },
     "api/[...path].js": {
       "maxDuration": 300
     },

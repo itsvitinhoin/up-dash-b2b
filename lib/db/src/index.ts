@@ -80,6 +80,7 @@ function isTransientDatabaseError(error: unknown): boolean {
   return [
     "connection terminated",
     "connection timeout",
+    "timeout exceeded when trying to connect",
     "connection closed",
     "connect timeout",
     "remaining connection slots",

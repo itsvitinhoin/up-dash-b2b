@@ -260,7 +260,7 @@ export const ListClientsResponse = zod.object({
           "Sidebar nav item keys hidden for this client (per-client tab\nvisibility control). `null`\/omitted means nothing is hidden.\n",
         ),
       erpProvider: zod
-        .enum(["MIREDATA", "MANSE"])
+        .enum(["MIREDATA", "MANSE", "BLING"])
         .nullish()
         .describe(
           "ERP this client syncs from (independent of commercePlatform). `null` = no ERP configured. Credentials are never returned here.",
@@ -531,7 +531,7 @@ export const GetClientResponse = zod.object({
     .nullish()
     .describe("UP Zero API key for syncing live orders and customers."),
   erpProvider: zod
-    .enum(["MIREDATA", "MANSE"])
+    .enum(["MIREDATA", "MANSE", "BLING"])
     .nullish()
     .describe(
       "ERP this client syncs from (independent of commercePlatform). `null` = no ERP configured. Credentials are never returned here.",
@@ -774,7 +774,7 @@ export const UpdateClientResponse = zod.object({
     .nullish()
     .describe("UP Zero API key for syncing live orders and customers."),
   erpProvider: zod
-    .enum(["MIREDATA", "MANSE"])
+    .enum(["MIREDATA", "MANSE", "BLING"])
     .nullish()
     .describe(
       "ERP this client syncs from (independent of commercePlatform). `null` = no ERP configured. Credentials are never returned here.",
