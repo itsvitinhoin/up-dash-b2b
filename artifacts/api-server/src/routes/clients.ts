@@ -67,6 +67,7 @@ import {
 } from "../services/vesti-sync-service";
 import { BraavoError, normalizeBraavoDomain } from "../services/braavo-api";
 import { encryptErpCredentials, decryptErpCredentials } from "../lib/erp-crypto";
+import { getOperationStatus } from "../services/cloud-run-jobs";
 
 const router: IRouter = Router();
 
@@ -1819,7 +1820,7 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
         }),
       }).then(async (r) => {
         if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-        return r.json();
+        return r.json() as Promise<{ executionName?: string }>;
       }),
     ),
   );
@@ -1829,9 +1830,25 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
     return {
       ...chunk,
       ok: outcome.status === "fulfilled",
+      operationName: outcome.status === "fulfilled" ? (outcome.value.executionName ?? null) : null,
       error: outcome.status === "rejected" ? String(outcome.reason) : undefined,
     };
   });
+
+  await db
+    .update(clientsTable)
+    .set({
+      erpBackfillStatus: {
+        dispatchedAt: new Date().toISOString(),
+        chunks: results.map((r) => ({
+          dataInicio: r.dataInicio,
+          dataFim: r.dataFim,
+          operationName: r.operationName,
+          ...(r.error ? { dispatchError: r.error } : {}),
+        })),
+      },
+    })
+    .where(eq(clientsTable.id, clientId));
 
   const failedCount = results.filter((r) => !r.ok).length;
   res.status(failedCount === results.length ? 502 : 202).json({
@@ -1839,6 +1856,86 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
     totalChunks: results.length,
     failedChunks: failedCount,
     chunks: results,
+  });
+});
+
+/**
+ * GET /clients/:clientId/erp/backfill/status
+ * Consulta o status (rodando/concluido/falhou) do ultimo backfill de ERP
+ * disparado pelo painel pra esse client -- guardado em `erpBackfillStatus`
+ * na hora do POST acima. So devolve o resumo seguro de `getOperationStatus`,
+ * nunca os dados crus da operacao (tem credencial em texto puro no env
+ * override, ver cloud-run-jobs.ts).
+ */
+router.get("/clients/:clientId/erp/backfill/status", requireAdmin, async (req, res): Promise<void> => {
+  const params = GetClientParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: params.error.message, status: 400 });
+    return;
+  }
+  const [client] = await db
+    .select({ erpBackfillStatus: clientsTable.erpBackfillStatus })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, params.data.clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (!client.erpBackfillStatus) {
+    res.json({ hasRun: false });
+    return;
+  }
+
+  let storedChanged = false;
+  const storedChunks = client.erpBackfillStatus.chunks;
+  const chunks = await Promise.all(
+    storedChunks.map(async (chunk, i) => {
+      if (chunk.resolved) {
+        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, done: true, ...chunk.resolved };
+      }
+      if (!chunk.operationName) {
+        storedChunks[i] = { ...chunk, resolved: { succeeded: false, message: chunk.dispatchError ?? "Falha ao disparar", completedAt: null } };
+        storedChanged = true;
+        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, done: true, ...storedChunks[i].resolved! };
+      }
+      try {
+        const status = await getOperationStatus(chunk.operationName);
+        if (status.done) {
+          storedChunks[i] = {
+            ...chunk,
+            resolved: { succeeded: status.succeeded ?? false, message: status.message, completedAt: status.completedAt },
+          };
+          storedChanged = true;
+        }
+        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, ...status };
+      } catch (err) {
+        // Falha so na CONSULTA (ex: instabilidade pontual na API do Cloud Run) --
+        // nao grava nada: o pedaco continua "ainda nao resolvido" e tenta de novo
+        // no proximo poll, em vez de fingir que terminou ou voltar a aparecer como
+        // rodando depois de ja ter concluido (ver comentario no schema).
+        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, done: false, succeeded: null, message: err instanceof Error ? err.message : String(err) };
+      }
+    }),
+  );
+
+  if (storedChanged) {
+    await db
+      .update(clientsTable)
+      .set({ erpBackfillStatus: { ...client.erpBackfillStatus, chunks: storedChunks } })
+      .where(eq(clientsTable.id, params.data.clientId));
+  }
+
+  const overallStatus: "running" | "done" | "failed" = chunks.some((c) => !c.done)
+    ? "running"
+    : chunks.every((c) => c.succeeded)
+      ? "done"
+      : "failed";
+
+  res.json({
+    hasRun: true,
+    dispatchedAt: client.erpBackfillStatus.dispatchedAt,
+    status: overallStatus,
+    chunks,
   });
 });
 
