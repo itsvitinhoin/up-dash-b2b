@@ -884,12 +884,15 @@ export async function runNuvemshopTransactionalExtraction(
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
   const requestedLookbackDays = options.lookbackDays ?? NUVEMSHOP_LOOKBACK_DAYS;
-  // Teto de 200 dias (cobre backfill de 6 meses com folga) -- era 30, travava
-  // recuperar historico mais antigo depois do fix de updated_at_min (ver
-  // reconciliacao Nuvemshop de 2026-09). Uso normal (cron incremental) passa
-  // poucos dias, entao isso so importa pra backfill manual via LOOKBACK_DAYS.
+  // Teto de 400 dias (cobre backfill do ano corrente inteiro desde 1/jan, com
+  // folga) -- era 200, e por isso o backfill de 2026-09-17 (Jini/Hot
+  // Pink/Giah/Aiyu) parou em 18/03/2026 em vez de ir ate janeiro: 200 dias
+  // antes de setembro cai em marco, nao no comeco do ano (achado 25/11/2026,
+  // reclamacao do time de B2C sobre faturamento "faltando" nessas marcas). Uso
+  // normal (cron incremental) passa poucos dias, entao isso so importa pra
+  // backfill manual via LOOKBACK_DAYS.
   const lookbackDays = Number.isFinite(requestedLookbackDays) && requestedLookbackDays > 0
-    ? Math.min(200, Math.max(1, requestedLookbackDays))
+    ? Math.min(400, Math.max(1, requestedLookbackDays))
     : 3;
   const maxPages = Number.isFinite(NUVEMSHOP_MAX_PAGES) && NUVEMSHOP_MAX_PAGES > 0
     ? NUVEMSHOP_MAX_PAGES
