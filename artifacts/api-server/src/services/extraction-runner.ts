@@ -7,6 +7,7 @@ import {
   sellersTable,
   syncJobsTable,
 } from "@workspace/db";
+import { logger } from "../lib/logger";
 import { upsertMetaCreatives } from "./meta-ads";
 import { fetchStoredMarketingData } from "./stored-marketing";
 import { syncNuvemshopClient } from "./nuvemshop-sync";
@@ -186,6 +187,11 @@ async function completeJob(jobId: string, result: Record<string, unknown>) {
 
 async function failJob(jobId: string, err: unknown) {
   const message = err instanceof Error ? err.message : String(err);
+  // Achado 25/11/2026: até aqui o erro só ia pro Postgres (sync_jobs.error) --
+  // nunca aparecia no log do Cloud Run, só o resumo done/failed no fim do
+  // hourly_bundle. Loga aqui tambem pra dar pra ver a mensagem da API externa
+  // direto no Cloud Logging, sem precisar abrir o painel/banco.
+  logger.error({ err, jobId }, "[extraction-runner] job failed");
   await db
     .update(syncJobsTable)
     .set({
