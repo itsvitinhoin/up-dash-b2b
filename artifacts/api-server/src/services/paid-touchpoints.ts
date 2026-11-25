@@ -11,11 +11,47 @@ import { isPaidCampaignSignal } from "./campaign-attribution";
 
 const UPZERO_BASE = "https://api.upzero.com.br";
 
-// Sem teto real de lookback pra achar touchpoint -- 10 anos é "sem limite"
-// na prática, e a API da UpZero exige um `from` concreto. Exportada porque
+// Achado 25/11/2026: a UpZero passou a travar /analytics/facts com duas
+// regras novas (desde ~09/10/2026, quando todo sync parou de avançar):
+// só responde entre 3h-5h (horário de Brasília), 403 fora disso; e aceita
+// no máximo 24h de intervalo por chamada, 400 passando disso -- mesmo
+// dentro do horário certo. Nenhuma das duas existia quando este arquivo
+// foi escrito (03/09/2026). Confirmado direto na API (curl manual) e nos
+// logs do lote (console.error já mandava o texto, só não ia pro
+// sync_jobs.error -- por isso ficou invisível por semanas).
+const BRT_OFFSET_MS = 3 * 60 * 60 * 1000; // America/Sao_Paulo = UTC-3 o ano todo (sem horário de verão desde 2019)
+const UPZERO_FACTS_WINDOW_START_HOUR_BRT = 3;
+const UPZERO_FACTS_WINDOW_END_HOUR_BRT = 5;
+const UPZERO_FACTS_MAX_RANGE_MS = 23 * 60 * 60 * 1000; // teto real da UpZero é 24h; 23h de folga
+
+export class UpzeroFactsWindowClosedError extends Error {
+  constructor() {
+    super(
+      `UpZero /analytics/facts só responde entre ${UPZERO_FACTS_WINDOW_START_HOUR_BRT}h e ${UPZERO_FACTS_WINDOW_END_HOUR_BRT}h (horário de Brasília).`,
+    );
+    this.name = "UpzeroFactsWindowClosedError";
+  }
+}
+
+function currentBrtHour(): number {
+  return new Date(Date.now() - BRT_OFFSET_MS).getUTCHours();
+}
+
+function assertUpzeroFactsWindowOpen(): void {
+  const hour = currentBrtHour();
+  if (hour < UPZERO_FACTS_WINDOW_START_HOUR_BRT || hour >= UPZERO_FACTS_WINDOW_END_HOUR_BRT) {
+    throw new UpzeroFactsWindowClosedError();
+  }
+}
+
+// Era 3650 ("sem teto real") até 25/11/2026 -- inviável depois que a UpZero
+// passou a exigir chamadas picotadas em até 24h cada (acima). Touchpoint de
+// anúncio com mais de 6 meses não ajuda a decidir se mídia influenciou uma
+// compra recente, então 180 dias cobre o caso real sem precisar de
+// milhares de chamadas picotadas por cliente. Exportada porque
 // recompra-analytics.ts também usa como "desde sempre" fora do contexto de
 // touchpoint (fetchAllPositiveEventsForClient).
-export const TOUCHPOINT_LOOKBACK_DAYS = 3650;
+export const TOUCHPOINT_LOOKBACK_DAYS = 180;
 
 // Extraída de recompra-analytics.ts em 29/09/2026 (Fase 6) -- era usada só
 // lá, mas erp-attribution.ts tinha o mesmo problema que motivou essa
@@ -24,29 +60,27 @@ export const TOUCHPOINT_LOOKBACK_DAYS = 3650;
 // `covered` de paidTouchpointsSyncTable nunca fechar, mesmo com o cache
 // pré-aquecido em lote -- o lote ancora em "agora", o relatório ancorava
 // em datas do filtro, as duas janelas nunca coincidem. Ancorar em "agora"
-// (arredondado pra hora) faz TODO CONSUMIDOR pedir a mesma janela, o que é
-// exatamente o que permite o cache convergir. Não piora a atribuição:
-// janela mais larga nunca perde touchpoint (`latestTouchpointBefore` já
-// filtra "anterior ao pedido" por evento).
-// Achado 29/09/2026, mesmo dia, testando MX Fashion ao vivo: arredondar só
-// pra hora cheia não bastava -- o lote de pré-aquecimento roda a cada 6h
-// (Cloud Scheduler "0 */6 * * *", ver cloudbuild.job.yaml), então `covered`
-// só ficava verdadeiro na 1a hora depois de cada rodada (~1 de 6h); no
-// resto do ciclo o `to` arredondado pra hora ficava sempre à frente do
-// `syncedTo` da última rodada, caindo no fallback ao vivo de novo (piorou
-// de 31 pra 58 clientes falhando, testado longe de uma rodada do lote).
-// Arredondar pro mesmo bloco de 6h do Scheduler (00h/06h/12h/18h UTC) faz
-// o `to` ficar FIXO durante as 6h inteiras entre uma rodada e a próxima.
-// Acoplado à cadência do Scheduler de propósito -- se o intervalo do
-// trigger mudar, este "6" precisa mudar junto.
-const SYNC_BLOCK_HOURS = 6;
+// faz TODO CONSUMIDOR pedir a mesma janela, o que é exatamente o que
+// permite o cache convergir. Não piora a atribuição: janela mais larga
+// nunca perde touchpoint (`latestTouchpointBefore` já filtra "anterior ao
+// pedido" por evento).
+// Achado 25/11/2026: antes ancorava em blocos de 6h (acoplado ao
+// Scheduler antigo, "0 */6 * * *"). Agora que o lote só roda dentro da
+// janela 3h-5h BRT que a UpZero aceita (ver upzero-sync-job-paid-touchpoints-schedule),
+// ancora no checkpoint fixo das 5h BRT (fim dessa janela) -- assim toda
+// chamada ao vivo do dia pede o que o lote já deveria ter terminado às 5h,
+// e some o "covered" nunca fechar enquanto o lote só roda 2h por dia.
+const CHECKPOINT_HOUR_BRT = UPZERO_FACTS_WINDOW_END_HOUR_BRT;
 
 export function standardTouchpointWindow(): { lookbackFrom: string; lookbackTo: string } {
-  const now = new Date();
-  const blockStartHour = Math.floor(now.getUTCHours() / SYNC_BLOCK_HOURS) * SYNC_BLOCK_HOURS;
-  now.setUTCHours(blockStartHour, 0, 0, 0);
-  const lookbackFrom = new Date(now.getTime() - TOUCHPOINT_LOOKBACK_DAYS * 86_400_000);
-  return { lookbackFrom: lookbackFrom.toISOString(), lookbackTo: now.toISOString() };
+  const brtNowMs = Date.now() - BRT_OFFSET_MS;
+  const dayMs = 86_400_000;
+  const dayStartBrtMs = Math.floor(brtNowMs / dayMs) * dayMs;
+  let checkpointBrtMs = dayStartBrtMs + CHECKPOINT_HOUR_BRT * 60 * 60 * 1000;
+  if (brtNowMs < checkpointBrtMs) checkpointBrtMs -= dayMs; // ainda não chegou no checkpoint de hoje -- usa o de ontem
+  const lookbackToMs = checkpointBrtMs + BRT_OFFSET_MS;
+  const lookbackFromMs = lookbackToMs - TOUCHPOINT_LOOKBACK_DAYS * dayMs;
+  return { lookbackFrom: new Date(lookbackFromMs).toISOString(), lookbackTo: new Date(lookbackToMs).toISOString() };
 }
 
 export type UpzeroFact = {
@@ -93,6 +127,7 @@ async function fetchUpzeroFactsPage(params: {
   to: string;
   cursor?: string;
 }): Promise<UpzeroFactsResponse> {
+  assertUpzeroFactsWindowOpen();
   const url = new URL(`${UPZERO_BASE}/external/v1/analytics/facts`);
   url.searchParams.set("from", params.from);
   url.searchParams.set("to", params.to);
@@ -140,17 +175,17 @@ function evidenceKeyFor(fact: UpzeroFact): string {
   return `utm:${fact.utm_source ?? ""}|${fact.utm_medium ?? ""}|${fact.utm_campaign ?? ""}|${minute}`;
 }
 
-export async function fetchPaidTouchpointsForUser(params: {
+async function fetchPaidTouchpointsForUserChunk(params: {
   apiKey: string;
   userId: number;
   from: string;
   to: string;
-}): Promise<TouchpointCandidate[]> {
-  const found = new Map<string, TouchpointCandidate>();
+  found: Map<string, TouchpointCandidate>;
+}): Promise<void> {
   let cursor: string | undefined;
   let pages = 0;
   // Teto defensivo -- 20 páginas * 500 eventos = 10 mil eventos por
-  // cliente/janela antes de desistir, evita loop indefinido num cliente
+  // cliente/pedaço antes de desistir, evita loop indefinido num cliente
   // com volume anormal de navegação.
   const MAX_PAGES = 20;
   do {
@@ -166,9 +201,9 @@ export async function fetchPaidTouchpointsForUser(params: {
       const decoded = decodeFbcClickTimestamp(fact.fbc);
       const occurredAt = decoded ?? new Date(fact.occurred_at);
       const key = evidenceKeyFor(fact);
-      const existing = found.get(key);
+      const existing = params.found.get(key);
       if (existing && existing.occurredAt <= occurredAt) continue;
-      found.set(key, {
+      params.found.set(key, {
         occurredAt,
         eventName: fact.event_name,
         source: fact.utm_source ?? fact.source,
@@ -184,6 +219,34 @@ export async function fetchPaidTouchpointsForUser(params: {
     cursor = page.next_cursor ?? undefined;
     pages++;
   } while (cursor && pages < MAX_PAGES);
+}
+
+// Achado 25/11/2026: a UpZero não aceita mais de 24h de intervalo por
+// chamada (ver UPZERO_FACTS_MAX_RANGE_MS acima) -- pedaça o range pedido
+// em fatias de até 23h, picotando `from`/`to` e juntando o resultado.
+// Pra quem já tinha cache (coversStart em getTouchpointsForCustomerCached)
+// isso normalmente é 1 fatia só (gap de 1 dia); só o backlog/1ª
+// sincronização de um cliente precisa de várias fatias em sequência.
+export async function fetchPaidTouchpointsForUser(params: {
+  apiKey: string;
+  userId: number;
+  from: string;
+  to: string;
+}): Promise<TouchpointCandidate[]> {
+  const found = new Map<string, TouchpointCandidate>();
+  let chunkStartMs = new Date(params.from).getTime();
+  const endMs = new Date(params.to).getTime();
+  while (chunkStartMs < endMs) {
+    const chunkEndMs = Math.min(chunkStartMs + UPZERO_FACTS_MAX_RANGE_MS, endMs);
+    await fetchPaidTouchpointsForUserChunk({
+      apiKey: params.apiKey,
+      userId: params.userId,
+      from: new Date(chunkStartMs).toISOString(),
+      to: new Date(chunkEndMs).toISOString(),
+      found,
+    });
+    chunkStartMs = chunkEndMs;
+  }
   return [...found.values()];
 }
 
@@ -361,30 +424,47 @@ export async function getTouchpointsForCustomerCached(params: {
   // Já tem cobertura desde `from`: só falta o trecho recente.
   if (coversStart) {
     const refreshFrom = new Date(Math.max(fromDate.getTime(), syncState!.syncedTo.getTime() - TOUCHPOINT_REFRESH_OVERLAP_MS));
-    const fresh = await fetchPaidTouchpointsForUser({
-      apiKey: params.apiKey,
-      userId: params.externalUserId,
-      from: refreshFrom.toISOString(),
-      to: params.to,
-    });
-    if (fresh.length > 0) {
-      await savePaidTouchpoints({ clientId: params.clientId, customerId: params.customerId, externalUserId: params.externalUserId, touchpoints: fresh });
+    try {
+      const fresh = await fetchPaidTouchpointsForUser({
+        apiKey: params.apiKey,
+        userId: params.externalUserId,
+        from: refreshFrom.toISOString(),
+        to: params.to,
+      });
+      if (fresh.length > 0) {
+        await savePaidTouchpoints({ clientId: params.clientId, customerId: params.customerId, externalUserId: params.externalUserId, touchpoints: fresh });
+      }
+      await markSynced({ clientId: params.clientId, customerId: params.customerId, from: refreshFrom, to: toDate });
+    } catch (err) {
+      // Fora de 3h-5h BRT: não dá pra atualizar agora. Mostra o que já
+      // tem guardado (pode estar um pouco desatualizado) em vez de falhar
+      // o relatório inteiro -- achado 25/11/2026, era o motivo da tela de
+      // atribuição vir zerada fora desse horário mesmo com cache bom.
+      if (!(err instanceof UpzeroFactsWindowClosedError)) throw err;
     }
-    await markSynced({ clientId: params.clientId, customerId: params.customerId, from: refreshFrom, to: toDate });
     return readCachedTouchpoints({ clientId: params.clientId, customerId: params.customerId, from: fromDate, to: toDate });
   }
 
-  const touchpoints = await fetchPaidTouchpointsForUser({
-    apiKey: params.apiKey,
-    userId: params.externalUserId,
-    from: params.from,
-    to: params.to,
-  });
-  if (touchpoints.length > 0) {
-    await savePaidTouchpoints({ clientId: params.clientId, customerId: params.customerId, externalUserId: params.externalUserId, touchpoints });
+  try {
+    const touchpoints = await fetchPaidTouchpointsForUser({
+      apiKey: params.apiKey,
+      userId: params.externalUserId,
+      from: params.from,
+      to: params.to,
+    });
+    if (touchpoints.length > 0) {
+      await savePaidTouchpoints({ clientId: params.clientId, customerId: params.customerId, externalUserId: params.externalUserId, touchpoints });
+    }
+    await markSynced({ clientId: params.clientId, customerId: params.customerId, from: fromDate, to: toDate });
+    return touchpoints;
+  } catch (err) {
+    // Cliente nunca sincronizado antes E fora da janela: não tem cache
+    // nenhum pra cair. Devolve vazio (sem evidência de touchpoint) em vez
+    // de derrubar o relatório inteiro -- o pré-aquecimento em lote (dentro
+    // da janela certa) resolve isso de verdade.
+    if (err instanceof UpzeroFactsWindowClosedError) return [];
+    throw err;
   }
-  await markSynced({ clientId: params.clientId, customerId: params.customerId, from: fromDate, to: toDate });
-  return touchpoints;
 }
 
 // Achado 03/09/2026: `latestCampaignEvidenceBefore` (campaign-attribution.ts)
