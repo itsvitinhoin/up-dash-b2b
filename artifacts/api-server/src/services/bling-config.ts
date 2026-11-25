@@ -3,7 +3,10 @@ import { db, clientsTable } from "@workspace/db";
 import { decryptErpCredentials } from "../lib/erp-crypto";
 import { BlingError, blingConfig, type BlingAppCredentials } from "./bling-api";
 
-export async function getBlingApp(clientId: string) {
+export async function getBlingApp(
+  clientId: string,
+  includeUnselectedCredentials = false,
+) {
   const [client] = await db
     .select({
       provider: clientsTable.erpProvider,
@@ -15,7 +18,11 @@ export async function getBlingApp(clientId: string) {
     throw new BlingError("Marca não encontrada.", "CLIENT_NOT_FOUND", 404);
   let credentials: BlingAppCredentials | undefined;
   let source: "server" | "client" = "server";
-  if (client.provider === "BLING" && client.encrypted) {
+  if (
+    (client.provider === "BLING" ||
+      (includeUnselectedCredentials && client.provider === null)) &&
+    client.encrypted
+  ) {
     const saved = decryptErpCredentials(client.encrypted);
     if ("clientId" in saved && "clientSecret" in saved) {
       credentials = {

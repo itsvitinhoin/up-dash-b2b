@@ -299,6 +299,20 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [status.data?.retryAt]);
+  const restore = useMutation({
+    mutationFn: () => customFetch(`${base}/restore`, { method: "POST" }),
+    onSuccess: () => {
+      toast.success(
+        "Vínculo Bling restaurado; a carga importada foi preservada.",
+      );
+      void cache.invalidateQueries({ queryKey: ["bling", clientId] });
+      void cache.invalidateQueries({ queryKey: getListClientsQueryKey() });
+      void cache.invalidateQueries({
+        queryKey: getGetClientQueryKey(clientId),
+      });
+    },
+    onError: (error) => toast.error(message(error)),
+  });
   const authorize = useMutation({
     mutationFn: () =>
       customFetch<{ url: string }>(`${base}/authorize`, { method: "POST" }),
@@ -425,7 +439,8 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
       sync.isPending ||
       authorize.isPending ||
       test.isPending ||
-      refreshOrder.isPending;
+      refreshOrder.isPending ||
+      restore.isPending;
   return (
     <div className="space-y-4" data-testid="bling-integration">
       {status.isError && (
@@ -433,6 +448,25 @@ export function BlingIntegration({ clientId }: { clientId: string }) {
           <AlertDescription>
             Não foi possível atualizar o status. Os dados abaixo são da última
             consulta recebida.
+          </AlertDescription>
+        </Alert>
+      )}
+      {data.canRestore && (
+        <Alert>
+          <AlertDescription className="space-y-3">
+            <p>
+              Existe uma carga Bling concluída, mas a marca ficou sem ERP
+              selecionado. Restaure o vínculo com a conta anterior preservando
+              pedidos, tokens renovados, histórico e canal configurado.
+            </p>
+            <Button
+              disabled={busy || data.busy || cooldown > 0}
+              onClick={() => restore.mutate()}
+            >
+              {restore.isPending
+                ? "Restaurando…"
+                : "Restaurar conexão existente"}
+            </Button>
           </AlertDescription>
         </Alert>
       )}

@@ -278,6 +278,129 @@ export async function saveBlingConfiguration(
   }
 }
 
+/** Restore only an existing account binding; never clear its completed load. */
+export async function restoreBlingSelection(clientId: string) {
+  const client = await requireBlingClient(clientId);
+  if (client.erpProvider)
+    throw new BlingError(
+      "A marca já possui um ERP selecionado.",
+      "BLING_RESTORE_CONFLICT",
+      409,
+    );
+  const { connection, leaseId } = await claimBlingLease(clientId);
+  try {
+    if (
+      !connection.companyId ||
+      !connection.tokens ||
+      !connection.completedAt ||
+      connection.cursor
+    )
+      throw new BlingError(
+        "Não há uma conexão anterior concluída para restaurar.",
+        "BLING_RESTORE_UNAVAILABLE",
+        409,
+      );
+    const [saved] = await db
+      .select({ encrypted: clientsTable.erpCredentialsEncrypted })
+      .from(clientsTable)
+      .where(eq(clientsTable.id, clientId));
+    let credentials: { clientId: string; clientSecret: string } | undefined;
+    if (saved.encrypted) {
+      const previous = decryptErpCredentials(saved.encrypted);
+      if ("clientId" in previous && "clientSecret" in previous)
+        credentials = {
+          clientId: previous.clientId,
+          clientSecret: previous.clientSecret,
+        };
+    }
+    blingConfig(credentials);
+    if (
+      connection.error &&
+      connection.nextRequestAt &&
+      connection.nextRequestAt.getTime() > Date.now() + 2500
+    )
+      throw new BlingRateLimitError(connection.nextRequestAt);
+    // Refresh even a live token to verify that this application actually owns
+    // the prior grant. Persist its rotation immediately, before any later read.
+    const renewed = await exchangeBlingToken(
+      { refreshToken: openTokens(connection.tokens).refreshToken },
+      fetch,
+      credentials,
+    );
+    const [rotated] = await db
+      .update(connections)
+      .set({ tokens: sealTokens(renewed), expiresAt: renewed.expiresAt })
+      .where(
+        and(
+          eq(connections.clientId, clientId),
+          eq(connections.leaseId, leaseId),
+        ),
+      )
+      .returning({ id: connections.clientId });
+    if (!rotated)
+      throw new BlingError(
+        "Outra operação assumiu a conexão.",
+        "BLING_BUSY",
+        409,
+      );
+    const api = new BlingApi(renewed.accessToken, () =>
+      reserveBlingSlot(clientId),
+    );
+    const company = record(await api.get("/empresas/me/dados-basicos"));
+    if (String(company.id ?? "") !== connection.companyId)
+      throw new BlingError(
+        "A empresa não corresponde à conexão anterior.",
+        "BLING_COMPANY_MISMATCH",
+        409,
+      );
+    const [restored] = await db
+      .update(clientsTable)
+      .set({
+        erpProvider: "BLING",
+        erpCredentialsEncrypted: encryptErpCredentials(
+          credentials ?? { useServerApp: true },
+        ),
+      })
+      .where(
+        and(
+          eq(clientsTable.id, clientId),
+          sql`${clientsTable.erpProvider} IS NULL`,
+        ),
+      )
+      .returning({ id: clientsTable.id });
+    if (!restored)
+      throw new BlingError(
+        "Outra configuração de ERP foi salva durante a conferência.",
+        "BLING_RESTORE_CONFLICT",
+        409,
+      );
+    await db
+      .update(connections)
+      .set({ error: null })
+      .where(
+        and(
+          eq(connections.clientId, clientId),
+          eq(connections.leaseId, leaseId),
+        ),
+      );
+    return { ok: true, erpProvider: "BLING", restored: true };
+  } catch (error) {
+    if (error instanceof BlingRateLimitError)
+      await db
+        .update(connections)
+        .set({ error: error.message, nextRequestAt: error.retryAt })
+        .where(
+          and(
+            eq(connections.clientId, clientId),
+            eq(connections.leaseId, leaseId),
+          ),
+        );
+    throw error;
+  } finally {
+    await releaseBlingLease(clientId, leaseId);
+  }
+}
+
 export async function testBlingConnection(clientId: string) {
   const { connection, leaseId } = await claimBlingLease(clientId);
   try {

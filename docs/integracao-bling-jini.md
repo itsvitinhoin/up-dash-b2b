@@ -61,6 +61,10 @@ A ação administrativa **Conferir pedido** consulta um número específico no B
 
 O workflow horário `.github/workflows/bling-extractions.yml` limita cada execução a 100 lotes e continua no próximo horário. **O agendamento só será ativado após incorporar a branch na main.** A execução manual atual funciona a partir da branch revisada sem essa incorporação.
 
+## Recuperação de seleção do ERP
+
+Quando a marca ficou sem provedor selecionado, uma conexão Bling já concluída pode ser restaurada pelo administrador. O endpoint exige vínculo anterior com empresa, tokens e data de carga concluída, recusa cursor ativo ou outro ERP selecionado e respeita cooldown. Renova o grant anterior para verificar o aplicativo, grava a rotação imediatamente, confere a mesma empresa e só então volta a selecionar o Bling. Não reinicia a carga nem altera histórico, canal, watermark, completedAt ou registros importados. Tanto aplicativo privado preservado quanto aplicativo do servidor são suportados. Não cria permissões OAuth ou amplia escopos.
+
 ## Conciliação com a Nuvemshop
 
 O administrador seleciona o ID do canal Nuvemshop após conferi-lo na origem. Todos os canais continuam importados. O vínculo usa `numeroLoja` do pedido Bling e o número do pedido Nuvemshop, somente dentro da mesma marca e do canal selecionado.
@@ -77,7 +81,7 @@ A entrega mostra **valor registrado em pedidos, incluindo todas as situações**
 
 O catálogo mostra o último saldo importado, sem promessa de estoque em tempo real. Exclusões definitivas na origem ainda não são expurgadas automaticamente. Notas fiscais, recebimentos, cancelamentos/devoluções, custos, conferência financeira e por item e webhooks assinados com fila durável são próximas entregas.
 
-**45 testes Bling passaram** com respostas sintéticas e PostgreSQL local descartável, além de typechecks e builds da API/frontend. Cobertura: OAuth e estado de uso único, permissões e isolamento, criptografia, renovação, empresa, cotas e cooldown, retomada exata, sucesso parcial concorrente, reservas compartilhadas, importação idempotente, contagens e conciliação ambígua sem multiplicar totais. A atualização complementar foi testada com marca explícita, pré-requisito de carga completa, preservação do cursor ativo e rejeição de detalhes fora da janela, inclusive de outro ano. A conferência individual cobre permissões, recuperação idempotente, preservação da carga anterior, resultado ausente/ambíguo, cursor ativo e cooldown da conta. Um teste retém a única conexão local além do timeout de aquisição e verifica a recuperação limitada.
+**49 testes Bling passaram** com respostas sintéticas e PostgreSQL local descartável, além de typechecks e builds da API/frontend. Cobertura: OAuth e estado de uso único, permissões e isolamento, criptografia, renovação, empresa, cotas e cooldown, retomada exata, sucesso parcial concorrente, reservas compartilhadas, importação idempotente, contagens e conciliação ambígua sem multiplicar totais. A atualização complementar foi testada com marca explícita, pré-requisito de carga completa, preservação do cursor ativo e rejeição de detalhes fora da janela, inclusive de outro ano. A conferência individual cobre permissões, recuperação idempotente, preservação da carga anterior, resultado ausente/ambíguo, cursor ativo e cooldown da conta. Um teste retém a única conexão local além do timeout de aquisição e verifica a recuperação limitada.
 
 Uma comparação com tabelas temporárias sintéticas confirmou resultados iguais da conciliação e reduziu as varreduras de pedidos Nuvemshop de 1.500 para uma. Esse resultado não é uma medição de desempenho em produção. O executor também foi validado com falhas simuladas de transporte, HTTP 5xx, respostas malformadas e rejeições permanentes.
 

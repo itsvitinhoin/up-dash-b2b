@@ -6,6 +6,7 @@ export type BlingStatus = {
   redirectUri: string;
   appConfigured: boolean;
   connected: boolean;
+  canRestore?: boolean;
   companyName: string | null;
   companyId: string | null;
   historyDays: number;

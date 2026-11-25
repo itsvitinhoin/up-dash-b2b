@@ -31,6 +31,7 @@ import {
   reserveBlingSlot,
   runBlingBatch,
   testBlingConnection,
+  restoreBlingSelection,
 } from "../services/bling-sync";
 import { getBlingErpLayout } from "../services/bling-erp-layout";
 import { getBlingAnalytics, getBlingStatus } from "../services/bling-analytics";
@@ -87,6 +88,13 @@ blingRouter.use(
 blingRouter.get(clientPath, async (req, res) => {
   try {
     res.json(await getBlingStatus(String(req.params.clientId)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+blingRouter.post(`${clientPath}/restore`, async (req, res) => {
+  try {
+    res.json(await restoreBlingSelection(String(req.params.clientId)));
   } catch (error) {
     sendError(res, error);
   }

@@ -643,41 +643,135 @@ describe.skipIf(!connection)("Bling with isolated PostgreSQL", () => {
     ).toBe(1);
     expect(calls).toHaveLength(0);
   });
-  it("serves the shared B2B contract through the isolated Bling reader with bounded pages and brand isolation", async () => {
-    await schema.db
-      .insert(schema.blingRecordsTable)
-      .values(
-        Array.from({ length: 23 }, (_, i) => ({
-          clientId: "jini",
-          kind: "orders" as const,
-          externalId: String(i),
-          data: {
-            id: String(i),
-            number: String(i),
-            day: "2026-11-02",
-            customerId: "buyer",
-            customerName: "Contato",
-            statusId: "99",
-            channelId: "10",
-            total: 10,
-            items: [{ id: "item", quantity: 2, unitPrice: 5 }],
-          },
-        })),
+  it.each([false, true])(
+    "restores a deselected ERP with private app = %s only after verifying the prior grant and company",
+    async (privateApp) => {
+      await connect();
+      const completedAt = new Date("2026-11-18T12:00:00Z");
+      await schema.db
+        .update(schema.blingConnectionsTable)
+        .set({
+          completedAt,
+          watermark: "2026-11-18 09:00:00",
+          historyDays: 30,
+          nuvemshopChannelId: "10",
+        })
+        .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+      await schema.db.execute(
+        sql`UPDATE clients SET erp_provider = NULL, erp_credentials_encrypted = NULL WHERE id = 'jini'`,
       );
-    await schema.db
-      .insert(schema.blingRecordsTable)
-      .values({
-        clientId: "other",
-        kind: "orders",
-        externalId: "foreign",
-        data: {
-          id: "foreign",
-          number: "foreign",
-          day: "2026-11-02",
-          total: 99999,
-          items: [],
-        },
+      if (privateApp) {
+        const { encryptErpCredentials } = await import("../src/lib/erp-crypto");
+        await schema.db.execute(
+          sql`UPDATE clients SET erp_credentials_encrypted = ${encryptErpCredentials({ clientId: "test-app", clientSecret: "test-secret" })} WHERE id = 'jini'`,
+        );
+      }
+      const before = await request(app)
+        .get("/clients/jini/bling")
+        .set(admin)
+        .expect(200);
+      expect(before.body.canRestore).toBe(true);
+      await request(app)
+        .post("/clients/jini/bling/restore")
+        .set("Authorization", "Bearer client")
+        .expect(403);
+      await request(app)
+        .post("/clients/jini/bling/restore")
+        .set(admin)
+        .expect(200);
+      const [state] = await schema.db
+        .select()
+        .from(schema.blingConnectionsTable)
+        .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+      expect(state).toMatchObject({
+        completedAt,
+        watermark: "2026-11-18 09:00:00",
+        historyDays: 30,
+        nuvemshopChannelId: "10",
+        cursor: null,
+        leaseId: null,
       });
+      expect(api.openTokens(state.tokens!).refreshToken).toBe("refresh-1");
+      expect(
+        (await request(app).get("/clients/jini/bling").set(admin).expect(200))
+          .body,
+      ).toMatchObject({ selected: true, connected: true, canRestore: false });
+      expect(calls.some((p) => p.startsWith("/pedidos/vendas"))).toBe(false);
+    },
+  );
+  it("refuses restoration for another selected ERP or an incomplete old load", async () => {
+    await connect();
+    await schema.db.execute(
+      sql`UPDATE clients SET erp_provider = 'MANSE' WHERE id = 'jini'`,
+    );
+    await request(app)
+      .post("/clients/jini/bling/restore")
+      .set(admin)
+      .expect(409);
+    await schema.db.execute(
+      sql`UPDATE clients SET erp_provider = NULL WHERE id = 'jini'`,
+    );
+    await request(app)
+      .post("/clients/jini/bling/restore")
+      .set(admin)
+      .expect(409);
+    expect(calls).toHaveLength(0);
+  });
+  it("does not select a restored connection when the provider reports another company, while preserving refresh rotation", async () => {
+    await connect();
+    await schema.db
+      .update(schema.blingConnectionsTable)
+      .set({ completedAt: new Date(), companyId: "expected-company" })
+      .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    await schema.db.execute(
+      sql`UPDATE clients SET erp_provider = NULL WHERE id = 'jini'`,
+    );
+    await request(app)
+      .post("/clients/jini/bling/restore")
+      .set(admin)
+      .expect(409);
+    const state = await request(app)
+      .get("/clients/jini/bling")
+      .set(admin)
+      .expect(200);
+    expect(state.body.selected).toBe(false);
+    const [connection] = await schema.db
+      .select()
+      .from(schema.blingConnectionsTable)
+      .where(eq(schema.blingConnectionsTable.clientId, "jini"));
+    expect(api.openTokens(connection.tokens!).refreshToken).toBe("refresh-1");
+  });
+  it("serves the shared B2B contract through the isolated Bling reader with bounded pages and brand isolation", async () => {
+    await schema.db.insert(schema.blingRecordsTable).values(
+      Array.from({ length: 23 }, (_, i) => ({
+        clientId: "jini",
+        kind: "orders" as const,
+        externalId: String(i),
+        data: {
+          id: String(i),
+          number: String(i),
+          day: "2026-11-02",
+          customerId: "buyer",
+          customerName: "Contato",
+          statusId: "99",
+          channelId: "10",
+          total: 10,
+          items: [{ id: "item", quantity: 2, unitPrice: 5 }],
+        },
+      })),
+    );
+    await schema.db.insert(schema.blingRecordsTable).values({
+      clientId: "other",
+      kind: "orders",
+      externalId: "foreign",
+      data: {
+        id: "foreign",
+        number: "foreign",
+        day: "2026-11-02",
+        total: 99999,
+        items: [],
+      },
+    });
     const base =
       "/analytics/erp/bling?clientId=other&from=2026-11-01&to=2026-11-03";
     const read = async (extra: string) =>

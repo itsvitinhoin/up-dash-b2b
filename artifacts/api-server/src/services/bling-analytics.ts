@@ -34,7 +34,7 @@ export async function getBlingStatus(clientId: string) {
   let selected = client.erpProvider === "BLING";
   let redirectUri = process.env.BLING_REDIRECT_URI ?? "";
   try {
-    const app = await getBlingApp(clientId);
+    const app = await getBlingApp(clientId, true);
     appConfigured = true;
     appClientId = app.config.clientId;
     credentialsSource = app.source;
@@ -69,6 +69,13 @@ export async function getBlingStatus(clientId: string) {
     selected,
     redirectUri,
     connected: selected && !!row?.tokens,
+    canRestore:
+      !client.erpProvider &&
+      appConfigured &&
+      !!row?.tokens &&
+      !!row?.companyId &&
+      !!row?.completedAt &&
+      !row?.cursor,
     companyName: row?.companyName ?? null,
     companyId: row?.companyId ?? null,
     historyDays: row?.historyDays ?? 30,
