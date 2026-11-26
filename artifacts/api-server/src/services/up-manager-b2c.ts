@@ -72,7 +72,7 @@ import { readManagerShipping, shippingFinding } from "./up-manager-shipping-insi
 import { buildPaidMediaReview, resolveMediaActions, buildPaidMediaFinding, type PaidMediaRow } from "./up-manager-paid-media";
 import { combinePaidMediaChanges, evaluatePaidMediaChanges, readAppliedManagerMediaChanges, readPaidMediaChanges, readPaidMediaHistory, seedPaidMediaHistory } from "./up-manager-media-learning";
 
-export const B2C_VERSION = "up-b2c-v33";
+export const B2C_VERSION = "up-b2c-v34";
 
 function readManagerInputs<const T extends readonly (() => unknown)[]>(inputs: T, concurrency: number) {
   const workers: Promise<unknown>[] = Array.from({ length: Math.min(concurrency, inputs.length) }, () => Promise.resolve());

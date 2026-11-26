@@ -122,6 +122,7 @@ export async function readCohorts(clientId: string, asOf: string) {
 }
 
 export async function readCommerceFreshness(clientId: string, platform?: string | null) {
+  const braavo = platform === "BRAAVO";
   const [sync] = await db
     .select({
       status: syncJobsTable.status,
@@ -132,20 +133,30 @@ export async function readCommerceFreshness(clientId: string, platform?: string 
     .where(
       and(
         eq(syncJobsTable.clientId, clientId),
-        eq(syncJobsTable.jobType, platform === "BRAAVO" ? "braavo_transactional" : "nuvemshop_transactional"),
+        eq(syncJobsTable.jobType, braavo ? "braavo_transactional" : "nuvemshop_transactional"),
         sql`${syncJobsTable.finishedAt} IS NOT NULL`,
       ),
     )
     .orderBy(desc(syncJobsTable.finishedAt))
     .limit(1);
   const result = sync?.result as
-    | { partial?: boolean; errors?: unknown[]; since?: string }
+    | {
+        partial?: boolean;
+        errors?: unknown[];
+        since?: string;
+        ordersComplete?: boolean;
+        orderPaginationComplete?: boolean;
+      }
     | null
     | undefined;
   return {
     status: sync?.status ?? null,
     observedAt: sync?.finishedAt?.toISOString() ?? null,
-    partial: result?.partial === true || Boolean(result?.errors?.length),
+    partial: braavo
+      ? result?.partial === true || Boolean(result?.errors?.length)
+      : result?.ordersComplete === false || result?.orderPaginationComplete === false ||
+        Boolean(result?.errors?.some((error) => typeof error !== "string" || !error.startsWith("Product "))) ||
+        (result?.ordersComplete !== true && result?.partial === true),
     since: result?.since ?? null,
   };
 }
