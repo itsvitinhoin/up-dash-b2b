@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, lt, lte, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, gte, isNull, lt, lte, sql } from "drizzle-orm";
 import {
   clientsTable,
   db,
@@ -6,6 +6,7 @@ import {
   googleAdsDailyTable as daily,
   type GoogleAdsCampaignMetrics,
 } from "@workspace/db";
+import { logger } from "../lib/logger";
 import {
   GoogleAdsError,
   googleAdsConfigured,
@@ -100,6 +101,11 @@ export async function connectGoogleAds(clientId: string, ids: GoogleAdsAccountId
   return dates;
 }
 
+async function refreshCampaignDays(connection: Connection, dates: GoogleAdsDates, startedAt: Date) {
+  await saveDays(db, await collectDays(connection, dates, startedAt));
+  return dates;
+}
+
 export async function refreshGoogleAds(clientId: string, dates?: GoogleAdsDates) {
   const connection = await existingConnection(clientId);
   if (!connection) throw new GoogleAdsError("Conecte uma conta anunciante antes de sincronizar.", 409);
@@ -109,15 +115,35 @@ export async function refreshGoogleAds(clientId: string, dates?: GoogleAdsDates)
   assertRange(range);
   if (range.dateFrom > today) throw new GoogleAdsError("Selecione uma data inicial que já tenha começado no Google Ads.", 400);
   const actual = { ...range, dateTo: range.dateTo > today ? today : range.dateTo };
-  await saveDays(db, await collectDays(connection, actual, startedAt));
-  return actual;
+  return refreshCampaignDays(connection, actual, startedAt);
 }
 
-export async function googleAdsClientIds() {
-  const rows = await db.select({ id: connections.clientId }).from(connections)
+export async function refreshDailyGoogleAdsReports(now = new Date()) {
+  if (!googleAdsConfigured()) throw new GoogleAdsError("Credencial do Google Ads pendente no servidor.", 503);
+
+  const linkedClients = await db.select(getTableColumns(connections)).from(connections)
     .innerJoin(clientsTable, eq(clientsTable.id, connections.clientId))
-    .where(eq(clientsTable.isActive, true)).orderBy(asc(connections.clientId));
-  return rows.map((row) => row.id);
+    .where(and(eq(clientsTable.isActive, true), isNull(clientsTable.archivedAt)))
+    .orderBy(asc(connections.clientId));
+
+  const parallelAccounts = 4;
+  let updated = 0;
+  for (let offset = 0; offset < linkedClients.length; offset += parallelAccounts) {
+    const batch = linkedClients.slice(offset, offset + parallelAccounts);
+    await Promise.all(batch.map(async (connection) => {
+      try {
+        await refreshCampaignDays(connection, closedDays(connection.timeZone, now), new Date());
+        updated += 1;
+      } catch (error) {
+        logger.warn({
+          clientId: connection.clientId,
+          reason: error instanceof GoogleAdsError ? error.message : "Falha ao atualizar os dados no servidor.",
+        }, "Falha na sincronização diária do Google Ads");
+      }
+    }));
+  }
+
+  return { clients: linkedClients.length, updated, failed: linkedClients.length - updated };
 }
 
 function emptyMetrics() {

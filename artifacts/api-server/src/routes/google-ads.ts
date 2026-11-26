@@ -1,9 +1,10 @@
+import { timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { authenticate, requireAdmin, resolveClientId } from "../middlewares/auth";
 import { GoogleAdsError } from "../services/google-ads-api";
 import { getGoogleAdsInsight, googleAdsInsightViews, type GoogleAdsInsightView } from "../services/google-ads-insights";
-import { connectGoogleAds, getGoogleAdsReport, refreshGoogleAds } from "../services/google-ads-report";
+import { connectGoogleAds, getGoogleAdsReport, refreshDailyGoogleAdsReports, refreshGoogleAds } from "../services/google-ads-report";
 
 const router: IRouter = Router();
 const path = "/analytics/google-ads";
@@ -70,5 +71,24 @@ router.post(`${path}/connect`, authenticate, requireAdmin, forClient(async (clie
 
 router.post(`${path}/sync`, authenticate, requireAdmin, forClient((clientId, req) =>
   refreshGoogleAds(clientId, parseDates(req.body))));
+
+router.get("/cron/extractions/google-ads", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const secret = process.env.CRON_SECRET;
+  const provided = Buffer.from(req.get("authorization") ?? "");
+  const expected = Buffer.from("Bearer " + secret);
+  if (!secret || provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+    sendError(res, new GoogleAdsError("Unauthorized cron request.", 401));
+    return;
+  }
+
+  try {
+    const result = await refreshDailyGoogleAdsReports();
+    const ok = result.failed === 0;
+    res.status(ok ? 200 : 500).json({ ok, result });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
 
 export default router;
