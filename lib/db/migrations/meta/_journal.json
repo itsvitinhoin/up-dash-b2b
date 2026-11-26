@@ -358,6 +358,20 @@
       "when": 1795530593922,
       "tag": "0050_bling",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1795630000000,
+      "tag": "0051_google_ads",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795726800000,
+      "tag": "0052_google_ads_insight_snapshots",
+      "breakpoints": true
     }
   ]
 }

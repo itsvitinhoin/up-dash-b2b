@@ -13,6 +13,7 @@ import portfolioReportRouter from "./portfolio-report";
 import apiTokensRouter from "./api-tokens";
 import adsHistoryRouter from "./ads-history";
 import { blingRouter } from "./bling";
+import googleAdsRouter from "./google-ads";
 import { braavoRouter } from "./braavo";
 
 import { tvDashboardRouter } from "./tv-dashboard";
@@ -27,6 +28,7 @@ router.use(clientsRouter);
 router.use(braavoRouter);
 router.use(portfolioReportRouter);
 router.use(tvDashboardRouter);
+router.use(googleAdsRouter);
 router.use(analyticsRouter);
 router.use(notificationsRouter);
 router.use(savedViewsRouter);
