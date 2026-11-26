@@ -1120,6 +1120,12 @@ export type RecompraMonthlyBucket = {
   faturamento: number;
   vendas: number;
   clientes: number;
+  // Achado 26/11/2026: cliente na 1a compra de verdade (sem priorPositives)
+  // antes só dava `continue` -- ficava fora do bucket inteiro. Contado à
+  // parte aqui pra alimentar o grafico Novo/Recorrente/Reativado mes a mes
+  // (ate entao so tinha os outros dois). Nao entra em faturamento/vendas/
+  // clientes acima (mantido com o mesmo significado de antes: só recompra).
+  aquisicao: { clientes: number; vendas: number; faturamento: number };
   recorrentes: { clientes: number; vendas: number; faturamento: number };
   reativados: { clientes: number; vendas: number; faturamento: number };
 };
@@ -1211,6 +1217,7 @@ export async function classifyRecompraMonthly(params: {
     faturamento: 0,
     vendas: 0,
     clientes: 0,
+    aquisicao: { clientes: 0, vendas: 0, faturamento: 0 },
     recorrentes: { clientes: 0, vendas: 0, faturamento: 0 },
     reativados: { clientes: 0, vendas: 0, faturamento: 0 },
   }));
@@ -1230,15 +1237,23 @@ export async function classifyRecompraMonthly(params: {
         const earlierWindowEvents = events.filter((e) => e.requestedAt < start);
         const effectiveHistory = [...priorHistory, ...earlierWindowEvents];
         const priorPositives = effectiveHistory.filter((e) => e.requestedAt.getTime() < firstEvent.requestedAt.getTime());
-        if (priorPositives.length === 0) continue; // sem compra positiva anterior: não é recompra nesse mês
+        const faturamentoMes = monthEvents.reduce((s, e) => s + e.paidValue, 0);
+        const vendasMes = monthEvents.length;
+        const bucket = buckets[mi]!;
+        if (priorPositives.length === 0) {
+          // 1a compra de verdade (sem nenhuma anterior, nem fora da janela
+          // de 12 meses) -- é aquisição, não recompra; não soma no total
+          // faturamento/vendas/clientes do bucket (mantido só-recompra).
+          bucket.aquisicao.clientes += 1;
+          bucket.aquisicao.vendas += vendasMes;
+          bucket.aquisicao.faturamento += faturamentoMes;
+          continue;
+        }
 
         const lastBefore = priorPositives.reduce((latest, e) => (e.requestedAt.getTime() > latest.requestedAt.getTime() ? e : latest));
         const intervalDays = Math.round((firstEvent.requestedAt.getTime() - lastBefore.requestedAt.getTime()) / 86_400_000);
         const segment: RecompraSegment = intervalDays <= RECORRENTE_THRESHOLD_DAYS ? "recorrente" : "reativado";
 
-        const faturamentoMes = monthEvents.reduce((s, e) => s + e.paidValue, 0);
-        const vendasMes = monthEvents.length;
-        const bucket = buckets[mi]!;
         bucket.faturamento += faturamentoMes;
         bucket.vendas += vendasMes;
         bucket.clientes += 1;

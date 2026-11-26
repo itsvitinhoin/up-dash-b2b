@@ -27,7 +27,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { customFetch } from "@workspace/api-client-react";
+import { customFetch, useGetClient } from "@workspace/api-client-react";
+import { useOrganizationData } from "@/lib/organization-data";
+import { queryOpts } from "@/lib/query-opts";
 import { DashboardKpiCard } from "@/components/dashboard-kpi-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -208,54 +210,16 @@ type PerformanceOrder = {
 
 type CohortLabel = "novo" | "recorrente" | "reativado";
 
-type CohortSummary = {
-  cohort: CohortLabel;
-  clientes: number;
-  pedidos: number;
-  pedidosPagos: number;
-  faturamentoGerado: number;
-  faturamentoPago: number;
-  ticketMedio: number;
+// Mesmo formato de RecompraMonthlyBucket (recompra-analytics.ts), repetido
+// aqui porque este pacote não importa tipos do api-server.
+type RecompraMonthlyBucketRow = {
+  month: string;
+  aquisicao: { clientes: number; vendas: number; faturamento: number };
+  recorrentes: { clientes: number; vendas: number; faturamento: number };
+  reativados: { clientes: number; vendas: number; faturamento: number };
 };
-
-type CustomerCohort = {
-  upzeroCustomerId: string;
-  customerName: string | null;
-  cohort: CohortLabel;
-  firstInfluencedOrderAt: string;
-  lastOrderBeforeAt: string | null;
-  daysSinceLastOrder: number | null;
-};
-
-// Todo pedido do período (não só os influenciados) -- `attributed`/`cohort`
-// vêm null/false quando o pedido não foi conciliado com nenhuma evidência
-// de mídia paga antes dele.
-type PaidAttributionState = "PAID_ORIGIN" | "PAID_ASSISTED";
-
-type ErpOrderRow = {
-  orderId: string;
-  channel: "erp" | "site" | "vesti";
-  customerName: string | null;
-  document: string | null;
-  upzeroCustomerId: string | null;
-  valor: number;
-  valorPago: number;
-  dataCriado: string;
-  attributed: boolean;
-  attributionState: PaidAttributionState | null;
-  cohort: CohortLabel | null;
-  touchpointAt: string | null;
-  touchpointSource: string | null;
-};
-
-type ErpAttributionResponse = {
-  allOrders: ErpOrderRow[];
-  influencedTotal: number;
-  influencedCustomers: number;
-  cohortSummary: CohortSummary[];
-  customerCohorts: CustomerCohort[];
-  fetchErrors: Array<{ upzeroCustomerId: string; message: string }>;
-};
+// Mesmo formato de RecompraBlocks[segmento] (recompra-analytics.ts).
+type CohortBlockTotals = { faturamento: number; faturamentoBruto: number; vendas: number; clientes: number; ticketMedio: number | null };
 
 const COHORT_LABEL: Record<CohortLabel, string> = {
   novo: "Novo",
@@ -316,24 +280,24 @@ const cohortChartConfig = {
 
 /** Barras mes a mes de Novo/Recorrente/Reativado (pedido do time, 18/11/2026) --
  * calculado no front a partir do allOrders que a tela ja busca, sem request novo. */
-function monthlyCohortTotals(orders: ErpOrderRow[]): Array<{ month: string; novo: number; recorrente: number; reativado: number; novoPct: number; recorrentePct: number; reativadoPct: number }> {
-  const buckets = new Map<string, { novo: number; recorrente: number; reativado: number }>();
-  for (const order of orders) {
-    if (!order.attributed || !order.cohort) continue;
-    const month = order.dataCriado.slice(0, 7);
-    const bucket = buckets.get(month) ?? { novo: 0, recorrente: 0, reativado: 0 };
-    bucket[order.cohort] += order.valor;
-    buckets.set(month, bucket);
-  }
-  return Array.from(buckets.entries())
-    .map(([month, totals]) => {
-      const total = totals.novo + totals.recorrente + totals.reativado;
+// Achado 26/11/2026: trocado de erp-attribution.ts (allOrders calculado no
+// front) pro mesmo motor recompra-analytics.ts dos cards/tabela acima --
+// ver RecompraMonthlyBucket.aquisicao (api-server), acrescentado hoje.
+function monthlyCohortTotals(months: RecompraMonthlyBucketRow[]): Array<{ month: string; novo: number; recorrente: number; reativado: number; novoPct: number; recorrentePct: number; reativadoPct: number }> {
+  return months
+    .map((m) => {
+      const novo = m.aquisicao.faturamento;
+      const recorrente = m.recorrentes.faturamento;
+      const reativado = m.reativados.faturamento;
+      const total = novo + recorrente + reativado;
       return {
-        month,
-        ...totals,
-        novoPct: total > 0 ? (totals.novo / total) * 100 : 0,
-        recorrentePct: total > 0 ? (totals.recorrente / total) * 100 : 0,
-        reativadoPct: total > 0 ? (totals.reativado / total) * 100 : 0,
+        month: m.month,
+        novo,
+        recorrente,
+        reativado,
+        novoPct: total > 0 ? (novo / total) * 100 : 0,
+        recorrentePct: total > 0 ? (recorrente / total) * 100 : 0,
+        reativadoPct: total > 0 ? (reativado / total) * 100 : 0,
       };
     })
     .sort((a, b) => a.month.localeCompare(b.month));
@@ -488,23 +452,47 @@ export default function PerformancePage() {
     retry: 1,
   });
 
-  const attributionQuery = useQuery<ErpAttributionResponse>({
-    queryKey: ["performance-attribution", clientId, dateFrom, dateTo, sellerId, state, statusFilter],
+  // Achado 26/11/2026: "Novos, recorrentes e reativados" trocado de
+  // erp-attribution.ts (so CNPJ, nao reage a Tipo/Status/Estado/Vendedora,
+  // conta visita de site como "influenciada") pro mesmo motor dos cards
+  // Aquisicao/Retencao (recompra-analytics.ts, via useOrganizationData) --
+  // e o oficial (bate com a spec das 3 etapas) e ja reage aos filtros do
+  // topo (slide: "serao influenciados pelos filtros do topo de visao geral").
+  const { recompra: recompraForCohort } = useOrganizationData(["recompra"], [], tipoFilter);
+  const cohortBlocks = recompraForCohort.data?.blocks as
+    | { aquisicao: CohortBlockTotals; recorrentes: CohortBlockTotals; reativados: CohortBlockTotals; attributionUnavailable: boolean }
+    | undefined;
+
+  const { data: clientDetailForCohort } = useGetClient(selectedClientId ?? "", {
+    query: queryOpts({ enabled: !!selectedClientId }),
+  });
+  // Mesmo mapeamento Tipo->RecompraTipoFilter de organization-data.ts --
+  // duplicado aqui porque o hook não expõe os filtros já computados pra
+  // reaproveitar numa query própria (monthly-trend não é servido por ele).
+  const recompraTipoForMonthly: "vesti" | "site" | "anuncios-todos" | "erp" =
+    tipoFilter === "ecommerce"
+      ? clientDetailForCohort?.commercePlatform === "VESTI"
+        ? "vesti"
+        : "site"
+      : tipoFilter === "anuncios"
+        ? "anuncios-todos"
+        : "erp";
+  const monthlyTrendQuery = useQuery<{ months: RecompraMonthlyBucketRow[]; attributionUnavailable: boolean }>({
+    queryKey: ["performance-recompra-monthly", clientId, recompraTipoForMonthly, sellerId, state],
     queryFn: () =>
-      customFetch<ErpAttributionResponse>(
-        buildUrl("/api/analytics/erp/attribution", commonParams),
+      customFetch(
+        buildUrl("/api/analytics/recompra/monthly-trend", {
+          clientId,
+          status: "pago",
+          tipo: recompraTipoForMonthly,
+          estado: state,
+          vendedoraId: sellerId,
+        }),
       ),
     enabled,
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: false,
-    // Achado 09/09/2026: cliente Vesti nativo nunca tem chave da UpZero,
-    // então NO_API_KEY é permanente, não vale re-tentar (só gastaria
-    // request à toa contra um erro que nunca muda).
-    retry: (failureCount, err) =>
-      (err as { data?: { code?: string } })?.data?.code !== "NO_API_KEY" && failureCount < 1,
   });
-  const attributionErrorCode = (attributionQuery.error as { data?: { code?: string } } | undefined)?.data?.code;
-  const isVestiWithoutUpZero = attributionErrorCode === "NO_API_KEY";
 
   const previous = usePreviousPeriodQuery<PerformanceResponse>(periodQuery("/api/analytics/performance", { ...commonParams, page: 1, limit: PAGE_SIZE }), enabled);
   const pk = previous.data?.kpis;
@@ -868,17 +856,17 @@ export default function PerformancePage() {
             title="Novos, recorrentes e reativados"
             description="Coorte pela última compra concluída antes da 1ª compra que a mídia influenciou. Sem compra anterior = novo · até 90 dias = recorrente · acima = reativado."
           />
-          {attributionQuery.isLoading ? (
+          {recompraForCohort.isLoading ? (
             <p className="mt-4 text-sm text-muted-foreground">Carregando…</p>
-          ) : isVestiWithoutUpZero ? (
+          ) : cohortBlocks?.attributionUnavailable ? (
             <Alert className="mt-4">
               <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Não disponível para este cliente</AlertTitle>
+              <AlertTitle>Não disponível para este Tipo</AlertTitle>
               <AlertDescription>
-                Essa seção usa dados de clique da UpZero, que este cliente (Vesti nativo) não tem configurado.
+                Tipo=Anúncios foi pedido, mas este cliente não tem chave da UpZero configurada.
               </AlertDescription>
             </Alert>
-          ) : attributionQuery.isError ? (
+          ) : recompraForCohort.isError ? (
             <Alert variant="destructive" className="mt-4">
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>Não foi possível carregar a atribuição</AlertTitle>
@@ -888,105 +876,115 @@ export default function PerformancePage() {
             </Alert>
           ) : (
             <>
-              <div className="mt-4 up-metric-grid">
-                {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
-                  const summary = attributionQuery.data?.cohortSummary.find(
-                    (c) => c.cohort === cohort,
-                  );
-                  const totalClientes = attributionQuery.data?.influencedCustomers ?? 0;
-                  const pct =
-                    totalClientes > 0 && summary
-                      ? (summary.clientes / totalClientes) * 100
-                      : 0;
-                  return (
-                    <GlassMetricCard key={cohort} label={COHORT_LABEL[cohort]} value={<>{formatNumber(summary?.clientes ?? 0)}</>} sub={[{ label: "% dos clientes atribuídos", value: formatPercentage(pct) }]} hideComparison />
-                  );
-                })}
-              </div>
-              <div className="mt-4 overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Coorte</TableHead>
-                      <TableHead className="text-right">Clientes</TableHead>
-                      <TableHead className="text-right">Pedidos</TableHead>
-                      <TableHead className="text-right">Pedidos pagos</TableHead>
-                      <TableHead className="text-right">Fat. gerado</TableHead>
-                      <TableHead className="text-right">Fat. pago</TableHead>
-                      <TableHead className="text-right">Ticket médio</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
-                      const summary = attributionQuery.data?.cohortSummary.find(
-                        (c) => c.cohort === cohort,
-                      );
-                      return (
-                        <TableRow key={cohort}>
-                          <TableCell>
-                            <Badge
-                              variant="outline"
-                              className={COHORT_BADGE_CLASS[cohort]}
-                            >
-                              {COHORT_LABEL[cohort]}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(summary?.clientes ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(summary?.pedidos ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(summary?.pedidosPagos ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(summary?.faturamentoGerado ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(summary?.faturamentoPago ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(summary?.ticketMedio ?? 0)}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                    {(() => {
-                      const rows = attributionQuery.data?.cohortSummary ?? [];
-                      const totalPedidos = rows.reduce((s, r) => s + r.pedidos, 0);
-                      const totalPedidosPagos = rows.reduce((s, r) => s + r.pedidosPagos, 0);
-                      const totalFatPago = rows.reduce((s, r) => s + r.faturamentoPago, 0);
-                      const totalFatGerado = attributionQuery.data?.influencedTotal ?? 0;
-                      return (
-                        <TableRow className="bg-muted/30 font-semibold">
-                          <TableCell>Total</TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(attributionQuery.data?.influencedCustomers ?? 0)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(totalPedidos)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatNumber(totalPedidosPagos)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(totalFatGerado)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(totalFatPago)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(totalPedidos > 0 ? totalFatGerado / totalPedidos : 0)}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })()}
-                  </TableBody>
-                </Table>
-              </div>
               {(() => {
-                const monthly = monthlyCohortTotals(attributionQuery.data?.allOrders ?? []);
+                // Mesma simplificação combinada: Status já vem fixo em "pago"
+                // pra essa consulta (igual tela inteira sempre usa hoje), então
+                // "Pedidos" e "Pedidos pagos" viram o mesmo número (sem pedido
+                // extra ao backend só pra separar os dois).
+                const cohortRows: Record<CohortLabel, CohortBlockTotals | undefined> = {
+                  novo: cohortBlocks?.aquisicao,
+                  recorrente: cohortBlocks?.recorrentes,
+                  reativado: cohortBlocks?.reativados,
+                };
+                const totalClientes = (["novo", "recorrente", "reativado"] as const).reduce(
+                  (s, c) => s + (cohortRows[c]?.clientes ?? 0),
+                  0,
+                );
+                return (
+                  <>
+                    <div className="mt-4 up-metric-grid">
+                      {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
+                        const row = cohortRows[cohort];
+                        const pct = totalClientes > 0 && row ? (row.clientes / totalClientes) * 100 : 0;
+                        return (
+                          <GlassMetricCard key={cohort} label={COHORT_LABEL[cohort]} value={<>{formatNumber(row?.clientes ?? 0)}</>} sub={[{ label: "% dos clientes atribuídos", value: formatPercentage(pct) }]} hideComparison />
+                        );
+                      })}
+                    </div>
+                    <div className="mt-4 overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Coorte</TableHead>
+                            <TableHead className="text-right">Clientes</TableHead>
+                            <TableHead className="text-right">Pedidos</TableHead>
+                            <TableHead className="text-right">Pedidos pagos</TableHead>
+                            <TableHead className="text-right">Fat. gerado</TableHead>
+                            <TableHead className="text-right">Fat. pago</TableHead>
+                            <TableHead className="text-right">Ticket médio</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(["novo", "recorrente", "reativado"] as const).map((cohort) => {
+                            const row = cohortRows[cohort];
+                            return (
+                              <TableRow key={cohort}>
+                                <TableCell>
+                                  <Badge
+                                    variant="outline"
+                                    className={COHORT_BADGE_CLASS[cohort]}
+                                  >
+                                    {COHORT_LABEL[cohort]}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatNumber(row?.clientes ?? 0)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatNumber(row?.vendas ?? 0)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatNumber(row?.vendas ?? 0)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatCurrency(row?.faturamentoBruto ?? 0)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatCurrency(row?.faturamento ?? 0)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatCurrency(row?.ticketMedio ?? 0)}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                          {(() => {
+                            const rows = (["novo", "recorrente", "reativado"] as const).map((c) => cohortRows[c]).filter((r): r is CohortBlockTotals => Boolean(r));
+                            const totalPedidos = rows.reduce((s, r) => s + r.vendas, 0);
+                            const totalFatGerado = rows.reduce((s, r) => s + r.faturamentoBruto, 0);
+                            const totalFatPago = rows.reduce((s, r) => s + r.faturamento, 0);
+                            return (
+                              <TableRow className="bg-muted/30 font-semibold">
+                                <TableCell>Total</TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatNumber(totalClientes)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatNumber(totalPedidos)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatNumber(totalPedidos)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatCurrency(totalFatGerado)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatCurrency(totalFatPago)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatCurrency(totalPedidos > 0 ? totalFatGerado / totalPedidos : 0)}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })()}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
+                );
+              })()}
+              {(() => {
+                const monthly = monthlyCohortTotals(monthlyTrendQuery.data?.months ?? []);
                 if (monthly.length === 0) return null;
                 return (
                   <div className="mt-6">
