@@ -1334,14 +1334,17 @@ export async function runHourlyExtractionBundle(
 // de alguém precisar, reaproveitando a mesma infra dos outros TASK= já em
 // produção (Cloud Run Job + Cloud Scheduler, sem Vercel/timeout de
 // serverless no meio).
-const PAID_TOUCHPOINTS_RECENT_ORDER_DAYS = Number.parseInt(process.env.PAID_TOUCHPOINTS_RECENT_ORDER_DAYS ?? "90", 10);
+// Achado 26/11/2026: 90 dias deixava de fora quem só aparece nos presets
+// "Este Ano"/"Ano passado" do seletor de período (date-range-picker.tsx,
+// até ~12 meses) -- subido pra 400 pra cobrir esses também.
+const PAID_TOUCHPOINTS_RECENT_ORDER_DAYS = Number.parseInt(process.env.PAID_TOUCHPOINTS_RECENT_ORDER_DAYS ?? "400", 10);
 // Teto da 1ª sincronização de um cliente novo (sem synced_to ainda) --
 // mesmo valor de TOUCHPOINT_LOOKBACK_DAYS (paid-touchpoints.ts), pelo
 // mesmo motivo (achado 25/11/2026: UpZero só aceita pedir 24h por vez,
 // então 3650 dias nunca foi viável de verdade). Clientes que já têm
 // sincronização anterior pedem só o GAP desde a última vez (ver
 // candidatesWithSyncState abaixo), não esse teto cheio.
-const PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS = Number.parseInt(process.env.PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS ?? "180", 10);
+const PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS = Number.parseInt(process.env.PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS ?? "400", 10);
 // Overlap de segurança ao retomar de um synced_to anterior -- mesmo valor
 // de TOUCHPOINT_REFRESH_OVERLAP_MS (paid-touchpoints.ts).
 const PAID_TOUCHPOINTS_REFRESH_OVERLAP_MS = 24 * 60 * 60 * 1000;

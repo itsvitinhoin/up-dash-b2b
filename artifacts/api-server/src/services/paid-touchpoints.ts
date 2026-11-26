@@ -45,13 +45,13 @@ function assertUpzeroFactsWindowOpen(): void {
 }
 
 // Era 3650 ("sem teto real") até 25/11/2026 -- inviável depois que a UpZero
-// passou a exigir chamadas picotadas em até 24h cada (acima). Touchpoint de
-// anúncio com mais de 6 meses não ajuda a decidir se mídia influenciou uma
-// compra recente, então 180 dias cobre o caso real sem precisar de
-// milhares de chamadas picotadas por cliente. Exportada porque
+// passou a exigir chamadas picotadas em até 24h cada (acima). Achado
+// 26/11/2026: 180 parecia suficiente, mas o seletor de período do dashboard
+// (date-range-picker.tsx) tem presets "Este Ano"/"Ano passado" que passam
+// de 180 dias -- subido pra 400 pra cobrir esses também. Exportada porque
 // recompra-analytics.ts também usa como "desde sempre" fora do contexto de
 // touchpoint (fetchAllPositiveEventsForClient).
-export const TOUCHPOINT_LOOKBACK_DAYS = 180;
+export const TOUCHPOINT_LOOKBACK_DAYS = 400;
 
 // Extraída de recompra-analytics.ts em 29/09/2026 (Fase 6) -- era usada só
 // lá, mas erp-attribution.ts tinha o mesmo problema que motivou essa
