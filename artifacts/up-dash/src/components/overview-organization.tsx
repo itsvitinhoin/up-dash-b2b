@@ -183,7 +183,7 @@ export function PerformanceSummarySections({
 }: {
   /** Pedido do time, 19/11/2026: Aquisição/Retenção seguem o mesmo Tipo da página Performance.
    * Sem esse prop (ex: Visão Geral "/"), comportamento de sempre (sem mudança). */
-  tipoFilter?: "todos" | "erp" | "ecommerce" | "anuncios";
+  tipoFilter?: "erp" | "ecommerce" | "anuncios";
 } = {}) {
   const { tx } = useI18n();
   const { pick, recompra } = useOrganizationData(

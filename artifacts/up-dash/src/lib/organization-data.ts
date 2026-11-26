@@ -113,7 +113,7 @@ export function useOrganizationData(
   previous: readonly OrganizationSource[] = only,
   // Pedido do time, 19/11/2026: Aquisição/Retenção (Recompra) seguem o Tipo da página Performance.
   // undefined = quem chama (ex: Visão Geral "/") não tem esse filtro -- comportamento de sempre, sem mudança.
-  tipoFilter?: "todos" | "erp" | "ecommerce" | "anuncios",
+  tipoFilter?: "erp" | "ecommerce" | "anuncios",
 ) {
   const { tx } = useI18n();
   const { user, selectedClientId, selectedDashboardMode } = useAuth();
@@ -185,10 +185,15 @@ export function useOrganizationData(
   });
   const platform = clientDetail?.commercePlatform;
   const platformReady = !selectedClientId || platform !== undefined;
-  // Com tipoFilter (só a página Performance manda isso): Todos/ERP mostram o universo reconciliado
-  // (ERP+site, igual ao card Faturamento); Ecommerce mostra só o nativo (Vesti/site, decisão B do
-  // Marcelo em 19/11/2026 -- muda o padrão de quem usa a Performance, de propósito); Anúncios usa o
-  // mesmo recorte "anuncios-todos" já usado na tela de Recompra dedicada.
+  // Com tipoFilter (só a página Performance manda isso): ERP mostra o universo reconciliado
+  // (ERP+site -- achado 25/11/2026: estreitar pra só-ERP aqui já quebrou e fez a Retenção
+  // ficar maior que o Faturamento total; não repetir sem corrigir essa parte também);
+  // Ecommerce mostra só o nativo (Vesti/site, decisão B do Marcelo em 19/11/2026 -- muda o
+  // padrão de quem usa a Performance, de propósito); Anúncios usa o mesmo recorte
+  // "anuncios-todos" já usado na tela de Recompra dedicada. Achado 26/11/2026: "Todos" nunca
+  // foi um valor de Tipo de verdade (spec só tem E-commerce/ERP/Anúncios) -- removido do
+  // dropdown da Performance; o que sobrou aqui (sem "todos" no tipo de tipoFilter) é só
+  // tipoFilter indefinido, tratado abaixo.
   // Sem tipoFilter (Visão Geral "/"): comportamento de sempre, sem mudança nenhuma.
   const recompraTipo = tipoFilter
     ? tipoFilter === "ecommerce"

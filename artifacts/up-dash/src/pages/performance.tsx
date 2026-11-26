@@ -425,7 +425,13 @@ export default function PerformancePage() {
   const { selectedClientId, user } = useAuth();
   const { dateRange, filters } = useDashboardFilters();
   const [ordersPage, setOrdersPage] = useState(1);
-  const [tipoFilter, setTipoFilter] = useState<"todos" | "erp" | "ecommerce" | "anuncios">("todos");
+  // Achado 26/11/2026: a spec original (slides) só tem 3 valores de Tipo --
+  // E-commerce/ERP/Anúncios. "Todos" só existe DENTRO de Anúncios (ver
+  // anunciosSubFilter abaixo), nunca como um 4º item no mesmo nível. Um
+  // "Todos" solto tinha sido acrescentado depois (19/11/2026) e causava
+  // Aquisição/Retenção (que nunca soube filtrar por Tipo=Todos) parecer
+  // inconsistente com o card de Faturamento -- removido.
+  const [tipoFilter, setTipoFilter] = useState<"erp" | "ecommerce" | "anuncios">("erp");
   // Sub-filtro dentro de Tipo=Anúncios (slides, 19/11/2026): Todos = gerado+pago por anúncio
   // (e-commerce + ERP direto, sem duplicar); E-commerce = só a parte com pedido real na Vesti/UP
   // Zero; ERP = só a parte fechada direto no ERP, sem contrapartida no e-commerce.
@@ -507,7 +513,8 @@ export default function PerformancePage() {
   // (k.attributedRevenue, ja filtrado por Status/Vendedora/Estado igual ao ERP) em vez do
   // faturamento total do ERP. Tipo=Ecommerce (19/11/2026): mostra o nativo do e-commerce
   // (Vesti/site, via dashboardQuery) -- mesma fonte que Aquisicao/Retencao usam pra esse
-  // Tipo. Tipo=ERP/Todos continuam mostrando k.netRevenue (universo reconciliado).
+  // Tipo. Tipo=ERP mostra k.netRevenue (ERP puro, independente da origem -- slide: "ERP:
+  // apresenta todos os pedidos registrados no ERP do cliente, independentemente da origem").
   const dk = dashboardQuery.data?.kpis;
   const dpk = dashboardQuery.data?.prevKpis;
   // Sub-filtro dentro de Anúncios (slides): Todos = attributedRevenue (e-commerce + ERP direto,
@@ -518,25 +525,18 @@ export default function PerformancePage() {
     if (anunciosSubFilter === "erp") return kpis.attributedRevenueErp;
     return kpis.attributedRevenue;
   };
-  // Tipo=Todos (pedido do time, 19/11/2026): ERP + pedido nativo do e-commerce sem gêmeo no
-  // ERP, combinados -- bate com Aquisição×Retenção, que já combina as duas fontes. Tipo=ERP
-  // continua só ERP (k.netRevenue), sem mudar.
   const faturamentoValue =
     tipoFilter === "anuncios"
       ? (attributedFor(k) ?? 0)
       : tipoFilter === "ecommerce"
         ? (dk?.paidRevenue ?? dk?.revenue ?? 0)
-        : tipoFilter === "todos"
-          ? (k?.combinedNetRevenue ?? 0)
-          : (k?.netRevenue ?? 0);
+        : (k?.netRevenue ?? 0);
   const faturamentoPrevious =
     tipoFilter === "anuncios"
       ? attributedFor(pk)
       : tipoFilter === "ecommerce"
         ? (dpk?.paidRevenue ?? dpk?.revenue)
-        : tipoFilter === "todos"
-          ? pk?.combinedNetRevenue
-          : pk?.netRevenue;
+        : pk?.netRevenue;
   const financialMetrics = [
     {
       label: "Faturamento",
@@ -551,9 +551,7 @@ export default function PerformancePage() {
       sub:
         tipoFilter === "anuncios"
           ? [{ label: "Cobertura", value: formatPercentage(k?.revenueAttributionCoveragePct ?? 0) }]
-          : tipoFilter === "todos"
-            ? [{ label: "Bruto", value: formatCurrency(k?.combinedGrossRevenue ?? 0) }]
-            : [{ label: "Bruto", value: formatCurrency(k?.grossRevenue ?? 0) }],
+          : [{ label: "Bruto", value: formatCurrency(k?.grossRevenue ?? 0) }],
     },
     {
       label: "Receita atribuída",
@@ -707,7 +705,6 @@ export default function PerformancePage() {
             <SelectValue placeholder="Tipo" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="todos">Tipo: Todos</SelectItem>
             <SelectItem value="erp">Tipo: ERP</SelectItem>
             <SelectItem value="ecommerce">Tipo: Ecommerce</SelectItem>
             <SelectItem value="anuncios">Tipo: Anúncios</SelectItem>
